@@ -10,24 +10,27 @@ defmodule Langchain.Functions.Function do
 
   @primary_key false
   embedded_schema do
-    field(:name, :string)
-    field(:description, :string)
-    field(:required, {:array, :string})
-    field(:function, :any, virtual: true)
+    field :name, :string
+    field :description, :string
+    # flag if the function should be auto-evaluated. Defaults to `false`
+    # requiring an explicit step to perform the evaluation.
+    # field :auto_evaluate, :boolean, default: false
+    field :function, :any, virtual: true
+    # parameters is a map used to express a JSONSchema structure of inputs and what's required
+    field :parameters_schema, :map
 
-    embeds_many(:parameters, FunctionParameter)
+    # embeds_many(:parameters, FunctionParameter)
   end
 
   @type t :: %Function{}
 
-  @create_fields [:name, :description, :required, :function]
+  @create_fields [:name, :description, :parameters_schema, :function]
   @required_fields [:name]
 
   @spec new(attrs :: map()) :: {:ok, t} | {:error, Ecto.Changeset.t()}
   def new(attrs \\ %{}) do
     %Function{}
     |> cast(attrs, @create_fields)
-    |> cast_embed(:parameters)
     |> common_validation()
     |> apply_action(:insert)
   end
@@ -47,22 +50,22 @@ defimpl Langchain.ForOpenAIApi, for: Langchain.Functions.Function do
     %{
       "name" => fun.name,
       "description" => fun.description,
-      "parameters" => get_parameters(fun),
-      "required" => fun.required
+      "parameters" => get_parameters(fun)
     }
   end
 
-  defp get_parameters(%Function{parameters: []} = _fun) do
+  defp get_parameters(%Function{parameters_schema: nil} = _fun) do
     %{
       "type" => "object",
       "properties" => %{}
     }
   end
 
-  defp get_parameters(%Function{parameters: params} = _fun) do
-    %{
-      "type" => "object",
-      "properties" => Enum.reduce(params, %{}, &FunctionParameter.for_api(&1, &2))
-    }
+  defp get_parameters(%Function{parameters_schema: schema} = _fun) do
+    # %{
+    #   "type" => "object",
+    #   "properties" => Enum.reduce(params, %{}, &FunctionParameter.for_api(&1, &2))
+    # }
+    schema
   end
 end

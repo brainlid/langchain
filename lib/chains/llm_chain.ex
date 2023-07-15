@@ -11,11 +11,13 @@ defmodule Langchain.Chains.LLMChain do
 
   @primary_key false
   embedded_schema do
-    field(:functions, {:array, :any}, default: [], virtual: true)
     field(:llm, :any, virtual: true)
     field(:prompt, :any, virtual: true)
     field(:stream, :boolean, default: false)
     field(:verbose, :boolean, default: false)
+    field(:functions, {:array, :any}, default: [], virtual: true)
+    # set and managed privately through functions
+    field(:function_map, :map, default: %{}, virtual: true)
   end
 
   # Note: A Langchain "Tool" is pretty much expressed by an OpenAI Function.
@@ -48,6 +50,7 @@ defmodule Langchain.Chains.LLMChain do
     changeset
     |> validate_required(@required_fields)
     |> validate_llm_is_struct()
+    |> validate_prompt()
     |> build_functions_map_from_functions()
   end
 
@@ -59,6 +62,32 @@ defmodule Langchain.Chains.LLMChain do
     end
   end
 
+  defp validate_prompt(changeset) do
+    # TODO: validate the types? List of String, Message, or PromptTemplate?
+    # TODO: Change the type to require a list? Make it a {:array, :any}? Don't accept a single text or prompt template?
+    # prompt =
+    changeset
+  end
+
+  @doc """
+  Prepare the prompt for actual submission. It's quite versatile in what it accepts.
+
+  Accepts a Message, String, PromptTemplate or a list of those.
+  """
+  @doc """
+  Prepares the prompt.
+  """
+  def prepare_prompt(%LLMChain{prompt: nil} = chain), do: ""
+
+  def prepare_prompt(%LLMChain{prompt: prompt} = chain) when not is_list(prompt) do
+    prepare_prompt(%LLMChain{chain | prompt: [prompt]})
+  end
+
+  def prepare_prompt(%LLMChain{prompt: prompt} = chain) when is_list(prompt) do
+    # TODO: Process the prompt
+    prepare_prompt(%LLMChain{chain | prompt: [prompt]})
+  end
+
   # TODO:
   # Figure out the definition for a tool. I believe it should define 1 - many functions.
   # Enum.tools()
@@ -68,17 +97,31 @@ defmodule Langchain.Chains.LLMChain do
     functions = get_field(changeset, :functions, [])
 
     # get a list of all the functions from all the functions
-    funs = Enum.flat_map(functions, & &1.functions)
+    # funs = Enum.flat_map(functions, & &1.functions)
 
     fun_map =
-      Enum.reduce(funs, %{}, fn f, acc ->
+      Enum.reduce(functions, %{}, fn f, acc ->
         Map.put(acc, f.name, f)
       end)
 
-    put_change(changeset, :functions, fun_map)
+    put_change(changeset, :function_map, fun_map)
   end
 
-  #NOTE: This isn't something I care about currently.
+  @doc """
+  Add more functions to an LLMChain.
+  """
+  @spec add_functions(t(), [Function.t()]) :: t() | no_return()
+  def add_functions(%LLMChain{functions: existing} = chain, functions) when is_list(functions) do
+    updated = existing ++ functions
+
+    chain
+    |> change()
+    |> cast(%{functions: updated}, [:functions])
+    |> build_functions_map_from_functions()
+    |> apply_action!(:update)
+  end
+
+  # NOTE: This isn't something I care about currently.
   # @doc """
   # Call the chain combining the inputs to generate a final combined text prompt
   # submitted to the LLM to be evaluated. This submits as a single block of text
@@ -100,7 +143,6 @@ defmodule Langchain.Chains.LLMChain do
   #   # then execute the `.call` function on that module.
   #   %module{} = chain.llm
 
-
   #   #TODO: If includes function executions, does it perform the evaluation?
 
   #   # handle and output response
@@ -121,26 +163,34 @@ defmodule Langchain.Chains.LLMChain do
   def call_chat(%LLMChain{} = chain, %{} = inputs \\ %{}) do
     if chain.verbose, do: IO.inspect(chain.llm, label: "LLM")
 
-    # build final prompt, a list of messages
-    messages = PromptTemplate.to_messages(chain.prompt, inputs)
-    if chain.verbose, do: IO.inspect(messages, label: "MESSAGES")
+    if is_list(chain.prompt) do
+      # build final prompt, a list of messages
+      messages = PromptTemplate.to_messages(chain.prompt, inputs)
+      if chain.verbose, do: IO.inspect(messages, label: "MESSAGES")
 
-    functions = []
-    if chain.verbose, do: IO.inspect(functions, label: "FUNCTIONS")
+      functions = chain.functions
+      if chain.verbose, do: IO.inspect(functions, label: "FUNCTIONS")
 
-    # submit to LLM. The "llm" is a struct. Match to get the name of the module
-    # then execute the `.call` function on that module.
-    %module{} = chain.llm
+      # submit to LLM. The "llm" is a struct. Match to get the name of the module
+      # then execute the `.call` function on that module.
+      %module{} = chain.llm
 
+      # TODO: If includes function executions, does it perform the evaluation?
 
-    #TODO: If includes function executions, does it perform the evaluation?
+      # handle and output response
+      case module.call(chain.llm, messages, functions) do
+        {:ok, %Message{role: :assistant, content: content} = message} ->
+          if chain.verbose, do: IO.inspect(message, label: "MESSAGE RESPONSE")
 
-    # handle and output response
-    case module.call(chain.llm, messages, functions) do
-      {:ok, %Message{role: :assistant, content: content} = message} ->
-        if chain.verbose, do: IO.inspect(message, label: "MESSAGE RESPONSE")
+          {:ok, %{text: content}}
 
-        {:ok, %{text: content}}
+        {:ok, %Message{role: :function_call, arguments: arguments} = message} ->
+          if chain.verbose, do: IO.inspect(message, label: "FUNCTION CALL")
+
+          {:ok, arguments}
+      end
+    else
+      {:error, "LLM prompt should be a list when using call_chat"}
     end
   end
 end

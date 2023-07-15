@@ -152,17 +152,6 @@ defmodule Langchain.ChatModels.ChatOpenAI do
     )
   end
 
-  # Parse a new message response
-  def do_process_response(%{"choices" => [%{"finish_reason" => "stop", "message" => message}]}) do
-    case Message.new(message) do
-      {:ok, message} ->
-        {:ok, message}
-
-      {:error, changeset} ->
-        {:error, Utils.changeset_error_to_string(changeset)}
-    end
-  end
-
   def do_process_error_response(%Req.Response{
         status: status,
         body: %{"error" => %{"message" => message}}
@@ -177,6 +166,31 @@ defmodule Langchain.ChatModels.ChatOpenAI do
     )
 
     {:error, "Unexpected response"}
+  end
+
+  # Parse a new message response
+  def do_process_response(%{"choices" => [%{"finish_reason" => "stop", "message" => message}]}) do
+    case Message.new(message) do
+      {:ok, message} ->
+        {:ok, message}
+
+      {:error, changeset} ->
+        {:error, Utils.changeset_error_to_string(changeset)}
+    end
+  end
+
+  def do_process_response(%{"choices" => [%{"finish_reason" => "function_call", "message" => %{"function_call" => %{"arguments" => raw_args, "name" => name}}}]}) do
+    case Message.new_function_call(name, raw_args) do
+      {:ok, message} ->
+        {:ok, message}
+
+      {:error, changeset} ->
+        {:error, Utils.changeset_error_to_string(changeset)}
+    end
+  end
+
+  def do_process_response(%{"choices" => [%{"finish_reason" => "length"}]}) do
+    {:error, "Stopped for length"}
   end
 
   # def do_process_response(data) do
@@ -258,43 +272,4 @@ defmodule Langchain.ChatModels.ChatOpenAI do
   # end
 
 
-  #TODO: Move this to a different module?
-  # https://github.com/hwchase17/langchainjs/blob/main/langchain/src/chains/openai_functions/extraction.ts#L42
-  @extraction_template ~s"Extract and save the relevant entities mentioned in the following passage together with their properties.
-
-  Passage:
-  <%= @input %>"
-
-  def get_extraction_functions() do
-    Langchain.Functions.new(%{
-      name: "information_extraction",
-      description: "Extracts the relevant information from the passage.",
-      parameters: [
-# TODO: Need to test support for this. Pass in a schema definition of type, properties and required.
-# function getExtractionFunctions(schema: FunctionParameters) {
-#   return [
-#     {
-#       name: "information_extraction",
-#       description: "Extracts the relevant information from the passage.",
-#       parameters: {
-#         type: "object",
-#         properties: {
-#           info: {
-#             type: "array",
-#             items: {
-#               type: schema.type,
-#               properties: schema.properties,
-#               required: schema.required,
-#             },
-#           },
-#         },
-#         required: ["info"],
-#       },
-#     },
-#   ];
-# }
-      ],
-      required: ["info"]
-    })
-  end
 end

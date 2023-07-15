@@ -4,6 +4,15 @@ defmodule Langchain.Functions.FunctionParameter do
   use Ecto.Schema
   import Ecto.Changeset
   alias __MODULE__
+  @moduledoc """
+  Models a function parameter for OpenAI functions which adhere to a JSON Schema structure.
+
+  https://json-schema.org/understanding-json-schema/
+  """
+
+  # TODO: Check if there is an easy Elixir JSON Schema library
+  # TODO: Setup valid/accepted types
+  # TODO: If type "object", allow nested "properties" parameters.?
 
   @primary_key false
   embedded_schema do
