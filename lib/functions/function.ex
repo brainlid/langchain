@@ -44,7 +44,6 @@ end
 
 defimpl Langchain.ForOpenAIApi, for: Langchain.Functions.Function do
   alias Langchain.Functions.Function
-  alias Langchain.Functions.FunctionParameter
 
   def for_api(%Function{} = fun) do
     %{
@@ -62,10 +61,6 @@ defimpl Langchain.ForOpenAIApi, for: Langchain.Functions.Function do
   end
 
   defp get_parameters(%Function{parameters_schema: schema} = _fun) do
-    # %{
-    #   "type" => "object",
-    #   "properties" => Enum.reduce(params, %{}, &FunctionParameter.for_api(&1, &2))
-    # }
     schema
   end
 end

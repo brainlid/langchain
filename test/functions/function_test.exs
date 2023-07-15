@@ -4,7 +4,6 @@ defmodule Langchain.Functions.FunctionTest do
   doctest Langchain.Functions.Function
 
   alias Langchain.Functions.Function
-  alias Langchain.Functions.FunctionParameter
   alias Langchain.ForOpenAIApi
 
   defp hello_world(_args, _context) do
@@ -23,51 +22,31 @@ defmodule Langchain.Functions.FunctionTest do
       assert {"can't be blank", _} = changeset.errors[:name]
     end
 
-    test "supports name, description, an 1 param" do
+    test "supports name, description, and parameter schema def" do
+      schema_def = %{
+        type: "object",
+        properties: %{
+          info: %{
+            type: "object",
+            properties: %{
+              name: %{type: "string"}
+            },
+            required: ["name"]
+          }
+        },
+        required: ["info"]
+      }
+
       {:ok, fun} =
         Function.new(%{
           "name" => "say_hi",
           "description" => "Provide a friendly greeting.",
-          "parameters" => [%{name: "p1", type: "string"}]
+          "parameters_schema" => schema_def
         })
 
       assert fun.name == "say_hi"
       assert fun.description == "Provide a friendly greeting."
-      assert fun.parameters == [%FunctionParameter{name: "p1", type: "string"}]
-    end
-
-    test "supports required param" do
-      {:ok, fun} =
-        Function.new(%{
-          "name" => "say_hi",
-          "parameters" => [%{name: "greeting", type: "string"}],
-          "required" => ["greeting"]
-        })
-
-      assert fun.name == "say_hi"
-      assert fun.required == ["greeting"]
-    end
-
-    test "correctly parses with additional params" do
-      {:ok, fun} =
-        Function.new(%{
-          "name" => "say_hi",
-          "description" => "Provide a friendly greeting.",
-          "parameters" => [
-            %{name: "p1", type: "string"},
-            %{name: "p2", type: "number", description: "Param 2"},
-            %{name: "p3", type: "string", enum: ["yellow", "red", "green"]}
-          ]
-        })
-
-      assert fun.name == "say_hi"
-      assert fun.description == "Provide a friendly greeting."
-
-      assert fun.parameters == [
-               %FunctionParameter{name: "p1", type: "string"},
-               %FunctionParameter{name: "p2", type: "number", description: "Param 2"},
-               %FunctionParameter{name: "p3", type: "string", enum: ["yellow", "red", "green"]}
-             ]
+      assert fun.parameters_schema == schema_def
     end
 
     test "assigns the function to execute" do
@@ -84,24 +63,33 @@ defmodule Langchain.Functions.FunctionTest do
       # result = Function.for_api(fun)
 
       assert result == %{
-               "description" => nil,
                "name" => "hello_world",
-               "parameters" => %{"properties" => %{}, "type" => "object"},
-               "required" => nil
+               "description" => nil,
+               #  NOTE: Sends the required empty parameter definition when none set
+               "parameters" => %{"properties" => %{}, "type" => "object"}
              }
     end
 
     test "supports parameters" do
+      params_def = %{
+        "type" => "object",
+        "properties" => %{
+          "p1" => %{"description" => nil, "type" => "string"},
+          "p2" => %{"description" => "Param 2", "type" => "number"},
+          "p3" => %{
+            "description" => nil,
+            "enum" => ["yellow", "red", "green"],
+            "type" => "string"
+          }
+        },
+        "required" => ["p1"]
+      }
+
       {:ok, fun} =
         Function.new(%{
           "name" => "say_hi",
           "description" => "Provide a friendly greeting.",
-          "parameters" => [
-            %{name: "p1", type: "string"},
-            %{name: "p2", type: "number", description: "Param 2"},
-            %{name: "p3", type: "string", enum: ["yellow", "red", "green"]}
-          ],
-          "required" => ["p1"]
+          "parameters_schema" => params_def
         })
 
       # result = Function.for_api(fun)
@@ -110,23 +98,12 @@ defmodule Langchain.Functions.FunctionTest do
       assert result == %{
                "name" => "say_hi",
                "description" => "Provide a friendly greeting.",
-               "parameters" => %{
-                 "properties" => %{
-                   "p1" => %{"description" => nil, "type" => "string"},
-                   "p2" => %{"description" => "Param 2", "type" => "number"},
-                   "p3" => %{
-                     "description" => nil,
-                     "enum" => ["yellow", "red", "green"],
-                     "type" => "string"
-                   }
-                 },
-                 "type" => "object"
-               },
-               "required" => ["p1"]
+               "parameters" => params_def
              }
     end
 
     test "does not include the function to execute" do
+      # don't try and send an Elixir function ref through to the API
       {:ok, fun} = Function.new(%{"name" => "hello_world", "function" => &hello_world/2})
       # result = Function.for_api(fun)
       result = ForOpenAIApi.for_api(fun)
