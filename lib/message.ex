@@ -1,4 +1,23 @@
 defmodule Langchain.Message do
+  @moduledoc """
+  Models a `Message` for chat LLM.
+
+  ## Roles
+
+  - `:system` - a system message. Typically just one and it tends to occur first
+    as a primer for how the LLM should behave.
+  - `:user` - The user or application responses. Typically represents the
+    "human" element of the exchange.
+  - `:assistant` - Responses coming back from the LLM.
+  - `:function_call` - A message from the LLM expressing the intent to execute a
+    function that was previously declared available to it.
+
+    The `arguments` will be the parsed JSON values passed to the function.
+
+  - `:function` - A message for returning the results of executing a
+    `function_call` if there is a response to give.
+
+  """
   use Ecto.Schema
   import Ecto.Changeset
   alias __MODULE__
@@ -6,14 +25,21 @@ defmodule Langchain.Message do
 
   @primary_key false
   embedded_schema do
-    field :content, :string
-    field :index, :integer
-    field :role, Ecto.Enum, values: [:system, :user, :assistant, :function], default: :user
+    field(:content, :string)
+    field(:index, :integer)
+
+    field(:role, Ecto.Enum,
+      values: [:system, :user, :assistant, :function, :function_call],
+      default: :user
+    )
+
+    field(:function_name, :string)
+    field :arguments, :any, virtual: true
   end
 
   @type t :: %Message{}
 
-  @create_fields [:role, :content]
+  @create_fields [:role, :content, :function_name, :arguments]
   @required_fields [:role]
 
   @spec new(attrs :: map()) :: {:ok, t()} | {:error, Ecto.Changeset.t()}
@@ -42,6 +68,7 @@ defmodule Langchain.Message do
     changeset
     |> validate_required(@required_fields)
     |> validate_content()
+    |> validate_function_name()
   end
 
   # validate that a "user" and "system" message has content. Allow an
@@ -52,6 +79,27 @@ defmodule Langchain.Message do
     case fetch_field!(changeset, :role) do
       role when role in [:system, :user] ->
         validate_required(changeset, [:content])
+
+      _other ->
+        changeset
+    end
+  end
+
+  # validate that "function_name" can only be set if the role is "function_call"
+  # for requesting execution or "function" for the returning a function result.
+  #
+  # The function_name is required for those message types.
+  defp validate_function_name(changeset) do
+    case fetch_field!(changeset, :role) do
+      role when role in [:function_call, :function] ->
+        validate_required(changeset, [:function_name])
+
+      role when role in [:system, :user, :assistant] ->
+        if get_field(changeset, :function_name) == nil do
+          changeset
+        else
+          add_error(changeset, :function_name, "can't be set with role #{inspect(role)}")
+        end
 
       _other ->
         changeset
@@ -129,21 +177,55 @@ defmodule Langchain.Message do
   end
 
   @doc """
-  Create a new function message to represent the result of an executed
-  function.
+  Create a new function_call message to represent the request for a function to
+  be executed.
   """
-  @spec new_function(content :: String.t()) :: {:ok, t()} | {:error, Ecto.Changeset.t()}
-  def new_function(content) do
-    new(%{role: :function, content: content})
+  @spec new_function_call(name :: String.t(), raw_args :: String.t()) ::
+          {:ok, t()} | {:error, Ecto.Changeset.t()}
+  def new_function_call(name, raw_args) do
+    case Jason.decode(raw_args) do
+      {:ok, parsed} ->
+        new(%{role: :function_call, function_name: name, arguments: parsed})
+
+      {:error, %Jason.DecodeError{data: reason}} ->
+        {:error,
+         %Message{role: :function_call, function_name: name}
+         |> change()
+         |> add_error(:arguments, "Failed to parse arguments: #{inspect(reason)}")}
+    end
+  end
+
+  @doc """
+  Create a new function_call message to represent the request for a function to
+  be executed.
+  """
+  @spec new_function_call!(name :: String.t(), raw_args :: String.t()) :: t() | no_return()
+  def new_function_call!(name, raw_args) do
+    case new_function_call(name, raw_args) do
+      {:ok, msg} ->
+        msg
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        raise LangchainError, changeset
+    end
   end
 
   @doc """
   Create a new function message to represent the result of an executed
   function.
   """
-  @spec new_function!(content :: String.t()) :: t() | no_return()
-  def new_function!(content) do
-    case new_function(content) do
+  @spec new_function(name :: String.t(), result :: any()) :: {:ok, t()} | {:error, Ecto.Changeset.t()}
+  def new_function(name, result) do
+    new(%{role: :function, function_name: name, content: result})
+  end
+
+  @doc """
+  Create a new function message to represent the result of an executed
+  function.
+  """
+  @spec new_function!(name :: String.t(), result :: any()) :: t() | no_return()
+  def new_function!(name, result) do
+    case new_function(name, result) do
       {:ok, msg} ->
         msg
 

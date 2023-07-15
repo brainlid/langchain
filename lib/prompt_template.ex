@@ -163,7 +163,7 @@ defmodule Langchain.PromptTemplate do
   @spec to_messages([t() | Message.t() | String.t()], inputs :: %{atom() => any()}) :: [
           Message.t()
         ]
-  def to_messages(prompts, %{} = inputs \\ %{}) do
+  def to_messages(prompts, %{} = inputs \\ %{}) when is_list(prompts) do
     Enum.map(prompts, fn
       %PromptTemplate{} = template ->
         to_message!(template, inputs)
