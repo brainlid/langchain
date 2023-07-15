@@ -20,6 +20,10 @@ defmodule Langchain.Chains.ExtractionChain do
   Passage:
   <%= @input %>"
 
+  @doc """
+  Run the data extraction chain.
+  """
+  @spec run(LLMChain.t(), schema :: map(), prompt :: [any()], opts :: Keyword.t()) :: {:ok, result :: [any()]} | {:error, String.t()}
   def run(llm, schema, prompt, opts \\ []) do
     verbose = Keyword.get(opts, :verbose, false)
     messages = [
@@ -30,11 +34,12 @@ defmodule Langchain.Chains.ExtractionChain do
 
     with {:ok, chain} <-
            LLMChain.new(%{prompt: messages, llm: llm, functions: [function], verbose: verbose}),
-         {:ok, %{"info" => info}} <- LLMChain.call_chat(chain, %{input: prompt}) do
+         {:ok, %{"info" => info}} when is_list(info) <- LLMChain.call_chat(chain, %{input: prompt}) do
       {:ok, info}
     else
       other ->
         IO.inspect(other, label: "???????")
+        {:error, "Unexpected response. #{inspect other}"}
     end
   end
 
