@@ -1,20 +1,30 @@
 defmodule Langchain.Tools.Calculator do
+  @moduledoc """
+  Defines a Calculator tool for performing basic math calculations.
+
+  Defines a function to expose to an LLM and provides the `execute/2` function
+  for evaluating it the function when executed by an LLM.
+  """
   require Logger
   alias Langchain.Functions.Function
 
+  @doc """
+  Defines the "calculator" function.
+  """
   def new() do
     Function.new(%{
       name: "calculator",
       description: "Perform basic math calculations",
-      parameters: [
-        %{name: "expression", type: "string", description: "A simple mathematical expression."}
-      ],
-      required: "expression",
+      parameters_schema: %{
+        type: "object",
+        properties: %{
+          expression: %{type: "string", description: "A simple mathematical expression."}
+        },
+        required: ["expression"]
+      },
       function: &execute/2
     })
   end
-
-  # def name, do: "calculator"
 
   # @doc """
   # Define the calculator tool using a JSON Schema.
@@ -38,22 +48,9 @@ defmodule Langchain.Tools.Calculator do
   #   }
   # end
 
-  # # TODO: Should the parse be separate from the execute?
-
-  # @spec parse(json :: String.t()) :: {:ok, number()} | {:error, String.t()}
-  # def parse(json) do
-  #   case Jason.decode(json) do
-  #     {:ok, args} ->
-  #       execute(args)
-
-  #     {:error, reason} ->
-  #       Logger.error("Error receiving calculator arguments! Reason: #{inspect(reason)}")
-  #       {:error, "error"}
-  #   end
-  # end
-
   @doc """
-  Function that performs the calculation.
+  Performs the calculation specified in the expression and returns the response
+  to be used by the the LLM.
   """
   @spec execute(args :: %{String.t() => any()}, context :: map()) :: String.t()
   def execute(%{"expression" => expr} = _args, _context) do
