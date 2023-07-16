@@ -6,7 +6,6 @@ defmodule Langchain.Functions.Function do
   use Ecto.Schema
   import Ecto.Changeset
   alias __MODULE__
-  alias Langchain.Functions.FunctionParameter
 
   @primary_key false
   embedded_schema do
