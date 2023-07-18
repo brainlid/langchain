@@ -11,6 +11,7 @@ defmodule Langchain.Tools.Calculator do
   @doc """
   Defines the "calculator" function.
   """
+  @spec new() :: {:ok, Function.t()} | {:error, Ecto.Changeset.t()}
   def new() do
     Function.new(%{
       name: "calculator",
@@ -24,6 +25,17 @@ defmodule Langchain.Tools.Calculator do
       },
       function: &execute/2
     })
+  end
+
+  @spec new!() :: Function.t() | no_return()
+  def new!() do
+    case new() do
+      {:ok, function} ->
+        function
+
+      {:error, changeset} ->
+        raise Langchain.LangchainError, changeset
+    end
   end
 
   # @doc """
