@@ -12,7 +12,9 @@ defmodule Langchain.Message do
   - `:function_call` - A message from the LLM expressing the intent to execute a
     function that was previously declared available to it.
 
-    The `arguments` will be the parsed JSON values passed to the function.
+    The `arguments` will be the parsed JSON values passed to the function. The
+    are received as a map of values. An empty map `%{}` means no arguments are
+    passed.
 
   - `:function` - A message for returning the results of executing a
     `function_call` if there is a response to give.
@@ -35,11 +37,14 @@ defmodule Langchain.Message do
 
     field(:function_name, :string)
     field :arguments, :any, virtual: true
+    # Messages can be streamed in as deltas. Keep a flag to note when the a
+    # message is fully complete or not.
+    field :complete, :boolean, default: false
   end
 
   @type t :: %Message{}
 
-  @create_fields [:role, :content, :function_name, :arguments]
+  @create_fields [:role, :content, :function_name, :arguments, :index, :complete]
   @required_fields [:role]
 
   @spec new(attrs :: map()) :: {:ok, t()} | {:error, Ecto.Changeset.t()}

@@ -7,6 +7,8 @@ defmodule Langchain.ChatModels.ChatOpenAI do
   https://platform.openai.com/docs/api-reference/chat/create
 
   - https://github.com/openai/openai-cookbook/blob/main/examples/How_to_call_functions_with_chat_models.ipynb
+
+  Converts responses into more explicit data structures.
   """
   use Ecto.Schema
   require Logger
@@ -17,10 +19,24 @@ defmodule Langchain.ChatModels.ChatOpenAI do
   alias Langchain.ForOpenAIApi
   alias Langchain.Utils
 
+  # NOTE: As of gpt-4 and gpt-3.5, only one function_call is issued at a time
+  # even when multiple requests could be issued based on the prompt.
+
+  # TODO: Add "pending" flag? or a "state" attribute?
+  # - it's "done" if the last message is from :assistant or is
+  # - pending if last message is :user, :function_call, or :function
+  #  - function_call - requesting to execute a function
+  #  - function - we're returning the function answer
+  # - only "finished" if the last message is :assistant. May add additional messages, but at that point we don't need to keep submitting for an answer.
+  # - We can use that easy state to know if we should keep submitting.
+  # - Option to "evaluate function" if function_call is the last message. Otherwise a noop.
+  # - call it "in_progress?"
+
   @primary_key false
   embedded_schema do
     field(:endpoint, :string, default: "https://api.openai.com/v1/chat/completions")
-    field(:model, :string, default: "gpt-3.5-turbo")
+    field(:model, :string, default: "gpt-4")
+    # field(:model, :string, default: "gpt-3.5-turbo")
     field(:temperature, :float, default: 0.0)
     field(:frequency_penalty, :float, default: 0.0)
     # How many chat completion choices to generate for each input message.
@@ -108,40 +124,48 @@ defmodule Langchain.ChatModels.ChatOpenAI do
                 "An unexpected fake API response was set. Should be an `{:ok, value}`"
       end
     else
-      # TODO: make api request
-      with %Req.Response{status: 200, body: data} <-
-             do_api_request(openai, messages, functions),
-           {:ok, parsed} <- do_process_response(data) do
-        # TODO: callbacks?
-        # TODO: handle parsed? What to return? return parsed?
-        {:ok, parsed}
+      # make base api request and perform high-level success/failure checks
+      case do_api_request(openai, messages, functions) do
+        %Req.Response{status: 200, body: data} ->
+          {:ok, do_process_response(data)}
 
-        # TODO: return a ChatState? Updated with messages added?
-      else
         %Req.Response{} = error_response ->
           do_process_error_response(error_response)
-
-          # error condition: stopped because token length is too long
-
-          # %{"choices" => [%{"finish_reason" => "length"}]} ->
-          #   # it stopped because it reached too many tokens. Update it to not
-          #   # show as edited.
-          #   message = Messages.get_message_by_index!(conversation_id, index)
-          #   {:ok, _updated} = Messages.update_message(message, %{edited: false})
-          #   send(pid, {:chat_error, "Stopped for length"})
-          #   :ok
-
-          # # error condition: we got an error response from ChatGPT
-          # %{"error" => %{"message" => message}} ->
-          #   send(pid, {:chat_error, message})
-
-          # # error condition: something else went wrong. May not have been able
-          # # to reach the server, etc.
-          # other ->
-          #   Logger.error("ChatGPT failure: #{inspect(other)}")
-          #   send(pid, {:chat_error, inspect(other)})
-          #   {:error, "Unexpected response from API"}
       end
+
+      # with %Req.Response{status: 200, body: data} <-
+      #        do_api_request(openai, messages, functions),
+      #      {:ok, parsed} <- do_process_response(data) do
+      #   # TODO: callbacks?
+      #   # TODO: handle parsed? What to return? return parsed?
+      #   {:ok, parsed}
+
+      #   # TODO: return a ChatState? Updated with messages added?
+      # else
+      #   %Req.Response{} = error_response ->
+      #     do_process_error_response(error_response)
+
+      #     # error condition: stopped because token length is too long
+
+      #     # %{"choices" => [%{"finish_reason" => "length"}]} ->
+      #     #   # it stopped because it reached too many tokens. Update it to not
+      #     #   # show as edited.
+      #     #   message = Messages.get_message_by_index!(conversation_id, index)
+      #     #   {:ok, _updated} = Messages.update_message(message, %{edited: false})
+      #     #   send(pid, {:chat_error, "Stopped for length"})
+      #     #   :ok
+
+      #     # # error condition: we got an error response from ChatGPT
+      #     # %{"error" => %{"message" => message}} ->
+      #     #   send(pid, {:chat_error, message})
+
+      #     # # error condition: something else went wrong. May not have been able
+      #     # # to reach the server, etc.
+      #     # other ->
+      #     #   Logger.error("ChatGPT failure: #{inspect(other)}")
+      #     #   send(pid, {:chat_error, inspect(other)})
+      #     #   {:error, "Unexpected response from API"}
+      # end
     end
   end
 
@@ -150,6 +174,7 @@ defmodule Langchain.ChatModels.ChatOpenAI do
       json: for_api(openai, messages, functions),
       auth: {:bearer, System.fetch_env!("OPENAPI_KEY")}
     )
+    |> IO.inspect(label: "RAW RESPONSE")
   end
 
   def do_process_error_response(%Req.Response{
@@ -168,21 +193,35 @@ defmodule Langchain.ChatModels.ChatOpenAI do
     {:error, "Unexpected response"}
   end
 
+  # TODO: support receiving multiple "choices" items.
+  # TODO: process the choice items
+  # TODO: NOTE: Multiple math questions
+
   # Parse a new message response
-  def do_process_response(%{"choices" => [%{"finish_reason" => "stop", "message" => message}]}) do
-    case Message.new(message) do
+  def do_process_response(%{"choices" => choices}) when is_list(choices) do
+    # process each response individually. Return a list of all processed choices
+    for choice <- choices do
+      do_process_response(choice)
+    end
+  end
+
+  def do_process_response(%{"finish_reason" => "stop", "message" => message}) do
+    case Message.new(Map.put(message, "complete", true)) do
       {:ok, message} ->
-        {:ok, message}
+        message
 
       {:error, changeset} ->
         {:error, Utils.changeset_error_to_string(changeset)}
     end
   end
 
-  def do_process_response(%{"choices" => [%{"finish_reason" => "function_call", "message" => %{"function_call" => %{"arguments" => raw_args, "name" => name}}}]}) do
+  def do_process_response(%{
+        "finish_reason" => "function_call",
+        "message" => %{"function_call" => %{"arguments" => raw_args, "name" => name}}
+      } = data) do
     case Message.new_function_call(name, raw_args) do
       {:ok, message} ->
-        {:ok, message}
+        message
 
       {:error, changeset} ->
         {:error, Utils.changeset_error_to_string(changeset)}
@@ -192,6 +231,11 @@ defmodule Langchain.ChatModels.ChatOpenAI do
   def do_process_response(%{"choices" => [%{"finish_reason" => "length"}]}) do
     {:error, "Stopped for length"}
   end
+
+  # TODO: "last_message reference? Does the "delta" include a message index?
+
+  # NOTE: Full delta message:
+  # - %{"delta" => %{"content" => " assist"}, "finish_reason" => nil, "index" => 0}
 
   # def do_process_response(data) do
   #   # handle the received data
@@ -270,6 +314,4 @@ defmodule Langchain.ChatModels.ChatOpenAI do
   #       send(pid, {:chat_error, inspect(other)})
   #   end
   # end
-
-
 end

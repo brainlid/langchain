@@ -5,6 +5,18 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
   alias Langchain.ChatModels.ChatOpenAI
   alias Langchain.Chains.LlmChain
   alias Langchain.PromptTemplate
+  alias Langchain.Functions.Function
+
+  setup do
+    {:ok, hello_world} =
+      Function.new(%{
+        name: "hello_world",
+        description: "Give a hello world greeting.",
+        function: fn -> IO.puts("Hello world!") end
+      })
+
+    %{hello_world: hello_world}
+  end
 
   describe "new/1" do
     test "works with minimal attr" do
@@ -50,7 +62,90 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
 
       assert response == "Colorful Threads"
     end
+
+    @tag :live_call
+    test "executing a function", %{hello_world: hello_world} do
+      {:ok, chat} = ChatOpenAI.new(%{verbose: true})
+
+      {:ok, message} =
+        Message.new_user(
+          "Only using the functions you have been provided with, give a greeting."
+        )
+
+      {:ok, [message]} = ChatOpenAI.call(chat, [message], [hello_world])
+
+      assert %Message{role: :function_call} = message
+      assert message.arguments == %{}
+      assert message.content == nil
+    end
   end
+
+  describe "do_process_response/1" do
+    test "handles receiving a complete message" do
+      response = %{
+        "message" => %{"role" => "assistant", "content" => "Greetings!", "index" => 1},
+        "finish_reason" => "stop"
+      }
+
+      assert %Message{} = struct = ChatOpenAI.do_process_response(response)
+      assert struct.role == :assistant
+      assert struct.content == "Greetings!"
+      assert struct.index == 1
+      assert struct.complete
+    end
+
+    test "handles receiving a function_call message" do
+      response = %{
+        "finish_reason" => "function_call",
+        "index" => 0,
+        "message" => %{
+          "content" => nil,
+          "function_call" => %{"arguments" => "{}", "name" => "hello_world"},
+          "role" => "assistant"
+        }
+      }
+
+      assert %Message{} = struct = ChatOpenAI.do_process_response(response)
+      assert struct.role == :function_call
+      assert struct.content == nil
+      assert struct.function_name == "hello_world"
+      assert struct.arguments == %{}
+      assert struct.complete
+    end
+
+    test "handles error from server that the max length has been reached"
+    test "handles unsupported response from server"
+    test "handles receiving a delta message with different portions"
+    test "handles receiving a delta message when complete and incomplete"
+    test "handles receiving error message from server"
+
+    test "return multiple responses when given multiple choices" do
+      # received multiple responses because multiples were requested.
+      response = %{
+        "choices" => [
+          %{
+            "message" => %{"role" => "assistant", "content" => "Greetings!", "index" => 1},
+            "finish_reason" => "stop"
+          },
+          %{
+            "message" => %{"role" => "assistant", "content" => "Howdy!", "index" => 1},
+            "finish_reason" => "stop"
+          }
+        ]
+      }
+
+      [msg1, msg2] = ChatOpenAI.do_process_response(response)
+      assert %Message{role: :assistant, index: 1, complete: true} = msg1
+      assert %Message{role: :assistant, index: 1, complete: true} = msg2
+      assert msg1.content == "Greetings!"
+      assert msg2.content == "Howdy!"
+    end
+  end
+
+  #TODO: TEST streaming in a function_call? How can I tell? Need ability to flag as complete or not.
+
+  #TODO: TEST that a non-streaming result could return content with "finish_reason" => "length". If so,
+  #      I would need to store content on a message AND flag the length error.
 
   # TODO: prompt template work/tests. Doesn't include API calls.
 
