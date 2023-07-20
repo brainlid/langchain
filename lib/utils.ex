@@ -49,27 +49,23 @@ defmodule Langchain.Utils do
     for {^field, {msg, opts}} <- errors, do: translate_error({msg, opts})
   end
 
-  # @doc """
-  # Return changeset errors as text with comma separated description.
-  # """
-  # def changeset_error_text(%Changeset{valid?: true} = _changeset), do: nil
+  @doc """
+  Return changeset errors as text with comma separated description.
+  """
+  def changeset_error_to_string(%Ecto.Changeset{valid?: true}), do: nil
 
-  # def changeset_error_text(%Changeset{valid?: false} = changeset) do
-  #   changeset.errors
-  #   |> Enum.map(&translate_error(&1))
-  #   |> Enum.join(", ")
-  # end
+  def changeset_error_to_string(%Ecto.Changeset{valid?: false} = changeset) do
+    fields = changeset.errors |> Keyword.keys() |> Enum.uniq()
 
-  def changeset_error_to_string(changeset) do
-    Ecto.Changeset.traverse_errors(changeset, fn {msg, opts} ->
-      Enum.reduce(opts, msg, fn {key, value}, acc ->
-        String.replace(acc, "%{#{key}}", to_string(value))
-      end)
+    fields
+    |> Enum.reduce([], fn f, acc ->
+      field_errors =
+        changeset.errors
+        |> translate_errors(f)
+        |> Enum.join(", ")
+
+      acc ++ ["#{f}: #{field_errors}"]
     end)
-    |> Enum.reduce([], fn {k, v}, acc ->
-      Enum.map(v, &"#{k}: #{&1}") ++ acc
-    end)
-    |> Enum.reverse()
-    |> Enum.join(", ")
+    |> Enum.join("; ")
   end
 end
