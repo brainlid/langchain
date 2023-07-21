@@ -18,6 +18,7 @@ defmodule Langchain.ChatModels.ChatOpenAI do
   alias Langchain.Message
   alias Langchain.ForOpenAIApi
   alias Langchain.Utils
+  alias Langchain.MessageDelta
 
   # NOTE: As of gpt-4 and gpt-3.5, only one function_call is issued at a time
   # even when multiple requests could be issued based on the prompt.
@@ -215,11 +216,69 @@ defmodule Langchain.ChatModels.ChatOpenAI do
     end
   end
 
-  def do_process_response(%{
-        "finish_reason" => "function_call",
-        "message" => %{"function_call" => %{"arguments" => raw_args, "name" => name}}
-      } = data) do
+  def do_process_response(
+        %{
+          "finish_reason" => "function_call",
+          "message" => %{"function_call" => %{"arguments" => raw_args, "name" => name}}
+        } = data
+      ) do
     case Message.new_function_call(name, raw_args) do
+      {:ok, message} ->
+        message
+
+      {:error, changeset} ->
+        {:error, Utils.changeset_error_to_string(changeset)}
+    end
+  end
+
+  def do_process_response(%{"delta" => delta_body, "finish_reason" => finish, "index" => index} = _msg) do
+    complete =
+      case finish do
+        nil ->
+          false
+
+        "stop" ->
+          true
+
+        "function_call" ->
+          true
+
+        other ->
+          Logger.warning("Unsupported finish_reason in delta message. Reason: #{inspect(other)}")
+          false
+      end
+
+    function_name =
+      case delta_body do
+        %{"function_call" => %{"name" => name}} -> name
+        _other -> nil
+      end
+
+    arguments =
+      case delta_body do
+        %{"function_call" => %{"arguments" => args}} when is_binary(args) -> args
+        _other -> nil
+      end
+
+    # more explicitly interpret the role. We treat a "function_call" as a a role
+    # while OpenAI addresses it as an "assistant". Technically, they are correct
+    # that the assistant is issuing the function_call.
+    role =
+      case delta_body do
+        %{"function_call" => _data} -> "function_call"
+        %{"role" => role} -> role
+        _other -> "unknown"
+      end
+
+    data =
+      delta_body
+      |> Map.put("role", role)
+      |> Map.put("index", index)
+      |> Map.put("complete", complete)
+      |> Map.put("function_name", function_name)
+      |> Map.put("arguments", arguments)
+
+    case MessageDelta.new(data) do
       {:ok, message} ->
         message
 
