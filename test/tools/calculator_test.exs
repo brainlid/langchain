@@ -54,7 +54,7 @@ defmodule Langchain.Tools.CalculatorTest do
         LLMChain.new(%{
           llm: chat,
           # prompt: ["How many cookies will I get share my 35 cookies among 4 friends and myself? Additionally, what is 5 to the power of 2?"],
-          prompt: ["Answer the following math questions: What is 100 + 300 - 200?"],
+          prompt: ["Answer the following math question: What is 100 + 300 - 200?"],
           verbose: true
         })
 

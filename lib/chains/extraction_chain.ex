@@ -1,5 +1,5 @@
 defmodule Langchain.Chains.ExtractionChain do
-  @doc """
+  @moduledoc """
   Define an LLMChain for performing data extraction from a body of text.
 
   Provide the schema for desired information to be parsed into. It is treated as
