@@ -21,6 +21,69 @@ defmodule Langchain.MessageTest do
       refute changeset.valid?
       assert {"can't be blank", _} = changeset.errors[:role]
     end
+
+    test "parses arguments when complete" do
+      json = Jason.encode!(%{name: "Tim", age: 40})
+
+      assert {:ok, %Message{role: :function_call} = msg} =
+               Message.new(%{
+                 role: :function_call,
+                 function_name: "my_fun",
+                 complete: true,
+                 arguments: json
+               })
+
+      assert msg.role == :function_call
+      assert msg.function_name == "my_fun"
+      assert msg.arguments == %{"name" => "Tim", "age" => 40}
+      assert msg.complete
+      assert msg.content == nil
+    end
+
+    test "adds error to arguments when message not complete" do
+      json = Jason.encode!(%{name: "Tim", age: 40})
+
+      assert {:error, changeset} =
+               Message.new(%{
+                 role: :function_call,
+                 complete: false,
+                 function_name: "my_fun",
+                 arguments: json
+               })
+
+      refute changeset.valid?
+
+      assert {"cannot parse function arguments on incomplete message", _} =
+               changeset.errors[:arguments]
+    end
+
+    test "adds error to arguments when valid JSON but not a map" do
+      json = Jason.encode!([true, 1, 2, 3])
+
+      assert {:error, changeset} =
+               Message.new(%{
+                 role: :function_call,
+                 complete: true,
+                 function_name: "my_fun",
+                 arguments: json
+               })
+
+      refute changeset.valid?
+      assert {"unexpected JSON arguments format", _} = changeset.errors[:arguments]
+    end
+
+    test "adds error to arguments if it fails to parse" do
+      assert {:error, changeset} =
+               Message.new(%{
+                 role: :function_call,
+                 complete: true,
+                 function_name: "my_fun",
+                 arguments: "invalid"
+               })
+
+      refute changeset.valid?
+      assert {"invalid JSON function arguments", _} = changeset.errors[:arguments]
+    end
   end
 
   describe "validations" do
@@ -74,7 +137,6 @@ defmodule Langchain.MessageTest do
         Message.new_system!(nil)
       end
     end
-
   end
 
   describe "new_user/1" do
@@ -122,7 +184,8 @@ defmodule Langchain.MessageTest do
 
   describe "new_function_call/1" do
     test "creates a function_call execution request message" do
-      assert {:ok, %Message{role: :function_call} = msg} = Message.new_function_call("my_fun", Jason.encode!(%{name: "Tim", age: 40}))
+      assert {:ok, %Message{role: :function_call} = msg} =
+               Message.new_function_call("my_fun", Jason.encode!(%{name: "Tim", age: 40}))
 
       assert msg.function_name == "my_fun"
       assert msg.arguments == %{"name" => "Tim", "age" => 40}
@@ -142,7 +205,8 @@ defmodule Langchain.MessageTest do
 
   describe "new_function_call!/1" do
     test "creates a function_call execution request message" do
-      assert %Message{role: :function_call} = msg = Message.new_function_call!("fun_name", Jason.encode!(%{name: "Herman"}))
+      assert %Message{role: :function_call} =
+               msg = Message.new_function_call!("fun_name", Jason.encode!(%{name: "Herman"}))
 
       assert msg.function_name == "fun_name"
       assert msg.arguments == %{"name" => "Herman"}

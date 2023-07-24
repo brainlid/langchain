@@ -146,50 +146,19 @@ defmodule Langchain.MessageDelta do
     end
   end
 
-  @spec parse_arguments(t()) :: {:ok, t()} | {:error, :incomplete | :invalid}
-  def parse_arguments(%MessageDelta{role: :assistant} = delta), do: {:ok, delta}
-
-  def parse_arguments(%MessageDelta{role: :function_call, complete: false}),
-    do: {:error, :incomplete}
-
-  def parse_arguments(%MessageDelta{role: :function_call, complete: true} = delta) do
-    # according the OpenAI spec, the arguments must be an object/map
-    case Jason.decode(delta.arguments) do
-      {:ok, parsed} when is_map(parsed) ->
-        {:ok, %MessageDelta{delta | arguments: parsed}}
-
-      {:ok, parsed} ->
-        Logger.warning("Parsed unexpected argument format. Received: #{inspect(parsed)}")
-        {:error, :invalid}
-
-      {:error, error} ->
-        Logger.warning("Received invalid argument JSON data. Error: #{inspect(error)}")
-        {:error, :invalid}
-    end
-  end
-
   @doc """
   Convert the MessageDelta to a Message. Some messages must be complete before
   they can be transformed to a message. For instance, an incomplete
   `:function_call` cannot be used. However, an incomplete `:assistant` message
-  with content can be used before full complete.
+  with content can be used before fully complete.
   """
   @spec to_message(t()) :: {:ok, Message.t()} | {:error, String.t()}
-  def to_message(%MessageDelta{role: :function_call, complete: false}), do: {:error, :incomplete}
-
   def to_message(%MessageDelta{} = delta) do
-    with {:ok, parsed} <- parse_arguments(delta),
-         {:ok, message} <- Message.new(Map.from_struct(parsed)) do
-      {:ok, message}
-    else
-      {:error, :incomplete} ->
-        {:error, "The MessageDelta must be complete before transforming to a Message"}
-
-      {:error, :invalid} ->
-        {:error, "The MessageDelta failed to convert because it is invalid"}
+    case Message.new(Map.from_struct(delta)) do
+      {:ok, message} ->
+        {:ok, message}
 
       {:error, changeset} ->
-        Logger.warning("Error converting delta to message. Reason: #{inspect(changeset)}")
         {:error, Utils.changeset_error_to_string(changeset)}
     end
   end

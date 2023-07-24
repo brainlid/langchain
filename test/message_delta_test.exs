@@ -85,52 +85,6 @@ defmodule Langchain.MessageDeltaTest do
     end
   end
 
-  describe "parse_arguments/1" do
-    test "does nothing for non-function_call roles" do
-      msg = %MessageDelta{role: :assistant, content: "Hi!", complete: true}
-      assert {:ok, ^msg} = MessageDelta.parse_arguments(msg)
-    end
-
-    test "returns updated struct when parsed and valid" do
-      msg = %Langchain.MessageDelta{
-        content: nil,
-        index: 0,
-        function_name: "calculator",
-        role: :function_call,
-        arguments: "{\n  \"expression\": \"100 + 300 - 200\"\n}",
-        complete: true
-      }
-      assert {:ok, updated} = MessageDelta.parse_arguments(msg)
-      assert updated.function_name == "calculator"
-      assert updated.arguments == %{"expression" => "100 + 300 - 200"}
-      assert updated.complete
-    end
-
-    test "returns error when function_call message is incomplete" do
-      msg = %Langchain.MessageDelta{
-        content: nil,
-        index: 0,
-        function_name: "calculator",
-        role: :function_call,
-        arguments: "{\n  \"expression\": \"100 + 300 -",
-        complete: false
-      }
-      assert {:error, :incomplete} = MessageDelta.parse_arguments(msg)
-    end
-
-    test "returns error and invalid when parse fails" do
-      msg = %Langchain.MessageDelta{
-        content: nil,
-        index: 0,
-        function_name: "calculator",
-        role: :function_call,
-        arguments: "{\n  \"expression\": \"100 + 300 -",
-        complete: true
-      }
-      assert {:error, :invalid} = MessageDelta.parse_arguments(msg)
-    end
-  end
-
   describe "merge_delta/2" do
     test "correctly merges assistant content message" do
       [first | rest] = delta_content_sample()
@@ -193,8 +147,6 @@ defmodule Langchain.MessageDeltaTest do
     end
   end
 
-  # TODO: Parse arguments during the to_message/1 process?
-  # TODO: It is a separate step that needs to happen after fully merged and complete.
   describe "to_message/1" do
     test "transform an incomplete content MessageDelta to an incomplete Message" do
       delta = %Langchain.MessageDelta{
@@ -250,7 +202,8 @@ defmodule Langchain.MessageDeltaTest do
         complete: false
       }
 
-      {:error, :incomplete} = MessageDelta.to_message(delta)
+      {:error, reason} = MessageDelta.to_message(delta)
+      assert reason == "arguments: cannot parse function arguments on incomplete message"
     end
   end
 

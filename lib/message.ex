@@ -12,9 +12,12 @@ defmodule Langchain.Message do
   - `:function_call` - A message from the LLM expressing the intent to execute a
     function that was previously declared available to it.
 
-    The `arguments` will be the parsed JSON values passed to the function. The
-    are received as a map of values. An empty map `%{}` means no arguments are
-    passed.
+  - `:arguments` - The `arguments` can be set as a map where each key is an
+    "argument". If set as a String, it is expected to be a JSON formatted string
+    and will be parsed to a map. If there is an error parsing to JSON, it is
+    considered an error.
+
+    An empty map `%{}` means no arguments are passed.
 
   - `:function` - A message for returning the results of executing a
     `function_call` if there is a response to give.
@@ -22,6 +25,7 @@ defmodule Langchain.Message do
   """
   use Ecto.Schema
   import Ecto.Changeset
+  require Logger
   alias __MODULE__
   alias Langchain.LangchainError
 
@@ -51,6 +55,7 @@ defmodule Langchain.Message do
   def new(attrs \\ %{}) do
     %Message{}
     |> cast(attrs, @create_fields)
+    |> parse_arguments()
     |> common_validations()
     |> apply_action(:insert)
   end
@@ -66,6 +71,36 @@ defmodule Langchain.Message do
 
       {:error, changeset} ->
         raise LangchainError, changeset
+    end
+  end
+
+  defp parse_arguments(changeset) do
+    args = get_field(changeset, :arguments)
+    is_function = get_field(changeset, :role) == :function_call
+    is_complete = get_field(changeset, :complete, false) == true
+
+    # only
+    cond do
+      is_function && is_complete && is_binary(args) ->
+        # decode the arguments
+        case Jason.decode(args) do
+          {:ok, parsed} when is_map(parsed) ->
+            put_change(changeset, :arguments, parsed)
+
+          {:ok, parsed} ->
+            Logger.warning("Parsed unexpected function argument format. Expected a map but received: #{inspect(parsed)}")
+            add_error(changeset, :arguments, "unexpected JSON arguments format")
+
+          {:error, error} ->
+            Logger.warning("Received invalid argument JSON data. Error: #{inspect(error)}")
+            add_error(changeset, :arguments, "invalid JSON function arguments")
+        end
+
+      is_function && is_binary(args) ->
+        add_error(changeset, :arguments, "cannot parse function arguments on incomplete message")
+
+      true ->
+        changeset
     end
   end
 
