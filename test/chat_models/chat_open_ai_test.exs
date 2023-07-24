@@ -6,6 +6,7 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
   alias Langchain.Chains.LlmChain
   alias Langchain.PromptTemplate
   alias Langchain.Functions.Function
+  alias Langchain.MessageDelta
 
   setup do
     {:ok, hello_world} =
@@ -68,9 +69,7 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
       {:ok, chat} = ChatOpenAI.new(%{verbose: true})
 
       {:ok, message} =
-        Message.new_user(
-          "Only using the functions you have been provided with, give a greeting."
-        )
+        Message.new_user("Only using the functions you have been provided with, give a greeting.")
 
       {:ok, [message]} = ChatOpenAI.call(chat, [message], [hello_world])
 
@@ -81,6 +80,160 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
   end
 
   describe "do_process_response/1" do
+    setup do
+      delta_content = [
+        %{
+          "choices" => [
+            %{
+              "delta" => %{"content" => "", "role" => "assistant"},
+              "finish_reason" => nil,
+              "index" => 0
+            }
+          ],
+          "created" => 1_689_774_181,
+          "id" => "chatcmpl-7e1kD0YMC3AmCycOK4oLGfFMBcCdv",
+          "model" => "gpt-4-0613",
+          "object" => "chat.completion.chunk"
+        },
+        %{
+          "choices" => [
+            %{"delta" => %{"content" => "Hello"}, "finish_reason" => nil, "index" => 0}
+          ],
+          "created" => 1_689_774_181,
+          "id" => "chatcmpl-7e1kD0YMC3AmCycOK4oLGfFMBcCdv",
+          "model" => "gpt-4-0613",
+          "object" => "chat.completion.chunk"
+        },
+        %{
+          "choices" => [
+            %{"delta" => %{"content" => "!"}, "finish_reason" => nil, "index" => 0}
+          ],
+          "created" => 1_689_774_181,
+          "id" => "chatcmpl-7e1kD0YMC3AmCycOK4oLGfFMBcCdv",
+          "model" => "gpt-4-0613",
+          "object" => "chat.completion.chunk"
+        },
+        %{
+          "choices" => [
+            %{"delta" => %{"content" => " How"}, "finish_reason" => nil, "index" => 0}
+          ],
+          "created" => 1_689_774_181,
+          "id" => "chatcmpl-7e1kD0YMC3AmCycOK4oLGfFMBcCdv",
+          "model" => "gpt-4-0613",
+          "object" => "chat.completion.chunk"
+        },
+        %{
+          "choices" => [
+            %{"delta" => %{"content" => " can"}, "finish_reason" => nil, "index" => 0}
+          ],
+          "created" => 1_689_774_181,
+          "id" => "chatcmpl-7e1kD0YMC3AmCycOK4oLGfFMBcCdv",
+          "model" => "gpt-4-0613",
+          "object" => "chat.completion.chunk"
+        },
+        %{
+          "choices" => [
+            %{"delta" => %{"content" => " I"}, "finish_reason" => nil, "index" => 0}
+          ],
+          "created" => 1_689_774_181,
+          "id" => "chatcmpl-7e1kD0YMC3AmCycOK4oLGfFMBcCdv",
+          "model" => "gpt-4-0613",
+          "object" => "chat.completion.chunk"
+        },
+        %{
+          "choices" => [
+            %{
+              "delta" => %{"content" => " assist"},
+              "finish_reason" => nil,
+              "index" => 0
+            }
+          ],
+          "created" => 1_689_774_181,
+          "id" => "chatcmpl-7e1kD0YMC3AmCycOK4oLGfFMBcCdv",
+          "model" => "gpt-4-0613",
+          "object" => "chat.completion.chunk"
+        },
+        %{
+          "choices" => [
+            %{"delta" => %{"content" => " you"}, "finish_reason" => nil, "index" => 0}
+          ],
+          "created" => 1_689_774_181,
+          "id" => "chatcmpl-7e1kD0YMC3AmCycOK4oLGfFMBcCdv",
+          "model" => "gpt-4-0613",
+          "object" => "chat.completion.chunk"
+        },
+        %{
+          "choices" => [
+            %{"delta" => %{"content" => " today"}, "finish_reason" => nil, "index" => 0}
+          ],
+          "created" => 1_689_774_181,
+          "id" => "chatcmpl-7e1kD0YMC3AmCycOK4oLGfFMBcCdv",
+          "model" => "gpt-4-0613",
+          "object" => "chat.completion.chunk"
+        },
+        %{
+          "choices" => [
+            %{"delta" => %{"content" => "?"}, "finish_reason" => nil, "index" => 0}
+          ],
+          "created" => 1_689_774_181,
+          "id" => "chatcmpl-7e1kD0YMC3AmCycOK4oLGfFMBcCdv",
+          "model" => "gpt-4-0613",
+          "object" => "chat.completion.chunk"
+        },
+        %{
+          "choices" => [%{"delta" => %{}, "finish_reason" => "stop", "index" => 0}],
+          "created" => 1_689_774_181,
+          "id" => "chatcmpl-7e1kD0YMC3AmCycOK4oLGfFMBcCdv",
+          "model" => "gpt-4-0613",
+          "object" => "chat.completion.chunk"
+        }
+      ]
+
+      delta_function = [
+        %{
+          "choices" => [
+            %{
+              "delta" => %{
+                "content" => nil,
+                "function_call" => %{"arguments" => "", "name" => "hello_world"},
+                "role" => "assistant"
+              },
+              "finish_reason" => nil,
+              "index" => 0
+            }
+          ],
+          "created" => 1_689_775_878,
+          "id" => "chatcmpl-7e2BalHi6Ly6AAfZJRLkqLZ4cD4C7",
+          "model" => "gpt-4-0613",
+          "object" => "chat.completion.chunk"
+        },
+        %{
+          "choices" => [
+            %{
+              "delta" => %{"function_call" => %{"arguments" => "{}"}},
+              "finish_reason" => nil,
+              "index" => 0
+            }
+          ],
+          "created" => 1_689_775_878,
+          "id" => "chatcmpl-7e2BalHi6Ly6AAfZJRLkqLZ4cD4C7",
+          "model" => "gpt-4-0613",
+          "object" => "chat.completion.chunk"
+        },
+        %{
+          "choices" => [
+            %{"delta" => %{}, "finish_reason" => "function_call", "index" => 0}
+          ],
+          "created" => 1_689_775_878,
+          "id" => "chatcmpl-7e2BalHi6Ly6AAfZJRLkqLZ4cD4C7",
+          "model" => "gpt-4-0613",
+          "object" => "chat.completion.chunk"
+        }
+      ]
+
+      %{delta_content: delta_content, delta_function: delta_function}
+    end
+
     test "handles receiving a complete message" do
       response = %{
         "message" => %{"role" => "assistant", "content" => "Greetings!", "index" => 1},
@@ -106,6 +259,9 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
       }
 
       assert %Message{} = struct = ChatOpenAI.do_process_response(response)
+
+      IO.inspect struct
+
       assert struct.role == :function_call
       assert struct.content == nil
       assert struct.function_name == "hello_world"
@@ -115,8 +271,115 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
 
     test "handles error from server that the max length has been reached"
     test "handles unsupported response from server"
-    test "handles receiving a delta message with different portions"
-    test "handles receiving a delta message when complete and incomplete"
+
+    test "handles receiving a delta message for a content message at different parts", %{
+      delta_content: delta_content
+    } do
+      msg_1 = Enum.at(delta_content, 0)
+      msg_2 = Enum.at(delta_content, 1)
+      msg_10 = Enum.at(delta_content, 10)
+
+      expected_1 = %MessageDelta{
+        content: nil,
+        index: 0,
+        function_name: nil,
+        role: :assistant,
+        arguments: nil,
+        complete: false
+      }
+
+      [%MessageDelta{} = delta_1] = ChatOpenAI.do_process_response(msg_1)
+      assert delta_1 == expected_1
+
+      expected_2 = %MessageDelta{
+        content: "Hello",
+        index: 0,
+        function_name: nil,
+        role: :unknown,
+        arguments: nil,
+        complete: false
+      }
+
+      [%MessageDelta{} = delta_2] = ChatOpenAI.do_process_response(msg_2)
+      assert delta_2 == expected_2
+
+      expected_10 = %MessageDelta{
+        content: nil,
+        index: 0,
+        function_name: nil,
+        role: :unknown,
+        arguments: nil,
+        complete: true
+      }
+
+      [%MessageDelta{} = delta_10] = ChatOpenAI.do_process_response(msg_10)
+      assert delta_10 == expected_10
+
+      # results = Enum.flat_map(delta_content, &ChatOpenAI.do_process_response(&1))
+      # IO.inspect results
+
+      # results = Enum.flat_map(delta_function, &ChatOpenAI.do_process_response(&1))
+      # IO.inspect results
+
+      # results = Enum.flat_map(streamed_function_with_arguments(), &ChatOpenAI.do_process_response(&1))
+      # IO.inspect results
+
+      # TODO: Store in-progress message on ChatOpenAI? Could be a list of choices as current message.
+      # otherwise write the delta packet message and
+
+      # - can't mutate the chat struct in the callback function.
+      # - create the delta message and fire it off.
+      # - in a separate process, receive the messages and apply them to a message?
+      # - flag when complete
+
+      # use functions but make data aggregation separate from from the OpenAI struct
+    end
+
+    test "handles receiving a delta message for a function_call", %{
+      delta_function: delta_function
+    } do
+      msg_1 = Enum.at(delta_function, 0)
+      msg_2 = Enum.at(delta_function, 1)
+      msg_3 = Enum.at(delta_function, 2)
+
+      expected_1 = %MessageDelta{
+        content: nil,
+        index: 0,
+        function_name: "hello_world",
+        role: :function_call,
+        arguments: "",
+        complete: false
+      }
+
+      [%MessageDelta{} = delta_1] = ChatOpenAI.do_process_response(msg_1)
+      assert delta_1 == expected_1
+
+      expected_2 = %MessageDelta{
+        content: nil,
+        index: 0,
+        function_name: nil,
+        role: :function_call,
+        arguments: "{}",
+        complete: false
+      }
+
+      [%MessageDelta{} = delta_2] = ChatOpenAI.do_process_response(msg_2)
+      assert delta_2 == expected_2
+
+      expected_3 = %MessageDelta{
+        content: nil,
+        index: 0,
+        function_name: nil,
+        role: :unknown,
+        arguments: nil,
+        complete: true
+      }
+
+      # it should not trim the arguments text
+      [%MessageDelta{} = delta_3] = ChatOpenAI.do_process_response(msg_3)
+      assert delta_3 == expected_3
+    end
+
     test "handles receiving error message from server"
 
     test "return multiple responses when given multiple choices" do
@@ -142,9 +405,55 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
     end
   end
 
-  #TODO: TEST streaming in a function_call? How can I tell? Need ability to flag as complete or not.
+  describe "streaming examples" do
+    @tag :live_call
+    test "supports streaming response", %{hello_world: _hello_world} do
+      {:ok, chat} = ChatOpenAI.new(%{stream: true, verbose: true})
 
-  #TODO: TEST that a non-streaming result could return content with "finish_reason" => "length". If so,
+      {:ok, message} = Message.new_user("Hello!")
+      # Message.new_user(
+      #   "Only using the functions you have been provided with, give a greeting."
+      # )
+
+      callback = fn data ->
+        IO.inspect(data, label: "DATA")
+        ChatOpenAI.do_process_response(data)
+        :ok
+      end
+
+      # response = ChatOpenAI.do_api_stream(chat, [message], [hello_world], callback)
+      response = ChatOpenAI.do_api_stream(chat, [message], [], callback)
+      IO.inspect(response, label: "OPEN AI POST RESPONSE")
+
+      Process.sleep(1_000)
+    end
+
+    @tag :live_call
+    test "supports streaming response calling function with args" do
+      {:ok, chat} = ChatOpenAI.new(%{stream: true, verbose: true})
+
+      {:ok, message} =
+        Message.new_user("Answer the following math question: What is 100 + 300 - 200?")
+
+      callback = fn data ->
+        IO.inspect(data, label: "DATA")
+        ChatOpenAI.do_process_response(data)
+        :ok
+      end
+
+      response =
+        ChatOpenAI.do_api_stream(chat, [message], [Langchain.Tools.Calculator.new!()], callback)
+
+      IO.inspect(response, label: "OPEN AI POST RESPONSE")
+
+      Process.sleep(1_000)
+    end
+  end
+
+
+  # TODO: TEST streaming in a function_call? How can I tell? Need ability to flag as complete or not.
+
+  # TODO: TEST that a non-streaming result could return content with "finish_reason" => "length". If so,
   #      I would need to store content on a message AND flag the length error.
 
   # TODO: prompt template work/tests. Doesn't include API calls.
@@ -223,4 +532,166 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
   #   }
   #   */
   # };
+
+  defp streamed_function_with_arguments() do
+    [
+      %{
+        "choices" => [
+          %{
+            "delta" => %{
+              "content" => nil,
+              "function_call" => %{"arguments" => "", "name" => "calculator"},
+              "role" => "assistant"
+            },
+            "finish_reason" => nil,
+            "index" => 0
+          }
+        ]
+      },
+      %{
+        "choices" => [
+          %{
+            "delta" => %{"function_call" => %{"arguments" => "{\n"}},
+            "finish_reason" => nil,
+            "index" => 0
+          }
+        ]
+      },
+      %{
+        "choices" => [
+          %{
+            "delta" => %{"function_call" => %{"arguments" => " "}},
+            "finish_reason" => nil,
+            "index" => 0
+          }
+        ]
+      },
+      %{
+        "choices" => [
+          %{
+            "delta" => %{"function_call" => %{"arguments" => " \""}},
+            "finish_reason" => nil,
+            "index" => 0
+          }
+        ]
+      },
+      %{
+        "choices" => [
+          %{
+            "delta" => %{"function_call" => %{"arguments" => "expression"}},
+            "finish_reason" => nil,
+            "index" => 0
+          }
+        ]
+      },
+      %{
+        "choices" => [
+          %{
+            "delta" => %{"function_call" => %{"arguments" => "\":"}},
+            "finish_reason" => nil,
+            "index" => 0
+          }
+        ]
+      },
+      %{
+        "choices" => [
+          %{
+            "delta" => %{"function_call" => %{"arguments" => " \""}},
+            "finish_reason" => nil,
+            "index" => 0
+          }
+        ]
+      },
+      %{
+        "choices" => [
+          %{
+            "delta" => %{"function_call" => %{"arguments" => "100"}},
+            "finish_reason" => nil,
+            "index" => 0
+          }
+        ]
+      },
+      %{
+        "choices" => [
+          %{
+            "delta" => %{"function_call" => %{"arguments" => " +"}},
+            "finish_reason" => nil,
+            "index" => 0
+          }
+        ]
+      },
+      %{
+        "choices" => [
+          %{
+            "delta" => %{"function_call" => %{"arguments" => " "}},
+            "finish_reason" => nil,
+            "index" => 0
+          }
+        ]
+      },
+      %{
+        "choices" => [
+          %{
+            "delta" => %{"function_call" => %{"arguments" => "300"}},
+            "finish_reason" => nil,
+            "index" => 0
+          }
+        ]
+      },
+      %{
+        "choices" => [
+          %{
+            "delta" => %{"function_call" => %{"arguments" => " -"}},
+            "finish_reason" => nil,
+            "index" => 0
+          }
+        ]
+      },
+      %{
+        "choices" => [
+          %{
+            "delta" => %{"function_call" => %{"arguments" => " "}},
+            "finish_reason" => nil,
+            "index" => 0
+          }
+        ]
+      },
+      %{
+        "choices" => [
+          %{
+            "delta" => %{"function_call" => %{"arguments" => "200"}},
+            "finish_reason" => nil,
+            "index" => 0
+          }
+        ]
+      },
+      %{
+        "choices" => [
+          %{
+            "delta" => %{"function_call" => %{"arguments" => "\"\n"}},
+            "finish_reason" => nil,
+            "index" => 0
+          }
+        ]
+      },
+      %{
+        "choices" => [
+          %{
+            "delta" => %{"function_call" => %{"arguments" => "}"}},
+            "finish_reason" => nil,
+            "index" => 0
+          }
+        ]
+      },
+      %{
+        "choices" => [
+          %{
+            "delta" => %{},
+            "finish_reason" => "function_call",
+            "index" => 0
+          }
+        ]
+      }
+    ]
+  end
 end

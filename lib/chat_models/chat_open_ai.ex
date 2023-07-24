@@ -175,8 +175,115 @@ defmodule Langchain.ChatModels.ChatOpenAI do
       json: for_api(openai, messages, functions),
       auth: {:bearer, System.fetch_env!("OPENAPI_KEY")}
     )
-    |> IO.inspect(label: "RAW RESPONSE")
   end
+
+  @doc """
+  Stream a ChatGPT response. At the end of the stream, the full set of received
+  MessageDelta structs is returned in the response.
+
+  Provide a callback function to handle the streamed data as it comes it. Using
+  the callback function, the messages can be sent to another process to be
+  handled.
+  """
+  def do_api_stream(%ChatOpenAI{stream: true} = openai, messages, functions, callback_fn) do
+    finch_fun = fn request, finch_request, finch_name, finch_options ->
+      resp_fun = fn
+        {:status, status}, response ->
+          %{response | status: status}
+
+        {:headers, headers}, response ->
+          %{response | headers: headers}
+
+        {:data, data}, response ->
+          # cleanup data because it isn't structured well for JSON.
+          body = decode_streamed_data(data)
+
+          old_body = if response.body == "", do: [], else: response.body
+
+          # Returns %Req.Response{} where the body contains ALL the stream delta
+          # chunks converted to MessageDelta structs. The body is a list of lists like this...
+          #
+          # body: [
+          #         [
+          #           %Langchain.MessageDelta{
+          #             content: nil,
+          #             index: 0,
+          #             function_name: nil,
+          #             role: :assistant,
+          #             arguments: nil,
+          #             complete: false
+          #           }
+          #         ],
+          #         ...
+          #       ]
+          #
+          # The reason for the inner list is for each entry in the "n" choices. By default only 1.
+          %{response | body: old_body ++ body}
+      end
+
+      # TODO: Merge deltas and return that as the result? Return the raw combined request body? Not even sure we care about it.
+      # TODO: Create callback function to receive deltas
+      # TODO: Chain tracks last message and merges them through callback.
+      #      - callback needs to be received by a LiveView.
+
+      case Finch.stream(finch_request, finch_name, Req.Response.new(), resp_fun, finch_options) do
+        {:ok, response} ->
+          {request, response}
+
+        {:error, exception} ->
+          Logger.error("Failed request to API: #{inspect(exception)}")
+          {request, exception}
+      end
+    end
+
+    # NOTE: The POST response includes a list of body messages that were
+    # received during the streaming process. However, the messages in the
+    # response all come at once when the stream is complete. It is blocking
+    # until it completes. This means the streaming call should happen in a
+    # separate process from the UI and the callback function will process the
+    # chunks and should notify the UI process of the additional data.
+    Req.post!(openai.endpoint,
+      json: for_api(openai, messages, functions),
+      auth: {:bearer, System.fetch_env!("OPENAPI_KEY")},
+      finch_request: finch_fun
+    )
+  end
+
+  defp decode_streamed_data(data) do
+    # Data comes back like this:
+    #
+    # "data: {\"id\":\"chatcmpl-7e8yp1xBhriNXiqqZ0xJkgNrmMuGS\",\"object\":\"chat.completion.chunk\",\"created\":1689801995,\"model\":\"gpt-4-0613\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":null,\"function_call\":{\"name\":\"calculator\",\"arguments\":\"\"}},\"finish_reason\":null}]}\n\n
+    #  data: {\"id\":\"chatcmpl-7e8yp1xBhriNXiqqZ0xJkgNrmMuGS\",\"object\":\"chat.completion.chunk\",\"created\":1689801995,\"model\":\"gpt-4-0613\",\"choices\":[{\"index\":0,\"delta\":{\"function_call\":{\"arguments\":\"{\\n\"}},\"finish_reason\":null}]}\n\n"
+    #
+    # In that form, the data is not ready to be interpreted as JSON. Let's clean
+    # it up first.
+
+    data
+    |> String.split("data: ")
+    |> Enum.map(fn str ->
+      str
+      |> String.trim()
+      |> case do
+        "" ->
+          :empty
+
+        "[DONE]" ->
+          :empty
+
+        json ->
+          json
+          |> Jason.decode!()
+          |> do_process_response()
+      end
+    end)
+    # returning a list of elements. "junk" elements were replaced with `:empty`.
+    # Filter those out down and return the final list of MessageDelta structs.
+    |> Enum.filter(fn d -> d != :empty end)
+  end
+
+  defp decode_stream_body("", _), do: :ok
+  defp decode_stream_body("[DONE]", _), do: :ok
+  defp decode_stream_body(json, callback_fn), do: callback_fn.(Jason.decode!(json))
 
   def do_process_error_response(%Req.Response{
         status: status,
@@ -222,7 +329,12 @@ defmodule Langchain.ChatModels.ChatOpenAI do
           "message" => %{"function_call" => %{"arguments" => raw_args, "name" => name}}
         } = data
       ) do
-    case Message.new_function_call(name, raw_args) do
+    case Message.new(%{
+           "role" => "function_call",
+           "function_name" => name,
+           "arguments" => raw_args,
+           "complete" => true
+         }) do
       {:ok, message} ->
         message
 
@@ -231,7 +343,9 @@ defmodule Langchain.ChatModels.ChatOpenAI do
     end
   end
 
-  def do_process_response(%{"delta" => delta_body, "finish_reason" => finish, "index" => index} = _msg) do
+  def do_process_response(
+        %{"delta" => delta_body, "finish_reason" => finish, "index" => index} = _msg
+      ) do
     complete =
       case finish do
         nil ->
