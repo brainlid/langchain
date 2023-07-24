@@ -8,6 +8,7 @@ defmodule Langchain.Chains.LLMChain do
   alias Langchain.PromptTemplate
   alias __MODULE__
   alias Langchain.Message
+  alias Langchain.Functions.Function
 
   @primary_key false
   embedded_schema do
