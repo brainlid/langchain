@@ -6,6 +6,7 @@ defmodule Langchain.Chains.LLMChainTest do
   alias Langchain.Chains.LLMChain
   alias Langchain.PromptTemplate
   alias Langchain.Functions.Function
+  alias Langchain.Message
 
   setup do
     {:ok, chat} = ChatOpenAI.new(%{temperature: 0})
@@ -118,7 +119,8 @@ defmodule Langchain.Chains.LLMChainTest do
         PromptTemplate.new!(%{role: :user, text: "<%= @text %>"})
       ]
 
-      set_api_override({:ok, Message.new_assistant!("Amo programar")})
+      # Made NOT LIVE here
+      set_api_override({:ok, [Message.new!(%{role: :assistant, content: "Amo programar", complete: true})]})
 
       {:ok, chain} =
         LLMChain.new(%{
@@ -127,14 +129,16 @@ defmodule Langchain.Chains.LLMChainTest do
           verbose: true
         })
 
-      {:ok, result} =
+      # Only returns the 1 single message
+      {:ok, %Message{} = result} =
         LLMChain.call_chat(chain, %{
           input_language: "English",
           output_language: "Spanish",
           text: "I love programming."
         })
 
-      assert %{text: "Amo programar"} = result
+      expected = Message.new!(%{role: :assistant, content: "Amo programar"})
+      assert expected = result
     end
   end
 

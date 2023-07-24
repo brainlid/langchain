@@ -110,7 +110,11 @@ defmodule Langchain.Chains.LLMChain do
   @doc """
   Add more functions to an LLMChain.
   """
-  @spec add_functions(t(), [Function.t()]) :: t() | no_return()
+  @spec add_functions(t(), Function.t() | [Function.t()]) :: t() | no_return()
+  def add_functions(%LLMChain{} = chain, %Function{} = function) do
+    add_functions(chain, [function])
+  end
+
   def add_functions(%LLMChain{functions: existing} = chain, functions) when is_list(functions) do
     updated = existing ++ functions
 
@@ -159,7 +163,7 @@ defmodule Langchain.Chains.LLMChain do
   the LLM to be evaluated. This formats the request for a ChatLLMChain where
   messages are passed to the API.
   """
-  @spec call_chat(t(), inputs :: map()) :: {:ok, any()} | {:error, String.t()}
+  @spec call_chat(t(), inputs :: map()) :: {:ok, Message.t() | [Message.t()]} | {:error, String.t()}
   def call_chat(%LLMChain{} = chain, %{} = inputs \\ %{}) do
     if chain.verbose, do: IO.inspect(chain.llm, label: "LLM")
 
@@ -179,15 +183,20 @@ defmodule Langchain.Chains.LLMChain do
 
       # handle and output response
       case module.call(chain.llm, messages, functions) do
-        {:ok, %Message{role: :assistant, content: content} = message} ->
-          if chain.verbose, do: IO.inspect(message, label: "MESSAGE RESPONSE")
+        {:ok, [%Message{} = message]} ->
+          if chain.verbose, do: IO.inspect(message, label: "SINGLE MESSAGE RESPONSE")
+          {:ok, message}
 
-          {:ok, %{text: content}}
+        {:ok, [%Message{}, _others] = messages} ->
+          if chain.verbose, do: IO.inspect(messages, label: "MULTIPLE MESSAGE RESPONSE")
+          # return the list of message responses. Happens when multiple
+          # "choices" are returned from LLM by request.
+          {:ok, messages}
 
-        {:ok, %Message{role: :function_call, arguments: arguments} = message} ->
-          if chain.verbose, do: IO.inspect(message, label: "FUNCTION CALL")
-
-          {:ok, arguments}
+        {:error, reason} ->
+          if chain.verbose, do: IO.inspect(reason, label: "ERROR")
+          Logger.error("Error during chat call. Reason: #{inspect(reason)}")
+          {:error, reason}
       end
     else
       {:error, "LLM prompt should be a list when using call_chat"}
