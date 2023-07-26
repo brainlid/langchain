@@ -148,19 +148,6 @@ defmodule Langchain.MessageDeltaTest do
   end
 
   describe "to_message/1" do
-    test "transform an incomplete content MessageDelta to an incomplete Message" do
-      delta = %Langchain.MessageDelta{
-        content: "Hello! How can I ",
-        role: :assistant,
-        complete: false
-      }
-
-      {:ok, %Message{} = msg} = MessageDelta.to_message(delta)
-      assert msg.role == :assistant
-      assert msg.content == "Hello! How can I "
-      assert msg.complete == false
-    end
-
     test "transform a merged and complete MessageDelta to a Message" do
       # :assistant content type
       delta = %Langchain.MessageDelta{
@@ -172,7 +159,6 @@ defmodule Langchain.MessageDeltaTest do
       {:ok, %Message{} = msg} = MessageDelta.to_message(delta)
       assert msg.role == :assistant
       assert msg.content == "Hello! How can I assist you?"
-      assert msg.complete == true
 
       # :function_call type
       delta = %Langchain.MessageDelta{
@@ -187,11 +173,20 @@ defmodule Langchain.MessageDeltaTest do
       assert msg.function_name == "calculator"
       # parses the arguments
       assert msg.arguments == %{"expression" => "100 + 300 - 200"}
-      assert msg.complete == true
       assert msg.content == nil
     end
 
-    test "for a function_call, return an error when delta is partial and invalid" do
+    test "does not transform an incomplete MessageDelta to a Message" do
+      delta = %Langchain.MessageDelta{
+        content: "Hello! How can I assist ",
+        role: :assistant,
+        complete: false
+      }
+
+      assert {:error, "Cannot convert incomplete message"} = MessageDelta.to_message(delta)
+    end
+
+    test "for a function_call, return an error when delta is invalid" do
       # a partially merged delta is invalid. It may have the "complete" flag but
       # if previous message deltas are missing and were not merged, the
       # to_message function will fail.
@@ -199,11 +194,11 @@ defmodule Langchain.MessageDeltaTest do
         role: :function_call,
         function_name: "calculator",
         arguments: "{\n  \"expression\": \"100 + 300 - 200\"",
-        complete: false
+        complete: true
       }
 
       {:error, reason} = MessageDelta.to_message(delta)
-      assert reason == "arguments: cannot parse function arguments on incomplete message"
+      assert reason == "arguments: invalid JSON function arguments"
     end
   end
 

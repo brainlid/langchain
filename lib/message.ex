@@ -1,6 +1,6 @@
 defmodule Langchain.Message do
   @moduledoc """
-  Models a `Message` for chat LLM.
+  Models a complete `Message` for a chat LLM.
 
   ## Roles
 
@@ -31,24 +31,20 @@ defmodule Langchain.Message do
 
   @primary_key false
   embedded_schema do
-    field(:content, :string)
-    field(:index, :integer)
+    field :content, :string
+    field :index, :integer
 
-    field(:role, Ecto.Enum,
+    field :role, Ecto.Enum,
       values: [:system, :user, :assistant, :function, :function_call],
       default: :user
-    )
 
-    field(:function_name, :string)
+    field :function_name, :string
     field :arguments, :any, virtual: true
-    # Messages can be streamed in as deltas. Keep a flag to note when the a
-    # message is fully complete or not.
-    field :complete, :boolean, default: false
   end
 
   @type t :: %Message{}
 
-  @create_fields [:role, :content, :function_name, :arguments, :index, :complete]
+  @create_fields [:role, :content, :function_name, :arguments, :index]
   @required_fields [:role]
 
   @spec new(attrs :: map()) :: {:ok, t()} | {:error, Ecto.Changeset.t()}
@@ -77,27 +73,26 @@ defmodule Langchain.Message do
   defp parse_arguments(changeset) do
     args = get_field(changeset, :arguments)
     is_function = get_field(changeset, :role) == :function_call
-    is_complete = get_field(changeset, :complete, false) == true
 
     # only
     cond do
-      is_function && is_complete && is_binary(args) ->
+      is_function && is_binary(args) ->
         # decode the arguments
         case Jason.decode(args) do
           {:ok, parsed} when is_map(parsed) ->
             put_change(changeset, :arguments, parsed)
 
           {:ok, parsed} ->
-            Logger.warning("Parsed unexpected function argument format. Expected a map but received: #{inspect(parsed)}")
+            Logger.warning(
+              "Parsed unexpected function argument format. Expected a map but received: #{inspect(parsed)}"
+            )
+
             add_error(changeset, :arguments, "unexpected JSON arguments format")
 
           {:error, error} ->
             Logger.warning("Received invalid argument JSON data. Error: #{inspect(error)}")
             add_error(changeset, :arguments, "invalid JSON function arguments")
         end
-
-      is_function && is_binary(args) ->
-        add_error(changeset, :arguments, "cannot parse function arguments on incomplete message")
 
       true ->
         changeset
@@ -254,7 +249,8 @@ defmodule Langchain.Message do
   Create a new function message to represent the result of an executed
   function.
   """
-  @spec new_function(name :: String.t(), result :: any()) :: {:ok, t()} | {:error, Ecto.Changeset.t()}
+  @spec new_function(name :: String.t(), result :: any()) ::
+          {:ok, t()} | {:error, Ecto.Changeset.t()}
   def new_function(name, result) do
     new(%{role: :function, function_name: name, content: result})
   end

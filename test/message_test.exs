@@ -22,39 +22,20 @@ defmodule Langchain.MessageTest do
       assert {"can't be blank", _} = changeset.errors[:role]
     end
 
-    test "parses arguments when complete" do
+    test "parses arguments" do
       json = Jason.encode!(%{name: "Tim", age: 40})
 
       assert {:ok, %Message{role: :function_call} = msg} =
                Message.new(%{
                  role: :function_call,
                  function_name: "my_fun",
-                 complete: true,
                  arguments: json
                })
 
       assert msg.role == :function_call
       assert msg.function_name == "my_fun"
       assert msg.arguments == %{"name" => "Tim", "age" => 40}
-      assert msg.complete
       assert msg.content == nil
-    end
-
-    test "adds error to arguments when message not complete" do
-      json = Jason.encode!(%{name: "Tim", age: 40})
-
-      assert {:error, changeset} =
-               Message.new(%{
-                 role: :function_call,
-                 complete: false,
-                 function_name: "my_fun",
-                 arguments: json
-               })
-
-      refute changeset.valid?
-
-      assert {"cannot parse function arguments on incomplete message", _} =
-               changeset.errors[:arguments]
     end
 
     test "adds error to arguments when valid JSON but not a map" do
@@ -63,7 +44,6 @@ defmodule Langchain.MessageTest do
       assert {:error, changeset} =
                Message.new(%{
                  role: :function_call,
-                 complete: true,
                  function_name: "my_fun",
                  arguments: json
                })
@@ -76,7 +56,6 @@ defmodule Langchain.MessageTest do
       assert {:error, changeset} =
                Message.new(%{
                  role: :function_call,
-                 complete: true,
                  function_name: "my_fun",
                  arguments: "invalid"
                })

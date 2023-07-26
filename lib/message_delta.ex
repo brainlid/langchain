@@ -147,12 +147,14 @@ defmodule Langchain.MessageDelta do
   end
 
   @doc """
-  Convert the MessageDelta to a Message. Some messages must be complete before
-  they can be transformed to a message. For instance, an incomplete
-  `:function_call` cannot be used. However, an incomplete `:assistant` message
-  with content can be used before fully complete.
+  Convert the MessageDelta to a Message. Can only convert a fully complete
+  MessageDelta.
   """
   @spec to_message(t()) :: {:ok, Message.t()} | {:error, String.t()}
+  def to_message(%MessageDelta{complete: false} = _delta) do
+    {:error, "Cannot convert incomplete message"}
+  end
+
   def to_message(%MessageDelta{} = delta) do
     case Message.new(Map.from_struct(delta)) do
       {:ok, message} ->
