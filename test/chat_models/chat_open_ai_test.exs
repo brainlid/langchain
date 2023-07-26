@@ -80,161 +80,7 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
   end
 
   describe "do_process_response/1" do
-    setup do
-      delta_content = [
-        %{
-          "choices" => [
-            %{
-              "delta" => %{"content" => "", "role" => "assistant"},
-              "finish_reason" => nil,
-              "index" => 0
-            }
-          ],
-          "created" => 1_689_774_181,
-          "id" => "chatcmpl-7e1kD0YMC3AmCycOK4oLGfFMBcCdv",
-          "model" => "gpt-4-0613",
-          "object" => "chat.completion.chunk"
-        },
-        %{
-          "choices" => [
-            %{"delta" => %{"content" => "Hello"}, "finish_reason" => nil, "index" => 0}
-          ],
-          "created" => 1_689_774_181,
-          "id" => "chatcmpl-7e1kD0YMC3AmCycOK4oLGfFMBcCdv",
-          "model" => "gpt-4-0613",
-          "object" => "chat.completion.chunk"
-        },
-        %{
-          "choices" => [
-            %{"delta" => %{"content" => "!"}, "finish_reason" => nil, "index" => 0}
-          ],
-          "created" => 1_689_774_181,
-          "id" => "chatcmpl-7e1kD0YMC3AmCycOK4oLGfFMBcCdv",
-          "model" => "gpt-4-0613",
-          "object" => "chat.completion.chunk"
-        },
-        %{
-          "choices" => [
-            %{"delta" => %{"content" => " How"}, "finish_reason" => nil, "index" => 0}
-          ],
-          "created" => 1_689_774_181,
-          "id" => "chatcmpl-7e1kD0YMC3AmCycOK4oLGfFMBcCdv",
-          "model" => "gpt-4-0613",
-          "object" => "chat.completion.chunk"
-        },
-        %{
-          "choices" => [
-            %{"delta" => %{"content" => " can"}, "finish_reason" => nil, "index" => 0}
-          ],
-          "created" => 1_689_774_181,
-          "id" => "chatcmpl-7e1kD0YMC3AmCycOK4oLGfFMBcCdv",
-          "model" => "gpt-4-0613",
-          "object" => "chat.completion.chunk"
-        },
-        %{
-          "choices" => [
-            %{"delta" => %{"content" => " I"}, "finish_reason" => nil, "index" => 0}
-          ],
-          "created" => 1_689_774_181,
-          "id" => "chatcmpl-7e1kD0YMC3AmCycOK4oLGfFMBcCdv",
-          "model" => "gpt-4-0613",
-          "object" => "chat.completion.chunk"
-        },
-        %{
-          "choices" => [
-            %{
-              "delta" => %{"content" => " assist"},
-              "finish_reason" => nil,
-              "index" => 0
-            }
-          ],
-          "created" => 1_689_774_181,
-          "id" => "chatcmpl-7e1kD0YMC3AmCycOK4oLGfFMBcCdv",
-          "model" => "gpt-4-0613",
-          "object" => "chat.completion.chunk"
-        },
-        %{
-          "choices" => [
-            %{"delta" => %{"content" => " you"}, "finish_reason" => nil, "index" => 0}
-          ],
-          "created" => 1_689_774_181,
-          "id" => "chatcmpl-7e1kD0YMC3AmCycOK4oLGfFMBcCdv",
-          "model" => "gpt-4-0613",
-          "object" => "chat.completion.chunk"
-        },
-        %{
-          "choices" => [
-            %{"delta" => %{"content" => " today"}, "finish_reason" => nil, "index" => 0}
-          ],
-          "created" => 1_689_774_181,
-          "id" => "chatcmpl-7e1kD0YMC3AmCycOK4oLGfFMBcCdv",
-          "model" => "gpt-4-0613",
-          "object" => "chat.completion.chunk"
-        },
-        %{
-          "choices" => [
-            %{"delta" => %{"content" => "?"}, "finish_reason" => nil, "index" => 0}
-          ],
-          "created" => 1_689_774_181,
-          "id" => "chatcmpl-7e1kD0YMC3AmCycOK4oLGfFMBcCdv",
-          "model" => "gpt-4-0613",
-          "object" => "chat.completion.chunk"
-        },
-        %{
-          "choices" => [%{"delta" => %{}, "finish_reason" => "stop", "index" => 0}],
-          "created" => 1_689_774_181,
-          "id" => "chatcmpl-7e1kD0YMC3AmCycOK4oLGfFMBcCdv",
-          "model" => "gpt-4-0613",
-          "object" => "chat.completion.chunk"
-        }
-      ]
-
-      delta_function = [
-        %{
-          "choices" => [
-            %{
-              "delta" => %{
-                "content" => nil,
-                "function_call" => %{"arguments" => "", "name" => "hello_world"},
-                "role" => "assistant"
-              },
-              "finish_reason" => nil,
-              "index" => 0
-            }
-          ],
-          "created" => 1_689_775_878,
-          "id" => "chatcmpl-7e2BalHi6Ly6AAfZJRLkqLZ4cD4C7",
-          "model" => "gpt-4-0613",
-          "object" => "chat.completion.chunk"
-        },
-        %{
-          "choices" => [
-            %{
-              "delta" => %{"function_call" => %{"arguments" => "{}"}},
-              "finish_reason" => nil,
-              "index" => 0
-            }
-          ],
-          "created" => 1_689_775_878,
-          "id" => "chatcmpl-7e2BalHi6Ly6AAfZJRLkqLZ4cD4C7",
-          "model" => "gpt-4-0613",
-          "object" => "chat.completion.chunk"
-        },
-        %{
-          "choices" => [
-            %{"delta" => %{}, "finish_reason" => "function_call", "index" => 0}
-          ],
-          "created" => 1_689_775_878,
-          "id" => "chatcmpl-7e2BalHi6Ly6AAfZJRLkqLZ4cD4C7",
-          "model" => "gpt-4-0613",
-          "object" => "chat.completion.chunk"
-        }
-      ]
-
-      %{delta_content: delta_content, delta_function: delta_function}
-    end
-
-    test "handles receiving a complete message" do
+    test "handles receiving a message" do
       response = %{
         "message" => %{"role" => "assistant", "content" => "Greetings!", "index" => 1},
         "finish_reason" => "stop"
@@ -244,7 +90,6 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
       assert struct.role == :assistant
       assert struct.content == "Greetings!"
       assert struct.index == 1
-      assert struct.complete
     end
 
     test "handles receiving a function_call message" do
@@ -266,15 +111,14 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
       assert struct.content == nil
       assert struct.function_name == "hello_world"
       assert struct.arguments == %{}
-      assert struct.complete
     end
 
     test "handles error from server that the max length has been reached"
     test "handles unsupported response from server"
 
-    test "handles receiving a delta message for a content message at different parts", %{
-      delta_content: delta_content
-    } do
+    test "handles receiving a delta message for a content message at different parts" do
+      delta_content = Langchain.Fixtures.raw_deltas_for_content()
+
       msg_1 = Enum.at(delta_content, 0)
       msg_2 = Enum.at(delta_content, 1)
       msg_10 = Enum.at(delta_content, 10)
@@ -335,9 +179,9 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
       # use functions but make data aggregation separate from from the OpenAI struct
     end
 
-    test "handles receiving a delta message for a function_call", %{
-      delta_function: delta_function
-    } do
+    test "handles receiving a delta message for a function_call" do
+      delta_function = Langchain.Fixtures.raw_deltas_for_function_call()
+
       msg_1 = Enum.at(delta_function, 0)
       msg_2 = Enum.at(delta_function, 1)
       msg_3 = Enum.at(delta_function, 2)
@@ -398,8 +242,8 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
       }
 
       [msg1, msg2] = ChatOpenAI.do_process_response(response)
-      assert %Message{role: :assistant, index: 1, complete: true} = msg1
-      assert %Message{role: :assistant, index: 1, complete: true} = msg2
+      assert %Message{role: :assistant, index: 1} = msg1
+      assert %Message{role: :assistant, index: 1} = msg2
       assert msg1.content == "Greetings!"
       assert msg2.content == "Howdy!"
     end
@@ -533,165 +377,5 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
   #   */
   # };
 
-  defp streamed_function_with_arguments() do
-    [
-      %{
-        "choices" => [
-          %{
-            "delta" => %{
-              "content" => nil,
-              "function_call" => %{"arguments" => "", "name" => "calculator"},
-              "role" => "assistant"
-            },
-            "finish_reason" => nil,
-            "index" => 0
-          }
-        ]
-      },
-      %{
-        "choices" => [
-          %{
-            "delta" => %{"function_call" => %{"arguments" => "{\n"}},
-            "finish_reason" => nil,
-            "index" => 0
-          }
-        ]
-      },
-      %{
-        "choices" => [
-          %{
-            "delta" => %{"function_call" => %{"arguments" => " "}},
-            "finish_reason" => nil,
-            "index" => 0
-          }
-        ]
-      },
-      %{
-        "choices" => [
-          %{
-            "delta" => %{"function_call" => %{"arguments" => " \""}},
-            "finish_reason" => nil,
-            "index" => 0
-          }
-        ]
-      },
-      %{
-        "choices" => [
-          %{
-            "delta" => %{"function_call" => %{"arguments" => "expression"}},
-            "finish_reason" => nil,
-            "index" => 0
-          }
-        ]
-      },
-      %{
-        "choices" => [
-          %{
-            "delta" => %{"function_call" => %{"arguments" => "\":"}},
-            "finish_reason" => nil,
-            "index" => 0
-          }
-        ]
-      },
-      %{
-        "choices" => [
-          %{
-            "delta" => %{"function_call" => %{"arguments" => " \""}},
-            "finish_reason" => nil,
-            "index" => 0
-          }
-        ]
-      },
-      %{
-        "choices" => [
-          %{
-            "delta" => %{"function_call" => %{"arguments" => "100"}},
-            "finish_reason" => nil,
-            "index" => 0
-          }
-        ]
-      },
-      %{
-        "choices" => [
-          %{
-            "delta" => %{"function_call" => %{"arguments" => " +"}},
-            "finish_reason" => nil,
-            "index" => 0
-          }
-        ]
-      },
-      %{
-        "choices" => [
-          %{
-            "delta" => %{"function_call" => %{"arguments" => " "}},
-            "finish_reason" => nil,
-            "index" => 0
-          }
-        ]
-      },
-      %{
-        "choices" => [
-          %{
-            "delta" => %{"function_call" => %{"arguments" => "300"}},
-            "finish_reason" => nil,
-            "index" => 0
-          }
-        ]
-      },
-      %{
-        "choices" => [
-          %{
-            "delta" => %{"function_call" => %{"arguments" => " -"}},
-            "finish_reason" => nil,
-            "index" => 0
-          }
-        ]
-      },
-      %{
-        "choices" => [
-          %{
-            "delta" => %{"function_call" => %{"arguments" => " "}},
-            "finish_reason" => nil,
-            "index" => 0
-          }
-        ]
-      },
-      %{
-        "choices" => [
-          %{
-            "delta" => %{"function_call" => %{"arguments" => "200"}},
-            "finish_reason" => nil,
-            "index" => 0
-          }
-        ]
-      },
-      %{
-        "choices" => [
-          %{
-            "delta" => %{"function_call" => %{"arguments" => "\"\n"}},
-            "finish_reason" => nil,
-            "index" => 0
-          }
-        ]
-      },
-      %{
-        "choices" => [
-          %{
-            "delta" => %{"function_call" => %{"arguments" => "}"}},
-            "finish_reason" => nil,
-            "index" => 0
-          }
-        ]
-      },
-      %{
-        "choices" => [
-          %{
-            "delta" => %{},
-            "finish_reason" => "function_call",
-            "index" => 0
-          }
-        ]
-      }
-    ]
-  end
+
 end

@@ -23,29 +23,16 @@ defmodule Langchain.ChatModels.ChatOpenAI do
   # NOTE: As of gpt-4 and gpt-3.5, only one function_call is issued at a time
   # even when multiple requests could be issued based on the prompt.
 
-  # TODO: Add "pending" flag? or a "state" attribute?
-  # - it's "done" if the last message is from :assistant or is
-  # - pending if last message is :user, :function_call, or :function
-  #  - function_call - requesting to execute a function
-  #  - function - we're returning the function answer
-  # - only "finished" if the last message is :assistant. May add additional messages, but at that point we don't need to keep submitting for an answer.
-  # - We can use that easy state to know if we should keep submitting.
-  # - Option to "evaluate function" if function_call is the last message. Otherwise a noop.
-  # - call it "in_progress?"
-
   @primary_key false
   embedded_schema do
-    field(:endpoint, :string, default: "https://api.openai.com/v1/chat/completions")
-    field(:model, :string, default: "gpt-4")
-    # field(:model, :string, default: "gpt-3.5-turbo")
-    field(:temperature, :float, default: 0.0)
-    field(:frequency_penalty, :float, default: 0.0)
+    field :endpoint, :string, default: "https://api.openai.com/v1/chat/completions"
+    field :model, :string, default: "gpt-4"
+    # field :model, :string, default: "gpt-3.5-turbo"
+    field :temperature, :float, default: 0.0
+    field :frequency_penalty, :float, default: 0.0
     # How many chat completion choices to generate for each input message.
-    field(:n, :integer, default: 1)
-    field(:stream, :boolean, default: false)
-
-    # embeds_many :messages, OpenAIMessage
-    # embeds_many :functions, OpenAIFunctions
+    field :n, :integer, default: 1
+    field :stream, :boolean, default: false
   end
 
   @type t :: %ChatOpenAI{}

@@ -73,6 +73,7 @@ defmodule Langchain.MessageDelta do
   Merge two MessageDelta structs. The first MessageDelta is the `primary` one
   that smaller deltas are merged into.
   """
+  @spec merge_delta(t(), t()) :: t()
   def merge_delta(%MessageDelta{role: :assistant} = primary, %MessageDelta{} = delta_part) do
     primary
     |> append_content(delta_part)
