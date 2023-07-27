@@ -6,6 +6,7 @@ defmodule Langchain.Functions.Function do
   use Ecto.Schema
   import Ecto.Changeset
   alias __MODULE__
+  alias Langchain.LangchainError
 
   @primary_key false
   embedded_schema do
@@ -26,12 +27,29 @@ defmodule Langchain.Functions.Function do
   @create_fields [:name, :description, :parameters_schema, :function]
   @required_fields [:name]
 
+  @doc """
+  Build a new function.
+  """
   @spec new(attrs :: map()) :: {:ok, t} | {:error, Ecto.Changeset.t()}
   def new(attrs \\ %{}) do
     %Function{}
     |> cast(attrs, @create_fields)
     |> common_validation()
     |> apply_action(:insert)
+  end
+
+  @doc """
+  Build a new function and return it or raise an error if invalid.
+  """
+  @spec new!(attrs :: map()) :: t() | no_return()
+  def new!(attrs \\ %{}) do
+    case new(attrs) do
+      {:ok, function} ->
+        function
+
+      {:error, changeset} ->
+        raise LangchainError, changeset
+    end
   end
 
   def common_validation(changeset) do
