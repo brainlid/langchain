@@ -27,6 +27,8 @@ defmodule Langchain.MessageDelta do
   @primary_key false
   embedded_schema do
     field :content, :string
+    # When requesting multiple choices for a response, the `index` represents
+    # which choice it is. It is a 0 based list.()
     field :index, :integer
     field :function_name, :string
 

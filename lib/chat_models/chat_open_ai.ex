@@ -16,6 +16,7 @@ defmodule Langchain.ChatModels.ChatOpenAI do
   import Langchain.Utils.ApiOverride
   alias __MODULE__
   alias Langchain.Message
+  alias Langchain.LangchainError
   alias Langchain.ForOpenAIApi
   alias Langchain.Utils
   alias Langchain.MessageDelta
@@ -33,11 +34,14 @@ defmodule Langchain.ChatModels.ChatOpenAI do
     # How many chat completion choices to generate for each input message.
     field :n, :integer, default: 1
     field :stream, :boolean, default: false
+
+    # A callback function to execute when a message is received.
+    field :callback_fn, :any, virtual: true
   end
 
   @type t :: %ChatOpenAI{}
 
-  @create_fields [:model, :temperature, :frequency_penalty, :n, :stream]
+  @create_fields [:model, :temperature, :frequency_penalty, :n, :stream, :callback_fn]
   @required_fields [:model]
 
   @spec new(attrs :: map()) :: {:ok, t} | {:error, Ecto.Changeset.t()}
@@ -114,8 +118,8 @@ defmodule Langchain.ChatModels.ChatOpenAI do
     else
       # make base api request and perform high-level success/failure checks
       case do_api_request(openai, messages, functions) do
-        %Req.Response{status: 200, body: data} ->
-          {:ok, do_process_response(data)}
+        %Req.Response{status: 200, body: parsed_data} ->
+          {:ok, parsed_data}
 
         %Req.Response{} = error_response ->
           do_process_error_response(error_response)
@@ -157,22 +161,41 @@ defmodule Langchain.ChatModels.ChatOpenAI do
     end
   end
 
+  @doc """
+  Make the API request from the OpenAI server.
+
+  If `stream: false`, the completed message is returned.
+
+  If `stream: true`, the `callback_fn` is executed for the returned MessageDelta
+  responses.
+
+  Executes the callback function passing the response only parsed to the data
+  structures.
+  """
   def do_api_request(%ChatOpenAI{stream: false} = openai, messages, functions) do
-    Req.post!(openai.endpoint,
-      json: for_api(openai, messages, functions),
-      auth: {:bearer, System.fetch_env!("OPENAPI_KEY")}
-    )
+    response =
+      Req.post!(openai.endpoint,
+        json: for_api(openai, messages, functions),
+        auth: {:bearer, System.fetch_env!("OPENAPI_KEY")}
+      )
+
+    # parse the body and return it as parsed structs
+    case response do
+      %Req.Response{status: 200, body: data} ->
+        body = do_process_response(data)
+        # OPTIONAL: Execute callback function
+        if is_function(openai.callback_fn) do
+          openai.callback_fn.(body)
+        end
+
+        %Req.Response{response | body: body}
+
+      other ->
+        other
+    end
   end
 
-  @doc """
-  Stream a ChatGPT response. At the end of the stream, the full set of received
-  MessageDelta structs is returned in the response.
-
-  Provide a callback function to handle the streamed data as it comes it. Using
-  the callback function, the messages can be sent to another process to be
-  handled.
-  """
-  def do_api_stream(%ChatOpenAI{stream: true} = openai, messages, functions, callback_fn) do
+  def do_api_request(%ChatOpenAI{stream: true} = openai, messages, functions) do
     finch_fun = fn request, finch_request, finch_name, finch_options ->
       resp_fun = fn
         {:status, status}, response ->
@@ -184,6 +207,14 @@ defmodule Langchain.ChatModels.ChatOpenAI do
         {:data, data}, response ->
           # cleanup data because it isn't structured well for JSON.
           body = decode_streamed_data(data)
+          # execute the callback function for each MessageDelta
+          if is_function(openai.callback_fn) do
+            body
+            |> List.flatten()
+            |> Enum.each(fn item -> openai.callback_fn.(item) end)
+          else
+            Logger.warning("Streaming call requested but no callback function was given.")
+          end
 
           old_body = if response.body == "", do: [], else: response.body
 
