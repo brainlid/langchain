@@ -5,9 +5,10 @@ defmodule Langchain.MessageTest do
 
   describe "new/1" do
     test "works with minimal attrs" do
-      assert {:ok, %Message{} = msg} = Message.new(%{"role" => "system", "content" => "hello!"})
+      assert {:ok, %Message{} = msg} = Message.new(%{"role" => "system", "content" => "hello!", "index" => 0})
       assert msg.role == :system
       assert msg.content == "hello!"
+      assert msg.index == 0
     end
 
     test "accepts atom keys and role enum" do
