@@ -299,10 +299,6 @@ defmodule Langchain.ChatModels.ChatOpenAI do
     |> Enum.filter(fn d -> d != :empty end)
   end
 
-  defp decode_stream_body("", _), do: :ok
-  defp decode_stream_body("[DONE]", _), do: :ok
-  defp decode_stream_body(json, callback_fn), do: callback_fn.(Jason.decode!(json))
-
   def do_process_error_response(%Req.Response{
         status: status,
         body: %{"error" => %{"message" => message}}
