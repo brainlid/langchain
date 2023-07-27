@@ -3,8 +3,6 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
 
   doctest Langchain.ChatModels.ChatOpenAI
   alias Langchain.ChatModels.ChatOpenAI
-  alias Langchain.Chains.LlmChain
-  alias Langchain.PromptTemplate
   alias Langchain.Functions.Function
   alias Langchain.MessageDelta
 
@@ -50,13 +48,13 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
 
   describe "call/2" do
     @tag :live_call
-    test "basic example" do
+    test "basic content example" do
       # set_fake_llm_response({:ok, Message.new_assistant("\n\nRainbow Sox Co.")})
 
       # https://js.langchain.com/docs/modules/models/chat/
       {:ok, chat} = ChatOpenAI.new(%{temperature: 1})
 
-      {:ok, %Message{role: :assistant, content: response}} =
+      {:ok, [%Message{role: :assistant, content: response}]} =
         ChatOpenAI.call(chat, [
           Message.new_user!("Return the response 'Colorful Threads'.")
         ])
@@ -76,6 +74,61 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
       assert %Message{role: :function_call} = message
       assert message.arguments == %{}
       assert message.content == nil
+    end
+
+    @tag :live_call
+    test "executes callback function when data is streamed" do
+      callback = fn %MessageDelta{} = delta ->
+        send(self(), {:message_delta, delta})
+      end
+
+      # https://js.langchain.com/docs/modules/models/chat/
+      {:ok, chat} = ChatOpenAI.new(%{temperature: 1, stream: true, callback_fn: callback})
+
+      {:ok, _post_results} =
+        ChatOpenAI.call(chat, [
+          Message.new_user!("Return the response 'Hi'.")
+        ])
+
+      # we expect to receive the response over 3 delta messages
+      assert_receive {:message_delta, delta_1}, 500
+      assert_receive {:message_delta, delta_2}, 500
+      assert_receive {:message_delta, delta_3}, 500
+
+      # IO.inspect(delta_1)
+      # IO.inspect(delta_2)
+      # IO.inspect(delta_3)
+
+      merged =
+        delta_1
+        |> MessageDelta.merge_delta(delta_2)
+        |> MessageDelta.merge_delta(delta_3)
+
+      assert merged.role == :assistant
+      assert merged.content == "Hi"
+      assert merged.complete
+    end
+
+    @tag :live_call
+    test "executes callback function when data is NOT streamed" do
+      callback = fn [%Message{} = new_message] ->
+        send(self(), {:message_received, new_message})
+      end
+
+      # https://js.langchain.com/docs/modules/models/chat/
+      # NOTE streamed. Should receive complete message.
+      {:ok, chat} = ChatOpenAI.new(%{temperature: 1, stream: false, callback_fn: callback})
+
+      {:ok, [message]} =
+        ChatOpenAI.call(chat, [
+          Message.new_user!("Return the response 'Hi'.")
+        ])
+
+      assert message.content == "Hi"
+      assert_receive {:message_received, received_item}, 500
+      assert %Message{} = received_item
+      assert received_item.role == :assistant
+      assert received_item.content == "Hi"
     end
   end
 
@@ -105,8 +158,6 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
 
       assert %Message{} = struct = ChatOpenAI.do_process_response(response)
 
-      IO.inspect struct
-
       assert struct.role == :function_call
       assert struct.content == nil
       assert struct.function_name == "hello_world"
@@ -114,7 +165,6 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
     end
 
     test "handles error from server that the max length has been reached"
-    test "handles unsupported response from server"
 
     test "handles receiving a delta message for a content message at different parts" do
       delta_content = Langchain.Fixtures.raw_deltas_for_content()
@@ -158,25 +208,6 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
 
       [%MessageDelta{} = delta_10] = ChatOpenAI.do_process_response(msg_10)
       assert delta_10 == expected_10
-
-      # results = Enum.flat_map(delta_content, &ChatOpenAI.do_process_response(&1))
-      # IO.inspect results
-
-      # results = Enum.flat_map(delta_function, &ChatOpenAI.do_process_response(&1))
-      # IO.inspect results
-
-      # results = Enum.flat_map(streamed_function_with_arguments(), &ChatOpenAI.do_process_response(&1))
-      # IO.inspect results
-
-      # TODO: Store in-progress message on ChatOpenAI? Could be a list of choices as current message.
-      # otherwise write the delta packet message and
-
-      # - can't mutate the chat struct in the callback function.
-      # - create the delta message and fire it off.
-      # - in a separate process, receive the messages and apply them to a message?
-      # - flag when complete
-
-      # use functions but make data aggregation separate from from the OpenAI struct
     end
 
     test "handles receiving a delta message for a function_call" do
@@ -251,131 +282,30 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
 
   describe "streaming examples" do
     @tag :live_call
-    test "supports streaming response", %{hello_world: _hello_world} do
-      {:ok, chat} = ChatOpenAI.new(%{stream: true, verbose: true})
-
-      {:ok, message} = Message.new_user("Hello!")
-      # Message.new_user(
-      #   "Only using the functions you have been provided with, give a greeting."
-      # )
-
+    test "supports streaming response calling function with args" do
       callback = fn data ->
         IO.inspect(data, label: "DATA")
-        ChatOpenAI.do_process_response(data)
-        :ok
+        send(self(), {:streamed_fn, data})
       end
 
-      # response = ChatOpenAI.do_api_stream(chat, [message], [hello_world], callback)
-      response = ChatOpenAI.do_api_stream(chat, [message], [], callback)
-      IO.inspect(response, label: "OPEN AI POST RESPONSE")
-
-      Process.sleep(1_000)
-    end
-
-    @tag :live_call
-    test "supports streaming response calling function with args" do
-      {:ok, chat} = ChatOpenAI.new(%{stream: true, verbose: true})
+      {:ok, chat} = ChatOpenAI.new(%{stream: true, callback_fn: callback, verbose: true})
 
       {:ok, message} =
         Message.new_user("Answer the following math question: What is 100 + 300 - 200?")
 
-      callback = fn data ->
-        IO.inspect(data, label: "DATA")
-        ChatOpenAI.do_process_response(data)
-        :ok
-      end
-
-      response =
-        ChatOpenAI.do_api_stream(chat, [message], [Langchain.Tools.Calculator.new!()], callback)
+      response = ChatOpenAI.do_api_request(chat, [message], [Langchain.Tools.Calculator.new!()])
 
       IO.inspect(response, label: "OPEN AI POST RESPONSE")
 
-      Process.sleep(1_000)
+      assert_receive {:streamed_fn, received_data}, 300
+      assert %MessageDelta{} = received_data
+      assert received_data.role == :function_call
+      # wait for the response to be received
+      Process.sleep(500)
     end
   end
 
-
-  # TODO: TEST streaming in a function_call? How can I tell? Need ability to flag as complete or not.
-
   # TODO: TEST that a non-streaming result could return content with "finish_reason" => "length". If so,
   #      I would need to store content on a message AND flag the length error.
-
-  # TODO: prompt template work/tests. Doesn't include API calls.
-
-  # import {
-  #   ChatPromptTemplate,
-  #   HumanMessagePromptTemplate,
-  #   PromptTemplate,
-  #   SystemMessagePromptTemplate,
-  # } from "langchain/prompts";
-
-  # export const run = async () => {
-  #   // A `PromptTemplate` consists of a template string and a list of input variables.
-  #   const template = "What is a good name for a company that makes {product}?";
-  #   const promptA = new PromptTemplate({ template, inputVariables: ["product"] });
-
-  #   // We can use the `format` method to format the template with the given input values.
-  #   const responseA = await promptA.format({ product: "colorful socks" });
-  #   console.log({ responseA });
-  #   /*
-  #   {
-  #     responseA: 'What is a good name for a company that makes colorful socks?'
-  #   }
-  #   */
-
-  #   // We can also use the `fromTemplate` method to create a `PromptTemplate` object.
-  #   const promptB = PromptTemplate.fromTemplate(
-  #     "What is a good name for a company that makes {product}?"
-  #   );
-  #   const responseB = await promptB.format({ product: "colorful socks" });
-  #   console.log({ responseB });
-  #   /*
-  #   {
-  #     responseB: 'What is a good name for a company that makes colorful socks?'
-  #   }
-  #   */
-
-  #   // For chat models, we provide a `ChatPromptTemplate` class that can be used to format chat prompts.
-  #   const chatPrompt = ChatPromptTemplate.fromPromptMessages([
-  #     SystemMessagePromptTemplate.fromTemplate(
-  #       "You are a helpful assistant that translates {input_language} to {output_language}."
-  #     ),
-  #     HumanMessagePromptTemplate.fromTemplate("{text}"),
-  #   ]);
-
-  #   // The result can be formatted as a string using the `format` method.
-  #   const responseC = await chatPrompt.format({
-  #     input_language: "English",
-  #     output_language: "French",
-  #     text: "I love programming.",
-  #   });
-  #   console.log({ responseC });
-  #   /*
-  #   {
-  #     responseC: '[{"text":"You are a helpful assistant that translates English to French."},{"text":"I love programming."}]'
-  #   }
-  #   */
-
-  #   // The result can also be formatted as a list of `ChatMessage` objects by returning a `PromptValue` object and calling the `toChatMessages` method.
-  #   // More on this below.
-  #   const responseD = await chatPrompt.formatPromptValue({
-  #     input_language: "English",
-  #     output_language: "French",
-  #     text: "I love programming.",
-  #   });
-  #   const messages = responseD.toChatMessages();
-  #   console.log({ messages });
-  #   /*
-  #   {
-  #     messages: [
-  #         SystemMessage {
-  #           text: 'You are a helpful assistant that translates English to French.'
-  #         },
-  #         HumanMessage { text: 'I love programming.' }
-  #       ]
-  #   }
-  #   */
-  # };
-
 
 end
