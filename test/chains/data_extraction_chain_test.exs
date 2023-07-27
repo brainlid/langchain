@@ -1,7 +1,7 @@
-defmodule Langchain.Chains.ExtractionChainTest do
+defmodule Langchain.Chains.DataExtractionChainTest do
   use Langchain.BaseCase
 
-  doctest Langchain.Chains.ExtractionChain
+  doctest Langchain.Chains.DataExtractionChain
   alias Langchain.ChatModels.ChatOpenAI
 
   # Extraction - https://js.langchain.com/docs/modules/chains/openai_functions/extraction
@@ -28,20 +28,20 @@ defmodule Langchain.Chains.ExtractionChainTest do
       "Alex is 5 feet tall. Claudia is 4 feet taller than Alex and jumps higher than him.
        Claudia is a brunette and Alex is blonde. Alex's dog Frosty is a labrador and likes to play hide and seek."
 
-    {:ok, result} = Langchain.Chains.ExtractionChain.run(chat, schema_parameters, data_prompt, verbose: true)
+    {:ok, result} = Langchain.Chains.DataExtractionChain.run(chat, schema_parameters, data_prompt, verbose: true)
 
     assert result == [
       %{
         "dog_breed" => "labrador",
         "dog_name" => "Frosty",
-        "person_age" => 0,
+        "person_age" => nil,
         "person_hair_color" => "blonde",
         "person_name" => "Alex"
       },
       %{
-        "dog_breed" => "",
-        "dog_name" => "",
-        "person_age" => 0,
+        "dog_breed" => nil,
+        "dog_name" => nil,
+        "person_age" => nil,
         "person_hair_color" => "brunette",
         "person_name" => "Claudia"
       }
