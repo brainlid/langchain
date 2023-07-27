@@ -185,7 +185,9 @@ defmodule Langchain.ChatModels.ChatOpenAI do
         body = do_process_response(data)
         # OPTIONAL: Execute callback function
         if is_function(openai.callback_fn) do
-          openai.callback_fn.(body)
+          body
+          |> List.flatten()
+          |> Enum.each(fn item -> openai.callback_fn.(item) end)
         end
 
         %Req.Response{response | body: body}
@@ -327,8 +329,8 @@ defmodule Langchain.ChatModels.ChatOpenAI do
     end
   end
 
-  def do_process_response(%{"finish_reason" => "stop", "message" => message}) do
-    case Message.new(Map.put(message, "complete", true)) do
+  def do_process_response(%{"finish_reason" => "stop", "message" => message, "index" => index}) do
+    case Message.new(Map.merge(message, %{"complete" => true, "index" => index})) do
       {:ok, message} ->
         message
 
@@ -347,7 +349,8 @@ defmodule Langchain.ChatModels.ChatOpenAI do
            "role" => "function_call",
            "function_name" => name,
            "arguments" => raw_args,
-           "complete" => true
+           "complete" => true,
+           "index" => data["index"]
          }) do
       {:ok, message} ->
         message

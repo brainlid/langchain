@@ -111,7 +111,7 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
 
     @tag :live_call
     test "executes callback function when data is NOT streamed" do
-      callback = fn [%Message{} = new_message] ->
+      callback = fn %Message{} = new_message ->
         send(self(), {:message_received, new_message})
       end
 
@@ -125,18 +125,20 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
         ])
 
       assert message.content == "Hi"
+      assert message.index == 0
       assert_receive {:message_received, received_item}, 500
       assert %Message{} = received_item
       assert received_item.role == :assistant
       assert received_item.content == "Hi"
+      assert received_item.index == 0
     end
   end
 
   describe "do_process_response/1" do
     test "handles receiving a message" do
       response = %{
-        "message" => %{"role" => "assistant", "content" => "Greetings!", "index" => 1},
-        "finish_reason" => "stop"
+        "message" => %{"role" => "assistant", "content" => "Greetings!"},
+        "finish_reason" => "stop", "index" => 1
       }
 
       assert %Message{} = struct = ChatOpenAI.do_process_response(response)
@@ -162,6 +164,7 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
       assert struct.content == nil
       assert struct.function_name == "hello_world"
       assert struct.arguments == %{}
+      assert struct.index == 0
     end
 
     test "handles error from server that the max length has been reached"
@@ -262,18 +265,20 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
       response = %{
         "choices" => [
           %{
-            "message" => %{"role" => "assistant", "content" => "Greetings!", "index" => 1},
-            "finish_reason" => "stop"
+            "message" => %{"role" => "assistant", "content" => "Greetings!"},
+            "finish_reason" => "stop",
+            "index" => 0
           },
           %{
-            "message" => %{"role" => "assistant", "content" => "Howdy!", "index" => 1},
-            "finish_reason" => "stop"
+            "message" => %{"role" => "assistant", "content" => "Howdy!"},
+            "finish_reason" => "stop",
+            "index" => 1
           }
         ]
       }
 
       [msg1, msg2] = ChatOpenAI.do_process_response(response)
-      assert %Message{role: :assistant, index: 1} = msg1
+      assert %Message{role: :assistant, index: 0} = msg1
       assert %Message{role: :assistant, index: 1} = msg2
       assert msg1.content == "Greetings!"
       assert msg2.content == "Howdy!"
@@ -300,6 +305,7 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
       assert_receive {:streamed_fn, received_data}, 300
       assert %MessageDelta{} = received_data
       assert received_data.role == :function_call
+      assert received_data.index == 0
       # wait for the response to be received
       Process.sleep(500)
     end
