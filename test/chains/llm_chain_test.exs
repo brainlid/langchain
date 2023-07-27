@@ -7,6 +7,7 @@ defmodule Langchain.Chains.LLMChainTest do
   alias Langchain.PromptTemplate
   alias Langchain.Functions.Function
   alias Langchain.Message
+  alias Langchain.MessageDelta
 
   setup do
     {:ok, chat} = ChatOpenAI.new(%{temperature: 0})
@@ -78,32 +79,108 @@ defmodule Langchain.Chains.LLMChainTest do
   end
 
   describe "JS inspired test" do
-    # test "usage with LLMs" do
-    # # https://js.langchain.com/docs/modules/chains/llm_chain
+    @tag :live_call
+    test "live usage with LLM" do
+      # https://js.langchain.com/docs/modules/chains/llm_chain
 
-    # # We can construct an LLMChain from a PromptTemplate and an LLM.
-    # {:ok, model} = ChatOpenAI.new(%{temperature: 0})
+      # We can construct an LLMChain from a PromptTemplate and an LLM.
+      {:ok, model} =
+        ChatOpenAI.new(%{
+          temperature: 1,
+          stream: false
+        })
 
-    # {:ok, prompt} =
-    #   PromptTemplate.from_template(
-    #     "What is a good name for a company that makes <%= @product %>?"
-    #   )
+      {:ok, prompt} =
+        PromptTemplate.from_template(
+          "What is a good name for a company that makes <%= @product %>?"
+        )
 
-    # {:ok, chain_A} = LLMChain.new(%{llm: model, prompt: prompt})
+      {:ok, chain} = LLMChain.new(%{llm: model, prompt: [prompt]})
 
-    # # The result is an LLMChain with a `text` property that's been set.
-    # {:ok, res_A} = chain_A.call(%{product: "colorful socks"})
-    # # console.log({ resA });
-    # # // { resA: { text: '\n\nSocktastic!' } }
+      # TODO: It should return an `{:ok, updated_chain}`.
+      # The result is an LLMChain with a `text` property that's been set.
+      {:ok, response} = LLMChain.call_chat(chain, %{product: "colorful socks"})
+      # console.log({ resA });
+      # // { resA: { text: '\n\nSocktastic!' } }
+      IO.inspect(response)
 
-    # # Since the LLMChain is a single-input, single-output chain, we can also `run` it.
-    # # This takes in a string and returns the `text` property.
-    # {:ok, res_A2} = chain_A.run("colorful socks")
-    # # console.log({ resA2 });
-    # # // { resA2: '\n\nSocktastic!' }
+      # TODO: What does a streamed call_chat return?
+      # success that it was submitted?
+      # it's a blocking call while the callback function fires.
 
-    # assert false
-    # end
+      assert false
+    end
+
+    test "non-live not-streamed usage test" do
+      # https://js.langchain.com/docs/modules/chains/llm_chain
+
+      # We can construct an LLMChain from a PromptTemplate and an LLM.
+      {:ok, model} =
+        ChatOpenAI.new(%{
+          temperature: 1,
+          stream: false
+        })
+
+      {:ok, prompt} =
+        PromptTemplate.from_template(
+          "What is a good name for a company that makes <%= @product %>?"
+        )
+
+      {:ok, chain} = LLMChain.new(%{llm: model, prompt: [prompt]})
+
+      # Made NOT LIVE here
+      fake_message = Message.new!(%{role: :assistant, content: "Socktastic!", complete: true})
+      set_api_override({:ok, [fake_message]})
+
+      # The result is an updated LLMChain with a last_message set, also the received message is returned
+      {:ok, %LLMChain{} = updated_chain, message} =
+        LLMChain.call_chat(chain, %{product: "colorful socks"})
+
+      assert updated_chain.needs_response == false
+      assert updated_chain.last_message == message
+      assert updated_chain.last_message == fake_message
+    end
+
+    test "non-live streamed usage test" do
+      # https://js.langchain.com/docs/modules/chains/llm_chain
+
+      # We can construct an LLMChain from a PromptTemplate and an LLM.
+      {:ok, model} =
+        ChatOpenAI.new(%{
+          temperature: 1,
+          stream: true
+          # TODO: PUT DELTA CALLBACK function here?
+          # TODO: Pass it in the LLMChain new function?
+        })
+
+      {:ok, prompt} =
+        PromptTemplate.from_template(
+          "What is a good name for a company that makes <%= @product %>?"
+        )
+
+      {:ok, chain} = LLMChain.new(%{llm: model, prompt: [prompt]})
+
+      # TODO: Need to fake a list of delta callbacks.
+
+      # Made NOT LIVE here
+      fake_message = Message.new!(%{role: :assistant, content: "Socktastic!", complete: true})
+      set_api_override({:ok, [fake_message]})
+
+      # TODO: Updated return type
+      # The result is an updated LLMChain with a last_message set, also the received message is returned
+      {:ok, %LLMChain{} = updated_chain, message} =
+        LLMChain.call_chat(chain, %{product: "colorful socks"})
+
+      assert updated_chain.needs_response == false
+      assert updated_chain.last_message == message
+      assert updated_chain.last_message == fake_message
+
+      # TODO: What does a streamed call_chat return?
+      # success that it was submitted?
+      # it's a blocking call while the callback function fires.
+
+      assert false
+    end
 
     # @tag :live_call
     test "usage with chat models" do
@@ -120,7 +197,9 @@ defmodule Langchain.Chains.LLMChainTest do
       ]
 
       # Made NOT LIVE here
-      set_api_override({:ok, [Message.new!(%{role: :assistant, content: "Amo programar", complete: true})]})
+      set_api_override(
+        {:ok, [Message.new!(%{role: :assistant, content: "Amo programar", complete: true})]}
+      )
 
       {:ok, chain} =
         LLMChain.new(%{
@@ -130,7 +209,7 @@ defmodule Langchain.Chains.LLMChainTest do
         })
 
       # Only returns the 1 single message
-      {:ok, %Message{} = result} =
+      {:ok, %LLMChain{} = _updated, result} =
         LLMChain.call_chat(chain, %{
           input_language: "English",
           output_language: "Spanish",
@@ -138,7 +217,158 @@ defmodule Langchain.Chains.LLMChainTest do
         })
 
       expected = Message.new!(%{role: :assistant, content: "Amo programar"})
-      assert expected = result
+      assert expected == result
+    end
+  end
+
+  describe "apply_delta/2" do
+    setup do
+      # https://js.langchain.com/docs/modules/chains/llm_chain#usage-with-chat-models
+      {:ok, chat} = ChatOpenAI.new()
+      {:ok, chain} = LLMChain.new(%{prompt: [], llm: chat, verbose: true})
+
+      %{chain: chain}
+    end
+
+    test "when the first delta, assigns it to `delta`", %{chain: chain} do
+      delta = MessageDelta.new!(%{role: :assistant, content: "Greetings from"})
+
+      assert chain.delta == nil
+      updated_chain = LLMChain.apply_delta(chain, delta)
+      assert updated_chain.delta == delta
+    end
+
+    test "merges to existing delta and returns merged on struct", %{chain: chain} do
+      updated_chain =
+        chain
+        |> LLMChain.apply_delta(
+          MessageDelta.new!(%{role: :assistant, content: "Greetings from "})
+        )
+        |> LLMChain.apply_delta(MessageDelta.new!(%{content: "your "}))
+
+      assert updated_chain.delta.content == "Greetings from your "
+    end
+
+    test "when final delta received, transforms to a message and applies it", %{chain: chain} do
+      assert chain.messages == []
+
+      updated_chain =
+        chain
+        |> LLMChain.apply_delta(
+          MessageDelta.new!(%{role: :assistant, content: "Greetings from "})
+        )
+        |> LLMChain.apply_delta(MessageDelta.new!(%{content: "your "}))
+        |> LLMChain.apply_delta(MessageDelta.new!(%{content: "favorite "}))
+        |> LLMChain.apply_delta(MessageDelta.new!(%{content: "assistant.", complete: true}))
+
+      # the delta is complete and removed from the chain
+      assert updated_chain.delta == nil
+      # the delta is converted to a message and applied to the messages
+      assert [%Message{} = new_message] = updated_chain.messages
+      assert new_message.role == :assistant
+      assert new_message.content == "Greetings from your favorite assistant."
+    end
+
+    test "applies list of deltas for function_call with arguments", %{chain: chain} do
+      deltas = Langchain.Fixtures.deltas_for_function_call("calculator")
+
+      updated_chain =
+        Enum.reduce(deltas, chain, fn delta, acc ->
+          # apply each successive delta to the chain
+          LLMChain.apply_delta(acc, delta)
+        end)
+
+      assert updated_chain.delta == nil
+      last = updated_chain.last_message
+      assert last.role == :function_call
+      assert last.function_name == "calculator"
+      assert last.arguments == %{"expression" => "100 + 300 - 200"}
+      assert updated_chain.messages == [last]
+    end
+  end
+
+  describe "apply_message/2" do
+    setup do
+      # https://js.langchain.com/docs/modules/chains/llm_chain#usage-with-chat-models
+      {:ok, chat} = ChatOpenAI.new()
+      {:ok, chain} = LLMChain.new(%{prompt: [], llm: chat, verbose: true})
+
+      %{chain: chain}
+    end
+
+    test "appends a message and stores as last_message", %{chain: chain} do
+      assert chain.messages == []
+
+      # start with user message
+      user_msg = Message.new_user!("Howdy!")
+      updated_chain = LLMChain.apply_message(chain, user_msg)
+      assert updated_chain.messages == [user_msg]
+      assert updated_chain.last_message == user_msg
+
+      # add assistant response
+      assist_msg = Message.new_assistant!("Well hello to you too.")
+      updated_chain = LLMChain.apply_message(updated_chain, assist_msg)
+      assert updated_chain.messages == [user_msg, assist_msg]
+      assert updated_chain.last_message == assist_msg
+    end
+
+    test "correctly sets the needs_response flag", %{chain: chain} do
+      # after applying a message with role of :user, :function_call, or
+      # :function, it should set need_response to true.
+      user_msg = Message.new_user!("Howdy!")
+      updated_chain = LLMChain.apply_message(chain, user_msg)
+      assert updated_chain.needs_response
+
+      function_call_msg = Message.new_function_call!("hello_world", "{}")
+      updated_chain = LLMChain.apply_message(chain, function_call_msg)
+      assert updated_chain.needs_response
+
+      function_msg = Message.new_function!("hello_world", "Hello world!")
+      updated_chain = LLMChain.apply_message(chain, function_msg)
+      assert updated_chain.needs_response
+
+      # set to false with a :system or :assistant message.
+      system_msg = Message.new_system!("You are an overly optimistic assistant.")
+      updated_chain = LLMChain.apply_message(chain, system_msg)
+      refute updated_chain.needs_response
+
+      assistant_msg = Message.new_assistant!("Yes, that's correct.")
+      updated_chain = LLMChain.apply_message(chain, assistant_msg)
+      refute updated_chain.needs_response
+    end
+  end
+
+  describe "apply_prompt_templates/3" do
+    test "transforms a list of messages and prompt templates into messages" do
+      templates = [
+        Message.new_system!("You are a helpful assistant"),
+        PromptTemplate.new!(%{
+          role: :user,
+          text: "Give a brief description of <%= @subject %>."
+        })
+      ]
+
+      {:ok, chat} = ChatOpenAI.new()
+      {:ok, chain} = LLMChain.new(%{prompt: [], llm: chat})
+      updated = LLMChain.apply_prompt_templates(chain, templates, %{subject: "Pomeranians"})
+      assert length(updated.messages) == 2
+      assert [%Message{role: :system}, %Message{role: :user} = user_msg] = updated.messages
+      assert user_msg.content == "Give a brief description of Pomeranians."
+      assert updated.last_message == user_msg
+      assert updated.needs_response
+    end
+  end
+
+  describe "quick_prompt/2" do
+    test "creates the needed underlying messages and applies them" do
+      {:ok, chat} = ChatOpenAI.new()
+      {:ok, chain} = LLMChain.new(%{llm: chat})
+      updated = LLMChain.quick_prompt(chain, "Hello!")
+      assert length(updated.messages) == 2
+      assert [%Message{role: :system}, %Message{role: :user} = user_msg] = updated.messages
+      assert user_msg.content == "Hello!"
+      assert updated.last_message == user_msg
+      assert updated.needs_response
     end
   end
 
