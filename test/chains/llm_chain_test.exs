@@ -24,14 +24,9 @@ defmodule Langchain.Chains.LLMChainTest do
 
   describe "new/1" do
     test "works with minimal setup", %{chat: chat} do
-      assert {:ok, %LLMChain{} = chain} =
-               LLMChain.new(%{
-                 prompt: "What year is it?",
-                 llm: chat
-               })
+      assert {:ok, %LLMChain{} = chain} = LLMChain.new(%{llm: chat})
 
       assert chain.llm == chat
-      assert chain.prompt == "What year is it?"
     end
 
     test "accepts and includes functions to list and map", %{chat: chat, function: function} do
@@ -80,144 +75,121 @@ defmodule Langchain.Chains.LLMChainTest do
 
   describe "JS inspired test" do
     @tag :live_call
-    test "live usage with LLM" do
+    test "live POST usage with LLM" do
       # https://js.langchain.com/docs/modules/chains/llm_chain
 
-      # We can construct an LLMChain from a PromptTemplate and an LLM.
-      {:ok, model} =
-        ChatOpenAI.new(%{
-          temperature: 1,
-          stream: false
-        })
-
-      {:ok, prompt} =
-        PromptTemplate.from_template(
-          "What is a good name for a company that makes <%= @product %>?"
+      prompt =
+        PromptTemplate.from_template!(
+          "Suggest one good name for a company that makes <%= @product %>?"
         )
 
-      {:ok, chain} = LLMChain.new(%{llm: model, prompt: [prompt]})
+      # We can construct an LLMChain from a PromptTemplate and an LLM.
+      {:ok, updated_chain, response} =
+        %{llm: ChatOpenAI.new!(%{temperature: 1, stream: false}), verbose: true}
+        |> LLMChain.new!()
+        |> LLMChain.apply_prompt_templates([prompt], %{product: "colorful socks"})
+        |> LLMChain.run()
 
-      # TODO: It should return an `{:ok, updated_chain}`.
-      # The result is an LLMChain with a `text` property that's been set.
-      {:ok, response} = LLMChain.call_chat(chain, %{product: "colorful socks"})
-      # console.log({ resA });
-      # // { resA: { text: '\n\nSocktastic!' } }
-      IO.inspect(response)
+      assert %Message{role: :assistant} = response
+      assert updated_chain.last_message == response
 
       # TODO: What does a streamed call_chat return?
       # success that it was submitted?
       # it's a blocking call while the callback function fires.
+    end
 
-      assert false
+    @tag :live_call
+    test "live STREAM usage with LLM" do
+      # https://js.langchain.com/docs/modules/chains/llm_chain
+
+      prompt =
+        PromptTemplate.from_template!(
+          "Suggest one good name for a company that makes <%= @product %>?"
+        )
+
+      callback = fn %MessageDelta{} = delta ->
+        send(self(), {:test_stream_deltas, delta})
+      end
+
+      model = ChatOpenAI.new!(%{temperature: 1, stream: true, callback_fn: callback})
+
+      # We can construct an LLMChain from a PromptTemplate and an LLM.
+      {:ok, updated_chain, response} =
+        %{llm: model, verbose: true}
+        |> LLMChain.new!()
+        |> LLMChain.apply_prompt_templates([prompt], %{product: "colorful socks"})
+        |> LLMChain.run()
+
+      assert %Message{role: :assistant} = response
+      assert updated_chain.last_message == response
+      IO.inspect(response, label: "RECEIVED MESSAGE")
+
+      # we should have received at least one callback message delta
+      assert_received {:test_stream_deltas, delta_1}
+      assert %MessageDelta{role: :assistant, complete: false} = delta_1
     end
 
     test "non-live not-streamed usage test" do
       # https://js.langchain.com/docs/modules/chains/llm_chain
 
-      # We can construct an LLMChain from a PromptTemplate and an LLM.
-      {:ok, model} =
-        ChatOpenAI.new(%{
-          temperature: 1,
-          stream: false
-        })
-
-      {:ok, prompt} =
-        PromptTemplate.from_template(
+      prompt =
+        PromptTemplate.from_template!(
           "What is a good name for a company that makes <%= @product %>?"
         )
-
-      {:ok, chain} = LLMChain.new(%{llm: model, prompt: [prompt]})
 
       # Made NOT LIVE here
       fake_message = Message.new!(%{role: :assistant, content: "Socktastic!", complete: true})
       set_api_override({:ok, [fake_message]})
 
-      # The result is an updated LLMChain with a last_message set, also the received message is returned
+      # We can construct an LLMChain from a PromptTemplate and an LLM.
       {:ok, %LLMChain{} = updated_chain, message} =
-        LLMChain.call_chat(chain, %{product: "colorful socks"})
+        %{llm: ChatOpenAI.new!(%{stream: false})}
+        |> LLMChain.new!()
+        |> LLMChain.apply_prompt_templates([prompt], %{product: "colorful socks"})
+        # The result is an updated LLMChain with a last_message set, also the received message is returned
+        |> LLMChain.run()
 
       assert updated_chain.needs_response == false
       assert updated_chain.last_message == message
       assert updated_chain.last_message == fake_message
     end
 
-    test "non-live streamed usage test" do
+    test "non-live STREAM usage test" do
       # https://js.langchain.com/docs/modules/chains/llm_chain
 
-      # We can construct an LLMChain from a PromptTemplate and an LLM.
-      {:ok, model} =
-        ChatOpenAI.new(%{
-          temperature: 1,
-          stream: true
-          # TODO: PUT DELTA CALLBACK function here?
-          # TODO: Pass it in the LLMChain new function?
-        })
-
-      {:ok, prompt} =
-        PromptTemplate.from_template(
-          "What is a good name for a company that makes <%= @product %>?"
+      prompt =
+        PromptTemplate.from_template!(
+          "Suggest one good name for a company that makes <%= @product %>?"
         )
 
-      {:ok, chain} = LLMChain.new(%{llm: model, prompt: [prompt]})
+      callback = fn %MessageDelta{} = delta ->
+        send(self(), {:fake_stream_deltas, delta})
+      end
 
-      # TODO: Need to fake a list of delta callbacks.
+      model = ChatOpenAI.new!(%{temperature: 1, stream: true, callback_fn: callback})
 
       # Made NOT LIVE here
-      fake_message = Message.new!(%{role: :assistant, content: "Socktastic!", complete: true})
-      set_api_override({:ok, [fake_message]})
-
-      # TODO: Updated return type
-      # The result is an updated LLMChain with a last_message set, also the received message is returned
-      {:ok, %LLMChain{} = updated_chain, message} =
-        LLMChain.call_chat(chain, %{product: "colorful socks"})
-
-      assert updated_chain.needs_response == false
-      assert updated_chain.last_message == message
-      assert updated_chain.last_message == fake_message
-
-      # TODO: What does a streamed call_chat return?
-      # success that it was submitted?
-      # it's a blocking call while the callback function fires.
-
-      assert false
-    end
-
-    # @tag :live_call
-    test "usage with chat models" do
-      # https://js.langchain.com/docs/modules/chains/llm_chain#usage-with-chat-models
-      {:ok, chat} = ChatOpenAI.new(%{temperature: 0})
-
-      chat_prompt = [
-        PromptTemplate.new!(%{
-          role: :system,
-          text:
-            "You are a helpful assistant that translates <%= @input_language %> to <%= @output_language %>."
-        }),
-        PromptTemplate.new!(%{role: :user, text: "<%= @text %>"})
+      fake_messages = [
+        [MessageDelta.new!(%{role: :assistant, content: nil, complete: false})],
+        [MessageDelta.new!(%{content: "Socktastic!", complete: false})],
+        [MessageDelta.new!(%{content: nil, complete: true})]
       ]
+      set_api_override({:ok, fake_messages})
 
-      # Made NOT LIVE here
-      set_api_override(
-        {:ok, [Message.new!(%{role: :assistant, content: "Amo programar", complete: true})]}
-      )
+      # We can construct an LLMChain from a PromptTemplate and an LLM.
+      {:ok, updated_chain, response} =
+        %{llm: model, verbose: false}
+        |> LLMChain.new!()
+        |> LLMChain.apply_prompt_templates([prompt], %{product: "colorful socks"})
+        |> LLMChain.run()
 
-      {:ok, chain} =
-        LLMChain.new(%{
-          prompt: chat_prompt,
-          llm: chat,
-          verbose: true
-        })
+      assert %Message{role: :assistant, content: "Socktastic!"} = response
+      assert updated_chain.last_message == response
+      IO.inspect(response, label: "RECEIVED MESSAGE")
 
-      # Only returns the 1 single message
-      {:ok, %LLMChain{} = _updated, result} =
-        LLMChain.call_chat(chain, %{
-          input_language: "English",
-          output_language: "Spanish",
-          text: "I love programming."
-        })
-
-      expected = Message.new!(%{role: :assistant, content: "Amo programar"})
-      assert expected == result
+      # we should have received at least one callback message delta
+      assert_received {:fake_stream_deltas, delta_1}
+      assert %MessageDelta{role: :assistant, complete: false} = delta_1
     end
   end
 

@@ -17,6 +17,7 @@ defmodule Langchain.Chains.LLMChain do
   alias Langchain.Message
   alias Langchain.MessageDelta
   alias Langchain.Functions.Function
+  alias Langchain.LangchainError
 
   @primary_key false
   embedded_schema do
@@ -54,19 +55,34 @@ defmodule Langchain.Chains.LLMChain do
   # functions, and adding more to the state object (like the function result of
   # the execution)
 
-  # TODO: function that reduces all messages or prompts to single text string. USAGE with LLM and not ChatLLM.
-
   @type t :: %LLMChain{}
 
   @create_fields [:llm, :messages, :functions, :stream, :verbose]
   @required_fields [:llm]
 
+  @doc """
+  Start a new LLMChain configuration.
+  """
   @spec new(attrs :: map()) :: {:ok, t} | {:error, Ecto.Changeset.t()}
   def new(attrs \\ %{}) do
     %LLMChain{}
     |> cast(attrs, @create_fields)
     |> common_validation()
     |> apply_action(:insert)
+  end
+
+  @doc """
+  Start a new LLMChain configuration and return it or raise an error if invalid.
+  """
+  @spec new!(attrs :: map()) :: t() | no_return()
+  def new!(attrs \\ %{}) do
+    case new(attrs) do
+      {:ok, chain} ->
+        chain
+
+      {:error, changeset} ->
+        raise LangchainError, changeset
+    end
   end
 
   def common_validation(changeset) do
@@ -157,6 +173,11 @@ defmodule Langchain.Chains.LLMChain do
         # "choices" are returned from LLM by request.
         {:ok, apply_message(chain, message), messages}
 
+      {:ok, [[%MessageDelta{} | _] | _] = deltas} ->
+        if chain.verbose, do: IO.inspect(deltas, label: "DELTA MESSAGE LIST RESPONSE")
+        applied = apply_deltas(chain, deltas)
+        {:ok, applied, applied.last_message}
+
       {:error, reason} ->
         if chain.verbose, do: IO.inspect(reason, label: "ERROR")
         Logger.error("Error during chat call. Reason: #{inspect(reason)}")
@@ -195,6 +216,16 @@ defmodule Langchain.Chains.LLMChain do
       # result.
       %LLMChain{chain | delta: merged}
     end
+  end
+
+  @doc """
+  Apply a list of deltas to the chain.
+  """
+  @spec apply_deltas(t(), list()) :: t()
+  def apply_deltas(%LLMChain{} = chain, deltas) when is_list(deltas) do
+    deltas
+    |> List.flatten()
+    |> Enum.reduce(chain, fn d, acc -> apply_delta(acc, d) end)
   end
 
   @doc """
@@ -272,9 +303,13 @@ defmodule Langchain.Chains.LLMChain do
   def execute_function(%LLMChain{last_message: %Message{role: :function_call} = message} = chain) do
     # TODO: execute the linked function
 
+    # TODO: append new message with role: :function
+
     # TODO: How to handle this when the function function to execute will be slow??? Want it to be async!
     #   - function has an `:async` flag? Execute helper?
     #   - how to handle receiving the function result?
+
+
   end
 
   # Either not a function_call or an incomplete function_call, do nothing.
