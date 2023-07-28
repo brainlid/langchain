@@ -5,7 +5,7 @@ defmodule Langchain.Chains.LLMChainTest do
   alias Langchain.ChatModels.ChatOpenAI
   alias Langchain.Chains.LLMChain
   alias Langchain.PromptTemplate
-  alias Langchain.Functions.Function
+  alias Langchain.Function
   alias Langchain.Message
   alias Langchain.MessageDelta
 

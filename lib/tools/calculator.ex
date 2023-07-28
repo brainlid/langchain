@@ -6,7 +6,7 @@ defmodule Langchain.Tools.Calculator do
   for evaluating it the function when executed by an LLM.
   """
   require Logger
-  alias Langchain.Functions.Function
+  alias Langchain.Function
 
   @doc """
   Defines the "calculator" function.

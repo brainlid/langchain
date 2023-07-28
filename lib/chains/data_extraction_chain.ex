@@ -69,7 +69,7 @@ defmodule Langchain.Chains.DataExtractionChain do
   """
   @spec build_extract_function(schema :: map()) :: Function.t() | no_return()
   def build_extract_function(schema) do
-    Langchain.Functions.Function.new!(%{
+    Langchain.Function.new!(%{
       name: "information_extraction",
       description: "Extracts the relevant information from the passage.",
       parameters_schema: %{

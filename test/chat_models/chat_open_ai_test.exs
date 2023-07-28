@@ -3,7 +3,7 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
 
   doctest Langchain.ChatModels.ChatOpenAI
   alias Langchain.ChatModels.ChatOpenAI
-  alias Langchain.Functions.Function
+  alias Langchain.Function
   alias Langchain.MessageDelta
 
   setup do

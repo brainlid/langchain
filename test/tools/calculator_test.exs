@@ -4,7 +4,7 @@ defmodule Langchain.Tools.CalculatorTest do
 
   doctest Langchain.Tools.Calculator
   alias Langchain.Tools.Calculator
-  alias Langchain.Functions.Function
+  alias Langchain.Function
   alias Langchain.ChatModels.ChatOpenAI
   alias Langchain.PromptTemplate
 

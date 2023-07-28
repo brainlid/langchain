@@ -16,7 +16,7 @@ defmodule Langchain.Chains.LLMChain do
   alias __MODULE__
   alias Langchain.Message
   alias Langchain.MessageDelta
-  alias Langchain.Functions.Function
+  alias Langchain.Function
   alias Langchain.LangchainError
 
   @primary_key false
