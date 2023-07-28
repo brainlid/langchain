@@ -6,7 +6,6 @@ defmodule Langchain.Tools.CalculatorTest do
   alias Langchain.Tools.Calculator
   alias Langchain.Function
   alias Langchain.ChatModels.ChatOpenAI
-  alias Langchain.PromptTemplate
 
   describe "new/0" do
     test "defines the function correctly" do
@@ -46,39 +45,39 @@ defmodule Langchain.Tools.CalculatorTest do
     end
   end
 
-  @tag :live_call
   describe "live test" do
-    test "works when used with a live LLM" do
-      {:ok, updated_chain_1, %Message{} = message} =
+    @tag :live_call
+    test "performs repeated calls until complete with a live LLM" do
+      callback = fn %Message{} = msg ->
+        send(self(), {:callback_msg, msg})
+      end
+
+      {:ok, updated_chain, %Message{} = message} =
         LLMChain.new!(%{
-          llm: ChatOpenAI.new!(%{temperature: 0}),
-          messages: [
-            Message.new_user!("Answer the following math question: What is 100 + 300 - 200?")
-          ],
+          llm: ChatOpenAI.new!(%{temperature: 0, callback_fn: callback}),
           verbose: true
         })
+        |> LLMChain.apply_message(
+          Message.new_user!("Answer the following math question: What is 100 + 300 - 200?")
+        )
         |> LLMChain.add_functions(Calculator.new!())
-        |> LLMChain.run()
+        |> LLMChain.run(while_needs_response: true)
 
-      assert updated_chain_1.last_message == message
+      assert updated_chain.last_message == message
+      assert message.role == :assistant
+      assert message.content == "The answer is 200."
+
+      # assert received multiple messages as callbacks
+      assert_received {:callback_msg, message}
       assert message.role == :function_call
+      assert message.function_name == "calculator"
       assert message.arguments == %{"expression" => "100 + 300 - 200"}
 
-      # execute/evaluate the requested function and respond
-      {:ok, updated_chain_2, %Message{} = final_answer} =
-        updated_chain_1
-        |> LLMChain.execute_function()
-        |> LLMChain.run()
+      assert_received {:callback_msg, message}
+      assert message.role == :assistant
+      assert message.content == "The answer is 200."
 
-      assert final_answer.role == :assistant
-      assert final_answer.content == "The answer is 200."
-
-      # LLMChain.run(while_needs_response: true)
-      # LLMChain.run(until_complete: true)
-      # LLMChain.run(until_response: true)
-
-      #TODO: create a "run_until_answered"? Keeps evaluating functions and resubmitting.
-      # TODO: Would ideally be run in a separate task/process with message passing for results.
+      assert updated_chain.last_message == message
     end
   end
 end

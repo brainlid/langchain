@@ -31,6 +31,10 @@ defmodule Langchain.Chains.LLMChain do
     # List of `Message` structs for creating the conversation with the LLM.
     field :messages, {:array, :any}, default: [], virtual: true
 
+    # Custom context data made available to functions when executed.
+    # Could include information like account ID, user data, etc.
+    field :custom_context, :any, virtual: true
+
     # Track the current merged `%MessageDelta{}` struct received when streamed.
     # Set to `nil` when there is no current delta being tracked. This happens
     # when the final delta is received that completes the message. At that point,
@@ -57,7 +61,7 @@ defmodule Langchain.Chains.LLMChain do
 
   @type t :: %LLMChain{}
 
-  @create_fields [:llm, :messages, :functions, :stream, :verbose]
+  @create_fields [:llm, :functions, :stream, :custom_context, :verbose]
   @required_fields [:llm]
 
   @doc """
@@ -146,9 +150,16 @@ defmodule Langchain.Chains.LLMChain do
   formats the request for a ChatLLMChain where messages are passed to the API.
 
   When successful, it returns `{:ok, updated_chain, message_or_messages}`
+
+  ## Options
+
+  - `:while_needs_response` - repeatedly evaluates functions and submits to the
+    LLM so long as we still expect to get a response.
   """
-  @spec run(t()) :: {:ok, t(), Message.t() | [Message.t()]} | {:error, String.t()}
-  def run(%LLMChain{} = chain) do
+  @spec run(t(), Keyword.t()) :: {:ok, t(), Message.t() | [Message.t()]} | {:error, String.t()}
+  def run(chain, opts \\ [])
+
+  def run(%LLMChain{} = chain, opts) do
     if chain.verbose, do: IO.inspect(chain.llm, label: "LLM")
 
     if chain.verbose, do: IO.inspect(chain.messages, label: "MESSAGES")
@@ -156,32 +167,73 @@ defmodule Langchain.Chains.LLMChain do
     functions = chain.functions
     if chain.verbose, do: IO.inspect(functions, label: "FUNCTIONS")
 
+    if Keyword.get(opts, :while_needs_response, false) do
+      run_while_needs_response(chain)
+    else
+      # run the chain and format the return
+      case do_run(chain) do
+        {:ok, chain} ->
+          {:ok, chain, chain.last_message}
+
+        {:error, _reason} = error ->
+          error
+      end
+    end
+  end
+
+  # Repeatedly run the chain while `needs_response` is true. This will execute
+  # functions and re-submit the function result to the LLM giving the LLM an
+  # opportunity to execute more functions or return a response.
+  @spec run_while_needs_response(t()) :: {:ok, t(), Message.t()} | {:error, String.t()}
+  defp run_while_needs_response(%LLMChain{needs_response: false} = chain) do
+    {:ok, chain, chain.last_message}
+  end
+
+  defp run_while_needs_response(%LLMChain{needs_response: true} = chain) do
+    chain
+    |> execute_function()
+    |> do_run()
+    |> case do
+      {:ok, updated_chain} ->
+        run_while_needs_response(updated_chain)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  # internal reusable function for running the chain
+  @spec do_run(t()) :: {:ok, t()} | {:error, String.t()}
+  defp do_run(%LLMChain{} = chain) do
     # submit to LLM. The "llm" is a struct. Match to get the name of the module
     # then execute the `.call` function on that module.
     %module{} = chain.llm
 
     # handle and output response
-    case module.call(chain.llm, chain.messages, functions) do
+    case module.call(chain.llm, chain.messages, chain.functions) do
       {:ok, [%Message{} = message]} ->
         if chain.verbose, do: IO.inspect(message, label: "SINGLE MESSAGE RESPONSE")
-        {:ok, apply_message(chain, message), message}
+        {:ok, apply_message(chain, message)}
 
       {:ok, [%Message{} = message, _others] = messages} ->
         if chain.verbose, do: IO.inspect(messages, label: "MULTIPLE MESSAGE RESPONSE")
         # return the list of message responses. Happens when multiple
         # "choices" are returned from LLM by request.
-        {:ok, apply_message(chain, message), messages}
+        {:ok, apply_message(chain, message)}
 
       {:ok, [[%MessageDelta{} | _] | _] = deltas} ->
         if chain.verbose, do: IO.inspect(deltas, label: "DELTA MESSAGE LIST RESPONSE")
-        applied = apply_deltas(chain, deltas)
-        {:ok, applied, applied.last_message}
+        {:ok, apply_deltas(chain, deltas)}
 
       {:error, reason} ->
         if chain.verbose, do: IO.inspect(reason, label: "ERROR")
         Logger.error("Error during chat call. Reason: #{inspect(reason)}")
         {:error, reason}
     end
+  end
+
+  defp do_run(%LLMChain{needs_response: false} = chain) do
+    {:ok, chain, chain.last_message}
   end
 
   @doc """
@@ -297,6 +349,8 @@ defmodule Langchain.Chains.LLMChain do
   This makes it safe to call any time.
 
   The `context` is additional data that will be passed to the executed function.
+  The value given here will override any `custom_context` set on the LLMChain.
+  If not set, the global `custom_context` is used.
 
   https://platform.openai.com/docs/guides/gpt/function-calling
   """
@@ -308,13 +362,16 @@ defmodule Langchain.Chains.LLMChain do
         %LLMChain{last_message: %Message{role: :function_call} = message} = chain,
         context
       ) do
+    # context to use
+    use_context = context || chain.custom_context
+
     # find and execute the linked function
     case chain.function_map[message.function_name] do
       %Function{} = function ->
         if chain.verbose, do: IO.inspect(function.name, label: "EXECUTING FUNCTION")
 
         # execute the function
-        result = Function.execute(function, message.arguments, context)
+        result = Function.execute(function, message.arguments, use_context)
         if chain.verbose, do: IO.inspect(result, label: "FUNCTION RESULT")
 
         # add the :function response to the chain

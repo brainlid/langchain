@@ -185,7 +185,6 @@ defmodule Langchain.Chains.LLMChainTest do
 
       assert %Message{role: :assistant, content: "Socktastic!"} = response
       assert updated_chain.last_message == response
-      IO.inspect(response, label: "RECEIVED MESSAGE")
 
       # we should have received at least one callback message delta
       assert_received {:fake_stream_deltas, delta_1}

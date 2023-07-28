@@ -334,10 +334,6 @@ defmodule Langchain.ChatModels.ChatOpenAI do
     {:error, "Unexpected response"}
   end
 
-  # TODO: support receiving multiple "choices" items.
-  # TODO: process the choice items
-  # TODO: NOTE: Multiple math questions
-
   # Parse a new message response
   def do_process_response(%{"choices" => choices}) when is_list(choices) do
     # process each response individually. Return a list of all processed choices
