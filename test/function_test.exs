@@ -1,9 +1,9 @@
-defmodule Langchain.Functions.FunctionTest do
+defmodule Langchain.FunctionTest do
   use ExUnit.Case
 
-  doctest Langchain.Functions.Function
+  doctest Langchain.Function
 
-  alias Langchain.Functions.Function
+  alias Langchain.Function
   alias Langchain.ForOpenAIApi
 
   defp hello_world(_args, _context) do

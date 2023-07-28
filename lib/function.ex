@@ -2,7 +2,7 @@
 # NOTE: New in OpenAI - https://openai.com/blog/function-calling-and-other-api-updates
 #  - 13 June 2023
 # NOTE: Pretty much takes the place of a Langchain "Tool".
-defmodule Langchain.Functions.Function do
+defmodule Langchain.Function do
   use Ecto.Schema
   import Ecto.Changeset
   require Logger
@@ -66,8 +66,8 @@ defmodule Langchain.Functions.Function do
   end
 end
 
-defimpl Langchain.ForOpenAIApi, for: Langchain.Functions.Function do
-  alias Langchain.Functions.Function
+defimpl Langchain.ForOpenAIApi, for: Langchain.Function do
+  alias Langchain.Function
 
   def for_api(%Function{} = fun) do
     %{
