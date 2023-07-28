@@ -6,6 +6,7 @@ defmodule Langchain.Tools.CalculatorTest do
   alias Langchain.Tools.Calculator
   alias Langchain.Functions.Function
   alias Langchain.ChatModels.ChatOpenAI
+  alias Langchain.PromptTemplate
 
   describe "new/0" do
     test "defines the function correctly" do
@@ -48,20 +49,36 @@ defmodule Langchain.Tools.CalculatorTest do
   @tag :live_call
   describe "live test" do
     test "works when used with a live LLM" do
-      {:ok, chat} = ChatOpenAI.new(%{temperature: 0})
-
-      {:ok, chain} =
-        LLMChain.new(%{
-          llm: chat,
-          # prompt: ["How many cookies will I get share my 35 cookies among 4 friends and myself? Additionally, what is 5 to the power of 2?"],
-          prompt: ["Answer the following math question: What is 100 + 300 - 200?"],
+      {:ok, updated_chain_1, %Message{} = message} =
+        LLMChain.new!(%{
+          llm: ChatOpenAI.new!(%{temperature: 0}),
+          messages: [
+            Message.new_user!("Answer the following math question: What is 100 + 300 - 200?")
+          ],
           verbose: true
         })
+        |> LLMChain.add_functions(Calculator.new!())
+        |> LLMChain.run()
 
-      chain = LLMChain.add_functions(chain, Calculator.new!())
-      {:ok, %Message{} = message} = LLMChain.call_chat(chain)
+      assert updated_chain_1.last_message == message
       assert message.role == :function_call
       assert message.arguments == %{"expression" => "100 + 300 - 200"}
+
+      # execute/evaluate the requested function and respond
+      {:ok, updated_chain_2, %Message{} = final_answer} =
+        updated_chain_1
+        |> LLMChain.execute_function()
+        |> LLMChain.run()
+
+      assert final_answer.role == :assistant
+      assert final_answer.content == "The answer is 200."
+
+      # LLMChain.run(while_needs_response: true)
+      # LLMChain.run(until_complete: true)
+      # LLMChain.run(until_response: true)
+
+      #TODO: create a "run_until_answered"? Keeps evaluating functions and resubmitting.
+      # TODO: Would ideally be run in a separate task/process with message passing for results.
     end
   end
 end

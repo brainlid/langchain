@@ -105,12 +105,11 @@ defmodule Langchain.Chains.LLMChain do
   # Enum.tools()
   # A Tool is basically a Function. If %Function{}, keep it. If a Toolkit, look for functions and flatten it.
 
+  @doc false
   def build_functions_map_from_functions(changeset) do
     functions = get_field(changeset, :functions, [])
 
-    # get a list of all the functions from all the functions
-    # funs = Enum.flat_map(functions, & &1.functions)
-
+    # get a list of all the functions indexed into a map by name
     fun_map =
       Enum.reduce(functions, %{}, fn f, acc ->
         Map.put(acc, f.name, f)
@@ -296,22 +295,40 @@ defmodule Langchain.Chains.LLMChain do
   function is executed. If there is no `last_message` or the `last_message` is
   not a `:function_call`, the LLMChain is returned with no action performed.
   This makes it safe to call any time.
+
+  The `context` is additional data that will be passed to the executed function.
+
+  https://platform.openai.com/docs/guides/gpt/function-calling
   """
-  @spec execute_function(t()) :: t()
-  def execute_function(%LLMChain{last_message: nil} = chain), do: chain
+  @spec execute_function(t(), context :: any()) :: t()
+  def execute_function(chain, context \\ nil)
+  def execute_function(%LLMChain{last_message: nil} = chain, _context), do: chain
 
-  def execute_function(%LLMChain{last_message: %Message{role: :function_call} = message} = chain) do
-    # TODO: execute the linked function
+  def execute_function(
+        %LLMChain{last_message: %Message{role: :function_call} = message} = chain,
+        context
+      ) do
+    # find and execute the linked function
+    case chain.function_map[message.function_name] do
+      %Function{} = function ->
+        if chain.verbose, do: IO.inspect(function.name, label: "EXECUTING FUNCTION")
 
-    # TODO: append new message with role: :function
+        # execute the function
+        result = Function.execute(function, message.arguments, context)
+        if chain.verbose, do: IO.inspect(result, label: "FUNCTION RESULT")
 
-    # TODO: How to handle this when the function function to execute will be slow??? Want it to be async!
-    #   - function has an `:async` flag? Execute helper?
-    #   - how to handle receiving the function result?
+        # add the :function response to the chain
+        LLMChain.apply_message(chain, Message.new_function!(function.name, result))
 
+      nil ->
+        Logger.warning(
+          "Received function_call for missing function #{inspect(message.function_name)}"
+        )
 
+        chain
+    end
   end
 
   # Either not a function_call or an incomplete function_call, do nothing.
-  def execute_function(%LLMChain{last_message: %Message{}} = chain), do: chain
+  def execute_function(%LLMChain{last_message: %Message{}} = chain, _context), do: chain
 end

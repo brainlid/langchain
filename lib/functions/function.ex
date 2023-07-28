@@ -5,6 +5,7 @@
 defmodule Langchain.Functions.Function do
   use Ecto.Schema
   import Ecto.Changeset
+  require Logger
   alias __MODULE__
   alias Langchain.LangchainError
 
@@ -18,8 +19,6 @@ defmodule Langchain.Functions.Function do
     field :function, :any, virtual: true
     # parameters is a map used to express a JSONSchema structure of inputs and what's required
     field :parameters_schema, :map
-
-    # embeds_many(:parameters, FunctionParameter)
   end
 
   @type t :: %Function{}
@@ -52,10 +51,18 @@ defmodule Langchain.Functions.Function do
     end
   end
 
-  def common_validation(changeset) do
+  defp common_validation(changeset) do
     changeset
     |> validate_required(@required_fields)
     |> validate_length(:name, max: 64)
+  end
+
+  @doc """
+  Execute the function passing in arguments and additional optional context.
+  """
+  def execute(%Function{function: fun} = function, arguments, context) do
+    Logger.debug("Executing function #{inspect(function.name)}")
+    fun.(arguments, context)
   end
 end
 
