@@ -110,11 +110,10 @@ defmodule Langchain.ChatModels.ChatOpenAI do
   def call(openai, prompt, functions \\ [])
 
   def call(%ChatOpenAI{} = openai, prompt, functions) when is_binary(prompt) do
-    messages =
-      [
-        Message.new_system!(),
-        Message.new_user!(prompt)
-      ]
+    messages = [
+      Message.new_system!(),
+      Message.new_user!(prompt)
+    ]
 
     call(openai, messages, functions)
   end
@@ -124,7 +123,9 @@ defmodule Langchain.ChatModels.ChatOpenAI do
       Logger.warning("Found override API response. Will not make live API call.")
 
       case get_api_override() do
-        {:ok, response} ->
+        {:ok, {:ok, data} = response} ->
+          # fire callback for face responses too
+          fire_callback(openai, data)
           response
 
         _other ->
@@ -177,17 +178,16 @@ defmodule Langchain.ChatModels.ChatOpenAI do
     end
   end
 
-  @doc """
-  Make the API request from the OpenAI server.
-
-  If `stream: false`, the completed message is returned.
-
-  If `stream: true`, the `callback_fn` is executed for the returned MessageDelta
-  responses.
-
-  Executes the callback function passing the response only parsed to the data
-  structures.
-  """
+  # Make the API request from the OpenAI server.
+  #
+  # If `stream: false`, the completed message is returned.
+  #
+  # If `stream: true`, the `callback_fn` is executed for the returned MessageDelta
+  # responses.
+  #
+  # Executes the callback function passing the response only parsed to the data
+  # structures.
+  @doc false
   def do_api_request(%ChatOpenAI{stream: false} = openai, messages, functions) do
     response =
       Req.post!(openai.endpoint,
@@ -199,13 +199,7 @@ defmodule Langchain.ChatModels.ChatOpenAI do
     case response do
       %Req.Response{status: 200, body: data} ->
         body = do_process_response(data)
-        # OPTIONAL: Execute callback function
-        if is_function(openai.callback_fn) do
-          body
-          |> List.flatten()
-          |> Enum.each(fn item -> openai.callback_fn.(item) end)
-        end
-
+        fire_callback(openai, body)
         %Req.Response{response | body: body}
 
       other ->
@@ -226,14 +220,7 @@ defmodule Langchain.ChatModels.ChatOpenAI do
           # cleanup data because it isn't structured well for JSON.
           body = decode_streamed_data(data)
           # execute the callback function for each MessageDelta
-          if is_function(openai.callback_fn) do
-            body
-            |> List.flatten()
-            |> Enum.each(fn item -> openai.callback_fn.(item) end)
-          else
-            Logger.warning("Streaming call requested but no callback function was given.")
-          end
-
+          fire_callback(openai, body)
           old_body = if response.body == "", do: [], else: response.body
 
           # Returns %Req.Response{} where the body contains ALL the stream delta
@@ -315,6 +302,20 @@ defmodule Langchain.ChatModels.ChatOpenAI do
     # returning a list of elements. "junk" elements were replaced with `:empty`.
     # Filter those out down and return the final list of MessageDelta structs.
     |> Enum.filter(fn d -> d != :empty end)
+  end
+
+  # fire the callback if present.
+  defp fire_callback(%ChatOpenAI{callback_fn: nil, stream: true}, _body) do
+    Logger.warning("Streaming call requested but no callback function was given.")
+  end
+
+  defp fire_callback(%ChatOpenAI{callback_fn: nil}, _body), do: :ok
+
+  defp fire_callback(%ChatOpenAI{callback_fn: callback_fn}, body) when is_function(callback_fn) do
+    # OPTIONAL: Execute callback function
+    body
+    |> List.flatten()
+    |> Enum.each(fn item -> callback_fn.(item) end)
   end
 
   def do_process_error_response(%Req.Response{

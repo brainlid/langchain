@@ -177,7 +177,7 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
       msg_10 = Enum.at(delta_content, 10)
 
       expected_1 = %MessageDelta{
-        content: nil,
+        content: "",
         index: 0,
         function_name: nil,
         role: :assistant,
