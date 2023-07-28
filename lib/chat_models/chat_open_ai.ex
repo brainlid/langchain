@@ -44,12 +44,29 @@ defmodule Langchain.ChatModels.ChatOpenAI do
   @create_fields [:model, :temperature, :frequency_penalty, :n, :stream, :callback_fn]
   @required_fields [:model]
 
+  @doc """
+  Setup a ChatOpenAI client configuration.
+  """
   @spec new(attrs :: map()) :: {:ok, t} | {:error, Ecto.Changeset.t()}
   def new(%{} = attrs \\ %{}) do
     %ChatOpenAI{}
     |> cast(attrs, @create_fields)
     |> common_validation()
     |> apply_action(:insert)
+  end
+
+  @doc """
+  Setup a ChatOpenAI client configuration and return it or raise an error if invalid.
+  """
+  @spec new!(attrs :: map()) :: t() | no_return()
+  def new!(attrs \\ %{}) do
+    case new(attrs) do
+      {:ok, chain} ->
+        chain
+
+      {:error, changeset} ->
+        raise LangchainError, changeset
+    end
   end
 
   def common_validation(changeset) do
@@ -98,7 +115,6 @@ defmodule Langchain.ChatModels.ChatOpenAI do
         Message.new_system!(),
         Message.new_user!(prompt)
       ]
-      |> dbg()
 
     call(openai, messages, functions)
   end
