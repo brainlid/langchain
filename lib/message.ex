@@ -274,6 +274,22 @@ end
 defimpl Langchain.ForOpenAIApi, for: Langchain.Message do
   alias Langchain.Message
 
+  def for_api(%Message{role: :function_call} = fun) do
+    %{
+      "role" => :assistant,
+      "function_call" => %{"arguments" => Jason.encode!(fun.arguments), "name" => fun.function_name},
+      "content" => fun.content
+    }
+  end
+
+  def for_api(%Message{role: :function} = fun) do
+    %{
+      "role" => :function,
+      "name" => fun.function_name,
+      "content" => fun.content
+    }
+  end
+
   def for_api(%Message{} = fun) do
     %{
       "role" => fun.role,
