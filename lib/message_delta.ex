@@ -51,7 +51,8 @@ defmodule Langchain.MessageDelta do
   def new(attrs \\ %{}) do
     %MessageDelta{}
     |> cast(attrs, @create_fields)
-    |> assign_arguments(attrs)
+    |> assign_string_value(:content, attrs)
+    |> assign_string_value(:arguments, attrs)
     |> validate_required(@required_fields)
     |> apply_action(:insert)
   end
@@ -133,17 +134,17 @@ defmodule Langchain.MessageDelta do
     primary
   end
 
-  # The arguments get streamed as a string. A delta of " " a single empty space
+  # The contents and arguments get streamed as a string. A delta of " " a single empty space
   # is expected. The "cast" process of the changeset turns this into `nil`
   # causing us to lose data.
   #
   # We want to take whatever we are given here.
-  defp assign_arguments(changeset, attrs) do
+  defp assign_string_value(changeset, field, attrs) do
     # get both possible versions of the arguments.
-    args = Map.get(attrs, :arguments) || Map.get(attrs, "arguments")
+    val = Map.get(attrs, field) || Map.get(attrs, to_string(field))
     # if we got a string, use it as-is without casting
-    if is_binary(args) do
-      put_change(changeset, :arguments, args)
+    if is_binary(val) do
+      put_change(changeset, field, val)
     else
       changeset
     end

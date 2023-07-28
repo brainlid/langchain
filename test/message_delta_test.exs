@@ -60,6 +60,14 @@ defmodule Langchain.MessageDeltaTest do
       {:ok, msg} = MessageDelta.new(%{role: "function_call", arguments: " "})
       assert msg.role == :function_call
       assert msg.arguments == " "
+
+      {:ok, msg} = MessageDelta.new(%{role: "assistant", content: "\r\n"})
+      assert msg.role == :assistant
+      assert msg.content == "\r\n"
+
+      {:ok, msg} = MessageDelta.new(%{role: "assistant", content: "\n"})
+      assert msg.role == :assistant
+      assert msg.content == "\n"
     end
 
     test "returns error when invalid" do
