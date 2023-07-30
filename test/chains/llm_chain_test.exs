@@ -174,6 +174,7 @@ defmodule Langchain.Chains.LLMChainTest do
         [MessageDelta.new!(%{content: "Socktastic!", complete: false})],
         [MessageDelta.new!(%{content: nil, complete: true})]
       ]
+
       set_api_override({:ok, fake_messages})
 
       # We can construct an LLMChain from a PromptTemplate and an LLM.
@@ -340,6 +341,68 @@ defmodule Langchain.Chains.LLMChainTest do
       assert user_msg.content == "Hello!"
       assert updated.last_message == user_msg
       assert updated.needs_response
+    end
+  end
+
+  describe "run/1" do
+    # TODO: runs a single execution
+
+    # TODO: runs until functions are evaluated
+
+    # TODO: LIVE and not-live tests.
+
+    @tag :live_call
+    test "custom_context is passed to a custom function" do
+      # map of data we want to be passed as `context` to the function when
+      # executed.
+      custom_context = %{
+        "user_id" => 123,
+        "hairbrush" => "drawer",
+        "dog" => "backyard",
+        "sandwich" => "kitchen"
+      }
+
+      # a custom Elixir function made available to the LLM
+      custom_fn =
+        Function.new!(%{
+          name: "custom",
+          description: "Returns the location of the requested element or item.",
+          parameters_schema: %{
+            type: "object",
+            properties: %{
+              thing: %{
+                type: "string",
+                description: "The thing whose location is being requested."
+              }
+            },
+            required: ["thing"]
+          },
+          function: fn %{"thing" => thing} = arguments, context ->
+            send(self(), {:function_run, arguments, context})
+            # our context is a pretend item/location location map
+            context[thing]
+          end
+        })
+
+      # create and run the chain
+      {:ok, updated_chain, %Message{} = message} =
+        LLMChain.new!(%{
+          llm: ChatOpenAI.new!(),
+          custom_context: custom_context,
+          verbose: true
+        })
+        |> LLMChain.add_functions(custom_fn)
+        |> LLMChain.apply_message(Message.new_user!("Where is the hairbrush located?"))
+        |> LLMChain.run(while_needs_response: true)
+
+      assert updated_chain.last_message == message
+      assert message.role == :assistant
+      assert message.content == "The hairbrush is located in the drawer."
+
+      # assert our custom function was executed with custom_context supplied
+      assert_received {:function_run, arguments, context}
+      assert context == custom_context
+      assert arguments == %{"thing" => "hairbrush"}
     end
   end
 
