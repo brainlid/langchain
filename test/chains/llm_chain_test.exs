@@ -259,7 +259,7 @@ defmodule Langchain.Chains.LLMChainTest do
     end
   end
 
-  describe "apply_message/2" do
+  describe "add_message/2" do
     setup do
       # https://js.langchain.com/docs/modules/chains/llm_chain#usage-with-chat-models
       {:ok, chat} = ChatOpenAI.new()
@@ -273,13 +273,13 @@ defmodule Langchain.Chains.LLMChainTest do
 
       # start with user message
       user_msg = Message.new_user!("Howdy!")
-      updated_chain = LLMChain.apply_message(chain, user_msg)
+      updated_chain = LLMChain.add_message(chain, user_msg)
       assert updated_chain.messages == [user_msg]
       assert updated_chain.last_message == user_msg
 
       # add assistant response
       assist_msg = Message.new_assistant!("Well hello to you too.")
-      updated_chain = LLMChain.apply_message(updated_chain, assist_msg)
+      updated_chain = LLMChain.add_message(updated_chain, assist_msg)
       assert updated_chain.messages == [user_msg, assist_msg]
       assert updated_chain.last_message == assist_msg
     end
@@ -288,24 +288,24 @@ defmodule Langchain.Chains.LLMChainTest do
       # after applying a message with role of :user, :function_call, or
       # :function, it should set need_response to true.
       user_msg = Message.new_user!("Howdy!")
-      updated_chain = LLMChain.apply_message(chain, user_msg)
+      updated_chain = LLMChain.add_message(chain, user_msg)
       assert updated_chain.needs_response
 
       function_call_msg = Message.new_function_call!("hello_world", "{}")
-      updated_chain = LLMChain.apply_message(chain, function_call_msg)
+      updated_chain = LLMChain.add_message(chain, function_call_msg)
       assert updated_chain.needs_response
 
       function_msg = Message.new_function!("hello_world", "Hello world!")
-      updated_chain = LLMChain.apply_message(chain, function_msg)
+      updated_chain = LLMChain.add_message(chain, function_msg)
       assert updated_chain.needs_response
 
       # set to false with a :system or :assistant message.
       system_msg = Message.new_system!("You are an overly optimistic assistant.")
-      updated_chain = LLMChain.apply_message(chain, system_msg)
+      updated_chain = LLMChain.add_message(chain, system_msg)
       refute updated_chain.needs_response
 
       assistant_msg = Message.new_assistant!("Yes, that's correct.")
-      updated_chain = LLMChain.apply_message(chain, assistant_msg)
+      updated_chain = LLMChain.add_message(chain, assistant_msg)
       refute updated_chain.needs_response
     end
   end
@@ -392,7 +392,7 @@ defmodule Langchain.Chains.LLMChainTest do
           verbose: true
         })
         |> LLMChain.add_functions(custom_fn)
-        |> LLMChain.apply_message(Message.new_user!("Where is the hairbrush located?"))
+        |> LLMChain.add_message(Message.new_user!("Where is the hairbrush located?"))
         |> LLMChain.run(while_needs_response: true)
 
       assert updated_chain.last_message == message

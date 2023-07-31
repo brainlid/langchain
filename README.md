@@ -30,6 +30,63 @@ Rename the `.envrc_template` to `.envrc` and populate it with your private API v
 
 Using a tool like [Dotenv](https://github.com/motdotla/dotenv), it can load the API values into the ENV when using the library locally.
 
+## Usage
+
+
+### Exposing a custom Elixir function to ChatGPT
+
+```elixir
+alias Langchain.Function
+alias Langchain.Message
+alias Langchain.Chains.LLMChain
+alias Langchain.ChatModels.ChatOpenAI
+
+# map of data we want to be passed as `context` to the function when
+# executed.
+custom_context = %{
+  "user_id" => 123,
+  "hairbrush" => "drawer",
+  "dog" => "backyard",
+  "sandwich" => "kitchen"
+}
+
+# a custom Elixir function made available to the LLM
+custom_fn =
+  Function.new!(%{
+    name: "custom",
+    description: "Returns the location of the requested element or item.",
+    parameters_schema: %{
+      type: "object",
+      properties: %{
+        thing: %{
+          type: "string",
+          description: "The thing whose location is being requested."
+        }
+      },
+      required: ["thing"]
+    },
+    function: fn %{"thing" => thing} = _arguments, context ->
+      # our context is a pretend item/location location map
+      context[thing]
+    end
+  })
+
+# create and run the chain
+{:ok, updated_chain, %Message{} = message} =
+  LLMChain.new!(%{
+    llm: ChatOpenAI.new!(),
+    custom_context: custom_context,
+    verbose: true
+  })
+  |> LLMChain.add_functions(custom_fn)
+  |> LLMChain.add_message(Message.new_user!("Where is the hairbrush located?"))
+  |> LLMChain.run(while_needs_response: true)
+
+# print the LLM's answer
+IO.put message.content
+#=> "The hairbrush is located in the drawer."
+```
+
 ## Testing
 
 To run all the tests including the ones that perform live calls against the OpenAI API, use the following command:

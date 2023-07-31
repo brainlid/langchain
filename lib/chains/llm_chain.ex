@@ -213,13 +213,13 @@ defmodule Langchain.Chains.LLMChain do
     case module.call(chain.llm, chain.messages, chain.functions) do
       {:ok, [%Message{} = message]} ->
         if chain.verbose, do: IO.inspect(message, label: "SINGLE MESSAGE RESPONSE")
-        {:ok, apply_message(chain, message)}
+        {:ok, add_message(chain, message)}
 
       {:ok, [%Message{} = message, _others] = messages} ->
         if chain.verbose, do: IO.inspect(messages, label: "MULTIPLE MESSAGE RESPONSE")
         # return the list of message responses. Happens when multiple
         # "choices" are returned from LLM by request.
-        {:ok, apply_message(chain, message)}
+        {:ok, add_message(chain, message)}
 
       {:ok, [[%MessageDelta{} | _] | _] = deltas} ->
         if chain.verbose, do: IO.inspect(deltas, label: "DELTA MESSAGE LIST RESPONSE")
@@ -254,7 +254,7 @@ defmodule Langchain.Chains.LLMChain do
     if merged.complete do
       case MessageDelta.to_message(merged) do
         {:ok, %Message{} = message} ->
-          apply_message(%LLMChain{chain | delta: nil}, message)
+          add_message(%LLMChain{chain | delta: nil}, message)
 
         {:error, reason} ->
           # should not have failed, but it did. Log the error and return
@@ -280,13 +280,13 @@ defmodule Langchain.Chains.LLMChain do
   end
 
   @doc """
-  Apply a received Message struct to the chain. The LLMChain tracks the
+  Add a received Message struct to the chain. The LLMChain tracks the
   `last_message` received and the complete list of messages exchanged. Depending
   on the message role, the chain may be in a pending or incomplete state where
-  an response from the LLM is anticipated.
+  a response from the LLM is anticipated.
   """
-  @spec apply_message(t(), Message.t()) :: t()
-  def apply_message(%LLMChain{} = chain, %Message{} = new_message) do
+  @spec add_message(t(), Message.t()) :: t()
+  def add_message(%LLMChain{} = chain, %Message{} = new_message) do
     needs_response =
       case new_message do
         %Message{role: role} when role in [:user, :function_call, :function] ->
@@ -305,13 +305,13 @@ defmodule Langchain.Chains.LLMChain do
   end
 
   @doc """
-  Apply a set of Message structs to the chain. This enables quickly building a chain
+  Add a set of Message structs to the chain. This enables quickly building a chain
   for submitting to an LLM.
   """
-  @spec apply_messages(t(), [Message.t()]) :: t()
-  def apply_messages(%LLMChain{} = chain, messages) do
+  @spec add_messages(t(), [Message.t()]) :: t()
+  def add_messages(%LLMChain{} = chain, messages) do
     Enum.reduce(messages, chain, fn msg, acc ->
-      apply_message(acc, msg)
+      add_message(acc, msg)
     end)
   end
 
@@ -325,7 +325,7 @@ defmodule Langchain.Chains.LLMChain do
           t() | no_return()
   def apply_prompt_templates(%LLMChain{} = chain, templates, %{} = inputs) do
     messages = PromptTemplate.to_messages(templates, inputs)
-    apply_messages(chain, messages)
+    add_messages(chain, messages)
   end
 
   @doc """
@@ -339,7 +339,7 @@ defmodule Langchain.Chains.LLMChain do
       Message.new_user!(text)
     ]
 
-    apply_messages(chain, messages)
+    add_messages(chain, messages)
   end
 
   @doc """
@@ -375,7 +375,7 @@ defmodule Langchain.Chains.LLMChain do
         if chain.verbose, do: IO.inspect(result, label: "FUNCTION RESULT")
 
         # add the :function response to the chain
-        LLMChain.apply_message(chain, Message.new_function!(function.name, result))
+        LLMChain.add_message(chain, Message.new_function!(function.name, result))
 
       nil ->
         Logger.warning(

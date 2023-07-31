@@ -57,7 +57,7 @@ defmodule Langchain.Tools.CalculatorTest do
           llm: ChatOpenAI.new!(%{temperature: 0, callback_fn: callback}),
           verbose: true
         })
-        |> LLMChain.apply_message(
+        |> LLMChain.add_message(
           Message.new_user!("Answer the following math question: What is 100 + 300 - 200?")
         )
         |> LLMChain.add_functions(Calculator.new!())

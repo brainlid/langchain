@@ -42,7 +42,7 @@ defmodule Langchain.Chains.DataExtractionChain do
 
       chain
       |> LLMChain.add_functions(build_extract_function(schema))
-      |> LLMChain.apply_messages(messages)
+      |> LLMChain.add_messages(messages)
       |> LLMChain.run()
       |> case do
         {:ok, _updated_chain, %Message{role: :function_call, arguments: %{"info" => info}}}
