@@ -71,7 +71,7 @@ defmodule Langchain.Tools.Calculator do
         to_string(number)
 
       {:error, reason} ->
-        Logger.warn(
+        Logger.warning(
           "Calculator tool errored in eval of #{inspect(expr)}. Reason: #{inspect(reason)}"
         )
 
