@@ -110,6 +110,7 @@ defmodule Langchain.Chains.LLMChainTest do
       callback = fn
         %MessageDelta{} = delta ->
           send(self(), {:test_stream_deltas, delta})
+
         %Message{} = message ->
           send(self(), {:test_stream_message, message})
       end
@@ -174,11 +175,12 @@ defmodule Langchain.Chains.LLMChainTest do
       callback = fn
         %MessageDelta{} = delta ->
           send(self(), {:fake_stream_deltas, delta})
+
         %Message{} = message ->
           send(self(), {:fake_full_message, message})
       end
 
-      model = ChatOpenAI.new!(%{temperature: 1, stream: true,})
+      model = ChatOpenAI.new!(%{temperature: 1, stream: true})
 
       # Made NOT LIVE here
       fake_messages = [
@@ -419,6 +421,19 @@ defmodule Langchain.Chains.LLMChainTest do
       assert context == custom_context
       assert arguments == %{"thing" => "hairbrush"}
     end
+
+    @tag :live_call
+    test "handles receiving an error when no messages sent" do
+      # create and run the chain
+      {:error, reason} =
+        LLMChain.new!(%{
+          llm: ChatOpenAI.new!(),
+          verbose: true
+        })
+        |> LLMChain.run()
+
+      assert reason == "[] is too short - 'messages'"
+    end
   end
 
   describe "execute_function/2" do
@@ -427,7 +442,6 @@ defmodule Langchain.Chains.LLMChainTest do
     test "adds the function result message to chain"
 
     test "returns chain and logs warning when function_call is a hallucination"
-
   end
 
   # TODO: Sequential chains

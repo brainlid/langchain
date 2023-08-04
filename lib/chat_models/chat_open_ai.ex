@@ -322,7 +322,7 @@ defmodule Langchain.ChatModels.ChatOpenAI do
         body: %{"error" => %{"message" => message}}
       }) do
     Logger.error("OpenAI error status #{inspect(status)}. Reason: #{inspect(message)}")
-    {:error, inspect(message)}
+    {:error, message}
   end
 
   def do_process_error_response(%Req.Response{status: status, body: data}) do
