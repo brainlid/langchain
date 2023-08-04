@@ -107,18 +107,21 @@ defmodule Langchain.Chains.LLMChainTest do
           "Suggest one good name for a company that makes <%= @product %>?"
         )
 
-      callback = fn %MessageDelta{} = delta ->
-        send(self(), {:test_stream_deltas, delta})
+      callback = fn
+        %MessageDelta{} = delta ->
+          send(self(), {:test_stream_deltas, delta})
+        %Message{} = message ->
+          send(self(), {:test_stream_message, message})
       end
 
-      model = ChatOpenAI.new!(%{temperature: 1, stream: true, callback_fn: callback})
+      model = ChatOpenAI.new!(%{temperature: 1, stream: true})
 
       # We can construct an LLMChain from a PromptTemplate and an LLM.
       {:ok, updated_chain, response} =
         %{llm: model, verbose: true}
         |> LLMChain.new!()
         |> LLMChain.apply_prompt_templates([prompt], %{product: "colorful socks"})
-        |> LLMChain.run()
+        |> LLMChain.run(callback_fn: callback)
 
       assert %Message{role: :assistant} = response
       assert updated_chain.last_message == response
@@ -127,6 +130,12 @@ defmodule Langchain.Chains.LLMChainTest do
       # we should have received at least one callback message delta
       assert_received {:test_stream_deltas, delta_1}
       assert %MessageDelta{role: :assistant, complete: false} = delta_1
+
+      # we should have received the final combined message
+      assert_received {:test_stream_message, message}
+      assert %Message{role: :assistant, content: content} = message
+      # the final returned message should match the callback message
+      assert message.content == response.content
     end
 
     test "non-live not-streamed usage test" do
@@ -162,11 +171,14 @@ defmodule Langchain.Chains.LLMChainTest do
           "Suggest one good name for a company that makes <%= @product %>?"
         )
 
-      callback = fn %MessageDelta{} = delta ->
-        send(self(), {:fake_stream_deltas, delta})
+      callback = fn
+        %MessageDelta{} = delta ->
+          send(self(), {:fake_stream_deltas, delta})
+        %Message{} = message ->
+          send(self(), {:fake_full_message, message})
       end
 
-      model = ChatOpenAI.new!(%{temperature: 1, stream: true, callback_fn: callback})
+      model = ChatOpenAI.new!(%{temperature: 1, stream: true,})
 
       # Made NOT LIVE here
       fake_messages = [
@@ -182,7 +194,7 @@ defmodule Langchain.Chains.LLMChainTest do
         %{llm: model, verbose: false}
         |> LLMChain.new!()
         |> LLMChain.apply_prompt_templates([prompt], %{product: "colorful socks"})
-        |> LLMChain.run()
+        |> LLMChain.run(callback_fn: callback)
 
       assert %Message{role: :assistant, content: "Socktastic!"} = response
       assert updated_chain.last_message == response
@@ -190,6 +202,9 @@ defmodule Langchain.Chains.LLMChainTest do
       # we should have received at least one callback message delta
       assert_received {:fake_stream_deltas, delta_1}
       assert %MessageDelta{role: :assistant, complete: false} = delta_1
+
+      assert_received {:fake_full_message, message}
+      assert %Message{role: :assistant, content: "Socktastic!"} = message
     end
   end
 
@@ -404,6 +419,15 @@ defmodule Langchain.Chains.LLMChainTest do
       assert context == custom_context
       assert arguments == %{"thing" => "hairbrush"}
     end
+  end
+
+  describe "execute_function/2" do
+    test "fires callback with function result message"
+
+    test "adds the function result message to chain"
+
+    test "returns chain and logs warning when function_call is a hallucination"
+
   end
 
   # TODO: Sequential chains

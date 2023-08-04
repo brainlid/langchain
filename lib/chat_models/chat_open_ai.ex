@@ -34,14 +34,11 @@ defmodule Langchain.ChatModels.ChatOpenAI do
     # How many chat completion choices to generate for each input message.
     field :n, :integer, default: 1
     field :stream, :boolean, default: false
-
-    # A callback function to execute when a message is received.
-    field :callback_fn, :any, virtual: true
   end
 
   @type t :: %ChatOpenAI{}
 
-  @create_fields [:model, :temperature, :frequency_penalty, :n, :stream, :callback_fn]
+  @create_fields [:model, :temperature, :frequency_penalty, :n, :stream]
   @required_fields [:model]
 
   @doc """
@@ -105,27 +102,27 @@ defmodule Langchain.ChatModels.ChatOpenAI do
   in a list of functions available to the LLM for requesting execution in
   response.
   """
-  @spec call(t(), String.t() | [Message.t()], [Function.t()]) ::
+  @spec call(t(), String.t() | [Message.t()], [Function.t()], nil | (Message.t() | MessageDelta.t() -> any())) ::
           {:ok, map()} | {:error, String.t()}
-  def call(openai, prompt, functions \\ [])
+  def call(openai, prompt, functions \\ [], callback_fn \\ nil)
 
-  def call(%ChatOpenAI{} = openai, prompt, functions) when is_binary(prompt) do
+  def call(%ChatOpenAI{} = openai, prompt, functions, callback_fn) when is_binary(prompt) do
     messages = [
       Message.new_system!(),
       Message.new_user!(prompt)
     ]
 
-    call(openai, messages, functions)
+    call(openai, messages, functions, callback_fn)
   end
 
-  def call(%ChatOpenAI{} = openai, messages, functions) when is_list(messages) do
+  def call(%ChatOpenAI{} = openai, messages, functions, callback_fn) when is_list(messages) do
     if override_api_return?() do
       Logger.warning("Found override API response. Will not make live API call.")
 
       case get_api_override() do
         {:ok, {:ok, data} = response} ->
-          # fire callback for face responses too
-          fire_callback(openai, data)
+          # fire callback for fake responses too
+          fire_callback(openai, data, callback_fn)
           response
 
         _other ->
@@ -134,7 +131,7 @@ defmodule Langchain.ChatModels.ChatOpenAI do
       end
     else
       # make base api request and perform high-level success/failure checks
-      case do_api_request(openai, messages, functions) do
+      case do_api_request(openai, messages, functions, callback_fn) do
         %Req.Response{status: 200, body: parsed_data} ->
           {:ok, parsed_data}
 
@@ -188,7 +185,7 @@ defmodule Langchain.ChatModels.ChatOpenAI do
   # Executes the callback function passing the response only parsed to the data
   # structures.
   @doc false
-  def do_api_request(%ChatOpenAI{stream: false} = openai, messages, functions) do
+  def do_api_request(%ChatOpenAI{stream: false} = openai, messages, functions, callback_fn) do
     response =
       Req.post!(openai.endpoint,
         json: for_api(openai, messages, functions),
@@ -199,7 +196,7 @@ defmodule Langchain.ChatModels.ChatOpenAI do
     case response do
       %Req.Response{status: 200, body: data} ->
         body = do_process_response(data)
-        fire_callback(openai, body)
+        fire_callback(openai, body, callback_fn)
         %Req.Response{response | body: body}
 
       other ->
@@ -207,7 +204,7 @@ defmodule Langchain.ChatModels.ChatOpenAI do
     end
   end
 
-  def do_api_request(%ChatOpenAI{stream: true} = openai, messages, functions) do
+  def do_api_request(%ChatOpenAI{stream: true} = openai, messages, functions, callback_fn) do
     finch_fun = fn request, finch_request, finch_name, finch_options ->
       resp_fun = fn
         {:status, status}, response ->
@@ -220,7 +217,7 @@ defmodule Langchain.ChatModels.ChatOpenAI do
           # cleanup data because it isn't structured well for JSON.
           body = decode_streamed_data(data)
           # execute the callback function for each MessageDelta
-          fire_callback(openai, body)
+          fire_callback(openai, body, callback_fn)
           old_body = if response.body == "", do: [], else: response.body
 
           # Returns %Req.Response{} where the body contains ALL the stream delta
@@ -305,17 +302,19 @@ defmodule Langchain.ChatModels.ChatOpenAI do
   end
 
   # fire the callback if present.
-  defp fire_callback(%ChatOpenAI{callback_fn: nil, stream: true}, _body) do
+  defp fire_callback(%ChatOpenAI{stream: true}, _body, nil) do
     Logger.warning("Streaming call requested but no callback function was given.")
+    :ok
   end
 
-  defp fire_callback(%ChatOpenAI{callback_fn: nil}, _body), do: :ok
+  defp fire_callback(%ChatOpenAI{}, _body, nil), do: :ok
 
-  defp fire_callback(%ChatOpenAI{callback_fn: callback_fn}, body) when is_function(callback_fn) do
+  defp fire_callback(%ChatOpenAI{}, body, callback_fn) when is_function(callback_fn) do
     # OPTIONAL: Execute callback function
     body
     |> List.flatten()
     |> Enum.each(fn item -> callback_fn.(item) end)
+    :ok
   end
 
   def do_process_error_response(%Req.Response{

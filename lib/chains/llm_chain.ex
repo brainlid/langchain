@@ -22,7 +22,6 @@ defmodule Langchain.Chains.LLMChain do
   @primary_key false
   embedded_schema do
     field :llm, :any, virtual: true
-    field :stream, :boolean, default: false
     field :verbose, :boolean, default: false
     field :functions, {:array, :any}, default: [], virtual: true
     # set and managed privately through functions
@@ -46,6 +45,12 @@ defmodule Langchain.Chains.LLMChain do
     # happens after sending a user message or when a function_call is received,
     # we've provided a function response and the LLM needs to respond.
     field :needs_response, :boolean, default: false
+
+    # A callback function to execute when messages are added. Don't allow caller
+    # to setup in `.new` function. Want to set it from the `.run` function to
+    # avoid multiple chain instances (across processes) from both firing
+    # callbacks.
+    field :callback_fn, :any, virtual: true
   end
 
   # Note: A Langchain "Tool" is pretty much expressed by an OpenAI Function.
@@ -61,7 +66,7 @@ defmodule Langchain.Chains.LLMChain do
 
   @type t :: %LLMChain{}
 
-  @create_fields [:llm, :functions, :stream, :custom_context, :verbose]
+  @create_fields [:llm, :functions, :custom_context, :verbose]
   @required_fields [:llm]
 
   @doc """
@@ -155,11 +160,16 @@ defmodule Langchain.Chains.LLMChain do
 
   - `:while_needs_response` - repeatedly evaluates functions and submits to the
     LLM so long as we still expect to get a response.
+  - `:callback_fn` - the callback function to execute as messages are received.
+
   """
   @spec run(t(), Keyword.t()) :: {:ok, t(), Message.t() | [Message.t()]} | {:error, String.t()}
   def run(chain, opts \\ [])
 
   def run(%LLMChain{} = chain, opts) do
+    # set the callback function on the chain
+    chain = %LLMChain{chain | callback_fn: Keyword.get(opts, :callback_fn)}
+
     if chain.verbose, do: IO.inspect(chain.llm, label: "LLM")
 
     if chain.verbose, do: IO.inspect(chain.messages, label: "MESSAGES")
@@ -210,7 +220,7 @@ defmodule Langchain.Chains.LLMChain do
     %module{} = chain.llm
 
     # handle and output response
-    case module.call(chain.llm, chain.messages, chain.functions) do
+    case module.call(chain.llm, chain.messages, chain.functions, chain.callback_fn) do
       {:ok, [%Message{} = message]} ->
         if chain.verbose, do: IO.inspect(message, label: "SINGLE MESSAGE RESPONSE")
         {:ok, add_message(chain, message)}
@@ -254,6 +264,8 @@ defmodule Langchain.Chains.LLMChain do
     if merged.complete do
       case MessageDelta.to_message(merged) do
         {:ok, %Message{} = message} ->
+          IO.puts "APPLY_DELTA MERGED AND FIRING CALLBACK"
+          fire_callback(chain, message)
           add_message(%LLMChain{chain | delta: nil}, message)
 
         {:error, reason} ->
@@ -375,7 +387,10 @@ defmodule Langchain.Chains.LLMChain do
         if chain.verbose, do: IO.inspect(result, label: "FUNCTION RESULT")
 
         # add the :function response to the chain
-        LLMChain.add_message(chain, Message.new_function!(function.name, result))
+        function_result = Message.new_function!(function.name, result)
+        # fire the callback as this is newly generated message
+        fire_callback(chain, function_result)
+        LLMChain.add_message(chain, function_result)
 
       nil ->
         Logger.warning(
@@ -388,4 +403,24 @@ defmodule Langchain.Chains.LLMChain do
 
   # Either not a function_call or an incomplete function_call, do nothing.
   def execute_function(%LLMChain{last_message: %Message{}} = chain, _context), do: chain
+
+  # Fire the callback if set.
+  defp fire_callback(%LLMChain{callback_fn: nil}, _data), do: :ok
+
+  # OPTIONAL: Execute callback function
+  defp fire_callback(%LLMChain{callback_fn: callback_fn}, data) when is_function(callback_fn) do
+    case data do
+      value when is_list(value) ->
+        value
+        |> List.flatten()
+        |> Enum.each(fn item -> callback_fn.(item) end)
+
+        :ok
+
+      # not a list, pass the item as-is
+      item ->
+        callback_fn.(item)
+        :ok
+    end
+  end
 end

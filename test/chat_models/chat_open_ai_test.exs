@@ -83,12 +83,14 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
       end
 
       # https://js.langchain.com/docs/modules/models/chat/
-      {:ok, chat} = ChatOpenAI.new(%{temperature: 1, stream: true, callback_fn: callback})
+      {:ok, chat} = ChatOpenAI.new(%{temperature: 1, stream: true})
 
       {:ok, _post_results} =
         ChatOpenAI.call(chat, [
           Message.new_user!("Return the response 'Hi'.")
-        ])
+        ],
+        [],
+        callback)
 
       # we expect to receive the response over 3 delta messages
       assert_receive {:message_delta, delta_1}, 500
@@ -117,12 +119,13 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
 
       # https://js.langchain.com/docs/modules/models/chat/
       # NOTE streamed. Should receive complete message.
-      {:ok, chat} = ChatOpenAI.new(%{temperature: 1, stream: false, callback_fn: callback})
+      {:ok, chat} = ChatOpenAI.new(%{temperature: 1, stream: false})
 
       {:ok, [message]} =
         ChatOpenAI.call(chat, [
           Message.new_user!("Return the response 'Hi'.")
-        ])
+        ],
+        [], callback)
 
       assert message.content == "Hi"
       assert message.index == 0
@@ -293,12 +296,12 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
         send(self(), {:streamed_fn, data})
       end
 
-      {:ok, chat} = ChatOpenAI.new(%{stream: true, callback_fn: callback, verbose: true})
+      {:ok, chat} = ChatOpenAI.new(%{stream: true, verbose: true})
 
       {:ok, message} =
         Message.new_user("Answer the following math question: What is 100 + 300 - 200?")
 
-      response = ChatOpenAI.do_api_request(chat, [message], [Langchain.Tools.Calculator.new!()])
+      response = ChatOpenAI.do_api_request(chat, [message], [Langchain.Tools.Calculator.new!()], callback)
 
       IO.inspect(response, label: "OPEN AI POST RESPONSE")
 
