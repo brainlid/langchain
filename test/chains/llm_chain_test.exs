@@ -130,11 +130,11 @@ defmodule Langchain.Chains.LLMChainTest do
 
       # we should have received at least one callback message delta
       assert_received {:test_stream_deltas, delta_1}
-      assert %MessageDelta{role: :assistant, complete: false} = delta_1
+      assert %MessageDelta{role: :assistant, status: :incomplete} = delta_1
 
       # we should have received the final combined message
       assert_received {:test_stream_message, message}
-      assert %Message{role: :assistant, content: content} = message
+      assert %Message{role: :assistant} = message
       # the final returned message should match the callback message
       assert message.content == response.content
     end
@@ -148,7 +148,7 @@ defmodule Langchain.Chains.LLMChainTest do
         )
 
       # Made NOT LIVE here
-      fake_message = Message.new!(%{role: :assistant, content: "Socktastic!", complete: true})
+      fake_message = Message.new!(%{role: :assistant, content: "Socktastic!", status: :complete})
       set_api_override({:ok, [fake_message]})
 
       # We can construct an LLMChain from a PromptTemplate and an LLM.
@@ -184,9 +184,9 @@ defmodule Langchain.Chains.LLMChainTest do
 
       # Made NOT LIVE here
       fake_messages = [
-        [MessageDelta.new!(%{role: :assistant, content: nil, complete: false})],
-        [MessageDelta.new!(%{content: "Socktastic!", complete: false})],
-        [MessageDelta.new!(%{content: nil, complete: true})]
+        [MessageDelta.new!(%{role: :assistant, content: nil, status: :incomplete})],
+        [MessageDelta.new!(%{content: "Socktastic!", status: :incomplete})],
+        [MessageDelta.new!(%{content: nil, status: :complete})]
       ]
 
       set_api_override({:ok, fake_messages})
@@ -198,12 +198,12 @@ defmodule Langchain.Chains.LLMChainTest do
         |> LLMChain.apply_prompt_templates([prompt], %{product: "colorful socks"})
         |> LLMChain.run(callback_fn: callback)
 
-      assert %Message{role: :assistant, content: "Socktastic!"} = response
+      assert %Message{role: :assistant, content: "Socktastic!", status: :complete} = response
       assert updated_chain.last_message == response
 
       # we should have received at least one callback message delta
       assert_received {:fake_stream_deltas, delta_1}
-      assert %MessageDelta{role: :assistant, complete: false} = delta_1
+      assert %MessageDelta{role: :assistant, status: :incomplete} = delta_1
 
       assert_received {:fake_full_message, message}
       assert %Message{role: :assistant, content: "Socktastic!"} = message
@@ -248,7 +248,7 @@ defmodule Langchain.Chains.LLMChainTest do
         )
         |> LLMChain.apply_delta(MessageDelta.new!(%{content: "your "}))
         |> LLMChain.apply_delta(MessageDelta.new!(%{content: "favorite "}))
-        |> LLMChain.apply_delta(MessageDelta.new!(%{content: "assistant.", complete: true}))
+        |> LLMChain.apply_delta(MessageDelta.new!(%{content: "assistant.", status: :complete}))
 
       # the delta is complete and removed from the chain
       assert updated_chain.delta == nil
@@ -423,11 +423,24 @@ defmodule Langchain.Chains.LLMChainTest do
     end
 
     @tag :live_call
-    test "handles receiving an error when no messages sent" do
+    test "NON-STREAMING handles receiving an error when no messages sent" do
       # create and run the chain
       {:error, reason} =
         LLMChain.new!(%{
-          llm: ChatOpenAI.new!(),
+          llm: ChatOpenAI.new!(%{stream: false}),
+          verbose: true
+        })
+        |> LLMChain.run()
+
+      assert reason == "[] is too short - 'messages'"
+    end
+
+    @tag :live_call
+    test "STREAMING handles receiving an error when no messages sent" do
+      # create and run the chain
+      {:error, reason} =
+        LLMChain.new!(%{
+          llm: ChatOpenAI.new!(%{stream: true}),
           verbose: true
         })
         |> LLMChain.run()

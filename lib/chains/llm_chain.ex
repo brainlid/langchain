@@ -242,10 +242,6 @@ defmodule Langchain.Chains.LLMChain do
     end
   end
 
-  defp do_run(%LLMChain{needs_response: false} = chain) do
-    {:ok, chain, chain.last_message}
-  end
-
   @doc """
   Apply a received MessageDelta struct to the chain. The LLMChain tracks the
   current merged MessageDelta state. When the final delta is received that
@@ -261,10 +257,9 @@ defmodule Langchain.Chains.LLMChain do
     merged = MessageDelta.merge_delta(delta, new_delta)
 
     # if the merged delta is now complete, updates as a message.
-    if merged.complete do
+    if merged.status == :complete do
       case MessageDelta.to_message(merged) do
         {:ok, %Message{} = message} ->
-          IO.puts "APPLY_DELTA MERGED AND FIRING CALLBACK"
           fire_callback(chain, message)
           add_message(%LLMChain{chain | delta: nil}, message)
 

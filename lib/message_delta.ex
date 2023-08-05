@@ -81,14 +81,14 @@ defmodule Langchain.MessageDelta do
     primary
     |> append_content(delta_part)
     |> update_index(delta_part)
-    |> update_complete(delta_part)
+    |> update_status(delta_part)
   end
 
   def merge_delta(%MessageDelta{role: :function_call} = primary, %MessageDelta{} = delta_part) do
     primary
     |> append_arguments(delta_part)
     |> update_index(delta_part)
-    |> update_complete(delta_part)
+    |> update_status(delta_part)
   end
 
   defp append_content(%MessageDelta{role: :assistant} = primary, %MessageDelta{
@@ -113,13 +113,19 @@ defmodule Langchain.MessageDelta do
     primary
   end
 
-  defp update_complete(%MessageDelta{status: :incomplete} = primary, %MessageDelta{
+  defp update_status(%MessageDelta{status: :incomplete} = primary, %MessageDelta{
          status: :complete
        }) do
     %MessageDelta{primary | status: :complete}
   end
 
-  defp update_complete(%MessageDelta{} = primary, %MessageDelta{} = _delta_part) do
+  defp update_status(%MessageDelta{status: :incomplete} = primary, %MessageDelta{
+         status: :length
+       }) do
+    %MessageDelta{primary | status: :length}
+  end
+
+  defp update_status(%MessageDelta{} = primary, %MessageDelta{} = _delta_part) do
     # status flag not updated
     primary
   end

@@ -1,10 +1,11 @@
 defmodule Langchain.ChatModels.ChatOpenAITest do
   use Langchain.BaseCase
+  import Langchain.Fixtures
 
   doctest Langchain.ChatModels.ChatOpenAI
   alias Langchain.ChatModels.ChatOpenAI
   alias Langchain.Function
-  alias Langchain.MessageDelta
+  alias Langchain.PromptTemplate
 
   setup do
     {:ok, hello_world} =
@@ -86,11 +87,14 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
       {:ok, chat} = ChatOpenAI.new(%{temperature: 1, stream: true})
 
       {:ok, _post_results} =
-        ChatOpenAI.call(chat, [
-          Message.new_user!("Return the response 'Hi'.")
-        ],
-        [],
-        callback)
+        ChatOpenAI.call(
+          chat,
+          [
+            Message.new_user!("Return the response 'Hi'.")
+          ],
+          [],
+          callback
+        )
 
       # we expect to receive the response over 3 delta messages
       assert_receive {:message_delta, delta_1}, 500
@@ -108,7 +112,7 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
 
       assert merged.role == :assistant
       assert merged.content == "Hi"
-      assert merged.complete
+      assert merged.status == :complete
     end
 
     @tag :live_call
@@ -122,10 +126,14 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
       {:ok, chat} = ChatOpenAI.new(%{temperature: 1, stream: false})
 
       {:ok, [message]} =
-        ChatOpenAI.call(chat, [
-          Message.new_user!("Return the response 'Hi'.")
-        ],
-        [], callback)
+        ChatOpenAI.call(
+          chat,
+          [
+            Message.new_user!("Return the response 'Hi'.")
+          ],
+          [],
+          callback
+        )
 
       assert message.content == "Hi"
       assert message.index == 0
@@ -135,13 +143,22 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
       assert received_item.content == "Hi"
       assert received_item.index == 0
     end
+
+    @tag :live_call
+    test "handles when request is too large" do
+      {:ok, chat} = ChatOpenAI.new(%{model: "gpt-3.5-turbo-0301", stream: false, temperature: 1})
+
+      {:error, reason} = ChatOpenAI.call(chat, [too_large_user_request()])
+      assert reason =~ "maximum context length"
+    end
   end
 
   describe "do_process_response/1" do
     test "handles receiving a message" do
       response = %{
         "message" => %{"role" => "assistant", "content" => "Greetings!"},
-        "finish_reason" => "stop", "index" => 1
+        "finish_reason" => "stop",
+        "index" => 1
       }
 
       assert %Message{} = struct = ChatOpenAI.do_process_response(response)
@@ -170,7 +187,23 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
       assert struct.index == 0
     end
 
-    test "handles error from server that the max length has been reached"
+    test "handles error from server that the max length has been reached" do
+      response = %{
+        "finish_reason" => "length",
+        "index" => 0,
+        "message" => %{
+          "content" => "Some of the response that was abruptly",
+          "role" => "assistant"
+        }
+      }
+
+      assert %Message{} = struct = ChatOpenAI.do_process_response(response)
+
+      assert struct.role == :assistant
+      assert struct.content == "Some of the response that was abruptly"
+      assert struct.index == 0
+      assert struct.status == :length
+    end
 
     test "handles receiving a delta message for a content message at different parts" do
       delta_content = Langchain.Fixtures.raw_deltas_for_content()
@@ -185,7 +218,7 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
         function_name: nil,
         role: :assistant,
         arguments: nil,
-        complete: false
+        status: :incomplete
       }
 
       [%MessageDelta{} = delta_1] = ChatOpenAI.do_process_response(msg_1)
@@ -197,7 +230,7 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
         function_name: nil,
         role: :unknown,
         arguments: nil,
-        complete: false
+        status: :incomplete
       }
 
       [%MessageDelta{} = delta_2] = ChatOpenAI.do_process_response(msg_2)
@@ -209,7 +242,7 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
         function_name: nil,
         role: :unknown,
         arguments: nil,
-        complete: true
+        status: :complete
       }
 
       [%MessageDelta{} = delta_10] = ChatOpenAI.do_process_response(msg_10)
@@ -229,7 +262,7 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
         function_name: "hello_world",
         role: :function_call,
         arguments: "",
-        complete: false
+        status: :incomplete
       }
 
       [%MessageDelta{} = delta_1] = ChatOpenAI.do_process_response(msg_1)
@@ -241,7 +274,7 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
         function_name: nil,
         role: :function_call,
         arguments: "{}",
-        complete: false
+        status: :incomplete
       }
 
       [%MessageDelta{} = delta_2] = ChatOpenAI.do_process_response(msg_2)
@@ -253,7 +286,7 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
         function_name: nil,
         role: :unknown,
         arguments: nil,
-        complete: true
+        status: :complete
       }
 
       # it should not trim the arguments text
@@ -292,7 +325,7 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
     @tag :live_call
     test "supports streaming response calling function with args" do
       callback = fn data ->
-        IO.inspect(data, label: "DATA")
+        # IO.inspect(data, label: "DATA")
         send(self(), {:streamed_fn, data})
       end
 
@@ -301,20 +334,27 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
       {:ok, message} =
         Message.new_user("Answer the following math question: What is 100 + 300 - 200?")
 
-      response = ChatOpenAI.do_api_request(chat, [message], [Langchain.Tools.Calculator.new!()], callback)
+      _response =
+        ChatOpenAI.do_api_request(chat, [message], [Langchain.Tools.Calculator.new!()], callback)
 
-      IO.inspect(response, label: "OPEN AI POST RESPONSE")
+      # IO.inspect(response, label: "OPEN AI POST RESPONSE")
 
       assert_receive {:streamed_fn, received_data}, 300
       assert %MessageDelta{} = received_data
       assert received_data.role == :function_call
       assert received_data.index == 0
-      # wait for the response to be received
-      Process.sleep(500)
+    end
+
+    @tag :live_call
+    test "STREAMING handles receiving an error when no messages sent" do
+      chat = ChatOpenAI.new!(%{stream: true})
+
+      {:error, reason} = ChatOpenAI.call(chat, [], [], nil)
+
+      assert reason == "[] is too short - 'messages'"
     end
   end
 
   # TODO: TEST that a non-streaming result could return content with "finish_reason" => "length". If so,
   #      I would need to store content on a message AND flag the length error.
-
 end
