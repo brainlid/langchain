@@ -73,6 +73,47 @@ defmodule Langchain.Chains.LLMChainTest do
     end
   end
 
+  describe "cancelled_delta/1" do
+    test "does nothing when no delta is present" do
+      model = ChatOpenAI.new!(%{temperature: 1, stream: true})
+
+      # We can construct an LLMChain from a PromptTemplate and an LLM.
+      chain = LLMChain.new!(%{llm: model, verbose: false})
+      assert chain.delta == nil
+
+      new_chain = LLMChain.cancel_delta(chain, :cancelled)
+      assert new_chain == chain
+    end
+
+    test "remove delta and adds cancelled message" do
+      model = ChatOpenAI.new!(%{temperature: 1, stream: true})
+
+      # Made NOT LIVE here
+      fake_messages = [
+        [MessageDelta.new!(%{role: :assistant, content: nil, status: :incomplete})],
+        [MessageDelta.new!(%{content: "Sock", status: :incomplete})]
+      ]
+
+      set_api_override({:ok, fake_messages})
+
+      # We can construct an LLMChain from a PromptTemplate and an LLM.
+      {:ok, updated_chain, _response} =
+        %{llm: model, verbose: false}
+        |> LLMChain.new!()
+        |> LLMChain.add_message(
+          Message.new_user!("What is a good name for a company that makes colorful socks?")
+        )
+        |> LLMChain.run()
+
+      assert %MessageDelta{} = delta = updated_chain.delta
+      new_chain = LLMChain.cancel_delta(updated_chain, :cancelled)
+      assert new_chain.delta == nil
+
+      assert %Message{role: :assistant, content: "Sock", status: :cancelled} =
+               new_chain.last_message
+    end
+  end
+
   describe "JS inspired test" do
     @tag :live_call
     test "live POST usage with LLM" do

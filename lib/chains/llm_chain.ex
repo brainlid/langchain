@@ -418,4 +418,21 @@ defmodule Langchain.Chains.LLMChain do
         :ok
     end
   end
+
+  def cancel_delta(%LLMChain{delta: nil} = chain, _message_status), do: chain
+
+  def cancel_delta(%LLMChain{delta: delta} = chain, message_status) do
+    # remove the in-progress delta
+    updated_chain = %LLMChain{chain | delta: nil}
+
+    case MessageDelta.to_message(%MessageDelta{delta | status: :complete}) do
+      {:ok, message} ->
+        message = %Message{message | status: message_status}
+        add_message(updated_chain, message)
+
+      {:error, reason} ->
+        Logger.error("Error attempting to cancel_delta. Reason: #{inspect(reason)}")
+        chain
+    end
+  end
 end
