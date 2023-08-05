@@ -12,7 +12,7 @@ defmodule Langchain.MessageDeltaTest do
       assert msg.content == nil
       assert msg.function_name == nil
       assert msg.arguments == nil
-      assert msg.complete == false
+      assert msg.status == :incomplete
       assert msg.index == nil
     end
 
@@ -22,14 +22,14 @@ defmodule Langchain.MessageDeltaTest do
                  "content" => "Hi!",
                  "role" => "assistant",
                  "index" => 1,
-                 "complete" => true
+                 "status" => "complete"
                })
 
       assert msg.role == :assistant
       assert msg.content == "Hi!"
       assert msg.function_name == nil
       assert msg.arguments == nil
-      assert msg.complete == true
+      assert msg.status == :complete
       assert msg.index == 1
     end
 
@@ -41,14 +41,14 @@ defmodule Langchain.MessageDeltaTest do
                  "function_name" => "hello_world",
                  "arguments" => Jason.encode!(%{greeting: "Howdy"}),
                  "index" => 1,
-                 "complete" => true
+                 "status" => "complete"
                })
 
       assert msg.role == :function_call
       assert msg.content == nil
       assert msg.function_name == "hello_world"
       assert msg.arguments == "{\"greeting\":\"Howdy\"}"
-      assert msg.complete == true
+      assert msg.status == :complete
       assert msg.index == 1
     end
 
@@ -79,7 +79,7 @@ defmodule Langchain.MessageDeltaTest do
 
   describe "new!/1" do
     test "returns struct when valid" do
-      assert %MessageDelta{role: :assistant, content: "Hi!", complete: false} =
+      assert %MessageDelta{role: :assistant, content: "Hi!", status: :incomplete} =
                MessageDelta.new!(%{
                  "content" => "Hi!",
                  "role" => "assistant"
@@ -108,7 +108,7 @@ defmodule Langchain.MessageDeltaTest do
         function_name: nil,
         role: :assistant,
         arguments: nil,
-        complete: true
+        status: :complete
       }
 
       assert merged == expected
@@ -128,7 +128,7 @@ defmodule Langchain.MessageDeltaTest do
         function_name: "hello_world",
         role: :function_call,
         arguments: "{}",
-        complete: true
+        status: :complete
       }
 
       assert merged == expected
@@ -148,7 +148,7 @@ defmodule Langchain.MessageDeltaTest do
         function_name: "calculator",
         role: :function_call,
         arguments: "{\n  \"expression\": \"100 + 300 - 200\"\n}",
-        complete: true
+        status: :complete
       }
 
       assert merged == expected
@@ -161,7 +161,7 @@ defmodule Langchain.MessageDeltaTest do
       delta = %Langchain.MessageDelta{
         content: "Hello! How can I assist you?",
         role: :assistant,
-        complete: true
+        status: :complete
       }
 
       {:ok, %Message{} = msg} = MessageDelta.to_message(delta)
@@ -173,7 +173,7 @@ defmodule Langchain.MessageDeltaTest do
         role: :function_call,
         function_name: "calculator",
         arguments: "{\n  \"expression\": \"100 + 300 - 200\"\n}",
-        complete: true
+        status: :complete
       }
 
       {:ok, %Message{} = msg} = MessageDelta.to_message(delta)
@@ -188,7 +188,7 @@ defmodule Langchain.MessageDeltaTest do
       delta = %Langchain.MessageDelta{
         content: "Hello! How can I assist ",
         role: :assistant,
-        complete: false
+        status: :incomplete
       }
 
       assert {:error, "Cannot convert incomplete message"} = MessageDelta.to_message(delta)
@@ -202,7 +202,7 @@ defmodule Langchain.MessageDeltaTest do
         role: :function_call,
         function_name: "calculator",
         arguments: "{\n  \"expression\": \"100 + 300 - 200\"",
-        complete: true
+        status: :complete
       }
 
       {:error, reason} = MessageDelta.to_message(delta)
@@ -221,7 +221,7 @@ defmodule Langchain.MessageDeltaTest do
         function_name: nil,
         role: :assistant,
         arguments: nil,
-        complete: false
+        status: :incomplete
       },
       %Langchain.MessageDelta{
         content: "Hello",
@@ -229,7 +229,7 @@ defmodule Langchain.MessageDeltaTest do
         function_name: nil,
         role: :unknown,
         arguments: nil,
-        complete: false
+        status: :incomplete
       },
       %Langchain.MessageDelta{
         content: "!",
@@ -237,7 +237,7 @@ defmodule Langchain.MessageDeltaTest do
         function_name: nil,
         role: :unknown,
         arguments: nil,
-        complete: false
+        status: :incomplete
       },
       %Langchain.MessageDelta{
         content: " How",
@@ -245,7 +245,7 @@ defmodule Langchain.MessageDeltaTest do
         function_name: nil,
         role: :unknown,
         arguments: nil,
-        complete: false
+        status: :incomplete
       },
       %Langchain.MessageDelta{
         content: " can",
@@ -253,7 +253,7 @@ defmodule Langchain.MessageDeltaTest do
         function_name: nil,
         role: :unknown,
         arguments: nil,
-        complete: false
+        status: :incomplete
       },
       %Langchain.MessageDelta{
         content: " I",
@@ -261,7 +261,7 @@ defmodule Langchain.MessageDeltaTest do
         function_name: nil,
         role: :unknown,
         arguments: nil,
-        complete: false
+        status: :incomplete
       },
       %Langchain.MessageDelta{
         content: " assist",
@@ -269,7 +269,7 @@ defmodule Langchain.MessageDeltaTest do
         function_name: nil,
         role: :unknown,
         arguments: nil,
-        complete: false
+        status: :incomplete
       },
       %Langchain.MessageDelta{
         content: " you",
@@ -277,7 +277,7 @@ defmodule Langchain.MessageDeltaTest do
         function_name: nil,
         role: :unknown,
         arguments: nil,
-        complete: false
+        status: :incomplete
       },
       %Langchain.MessageDelta{
         content: " today",
@@ -285,7 +285,7 @@ defmodule Langchain.MessageDeltaTest do
         function_name: nil,
         role: :unknown,
         arguments: nil,
-        complete: false
+        status: :incomplete
       },
       %Langchain.MessageDelta{
         content: "?",
@@ -293,7 +293,7 @@ defmodule Langchain.MessageDeltaTest do
         function_name: nil,
         role: :unknown,
         arguments: nil,
-        complete: false
+        status: :incomplete
       },
       %Langchain.MessageDelta{
         content: nil,
@@ -301,7 +301,7 @@ defmodule Langchain.MessageDeltaTest do
         function_name: nil,
         role: :unknown,
         arguments: nil,
-        complete: true
+        status: :complete
       }
     ]
   end
@@ -314,7 +314,7 @@ defmodule Langchain.MessageDeltaTest do
         function_name: "hello_world",
         role: :function_call,
         arguments: nil,
-        complete: false
+        status: :incomplete
       },
       %Langchain.MessageDelta{
         content: nil,
@@ -322,7 +322,7 @@ defmodule Langchain.MessageDeltaTest do
         function_name: nil,
         role: :function_call,
         arguments: "{}",
-        complete: false
+        status: :incomplete
       },
       %Langchain.MessageDelta{
         content: nil,
@@ -330,7 +330,7 @@ defmodule Langchain.MessageDeltaTest do
         function_name: nil,
         role: :unknown,
         arguments: nil,
-        complete: true
+        status: :complete
       }
     ]
   end
@@ -343,7 +343,7 @@ defmodule Langchain.MessageDeltaTest do
         function_name: "calculator",
         role: :function_call,
         arguments: "",
-        complete: false
+        status: :incomplete
       },
       %Langchain.MessageDelta{
         content: nil,
@@ -351,7 +351,7 @@ defmodule Langchain.MessageDeltaTest do
         function_name: nil,
         role: :function_call,
         arguments: "{\n",
-        complete: false
+        status: :incomplete
       },
       %Langchain.MessageDelta{
         content: nil,
@@ -359,7 +359,7 @@ defmodule Langchain.MessageDeltaTest do
         function_name: nil,
         role: :function_call,
         arguments: " ",
-        complete: false
+        status: :incomplete
       },
       %Langchain.MessageDelta{
         content: nil,
@@ -367,7 +367,7 @@ defmodule Langchain.MessageDeltaTest do
         function_name: nil,
         role: :function_call,
         arguments: " \"",
-        complete: false
+        status: :incomplete
       },
       %Langchain.MessageDelta{
         content: nil,
@@ -375,7 +375,7 @@ defmodule Langchain.MessageDeltaTest do
         function_name: nil,
         role: :function_call,
         arguments: "expression",
-        complete: false
+        status: :incomplete
       },
       %Langchain.MessageDelta{
         content: nil,
@@ -383,7 +383,7 @@ defmodule Langchain.MessageDeltaTest do
         function_name: nil,
         role: :function_call,
         arguments: "\":",
-        complete: false
+        status: :incomplete
       },
       %Langchain.MessageDelta{
         content: nil,
@@ -391,7 +391,7 @@ defmodule Langchain.MessageDeltaTest do
         function_name: nil,
         role: :function_call,
         arguments: " \"",
-        complete: false
+        status: :incomplete
       },
       %Langchain.MessageDelta{
         content: nil,
@@ -399,7 +399,7 @@ defmodule Langchain.MessageDeltaTest do
         function_name: nil,
         role: :function_call,
         arguments: "100",
-        complete: false
+        status: :incomplete
       },
       %Langchain.MessageDelta{
         content: nil,
@@ -407,7 +407,7 @@ defmodule Langchain.MessageDeltaTest do
         function_name: nil,
         role: :function_call,
         arguments: " +",
-        complete: false
+        status: :incomplete
       },
       %Langchain.MessageDelta{
         content: nil,
@@ -415,7 +415,7 @@ defmodule Langchain.MessageDeltaTest do
         function_name: nil,
         role: :function_call,
         arguments: " ",
-        complete: false
+        status: :incomplete
       },
       %Langchain.MessageDelta{
         content: nil,
@@ -423,7 +423,7 @@ defmodule Langchain.MessageDeltaTest do
         function_name: nil,
         role: :function_call,
         arguments: "300",
-        complete: false
+        status: :incomplete
       },
       %Langchain.MessageDelta{
         content: nil,
@@ -431,7 +431,7 @@ defmodule Langchain.MessageDeltaTest do
         function_name: nil,
         role: :function_call,
         arguments: " -",
-        complete: false
+        status: :incomplete
       },
       %Langchain.MessageDelta{
         content: nil,
@@ -439,7 +439,7 @@ defmodule Langchain.MessageDeltaTest do
         function_name: nil,
         role: :function_call,
         arguments: " ",
-        complete: false
+        status: :incomplete
       },
       %Langchain.MessageDelta{
         content: nil,
@@ -447,7 +447,7 @@ defmodule Langchain.MessageDeltaTest do
         function_name: nil,
         role: :function_call,
         arguments: "200",
-        complete: false
+        status: :incomplete
       },
       %Langchain.MessageDelta{
         content: nil,
@@ -455,7 +455,7 @@ defmodule Langchain.MessageDeltaTest do
         function_name: nil,
         role: :function_call,
         arguments: "\"\n",
-        complete: false
+        status: :incomplete
       },
       %Langchain.MessageDelta{
         content: nil,
@@ -463,7 +463,7 @@ defmodule Langchain.MessageDeltaTest do
         function_name: nil,
         role: :function_call,
         arguments: "}",
-        complete: false
+        status: :incomplete
       },
       %Langchain.MessageDelta{
         content: nil,
@@ -471,7 +471,7 @@ defmodule Langchain.MessageDeltaTest do
         function_name: nil,
         role: :unknown,
         arguments: nil,
-        complete: true
+        status: :complete
       }
     ]
   end

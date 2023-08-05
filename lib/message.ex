@@ -33,6 +33,7 @@ defmodule Langchain.Message do
   embedded_schema do
     field :content, :string
     field :index, :integer
+    field :status, Ecto.Enum, values: [:complete, :cancelled, :length], default: :complete
 
     field :role, Ecto.Enum,
       values: [:system, :user, :assistant, :function, :function_call],
@@ -43,8 +44,9 @@ defmodule Langchain.Message do
   end
 
   @type t :: %Message{}
+  @type status :: :complete | :cancelled | :length
 
-  @create_fields [:role, :content, :function_name, :arguments, :index]
+  @create_fields [:role, :content, :status, :function_name, :arguments, :index]
   @required_fields [:role]
 
   @spec new(attrs :: map()) :: {:ok, t()} | {:error, Ecto.Changeset.t()}
@@ -147,7 +149,7 @@ defmodule Langchain.Message do
   """
   @spec new_system(content :: String.t()) :: {:ok, t()} | {:error, Ecto.Changeset.t()}
   def new_system(content \\ "You are a helpful assistant.") do
-    new(%{role: :system, content: content})
+    new(%{role: :system, content: content, status: :complete})
   end
 
   @doc """
@@ -171,7 +173,7 @@ defmodule Langchain.Message do
   """
   @spec new_user(content :: String.t()) :: {:ok, t()} | {:error, Ecto.Changeset.t()}
   def new_user(content) do
-    new(%{role: :user, content: content})
+    new(%{role: :user, content: content, status: :complete})
   end
 
   @doc """
@@ -192,17 +194,18 @@ defmodule Langchain.Message do
   @doc """
   Create a new assistant message which represents a response from the AI or LLM.
   """
-  @spec new_assistant(content :: String.t()) :: {:ok, t()} | {:error, Ecto.Changeset.t()}
-  def new_assistant(content) do
-    new(%{role: :assistant, content: content})
+  @spec new_assistant(content :: String.t(), status()) ::
+          {:ok, t()} | {:error, Ecto.Changeset.t()}
+  def new_assistant(content, status \\ :complete) do
+    new(%{role: :assistant, content: content, status: status})
   end
 
   @doc """
   Create a new assistant message which represents a response from the AI or LLM.
   """
-  @spec new_assistant!(content :: String.t()) :: t() | no_return()
-  def new_assistant!(content) do
-    case new_assistant(content) do
+  @spec new_assistant!(content :: String.t(), status()) :: t() | no_return()
+  def new_assistant!(content, status \\ :complete) do
+    case new_assistant(content, status) do
       {:ok, msg} ->
         msg
 
@@ -277,7 +280,10 @@ defimpl Langchain.ForOpenAIApi, for: Langchain.Message do
   def for_api(%Message{role: :function_call} = fun) do
     %{
       "role" => :assistant,
-      "function_call" => %{"arguments" => Jason.encode!(fun.arguments), "name" => fun.function_name},
+      "function_call" => %{
+        "arguments" => Jason.encode!(fun.arguments),
+        "name" => fun.function_name
+      },
       "content" => fun.content
     }
   end

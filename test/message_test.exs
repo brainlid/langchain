@@ -135,6 +135,7 @@ defmodule Langchain.MessageTest do
     test "creates a user message" do
       assert %Message{role: :user} = msg = Message.new_user!("Hello!")
       assert msg.content == "Hello!"
+      assert msg.status == :complete
     end
 
     test "requires content" do
@@ -146,8 +147,15 @@ defmodule Langchain.MessageTest do
 
   describe "new_assistant/1" do
     test "creates a assistant message" do
-      assert {:ok, %Message{role: :assistant} = msg} = Message.new_assistant("Greetings non-AI!")
+      assert {:ok, %Message{role: :assistant} = msg} = Message.new_assistant("Greetings non-AI!", "complete")
       assert msg.content == "Greetings non-AI!"
+      assert msg.status == :complete
+    end
+
+    test "creates a cancelled assistant message" do
+      assert {:ok, %Message{role: :assistant} = msg} = Message.new_assistant("Greetings ", :cancelled)
+      assert msg.content == "Greetings "
+      assert msg.status == :cancelled
     end
 
     test "does not require content" do

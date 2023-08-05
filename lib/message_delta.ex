@@ -27,6 +27,8 @@ defmodule Langchain.MessageDelta do
   @primary_key false
   embedded_schema do
     field :content, :string
+    # Marks if the delta completes the message.
+    field :status, Ecto.Enum, values: [:incomplete, :complete, :length], default: :incomplete
     # When requesting multiple choices for a response, the `index` represents
     # which choice it is. It is a 0 based list.()
     field :index, :integer
@@ -35,13 +37,11 @@ defmodule Langchain.MessageDelta do
     field :role, Ecto.Enum, values: [:unknown, :assistant, :function_call], default: :unknown
 
     field :arguments, :string
-    # Marks if the delta completes the message.
-    field :complete, :boolean, default: false
   end
 
   @type t :: %MessageDelta{}
 
-  @create_fields [:role, :content, :function_name, :arguments, :index, :complete]
+  @create_fields [:role, :content, :function_name, :arguments, :index, :status]
   @required_fields []
 
   @doc """
@@ -113,12 +113,14 @@ defmodule Langchain.MessageDelta do
     primary
   end
 
-  defp update_complete(%MessageDelta{complete: false} = primary, %MessageDelta{complete: true}) do
-    %MessageDelta{primary | complete: true}
+  defp update_complete(%MessageDelta{status: :incomplete} = primary, %MessageDelta{
+         status: :complete
+       }) do
+    %MessageDelta{primary | status: :complete}
   end
 
   defp update_complete(%MessageDelta{} = primary, %MessageDelta{} = _delta_part) do
-    # complete flag not updated
+    # status flag not updated
     primary
   end
 
@@ -155,12 +157,29 @@ defmodule Langchain.MessageDelta do
   MessageDelta.
   """
   @spec to_message(t()) :: {:ok, Message.t()} | {:error, String.t()}
-  def to_message(%MessageDelta{complete: false} = _delta) do
+  def to_message(%MessageDelta{status: :incomplete} = _delta) do
     {:error, "Cannot convert incomplete message"}
   end
 
-  def to_message(%MessageDelta{} = delta) do
-    case Message.new(Map.from_struct(delta)) do
+  def to_message(%MessageDelta{status: status} = delta) do
+    msg_status =
+      case status do
+        :complete ->
+          :complete
+
+        :length ->
+          :length
+
+        _other ->
+          nil
+      end
+
+    attrs =
+      delta
+      |> Map.from_struct()
+      |> Map.put(:status, msg_status)
+
+    case Message.new(attrs) do
       {:ok, message} ->
         {:ok, message}
 

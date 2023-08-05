@@ -9,6 +9,7 @@ defmodule Langchain.BaseCase do
   using do
     quote do
       alias Langchain.Message
+      alias Langchain.MessageDelta
 
       # Import conveniences for testing with AI models
       import Langchain.BaseCase
