@@ -419,6 +419,10 @@ defmodule Langchain.Chains.LLMChain do
     end
   end
 
+  @doc """
+  Remove an incomplete MessageDelta from `delta` and add a Message with the
+  desired status to the chain.
+  """
   def cancel_delta(%LLMChain{delta: nil} = chain, _message_status), do: chain
 
   def cancel_delta(%LLMChain{delta: delta} = chain, message_status) do
