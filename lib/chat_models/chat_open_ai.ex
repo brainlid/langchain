@@ -266,8 +266,8 @@ defmodule Langchain.ChatModels.ChatOpenAI do
         data
 
       other ->
-        Logger.error("WHAT IS THIS???? #{inspect(other)}")
-        {:error, "WHAT IS THIS????????????"}
+        Logger.error("Unhandled and unexpected response from streamed post call. #{inspect(other)}")
+        {:error, "Unexpected response"}
     end
   end
 
