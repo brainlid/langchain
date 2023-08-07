@@ -5,7 +5,9 @@ defmodule Langchain.MessageTest do
 
   describe "new/1" do
     test "works with minimal attrs" do
-      assert {:ok, %Message{} = msg} = Message.new(%{"role" => "system", "content" => "hello!", "index" => 0})
+      assert {:ok, %Message{} = msg} =
+               Message.new(%{"role" => "system", "content" => "hello!", "index" => 0})
+
       assert msg.role == :system
       assert msg.content == "hello!"
       assert msg.index == 0
@@ -26,17 +28,19 @@ defmodule Langchain.MessageTest do
     test "parses arguments" do
       json = Jason.encode!(%{name: "Tim", age: 40})
 
-      assert {:ok, %Message{role: :function_call} = msg} =
+      assert {:ok, %Message{role: :assistant} = msg} =
                Message.new(%{
-                 role: :function_call,
+                 role: :assistant,
                  function_name: "my_fun",
                  arguments: json
                })
 
-      assert msg.role == :function_call
+      assert msg.role == :assistant
       assert msg.function_name == "my_fun"
       assert msg.arguments == %{"name" => "Tim", "age" => 40}
       assert msg.content == nil
+      assert msg.status == :complete
+      assert Message.is_function_call?(msg)
     end
 
     test "adds error to arguments when valid JSON but not a map" do
@@ -44,7 +48,7 @@ defmodule Langchain.MessageTest do
 
       assert {:error, changeset} =
                Message.new(%{
-                 role: :function_call,
+                 role: :assistant,
                  function_name: "my_fun",
                  arguments: json
                })
@@ -56,7 +60,7 @@ defmodule Langchain.MessageTest do
     test "adds error to arguments if it fails to parse" do
       assert {:error, changeset} =
                Message.new(%{
-                 role: :function_call,
+                 role: :assistant,
                  function_name: "my_fun",
                  arguments: "invalid"
                })
@@ -81,23 +85,17 @@ defmodule Langchain.MessageTest do
       assert {"can't be blank", _} = changeset.errors[:content]
     end
 
-    test "requires function_name when role is function_call or function" do
-      assert {:error, changeset} = Message.new(%{role: :function_call, function_name: nil})
-      assert {"can't be blank", _} = changeset.errors[:function_name]
-
+    test "requires function_name when role is function" do
       assert {:error, changeset} = Message.new(%{role: :function, function_name: nil})
       assert {"can't be blank", _} = changeset.errors[:function_name]
     end
 
-    test "function_name cannot be set when when role is neither function_call nor function" do
+    test "function_name cannot be set when when role is not function" do
       assert {:error, changeset} = Message.new(%{role: :user, function_name: "test"})
       assert {"can't be set with role :user", _} = changeset.errors[:function_name]
 
       assert {:error, changeset} = Message.new(%{role: :system, function_name: "test"})
       assert {"can't be set with role :system", _} = changeset.errors[:function_name]
-
-      assert {:error, changeset} = Message.new(%{role: :assistant, function_name: "test"})
-      assert {"can't be set with role :assistant", _} = changeset.errors[:function_name]
     end
   end
 
@@ -147,13 +145,17 @@ defmodule Langchain.MessageTest do
 
   describe "new_assistant/1" do
     test "creates a assistant message" do
-      assert {:ok, %Message{role: :assistant} = msg} = Message.new_assistant("Greetings non-AI!", "complete")
+      assert {:ok, %Message{role: :assistant} = msg} =
+               Message.new_assistant("Greetings non-AI!", "complete")
+
       assert msg.content == "Greetings non-AI!"
       assert msg.status == :complete
     end
 
     test "creates a cancelled assistant message" do
-      assert {:ok, %Message{role: :assistant} = msg} = Message.new_assistant("Greetings ", :cancelled)
+      assert {:ok, %Message{role: :assistant} = msg} =
+               Message.new_assistant("Greetings ", :cancelled)
+
       assert msg.content == "Greetings "
       assert msg.status == :cancelled
     end
@@ -172,17 +174,18 @@ defmodule Langchain.MessageTest do
 
   describe "new_function_call/1" do
     test "creates a function_call execution request message" do
-      assert {:ok, %Message{role: :function_call} = msg} =
+      assert {:ok, %Message{role: :assistant} = msg} =
                Message.new_function_call("my_fun", Jason.encode!(%{name: "Tim", age: 40}))
 
       assert msg.function_name == "my_fun"
       assert msg.arguments == %{"name" => "Tim", "age" => 40}
       assert msg.content == nil
+      assert Message.is_function_call?(msg)
     end
 
     test "requires function_name" do
       assert {:error, changeset} = Message.new_function_call("", Jason.encode!(%{}))
-      assert {"can't be blank", _} = changeset.errors[:function_name]
+      assert {"is required when arguments are given", _} = changeset.errors[:function_name]
     end
 
     test "returns error if JSON parsing fails" do
@@ -193,12 +196,13 @@ defmodule Langchain.MessageTest do
 
   describe "new_function_call!/1" do
     test "creates a function_call execution request message" do
-      assert %Message{role: :function_call} =
+      assert %Message{role: :assistant} =
                msg = Message.new_function_call!("fun_name", Jason.encode!(%{name: "Herman"}))
 
       assert msg.function_name == "fun_name"
       assert msg.arguments == %{"name" => "Herman"}
       assert msg.content == nil
+      assert Message.is_function_call?(msg)
     end
   end
 

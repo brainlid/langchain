@@ -310,7 +310,7 @@ defmodule Langchain.Chains.LLMChainTest do
 
       assert updated_chain.delta == nil
       last = updated_chain.last_message
-      assert last.role == :function_call
+      assert last.role == :assistant
       assert last.function_name == "calculator"
       assert last.arguments == %{"expression" => "100 + 300 - 200"}
       assert updated_chain.messages == [last]
@@ -405,8 +405,6 @@ defmodule Langchain.Chains.LLMChainTest do
   describe "run/1" do
     # TODO: runs a single execution
 
-    # TODO: runs until functions are evaluated
-
     # TODO: LIVE and not-live tests.
 
     @tag :live_call
@@ -487,6 +485,63 @@ defmodule Langchain.Chains.LLMChainTest do
         |> LLMChain.run()
 
       assert reason == "[] is too short - 'messages'"
+    end
+
+    # TODO: runs until functions are evaluated
+
+    @tag :live_call
+    test "handles content response + function call" do
+      callback = fn data ->
+        # IO.inspect(data, label: "DATA")
+        send(self(), {:streamed_fn, data})
+      end
+
+      {:ok, chat} = ChatOpenAI.new(%{stream: true, verbose: true})
+
+      {:ok, message} = Message.new_user("I want to deploy my app to additional regions.")
+
+      regions_function =
+        Function.new!(%{
+          name: "fly_regions",
+          description:
+            "List the currently available regions an app can be deployed to on Fly.io in JSON format.",
+          function: fn _args, _context ->
+            [
+              %{name: "ams", location: "Amsterdam, Netherlands"},
+              %{name: "arn", location: "Stockholm, Sweden"},
+              %{name: "atl", location: "Atlanta, Georgia (US)"},
+              %{name: "dfw", location: "Dallas, Texas (US)"},
+              %{name: "fra", location: "Frankfurt, Germany"},
+              %{name: "iad", location: "Ashburn, Virginia (US)"},
+              %{name: "lax", location: "Los Angeles, California (US)"},
+              %{name: "nrt", location: "Tokyo, Japan"},
+              %{name: "ord", location: "Chicago, Illinois (US)"},
+              %{name: "yul", location: "Montreal, Canada"},
+              %{name: "yyz", location: "Toronto, Canada"}
+            ]
+            |> Jason.encode!()
+          end
+        })
+
+        {:ok, updated_chain, %Message{} = message} =
+          LLMChain.new!(%{
+            llm: ChatOpenAI.new!(),
+            custom_context: nil,
+            verbose: true
+          })
+          |> LLMChain.add_functions(regions_function)
+          |> LLMChain.add_message(message)
+          |> LLMChain.run(while_needs_response: true)
+
+      IO.inspect(message, label: "OPEN AI POST RESPONSE")
+      IO.inspect updated_chain
+
+      # assert_receive {:streamed_fn, received_data}, 300
+      # assert %MessageDelta{} = received_data
+      # assert received_data.role == :assistant
+      # assert received_data.index == 0
+
+      assert false
     end
   end
 

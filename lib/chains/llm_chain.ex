@@ -295,12 +295,10 @@ defmodule Langchain.Chains.LLMChain do
   @spec add_message(t(), Message.t()) :: t()
   def add_message(%LLMChain{} = chain, %Message{} = new_message) do
     needs_response =
-      case new_message do
-        %Message{role: role} when role in [:user, :function_call, :function] ->
-          true
-
-        %Message{role: role} when role in [:system, :assistant] ->
-          false
+      cond do
+        new_message.role in [:user, :function_call, :function] -> true
+        Message.is_function_call?(new_message) -> true
+        new_message.role in [:system, :assistant] -> false
       end
 
     %LLMChain{
@@ -366,38 +364,40 @@ defmodule Langchain.Chains.LLMChain do
   def execute_function(%LLMChain{last_message: nil} = chain, _context), do: chain
 
   def execute_function(
-        %LLMChain{last_message: %Message{role: :function_call} = message} = chain,
+        %LLMChain{last_message: %Message{} = message} = chain,
         context
       ) do
-    # context to use
-    use_context = context || chain.custom_context
+    if Message.is_function_call?(message) do
+      # context to use
+      use_context = context || chain.custom_context
 
-    # find and execute the linked function
-    case chain.function_map[message.function_name] do
-      %Function{} = function ->
-        if chain.verbose, do: IO.inspect(function.name, label: "EXECUTING FUNCTION")
+      # find and execute the linked function
+      case chain.function_map[message.function_name] do
+        %Function{} = function ->
+          if chain.verbose, do: IO.inspect(function.name, label: "EXECUTING FUNCTION")
 
-        # execute the function
-        result = Function.execute(function, message.arguments, use_context)
-        if chain.verbose, do: IO.inspect(result, label: "FUNCTION RESULT")
+          # execute the function
+          result = Function.execute(function, message.arguments, use_context)
+          if chain.verbose, do: IO.inspect(result, label: "FUNCTION RESULT")
 
-        # add the :function response to the chain
-        function_result = Message.new_function!(function.name, result)
-        # fire the callback as this is newly generated message
-        fire_callback(chain, function_result)
-        LLMChain.add_message(chain, function_result)
+          # add the :function response to the chain
+          function_result = Message.new_function!(function.name, result)
+          # fire the callback as this is newly generated message
+          fire_callback(chain, function_result)
+          LLMChain.add_message(chain, function_result)
 
-      nil ->
-        Logger.warning(
-          "Received function_call for missing function #{inspect(message.function_name)}"
-        )
+        nil ->
+          Logger.warning(
+            "Received function_call for missing function #{inspect(message.function_name)}"
+          )
 
-        chain
+          chain
+      end
+    else
+      # Either not a function_call or an incomplete function_call, do nothing.
+      chain
     end
   end
-
-  # Either not a function_call or an incomplete function_call, do nothing.
-  def execute_function(%LLMChain{last_message: %Message{}} = chain, _context), do: chain
 
   # Fire the callback if set.
   defp fire_callback(%LLMChain{callback_fn: nil}, _data), do: :ok

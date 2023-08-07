@@ -372,7 +372,7 @@ defmodule Langchain.ChatModels.ChatOpenAI do
         } = data
       ) do
     case Message.new(%{
-           "role" => "function_call",
+           "role" => "assistant",
            "function_name" => name,
            "arguments" => raw_args,
            "complete" => true,
@@ -425,7 +425,6 @@ defmodule Langchain.ChatModels.ChatOpenAI do
     # that the assistant is issuing the function_call.
     role =
       case delta_body do
-        %{"function_call" => _data} -> "function_call"
         %{"role" => role} -> role
         _other -> "unknown"
       end
@@ -481,87 +480,4 @@ defmodule Langchain.ChatModels.ChatOpenAI do
   def do_process_response(%{"error" => %{"message" => reason}}) do
     {:error, reason}
   end
-
-  # TODO: "last_message reference? Does the "delta" include a message index?
-
-  # NOTE: Full delta message:
-  # - %{"delta" => %{"content" => " assist"}, "finish_reason" => nil, "index" => 0}
-
-  # def do_process_response(data) do
-  #   # handle the received data
-  #   case data do
-  #     # starting a new assistant response
-  #     %{"choices" => [%{"delta" => %{"role" => "assistant"}}]} ->
-  #       {:ok, message} =
-  #         Messages.create_message(conversation_id, %{"role" => "assistant", "index" => index})
-
-  #       send(pid, {:chat_response, message, {:start, self()}})
-
-  #     # adding data to a response
-  #     %{"choices" => [%{"delta" => %{"content" => content}}]} ->
-  #       message = Messages.get_message_by_index!(conversation_id, index)
-  #       new_content = (message.content || "") <> content
-  #       {:ok, updated} = Messages.update_message(message, %{content: new_content})
-  #       send(pid, {:chat_response, updated, {:update, self()}})
-  #       nil
-
-  #     # Execute a function_call
-  #     %{
-  #       "choices" => [
-  #         %{
-  #           "finish_reason" => "function_call",
-  #           "message" => %{"function_call" => %{"arguments" => raw_args, "name" => name}}
-  #         }
-  #       ]
-  #     } ->
-  #       # NOTE: JSON from the LLM may not be valid. Handle that situation.
-  #       # TODO: May receive multiple function calls in a single response.
-  #       Langchain.Tools.Calculator.parse(raw_args)
-
-  #     # TODO:
-  #     # # Step 4: send the info on the function call and function response to GPT
-  #     # messages.append(response_message)  # extend conversation with assistant's reply
-  #     # messages.append(
-  #     #     {
-  #     #         "role": "function",
-  #     #         "name": function_name,
-  #     #         "content": function_response,
-  #     #     }
-  #     # )  # extend conversation with function response
-  #     # second_response = openai.ChatCompletion.create(
-  #     #     model="gpt-3.5-turbo-0613",
-  #     #     messages=messages,
-  #     # )  # get a new response from GPT where it can see the function response
-  #     # return second_response
-
-  #     # TODO: Include "Only use the functions you have been provided with." in system message.
-
-  #     # response is finished
-  #     %{"choices" => [%{"delta" => %{}, "finish_reason" => "stop"}]} ->
-  #       # we received the final message. Flag it as "original" and unedited
-  #       message = Messages.get_message_by_index!(conversation_id, index)
-  #       {:ok, updated} = Messages.update_message(message, %{edited: false})
-  #       send(pid, {:chat_response, updated, {:done, self()}})
-  #       :ok
-
-  #     # error condition: stopped because token length is too long
-  #     %{"choices" => [%{"finish_reason" => "length"}]} ->
-  #       # it stopped because it reached too many tokens. Update it to not
-  #       # show as edited.
-  #       message = Messages.get_message_by_index!(conversation_id, index)
-  #       {:ok, _updated} = Messages.update_message(message, %{edited: false})
-  #       send(pid, {:chat_error, "Stopped for length"})
-  #       :ok
-
-  #     # error condition: we got an error response from ChatGPT
-  #     %{"error" => %{"message" => message}} ->
-  #       send(pid, {:chat_error, message})
-
-  #     # error condition: something else went wrong. May not have been able
-  #     # to reach the server, etc.
-  #     other ->
-  #       Logger.error("ChatGPT failure: #{inspect(other)}")
-  #       send(pid, {:chat_error, inspect(other)})
-  #   end
-  # end
 end

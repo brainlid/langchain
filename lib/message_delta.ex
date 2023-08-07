@@ -8,7 +8,10 @@ defmodule Langchain.MessageDelta do
 
   - `:unknown` - The role data is missing for the delta.
   - `:assistant` - Responses coming back from the LLM.
-  - `:function_call` - A message from the LLM expressing the intent to execute a
+
+  ## Function calling
+
+  - `:function_name` - A message from the LLM expressing the intent to execute a
     function that was previously declared available to it.
 
     The `arguments` will eventually be parsed from JSON. However, as deltas are
@@ -34,12 +37,13 @@ defmodule Langchain.MessageDelta do
     field :index, :integer
     field :function_name, :string
 
-    field :role, Ecto.Enum, values: [:unknown, :assistant, :function_call], default: :unknown
+    field :role, Ecto.Enum, values: [:unknown, :assistant], default: :unknown
 
     field :arguments, :string
   end
 
   @type t :: %MessageDelta{}
+
 
   @create_fields [:role, :content, :function_name, :arguments, :index, :status]
   @required_fields []
@@ -80,12 +84,7 @@ defmodule Langchain.MessageDelta do
   def merge_delta(%MessageDelta{role: :assistant} = primary, %MessageDelta{} = delta_part) do
     primary
     |> append_content(delta_part)
-    |> update_index(delta_part)
-    |> update_status(delta_part)
-  end
-
-  def merge_delta(%MessageDelta{role: :function_call} = primary, %MessageDelta{} = delta_part) do
-    primary
+    |> append_function_name(delta_part)
     |> append_arguments(delta_part)
     |> update_index(delta_part)
     |> update_status(delta_part)
@@ -100,6 +99,18 @@ defmodule Langchain.MessageDelta do
 
   defp append_content(%MessageDelta{} = primary, %MessageDelta{} = _delta_part) do
     # no content to merge
+    primary
+  end
+
+  defp append_function_name(%MessageDelta{role: :assistant} = primary, %MessageDelta{
+         function_name: new_function
+       })
+       when is_binary(new_function) do
+    %MessageDelta{primary | function_name: (primary.function_name || "") <> new_function}
+  end
+
+  defp append_function_name(%MessageDelta{} = primary, %MessageDelta{} = _delta_part) do
+    # no function name to merge
     primary
   end
 
@@ -130,7 +141,7 @@ defmodule Langchain.MessageDelta do
     primary
   end
 
-  defp append_arguments(%MessageDelta{role: :function_call} = primary, %MessageDelta{
+  defp append_arguments(%MessageDelta{role: :assistant} = primary, %MessageDelta{
          arguments: new_arguments
        })
        when is_binary(new_arguments) do

@@ -71,7 +71,7 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
 
       {:ok, [message]} = ChatOpenAI.call(chat, [message], [hello_world])
 
-      assert %Message{role: :function_call} = message
+      assert %Message{role: :assistant} = message
       assert message.arguments == %{}
       assert message.content == nil
     end
@@ -179,7 +179,7 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
 
       assert %Message{} = struct = ChatOpenAI.do_process_response(response)
 
-      assert struct.role == :function_call
+      assert struct.role == :assistant
       assert struct.content == nil
       assert struct.function_name == "hello_world"
       assert struct.arguments == %{}
@@ -259,7 +259,7 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
         content: nil,
         index: 0,
         function_name: "hello_world",
-        role: :function_call,
+        role: :assistant,
         arguments: "",
         status: :incomplete
       }
@@ -271,7 +271,7 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
         content: nil,
         index: 0,
         function_name: nil,
-        role: :function_call,
+        role: :unknown,
         arguments: "{}",
         status: :incomplete
       }
@@ -340,7 +340,7 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
 
       assert_receive {:streamed_fn, received_data}, 300
       assert %MessageDelta{} = received_data
-      assert received_data.role == :function_call
+      assert received_data.role == :assistant
       assert received_data.index == 0
     end
 
@@ -353,7 +353,4 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
       assert reason == "[] is too short - 'messages'"
     end
   end
-
-  # TODO: TEST that a non-streaming result could return content with "finish_reason" => "length". If so,
-  #      I would need to store content on a message AND flag the length error.
 end

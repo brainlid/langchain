@@ -9,8 +9,6 @@ defmodule Langchain.Message do
   - `:user` - The user or application responses. Typically represents the
     "human" element of the exchange.
   - `:assistant` - Responses coming back from the LLM.
-  - `:function_call` - A message from the LLM expressing the intent to execute a
-    function that was previously declared available to it.
 
   - `:arguments` - The `arguments` can be set as a map where each key is an
     "argument". If set as a String, it is expected to be a JSON formatted string
@@ -21,6 +19,13 @@ defmodule Langchain.Message do
 
   - `:function` - A message for returning the results of executing a
     `function_call` if there is a response to give.
+
+  ## Functions
+
+  A `function_call` comes from the `:assistant` role. The `function_name`
+  identifies the named function to execute.
+
+  Create a message of role `:function` to provide the function response.
 
   """
   use Ecto.Schema
@@ -36,7 +41,7 @@ defmodule Langchain.Message do
     field :status, Ecto.Enum, values: [:complete, :cancelled, :length], default: :complete
 
     field :role, Ecto.Enum,
-      values: [:system, :user, :assistant, :function, :function_call],
+      values: [:system, :user, :assistant, :function],
       default: :user
 
     field :function_name, :string
@@ -72,9 +77,15 @@ defmodule Langchain.Message do
     end
   end
 
+  defp changeset_is_function?(changeset) do
+    get_field(changeset, :role) == :assistant and
+      is_binary(get_field(changeset, :function_name)) and
+      get_field(changeset, :status) == :complete
+  end
+
   defp parse_arguments(changeset) do
     args = get_field(changeset, :arguments)
-    is_function = get_field(changeset, :role) == :function_call
+    is_function = changeset_is_function?(changeset)
 
     # only
     cond do
@@ -105,7 +116,8 @@ defmodule Langchain.Message do
     changeset
     |> validate_required(@required_fields)
     |> validate_content()
-    |> validate_function_name()
+    |> validate_function_name_for_role()
+    |> validate_function_name_when_args()
   end
 
   # validate that a "user" and "system" message has content. Allow an
@@ -126,12 +138,12 @@ defmodule Langchain.Message do
   # for requesting execution or "function" for the returning a function result.
   #
   # The function_name is required for those message types.
-  defp validate_function_name(changeset) do
+  defp validate_function_name_for_role(changeset) do
     case fetch_field!(changeset, :role) do
-      role when role in [:function_call, :function] ->
+      role when role in [:function] ->
         validate_required(changeset, [:function_name])
 
-      role when role in [:system, :user, :assistant] ->
+      role when role in [:system, :user] ->
         if get_field(changeset, :function_name) == nil do
           changeset
         else
@@ -140,6 +152,17 @@ defmodule Langchain.Message do
 
       _other ->
         changeset
+    end
+  end
+
+  # validate that "function_name" is required if arguments are set.
+  defp validate_function_name_when_args(changeset) do
+    function_name = get_field(changeset, :function_name)
+
+    if get_field(changeset, :arguments) != nil && is_nil(function_name) do
+      add_error(changeset, :function_name, "is required when arguments are given")
+    else
+      changeset
     end
   end
 
@@ -223,11 +246,11 @@ defmodule Langchain.Message do
   def new_function_call(name, raw_args) do
     case Jason.decode(raw_args) do
       {:ok, parsed} ->
-        new(%{role: :function_call, function_name: name, arguments: parsed})
+        new(%{role: :assistant, function_name: name, arguments: parsed, status: :complete})
 
       {:error, %Jason.DecodeError{data: reason}} ->
         {:error,
-         %Message{role: :function_call, function_name: name}
+         %Message{role: :assistant, function_name: name}
          |> change()
          |> add_error(:arguments, "Failed to parse arguments: #{inspect(reason)}")}
     end
@@ -272,12 +295,21 @@ defmodule Langchain.Message do
         raise LangchainError, changeset
     end
   end
+
+  @doc """
+  Return if a Message is a function_call.
+  """
+  def is_function_call?(%Message{role: :assistant, status: :complete, function_name: fun_name})
+      when is_binary(fun_name),
+      do: true
+
+  def is_function_call?(%Message{}), do: false
 end
 
 defimpl Langchain.ForOpenAIApi, for: Langchain.Message do
   alias Langchain.Message
 
-  def for_api(%Message{role: :function_call} = fun) do
+  def for_api(%Message{role: :assistant, function_name: fun_name} = fun) when is_binary(fun_name) do
     %{
       "role" => :assistant,
       "function_call" => %{

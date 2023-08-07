@@ -1,6 +1,7 @@
 defmodule Langchain.MessageDeltaTest do
   use ExUnit.Case
   doctest Langchain.MessageDelta
+  import Langchain.Fixtures
   alias Langchain.Message
   alias Langchain.MessageDelta
   alias Langchain.LangchainError
@@ -37,14 +38,14 @@ defmodule Langchain.MessageDeltaTest do
       assert {:ok, %MessageDelta{} = msg} =
                MessageDelta.new(%{
                  "content" => nil,
-                 "role" => "function_call",
+                 "role" => "assistant",
                  "function_name" => "hello_world",
                  "arguments" => Jason.encode!(%{greeting: "Howdy"}),
                  "index" => 1,
                  "status" => "complete"
                })
 
-      assert msg.role == :function_call
+      assert msg.role == :assistant
       assert msg.content == nil
       assert msg.function_name == "hello_world"
       assert msg.arguments == "{\"greeting\":\"Howdy\"}"
@@ -53,12 +54,12 @@ defmodule Langchain.MessageDeltaTest do
     end
 
     test "accepts arguments as an empty string" do
-      {:ok, msg} = MessageDelta.new(%{"role" => "function_call", "arguments" => " "})
-      assert msg.role == :function_call
+      {:ok, msg} = MessageDelta.new(%{"role" => "assistant", "arguments" => " "})
+      assert msg.role == :assistant
       assert msg.arguments == " "
 
-      {:ok, msg} = MessageDelta.new(%{role: "function_call", arguments: " "})
-      assert msg.role == :function_call
+      {:ok, msg} = MessageDelta.new(%{role: "assistant", arguments: " "})
+      assert msg.role == :assistant
       assert msg.arguments == " "
 
       {:ok, msg} = MessageDelta.new(%{role: "assistant", content: "\r\n"})
@@ -126,7 +127,7 @@ defmodule Langchain.MessageDeltaTest do
         content: nil,
         index: 0,
         function_name: "hello_world",
-        role: :function_call,
+        role: :assistant,
         arguments: "{}",
         status: :complete
       }
@@ -146,8 +147,28 @@ defmodule Langchain.MessageDeltaTest do
         content: nil,
         index: 0,
         function_name: "calculator",
-        role: :function_call,
+        role: :assistant,
         arguments: "{\n  \"expression\": \"100 + 300 - 200\"\n}",
+        status: :complete
+      }
+
+      assert merged == expected
+    end
+
+    test "correctly merges assistant content with function_call" do
+      [first | rest] = delta_content_with_function_call() |> List.flatten()
+
+      merged =
+        Enum.reduce(rest, first, fn new_delta, acc ->
+          MessageDelta.merge_delta(acc, new_delta)
+        end)
+
+      expected = %Langchain.MessageDelta{
+        content: "Sure, I can help with that. First, let's check which regions are currently available for deployment on Fly.io. Please wait a moment while I fetch this information for you.",
+        index: 0,
+        function_name: "regions_list",
+        role: :assistant,
+        arguments: "{}",
         status: :complete
       }
 
@@ -168,16 +189,16 @@ defmodule Langchain.MessageDeltaTest do
       assert msg.role == :assistant
       assert msg.content == "Hello! How can I assist you?"
 
-      # :function_call type
+      # :assistant type
       delta = %Langchain.MessageDelta{
-        role: :function_call,
+        role: :assistant,
         function_name: "calculator",
         arguments: "{\n  \"expression\": \"100 + 300 - 200\"\n}",
         status: :complete
       }
 
       {:ok, %Message{} = msg} = MessageDelta.to_message(delta)
-      assert msg.role == :function_call
+      assert msg.role == :assistant
       assert msg.function_name == "calculator"
       # parses the arguments
       assert msg.arguments == %{"expression" => "100 + 300 - 200"}
@@ -199,7 +220,7 @@ defmodule Langchain.MessageDeltaTest do
       # if previous message deltas are missing and were not merged, the
       # to_message function will fail.
       delta = %Langchain.MessageDelta{
-        role: :function_call,
+        role: :assistant,
         function_name: "calculator",
         arguments: "{\n  \"expression\": \"100 + 300 - 200\"",
         status: :complete
@@ -208,271 +229,5 @@ defmodule Langchain.MessageDeltaTest do
       {:error, reason} = MessageDelta.to_message(delta)
       assert reason == "arguments: invalid JSON function arguments"
     end
-  end
-
-  defp delta_content_sample do
-    # built from actual responses parsed to MessageDeltas
-    # results = Enum.flat_map(delta_content, &ChatOpenAI.do_process_response(&1))
-    # IO.inspect results
-    [
-      %Langchain.MessageDelta{
-        content: nil,
-        index: 0,
-        function_name: nil,
-        role: :assistant,
-        arguments: nil,
-        status: :incomplete
-      },
-      %Langchain.MessageDelta{
-        content: "Hello",
-        index: 0,
-        function_name: nil,
-        role: :unknown,
-        arguments: nil,
-        status: :incomplete
-      },
-      %Langchain.MessageDelta{
-        content: "!",
-        index: 0,
-        function_name: nil,
-        role: :unknown,
-        arguments: nil,
-        status: :incomplete
-      },
-      %Langchain.MessageDelta{
-        content: " How",
-        index: 0,
-        function_name: nil,
-        role: :unknown,
-        arguments: nil,
-        status: :incomplete
-      },
-      %Langchain.MessageDelta{
-        content: " can",
-        index: 0,
-        function_name: nil,
-        role: :unknown,
-        arguments: nil,
-        status: :incomplete
-      },
-      %Langchain.MessageDelta{
-        content: " I",
-        index: 0,
-        function_name: nil,
-        role: :unknown,
-        arguments: nil,
-        status: :incomplete
-      },
-      %Langchain.MessageDelta{
-        content: " assist",
-        index: 0,
-        function_name: nil,
-        role: :unknown,
-        arguments: nil,
-        status: :incomplete
-      },
-      %Langchain.MessageDelta{
-        content: " you",
-        index: 0,
-        function_name: nil,
-        role: :unknown,
-        arguments: nil,
-        status: :incomplete
-      },
-      %Langchain.MessageDelta{
-        content: " today",
-        index: 0,
-        function_name: nil,
-        role: :unknown,
-        arguments: nil,
-        status: :incomplete
-      },
-      %Langchain.MessageDelta{
-        content: "?",
-        index: 0,
-        function_name: nil,
-        role: :unknown,
-        arguments: nil,
-        status: :incomplete
-      },
-      %Langchain.MessageDelta{
-        content: nil,
-        index: 0,
-        function_name: nil,
-        role: :unknown,
-        arguments: nil,
-        status: :complete
-      }
-    ]
-  end
-
-  defp delta_function_no_args() do
-    [
-      %Langchain.MessageDelta{
-        content: nil,
-        index: 0,
-        function_name: "hello_world",
-        role: :function_call,
-        arguments: nil,
-        status: :incomplete
-      },
-      %Langchain.MessageDelta{
-        content: nil,
-        index: 0,
-        function_name: nil,
-        role: :function_call,
-        arguments: "{}",
-        status: :incomplete
-      },
-      %Langchain.MessageDelta{
-        content: nil,
-        index: 0,
-        function_name: nil,
-        role: :unknown,
-        arguments: nil,
-        status: :complete
-      }
-    ]
-  end
-
-  defp delta_function_streamed_args() do
-    [
-      %Langchain.MessageDelta{
-        content: nil,
-        index: 0,
-        function_name: "calculator",
-        role: :function_call,
-        arguments: "",
-        status: :incomplete
-      },
-      %Langchain.MessageDelta{
-        content: nil,
-        index: 0,
-        function_name: nil,
-        role: :function_call,
-        arguments: "{\n",
-        status: :incomplete
-      },
-      %Langchain.MessageDelta{
-        content: nil,
-        index: 0,
-        function_name: nil,
-        role: :function_call,
-        arguments: " ",
-        status: :incomplete
-      },
-      %Langchain.MessageDelta{
-        content: nil,
-        index: 0,
-        function_name: nil,
-        role: :function_call,
-        arguments: " \"",
-        status: :incomplete
-      },
-      %Langchain.MessageDelta{
-        content: nil,
-        index: 0,
-        function_name: nil,
-        role: :function_call,
-        arguments: "expression",
-        status: :incomplete
-      },
-      %Langchain.MessageDelta{
-        content: nil,
-        index: 0,
-        function_name: nil,
-        role: :function_call,
-        arguments: "\":",
-        status: :incomplete
-      },
-      %Langchain.MessageDelta{
-        content: nil,
-        index: 0,
-        function_name: nil,
-        role: :function_call,
-        arguments: " \"",
-        status: :incomplete
-      },
-      %Langchain.MessageDelta{
-        content: nil,
-        index: 0,
-        function_name: nil,
-        role: :function_call,
-        arguments: "100",
-        status: :incomplete
-      },
-      %Langchain.MessageDelta{
-        content: nil,
-        index: 0,
-        function_name: nil,
-        role: :function_call,
-        arguments: " +",
-        status: :incomplete
-      },
-      %Langchain.MessageDelta{
-        content: nil,
-        index: 0,
-        function_name: nil,
-        role: :function_call,
-        arguments: " ",
-        status: :incomplete
-      },
-      %Langchain.MessageDelta{
-        content: nil,
-        index: 0,
-        function_name: nil,
-        role: :function_call,
-        arguments: "300",
-        status: :incomplete
-      },
-      %Langchain.MessageDelta{
-        content: nil,
-        index: 0,
-        function_name: nil,
-        role: :function_call,
-        arguments: " -",
-        status: :incomplete
-      },
-      %Langchain.MessageDelta{
-        content: nil,
-        index: 0,
-        function_name: nil,
-        role: :function_call,
-        arguments: " ",
-        status: :incomplete
-      },
-      %Langchain.MessageDelta{
-        content: nil,
-        index: 0,
-        function_name: nil,
-        role: :function_call,
-        arguments: "200",
-        status: :incomplete
-      },
-      %Langchain.MessageDelta{
-        content: nil,
-        index: 0,
-        function_name: nil,
-        role: :function_call,
-        arguments: "\"\n",
-        status: :incomplete
-      },
-      %Langchain.MessageDelta{
-        content: nil,
-        index: 0,
-        function_name: nil,
-        role: :function_call,
-        arguments: "}",
-        status: :incomplete
-      },
-      %Langchain.MessageDelta{
-        content: nil,
-        index: 0,
-        function_name: nil,
-        role: :unknown,
-        arguments: nil,
-        status: :complete
-      }
-    ]
   end
 end
