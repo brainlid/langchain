@@ -159,6 +159,10 @@ defmodule Langchain.PromptTemplate do
   Transform a list of PromptTemplates into a list of messages. Applies the
   inputs to the list of prompt templates. If any of the prompt entries are
   invalid or fail, an exception is raised.
+
+  Pass in the values for the prompts:
+
+      PromptTemplate.new!(%{role: :user, text: "User question: <%= @user_question %>}, %{user_question: "How tall are you?"})
   """
   @spec to_messages!([t() | Message.t() | String.t()], inputs :: %{atom() => any()}) :: [Message.t()] | no_return()
   def to_messages!(prompts, %{} = inputs \\ %{}) when is_list(prompts) do
