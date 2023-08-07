@@ -24,6 +24,8 @@ defmodule Langchain.ChatModels.ChatOpenAI do
   # NOTE: As of gpt-4 and gpt-3.5, only one function_call is issued at a time
   # even when multiple requests could be issued based on the prompt.
 
+  @request_timeout 45_000
+
   @primary_key false
   embedded_schema do
     field :endpoint, :string, default: "https://api.openai.com/v1/chat/completions"
@@ -180,7 +182,7 @@ defmodule Langchain.ChatModels.ChatOpenAI do
       json: for_api(openai, messages, functions),
       auth: {:bearer, System.fetch_env!("OPENAPI_KEY")},
       # allow for longer time to receive the response
-      receive_timeout: 30_000
+      receive_timeout: @request_timeout
     )
     # parse the body and return it as parsed structs
     |> case do
@@ -244,6 +246,9 @@ defmodule Langchain.ChatModels.ChatOpenAI do
         {:ok, response} ->
           {request, response}
 
+        {:error, %Mint.TransportError{reason: :timeout}} ->
+          {:error, "Request timed out"}
+
         {:error, exception} ->
           Logger.error("Failed request to API: #{inspect(exception)}")
           {request, exception}
@@ -259,7 +264,9 @@ defmodule Langchain.ChatModels.ChatOpenAI do
     Req.post(openai.endpoint,
       json: for_api(openai, messages, functions),
       auth: {:bearer, System.fetch_env!("OPENAPI_KEY")},
-      finch_request: finch_fun
+      finch_request: finch_fun,
+      # allow for longer time to receive the response
+      receive_timeout: @request_timeout
     )
     |> case do
       {:ok, %Req.Response{body: data}} ->

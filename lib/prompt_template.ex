@@ -160,10 +160,8 @@ defmodule Langchain.PromptTemplate do
   inputs to the list of prompt templates. If any of the prompt entries are
   invalid or fail, an exception is raised.
   """
-  @spec to_messages([t() | Message.t() | String.t()], inputs :: %{atom() => any()}) :: [
-          Message.t()
-        ]
-  def to_messages(prompts, %{} = inputs \\ %{}) when is_list(prompts) do
+  @spec to_messages!([t() | Message.t() | String.t()], inputs :: %{atom() => any()}) :: [Message.t()] | no_return()
+  def to_messages!(prompts, %{} = inputs \\ %{}) when is_list(prompts) do
     Enum.map(prompts, fn
       %PromptTemplate{} = template ->
         to_message!(template, inputs)

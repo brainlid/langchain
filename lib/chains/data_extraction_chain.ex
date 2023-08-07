@@ -36,7 +36,7 @@ defmodule Langchain.Chains.DataExtractionChain do
           ),
           PromptTemplate.new!(%{role: :user, text: @extraction_template})
         ]
-        |> PromptTemplate.to_messages(%{input: prompt})
+        |> PromptTemplate.to_messages!(%{input: prompt})
 
       {:ok, chain} = LLMChain.new(%{llm: llm, verbose: verbose})
 

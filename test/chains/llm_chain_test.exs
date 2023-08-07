@@ -105,7 +105,7 @@ defmodule Langchain.Chains.LLMChainTest do
         )
         |> LLMChain.run()
 
-      assert %MessageDelta{} = delta = updated_chain.delta
+      assert %MessageDelta{} = updated_chain.delta
       new_chain = LLMChain.cancel_delta(updated_chain, :cancelled)
       assert new_chain.delta == nil
 

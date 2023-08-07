@@ -331,7 +331,7 @@ defmodule Langchain.Chains.LLMChain do
   @spec apply_prompt_templates(t(), [Message.t() | PromptTemplate.t()], %{atom() => any()}) ::
           t() | no_return()
   def apply_prompt_templates(%LLMChain{} = chain, templates, %{} = inputs) do
-    messages = PromptTemplate.to_messages(templates, inputs)
+    messages = PromptTemplate.to_messages!(templates, inputs)
     add_messages(chain, messages)
   end
 

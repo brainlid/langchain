@@ -5,7 +5,6 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
   doctest Langchain.ChatModels.ChatOpenAI
   alias Langchain.ChatModels.ChatOpenAI
   alias Langchain.Function
-  alias Langchain.PromptTemplate
 
   setup do
     {:ok, hello_world} =

@@ -280,7 +280,7 @@ What is the answer to 1 + 1?)
     end
   end
 
-  describe "to_messages/2" do
+  describe "to_messages!/2" do
     setup do
       expected = [
         Message.new_system!("You are an unhelpful assistant and actively avoid helping."),
@@ -309,7 +309,7 @@ What is the answer to 1 + 1?)
         PromptTemplate.new!(%{role: :user, text: "Yes, it matters to me!"})
       ]
 
-      result = PromptTemplate.to_messages(prompts, %{destination: "Peru"})
+      result = PromptTemplate.to_messages!(prompts, %{destination: "Peru"})
       assert result == expected
     end
 
@@ -325,7 +325,7 @@ What is the answer to 1 + 1?)
         Message.new_user!("Yes, it matters to me!")
       ]
 
-      result = PromptTemplate.to_messages(prompts, %{destination: "Peru"})
+      result = PromptTemplate.to_messages!(prompts, %{destination: "Peru"})
       assert result == expected
     end
 
@@ -339,7 +339,7 @@ What is the answer to 1 + 1?)
         "Yes, it matters to me!"
       ]
 
-      result = PromptTemplate.to_messages(prompts)
+      result = PromptTemplate.to_messages!(prompts)
       assert result == expected
     end
   end
