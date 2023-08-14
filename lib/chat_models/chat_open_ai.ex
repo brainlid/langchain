@@ -24,7 +24,7 @@ defmodule Langchain.ChatModels.ChatOpenAI do
   # NOTE: As of gpt-4 and gpt-3.5, only one function_call is issued at a time
   # even when multiple requests could be issued based on the prompt.
 
-  @request_timeout 45_000
+  @request_timeout 60_000
 
   @primary_key false
   embedded_schema do
@@ -266,7 +266,7 @@ defmodule Langchain.ChatModels.ChatOpenAI do
       auth: {:bearer, System.fetch_env!("OPENAPI_KEY")},
       finch_request: finch_fun,
       # allow for longer time to receive the response
-      receive_timeout: @request_timeout
+      receive_timeout: @request_timeout,
     )
     |> case do
       {:ok, %Req.Response{body: data}} ->
