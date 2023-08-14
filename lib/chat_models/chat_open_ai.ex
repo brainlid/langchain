@@ -266,7 +266,7 @@ defmodule Langchain.ChatModels.ChatOpenAI do
       auth: {:bearer, System.fetch_env!("OPENAPI_KEY")},
       finch_request: finch_fun,
       # allow for longer time to receive the response
-      receive_timeout: @request_timeout,
+      receive_timeout: @request_timeout
     )
     |> case do
       {:ok, %Req.Response{body: data}} ->
