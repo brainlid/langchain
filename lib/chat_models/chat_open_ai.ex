@@ -31,7 +31,14 @@ defmodule Langchain.ChatModels.ChatOpenAI do
     field :endpoint, :string, default: "https://api.openai.com/v1/chat/completions"
     field :model, :string, default: "gpt-4"
     # field :model, :string, default: "gpt-3.5-turbo"
-    field :temperature, :float, default: 0.0
+
+    # What sampling temperature to use, between 0 and 2. Higher values like 0.8
+    # will make the output more random, while lower values like 0.2 will make it
+    # more focused and deterministic.
+    field :temperature, :float, default: 1.0
+    # Number between -2.0 and 2.0. Positive values penalize new tokens based on
+    # their existing frequency in the text so far, decreasing the model's
+    # likelihood to repeat the same line verbatim.
     field :frequency_penalty, :float, default: 0.0
     # How many chat completion choices to generate for each input message.
     field :n, :integer, default: 1
