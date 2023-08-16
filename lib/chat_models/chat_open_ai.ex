@@ -255,19 +255,25 @@ defmodule Langchain.ChatModels.ChatOpenAI do
       end
     end
 
+    req = Req.new([
+      url: openai.endpoint,
+      json: for_api(openai, messages, functions),
+      auth: {:bearer, System.fetch_env!("OPENAPI_KEY")},
+      connect_options: [
+        timeout: @request_timeout,
+      ],
+      receive_timeout: @request_timeout,
+      finch_request: finch_fun
+    ])
+
     # NOTE: The POST response includes a list of body messages that were
     # received during the streaming process. However, the messages in the
     # response all come at once when the stream is complete. It is blocking
     # until it completes. This means the streaming call should happen in a
     # separate process from the UI and the callback function will process the
     # chunks and should notify the UI process of the additional data.
-    Req.post(openai.endpoint,
-      json: for_api(openai, messages, functions),
-      auth: {:bearer, System.fetch_env!("OPENAPI_KEY")},
-      finch_request: finch_fun,
-      # allow for longer time to receive the response
-      receive_timeout: @request_timeout
-    )
+    req
+    |> Req.post()
     |> case do
       {:ok, %Req.Response{body: data}} ->
         data
