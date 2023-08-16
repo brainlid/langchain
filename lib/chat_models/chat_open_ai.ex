@@ -57,7 +57,7 @@ defmodule Langchain.ChatModels.ChatOpenAI do
           {:ok, Message.t() | MessageDelta.t() | [Message.t() | MessageDelta.t()]}
           | {:error, String.t()}
 
-  @create_fields [:model, :temperature, :frequency_penalty, :n, :stream]
+  @create_fields [:model, :temperature, :frequency_penalty, :n, :stream, :receive_timeout]
   @required_fields [:model]
 
   @doc """
@@ -91,6 +91,7 @@ defmodule Langchain.ChatModels.ChatOpenAI do
     |> validate_number(:temperature, greater_than_or_equal_to: 0, less_than_or_equal_to: 2)
     |> validate_number(:frequency_penalty, greater_than_or_equal_to: -2, less_than_or_equal_to: 2)
     |> validate_number(:n, greater_than_or_equal_to: 1)
+    |> validate_number(:receive_timeout, greater_than_or_equal_to: 0)
   end
 
   @doc """
@@ -258,7 +259,7 @@ defmodule Langchain.ChatModels.ChatOpenAI do
           {request, response}
 
         {:error, %Mint.TransportError{reason: :timeout}} ->
-          {:error, "Request timed out"}
+          {request, LangchainError.exception("Request timed out")}
 
         {:error, exception} ->
           Logger.error("Failed request to API: #{inspect(exception)}")
@@ -285,6 +286,9 @@ defmodule Langchain.ChatModels.ChatOpenAI do
     |> case do
       {:ok, %Req.Response{body: data}} ->
         data
+
+      {:error, %LangchainError{message: reason}} ->
+        {:error, reason}
 
       other ->
         Logger.error("Unhandled and unexpected response from streamed post call. #{inspect(other)}")

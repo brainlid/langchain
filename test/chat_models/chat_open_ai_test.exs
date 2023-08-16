@@ -352,5 +352,18 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
 
       assert reason == "[] is too short - 'messages'"
     end
+
+    @tag :live_call
+    test "STREAMING handles receiving a timeout error" do
+      callback = fn data ->
+        send(self(), {:streamed_fn, data})
+      end
+
+      {:ok, chat} = ChatOpenAI.new(%{stream: true, receive_timeout: 50, verbose: true})
+
+      {:error, reason} = ChatOpenAI.call(chat, [Message.new_user!("Why is the sky blue?")], [], callback)
+
+      assert reason == "Request timed out"
+    end
   end
 end
