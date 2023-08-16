@@ -24,7 +24,8 @@ defmodule Langchain.ChatModels.ChatOpenAI do
   # NOTE: As of gpt-4 and gpt-3.5, only one function_call is issued at a time
   # even when multiple requests could be issued based on the prompt.
 
-  @request_timeout 60_000
+  # allow up to 2 minutes for response.
+  @request_timeout 60_000 * 2
 
   @primary_key false
   embedded_schema do
@@ -266,9 +267,9 @@ defmodule Langchain.ChatModels.ChatOpenAI do
       url: openai.endpoint,
       json: for_api(openai, messages, functions),
       auth: {:bearer, System.fetch_env!("OPENAPI_KEY")},
-      connect_options: [
-        timeout: @request_timeout,
-      ],
+      # connect_options: [
+      #   timeout: @request_timeout,
+      # ],
       receive_timeout: @request_timeout,
       finch_request: finch_fun
     ])
