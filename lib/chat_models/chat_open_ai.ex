@@ -25,7 +25,7 @@ defmodule Langchain.ChatModels.ChatOpenAI do
   # even when multiple requests could be issued based on the prompt.
 
   # allow up to 2 minutes for response.
-  @request_timeout 60_000 * 2
+  @receive_timeout 60_000
 
   @primary_key false
   embedded_schema do
@@ -41,6 +41,10 @@ defmodule Langchain.ChatModels.ChatOpenAI do
     # their existing frequency in the text so far, decreasing the model's
     # likelihood to repeat the same line verbatim.
     field :frequency_penalty, :float, default: 0.0
+    # Duration in seconds for the response to be received. When streaming a very
+    # lengthy response, a longer time limit may be required. However, when it
+    # goes on too long by itself, it tends to hallucinate more.
+    field :receive_timeout, :integer, default: @receive_timeout
     # How many chat completion choices to generate for each input message.
     field :n, :integer, default: 1
     field :stream, :boolean, default: false
@@ -189,8 +193,7 @@ defmodule Langchain.ChatModels.ChatOpenAI do
     Req.post(openai.endpoint,
       json: for_api(openai, messages, functions),
       auth: {:bearer, System.fetch_env!("OPENAPI_KEY")},
-      # allow for longer time to receive the response
-      receive_timeout: @request_timeout
+      receive_timeout: openai.receive_timeout
     )
     # parse the body and return it as parsed structs
     |> case do
@@ -267,10 +270,7 @@ defmodule Langchain.ChatModels.ChatOpenAI do
       url: openai.endpoint,
       json: for_api(openai, messages, functions),
       auth: {:bearer, System.fetch_env!("OPENAPI_KEY")},
-      # connect_options: [
-      #   timeout: @request_timeout,
-      # ],
-      receive_timeout: @request_timeout,
+      receive_timeout: openai.receive_timeout,
       finch_request: finch_fun
     ])
 
