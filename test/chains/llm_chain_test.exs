@@ -297,6 +297,28 @@ defmodule Langchain.Chains.LLMChainTest do
       assert [%Message{} = new_message] = updated_chain.messages
       assert new_message.role == :assistant
       assert new_message.content == "Greetings from your favorite assistant."
+      assert new_message.status == :complete
+    end
+
+    test "when delta received with length error, transforms to a message with length status", %{chain: chain} do
+      assert chain.messages == []
+
+      updated_chain =
+        chain
+        |> LLMChain.apply_delta(
+          MessageDelta.new!(%{role: :assistant, content: "Greetings from "})
+        )
+        |> LLMChain.apply_delta(MessageDelta.new!(%{content: "your "}))
+        |> LLMChain.apply_delta(MessageDelta.new!(%{content: "favorite "}))
+        |> LLMChain.apply_delta(MessageDelta.new!(%{content: "assistant.", status: :length}))
+
+      # the delta is complete and removed from the chain
+      assert updated_chain.delta == nil
+      # the delta is converted to a message and applied to the messages
+      assert [%Message{} = new_message] = updated_chain.messages
+      assert new_message.role == :assistant
+      assert new_message.content == "Greetings from your favorite assistant."
+      assert new_message.status == :length
     end
 
     test "applies list of deltas for function_call with arguments", %{chain: chain} do

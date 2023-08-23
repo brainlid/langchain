@@ -164,7 +164,8 @@ defmodule Langchain.MessageDeltaTest do
         end)
 
       expected = %Langchain.MessageDelta{
-        content: "Sure, I can help with that. First, let's check which regions are currently available for deployment on Fly.io. Please wait a moment while I fetch this information for you.",
+        content:
+          "Sure, I can help with that. First, let's check which regions are currently available for deployment on Fly.io. Please wait a moment while I fetch this information for you.",
         index: 0,
         function_name: "regions_list",
         role: :assistant,
@@ -213,6 +214,19 @@ defmodule Langchain.MessageDeltaTest do
       }
 
       assert {:error, "Cannot convert incomplete message"} = MessageDelta.to_message(delta)
+    end
+
+    test "transforms a delta stopped for length" do
+      delta = %Langchain.MessageDelta{
+        content: "Hello! How can I assist ",
+        role: :assistant,
+        status: :length
+      }
+
+      assert {:ok, message} = MessageDelta.to_message(delta)
+      assert message.role == :assistant
+      assert message.content == "Hello! How can I assist "
+      assert message.status == :length
     end
 
     test "for a function_call, return an error when delta is invalid" do
