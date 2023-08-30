@@ -1,14 +1,46 @@
-# Langchain
-
-Elixir version of a Langchain styled framework.
+# LangChain
 
 **NOTE**: This is under active development and is subject to significant changes.
 
+**LangChain** is a framework for developing applications powered by language models. It enables applications that are:
+
+- **Data-aware:** connect a language model to other sources of data
+- **Agentic:** allow a language model to interact with its environment
+
+The main value props of LangChain are:
+
+1. **Components:** abstractions for working with language models, along with a collection of implementations for each abstraction. Components are modular and easy-to-use, whether you are using the rest of the LangChain framework or not
+1. **Off-the-shelf chains:** a structured assembly of components for accomplishing specific higher-level tasks
+
+Off-the-shelf chains make it easy to get started. For more complex applications and nuanced use-cases, components make it easy to customize existing chains or build new ones.
+
+## What is this?
+
+Large Language Models (LLMs) are emerging as a transformative technology, enabling developers to build applications that they previously could not. But using these LLMs in isolation is often not enough to create a truly powerful app - the real power comes when you can combine them with other sources of computation or knowledge.
+
+This library is aimed at assisting in the development of those types of applications.
+
+## Documentation
+
+The online documentation can [found here](https://hexdocs.pm/langchain).
+
+## Relationship with JavaScript and Python LangChain
+
+This library is written in [Elixir](https://elixir-lang.org/) and intended to be used with Elixir applications. The original libraries are [LangChain JS](https://js.langchain.com/) and [LangChain Python](https://python.langchain.com/).
+
+The JavaScript and Python projects aim to integrate with each other as seamlessly as possible. The intended integration is so strong that that all objects (prompts, LLMs, chains, etc) are designed in a way where they can be serialized and shared between the two languages.
+
+This Elixir version does not aim for parity with the JavaScript and Python libraries. Why not?
+
+- JavaScript and Python are both Object Oriented languages. Elixir is Functional. We're not going to force a design that doesn't apply.
+- The JS and Python versions started before conversational LLMs were standard. They put a lot of effort into preserving history (like a conversation) when the LLM didn't support it. We're not doing that here.
+
+This library was heavily inspired by, and based on, the way the JavaScript library actually worked and interacted with an LLM.
 
 ## Installation
 
-If [available in Hex](https://hex.pm/docs/publish), the package can be installed
-by adding `langchain` to your list of dependencies in `mix.exs`:
+The package can be installed by adding `langchain` to your list of dependencies
+in `mix.exs`:
 
 ```elixir
 def deps do
@@ -17,10 +49,6 @@ def deps do
   ]
 end
 ```
-
-Documentation can be generated with [ExDoc](https://github.com/elixir-lang/ex_doc)
-and published on [HexDocs](https://hexdocs.pm). Once published, the docs can
-be found at <https://hexdocs.pm/langchain>.
 
 ## Configuration
 
