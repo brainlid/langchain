@@ -1,6 +1,6 @@
 # LangChain
 
-**NOTE**: This is under active development and is subject to significant changes.
+**NOTE**: This project is under active development and is subject to significant changes.
 
 **LangChain** is a framework for developing applications powered by language models. It enables applications that are:
 
