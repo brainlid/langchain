@@ -300,7 +300,9 @@ defmodule Langchain.Chains.LLMChainTest do
       assert new_message.status == :complete
     end
 
-    test "when delta received with length error, transforms to a message with length status", %{chain: chain} do
+    test "when delta received with length error, transforms to a message with length status", %{
+      chain: chain
+    } do
       assert chain.messages == []
 
       updated_chain =
@@ -509,18 +511,12 @@ defmodule Langchain.Chains.LLMChainTest do
       assert reason == "[] is too short - 'messages'"
     end
 
-    # TODO: runs until functions are evaluated
-
+    # runs until functions are evaluated
     @tag :live_call
     test "handles content response + function call" do
-      callback = fn data ->
-        # IO.inspect(data, label: "DATA")
-        send(self(), {:streamed_fn, data})
-      end
+      test_pid = self()
 
-      {:ok, chat} = ChatOpenAI.new(%{stream: true, verbose: true})
-
-      {:ok, message} = Message.new_user("I want to deploy my app to additional regions.")
+      message = Message.new_user!("Please pull the list of available fly_regions and return them to me.")
 
       regions_function =
         Function.new!(%{
@@ -528,6 +524,7 @@ defmodule Langchain.Chains.LLMChainTest do
           description:
             "List the currently available regions an app can be deployed to on Fly.io in JSON format.",
           function: fn _args, _context ->
+            send(test_pid, {:function_called, "fly_regions"})
             [
               %{name: "ams", location: "Amsterdam, Netherlands"},
               %{name: "arn", location: "Stockholm, Sweden"},
@@ -545,25 +542,21 @@ defmodule Langchain.Chains.LLMChainTest do
           end
         })
 
-        {:ok, updated_chain, %Message{} = message} =
-          LLMChain.new!(%{
-            llm: ChatOpenAI.new!(),
-            custom_context: nil,
-            verbose: true
-          })
-          |> LLMChain.add_functions(regions_function)
-          |> LLMChain.add_message(message)
-          |> LLMChain.run(while_needs_response: true)
+      {:ok, _updated_chain, %Message{} = response} =
+        LLMChain.new!(%{
+          llm: ChatOpenAI.new!(%{stream: false}),
+          custom_context: nil,
+          verbose: true
+        })
+        |> LLMChain.add_functions(regions_function)
+        |> LLMChain.add_message(message)
+        |> LLMChain.run(while_needs_response: true)
 
-      IO.inspect(message, label: "OPEN AI POST RESPONSE")
-      IO.inspect updated_chain
-
-      # assert_receive {:streamed_fn, received_data}, 300
-      # assert %MessageDelta{} = received_data
-      # assert received_data.role == :assistant
-      # assert received_data.index == 0
-
-      assert false
+      # the response should contain data returned from the function
+      assert response.content =~ "Germany"
+      assert response.content =~ "fra"
+      assert response.role == :assistant
+      assert_received {:function_called, "fly_regions"}
     end
   end
 
