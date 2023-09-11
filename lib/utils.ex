@@ -18,9 +18,6 @@ defmodule Langchain.Utils do
     Map.put(map, key, value)
   end
 
-  # TODO: These would be for fields defined in schemas in the Langchain namespace, so gettext makes sense.
-  #     Just need to extract to a library for it to work better? Could do all the gettext stuff in that namespace in this app?
-
   @doc """
   Translates an error message using gettext.
   """

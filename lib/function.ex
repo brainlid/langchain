@@ -3,6 +3,23 @@
 #  - 13 June 2023
 # NOTE: Pretty much takes the place of a Langchain "Tool".
 defmodule Langchain.Function do
+  @moduledoc """
+  Defines a "function" that can be provided to an LLM for the LLM to optionally
+  execute and pass argument data to.
+
+  A function is defined using a schema.
+
+  * `name` - The name of the function given to the LLM.
+  * `description` - A description of the function provided to the LLM. This
+    should describe what the function is used for or what it returns. This
+    information is used by the LLM to decide which function to call and for what
+    purpose.
+  * ` parameters_schema` - A JSONSchema structure that describes how arguments
+    are passed to the function.
+  * `function` - An Elixir function to execute when an LLM requests to execute
+    the function.
+
+  """
   use Ecto.Schema
   import Ecto.Changeset
   require Logger

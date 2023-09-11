@@ -2,7 +2,7 @@ defmodule Langchain.ChatModels.ChatOpenAI do
   @moduledoc """
   Represents the OpenAI ChatModel.
 
-  Parses and validates inputs for making a request from the API.
+  Parses and validates inputs for making a requests from the OpenAI Chat API.
 
   https://platform.openai.com/docs/api-reference/chat/create
 
