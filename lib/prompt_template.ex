@@ -1,12 +1,31 @@
 defmodule Langchain.PromptTemplate do
   @moduledoc """
   Enables defining a prompt, optionally as a template, but delaying the final
-  building of it until a later time when input values can be substituted in.
+  building of it until a later time when input values are substituted in.
 
   This also supports the ability to create a Message from a PromptTemplate.
 
+  An LLM conversation is made up of a set of messages. PromptTemplates are a
+  tool to help build messages.
+
+      # Create a template and convert it to a message
       prompt = PromptTemplate.new!(%{text: "My template", role: :user})
       %Langchain.Message{} = message = PromptTemplate.to_message(prompt)
+
+  PromptTemplates are powerful because they support Elixir's EEx templates
+  allowing for parameter substitution. This is helpful when we want to prepare a
+  template message and plan to later substitute in information from the user.
+
+  Here's an example of setting up a template using a parameter then later
+  providing the input value.
+
+      prompt = PromptTemplate.from_template!("What's a name for a company that makes <%= @product %>?")
+
+      # later, format the final text after after applying the values.
+      PromptTemplate.format(prompt, %{product: "colorful socks"})
+      #=> "What's a name for a company that makes colorful socks?"
+
+
   """
   use Ecto.Schema
   import Ecto.Changeset
@@ -15,23 +34,11 @@ defmodule Langchain.PromptTemplate do
   alias Langchain.LangchainError
   alias Langchain.Message
 
-  # TODO: Langchain has ChatPromptTemplate that can be created `from_prompt_messages`
-  # TODO: Then it passes a SystemMessagePromptTemplate.from_template()
-  # TODO: - the idea I guess is if you know the message is a template, you can search for replacements. However, if the contents are NOT a template and actually deal with Phoenix template code, it would include things that could be replaced... messing things up.
-  # TODO: - could create a `Message.from_template()` which would just be marked as a template internally in the struct.
-  #        Then, when formatted, the `template?` flag would be flipped to `false` so it wouldn't be replaced again. That means a user's content could be Elixir template code and it wouldn't get messed up.
-  # TODO: I also have the PromptTemplate support for roles. So it could be created that way. Then a chat_prompt list of prompts could be formatted with inputs to create all Messages where they are not templated at that point.
-  #      - allow mixing a list of Message and PromptTemplate (with role)
-  #      - works for conversation because they are just messages at that point.
-  # TODO: a list of PromptTemplates can .format into a list of strings.
-  # TODO: a list of PromptTemplates can .to_message into a list of formatted Messages.
-  # TODO: a plain String is a prompt just by it's self. Allow Strings and PromptTepmlates to intermix in a list. Wouldn't expect to find those with a Message because a string can't indicate what chat message type it should be.
-
   @primary_key false
   embedded_schema do
-    field(:text, :string)
-    field(:inputs, :map, virtual: true, default: %{})
-    field(:role, Ecto.Enum, values: [:system, :user, :assistant, :function], default: :user)
+    field :text, :string
+    field :inputs, :map, virtual: true, default: %{}
+    field :role, Ecto.Enum, values: [:system, :user, :assistant, :function], default: :user
   end
 
   @type t :: %PromptTemplate{}
@@ -67,12 +74,13 @@ defmodule Langchain.PromptTemplate do
     |> validate_required(@required_fields)
   end
 
-  # def build_prompt(text, %{} = inputs) do
-  #   EEx.eval_string(text, Map.to_list(inputs))
-  # end
-
   @doc """
   Build a PromptTemplate struct from a template string.
+
+  Shortcut function for building a user prompt.
+
+      {:ok, prompt} = PromptTemplate.from_template("Suggest a good name for a company that makes <%= @product %>?")
+
   """
   @spec from_template(text :: String.t()) :: {:ok, t()} | {:error, Ecto.Changeset.t()}
   def from_template(text) do
@@ -80,7 +88,12 @@ defmodule Langchain.PromptTemplate do
   end
 
   @doc """
-  Build a PromptTemplate struct from a template string.
+  Build a PromptTemplate struct from a template string and return the struct or error if invalid.
+
+  Shortcut function for building a user prompt.
+
+      prompt = PromptTemplate.from_template!("Suggest a good name for a company that makes <%= @product %>?")
+
   """
   @spec from_template!(text :: String.t()) :: t() | no_return()
   def from_template!(text) do
@@ -90,6 +103,15 @@ defmodule Langchain.PromptTemplate do
   @doc """
   Format the prompt template with inputs to replace with assigns. It returns the
   formatted text.
+
+      prompt = PromptTemplate.from_template!("Suggest a good name for a company that makes <%= @product %>?")
+      PromptTemplate.format(prompt, %{product: "colorful socks"})
+      #=> "Suggest a good name for a company that makes colorful socks?"
+
+  A PromptTemplate supports storing input values on the struct. These could be
+  set when the template is defined. If an input value is not provided when the
+  `format` function is called, any inputs on the struct will be used.
+
   """
   @spec format(t(), inputs :: %{atom() => any()}) :: String.t()
   def format(%PromptTemplate{text: text} = template, %{} = inputs \\ %{}) do
@@ -99,6 +121,13 @@ defmodule Langchain.PromptTemplate do
   @doc """
   Format the prompt template with inputs to replace embeds. The final replaced
   text is returned.
+
+  Operates directly on text to apply the inputs. This does not take the
+  PromptTemplate struct.
+
+      PromptTemplate.format_text("Hi! My name is <%= @name %>.", %{name: "Jose"})
+      #=> "Hi! My name is Jose."
+
   """
   @spec format_text(text :: String.t(), inputs :: %{atom() => any()}) :: String.t()
   def format_text(text, %{} = inputs) do
@@ -106,8 +135,107 @@ defmodule Langchain.PromptTemplate do
   end
 
   @doc """
-  Format a PromptTemplate at two levels. Supports providing a list of
-  `composed_of` templates that can all be combined into a `full_template`.
+  Formats a PromptTemplate at two levels. Supports providing a list of
+  `composed_of` templates that are all combined into a `full_template`.
+
+  For this example, we'll use an overall template layout like this:
+
+      full_prompt =
+        PromptTemplate.from_template!(~s(<%= @introduction %>
+
+        <%= @example %>
+
+        <%= @start %>))
+
+  This template is made up of 3 more specific templates. Let's start with the
+  introduction sub-template.
+
+      introduction_prompt =
+        PromptTemplate.from_template!("You are impersonating <%= @person %>.")
+
+  The `introduction` takes a parameter for which person it should impersonate.
+  The desired person is not provided here and will come in later.
+
+  Let's next look at the `example` prompt:
+
+      example_prompt =
+        PromptTemplate.from_template!(~s(Here's an example of an interaction:
+          Q: <%= @example_q %>
+          A: <%= @example_a %>))
+
+  This defines a sample interaction for the LLM as a model of what we're looking
+  for. Primarily, this template is used to define the pattern we want to use for
+  the interaction. Again, this template takes parameters for the sample question
+  and answer.
+
+  Finally, there is the `start` section of the overall prompt. In this example,
+  that might be a question presented by a user asking a question of our
+  impersonating AI.
+
+      start_prompt =
+        PromptTemplate.from_template!(~s(Now, do this for real!
+        Q: <%= @input %>
+        A:))
+
+  We have the overall template defined and templates that define each of the
+  smaller portions. The `format_composed` function let's us combine those all
+  together and build the complete text to pass to an LLM.
+
+        formatted_prompt =
+          PromptTemplate.format_composed(
+            full_prompt,
+            %{
+              introduction: introduction_prompt,
+              example: example_prompt,
+              start: start_prompt
+            },
+            %{
+              person: "Elon Musk",
+              example_q: "What's your favorite car?",
+              example_a: "Tesla",
+              input: "What's your favorite social media site?"
+            }
+          )
+
+  We provide the PromptTemplate for the overall prompt, then provide the inputs,
+  which are themselves prompts.
+
+  Finally, we provide a map of values for all the parameters that still need
+  values. For this example, this is what the final prompt looks like that is
+  presented to the LLM.
+
+      ~s(You are impersonating Elon Musk.
+
+      Here's an example of an interaction:
+      Q: What's your favorite car?
+      A: Tesla
+
+      Now, do this for real!
+      Q: What's your favorite social media site?
+      A:)
+
+  Using a setup like this, we can easily swap out who we are impersonating and
+  allow the user to interact with that persona.
+
+  With everything defined, this is all it takes to now talk with an Abraham
+  Lincoln impersonation:
+
+      formatted_prompt =
+        PromptTemplate.format_composed(
+          full_prompt,
+          %{
+            introduction: introduction_prompt,
+            example: example_prompt,
+            start: start_prompt
+          },
+          %{
+            person: "Abraham Lincoln",
+            example_q: "What is your nickname?",
+            example_a: "Honest Abe",
+            input: "What is one of your favorite pastimes?"
+          }
+        )
+
   """
   @spec format_composed(t(), composed_of :: %{atom() => any()}, inputs :: %{atom() => any()}) ::
           String.t()
@@ -164,7 +292,8 @@ defmodule Langchain.PromptTemplate do
 
       PromptTemplate.new!(%{role: :user, text: "User question: <%= @user_question %>}, %{user_question: "How tall are you?"})
   """
-  @spec to_messages!([t() | Message.t() | String.t()], inputs :: %{atom() => any()}) :: [Message.t()] | no_return()
+  @spec to_messages!([t() | Message.t() | String.t()], inputs :: %{atom() => any()}) ::
+          [Message.t()] | no_return()
   def to_messages!(prompts, %{} = inputs \\ %{}) when is_list(prompts) do
     Enum.map(prompts, fn
       %PromptTemplate{} = template ->
