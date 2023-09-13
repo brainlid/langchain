@@ -1,13 +1,56 @@
 defmodule Langchain.Chains.DataExtractionChain do
   @moduledoc """
-  Define an LLMChain for performing data extraction from a body of text.
+  Defines an LLMChain for performing data extraction from a body of text.
 
   Provide the schema for desired information to be parsed into. It is treated as
   though there are 0 to many instances of the data structure being described so
-  it returns information as an array.
+  information is returned as an array.
 
   Originally based on:
   - https://github.com/hwchase17/langchainjs/blob/main/langchain/src/chains/openai_functions/extraction.ts#L42
+
+  ## Example
+
+      # JSONSchema definition of data we want to capture or extract.
+      schema_parameters = %{
+        type: "object",
+        properties: %{
+          person_name: %{type: "string"},
+          person_age: %{type: "number"},
+          person_hair_color: %{type: "string"},
+          dog_name: %{type: "string"},
+          dog_breed: %{type: "string"}
+        },
+        required: []
+      }
+
+      # Model setup
+      {:ok, chat} = ChatOpenAI.new(%{temperature: 0})
+
+      # run the chain on the text information
+      data_prompt =
+        "Alex is 5 feet tall. Claudia is 4 feet taller than Alex and jumps higher than him.
+        Claudia is a brunette and Alex is blonde. Alex's dog Frosty is a labrador and likes to play hide and seek."
+
+      {:ok, result} = Langchain.Chains.DataExtractionChain.run(chat, schema_parameters, data_prompt)
+
+      # Example result
+      [
+        %{
+          "dog_breed" => "labrador",
+          "dog_name" => "Frosty",
+          "person_age" => nil,
+          "person_hair_color" => "blonde",
+          "person_name" => "Alex"
+        },
+        %{
+          "dog_breed" => nil,
+          "dog_name" => nil,
+          "person_age" => nil,
+          "person_hair_color" => "brunette",
+          "person_name" => "Claudia"
+        }
+      ]
   """
   use Ecto.Schema
   require Logger
@@ -23,9 +66,9 @@ defmodule Langchain.Chains.DataExtractionChain do
   @doc """
   Run the data extraction chain.
   """
-  @spec run(ChatOpenAI.t(), schema :: map(), prompt :: [any()], opts :: Keyword.t()) ::
+  @spec run(ChatOpenAI.t(), json_schema :: map(), prompt :: [any()], opts :: Keyword.t()) ::
           {:ok, result :: [any()]} | {:error, String.t()}
-  def run(llm, schema, prompt, opts \\ []) do
+  def run(llm, json_schema, prompt, opts \\ []) do
     verbose = Keyword.get(opts, :verbose, false)
 
     try do
@@ -41,7 +84,7 @@ defmodule Langchain.Chains.DataExtractionChain do
       {:ok, chain} = LLMChain.new(%{llm: llm, verbose: verbose})
 
       chain
-      |> LLMChain.add_functions(build_extract_function(schema))
+      |> LLMChain.add_functions(build_extract_function(json_schema))
       |> LLMChain.add_messages(messages)
       |> LLMChain.run()
       |> case do
@@ -50,7 +93,6 @@ defmodule Langchain.Chains.DataExtractionChain do
           {:ok, info}
 
         other ->
-          IO.inspect(other, label: "???????")
           {:error, "Unexpected response. #{inspect(other)}"}
       end
     rescue
@@ -67,8 +109,8 @@ defmodule Langchain.Chains.DataExtractionChain do
   Build the function to expose to the LLM that can be called for data
   extraction.
   """
-  @spec build_extract_function(schema :: map()) :: Function.t() | no_return()
-  def build_extract_function(schema) do
+  @spec build_extract_function(json_schema :: map()) :: Langchain.Function.t() | no_return()
+  def build_extract_function(json_schema) do
     Langchain.Function.new!(%{
       name: "information_extraction",
       description: "Extracts the relevant information from the passage.",
@@ -77,7 +119,7 @@ defmodule Langchain.Chains.DataExtractionChain do
         properties: %{
           info: %{
             type: "array",
-            items: schema
+            items: json_schema
           }
         },
         required: ["info"]
