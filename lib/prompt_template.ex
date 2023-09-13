@@ -263,7 +263,7 @@ defmodule Langchain.PromptTemplate do
   end
 
   @doc """
-  Transform a PromptTemplate to a `Message`. Provide the inputs at the time of
+  Transform a PromptTemplate to a `Langchain.Message`. Provide the inputs at the time of
   transformation to render the final content.
   """
   @spec to_message(t(), input :: %{atom() => any()}) ::
@@ -274,7 +274,7 @@ defmodule Langchain.PromptTemplate do
   end
 
   @doc """
-  Transform a PromptTemplate to a `Message`. Provide the inputs at the time of
+  Transform a PromptTemplate to a `Langchain.Message`. Provide the inputs at the time of
   transformation to render the final content. Raises an exception if invalid.
   """
   @spec to_message!(t(), input :: %{atom() => any()}) :: Message.t() | no_return()
@@ -284,13 +284,9 @@ defmodule Langchain.PromptTemplate do
   end
 
   @doc """
-  Transform a list of PromptTemplates into a list of messages. Applies the
-  inputs to the list of prompt templates. If any of the prompt entries are
-  invalid or fail, an exception is raised.
-
-  Pass in the values for the prompts:
-
-      PromptTemplate.new!(%{role: :user, text: "User question: <%= @user_question %>}, %{user_question: "How tall are you?"})
+  Transform a list of PromptTemplates into a list of `Langchain.Message`s.
+  Applies the inputs to the list of prompt templates. If any of the prompt
+  entries are invalid or fail, an exception is raised.
   """
   @spec to_messages!([t() | Message.t() | String.t()], inputs :: %{atom() => any()}) ::
           [Message.t()] | no_return()
