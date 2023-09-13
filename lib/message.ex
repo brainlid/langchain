@@ -4,21 +4,23 @@ defmodule Langchain.Message do
 
   ## Roles
 
-  - `:system` - a system message. Typically just one and it tends to occur first
-    as a primer for how the LLM should behave.
+  - `:system` - a system message. Typically just one and it occurs first as a
+    primer for how the LLM should behave.
+
   - `:user` - The user or application responses. Typically represents the
     "human" element of the exchange.
+
   - `:assistant` - Responses coming back from the LLM.
 
   - `:arguments` - The `arguments` can be set as a map where each key is an
     "argument". If set as a String, it is expected to be a JSON formatted string
-    and will be parsed to a map. If there is an error parsing to JSON, it is
-    considered an error.
+    and will be parsed to a map. If there is an error parsing the arguments to
+    JSON, it is considered an error.
 
     An empty map `%{}` means no arguments are passed.
 
-  - `:function` - A message for returning the results of executing a
-    `function_call` if there is a response to give.
+  - `:function` - A message for returning the result of executing a
+    `function_call`.
 
   ## Functions
 
@@ -54,6 +56,9 @@ defmodule Langchain.Message do
   @create_fields [:role, :content, :status, :function_name, :arguments, :index]
   @required_fields [:role]
 
+  @doc """
+  Build a new message and return an `:ok`/`:error` tuple with the result.
+  """
   @spec new(attrs :: map()) :: {:ok, t()} | {:error, Ecto.Changeset.t()}
   def new(attrs \\ %{}) do
     %Message{}
