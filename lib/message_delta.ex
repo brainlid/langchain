@@ -1,22 +1,27 @@
 defmodule Langchain.MessageDelta do
   @moduledoc """
-  Models a "delta" message from a chat LLM. A delta is a small chunk of a
-  complete message. A series of deltas can be used to construct a complete
-  message.
+  Models a "delta" message from a chat LLM. A delta is a small chunk, or piece
+  of a much larger complete message. A series of deltas can are used to
+  construct a complete message.
+
+  Delta messages must be applied in order for them to be valid. Delta messages
+  can be combined and transformed into a `Langchain.Message` once the final
+  piece is received.
 
   ## Roles
 
-  - `:unknown` - The role data is missing for the delta.
-  - `:assistant` - Responses coming back from the LLM.
+  * `:unknown` - The role data is missing for the delta.
+  * `:assistant` - Responses coming back from the LLM.
 
   ## Function calling
 
-  - `:function_name` - A message from the LLM expressing the intent to execute a
+  * `:function_name` - A message from the LLM expressing the intent to execute a
     function that was previously declared available to it.
 
     The `arguments` will eventually be parsed from JSON. However, as deltas are
-    streamed, the arguments come in as text. Once it is fully received it can be
-    parsed as JSON, but it cannot be used before it is complete.
+    streamed, the arguments come in as text. Once it is _fully received_ it can
+    be parsed as JSON, but it cannot be used before it is complete as it will
+    not be valid JSON.
 
   """
   use Ecto.Schema
@@ -44,12 +49,11 @@ defmodule Langchain.MessageDelta do
 
   @type t :: %MessageDelta{}
 
-
   @create_fields [:role, :content, :function_name, :arguments, :index, :status]
   @required_fields []
 
   @doc """
-  Create a new MessageDelta that represents a message chunk.
+  Create a new `MessageDelta` that represents a message chunk.
   """
   @spec new(attrs :: map()) :: {:ok, t()} | {:error, Ecto.Changeset.t()}
   def new(attrs \\ %{}) do
@@ -62,7 +66,7 @@ defmodule Langchain.MessageDelta do
   end
 
   @doc """
-  Build a new MessageDelta that represents a message chunk and return it or
+  Create a new `MessageDelta` that represents a message chunk and return it or
   raise an error if invalid.
   """
   @spec new!(attrs :: map()) :: t() | no_return()
@@ -77,8 +81,38 @@ defmodule Langchain.MessageDelta do
   end
 
   @doc """
-  Merge two MessageDelta structs. The first MessageDelta is the `primary` one
-  that smaller deltas are merged into.
+  Merge two `MessageDelta` structs. The first `MessageDelta` is the `primary`
+  one that smaller deltas are merged into.
+
+      iex> delta_1 =
+      ...>   %Langchain.MessageDelta{
+      ...>     content: nil,
+      ...>     index: 0,
+      ...>     function_name: nil,
+      ...>     role: :assistant,
+      ...>     arguments: nil,
+      ...>     status: :incomplete
+      ...>   }
+      iex> delta_2 =
+      ...>   %Langchain.MessageDelta{
+      ...>     content: "Hello",
+      ...>     index: 0,
+      ...>     function_name: nil,
+      ...>     role: :unknown,
+      ...>     arguments: nil,
+      ...>     status: :incomplete
+      ...>   }
+      iex> Langchain.MessageDelta.merge_delta(delta_1, delta_2)
+      %Langchain.MessageDelta{content: "Hello", status: :incomplete, index: 0, function_name: nil, role: :assistant, arguments: nil}
+
+  A set of deltas can be easily merged like this:
+
+      [first | rest] = list_of_delta_message
+
+      Enum.reduce(rest, first, fn new_delta, acc ->
+        MessageDelta.merge_delta(acc, new_delta)
+      end)
+
   """
   @spec merge_delta(t(), t()) :: t()
   def merge_delta(%MessageDelta{role: :assistant} = primary, %MessageDelta{} = delta_part) do
@@ -172,6 +206,12 @@ defmodule Langchain.MessageDelta do
   @doc """
   Convert the MessageDelta to a Message. Can only convert a fully complete
   MessageDelta.
+
+  This is assumed to be the result of merging all the received `MessageDelta`s.
+  An error is returned if the `status` is `:incomplete`.
+
+  If the `MessageDelta` fails to convert to a `Langchain.Message`, an error is
+  returned with the reason.
   """
   @spec to_message(t()) :: {:ok, Message.t()} | {:error, String.t()}
   def to_message(%MessageDelta{status: :incomplete} = _delta) do
