@@ -148,7 +148,7 @@ A:))
           %{
             person: "Elon Musk",
             example_q: "What's your favorite car?",
-            example_a: "Telsa",
+            example_a: "Tesla",
             input: "What's your favorite social media site?"
           }
         )
@@ -157,7 +157,7 @@ A:))
 
 Here's an example of an interaction:
 Q: What's your favorite car?
-A: Telsa
+A: Tesla
 
 Now, do this for real!
 Q: What's your favorite social media site?
