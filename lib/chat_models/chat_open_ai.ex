@@ -30,8 +30,8 @@ defmodule Langchain.ChatModels.ChatOpenAI do
   @primary_key false
   embedded_schema do
     field :endpoint, :string, default: "https://api.openai.com/v1/chat/completions"
-    field :model, :string, default: "gpt-4"
-    # field :model, :string, default: "gpt-3.5-turbo"
+    # field :model, :string, default: "gpt-4"
+    field :model, :string, default: "gpt-3.5-turbo"
 
     # What sampling temperature to use, between 0 and 2. Higher values like 0.8
     # will make the output more random, while lower values like 0.2 will make it
@@ -85,7 +85,7 @@ defmodule Langchain.ChatModels.ChatOpenAI do
     end
   end
 
-  def common_validation(changeset) do
+  defp common_validation(changeset) do
     changeset
     |> validate_required(@required_fields)
     |> validate_number(:temperature, greater_than_or_equal_to: 0, less_than_or_equal_to: 2)
@@ -95,7 +95,7 @@ defmodule Langchain.ChatModels.ChatOpenAI do
   end
 
   @doc """
-  Return the params to send in an API request.
+  Return the params formatted for an API request.
   """
   @spec for_api(t, message :: [map()], functions :: [map()]) :: %{atom() => any()}
   def for_api(%ChatOpenAI{} = openai, messages, functions) do
@@ -125,7 +125,7 @@ defmodule Langchain.ChatModels.ChatOpenAI do
   @spec call(
           t(),
           String.t() | [Message.t()],
-          [Function.t()],
+          [Langchain.Function.t()],
           nil | (Message.t() | MessageDelta.t() -> any())
         ) :: call_response()
   def call(openai, prompt, functions \\ [], callback_fn \\ nil)
@@ -267,13 +267,14 @@ defmodule Langchain.ChatModels.ChatOpenAI do
       end
     end
 
-    req = Req.new([
-      url: openai.endpoint,
-      json: for_api(openai, messages, functions),
-      auth: {:bearer, System.fetch_env!("OPENAPI_KEY")},
-      receive_timeout: openai.receive_timeout,
-      finch_request: finch_fun
-    ])
+    req =
+      Req.new(
+        url: openai.endpoint,
+        json: for_api(openai, messages, functions),
+        auth: {:bearer, System.fetch_env!("OPENAPI_KEY")},
+        receive_timeout: openai.receive_timeout,
+        finch_request: finch_fun
+      )
 
     # NOTE: The POST response includes a list of body messages that were
     # received during the streaming process. However, the messages in the
@@ -291,13 +292,13 @@ defmodule Langchain.ChatModels.ChatOpenAI do
         {:error, reason}
 
       other ->
-        Logger.error("Unhandled and unexpected response from streamed post call. #{inspect(other)}")
+        Logger.error(
+          "Unhandled and unexpected response from streamed post call. #{inspect(other)}"
+        )
+
         {:error, "Unexpected response"}
     end
   end
-
-  # TODO: I want the raw JSON.
-  # TODO: 2 ways of getting the JSON. Then once we have the JSON, one path for processing.
 
   defp decode_streamed_data(data) do
     # Data comes back like this:
@@ -490,10 +491,6 @@ defmodule Langchain.ChatModels.ChatOpenAI do
         {:error, Utils.changeset_error_to_string(changeset)}
     end
   end
-
-  # def do_process_response(%{"choices" => [%{"finish_reason" => "length"}]}) do
-  #   {:error, "Stopped for length"}
-  # end
 
   def do_process_response(%{"error" => %{"message" => reason}}) do
     {:error, reason}
