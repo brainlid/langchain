@@ -14,10 +14,52 @@ defmodule Langchain.Function do
     should describe what the function is used for or what it returns. This
     information is used by the LLM to decide which function to call and for what
     purpose.
-  * ` parameters_schema` - A JSONSchema structure that describes how arguments
-    are passed to the function.
+  * ` parameters_schema` - A [JSONSchema
+    structure](https://json-schema.org/learn/getting-started-step-by-step.html)
+    that describes the required data structure format for how arguments are
+    passed to the function.
   * `function` - An Elixir function to execute when an LLM requests to execute
     the function.
+
+  ## Example
+
+  This example defines a function that an LLM can execute for performing basic
+  math calculations. **NOTE:** This is a partial implementation of the
+  `Langchain.Tools.Calculator`.
+
+      Function.new(%{
+        name: "calculator",
+        description: "Perform basic math calculations",
+        parameters_schema: %{
+          type: "object",
+          properties: %{
+            expression: %{type: "string", description: "A simple mathematical expression."}
+          },
+          required: ["expression"]
+        },
+        function:
+          fn(%{"expression" => expr} = _args, _context) ->
+            "Uh... I don't know!"
+          end)
+      })
+
+  The `function` attribute is an Elixir function that can be executed when the
+  function is "called" by the LLM.
+
+  The `args` argument is the JSON data passed by the LLM after being parsed to a
+  map.
+
+  The `context` argument is passed through as the `context` on a
+  `Langchain.Chains.LLMChain`. This is whatever context data is needed for the
+  function to do it's work.
+
+  Context examples may be user_id, account_id, account struct, billing level,
+  etc.
+
+  The `parameters_schema` is an Elixir map that follows a
+  [JSONSchema](https://json-schema.org/learn/getting-started-step-by-step.html)
+  structure. It is used to define the required data structure format for
+  receiving data to the function from the LLM.
 
   """
   use Ecto.Schema
@@ -76,6 +118,8 @@ defmodule Langchain.Function do
 
   @doc """
   Execute the function passing in arguments and additional optional context.
+  This is called by a `Langchain.Chains.LLMChain` when a `Function` execution is
+  requested by the LLM.
   """
   def execute(%Function{function: fun} = function, arguments, context) do
     Logger.debug("Executing function #{inspect(function.name)}")
