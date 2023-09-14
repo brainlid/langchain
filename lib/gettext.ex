@@ -20,6 +20,5 @@ defmodule Langchain.Gettext do
 
   See the [Gettext Docs](https://hexdocs.pm/gettext) for detailed usage.
   """
-  #TODO: Set otp_app to `:langchain` once extracted
-  use Gettext, otp_app: :gipity
+  use Gettext, otp_app: :langchain
 end
