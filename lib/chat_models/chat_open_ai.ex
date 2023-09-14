@@ -1,14 +1,13 @@
 defmodule Langchain.ChatModels.ChatOpenAI do
   @moduledoc """
-  Represents the OpenAI ChatModel.
+  Represents the [OpenAI ChatModel](https://platform.openai.com/docs/api-reference/chat/create).
 
   Parses and validates inputs for making a requests from the OpenAI Chat API.
 
-  https://platform.openai.com/docs/api-reference/chat/create
+  Converts responses into more specialized `Langchain` data structures.
 
   - https://github.com/openai/openai-cookbook/blob/main/examples/How_to_call_functions_with_chat_models.ipynb
 
-  Converts responses into more explicit data structures.
   """
   use Ecto.Schema
   require Logger
@@ -117,10 +116,24 @@ defmodule Langchain.ChatModels.ChatOpenAI do
   end
 
   @doc """
-  Call the API passing the ChatOpenAI struct with configuration, plus either a
-  simple message or the list of messages to act as the prompt. Optionally pass
-  in a list of functions available to the LLM for requesting execution in
-  response.
+  Calls the OpenAI API passing the ChatOpenAI struct with configuration, plus
+  either a simple message or the list of messages to act as the prompt.
+
+  Optionally pass in a list of functions available to the LLM for requesting
+  execution in response.
+
+  Optionally pass in a callback function that can be executed as data is
+  received from the API.
+
+  **NOTE:** This function *can* be used directly, but the primary interface
+  should be through `Langchain.Chains.LLMChain`. The `ChatOpenAI` module is more focused on
+  translating the `Langchain` data structures to and from the OpenAI API.
+
+  Another benefit of using `Langchain.Chains.LLMChain` is that it combines the
+  storage of messages, adding functions, adding custom context that should be
+  passed to functions, and automatically applying `Langchain.MessageDelta`
+  structs as they are are received, then converting those to the full
+  `Langchain.Message` once fully complete.
   """
   @spec call(
           t(),
@@ -371,6 +384,7 @@ defmodule Langchain.ChatModels.ChatOpenAI do
   end
 
   # Parse a new message response
+  @doc false
   @spec do_process_response(data :: %{String.t() => any()}) ::
           Message.t()
           | [Message.t()]
