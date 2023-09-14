@@ -133,10 +133,6 @@ defmodule Langchain.Chains.LLMChainTest do
 
       assert %Message{role: :assistant} = response
       assert updated_chain.last_message == response
-
-      # TODO: What does a streamed call_chat return?
-      # success that it was submitted?
-      # it's a blocking call while the callback function fires.
     end
 
     @tag :live_call
@@ -427,10 +423,6 @@ defmodule Langchain.Chains.LLMChainTest do
   end
 
   describe "run/1" do
-    # TODO: runs a single execution
-
-    # TODO: LIVE and not-live tests.
-
     @tag :live_call
     test "custom_context is passed to a custom function" do
       # map of data we want to be passed as `context` to the function when
@@ -573,9 +565,6 @@ defmodule Langchain.Chains.LLMChainTest do
 
   # TODO: Index related chains
   # https://js.langchain.com/docs/modules/chains/index_related_chains/
-
-  # TODO: OpenAI Function Chains
-  # https://js.langchain.com/docs/modules/chains/openai_functions/
 
   # TODO: Other Chains
   # https://js.langchain.com/docs/modules/chains/other_chains/

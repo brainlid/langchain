@@ -53,17 +53,6 @@ defmodule Langchain.Chains.LLMChain do
     field :callback_fn, :any, virtual: true
   end
 
-  # Note: A Langchain "Tool" is pretty much expressed by an OpenAI Function.
-  # TODO: Toolkit is a list of Tools/Functions. Makes it easy to define a set of
-  # functions for a specific service.
-
-  # TODO: Ability to receive a message executing a function and execute it. Add
-  # a message with the function response.
-
-  # TODO: Create a State structure that supports processing responses, executing
-  # functions, and adding more to the state object (like the function result of
-  # the execution)
-
   @type t :: %LLMChain{}
 
   @create_fields [:llm, :functions, :custom_context, :verbose]
@@ -109,11 +98,6 @@ defmodule Langchain.Chains.LLMChain do
     end
   end
 
-  # TODO:
-  # Figure out the definition for a tool. I believe it should define 1 - many functions.
-  # Enum.tools()
-  # A Tool is basically a Function. If %Function{}, keep it. If a Toolkit, look for functions and flatten it.
-
   @doc false
   def build_functions_map_from_functions(changeset) do
     functions = get_field(changeset, :functions, [])
@@ -144,11 +128,6 @@ defmodule Langchain.Chains.LLMChain do
     |> build_functions_map_from_functions()
     |> apply_action!(:update)
   end
-
-  # TODO: Callback needed here if streaming. Setup the callback on the LLM? That's where the stream option is set.
-
-  # TODO: The wrapping up of functions, function map, delta tracking, last_message tracking, messages, and verbose logging is handy to separate from the LLM.
-  #       - makes it easier to implement another LLM because it doesn't DO as much.
 
   @doc """
   Run the chain on the LLM using messages and any registered functions. This

@@ -117,7 +117,6 @@ defmodule Langchain.PromptTemplateTest do
     end
   end
 
-  # TODO: better multiline string characters to use?
   describe "format_composed/3" do
     # https://js.langchain.com/docs/modules/prompts/prompt_templates/prompt_composition
     test "support composing prompts with input replacement at two levels" do
