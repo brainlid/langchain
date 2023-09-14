@@ -7,7 +7,7 @@ defmodule Langchain.Chains.DataExtractionChainTest do
   # Extraction - https://js.langchain.com/docs/modules/chains/openai_functions/extraction
   @tag :live_call
   test "data extraction chain" do
-    # Schema definition
+    # JSONSchema definition
     schema_parameters = %{
       type: "object",
       properties: %{
