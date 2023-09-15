@@ -1,5 +1,8 @@
 # LangChain
 
+TODO: Highlight where to start on the project. The LLMChain is the central point for using the library.
+
+
 **NOTE**: This project is under active development and is subject to significant changes.
 
 **LangChain** is a framework for developing applications powered by language models. It enables applications that are:
@@ -71,10 +74,6 @@ config :langchain, openai_key: {MyApp.Secrets, :openai_key, []}
 # OR
 config :langchain, openai_key: fn -> System.get_env("OPENAI_KEY") end
 ```
-
-When doing local development on the `Langchain` library itself, rename the `.envrc_template` to `.envrc` and populate it with your private API values. This is only used when running live test when explicitly requested.
-
-Use a tool like [Dotenv](https://github.com/motdotla/dotenv) to load the API values into the ENV when using the library locally.
 
 ## Usage
 
@@ -150,3 +149,7 @@ mix test
 ```
 
 Executing a specific test, wether it is a `live_call` or not, will execute it creating a potentially billable event.
+
+When doing local development on the `Langchain` library itself, rename the `.envrc_template` to `.envrc` and populate it with your private API values. This is only used when running live test when explicitly requested.
+
+Use a tool like [Dotenv](https://github.com/motdotla/dotenv) to load the API values into the ENV when using the library locally.
