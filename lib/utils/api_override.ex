@@ -3,6 +3,32 @@ defmodule Langchain.Utils.ApiOverride do
   Tools for overriding API results. Used for testing.
 
   Works by setting and checking for special use of the Process dictionary.
+
+  ## Test Example
+
+      import Langchain.Utils.ApiOverride
+
+      model = ChatOpenAI.new!(%{temperature: 1, stream: true})
+
+      # Define the fake response to return
+      fake_messages = [
+        [MessageDelta.new!(%{role: :assistant, content: nil, status: :incomplete})],
+        [MessageDelta.new!(%{content: "Sock", status: :incomplete})]
+      ]
+
+      # Made NOT LIVE here. Will not make the external call to the LLM
+      set_api_override({:ok, fake_messages})
+
+      # We can construct an LLMChain from a PromptTemplate and an LLM.
+      {:ok, updated_chain, _response} =
+        %{llm: model, verbose: false}
+        |> LLMChain.new!()
+        |> LLMChain.add_message(
+          Message.new_user!("What is a good name for a company that makes colorful socks?")
+        )
+        |> LLMChain.run()
+
+      assert %Message{role: :assistant, content: "Sock"} = updated_chain.last_message
   """
 
   @key :fake_api_response
