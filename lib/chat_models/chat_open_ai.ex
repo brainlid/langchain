@@ -14,6 +14,7 @@ defmodule Langchain.ChatModels.ChatOpenAI do
   import Ecto.Changeset
   import Langchain.Utils.ApiOverride
   alias __MODULE__
+  alias Langchain.Config
   alias Langchain.Message
   alias Langchain.LangchainError
   alias Langchain.ForOpenAIApi
@@ -58,6 +59,12 @@ defmodule Langchain.ChatModels.ChatOpenAI do
 
   @create_fields [:model, :temperature, :frequency_penalty, :n, :stream, :receive_timeout]
   @required_fields [:model]
+
+  @spec get_api_key() :: String.t()
+  defp get_api_key() do
+    # if no API key is set default to `""` which will raise a Stripe API error
+    Config.resolve(:openai_key, "")
+  end
 
   @doc """
   Setup a ChatOpenAI client configuration.
@@ -206,7 +213,7 @@ defmodule Langchain.ChatModels.ChatOpenAI do
   def do_api_request(%ChatOpenAI{stream: false} = openai, messages, functions, callback_fn) do
     Req.post(openai.endpoint,
       json: for_api(openai, messages, functions),
-      auth: {:bearer, System.fetch_env!("OPENAPI_KEY")},
+      auth: {:bearer, get_api_key()},
       receive_timeout: openai.receive_timeout
     )
     # parse the body and return it as parsed structs
@@ -284,7 +291,7 @@ defmodule Langchain.ChatModels.ChatOpenAI do
       Req.new(
         url: openai.endpoint,
         json: for_api(openai, messages, functions),
-        auth: {:bearer, System.fetch_env!("OPENAPI_KEY")},
+        auth: {:bearer, get_api_key()},
         receive_timeout: openai.receive_timeout,
         finch_request: finch_fun
       )

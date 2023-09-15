@@ -54,9 +54,27 @@ end
 
 Currently, the library is written to use the `Req` library for making API calls.
 
-Rename the `.envrc_template` to `.envrc` and populate it with your private API values.
+To make API calls, it is necessary to configure the API keys for the services you connect with. At this time, the library only supports ChatGPT and the OpenAI API key.
 
-Using a tool like [Dotenv](https://github.com/motdotla/dotenv), it can load the API values into the ENV when using the library locally.
+```elixir
+import Config
+
+config :langchain, openai_key: System.get_env("OPENAI_KEY")
+# OR
+config :langchain, openai_key: "YOUR SECRET KEY"
+```
+
+It's possible to use a function or a tuple to resolve the secret:
+
+```elixir
+config :langchain, openai_key: {MyApp.Secrets, :openai_key, []}
+# OR
+config :langchain, openai_key: fn -> System.get_env("OPENAI_KEY") end
+```
+
+When doing local development on the `Langchain` library itself, rename the `.envrc_template` to `.envrc` and populate it with your private API values. This is only used when running live test when explicitly requested.
+
+Use a tool like [Dotenv](https://github.com/motdotla/dotenv) to load the API values into the ENV when using the library locally.
 
 ## Usage
 
