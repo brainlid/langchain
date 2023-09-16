@@ -1,10 +1,5 @@
 # LangChain
 
-TODO: Highlight where to start on the project. The LLMChain is the central point for using the library.
-
-
-**NOTE**: This project is under active development and is subject to significant changes.
-
 **LangChain** is a framework for developing applications powered by language models. It enables applications that are:
 
 - **Data-aware:** connect a language model to other sources of data
@@ -77,6 +72,7 @@ config :langchain, openai_key: fn -> System.get_env("OPENAI_KEY") end
 
 ## Usage
 
+The central module in this library is `Langchain.Chains.LLMChain`. Most other pieces are either inputs to this, or structures used by it. For understanding how to use the library, start there.
 
 ### Exposing a custom Elixir function to ChatGPT
 
