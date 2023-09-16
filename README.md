@@ -80,6 +80,10 @@ config :langchain, openai_key: fn -> System.get_env("OPENAI_KEY") end
 
 ### Exposing a custom Elixir function to ChatGPT
 
+For an interactive example, refer to the project [Livebook notebook "Langchain: Executing Custom Elixir Functions"](notebooks/custom_functions.livemd).
+
+The following is an example of a function that receives parameter arguments.
+
 ```elixir
 alias Langchain.Function
 alias Langchain.Message
