@@ -1,0 +1,315 @@
+<!-- livebook:{"persist_outputs":true} -->
+
+# Langchain: Executing Custom Elixir Functions
+
+```elixir
+Mix.install([
+  {:langchain, github: "brainlid/langchain"}
+])
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+:ok
+```
+
+## What we're doing
+
+This notebook shows how to use the Elixir [Langchain](https://github.com/brainlid/langchain) library to expose an Elixir function as something that can be executed by an LLM like ChatGPT. The Langchain library wraps this all up making it easy and portable between different LLMs.
+
+## The Elixir Function in our App
+
+Let's define the Elixir function we want to expose to ChatGPT so we can see how it works.
+
+In this example we'll create a `get_user_info` function that takes a user ID and returns the relevant user's information for the current user to a web app.
+
+For simplicity, we're skipping an actual database and storing our fake records on the module.
+
+```elixir
+defmodule MyApp do
+  @pretend_db %{
+    1 => %{user_id: 1, name: "Michael Johnson", account_type: :trial, favorite_animal: "Horse"},
+    2 => %{user_id: 2, name: "Joan Jett", account_type: :member, favorite_animal: "Aardvark"}
+  }
+
+  def get_user_info(user_id) do
+    @pretend_db[user_id]
+  end
+end
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+{:module, MyApp, <<70, 79, 82, 49, 0, 0, 7, ...>>, {:get_user_info, 1}}
+```
+
+## Explosing our Function to an LLM
+
+With an Elixir function defined, we will wrap it in a Langchain `Function` structure so it can be easily shared with an LLM.
+
+This is what that looks like:
+
+```elixir
+alias Langchain.Function
+
+function =
+  Function.new!(%{
+    name: "get_user_info",
+    description: "Return JSON object of the current users's relevant information.",
+    function: fn _args, %{user_id: user_id} = _context ->
+      # Use the provided user_id context to call our Elixir function.
+      # ChatGPT responses must be text. Convert the returned Map into JSON.
+      Jason.encode!(MyApp.get_user_info(user_id))
+    end
+  })
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+%Langchain.Function{
+  name: "get_user_info",
+  description: "Return JSON object of the current users's relevant information.",
+  function: #Function<41.3316493/2 in :erl_eval.expr/6>,
+  parameters_schema: nil
+}
+```
+
+The function `name` we provide is how the LLM will execute the function if the LLM chooses to call it.
+
+The `description` is for the LLM to know what the function can do so it can decide which function to call for which purpose.
+
+The `function` argument is passed an annonymous function whose job it is to be the glue that bridges data coming from the LLM with context from our application before calling other functions from our application.
+
+This "bridge" function receives 2 arguments. The first is any arguments passed to the function by the LLM if we defined any as being required. The second is an application context that we'll get to next. The `context` is specific to our application and does not go through the LLM at all. Think of this as the current user logged into our Phoenix web application. We want the exchange with the LLM to be relevant and only based on the what the current user can see and do.
+
+## Setting up our Langchain API Key
+
+We need to setup the Langchain library to connect with ChatGPT using our API key. In a real Elixir application, this would be done in the `config/config.exs` file using something like this:
+
+<!-- livebook:{"force_markdown":true} -->
+
+```elixir
+config :langchain, :openai_key, fn -> System.fetch_env!("OPENAI_KEY") end
+```
+
+<!-- livebook:{"break_markdown":true} -->
+
+For the Livebook notebook, use the "Secrets" on the sidebar to create an `OPENAI_KEY` secret with you API key. That is accessible here using `"LB_OPENAI_KEY"`.
+
+```elixir
+Application.put_env(:langchain, :openai_key, System.fetch_env!("LB_OPENAI_KEY"))
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+:ok
+```
+
+## Defining our AI Assistant
+
+We'll use the `Langchain.Message` struct to define the messages for what we want the LLM to do. Our `system` message instructs the LLM how to behave.
+
+In this example, we want the assistant to generate Haiku poems about the current user's favorite animals. However, we only want it to work for users who are "members" and not "trial" users.
+
+The instructions we're giving the LLM will require it to execute the function to get additional information. Yes, this is a simple and contrived example, in a real system, we wouldn't even make the API call to the server for a "trial" user and we could pass along the additional information with the first request.
+
+What we're demonstrating here is that the LLM can interact with our Elixir application, use multiple pieces of returned information to make business logic decisions and fullfil our system requests.
+
+```elixir
+alias Langchain.Message
+
+messages = [
+  Message.new_system!(~s(You are a helpful haiku poem generating assistant. 
+    ONLY generate a haiku for users with an `account_type` of "member". 
+    If the user has an `account_type` of "trial", say you can't do it, 
+    but you would love to help them if they upgrade and become a member.)),
+  Message.new_user!("The current user is requesting a Haiku poem about their favorite animal.")
+]
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+[
+  %Langchain.Message{
+    content: "You are a helpful haiku poem generating assistant. \n    ONLY generate a haiku for users with an `account_type` of \"member\". \n    If the user has an `account_type` of \"trial\", say you can't do it, \n    but you would love to help them if they upgrade and become a member.",
+    index: nil,
+    status: :complete,
+    role: :system,
+    function_name: nil,
+    arguments: nil
+  },
+  %Langchain.Message{
+    content: "The current user is requesting a Haiku poem about their favorite animal.",
+    index: nil,
+    status: :complete,
+    role: :user,
+    function_name: nil,
+    arguments: nil
+  }
+]
+```
+
+## Defining our AI Model
+
+For this example, we're talking to OpenAI's ChatGPT service. Let's setup that model. At this point, we can also specify which version of ChatGPT we want to talk with.
+
+For the kind of work we're asking it to do, GPT-4 does a better job than previous model versions. We'll specify we want "gpt-4".
+
+```elixir
+alias Langchain.ChatModels.ChatOpenAI
+
+chat_model = ChatOpenAI.new!(%{model: "gpt-4", temperature: 1, stream: false})
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+%Langchain.ChatModels.ChatOpenAI{
+  endpoint: "https://api.openai.com/v1/chat/completions",
+  model: "gpt-4",
+  temperature: 1.0,
+  frequency_penalty: 0.0,
+  receive_timeout: 60000,
+  n: 1,
+  stream: false
+}
+```
+
+## Defining our Application's User Context
+
+Here we'll define some special context that we want passed through to our `Langchain.Function` when it is executed.
+
+In a real application, this might be session based user or account information. It's whatever is relevant to our application that changes how and what a function should operate.
+
+```elixir
+context = %{user_id: 2}
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+%{user_id: 2}
+```
+
+After trying this with `user_id: 2`, a member who should have a Haiku generated for them, change it to `user_id: 1` to see it be polietly denied.
+
+## Making the API Call
+
+We're ready to make the API call!
+
+Notice the `custom_context: context` setting that is passed in when creating the `LLMChain`. That information is the application-specific context we want to be passed to our `Function` when executed.
+
+Also, note the `verbose: true` setting. That causes a number of `IO.inspect` calls to be printed showing what's happening internally.
+
+Additionally, the `stream: false` option says we want the result only when it's complete. This example isn't setup for receving a streaming response. We're keeping it simple!
+
+```elixir
+alias Langchain.Chains.LLMChain
+
+{:ok, updated_chain, response} =
+  %{llm: chat_model, custom_context: context, verbose: true}
+  |> LLMChain.new!()
+  # add the prompt message
+  |> LLMChain.add_messages(messages)
+  # add the functions that are available to the LLM
+  |> LLMChain.add_functions([function])
+  # keep running the LLM chain against the LLM if needed to evaluate 
+  # function calls and provide a response.
+  |> LLMChain.run(while_needs_response: true)
+
+IO.puts(response.content)
+response.content
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+LLM: %Langchain.ChatModels.ChatOpenAI{
+  endpoint: "https://api.openai.com/v1/chat/completions",
+  model: "gpt-4",
+  temperature: 1.0,
+  frequency_penalty: 0.0,
+  receive_timeout: 60000,
+  n: 1,
+  stream: false
+}
+MESSAGES: [
+  %Langchain.Message{
+    content: "You are a helpful haiku poem generating assistant. \n    ONLY generate a haiku for users with an `account_type` of \"member\". \n    If the user has an `account_type` of \"trial\", say you can't do it, \n    but you would love to help them if they upgrade and become a member.",
+    index: nil,
+    status: :complete,
+    role: :system,
+    function_name: nil,
+    arguments: nil
+  },
+  %Langchain.Message{
+    content: "The current user is requesting a Haiku poem about their favorite animal.",
+    index: nil,
+    status: :complete,
+    role: :user,
+    function_name: nil,
+    arguments: nil
+  }
+]
+FUNCTIONS: [
+  %Langchain.Function{
+    name: "get_user_info",
+    description: "Return JSON object of the current users's relevant information.",
+    function: #Function<41.3316493/2 in :erl_eval.expr/6>,
+    parameters_schema: nil
+  }
+]
+SINGLE MESSAGE RESPONSE: %Langchain.Message{
+  content: nil,
+  index: 0,
+  status: :complete,
+  role: :assistant,
+  function_name: "get_user_info",
+  arguments: %{}
+}
+EXECUTING FUNCTION: "get_user_info"
+
+10:31:04.338 [debug] Executing function "get_user_info"
+FUNCTION RESULT: "{\"account_type\":\"member\",\"favorite_animal\":\"Aardvark\",\"name\":\"Joan Jett\",\"user_id\":2}"
+SINGLE MESSAGE RESPONSE: %Langchain.Message{
+  content: "Delving in darkness,\nAardvark, nature's architect,\nJoan's spirit animal.",
+  index: 0,
+  status: :complete,
+  role: :assistant,
+  function_name: nil,
+  arguments: nil
+}
+Delving in darkness,
+Aardvark, nature's architect,
+Joan's spirit animal.
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+"Delving in darkness,\nAardvark, nature's architect,\nJoan's spirit animal."
+```
+
+**TIP:** Try chaging the `context` to `user_id: 1` now and see what happens when a different user context is provided.
+
+## Discussion
+
+After a successful call, we can see in the verbose logs that:
+
+* the LLM requested to execute the function
+* LLMChain executed the function attached to the `Function` struct
+* the response of our Elixir function passed through the anonymous function on `Function` and was re-submitted back to the LLM
+* the LLM reacted to the result of our function call
+
+This means it worked! We successfully let an LLM directly interact with our Elixir application!
+
+With this, we could expose functions that allow the LLM to request additional information specific to the current user, or we could even define functions that allow the LLM to **change** things in the user's account on their behalf!
+
+At that point, it's up to us!
+
+<!-- livebook:{"offset":11054,"stamp":{"token":"QTEyOEdDTQ.QVq3CzUVzbx_z4dCWDieVmA4vIU5aCBxwXqbdCzXOcfFDf1jE0mWXdJlJuA.IqFBfgoIJc-vWF4B.L5lX6upQX6GSJtmIgR64IJQNY9gb8P52ytR_GFDLDIS0ImioCeG9YWPKHaDkOg.ggDyY9shB2DUzfmP4SNJKQ","version":1}} -->
