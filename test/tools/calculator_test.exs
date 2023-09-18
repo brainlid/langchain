@@ -1,11 +1,11 @@
-defmodule Langchain.Tools.CalculatorTest do
-  alias Langchain.Chains.LLMChain
-  use Langchain.BaseCase
+defmodule LangChain.Tools.CalculatorTest do
+  alias LangChain.Chains.LLMChain
+  use LangChain.BaseCase
 
-  doctest Langchain.Tools.Calculator
-  alias Langchain.Tools.Calculator
-  alias Langchain.Function
-  alias Langchain.ChatModels.ChatOpenAI
+  doctest LangChain.Tools.Calculator
+  alias LangChain.Tools.Calculator
+  alias LangChain.Function
+  alias LangChain.ChatModels.ChatOpenAI
 
   describe "new/0" do
     test "defines the function correctly" do

@@ -1,11 +1,11 @@
-defmodule Langchain.MessageDelta do
+defmodule LangChain.MessageDelta do
   @moduledoc """
   Models a "delta" message from a chat LLM. A delta is a small chunk, or piece
   of a much larger complete message. A series of deltas can are used to
   construct a complete message.
 
   Delta messages must be applied in order for them to be valid. Delta messages
-  can be combined and transformed into a `Langchain.Message` once the final
+  can be combined and transformed into a `LangChain.Message` once the final
   piece is received.
 
   ## Roles
@@ -28,9 +28,9 @@ defmodule Langchain.MessageDelta do
   import Ecto.Changeset
   require Logger
   alias __MODULE__
-  alias Langchain.LangchainError
-  alias Langchain.Message
-  alias Langchain.Utils
+  alias LangChain.LangChainError
+  alias LangChain.Message
+  alias LangChain.Utils
 
   @primary_key false
   embedded_schema do
@@ -76,7 +76,7 @@ defmodule Langchain.MessageDelta do
         message
 
       {:error, changeset} ->
-        raise LangchainError, changeset
+        raise LangChainError, changeset
     end
   end
 
@@ -85,7 +85,7 @@ defmodule Langchain.MessageDelta do
   one that smaller deltas are merged into.
 
       iex> delta_1 =
-      ...>   %Langchain.MessageDelta{
+      ...>   %LangChain.MessageDelta{
       ...>     content: nil,
       ...>     index: 0,
       ...>     function_name: nil,
@@ -94,7 +94,7 @@ defmodule Langchain.MessageDelta do
       ...>     status: :incomplete
       ...>   }
       iex> delta_2 =
-      ...>   %Langchain.MessageDelta{
+      ...>   %LangChain.MessageDelta{
       ...>     content: "Hello",
       ...>     index: 0,
       ...>     function_name: nil,
@@ -102,8 +102,8 @@ defmodule Langchain.MessageDelta do
       ...>     arguments: nil,
       ...>     status: :incomplete
       ...>   }
-      iex> Langchain.MessageDelta.merge_delta(delta_1, delta_2)
-      %Langchain.MessageDelta{content: "Hello", status: :incomplete, index: 0, function_name: nil, role: :assistant, arguments: nil}
+      iex> LangChain.MessageDelta.merge_delta(delta_1, delta_2)
+      %LangChain.MessageDelta{content: "Hello", status: :incomplete, index: 0, function_name: nil, role: :assistant, arguments: nil}
 
   A set of deltas can be easily merged like this:
 
@@ -210,7 +210,7 @@ defmodule Langchain.MessageDelta do
   This is assumed to be the result of merging all the received `MessageDelta`s.
   An error is returned if the `status` is `:incomplete`.
 
-  If the `MessageDelta` fails to convert to a `Langchain.Message`, an error is
+  If the `MessageDelta` fails to convert to a `LangChain.Message`, an error is
   returned with the reason.
   """
   @spec to_message(t()) :: {:ok, Message.t()} | {:error, String.t()}

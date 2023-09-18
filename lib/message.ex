@@ -1,4 +1,4 @@
-defmodule Langchain.Message do
+defmodule LangChain.Message do
   @moduledoc """
   Models a complete `Message` for a chat LLM.
 
@@ -34,7 +34,7 @@ defmodule Langchain.Message do
   import Ecto.Changeset
   require Logger
   alias __MODULE__
-  alias Langchain.LangchainError
+  alias LangChain.LangChainError
 
   @primary_key false
   embedded_schema do
@@ -78,7 +78,7 @@ defmodule Langchain.Message do
         message
 
       {:error, changeset} ->
-        raise LangchainError, changeset
+        raise LangChainError, changeset
     end
   end
 
@@ -191,7 +191,7 @@ defmodule Langchain.Message do
         msg
 
       {:error, %Ecto.Changeset{} = changeset} ->
-        raise LangchainError, changeset
+        raise LangChainError, changeset
     end
   end
 
@@ -215,7 +215,7 @@ defmodule Langchain.Message do
         msg
 
       {:error, %Ecto.Changeset{} = changeset} ->
-        raise LangchainError, changeset
+        raise LangChainError, changeset
     end
   end
 
@@ -238,7 +238,7 @@ defmodule Langchain.Message do
         msg
 
       {:error, %Ecto.Changeset{} = changeset} ->
-        raise LangchainError, changeset
+        raise LangChainError, changeset
     end
   end
 
@@ -272,7 +272,7 @@ defmodule Langchain.Message do
         msg
 
       {:error, %Ecto.Changeset{} = changeset} ->
-        raise LangchainError, changeset
+        raise LangChainError, changeset
     end
   end
 
@@ -297,7 +297,7 @@ defmodule Langchain.Message do
         msg
 
       {:error, %Ecto.Changeset{} = changeset} ->
-        raise LangchainError, changeset
+        raise LangChainError, changeset
     end
   end
 
@@ -311,8 +311,8 @@ defmodule Langchain.Message do
   def is_function_call?(%Message{}), do: false
 end
 
-defimpl Langchain.ForOpenAIApi, for: Langchain.Message do
-  alias Langchain.Message
+defimpl LangChain.ForOpenAIApi, for: LangChain.Message do
+  alias LangChain.Message
 
   def for_api(%Message{role: :assistant, function_name: fun_name} = fun) when is_binary(fun_name) do
     %{

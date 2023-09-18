@@ -1,6 +1,6 @@
-defprotocol Langchain.ForOpenAIApi do
+defprotocol LangChain.ForOpenAIApi do
   @moduledoc """
-  A protocol that defines a way for converting the Langchain Elixir data structs
+  A protocol that defines a way for converting the LangChain Elixir data structs
   to an OpenAI supported data structure and format for making an API call.
   """
 
@@ -12,6 +12,6 @@ defprotocol Langchain.ForOpenAIApi do
   def for_api(struct)
 end
 
-defimpl Langchain.ForOpenAIApi, for: Any do
+defimpl LangChain.ForOpenAIApi, for: Any do
   def for_api(_struct), do: nil
 end

@@ -1,4 +1,4 @@
-defmodule Langchain.Utils.ApiOverride do
+defmodule LangChain.Utils.ApiOverride do
   @moduledoc """
   Tools for overriding API results. Used for testing.
 
@@ -6,7 +6,7 @@ defmodule Langchain.Utils.ApiOverride do
 
   ## Test Example
 
-      import Langchain.Utils.ApiOverride
+      import LangChain.Utils.ApiOverride
 
       model = ChatOpenAI.new!(%{temperature: 1, stream: true})
 

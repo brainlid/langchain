@@ -1,10 +1,10 @@
-defmodule Langchain.ChatModels.ChatOpenAI do
+defmodule LangChain.ChatModels.ChatOpenAI do
   @moduledoc """
   Represents the [OpenAI ChatModel](https://platform.openai.com/docs/api-reference/chat/create).
 
   Parses and validates inputs for making a requests from the OpenAI Chat API.
 
-  Converts responses into more specialized `Langchain` data structures.
+  Converts responses into more specialized `LangChain` data structures.
 
   - https://github.com/openai/openai-cookbook/blob/main/examples/How_to_call_functions_with_chat_models.ipynb
 
@@ -12,14 +12,14 @@ defmodule Langchain.ChatModels.ChatOpenAI do
   use Ecto.Schema
   require Logger
   import Ecto.Changeset
-  import Langchain.Utils.ApiOverride
+  import LangChain.Utils.ApiOverride
   alias __MODULE__
-  alias Langchain.Config
-  alias Langchain.Message
-  alias Langchain.LangchainError
-  alias Langchain.ForOpenAIApi
-  alias Langchain.Utils
-  alias Langchain.MessageDelta
+  alias LangChain.Config
+  alias LangChain.Message
+  alias LangChain.LangChainError
+  alias LangChain.ForOpenAIApi
+  alias LangChain.Utils
+  alias LangChain.MessageDelta
 
   # NOTE: As of gpt-4 and gpt-3.5, only one function_call is issued at a time
   # even when multiple requests could be issued based on the prompt.
@@ -87,7 +87,7 @@ defmodule Langchain.ChatModels.ChatOpenAI do
         chain
 
       {:error, changeset} ->
-        raise LangchainError, changeset
+        raise LangChainError, changeset
     end
   end
 
@@ -133,19 +133,19 @@ defmodule Langchain.ChatModels.ChatOpenAI do
   received from the API.
 
   **NOTE:** This function *can* be used directly, but the primary interface
-  should be through `Langchain.Chains.LLMChain`. The `ChatOpenAI` module is more focused on
-  translating the `Langchain` data structures to and from the OpenAI API.
+  should be through `LangChain.Chains.LLMChain`. The `ChatOpenAI` module is more focused on
+  translating the `LangChain` data structures to and from the OpenAI API.
 
-  Another benefit of using `Langchain.Chains.LLMChain` is that it combines the
+  Another benefit of using `LangChain.Chains.LLMChain` is that it combines the
   storage of messages, adding functions, adding custom context that should be
-  passed to functions, and automatically applying `Langchain.MessageDelta`
+  passed to functions, and automatically applying `LangChain.MessageDelta`
   structs as they are are received, then converting those to the full
-  `Langchain.Message` once fully complete.
+  `LangChain.Message` once fully complete.
   """
   @spec call(
           t(),
           String.t() | [Message.t()],
-          [Langchain.Function.t()],
+          [LangChain.Function.t()],
           nil | (Message.t() | MessageDelta.t() -> any())
         ) :: call_response()
   def call(openai, prompt, functions \\ [], callback_fn \\ nil)
@@ -170,7 +170,7 @@ defmodule Langchain.ChatModels.ChatOpenAI do
           response
 
         _other ->
-          raise LangchainError,
+          raise LangChainError,
                 "An unexpected fake API response was set. Should be an `{:ok, value}`"
       end
     else
@@ -184,7 +184,7 @@ defmodule Langchain.ChatModels.ChatOpenAI do
             {:ok, parsed_data}
         end
       rescue
-        err in LangchainError ->
+        err in LangChainError ->
           {:error, err.message}
       end
     end
@@ -258,7 +258,7 @@ defmodule Langchain.ChatModels.ChatOpenAI do
           #
           # body: [
           #         [
-          #           %Langchain.MessageDelta{
+          #           %LangChain.MessageDelta{
           #             content: nil,
           #             index: 0,
           #             function_name: nil,
@@ -279,7 +279,7 @@ defmodule Langchain.ChatModels.ChatOpenAI do
           {request, response}
 
         {:error, %Mint.TransportError{reason: :timeout}} ->
-          {request, LangchainError.exception("Request timed out")}
+          {request, LangChainError.exception("Request timed out")}
 
         {:error, exception} ->
           Logger.error("Failed request to API: #{inspect(exception)}")
@@ -308,7 +308,7 @@ defmodule Langchain.ChatModels.ChatOpenAI do
       {:ok, %Req.Response{body: data}} ->
         data
 
-      {:error, %LangchainError{message: reason}} ->
+      {:error, %LangChainError{message: reason}} ->
         {:error, reason}
 
       other ->
@@ -361,7 +361,7 @@ defmodule Langchain.ChatModels.ChatOpenAI do
     # return the error
     |> case do
       [{:error, reason}] ->
-        raise LangchainError, reason
+        raise LangChainError, reason
 
       other ->
         other

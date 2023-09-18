@@ -1,8 +1,8 @@
-defmodule Langchain.Tools.Calculator do
+defmodule LangChain.Tools.Calculator do
   @moduledoc """
   Defines a Calculator tool for performing basic math calculations.
 
-  This is an example of a pre-built `Langchain.Function` that is designed and
+  This is an example of a pre-built `LangChain.Function` that is designed and
   configured for a specific purpose.
 
   This defines a function to expose to an LLM and provides an implementation for
@@ -13,7 +13,7 @@ defmodule Langchain.Tools.Calculator do
   * make repeated calls to run the chain as the tool is called and the results
   are then made available to the LLM before it returns the final result.
   * OR run the chain using the `while_needs_response: true` option like this:
-    `Langchain.LLMChain.run(chain, while_needs_response: true)`
+    `LangChain.LLMChain.run(chain, while_needs_response: true)`
 
 
   ## Example
@@ -32,7 +32,7 @@ defmodule Langchain.Tools.Calculator do
 
   Verbose log output:
 
-      LLM: %Langchain.ChatModels.ChatOpenAI{
+      LLM: %LangChain.ChatModels.ChatOpenAI{
         endpoint: "https://api.openai.com/v1/chat/completions",
         model: "gpt-3.5-turbo",
         temperature: 0.0,
@@ -42,7 +42,7 @@ defmodule Langchain.Tools.Calculator do
         stream: false
       }
       MESSAGES: [
-        %Langchain.Message{
+        %LangChain.Message{
           content: "Answer the following math question: What is 100 + 300 - 200?",
           index: nil,
           status: :complete,
@@ -52,10 +52,10 @@ defmodule Langchain.Tools.Calculator do
         }
       ]
       FUNCTIONS: [
-        %Langchain.Function{
+        %LangChain.Function{
           name: "calculator",
           description: "Perform basic math calculations",
-          function: #Function<0.108164323/2 in Langchain.Tools.Calculator.execute>,
+          function: #Function<0.108164323/2 in LangChain.Tools.Calculator.execute>,
           parameters_schema: %{
             properties: %{
               expression: %{
@@ -68,7 +68,7 @@ defmodule Langchain.Tools.Calculator do
           }
         }
       ]
-      SINGLE MESSAGE RESPONSE: %Langchain.Message{
+      SINGLE MESSAGE RESPONSE: %LangChain.Message{
         content: nil,
         index: 0,
         status: :complete,
@@ -78,7 +78,7 @@ defmodule Langchain.Tools.Calculator do
       }
       EXECUTING FUNCTION: "calculator"
       FUNCTION RESULT: "200"
-      SINGLE MESSAGE RESPONSE: %Langchain.Message{
+      SINGLE MESSAGE RESPONSE: %LangChain.Message{
         content: "The answer to the math question \"What is 100 + 300 - 200?\" is 200.",
         index: 0,
         status: :complete,
@@ -89,7 +89,7 @@ defmodule Langchain.Tools.Calculator do
 
   """
   require Logger
-  alias Langchain.Function
+  alias LangChain.Function
 
   @doc """
   Define the "calculator" function. Returns a success/failure response.
@@ -120,7 +120,7 @@ defmodule Langchain.Tools.Calculator do
         function
 
       {:error, changeset} ->
-        raise Langchain.LangchainError, changeset
+        raise LangChain.LangChainError, changeset
     end
   end
 

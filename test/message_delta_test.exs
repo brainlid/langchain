@@ -1,10 +1,10 @@
-defmodule Langchain.MessageDeltaTest do
+defmodule LangChain.MessageDeltaTest do
   use ExUnit.Case
-  doctest Langchain.MessageDelta
-  import Langchain.Fixtures
-  alias Langchain.Message
-  alias Langchain.MessageDelta
-  alias Langchain.LangchainError
+  doctest LangChain.MessageDelta
+  import LangChain.Fixtures
+  alias LangChain.Message
+  alias LangChain.MessageDelta
+  alias LangChain.LangChainError
 
   describe "new/1" do
     test "works with minimal attrs" do
@@ -88,7 +88,7 @@ defmodule Langchain.MessageDeltaTest do
     end
 
     test "raises exception when invalid" do
-      assert_raise LangchainError, "role: is invalid; index: is invalid", fn ->
+      assert_raise LangChainError, "role: is invalid; index: is invalid", fn ->
         MessageDelta.new!(%{role: "invalid", index: "abc"})
       end
     end
@@ -103,7 +103,7 @@ defmodule Langchain.MessageDeltaTest do
           MessageDelta.merge_delta(acc, new_delta)
         end)
 
-      expected = %Langchain.MessageDelta{
+      expected = %LangChain.MessageDelta{
         content: "Hello! How can I assist you today?",
         index: 0,
         function_name: nil,
@@ -123,7 +123,7 @@ defmodule Langchain.MessageDeltaTest do
           MessageDelta.merge_delta(acc, new_delta)
         end)
 
-      expected = %Langchain.MessageDelta{
+      expected = %LangChain.MessageDelta{
         content: nil,
         index: 0,
         function_name: "hello_world",
@@ -143,7 +143,7 @@ defmodule Langchain.MessageDeltaTest do
           MessageDelta.merge_delta(acc, new_delta)
         end)
 
-      expected = %Langchain.MessageDelta{
+      expected = %LangChain.MessageDelta{
         content: nil,
         index: 0,
         function_name: "calculator",
@@ -163,7 +163,7 @@ defmodule Langchain.MessageDeltaTest do
           MessageDelta.merge_delta(acc, new_delta)
         end)
 
-      expected = %Langchain.MessageDelta{
+      expected = %LangChain.MessageDelta{
         content:
           "Sure, I can help with that. First, let's check which regions are currently available for deployment on Fly.io. Please wait a moment while I fetch this information for you.",
         index: 0,
@@ -180,7 +180,7 @@ defmodule Langchain.MessageDeltaTest do
   describe "to_message/1" do
     test "transform a merged and complete MessageDelta to a Message" do
       # :assistant content type
-      delta = %Langchain.MessageDelta{
+      delta = %LangChain.MessageDelta{
         content: "Hello! How can I assist you?",
         role: :assistant,
         status: :complete
@@ -191,7 +191,7 @@ defmodule Langchain.MessageDeltaTest do
       assert msg.content == "Hello! How can I assist you?"
 
       # :assistant type
-      delta = %Langchain.MessageDelta{
+      delta = %LangChain.MessageDelta{
         role: :assistant,
         function_name: "calculator",
         arguments: "{\n  \"expression\": \"100 + 300 - 200\"\n}",
@@ -207,7 +207,7 @@ defmodule Langchain.MessageDeltaTest do
     end
 
     test "does not transform an incomplete MessageDelta to a Message" do
-      delta = %Langchain.MessageDelta{
+      delta = %LangChain.MessageDelta{
         content: "Hello! How can I assist ",
         role: :assistant,
         status: :incomplete
@@ -217,7 +217,7 @@ defmodule Langchain.MessageDeltaTest do
     end
 
     test "transforms a delta stopped for length" do
-      delta = %Langchain.MessageDelta{
+      delta = %LangChain.MessageDelta{
         content: "Hello! How can I assist ",
         role: :assistant,
         status: :length
@@ -233,7 +233,7 @@ defmodule Langchain.MessageDeltaTest do
       # a partially merged delta is invalid. It may have the "complete" flag but
       # if previous message deltas are missing and were not merged, the
       # to_message function will fail.
-      delta = %Langchain.MessageDelta{
+      delta = %LangChain.MessageDelta{
         role: :assistant,
         function_name: "calculator",
         arguments: "{\n  \"expression\": \"100 + 300 - 200\"",

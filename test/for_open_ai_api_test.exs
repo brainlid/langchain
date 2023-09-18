@@ -1,8 +1,8 @@
-defmodule Langchain.ForOpenAIApiTest do
+defmodule LangChain.ForOpenAIApiTest do
   use ExUnit.Case
-  doctest Langchain.ForOpenAIApi
-  alias Langchain.ForOpenAIApi
-  alias Langchain.Message
+  doctest LangChain.ForOpenAIApi
+  alias LangChain.ForOpenAIApi
+  alias LangChain.Message
 
   describe "for_api/1" do
     test "turns a function_call into expected JSON format" do

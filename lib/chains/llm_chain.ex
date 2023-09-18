@@ -1,4 +1,4 @@
-defmodule Langchain.Chains.LLMChain do
+defmodule LangChain.Chains.LLMChain do
   @doc """
   Define an LLMChain. This is the heart of the LangChain library.
 
@@ -14,12 +14,12 @@ defmodule Langchain.Chains.LLMChain do
   use Ecto.Schema
   import Ecto.Changeset
   require Logger
-  alias Langchain.PromptTemplate
+  alias LangChain.PromptTemplate
   alias __MODULE__
-  alias Langchain.Message
-  alias Langchain.MessageDelta
-  alias Langchain.Function
-  alias Langchain.LangchainError
+  alias LangChain.Message
+  alias LangChain.MessageDelta
+  alias LangChain.Function
+  alias LangChain.LangChainError
 
   @primary_key false
   embedded_schema do
@@ -81,7 +81,7 @@ defmodule Langchain.Chains.LLMChain do
         chain
 
       {:error, changeset} ->
-        raise LangchainError, changeset
+        raise LangChainError, changeset
     end
   end
 

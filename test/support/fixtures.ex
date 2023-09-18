@@ -1,10 +1,10 @@
-defmodule Langchain.Fixtures do
+defmodule LangChain.Fixtures do
   @moduledoc """
   This module defines test helpers for creating
   entities.
   """
-  alias Langchain.ChatModels.ChatOpenAI
-  alias Langchain.Message
+  alias LangChain.ChatModels.ChatOpenAI
+  alias LangChain.Message
 
   def raw_deltas_for_function_call(function_name \\ "hello_world")
 
@@ -372,7 +372,7 @@ defmodule Langchain.Fixtures do
     # results = Enum.flat_map(delta_content, &ChatOpenAI.do_process_response(&1))
     # IO.inspect results
     [
-      %Langchain.MessageDelta{
+      %LangChain.MessageDelta{
         content: nil,
         index: 0,
         function_name: nil,
@@ -380,7 +380,7 @@ defmodule Langchain.Fixtures do
         arguments: nil,
         status: :incomplete
       },
-      %Langchain.MessageDelta{
+      %LangChain.MessageDelta{
         content: "Hello",
         index: 0,
         function_name: nil,
@@ -388,7 +388,7 @@ defmodule Langchain.Fixtures do
         arguments: nil,
         status: :incomplete
       },
-      %Langchain.MessageDelta{
+      %LangChain.MessageDelta{
         content: "!",
         index: 0,
         function_name: nil,
@@ -396,7 +396,7 @@ defmodule Langchain.Fixtures do
         arguments: nil,
         status: :incomplete
       },
-      %Langchain.MessageDelta{
+      %LangChain.MessageDelta{
         content: " How",
         index: 0,
         function_name: nil,
@@ -404,7 +404,7 @@ defmodule Langchain.Fixtures do
         arguments: nil,
         status: :incomplete
       },
-      %Langchain.MessageDelta{
+      %LangChain.MessageDelta{
         content: " can",
         index: 0,
         function_name: nil,
@@ -412,7 +412,7 @@ defmodule Langchain.Fixtures do
         arguments: nil,
         status: :incomplete
       },
-      %Langchain.MessageDelta{
+      %LangChain.MessageDelta{
         content: " I",
         index: 0,
         function_name: nil,
@@ -420,7 +420,7 @@ defmodule Langchain.Fixtures do
         arguments: nil,
         status: :incomplete
       },
-      %Langchain.MessageDelta{
+      %LangChain.MessageDelta{
         content: " assist",
         index: 0,
         function_name: nil,
@@ -428,7 +428,7 @@ defmodule Langchain.Fixtures do
         arguments: nil,
         status: :incomplete
       },
-      %Langchain.MessageDelta{
+      %LangChain.MessageDelta{
         content: " you",
         index: 0,
         function_name: nil,
@@ -436,7 +436,7 @@ defmodule Langchain.Fixtures do
         arguments: nil,
         status: :incomplete
       },
-      %Langchain.MessageDelta{
+      %LangChain.MessageDelta{
         content: " today",
         index: 0,
         function_name: nil,
@@ -444,7 +444,7 @@ defmodule Langchain.Fixtures do
         arguments: nil,
         status: :incomplete
       },
-      %Langchain.MessageDelta{
+      %LangChain.MessageDelta{
         content: "?",
         index: 0,
         function_name: nil,
@@ -452,7 +452,7 @@ defmodule Langchain.Fixtures do
         arguments: nil,
         status: :incomplete
       },
-      %Langchain.MessageDelta{
+      %LangChain.MessageDelta{
         content: nil,
         index: 0,
         function_name: nil,
@@ -465,7 +465,7 @@ defmodule Langchain.Fixtures do
 
   def delta_function_no_args() do
     [
-      %Langchain.MessageDelta{
+      %LangChain.MessageDelta{
         content: nil,
         index: 0,
         function_name: "hello_world",
@@ -473,7 +473,7 @@ defmodule Langchain.Fixtures do
         arguments: nil,
         status: :incomplete
       },
-      %Langchain.MessageDelta{
+      %LangChain.MessageDelta{
         content: nil,
         index: 0,
         function_name: nil,
@@ -481,7 +481,7 @@ defmodule Langchain.Fixtures do
         arguments: "{}",
         status: :incomplete
       },
-      %Langchain.MessageDelta{
+      %LangChain.MessageDelta{
         content: nil,
         index: 0,
         function_name: nil,
@@ -494,7 +494,7 @@ defmodule Langchain.Fixtures do
 
   def delta_function_streamed_args() do
     [
-      %Langchain.MessageDelta{
+      %LangChain.MessageDelta{
         content: nil,
         index: 0,
         function_name: "calculator",
@@ -502,7 +502,7 @@ defmodule Langchain.Fixtures do
         arguments: "",
         status: :incomplete
       },
-      %Langchain.MessageDelta{
+      %LangChain.MessageDelta{
         content: nil,
         index: 0,
         function_name: nil,
@@ -510,7 +510,7 @@ defmodule Langchain.Fixtures do
         arguments: "{\n",
         status: :incomplete
       },
-      %Langchain.MessageDelta{
+      %LangChain.MessageDelta{
         content: nil,
         index: 0,
         function_name: nil,
@@ -518,7 +518,7 @@ defmodule Langchain.Fixtures do
         arguments: " ",
         status: :incomplete
       },
-      %Langchain.MessageDelta{
+      %LangChain.MessageDelta{
         content: nil,
         index: 0,
         function_name: nil,
@@ -526,7 +526,7 @@ defmodule Langchain.Fixtures do
         arguments: " \"",
         status: :incomplete
       },
-      %Langchain.MessageDelta{
+      %LangChain.MessageDelta{
         content: nil,
         index: 0,
         function_name: nil,
@@ -534,7 +534,7 @@ defmodule Langchain.Fixtures do
         arguments: "expression",
         status: :incomplete
       },
-      %Langchain.MessageDelta{
+      %LangChain.MessageDelta{
         content: nil,
         index: 0,
         function_name: nil,
@@ -542,7 +542,7 @@ defmodule Langchain.Fixtures do
         arguments: "\":",
         status: :incomplete
       },
-      %Langchain.MessageDelta{
+      %LangChain.MessageDelta{
         content: nil,
         index: 0,
         function_name: nil,
@@ -550,7 +550,7 @@ defmodule Langchain.Fixtures do
         arguments: " \"",
         status: :incomplete
       },
-      %Langchain.MessageDelta{
+      %LangChain.MessageDelta{
         content: nil,
         index: 0,
         function_name: nil,
@@ -558,7 +558,7 @@ defmodule Langchain.Fixtures do
         arguments: "100",
         status: :incomplete
       },
-      %Langchain.MessageDelta{
+      %LangChain.MessageDelta{
         content: nil,
         index: 0,
         function_name: nil,
@@ -566,7 +566,7 @@ defmodule Langchain.Fixtures do
         arguments: " +",
         status: :incomplete
       },
-      %Langchain.MessageDelta{
+      %LangChain.MessageDelta{
         content: nil,
         index: 0,
         function_name: nil,
@@ -574,7 +574,7 @@ defmodule Langchain.Fixtures do
         arguments: " ",
         status: :incomplete
       },
-      %Langchain.MessageDelta{
+      %LangChain.MessageDelta{
         content: nil,
         index: 0,
         function_name: nil,
@@ -582,7 +582,7 @@ defmodule Langchain.Fixtures do
         arguments: "300",
         status: :incomplete
       },
-      %Langchain.MessageDelta{
+      %LangChain.MessageDelta{
         content: nil,
         index: 0,
         function_name: nil,
@@ -590,7 +590,7 @@ defmodule Langchain.Fixtures do
         arguments: " -",
         status: :incomplete
       },
-      %Langchain.MessageDelta{
+      %LangChain.MessageDelta{
         content: nil,
         index: 0,
         function_name: nil,
@@ -598,7 +598,7 @@ defmodule Langchain.Fixtures do
         arguments: " ",
         status: :incomplete
       },
-      %Langchain.MessageDelta{
+      %LangChain.MessageDelta{
         content: nil,
         index: 0,
         function_name: nil,
@@ -606,7 +606,7 @@ defmodule Langchain.Fixtures do
         arguments: "200",
         status: :incomplete
       },
-      %Langchain.MessageDelta{
+      %LangChain.MessageDelta{
         content: nil,
         index: 0,
         function_name: nil,
@@ -614,7 +614,7 @@ defmodule Langchain.Fixtures do
         arguments: "\"\n",
         status: :incomplete
       },
-      %Langchain.MessageDelta{
+      %LangChain.MessageDelta{
         content: nil,
         index: 0,
         function_name: nil,
@@ -622,7 +622,7 @@ defmodule Langchain.Fixtures do
         arguments: "}",
         status: :incomplete
       },
-      %Langchain.MessageDelta{
+      %LangChain.MessageDelta{
         content: nil,
         index: 0,
         function_name: nil,
@@ -640,7 +640,7 @@ defmodule Langchain.Fixtures do
     # This replicates the data returned in that type of response.
     [
       [
-        %Langchain.MessageDelta{
+        %LangChain.MessageDelta{
           content: "",
           status: :incomplete,
           index: 0,
@@ -650,7 +650,7 @@ defmodule Langchain.Fixtures do
         }
       ],
       [
-        %Langchain.MessageDelta{
+        %LangChain.MessageDelta{
           content: "Sure",
           status: :incomplete,
           index: 0,
@@ -660,7 +660,7 @@ defmodule Langchain.Fixtures do
         }
       ],
       [
-        %Langchain.MessageDelta{
+        %LangChain.MessageDelta{
           content: ",",
           status: :incomplete,
           index: 0,
@@ -670,7 +670,7 @@ defmodule Langchain.Fixtures do
         }
       ],
       [
-        %Langchain.MessageDelta{
+        %LangChain.MessageDelta{
           content: " I",
           status: :incomplete,
           index: 0,
@@ -680,7 +680,7 @@ defmodule Langchain.Fixtures do
         }
       ],
       [
-        %Langchain.MessageDelta{
+        %LangChain.MessageDelta{
           content: " can",
           status: :incomplete,
           index: 0,
@@ -690,7 +690,7 @@ defmodule Langchain.Fixtures do
         }
       ],
       [
-        %Langchain.MessageDelta{
+        %LangChain.MessageDelta{
           content: " help",
           status: :incomplete,
           index: 0,
@@ -700,7 +700,7 @@ defmodule Langchain.Fixtures do
         }
       ],
       [
-        %Langchain.MessageDelta{
+        %LangChain.MessageDelta{
           content: " with",
           status: :incomplete,
           index: 0,
@@ -710,7 +710,7 @@ defmodule Langchain.Fixtures do
         }
       ],
       [
-        %Langchain.MessageDelta{
+        %LangChain.MessageDelta{
           content: " that",
           status: :incomplete,
           index: 0,
@@ -720,7 +720,7 @@ defmodule Langchain.Fixtures do
         }
       ],
       [
-        %Langchain.MessageDelta{
+        %LangChain.MessageDelta{
           content: ".",
           status: :incomplete,
           index: 0,
@@ -730,7 +730,7 @@ defmodule Langchain.Fixtures do
         }
       ],
       [
-        %Langchain.MessageDelta{
+        %LangChain.MessageDelta{
           content: " First",
           status: :incomplete,
           index: 0,
@@ -740,7 +740,7 @@ defmodule Langchain.Fixtures do
         }
       ],
       [
-        %Langchain.MessageDelta{
+        %LangChain.MessageDelta{
           content: ",",
           status: :incomplete,
           index: 0,
@@ -750,7 +750,7 @@ defmodule Langchain.Fixtures do
         }
       ],
       [
-        %Langchain.MessageDelta{
+        %LangChain.MessageDelta{
           content: " let",
           status: :incomplete,
           index: 0,
@@ -760,7 +760,7 @@ defmodule Langchain.Fixtures do
         }
       ],
       [
-        %Langchain.MessageDelta{
+        %LangChain.MessageDelta{
           content: "'s",
           status: :incomplete,
           index: 0,
@@ -770,7 +770,7 @@ defmodule Langchain.Fixtures do
         }
       ],
       [
-        %Langchain.MessageDelta{
+        %LangChain.MessageDelta{
           content: " check",
           status: :incomplete,
           index: 0,
@@ -780,7 +780,7 @@ defmodule Langchain.Fixtures do
         }
       ],
       [
-        %Langchain.MessageDelta{
+        %LangChain.MessageDelta{
           content: " which",
           status: :incomplete,
           index: 0,
@@ -790,7 +790,7 @@ defmodule Langchain.Fixtures do
         }
       ],
       [
-        %Langchain.MessageDelta{
+        %LangChain.MessageDelta{
           content: " regions",
           status: :incomplete,
           index: 0,
@@ -800,7 +800,7 @@ defmodule Langchain.Fixtures do
         }
       ],
       [
-        %Langchain.MessageDelta{
+        %LangChain.MessageDelta{
           content: " are",
           status: :incomplete,
           index: 0,
@@ -810,7 +810,7 @@ defmodule Langchain.Fixtures do
         }
       ],
       [
-        %Langchain.MessageDelta{
+        %LangChain.MessageDelta{
           content: " currently",
           status: :incomplete,
           index: 0,
@@ -820,7 +820,7 @@ defmodule Langchain.Fixtures do
         }
       ],
       [
-        %Langchain.MessageDelta{
+        %LangChain.MessageDelta{
           content: " available",
           status: :incomplete,
           index: 0,
@@ -830,7 +830,7 @@ defmodule Langchain.Fixtures do
         }
       ],
       [
-        %Langchain.MessageDelta{
+        %LangChain.MessageDelta{
           content: " for",
           status: :incomplete,
           index: 0,
@@ -840,7 +840,7 @@ defmodule Langchain.Fixtures do
         }
       ],
       [
-        %Langchain.MessageDelta{
+        %LangChain.MessageDelta{
           content: " deployment",
           status: :incomplete,
           index: 0,
@@ -850,7 +850,7 @@ defmodule Langchain.Fixtures do
         }
       ],
       [
-        %Langchain.MessageDelta{
+        %LangChain.MessageDelta{
           content: " on",
           status: :incomplete,
           index: 0,
@@ -860,7 +860,7 @@ defmodule Langchain.Fixtures do
         }
       ],
       [
-        %Langchain.MessageDelta{
+        %LangChain.MessageDelta{
           content: " Fly",
           status: :incomplete,
           index: 0,
@@ -870,7 +870,7 @@ defmodule Langchain.Fixtures do
         }
       ],
       [
-        %Langchain.MessageDelta{
+        %LangChain.MessageDelta{
           content: ".io",
           status: :incomplete,
           index: 0,
@@ -880,7 +880,7 @@ defmodule Langchain.Fixtures do
         }
       ],
       [
-        %Langchain.MessageDelta{
+        %LangChain.MessageDelta{
           content: ".",
           status: :incomplete,
           index: 0,
@@ -890,7 +890,7 @@ defmodule Langchain.Fixtures do
         }
       ],
       [
-        %Langchain.MessageDelta{
+        %LangChain.MessageDelta{
           content: " Please",
           status: :incomplete,
           index: 0,
@@ -900,7 +900,7 @@ defmodule Langchain.Fixtures do
         }
       ],
       [
-        %Langchain.MessageDelta{
+        %LangChain.MessageDelta{
           content: " wait",
           status: :incomplete,
           index: 0,
@@ -910,7 +910,7 @@ defmodule Langchain.Fixtures do
         }
       ],
       [
-        %Langchain.MessageDelta{
+        %LangChain.MessageDelta{
           content: " a",
           status: :incomplete,
           index: 0,
@@ -920,7 +920,7 @@ defmodule Langchain.Fixtures do
         }
       ],
       [
-        %Langchain.MessageDelta{
+        %LangChain.MessageDelta{
           content: " moment",
           status: :incomplete,
           index: 0,
@@ -930,7 +930,7 @@ defmodule Langchain.Fixtures do
         }
       ],
       [
-        %Langchain.MessageDelta{
+        %LangChain.MessageDelta{
           content: " while",
           status: :incomplete,
           index: 0,
@@ -940,7 +940,7 @@ defmodule Langchain.Fixtures do
         }
       ],
       [
-        %Langchain.MessageDelta{
+        %LangChain.MessageDelta{
           content: " I",
           status: :incomplete,
           index: 0,
@@ -950,7 +950,7 @@ defmodule Langchain.Fixtures do
         }
       ],
       [
-        %Langchain.MessageDelta{
+        %LangChain.MessageDelta{
           content: " fetch",
           status: :incomplete,
           index: 0,
@@ -960,7 +960,7 @@ defmodule Langchain.Fixtures do
         }
       ],
       [
-        %Langchain.MessageDelta{
+        %LangChain.MessageDelta{
           content: " this",
           status: :incomplete,
           index: 0,
@@ -970,7 +970,7 @@ defmodule Langchain.Fixtures do
         }
       ],
       [
-        %Langchain.MessageDelta{
+        %LangChain.MessageDelta{
           content: " information",
           status: :incomplete,
           index: 0,
@@ -980,7 +980,7 @@ defmodule Langchain.Fixtures do
         }
       ],
       [
-        %Langchain.MessageDelta{
+        %LangChain.MessageDelta{
           content: " for",
           status: :incomplete,
           index: 0,
@@ -990,7 +990,7 @@ defmodule Langchain.Fixtures do
         }
       ],
       [
-        %Langchain.MessageDelta{
+        %LangChain.MessageDelta{
           content: " you",
           status: :incomplete,
           index: 0,
@@ -1000,7 +1000,7 @@ defmodule Langchain.Fixtures do
         }
       ],
       [
-        %Langchain.MessageDelta{
+        %LangChain.MessageDelta{
           content: ".",
           status: :incomplete,
           index: 0,
@@ -1010,7 +1010,7 @@ defmodule Langchain.Fixtures do
         }
       ],
       [
-        %Langchain.MessageDelta{
+        %LangChain.MessageDelta{
           content: nil,
           status: :incomplete,
           index: 0,
@@ -1020,7 +1020,7 @@ defmodule Langchain.Fixtures do
         }
       ],
       [
-        %Langchain.MessageDelta{
+        %LangChain.MessageDelta{
           content: nil,
           status: :incomplete,
           index: 0,
@@ -1030,7 +1030,7 @@ defmodule Langchain.Fixtures do
         }
       ],
       [
-        %Langchain.MessageDelta{
+        %LangChain.MessageDelta{
           content: nil,
           status: :complete,
           index: 0,

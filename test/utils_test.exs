@@ -1,8 +1,8 @@
-defmodule Langchain.UtilsTest do
+defmodule LangChain.UtilsTest do
   use ExUnit.Case
 
-  doctest Langchain.Utils
-  alias Langchain.Utils
+  doctest LangChain.Utils
+  alias LangChain.Utils
 
   defmodule FakeSchema do
     use Ecto.Schema
@@ -60,26 +60,26 @@ defmodule Langchain.UtilsTest do
     end
 
     test "handles ecto enum type errors" do
-      {:error, changeset} = Langchain.MessageDelta.new(%{role: "invalid"})
+      {:error, changeset} = LangChain.MessageDelta.new(%{role: "invalid"})
       result = Utils.changeset_error_to_string(changeset)
       assert result == "role: is invalid"
     end
 
     test "handles multiple errors on a field" do
-      {:error, changeset} = Langchain.MessageDelta.new(%{role: "invalid"})
+      {:error, changeset} = LangChain.MessageDelta.new(%{role: "invalid"})
       changeset = Ecto.Changeset.add_error(changeset, :role, "is required")
       result = Utils.changeset_error_to_string(changeset)
       assert result == "role: is required, is invalid"
     end
 
     test "handles errors on multiple fields" do
-      {:error, changeset} = Langchain.MessageDelta.new(%{role: "invalid", index: "abc"})
+      {:error, changeset} = LangChain.MessageDelta.new(%{role: "invalid", index: "abc"})
       result = Utils.changeset_error_to_string(changeset)
       assert result == "role: is invalid; index: is invalid"
     end
 
     test "handles multiple errors on multiple fields" do
-      {:error, changeset} = Langchain.MessageDelta.new(%{role: "invalid", index: "abc"})
+      {:error, changeset} = LangChain.MessageDelta.new(%{role: "invalid", index: "abc"})
       changeset =
         changeset
         |> Ecto.Changeset.add_error(:index, "is numeric")

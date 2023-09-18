@@ -1,13 +1,13 @@
-defmodule Langchain.Chains.LLMChainTest do
-  use Langchain.BaseCase
+defmodule LangChain.Chains.LLMChainTest do
+  use LangChain.BaseCase
 
-  doctest Langchain.Chains.LLMChain
-  alias Langchain.ChatModels.ChatOpenAI
-  alias Langchain.Chains.LLMChain
-  alias Langchain.PromptTemplate
-  alias Langchain.Function
-  alias Langchain.Message
-  alias Langchain.MessageDelta
+  doctest LangChain.Chains.LLMChain
+  alias LangChain.ChatModels.ChatOpenAI
+  alias LangChain.Chains.LLMChain
+  alias LangChain.PromptTemplate
+  alias LangChain.Function
+  alias LangChain.Message
+  alias LangChain.MessageDelta
 
   setup do
     {:ok, chat} = ChatOpenAI.new(%{temperature: 0})
@@ -320,7 +320,7 @@ defmodule Langchain.Chains.LLMChainTest do
     end
 
     test "applies list of deltas for function_call with arguments", %{chain: chain} do
-      deltas = Langchain.Fixtures.deltas_for_function_call("calculator")
+      deltas = LangChain.Fixtures.deltas_for_function_call("calculator")
 
       updated_chain =
         Enum.reduce(deltas, chain, fn delta, acc ->

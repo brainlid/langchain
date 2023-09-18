@@ -72,19 +72,19 @@ config :langchain, openai_key: fn -> System.get_env("OPENAI_KEY") end
 
 ## Usage
 
-The central module in this library is `Langchain.Chains.LLMChain`. Most other pieces are either inputs to this, or structures used by it. For understanding how to use the library, start there.
+The central module in this library is `LangChain.Chains.LLMChain`. Most other pieces are either inputs to this, or structures used by it. For understanding how to use the library, start there.
 
 ### Exposing a custom Elixir function to ChatGPT
 
-For an interactive example, refer to the project [Livebook notebook "Langchain: Executing Custom Elixir Functions"](notebooks/custom_functions.livemd).
+For an interactive example, refer to the project [Livebook notebook "LangChain: Executing Custom Elixir Functions"](notebooks/custom_functions.livemd).
 
 The following is an example of a function that receives parameter arguments.
 
 ```elixir
-alias Langchain.Function
-alias Langchain.Message
-alias Langchain.Chains.LLMChain
-alias Langchain.ChatModels.ChatOpenAI
+alias LangChain.Function
+alias LangChain.Message
+alias LangChain.Chains.LLMChain
+alias LangChain.ChatModels.ChatOpenAI
 
 # map of data we want to be passed as `context` to the function when
 # executed.
@@ -150,6 +150,6 @@ mix test
 
 Executing a specific test, wether it is a `live_call` or not, will execute it creating a potentially billable event.
 
-When doing local development on the `Langchain` library itself, rename the `.envrc_template` to `.envrc` and populate it with your private API values. This is only used when running live test when explicitly requested.
+When doing local development on the `LangChain` library itself, rename the `.envrc_template` to `.envrc` and populate it with your private API values. This is only used when running live test when explicitly requested.
 
 Use a tool like [Dotenv](https://github.com/motdotla/dotenv) to load the API values into the ENV when using the library locally.

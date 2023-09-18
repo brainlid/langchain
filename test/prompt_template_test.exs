@@ -1,9 +1,9 @@
-defmodule Langchain.PromptTemplateTest do
+defmodule LangChain.PromptTemplateTest do
   use ExUnit.Case
-  doctest Langchain.PromptTemplate
-  alias Langchain.PromptTemplate
-  alias Langchain.LangchainError
-  alias Langchain.Message
+  doctest LangChain.PromptTemplate
+  alias LangChain.PromptTemplate
+  alias LangChain.LangChainError
+  alias LangChain.Message
 
   describe "new/1" do
     test "create with text and no inputs" do
@@ -32,7 +32,7 @@ defmodule Langchain.PromptTemplateTest do
     end
 
     test "raise exception with text reason when invalid" do
-      assert_raise LangchainError, "text: can't be blank", fn ->
+      assert_raise LangChainError, "text: can't be blank", fn ->
         PromptTemplate.new!(%{text: ""})
       end
     end
@@ -62,7 +62,7 @@ defmodule Langchain.PromptTemplateTest do
     end
 
     test "raises an exception when invalid" do
-      assert_raise LangchainError, "text: can't be blank", fn ->
+      assert_raise LangChainError, "text: can't be blank", fn ->
         PromptTemplate.from_template!("")
       end
     end

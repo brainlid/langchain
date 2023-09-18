@@ -1,4 +1,4 @@
-defmodule Langchain.Utils do
+defmodule LangChain.Utils do
   @moduledoc """
   Collection of helpful utilities mostly for internal use.
   """
@@ -33,9 +33,9 @@ defmodule Langchain.Utils do
     # with our gettext backend as first argument. Translations are
     # available in the errors.po file (as we use the "errors" domain).
     if count = opts[:count] do
-      Gettext.dngettext(Langchain.Gettext, "errors", msg, msg, count, opts)
+      Gettext.dngettext(LangChain.Gettext, "errors", msg, msg, count, opts)
     else
-      Gettext.dgettext(Langchain.Gettext, "errors", msg, opts)
+      Gettext.dgettext(LangChain.Gettext, "errors", msg, opts)
     end
   end
 

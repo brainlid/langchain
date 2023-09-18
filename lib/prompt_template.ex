@@ -1,4 +1,4 @@
-defmodule Langchain.PromptTemplate do
+defmodule LangChain.PromptTemplate do
   @moduledoc """
   Enables defining a prompt, optionally as a template, but delaying the final
   building of it until a later time when input values are substituted in.
@@ -10,7 +10,7 @@ defmodule Langchain.PromptTemplate do
 
       # Create a template and convert it to a message
       prompt = PromptTemplate.new!(%{text: "My template", role: :user})
-      %Langchain.Message{} = message = PromptTemplate.to_message(prompt)
+      %LangChain.Message{} = message = PromptTemplate.to_message(prompt)
 
   PromptTemplates are powerful because they support Elixir's EEx templates
   allowing for parameter substitution. This is helpful when we want to prepare a
@@ -31,8 +31,8 @@ defmodule Langchain.PromptTemplate do
   import Ecto.Changeset
   require Logger
   alias __MODULE__
-  alias Langchain.LangchainError
-  alias Langchain.Message
+  alias LangChain.LangChainError
+  alias LangChain.Message
 
   @primary_key false
   embedded_schema do
@@ -65,7 +65,7 @@ defmodule Langchain.PromptTemplate do
         prompt
 
       {:error, changeset} ->
-        raise LangchainError, changeset
+        raise LangChainError, changeset
     end
   end
 
@@ -256,14 +256,14 @@ defmodule Langchain.PromptTemplate do
         {key, other}, _acc ->
           msg = "Unsupported `composed_of` entry for #{inspect(key)}: #{inspect(other)}"
           Logger.error(msg)
-          raise LangchainError, msg
+          raise LangChainError, msg
       end)
 
     PromptTemplate.format(full_prompt, composed_inputs)
   end
 
   @doc """
-  Transform a PromptTemplate to a `Langchain.Message`. Provide the inputs at the time of
+  Transform a PromptTemplate to a `LangChain.Message`. Provide the inputs at the time of
   transformation to render the final content.
   """
   @spec to_message(t(), input :: %{atom() => any()}) ::
@@ -274,7 +274,7 @@ defmodule Langchain.PromptTemplate do
   end
 
   @doc """
-  Transform a PromptTemplate to a `Langchain.Message`. Provide the inputs at the time of
+  Transform a PromptTemplate to a `LangChain.Message`. Provide the inputs at the time of
   transformation to render the final content. Raises an exception if invalid.
   """
   @spec to_message!(t(), input :: %{atom() => any()}) :: Message.t() | no_return()
@@ -284,7 +284,7 @@ defmodule Langchain.PromptTemplate do
   end
 
   @doc """
-  Transform a list of PromptTemplates into a list of `Langchain.Message`s.
+  Transform a list of PromptTemplates into a list of `LangChain.Message`s.
   Applies the inputs to the list of prompt templates. If any of the prompt
   entries are invalid or fail, an exception is raised.
   """

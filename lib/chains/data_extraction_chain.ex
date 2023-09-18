@@ -1,4 +1,4 @@
-defmodule Langchain.Chains.DataExtractionChain do
+defmodule LangChain.Chains.DataExtractionChain do
   @moduledoc """
   Defines an LLMChain for performing data extraction from a body of text.
 
@@ -32,7 +32,7 @@ defmodule Langchain.Chains.DataExtractionChain do
         "Alex is 5 feet tall. Claudia is 4 feet taller than Alex and jumps higher than him.
         Claudia is a brunette and Alex is blonde. Alex's dog Frosty is a labrador and likes to play hide and seek."
 
-      {:ok, result} = Langchain.Chains.DataExtractionChain.run(chat, schema_parameters, data_prompt)
+      {:ok, result} = LangChain.Chains.DataExtractionChain.run(chat, schema_parameters, data_prompt)
 
       # Example result
       [
@@ -54,9 +54,9 @@ defmodule Langchain.Chains.DataExtractionChain do
   """
   use Ecto.Schema
   require Logger
-  alias Langchain.PromptTemplate
-  alias Langchain.Message
-  alias Langchain.Chains.LLMChain
+  alias LangChain.PromptTemplate
+  alias LangChain.Message
+  alias LangChain.Chains.LLMChain
 
   @extraction_template ~s"Extract and save the relevant entities mentioned in the following passage together with their properties.
 
@@ -109,9 +109,9 @@ defmodule Langchain.Chains.DataExtractionChain do
   Build the function to expose to the LLM that can be called for data
   extraction.
   """
-  @spec build_extract_function(json_schema :: map()) :: Langchain.Function.t() | no_return()
+  @spec build_extract_function(json_schema :: map()) :: LangChain.Function.t() | no_return()
   def build_extract_function(json_schema) do
-    Langchain.Function.new!(%{
+    LangChain.Function.new!(%{
       name: "information_extraction",
       description: "Extracts the relevant information from the passage.",
       parameters_schema: %{

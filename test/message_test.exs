@@ -1,7 +1,7 @@
-defmodule Langchain.MessageTest do
+defmodule LangChain.MessageTest do
   use ExUnit.Case
-  doctest Langchain.Message
-  alias Langchain.Message
+  doctest LangChain.Message
+  alias LangChain.Message
 
   describe "new/1" do
     test "works with minimal attrs" do
@@ -111,7 +111,7 @@ defmodule Langchain.MessageTest do
     end
 
     test "requires content" do
-      assert_raise Langchain.LangchainError, "content: can't be blank", fn ->
+      assert_raise LangChain.LangChainError, "content: can't be blank", fn ->
         Message.new_system!(nil)
       end
     end
@@ -137,7 +137,7 @@ defmodule Langchain.MessageTest do
     end
 
     test "requires content" do
-      assert_raise Langchain.LangchainError, "content: can't be blank", fn ->
+      assert_raise LangChain.LangChainError, "content: can't be blank", fn ->
         Message.new_user!(nil)
       end
     end

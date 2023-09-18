@@ -1,8 +1,8 @@
-# {:ok, f} = Langchain.Function.new(%{name: "register_person", description: "Register a new person in the system", required: ["name"], parameters: [p_name, p_age]})
+# {:ok, f} = LangChain.Function.new(%{name: "register_person", description: "Register a new person in the system", required: ["name"], parameters: [p_name, p_age]})
 # NOTE: New in OpenAI - https://openai.com/blog/function-calling-and-other-api-updates
 #  - 13 June 2023
-# NOTE: Pretty much takes the place of a Langchain "Tool".
-defmodule Langchain.Function do
+# NOTE: Pretty much takes the place of a LangChain "Tool".
+defmodule LangChain.Function do
   @moduledoc """
   Defines a "function" that can be provided to an LLM for the LLM to optionally
   execute and pass argument data to.
@@ -25,7 +25,7 @@ defmodule Langchain.Function do
 
   This example defines a function that an LLM can execute for performing basic
   math calculations. **NOTE:** This is a partial implementation of the
-  `Langchain.Tools.Calculator`.
+  `LangChain.Tools.Calculator`.
 
       Function.new(%{
         name: "calculator",
@@ -50,7 +50,7 @@ defmodule Langchain.Function do
   map.
 
   The `context` argument is passed through as the `context` on a
-  `Langchain.Chains.LLMChain`. This is whatever context data is needed for the
+  `LangChain.Chains.LLMChain`. This is whatever context data is needed for the
   function to do it's work.
 
   Context examples may be user_id, account_id, account struct, billing level,
@@ -66,7 +66,7 @@ defmodule Langchain.Function do
   import Ecto.Changeset
   require Logger
   alias __MODULE__
-  alias Langchain.LangchainError
+  alias LangChain.LangChainError
 
   @primary_key false
   embedded_schema do
@@ -106,7 +106,7 @@ defmodule Langchain.Function do
         function
 
       {:error, changeset} ->
-        raise LangchainError, changeset
+        raise LangChainError, changeset
     end
   end
 
@@ -118,7 +118,7 @@ defmodule Langchain.Function do
 
   @doc """
   Execute the function passing in arguments and additional optional context.
-  This is called by a `Langchain.Chains.LLMChain` when a `Function` execution is
+  This is called by a `LangChain.Chains.LLMChain` when a `Function` execution is
   requested by the LLM.
   """
   def execute(%Function{function: fun} = function, arguments, context) do
@@ -127,8 +127,8 @@ defmodule Langchain.Function do
   end
 end
 
-defimpl Langchain.ForOpenAIApi, for: Langchain.Function do
-  alias Langchain.Function
+defimpl LangChain.ForOpenAIApi, for: LangChain.Function do
+  alias LangChain.Function
 
   def for_api(%Function{} = fun) do
     %{

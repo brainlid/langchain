@@ -1,19 +1,19 @@
-defmodule Langchain.BaseCase do
+defmodule LangChain.BaseCase do
   @moduledoc """
   This module defines the test case to be used by
-  tests that use Langchain features like Chat or LLMs.
+  tests that use LangChain features like Chat or LLMs.
   """
 
   use ExUnit.CaseTemplate
 
   using do
     quote do
-      alias Langchain.Message
-      alias Langchain.MessageDelta
+      alias LangChain.Message
+      alias LangChain.MessageDelta
 
       # Import conveniences for testing with AI models
-      import Langchain.BaseCase
-      import Langchain.Utils.ApiOverride
+      import LangChain.BaseCase
+      import LangChain.Utils.ApiOverride
     end
   end
 end

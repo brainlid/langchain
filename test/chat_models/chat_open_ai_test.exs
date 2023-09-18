@@ -1,10 +1,10 @@
-defmodule Langchain.ChatModels.ChatOpenAITest do
-  use Langchain.BaseCase
-  import Langchain.Fixtures
+defmodule LangChain.ChatModels.ChatOpenAITest do
+  use LangChain.BaseCase
+  import LangChain.Fixtures
 
-  doctest Langchain.ChatModels.ChatOpenAI
-  alias Langchain.ChatModels.ChatOpenAI
-  alias Langchain.Function
+  doctest LangChain.ChatModels.ChatOpenAI
+  alias LangChain.ChatModels.ChatOpenAI
+  alias LangChain.Function
 
   setup do
     {:ok, hello_world} =
@@ -205,7 +205,7 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
     end
 
     test "handles receiving a delta message for a content message at different parts" do
-      delta_content = Langchain.Fixtures.raw_deltas_for_content()
+      delta_content = LangChain.Fixtures.raw_deltas_for_content()
 
       msg_1 = Enum.at(delta_content, 0)
       msg_2 = Enum.at(delta_content, 1)
@@ -249,7 +249,7 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
     end
 
     test "handles receiving a delta message for a function_call" do
-      delta_function = Langchain.Fixtures.raw_deltas_for_function_call()
+      delta_function = LangChain.Fixtures.raw_deltas_for_function_call()
 
       msg_1 = Enum.at(delta_function, 0)
       msg_2 = Enum.at(delta_function, 1)
@@ -334,7 +334,7 @@ defmodule Langchain.ChatModels.ChatOpenAITest do
         Message.new_user("Answer the following math question: What is 100 + 300 - 200?")
 
       _response =
-        ChatOpenAI.do_api_request(chat, [message], [Langchain.Tools.Calculator.new!()], callback)
+        ChatOpenAI.do_api_request(chat, [message], [LangChain.Tools.Calculator.new!()], callback)
 
       # IO.inspect(response, label: "OPEN AI POST RESPONSE")
 

@@ -52,7 +52,7 @@ With an Elixir function defined, we will wrap it in a LangChain `Function` struc
 This is what that looks like:
 
 ```elixir
-alias Langchain.Function
+alias LangChain.Function
 
 function =
   Function.new!(%{
@@ -69,7 +69,7 @@ function =
 <!-- livebook:{"output":true} -->
 
 ```
-%Langchain.Function{
+%LangChain.Function{
   name: "get_user_info",
   description: "Return JSON object of the current users's relevant information.",
   function: #Function<41.3316493/2 in :erl_eval.expr/6>,
@@ -111,7 +111,7 @@ Application.put_env(:langchain, :openai_key, System.fetch_env!("LB_OPENAI_KEY"))
 
 ## Defining our AI Assistant
 
-We'll use the `Langchain.Message` struct to define the messages for what we want the LLM to do. Our `system` message instructs the LLM how to behave.
+We'll use the `LangChain.Message` struct to define the messages for what we want the LLM to do. Our `system` message instructs the LLM how to behave.
 
 In this example, we want the assistant to generate Haiku poems about the current user's favorite animals. However, we only want it to work for users who are "members" and not "trial" users.
 
@@ -120,7 +120,7 @@ The instructions we're giving the LLM will require it to execute the function to
 What we're demonstrating here is that the LLM can interact with our Elixir application, use multiple pieces of returned information to make business logic decisions and fullfil our system requests.
 
 ```elixir
-alias Langchain.Message
+alias LangChain.Message
 
 messages = [
   Message.new_system!(~s(You are a helpful haiku poem generating assistant.
@@ -135,7 +135,7 @@ messages = [
 
 ```
 [
-  %Langchain.Message{
+  %LangChain.Message{
     content: "You are a helpful haiku poem generating assistant. \n    ONLY generate a haiku for users with an `account_type` of \"member\". \n    If the user has an `account_type` of \"trial\", say you can't do it, \n    but you would love to help them if they upgrade and become a member.",
     index: nil,
     status: :complete,
@@ -143,7 +143,7 @@ messages = [
     function_name: nil,
     arguments: nil
   },
-  %Langchain.Message{
+  %LangChain.Message{
     content: "The current user is requesting a Haiku poem about their favorite animal.",
     index: nil,
     status: :complete,
@@ -161,7 +161,7 @@ For this example, we're talking to OpenAI's ChatGPT service. Let's setup that mo
 For the kind of work we're asking it to do, GPT-4 does a better job than previous model versions. We'll specify we want "gpt-4".
 
 ```elixir
-alias Langchain.ChatModels.ChatOpenAI
+alias LangChain.ChatModels.ChatOpenAI
 
 chat_model = ChatOpenAI.new!(%{model: "gpt-4", temperature: 1, stream: false})
 ```
@@ -169,7 +169,7 @@ chat_model = ChatOpenAI.new!(%{model: "gpt-4", temperature: 1, stream: false})
 <!-- livebook:{"output":true} -->
 
 ```
-%Langchain.ChatModels.ChatOpenAI{
+%LangChain.ChatModels.ChatOpenAI{
   endpoint: "https://api.openai.com/v1/chat/completions",
   model: "gpt-4",
   temperature: 1.0,
@@ -182,7 +182,7 @@ chat_model = ChatOpenAI.new!(%{model: "gpt-4", temperature: 1, stream: false})
 
 ## Defining our Application's User Context
 
-Here we'll define some special context that we want passed through to our `Langchain.Function` when it is executed.
+Here we'll define some special context that we want passed through to our `LangChain.Function` when it is executed.
 
 In a real application, this might be session based user or account information. It's whatever is relevant to our application that changes how and what a function should operate.
 
@@ -209,7 +209,7 @@ Also, note the `verbose: true` setting. That causes a number of `IO.inspect` cal
 Additionally, the `stream: false` option says we want the result only when it's complete. This example isn't setup for receving a streaming response. We're keeping it simple!
 
 ```elixir
-alias Langchain.Chains.LLMChain
+alias LangChain.Chains.LLMChain
 
 {:ok, updated_chain, response} =
   %{llm: chat_model, custom_context: context, verbose: true}
@@ -229,7 +229,7 @@ response.content
 <!-- livebook:{"output":true} -->
 
 ```
-LLM: %Langchain.ChatModels.ChatOpenAI{
+LLM: %LangChain.ChatModels.ChatOpenAI{
   endpoint: "https://api.openai.com/v1/chat/completions",
   model: "gpt-4",
   temperature: 1.0,
@@ -239,7 +239,7 @@ LLM: %Langchain.ChatModels.ChatOpenAI{
   stream: false
 }
 MESSAGES: [
-  %Langchain.Message{
+  %LangChain.Message{
     content: "You are a helpful haiku poem generating assistant. \n    ONLY generate a haiku for users with an `account_type` of \"member\". \n    If the user has an `account_type` of \"trial\", say you can't do it, \n    but you would love to help them if they upgrade and become a member.",
     index: nil,
     status: :complete,
@@ -247,7 +247,7 @@ MESSAGES: [
     function_name: nil,
     arguments: nil
   },
-  %Langchain.Message{
+  %LangChain.Message{
     content: "The current user is requesting a Haiku poem about their favorite animal.",
     index: nil,
     status: :complete,
@@ -257,14 +257,14 @@ MESSAGES: [
   }
 ]
 FUNCTIONS: [
-  %Langchain.Function{
+  %LangChain.Function{
     name: "get_user_info",
     description: "Return JSON object of the current users's relevant information.",
     function: #Function<41.3316493/2 in :erl_eval.expr/6>,
     parameters_schema: nil
   }
 ]
-SINGLE MESSAGE RESPONSE: %Langchain.Message{
+SINGLE MESSAGE RESPONSE: %LangChain.Message{
   content: nil,
   index: 0,
   status: :complete,
@@ -276,7 +276,7 @@ EXECUTING FUNCTION: "get_user_info"
 
 10:31:04.338 [debug] Executing function "get_user_info"
 FUNCTION RESULT: "{\"account_type\":\"member\",\"favorite_animal\":\"Aardvark\",\"name\":\"Joan Jett\",\"user_id\":2}"
-SINGLE MESSAGE RESPONSE: %Langchain.Message{
+SINGLE MESSAGE RESPONSE: %LangChain.Message{
   content: "Delving in darkness,\nAardvark, nature's architect,\nJoan's spirit animal.",
   index: 0,
   status: :complete,

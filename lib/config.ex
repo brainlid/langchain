@@ -1,4 +1,4 @@
-defmodule Langchain.Config do
+defmodule LangChain.Config do
   @moduledoc """
   Utility that handles interaction with the application's configuration.
   """
