@@ -1,12 +1,14 @@
 defmodule Langchain.Chains.LLMChain do
   @doc """
-  Define an LLMChain.
+  Define an LLMChain. This is the heart of the LangChain library.
 
   The chain deals with functions, a function map, delta tracking, last_message
   tracking, conversation messages, and verbose logging. This helps by separating
   these responsibilities from the LLM making it easier to support additional
   LLMs because the focus is on communication and formats instead of all the
   extra logic.
+
+
 
   """
   use Ecto.Schema

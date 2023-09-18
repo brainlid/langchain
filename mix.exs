@@ -1,14 +1,23 @@
 defmodule Langchain.MixProject do
   use Mix.Project
 
+  @version "0.1.0"
+
   def project do
     [
       app: :langchain,
-      version: "0.1.0",
+      version: @version,
       elixir: "~> 1.14",
       elixirc_paths: elixirc_paths(Mix.env()),
+      test_options: [docs: true],
       start_permanent: Mix.env() == :prod,
-      deps: deps()
+      deps: deps(),
+      docs: &docs/0,
+      name: "LangChain",
+      homepage_url: "https://github.com/brainlid/langchain",
+      description: """
+      Elixir implementation of a LangChain style framework.
+      """
     ]
   end
 
@@ -31,5 +40,27 @@ defmodule Langchain.MixProject do
       {:abacus, "~> 2.0.0"},
       {:ex_doc, "~> 0.27", only: :dev, runtime: false},
     ]
+  end
+
+  defp docs do
+    [
+      main: "welcome",
+      source_ref: "v#{@version}",
+      source_url: "https://github.com/brainlid/langchain",
+      extra_section: "GUIDES",
+      extras: extras(),
+      # groups_for_extras: groups_for_extras(),
+      # groups_for_modules: groups_for_modules(),
+      # groups_for_functions: [
+      #   Components: &(&1[:type] == :component),
+      #   Macros: &(&1[:type] == :macro)
+      # ],
+      skip_undefined_reference_warnings_on: ["CHANGELOG.md"],
+      # before_closing_body_tag: &before_closing_body_tag/1
+    ]
+  end
+
+  defp extras do
+    ["CHANGELOG.md"] ++ Path.wildcard("guides/*.md")
   end
 end

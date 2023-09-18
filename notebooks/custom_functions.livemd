@@ -1,6 +1,6 @@
 <!-- livebook:{"persist_outputs":true} -->
 
-# Langchain: Executing Custom Elixir Functions
+# LangChain: Executing Custom Elixir Functions
 
 ```elixir
 Mix.install([
@@ -16,7 +16,7 @@ Mix.install([
 
 ## What we're doing
 
-This notebook shows how to use the Elixir [Langchain](https://github.com/brainlid/langchain) library to expose an Elixir function as something that can be executed by an LLM like ChatGPT. The Langchain library wraps this all up making it easy and portable between different LLMs.
+This notebook shows how to use the Elixir [LangChain](https://github.com/brainlid/langchain) library to expose an Elixir function as something that can be executed by an LLM like ChatGPT. The LangChain library wraps this all up making it easy and portable between different LLMs.
 
 ## The Elixir Function in our App
 
@@ -47,7 +47,7 @@ end
 
 ## Explosing our Function to an LLM
 
-With an Elixir function defined, we will wrap it in a Langchain `Function` structure so it can be easily shared with an LLM.
+With an Elixir function defined, we will wrap it in a LangChain `Function` structure so it can be easily shared with an LLM.
 
 This is what that looks like:
 
@@ -85,9 +85,9 @@ The `function` argument is passed an annonymous function whose job it is to be t
 
 This "bridge" function receives 2 arguments. The first is any arguments passed to the function by the LLM if we defined any as being required. The second is an application context that we'll get to next. The `context` is specific to our application and does not go through the LLM at all. Think of this as the current user logged into our Phoenix web application. We want the exchange with the LLM to be relevant and only based on the what the current user can see and do.
 
-## Setting up our Langchain API Key
+## Setting up our LangChain API Key
 
-We need to setup the Langchain library to connect with ChatGPT using our API key. In a real Elixir application, this would be done in the `config/config.exs` file using something like this:
+We need to setup the LangChain library to connect with ChatGPT using our API key. In a real Elixir application, this would be done in the `config/config.exs` file using something like this:
 
 <!-- livebook:{"force_markdown":true} -->
 
@@ -123,9 +123,9 @@ What we're demonstrating here is that the LLM can interact with our Elixir appli
 alias Langchain.Message
 
 messages = [
-  Message.new_system!(~s(You are a helpful haiku poem generating assistant. 
-    ONLY generate a haiku for users with an `account_type` of "member". 
-    If the user has an `account_type` of "trial", say you can't do it, 
+  Message.new_system!(~s(You are a helpful haiku poem generating assistant.
+    ONLY generate a haiku for users with an `account_type` of "member".
+    If the user has an `account_type` of "trial", say you can't do it,
     but you would love to help them if they upgrade and become a member.)),
   Message.new_user!("The current user is requesting a Haiku poem about their favorite animal.")
 ]
@@ -218,7 +218,7 @@ alias Langchain.Chains.LLMChain
   |> LLMChain.add_messages(messages)
   # add the functions that are available to the LLM
   |> LLMChain.add_functions([function])
-  # keep running the LLM chain against the LLM if needed to evaluate 
+  # keep running the LLM chain against the LLM if needed to evaluate
   # function calls and provide a response.
   |> LLMChain.run(while_needs_response: true)
 
@@ -295,7 +295,7 @@ Joan's spirit animal.
 "Delving in darkness,\nAardvark, nature's architect,\nJoan's spirit animal."
 ```
 
-**TIP:** Try chaging the `context` to `user_id: 1` now and see what happens when a different user context is provided.
+**TIP:** Try changing the `context` to `user_id: 1` now and see what happens when a different user context is provided.
 
 ## Discussion
 
