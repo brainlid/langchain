@@ -44,19 +44,12 @@ defmodule LangChain.MixProject do
 
   defp docs do
     [
-      main: "welcome",
+      main: "getting_started",
       source_ref: "v#{@version}",
       source_url: "https://github.com/brainlid/langchain",
       extra_section: "GUIDES",
       extras: extras(),
-      # groups_for_extras: groups_for_extras(),
-      # groups_for_modules: groups_for_modules(),
-      # groups_for_functions: [
-      #   Components: &(&1[:type] == :component),
-      #   Macros: &(&1[:type] == :macro)
-      # ],
       skip_undefined_reference_warnings_on: ["CHANGELOG.md"],
-      # before_closing_body_tag: &before_closing_body_tag/1
     ]
   end
 
