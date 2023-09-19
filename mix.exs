@@ -12,6 +12,7 @@ defmodule LangChain.MixProject do
       test_options: [docs: true],
       start_permanent: Mix.env() == :prod,
       deps: deps(),
+      package: package(),
       docs: &docs/0,
       name: "LangChain",
       homepage_url: "https://github.com/brainlid/langchain",
@@ -55,5 +56,14 @@ defmodule LangChain.MixProject do
 
   defp extras do
     ["CHANGELOG.md"] ++ Path.wildcard("guides/*.md")
+  end
+
+  defp package do
+    [
+      files: ["lib", "mix.exs", "README*", "LICENSE*"],
+      maintainers: ["Mark Ericksen"],
+      licenses: ["Apache-2.0"],
+      links: %{"GitHub" => "https://github.com/brainlid/langchain"}
+    ]
   end
 end
