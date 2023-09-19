@@ -508,7 +508,8 @@ defmodule LangChain.Chains.LLMChainTest do
     test "handles content response + function call" do
       test_pid = self()
 
-      message = Message.new_user!("Please pull the list of available fly_regions and return them to me.")
+      message =
+        Message.new_user!("Please pull the list of available fly_regions and return them to me.")
 
       regions_function =
         Function.new!(%{
@@ -517,6 +518,7 @@ defmodule LangChain.Chains.LLMChainTest do
             "List the currently available regions an app can be deployed to on Fly.io in JSON format.",
           function: fn _args, _context ->
             send(test_pid, {:function_called, "fly_regions"})
+
             [
               %{name: "ams", location: "Amsterdam, Netherlands"},
               %{name: "arn", location: "Stockholm, Sweden"},
