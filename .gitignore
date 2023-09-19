@@ -29,3 +29,5 @@ langchain-*.tar
 /tmp/
 
 .envrc
+
+DEV_NOTES.md
