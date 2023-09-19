@@ -4,8 +4,125 @@
 
 ```elixir
 Mix.install([
-  {:langchain, github: "brainlid/langchain"}
+  {:langchain, "~> 0.1.0"}
 ])
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+Resolving Hex dependencies...
+Resolution completed in 0.796s
+New:
+  abacus 2.0.0
+  castore 1.0.3
+  decimal 2.1.1
+  ecto 3.10.3
+  expo 0.4.1
+  finch 0.16.0
+  gettext 0.23.1
+  hpax 0.1.2
+  jason 1.4.1
+  langchain 0.1.0
+  mime 2.0.5
+  mint 1.5.1
+  nimble_options 1.0.2
+  nimble_pool 1.0.0
+  req 0.4.3
+  telemetry 1.2.1
+* Getting langchain (Hex package)
+* Getting abacus (Hex package)
+* Getting ecto (Hex package)
+* Getting gettext (Hex package)
+* Getting req (Hex package)
+* Getting finch (Hex package)
+* Getting jason (Hex package)
+* Getting mime (Hex package)
+* Getting castore (Hex package)
+* Getting mint (Hex package)
+* Getting nimble_options (Hex package)
+* Getting nimble_pool (Hex package)
+* Getting telemetry (Hex package)
+* Getting hpax (Hex package)
+* Getting expo (Hex package)
+* Getting decimal (Hex package)
+==> decimal
+Compiling 4 files (.ex)
+Generated decimal app
+==> mime
+Compiling 1 file (.ex)
+Generated mime app
+==> nimble_options
+Compiling 3 files (.ex)
+Generated nimble_options app
+===> Analyzing applications...
+===> Compiling telemetry
+==> jason
+Compiling 10 files (.ex)
+Generated jason app
+==> expo
+Compiling 2 files (.erl)
+Compiling 21 files (.ex)
+Generated expo app
+==> hpax
+Compiling 4 files (.ex)
+Generated hpax app
+==> gettext
+Compiling 17 files (.ex)
+Generated gettext app
+==> ecto
+Compiling 56 files (.ex)
+warning: Logger.warn/1 is deprecated. Use Logger.warning/2 instead
+  lib/ecto/changeset/relation.ex:474: Ecto.Changeset.Relation.process_current/3
+
+warning: Logger.warn/1 is deprecated. Use Logger.warning/2 instead
+  lib/ecto/repo/preloader.ex:208: Ecto.Repo.Preloader.fetch_ids/4
+
+warning: Logger.warn/1 is deprecated. Use Logger.warning/2 instead
+  lib/ecto/changeset.ex:3156: Ecto.Changeset.optimistic_lock/3
+
+Generated ecto app
+==> abacus
+Compiling 3 files (.erl)
+Compiling 5 files (.ex)
+warning: Abacus.parse/1 is undefined or private
+Invalid call found at 9 locations:
+  lib/format.ex:36: Abacus.Format.format/1
+  lib/format.ex:37: Abacus.Format.format/1
+  lib/format.ex:38: Abacus.Format.format/1
+  lib/format.ex:39: Abacus.Format.format/1
+  lib/format.ex:64: Abacus.Format.format/1
+  lib/format.ex:65: Abacus.Format.format/1
+  lib/format.ex:81: Abacus.Format.format/1
+  lib/format.ex:82: Abacus.Format.format/1
+  lib/format.ex:100: Abacus.Format.format/1
+
+Generated abacus app
+==> nimble_pool
+Compiling 2 files (.ex)
+Generated nimble_pool app
+==> castore
+Compiling 1 file (.ex)
+Generated castore app
+==> mint
+Compiling 1 file (.erl)
+Compiling 19 files (.ex)
+Generated mint app
+==> finch
+Compiling 13 files (.ex)
+warning: Logger.warn/1 is deprecated. Use Logger.warning/2 instead
+  lib/finch/http2/pool.ex:362: Finch.HTTP2.Pool.connected/3
+
+warning: Logger.warn/1 is deprecated. Use Logger.warning/2 instead
+  lib/finch/http2/pool.ex:460: Finch.HTTP2.Pool.connected_read_only/3
+
+Generated finch app
+==> req
+Compiling 6 files (.ex)
+Generated req app
+==> langchain
+Compiling 14 files (.ex)
+Generated langchain app
 ```
 
 <!-- livebook:{"output":true} -->
@@ -64,6 +181,17 @@ function =
       Jason.encode!(MyApp.get_user_info(user_id))
     end
   })
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+%LangChain.Function{
+  name: "get_user_info",
+  description: "Return JSON object of the current users's relevant information.",
+  function: #Function<41.3316493/2 in :erl_eval.expr/6>,
+  parameters_schema: nil
+}
 ```
 
 The function `name` we provide is how the LLM will execute the function if the LLM chooses to call it.
@@ -125,7 +253,7 @@ messages = [
 ```
 [
   %LangChain.Message{
-    content: "You are a helpful haiku poem generating assistant. \n    ONLY generate a haiku for users with an `account_type` of \"member\". \n    If the user has an `account_type` of \"trial\", say you can't do it, \n    but you would love to help them if they upgrade and become a member.",
+    content: "You are a helpful haiku poem generating assistant.\n    ONLY generate a haiku for users with an `account_type` of \"member\".\n    If the user has an `account_type` of \"trial\", say you can't do it,\n    but you would love to help them if they upgrade and become a member.",
     index: nil,
     status: :complete,
     role: :system,
@@ -229,7 +357,7 @@ LLM: %LangChain.ChatModels.ChatOpenAI{
 }
 MESSAGES: [
   %LangChain.Message{
-    content: "You are a helpful haiku poem generating assistant. \n    ONLY generate a haiku for users with an `account_type` of \"member\". \n    If the user has an `account_type` of \"trial\", say you can't do it, \n    but you would love to help them if they upgrade and become a member.",
+    content: "You are a helpful haiku poem generating assistant.\n    ONLY generate a haiku for users with an `account_type` of \"member\".\n    If the user has an `account_type` of \"trial\", say you can't do it,\n    but you would love to help them if they upgrade and become a member.",
     index: nil,
     status: :complete,
     role: :system,
@@ -263,25 +391,25 @@ SINGLE MESSAGE RESPONSE: %LangChain.Message{
 }
 EXECUTING FUNCTION: "get_user_info"
 
-10:31:04.338 [debug] Executing function "get_user_info"
+21:19:05.991 [debug] Executing function "get_user_info"
 FUNCTION RESULT: "{\"account_type\":\"member\",\"favorite_animal\":\"Aardvark\",\"name\":\"Joan Jett\",\"user_id\":2}"
 SINGLE MESSAGE RESPONSE: %LangChain.Message{
-  content: "Delving in darkness,\nAardvark, nature's architect,\nJoan's spirit animal.",
+  content: "Aardvark in night's cloak,\nDigging deep beneath moon's gaze,\nJoan, this beast we evoke.",
   index: 0,
   status: :complete,
   role: :assistant,
   function_name: nil,
   arguments: nil
 }
-Delving in darkness,
-Aardvark, nature's architect,
-Joan's spirit animal.
+Aardvark in night's cloak,
+Digging deep beneath moon's gaze,
+Joan, this beast we evoke.
 ```
 
 <!-- livebook:{"output":true} -->
 
 ```
-"Delving in darkness,\nAardvark, nature's architect,\nJoan's spirit animal."
+"Aardvark in night's cloak,\nDigging deep beneath moon's gaze,\nJoan, this beast we evoke."
 ```
 
 **TIP:** Try changing the `context` to `user_id: 1` now and see what happens when a different user context is provided.
@@ -301,4 +429,4 @@ With this, we could expose functions that allow the LLM to request additional in
 
 At that point, it's up to us!
 
-<!-- livebook:{"offset":10795,"stamp":{"token":"QTEyOEdDTQ.olz_GbP6T4EaU2IyHYfQOkL2pnyE78N2PhXN-5cgqgLYK5k6VlXrZhNd7iA.4MuM-lxtejG5Kg3K.SkX3VFOLxSUQH687tCG74SmZUITF4e1LHHpuqVj7W0ONedpZxN6nCd2ONHMagg.zV-suQheja_oIjTaQ0C_Kg","version":1}} -->
+<!-- livebook:{"offset":14069,"stamp":{"token":"QTEyOEdDTQ.CzGpdcOHpENJFksI6fFg1XX3bjw7QgC0ZMEv6XYB7lauhApZxBMl1xmut9Q.871uTw6vD4vwYGNV.vuGlk7R7-rSCyEB3Z64cXmRhLD1FtTQaY6wSXlG8I3cb4OoF_z_oyj2pOa4SOA.uSZDf0-p9m2FyU5CTJiprA","version":1}} -->
