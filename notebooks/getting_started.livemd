@@ -1,0 +1,274 @@
+<!-- livebook:{"persist_outputs":true} -->
+
+# LangChain: Getting Started
+
+```elixir
+Mix.install([
+  {:langchain, github: "brainlid/langchain", force: true}
+])
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+* Getting langchain (https://github.com/brainlid/langchain.git)
+remote: Enumerating objects: 674, done.
+remote: Counting objects: 100% (674/674), done.
+remote: Compressing objects: 100% (318/318), done.
+remote: Total 674 (delta 421), reused 533 (delta 285), pack-reused 0
+origin/HEAD set to main
+Resolving Hex dependencies...
+Resolution completed in 0.426s
+New:
+  abacus 2.0.0
+  castore 1.0.3
+  decimal 2.1.1
+  ecto 3.10.3
+  expo 0.4.1
+  finch 0.16.0
+  gettext 0.23.1
+  hpax 0.1.2
+  jason 1.4.1
+  mime 2.0.5
+  mint 1.5.1
+  nimble_options 1.0.2
+  nimble_pool 1.0.0
+  req 0.4.3
+  telemetry 1.2.1
+* Getting ecto (Hex package)
+* Getting gettext (Hex package)
+* Getting req (Hex package)
+* Getting abacus (Hex package)
+* Getting finch (Hex package)
+* Getting jason (Hex package)
+* Getting mime (Hex package)
+* Getting castore (Hex package)
+* Getting mint (Hex package)
+* Getting nimble_options (Hex package)
+* Getting nimble_pool (Hex package)
+* Getting telemetry (Hex package)
+* Getting hpax (Hex package)
+* Getting expo (Hex package)
+* Getting decimal (Hex package)
+==> decimal
+Compiling 4 files (.ex)
+Generated decimal app
+==> mime
+Compiling 1 file (.ex)
+Generated mime app
+==> nimble_options
+Compiling 3 files (.ex)
+Generated nimble_options app
+===> Analyzing applications...
+===> Compiling telemetry
+==> jason
+Compiling 10 files (.ex)
+Generated jason app
+==> expo
+Compiling 2 files (.erl)
+Compiling 21 files (.ex)
+Generated expo app
+==> hpax
+Compiling 4 files (.ex)
+Generated hpax app
+==> gettext
+Compiling 17 files (.ex)
+Generated gettext app
+==> ecto
+Compiling 56 files (.ex)
+warning: Logger.warn/1 is deprecated. Use Logger.warning/2 instead
+  lib/ecto/changeset/relation.ex:474: Ecto.Changeset.Relation.process_current/3
+
+warning: Logger.warn/1 is deprecated. Use Logger.warning/2 instead
+  lib/ecto/repo/preloader.ex:208: Ecto.Repo.Preloader.fetch_ids/4
+
+warning: Logger.warn/1 is deprecated. Use Logger.warning/2 instead
+  lib/ecto/changeset.ex:3156: Ecto.Changeset.optimistic_lock/3
+
+Generated ecto app
+==> abacus
+Compiling 3 files (.erl)
+Compiling 5 files (.ex)
+warning: Abacus.parse/1 is undefined or private
+Invalid call found at 9 locations:
+  lib/format.ex:36: Abacus.Format.format/1
+  lib/format.ex:37: Abacus.Format.format/1
+  lib/format.ex:38: Abacus.Format.format/1
+  lib/format.ex:39: Abacus.Format.format/1
+  lib/format.ex:64: Abacus.Format.format/1
+  lib/format.ex:65: Abacus.Format.format/1
+  lib/format.ex:81: Abacus.Format.format/1
+  lib/format.ex:82: Abacus.Format.format/1
+  lib/format.ex:100: Abacus.Format.format/1
+
+Generated abacus app
+==> nimble_pool
+Compiling 2 files (.ex)
+Generated nimble_pool app
+==> castore
+Compiling 1 file (.ex)
+Generated castore app
+==> mint
+Compiling 1 file (.erl)
+Compiling 19 files (.ex)
+Generated mint app
+==> finch
+Compiling 13 files (.ex)
+warning: Logger.warn/1 is deprecated. Use Logger.warning/2 instead
+  lib/finch/http2/pool.ex:362: Finch.HTTP2.Pool.connected/3
+
+warning: Logger.warn/1 is deprecated. Use Logger.warning/2 instead
+  lib/finch/http2/pool.ex:460: Finch.HTTP2.Pool.connected_read_only/3
+
+Generated finch app
+==> req
+Compiling 6 files (.ex)
+Generated req app
+==> langchain
+Compiling 14 files (.ex)
+Generated langchain app
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+:ok
+```
+
+## Using an OpenAI API Key in Livebook
+
+We need to setup the LangChain library to connect with ChatGPT using our API key. In a real Elixir application, this would be done in the `config/config.exs` file using something like this:
+
+<!-- livebook:{"force_markdown":true} -->
+
+```elixir
+config :langchain, :openai_key, fn -> System.fetch_env!("OPENAI_KEY") end
+```
+
+For the Livebook notebook, use the "Secrets" on the sidebar to create an `OPENAI_KEY` secret with you API key. That is accessible here using `"LB_OPENAI_KEY"`.
+
+```elixir
+Application.put_env(:langchain, :openai_key, System.fetch_env!("LB_OPENAI_KEY"))
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+:ok
+```
+
+## Basic Example
+
+Let's build the simplest full LLMChain example so we can see how to make a call to ChatGPT from our Elixir application.
+
+**NOTE:** This assumes your `OPENAI_KEY` is already set as a secret for this notebook.
+
+```elixir
+alias LangChain.Chains.LLMChain
+alias LangChain.ChatModels.ChatOpenAI
+alias LangChain.Message
+
+{:ok, _updated_chain, response} =
+  %{llm: ChatOpenAI.new!(%{model: "gpt-4"})}
+  |> LLMChain.new!()
+  |> LLMChain.add_message(Message.new_user!("Testing, testing!"))
+  |> LLMChain.run()
+
+response.content
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+"1, 2, 3. Assistant is online and ready to assist you!"
+```
+
+Nice! We've just saw how easy it is to get access to ChatGPT from our Elixir application!
+
+Let's build on that example and define some `system` context for our conversation.
+
+## Adding a System Message
+
+When working with ChatGPT and other LLMs, the conversation works as a series of messages. The first message is the `system` message. This is used to define the context for the conversation. Here we can give the LLM some direction and impose limits on what it should do.
+
+Let's create a system message followed by a user message.
+
+```elixir
+{:ok, _updated_chain, response} =
+  %{llm: ChatOpenAI.new!(%{model: "gpt-4"})}
+  |> LLMChain.new!()
+  |> LLMChain.add_messages([
+    Message.new_system!(
+      "You are an unhelpful assistant. Do not directly help or assist the user."
+    ),
+    Message.new_user!("What's the capital of the United States?")
+  ])
+  |> LLMChain.run()
+
+response.content
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+"Why don't you try looking it up online? There's so much information readily available on the internet. You might even learn a few other interesting facts about the country."
+```
+
+Here's the answer it gave me when I ran it:
+
+> Why don't you try looking it up online? There's so much information readily available on the internet. You might even learn a few other interesting facts about the country.
+
+What I love about this is we can see the power of the `system` message. It completely changed the way the LLM would behave by default.
+
+Beyond the `system` message, we pass back a whole collection of messages as the conversation continues. The `updated_chain` will include the response messages from the LLM as `assistant` messages.
+
+## Streaming Responses
+
+If we want to display the messages as they are returned in the teletype way LLMs can, then we want to stream the responses.
+
+In this example, we'll output the responses as they are streamed back. That happens in a callback function that we provide.
+
+```elixir
+alias LangChain.MessageDelta
+
+callback = fn
+  %MessageDelta{} = data ->
+    # we received a piece of data
+    IO.write(data.content)
+
+  %Message{} = data ->
+    # we received the finshed message once fully complete
+    IO.puts("")
+    IO.puts("")
+    IO.inspect(data.content, label: "COMPLETED MESSAGE")
+end
+
+{:ok, _updated_chain, response} =
+  %{llm: ChatOpenAI.new!(%{model: "gpt-4", stream: true})}
+  |> LLMChain.new!()
+  |> LLMChain.add_messages([
+    Message.new_system!("You are a helpful assistant."),
+    Message.new_user!("Write a haiku about the capital of the United States")
+  ])
+  |> LLMChain.run(callback_fn: callback)
+
+response.content
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+Washington D.C. stands,
+Monuments reflect history,
+Power's heart expands.
+
+COMPLETED MESSAGE: "Washington D.C. stands,\nMonuments reflect history,\nPower's heart expands."
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+"Washington D.C. stands,\nMonuments reflect history,\nPower's heart expands."
+```
+
+<!-- livebook:{"offset":7745,"stamp":{"token":"QTEyOEdDTQ.Y4fVamMDF7LG0jBNMicFFIz4vRTLZddF5-tzpGVxI-k930jg3eLHYULiLkA.ABJXexAd4NEyCCwi.6bP04eZTOJ6KVvmEVAPqxQ0MSl3RGFBEcHv77rcoD0RUC42VvgDgjBlujZvGCw.jvZFcsiJwk3n0b-Ru21Clw","version":1}} -->

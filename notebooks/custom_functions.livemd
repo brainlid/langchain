@@ -66,17 +66,6 @@ function =
   })
 ```
 
-<!-- livebook:{"output":true} -->
-
-```
-%LangChain.Function{
-  name: "get_user_info",
-  description: "Return JSON object of the current users's relevant information.",
-  function: #Function<41.3316493/2 in :erl_eval.expr/6>,
-  parameters_schema: nil
-}
-```
-
 The function `name` we provide is how the LLM will execute the function if the LLM chooses to call it.
 
 The `description` is for the LLM to know what the function can do so it can decide which function to call for which purpose.
@@ -312,4 +301,4 @@ With this, we could expose functions that allow the LLM to request additional in
 
 At that point, it's up to us!
 
-<!-- livebook:{"offset":11054,"stamp":{"token":"QTEyOEdDTQ.QVq3CzUVzbx_z4dCWDieVmA4vIU5aCBxwXqbdCzXOcfFDf1jE0mWXdJlJuA.IqFBfgoIJc-vWF4B.L5lX6upQX6GSJtmIgR64IJQNY9gb8P52ytR_GFDLDIS0ImioCeG9YWPKHaDkOg.ggDyY9shB2DUzfmP4SNJKQ","version":1}} -->
+<!-- livebook:{"offset":10795,"stamp":{"token":"QTEyOEdDTQ.olz_GbP6T4EaU2IyHYfQOkL2pnyE78N2PhXN-5cgqgLYK5k6VlXrZhNd7iA.4MuM-lxtejG5Kg3K.SkX3VFOLxSUQH687tCG74SmZUITF4e1LHHpuqVj7W0ONedpZxN6nCd2ONHMagg.zV-suQheja_oIjTaQ0C_Kg","version":1}} -->
