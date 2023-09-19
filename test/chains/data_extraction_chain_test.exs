@@ -28,23 +28,26 @@ defmodule LangChain.Chains.DataExtractionChainTest do
       "Alex is 5 feet tall. Claudia is 4 feet taller than Alex and jumps higher than him.
        Claudia is a brunette and Alex is blonde. Alex's dog Frosty is a labrador and likes to play hide and seek."
 
-    {:ok, result} = LangChain.Chains.DataExtractionChain.run(chat, schema_parameters, data_prompt, verbose: true)
+    {:ok, result} =
+      LangChain.Chains.DataExtractionChain.run(chat, schema_parameters, data_prompt,
+        verbose: true
+      )
 
     assert result == [
-      %{
-        "dog_breed" => "labrador",
-        "dog_name" => "Frosty",
-        "person_age" => nil,
-        "person_hair_color" => "blonde",
-        "person_name" => "Alex"
-      },
-      %{
-        "dog_breed" => nil,
-        "dog_name" => nil,
-        "person_age" => nil,
-        "person_hair_color" => "brunette",
-        "person_name" => "Claudia"
-      }
-    ]
+             %{
+               "dog_breed" => "labrador",
+               "dog_name" => "Frosty",
+               "person_age" => nil,
+               "person_hair_color" => "blonde",
+               "person_name" => "Alex"
+             },
+             %{
+               "dog_breed" => nil,
+               "dog_name" => nil,
+               "person_age" => nil,
+               "person_hair_color" => "brunette",
+               "person_name" => "Claudia"
+             }
+           ]
   end
 end

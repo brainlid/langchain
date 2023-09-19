@@ -39,7 +39,7 @@ defmodule LangChain.MixProject do
       {:gettext, "~> 0.20"},
       {:req, "~> 0.3"},
       {:abacus, "~> 2.0.0"},
-      {:ex_doc, "~> 0.27", only: :dev, runtime: false},
+      {:ex_doc, "~> 0.27", only: :dev, runtime: false}
     ]
   end
 
@@ -50,7 +50,7 @@ defmodule LangChain.MixProject do
       source_url: "https://github.com/brainlid/langchain",
       extra_section: "GUIDES",
       extras: extras(),
-      skip_undefined_reference_warnings_on: ["CHANGELOG.md"],
+      skip_undefined_reference_warnings_on: ["CHANGELOG.md"]
     ]
   end
 

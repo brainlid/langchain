@@ -361,7 +361,8 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
       {:ok, chat} = ChatOpenAI.new(%{stream: true, receive_timeout: 50, verbose: true})
 
-      {:error, reason} = ChatOpenAI.call(chat, [Message.new_user!("Why is the sky blue?")], [], callback)
+      {:error, reason} =
+        ChatOpenAI.call(chat, [Message.new_user!("Why is the sky blue?")], [], callback)
 
       assert reason == "Request timed out"
     end

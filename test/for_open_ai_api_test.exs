@@ -10,7 +10,11 @@ defmodule LangChain.ForOpenAIApiTest do
 
       json = ForOpenAIApi.for_api(msg)
 
-      assert json == %{"content" => nil, "function_call" => %{"arguments" => "{}", "name" => "hello_world"}, "role" => :assistant}
+      assert json == %{
+               "content" => nil,
+               "function_call" => %{"arguments" => "{}", "name" => "hello_world"},
+               "role" => :assistant
+             }
     end
 
     test "turns a function_call into expected JSON format with arguments" do
@@ -19,7 +23,14 @@ defmodule LangChain.ForOpenAIApiTest do
 
       json = ForOpenAIApi.for_api(msg)
 
-      assert json == %{"content" => nil, "function_call" => %{"arguments" => "{\"expression\":\"11 + 10\"}", "name" => "hello_world"}, "role" => :assistant}
+      assert json == %{
+               "content" => nil,
+               "function_call" => %{
+                 "arguments" => "{\"expression\":\"11 + 10\"}",
+                 "name" => "hello_world"
+               },
+               "role" => :assistant
+             }
     end
 
     test "turns a function response into expected JSON format" do
@@ -30,5 +41,4 @@ defmodule LangChain.ForOpenAIApiTest do
       assert json == %{"content" => "Hello World!", "name" => "hello_world", "role" => :function}
     end
   end
-
 end
