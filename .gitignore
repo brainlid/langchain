@@ -29,3 +29,8 @@ langchain-*.tar
 /tmp/
 
 .envrc
+.idea/
+
+langchain.iml
+
+lib/document_loaders/web/.DS_Store
