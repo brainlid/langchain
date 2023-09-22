@@ -78,7 +78,7 @@ The central module in this library is `LangChain.Chains.LLMChain`. Most other pi
 
 A really powerful feature of LangChain is making it easy to integrate an LLM into your application and expose features, data, and functionality _from_ your application to the LLM.
 
-<img src="https://github.com/brainlid/langchain/blob/main/langchain_functions_overview.png?v=1" style="text-align: center;" width=50% height=50% alt="Diagram showing LLM integration to application logic and data through a LangChain.Function">
+<img src="https://github.com/brainlid/langchain/blob/main/langchain_functions_overview_sm_v1.png" style="text-align: center;" width=50% height=50% alt="Diagram showing LLM integration to application logic and data through a LangChain.Function">
 
 A `LangChain.Function` bridges the gap between the LLM and our application code. We choose what to expose and using `context`, we can ensure any actions are limited to what the user has permission to do and access.
 
