@@ -31,3 +31,4 @@ langchain-*.tar
 .envrc
 
 DEV_NOTES.md
+/logo/
