@@ -1,4 +1,6 @@
-# LangChain
+# ![Logo with chat chain links](./elixir-langchain-link-logo_100px.png) LangChain
+
+**LangChain** is short for Language Chain. An LLM, or Large Language Model, is the "Language" part. This library makes it easier to "chain" or connect different processes, integrations, libraries, services, or functionality together with an LLM.
 
 **LangChain** is a framework for developing applications powered by language models. It enables applications that are:
 
