@@ -1,6 +1,6 @@
-# ![Logo with chat chain links](./elixir-langchain-link-logo_100px.png) LangChain
+# ![Logo with chat chain links](./elixir-langchain-link-logo_32px.png) LangChain
 
-**LangChain** is short for Language Chain. An LLM, or Large Language Model, is the "Language" part. This library makes it easier to "chain" or connect different processes, integrations, libraries, services, or functionality together with an LLM.
+**LangChain** is short for Language Chain. An LLM, or Large Language Model, is the "Language" part. This library makes it easier for Elixir applications to "chain" or connect different processes, integrations, libraries, services, or functionality together with an LLM.
 
 **LangChain** is a framework for developing applications powered by language models. It enables applications that are:
 
@@ -26,7 +26,7 @@ The online documentation can [found here](https://hexdocs.pm/langchain).
 
 ## Relationship with JavaScript and Python LangChain
 
-This library is written in [Elixir](https://elixir-lang.org/) and intended to be used with Elixir applications. The original libraries are [LangChain JS](https://js.langchain.com/) and [LangChain Python](https://python.langchain.com/).
+This library is written in [Elixir](https://elixir-lang.org/) and intended to be used with Elixir applications. The original libraries are [LangChain JS/TS](https://js.langchain.com/) and [LangChain Python](https://python.langchain.com/).
 
 The JavaScript and Python projects aim to integrate with each other as seamlessly as possible. The intended integration is so strong that that all objects (prompts, LLMs, chains, etc) are designed in a way where they can be serialized and shared between the two languages.
 
