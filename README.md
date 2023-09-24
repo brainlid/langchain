@@ -156,7 +156,7 @@ Otherwise, running the following will only run local tests making no external AP
 mix test
 ```
 
-Executing a specific test, wether it is a `live_call` or not, will execute it creating a potentially billable event.
+Executing a specific test, whether it is a `live_call` or not, will execute it creating a potentially billable event.
 
 When doing local development on the `LangChain` library itself, rename the `.envrc_template` to `.envrc` and populate it with your private API values. This is only used when running live test when explicitly requested.
 
