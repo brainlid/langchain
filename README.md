@@ -56,9 +56,9 @@ Currently, the library is written to use the `Req` library for making API calls.
 
 To make API calls, it is necessary to configure the API keys for the services you connect with. At this time, the library only supports ChatGPT and the OpenAI API key.
 
-```elixir
-import Config
+`config/config.exs`:
 
+```elixir
 config :langchain, openai_key: System.get_env("OPENAI_KEY")
 # OR
 config :langchain, openai_key: "YOUR SECRET KEY"
