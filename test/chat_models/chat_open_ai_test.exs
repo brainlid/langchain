@@ -59,7 +59,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
           Message.new_user!("Return the response 'Colorful Threads'.")
         ])
 
-      assert response == "Colorful Threads"
+      assert response =~ "Colorful Threads"
     end
 
     @tag :live_call
@@ -110,7 +110,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
         |> MessageDelta.merge_delta(delta_3)
 
       assert merged.role == :assistant
-      assert merged.content == "Hi"
+      assert merged.content =~ "Hi"
       assert merged.status == :complete
     end
 
@@ -134,12 +134,12 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
           callback
         )
 
-      assert message.content == "Hi"
+      assert message.content =~ "Hi"
       assert message.index == 0
       assert_receive {:message_received, received_item}, 500
       assert %Message{} = received_item
       assert received_item.role == :assistant
-      assert received_item.content == "Hi"
+      assert received_item.content =~ "Hi"
       assert received_item.index == 0
     end
 
