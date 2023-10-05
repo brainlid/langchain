@@ -24,6 +24,10 @@ This library is aimed at assisting in the development of those types of applicat
 
 The online documentation can [found here](https://hexdocs.pm/langchain).
 
+## Demo
+
+Check out the [demo project](https://github.com/brainlid/langchain_demo) that you can download and review.
+
 ## Relationship with JavaScript and Python LangChain
 
 This library is written in [Elixir](https://elixir-lang.org/) and intended to be used with Elixir applications. The original libraries are [LangChain JS/TS](https://js.langchain.com/) and [LangChain Python](https://python.langchain.com/).
