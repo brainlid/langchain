@@ -16,6 +16,7 @@ defmodule LangChain.Chains.LLMChain do
   require Logger
   alias LangChain.PromptTemplate
   alias __MODULE__
+  alias LangChain.LLM
   alias LangChain.Message
   alias LangChain.MessageDelta
   alias LangChain.Function
@@ -196,12 +197,8 @@ defmodule LangChain.Chains.LLMChain do
   # internal reusable function for running the chain
   @spec do_run(t()) :: {:ok, t()} | {:error, String.t()}
   defp do_run(%LLMChain{} = chain) do
-    # submit to LLM. The "llm" is a struct. Match to get the name of the module
-    # then execute the `.call` function on that module.
-    %module{} = chain.llm
-
     # handle and output response
-    case module.call(chain.llm, chain.messages, chain.functions, chain.callback_fn) do
+    case LLM.call(chain.llm, chain.messages, chain.functions, chain.callback_fn) do
       {:ok, [%Message{} = message]} ->
         if chain.verbose, do: IO.inspect(message, label: "SINGLE MESSAGE RESPONSE")
         {:ok, add_message(chain, message)}

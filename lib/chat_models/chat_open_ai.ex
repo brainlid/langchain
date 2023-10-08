@@ -14,12 +14,15 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   import Ecto.Changeset
   import LangChain.Utils.ApiOverride
   alias __MODULE__
+  alias LangChain.LLM
   alias LangChain.Config
   alias LangChain.Message
   alias LangChain.LangChainError
   alias LangChain.ForOpenAIApi
   alias LangChain.Utils
   alias LangChain.MessageDelta
+
+  @behaviour LLM
 
   # NOTE: As of gpt-4 and gpt-3.5, only one function_call is issued at a time
   # even when multiple requests could be issued based on the prompt.
@@ -52,7 +55,6 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
   @type t :: %ChatOpenAI{}
 
-  @type call_response :: {:ok, Message.t() | [Message.t()]} | {:error, String.t()}
   @type callback_data ::
           {:ok, Message.t() | MessageDelta.t() | [Message.t() | MessageDelta.t()]}
           | {:error, String.t()}
@@ -142,12 +144,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   structs as they are are received, then converting those to the full
   `LangChain.Message` once fully complete.
   """
-  @spec call(
-          t(),
-          String.t() | [Message.t()],
-          [LangChain.Function.t()],
-          nil | (Message.t() | MessageDelta.t() -> any())
-        ) :: call_response()
+  @impl LLM
   def call(openai, prompt, functions \\ [], callback_fn \\ nil)
 
   def call(%ChatOpenAI{} = openai, prompt, functions, callback_fn) when is_binary(prompt) do
