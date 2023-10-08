@@ -80,7 +80,12 @@ defmodule LangChain.Function do
     field :parameters_schema, :map
   end
 
-  @type t :: %Function{}
+  @type t :: %Function{
+          name: String.t(),
+          description: String.t(),
+          function: any(),
+          parameters_schema: map()
+        }
 
   @create_fields [:name, :description, :parameters_schema, :function]
   @required_fields [:name]

@@ -51,7 +51,15 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     field :stream, :boolean, default: false
   end
 
-  @type t :: %ChatOpenAI{}
+  @type t :: %ChatOpenAI{
+          endpoint: String.t(),
+          model: String.t(),
+          temperature: float(),
+          frequency_penalty: float(),
+          receive_timeout: non_neg_integer(),
+          n: pos_integer(),
+          stream: boolean()
+        }
 
   @type call_response :: {:ok, Message.t() | [Message.t()]} | {:error, String.t()}
   @type callback_data ::

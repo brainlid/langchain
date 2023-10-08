@@ -55,7 +55,18 @@ defmodule LangChain.Chains.LLMChain do
     field :callback_fn, :any, virtual: true
   end
 
-  @type t :: %LLMChain{}
+  @type t :: %LLMChain{
+          llm: any(),
+          verbose: boolean(),
+          functions: list(),
+          function_map: %{},
+          messages: list(),
+          custom_context: any(),
+          delta: any(),
+          last_message: any(),
+          needs_response: boolean(),
+          callback_fn: any()
+        }
 
   @create_fields [:llm, :functions, :custom_context, :verbose]
   @required_fields [:llm]

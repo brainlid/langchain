@@ -50,8 +50,16 @@ defmodule LangChain.Message do
     field :arguments, :any, virtual: true
   end
 
-  @type t :: %Message{}
   @type status :: :complete | :cancelled | :length
+
+  @type t :: %Message{
+          content: String.t(),
+          index: integer(),
+          status: status(),
+          role: :system | :user | :assistant | :function,
+          function_name: String.t(),
+          arguments: any()
+        }
 
   @create_fields [:role, :content, :status, :function_name, :arguments, :index]
   @required_fields [:role]

@@ -47,7 +47,14 @@ defmodule LangChain.MessageDelta do
     field :arguments, :string
   end
 
-  @type t :: %MessageDelta{}
+  @type t :: %MessageDelta{
+          content: String.t(),
+          status: :incomplete | :complete | :length,
+          index: non_neg_integer(),
+          function_name: String.t(),
+          role: :unknown | :assistant,
+          arguments: String.t()
+        }
 
   @create_fields [:role, :content, :function_name, :arguments, :index, :status]
   @required_fields []

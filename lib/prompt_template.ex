@@ -41,7 +41,11 @@ defmodule LangChain.PromptTemplate do
     field :role, Ecto.Enum, values: [:system, :user, :assistant, :function], default: :user
   end
 
-  @type t :: %PromptTemplate{}
+  @type t :: %PromptTemplate{
+          text: String.t(),
+          inputs: %{},
+          role: :system | :user | :assistant | :function
+        }
 
   @create_fields [:role, :text, :inputs]
   @required_fields [:text]
