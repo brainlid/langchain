@@ -89,7 +89,7 @@ defmodule LangChain.Chains.DataExtractionChain do
       |> LLMChain.add_messages(messages)
       |> LLMChain.run()
       |> case do
-        {:ok, _updated_chain, %Message{role: :function_call, arguments: %{"info" => info}}}
+        {:ok, _updated_chain, %Message{role: :function, arguments: %{"info" => info}}}
         when is_list(info) ->
           {:ok, info}
 
