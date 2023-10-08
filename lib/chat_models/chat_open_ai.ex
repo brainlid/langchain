@@ -16,6 +16,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   alias __MODULE__
   alias LangChain.Config
   alias LangChain.Message
+  alias LangChain.Function
   alias LangChain.LangChainError
   alias LangChain.ForOpenAIApi
   alias LangChain.Utils

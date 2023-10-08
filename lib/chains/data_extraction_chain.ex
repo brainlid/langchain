@@ -57,6 +57,7 @@ defmodule LangChain.Chains.DataExtractionChain do
   alias LangChain.PromptTemplate
   alias LangChain.Message
   alias LangChain.Chains.LLMChain
+  alias LangChain.ChatModels.ChatOpenAI
 
   @extraction_template ~s"Extract and save the relevant entities mentioned in the following passage together with their properties.
 
