@@ -58,7 +58,7 @@ defmodule LangChain.Chains.DataExtractionChain do
   alias LangChain.Message
   alias LangChain.Chains.LLMChain
 
-  @extraction_template ~s"Extract and save the relevant entities mentioned in the following passage together with their properties.
+  @extraction_template ~s"Extract and save the relevant entities mentioned in the following passage together with their properties. Use the value `null` when missing in the passage.
 
   Passage:
   <%= @input %>"
