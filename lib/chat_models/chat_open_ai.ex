@@ -66,6 +66,11 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     Config.resolve(:openai_key, "")
   end
 
+  @spec get_org_id() :: String.t() | nil
+  defp get_org_id() do
+    Config.resolve(:openai_org_id)
+  end
+
   @doc """
   Setup a ChatOpenAI client configuration.
   """
@@ -211,11 +216,17 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   @spec do_api_request(t(), [Message.t()], [Function.t()], (any() -> any())) ::
           list() | struct() | {:error, String.t()}
   def do_api_request(%ChatOpenAI{stream: false} = openai, messages, functions, callback_fn) do
-    Req.post(openai.endpoint,
-      json: for_api(openai, messages, functions),
-      auth: {:bearer, get_api_key()},
-      receive_timeout: openai.receive_timeout
-    )
+    req =
+      Req.new(
+        url: openai.endpoint,
+        json: for_api(openai, messages, functions),
+        auth: {:bearer, get_api_key()},
+        receive_timeout: openai.receive_timeout
+      )
+
+    req
+    |> maybe_add_org_id_header()
+    |> Req.post()
     # parse the body and return it as parsed structs
     |> case do
       {:ok, %Req.Response{body: data}} ->
@@ -303,6 +314,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     # separate process from the UI and the callback function will process the
     # chunks and should notify the UI process of the additional data.
     req
+    |> maybe_add_org_id_header()
     |> Req.post()
     |> case do
       {:ok, %Req.Response{body: data}} ->
@@ -515,5 +527,15 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
   def do_process_response(%{"error" => %{"message" => reason}}) do
     {:error, reason}
+  end
+
+  defp maybe_add_org_id_header(%Req.Request{} = req) do
+    org_id = get_org_id()
+
+    if org_id do
+      Req.Request.put_header(req, "OpenAI-Organization", org_id)
+    else
+      req
+    end
   end
 end
