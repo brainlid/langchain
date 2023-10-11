@@ -235,6 +235,48 @@ defmodule LangChain.Chains.LLMChain do
   end
 
   @doc """
+  Update the LLMChain's `custom_context` map. Passing in a `context_update` map
+  will by default merge the map into the existing `custom_context`.
+
+  Use the `:as` option to:
+  - `:merge` - Merge update changes in. Default.
+  - `:replace` - Replace the context with the `context_update`.
+  """
+  @spec update_custom_context(t(), context_update :: %{atom() => any()}, opts :: Keyword.t()) ::
+          t() | no_return()
+  def update_custom_context(chain, context_update, opts \\ [])
+
+  def update_custom_context(
+        %LLMChain{custom_context: %{} = context} = chain,
+        %{} = context_update,
+        opts
+      ) do
+    new_context =
+      case Keyword.get(opts, :as) || :merge do
+        :merge ->
+          Map.merge(context, context_update)
+
+        :replace ->
+          context_update
+
+        other ->
+          raise LangChain.LangChainError,
+                "Invalid update_custom_context :as option of #{inspect(other)}"
+      end
+
+    %LLMChain{chain | custom_context: new_context}
+  end
+
+  def update_custom_context(
+        %LLMChain{custom_context: nil} = chain,
+        %{} = context_update,
+        _opts
+      ) do
+    # can't merge a map with `nil`. Replace it.
+    %LLMChain{chain | custom_context: context_update}
+  end
+
+  @doc """
   Apply a received MessageDelta struct to the chain. The LLMChain tracks the
   current merged MessageDelta state. When the final delta is received that
   completes the message, the LLMChain is updated to clear the `delta` and the

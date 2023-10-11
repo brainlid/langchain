@@ -1,4 +1,4 @@
-# ![Logo with chat chain links](./elixir-langchain-link-logo_32px.png) LangChain
+# ![Logo with chat chain links](./elixir-langchain-link-logo_32px.png) Elixir LangChain
 
 **LangChain** is short for Language Chain. An LLM, or Large Language Model, is the "Language" part. This library makes it easier for Elixir applications to "chain" or connect different processes, integrations, libraries, services, or functionality together with an LLM.
 
@@ -64,16 +64,20 @@ To make API calls, it is necessary to configure the API keys for the services yo
 
 ```elixir
 config :langchain, openai_key: System.get_env("OPENAI_KEY")
+config :langchain, openai_org_id: System.get_env("OPENAI_ORG_ID")
 # OR
 config :langchain, openai_key: "YOUR SECRET KEY"
+config :langchain, openai_org_id: "YOUR_OPENAI_ORG_ID"
 ```
 
 It's possible to use a function or a tuple to resolve the secret:
 
 ```elixir
 config :langchain, openai_key: {MyApp.Secrets, :openai_key, []}
+config :langchain, openai_org_id: {MyApp.Secrets, :openai_org_id, []}
 # OR
 config :langchain, openai_key: fn -> System.get_env("OPENAI_KEY") end
+config :langchain, openai_org_id: fn -> System.get_env("OPENAI_ORG_ID") end
 ```
 
 ## Usage

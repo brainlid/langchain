@@ -554,6 +554,46 @@ defmodule LangChain.Chains.LLMChainTest do
     end
   end
 
+  describe "update_custom_context/3" do
+    test "updates using merge by default" do
+      chain =
+        LLMChain.new!(%{
+          llm: ChatOpenAI.new!(%{stream: false}),
+          custom_context: %{existing: "a", count: 1}
+        })
+
+      updated_1 = LLMChain.update_custom_context(chain, %{count: 5})
+      assert updated_1.custom_context == %{existing: "a", count: 5}
+
+      updated_2 = LLMChain.update_custom_context(updated_1, %{more: true}, as: :merge)
+      assert updated_2.custom_context == %{existing: "a", count: 5, more: true}
+    end
+
+    test "handles update when custom_context is nil" do
+      chain =
+        LLMChain.new!(%{
+          llm: ChatOpenAI.new!(%{stream: false}),
+          custom_context: nil
+        })
+
+      assert chain.custom_context == nil
+
+      updated = LLMChain.update_custom_context(chain, %{some: :thing})
+      assert updated.custom_context == %{some: :thing}
+    end
+
+    test "support updates using replace" do
+      chain =
+        LLMChain.new!(%{
+          llm: ChatOpenAI.new!(%{stream: false}),
+          custom_context: %{count: 1}
+        })
+
+      updated = LLMChain.update_custom_context(chain, %{color: "blue"}, as: :replace)
+      assert updated.custom_context == %{color: "blue"}
+    end
+  end
+
   describe "execute_function/2" do
     test "fires callback with function result message"
 
