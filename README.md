@@ -1,4 +1,4 @@
-# ![Logo with chat chain links](./elixir-langchain-link-logo_32px.png) LangChain
+# ![Logo with chat chain links](./elixir-langchain-link-logo_32px.png) Elixir LangChain
 
 **LangChain** is short for Language Chain. An LLM, or Large Language Model, is the "Language" part. This library makes it easier for Elixir applications to "chain" or connect different processes, integrations, libraries, services, or functionality together with an LLM.
 
