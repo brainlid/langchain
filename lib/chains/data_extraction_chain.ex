@@ -58,7 +58,8 @@ defmodule LangChain.Chains.DataExtractionChain do
   alias LangChain.Message
   alias LangChain.Chains.LLMChain
 
-  @extraction_template ~s"Extract and save the relevant entities mentioned in the following passage together with their properties.
+  @function_name "information_extraction"
+  @extraction_template ~s"Extract and save the relevant entities mentioned in the following passage together with their properties. Use the value `null` when missing in the passage.
 
   Passage:
   <%= @input %>"
@@ -88,7 +89,12 @@ defmodule LangChain.Chains.DataExtractionChain do
       |> LLMChain.add_messages(messages)
       |> LLMChain.run()
       |> case do
-        {:ok, _updated_chain, %Message{role: :function_call, arguments: %{"info" => info}}}
+        {:ok, _updated_chain,
+         %Message{
+           role: :assistant,
+           function_name: @function_name,
+           arguments: %{"info" => info}
+         }}
         when is_list(info) ->
           {:ok, info}
 
@@ -112,7 +118,7 @@ defmodule LangChain.Chains.DataExtractionChain do
   @spec build_extract_function(json_schema :: map()) :: LangChain.Function.t() | no_return()
   def build_extract_function(json_schema) do
     LangChain.Function.new!(%{
-      name: "information_extraction",
+      name: @function_name,
       description: "Extracts the relevant information from the passage.",
       parameters_schema: %{
         type: "object",

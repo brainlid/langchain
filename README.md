@@ -1,4 +1,6 @@
-# LangChain
+# ![Logo with chat chain links](./elixir-langchain-link-logo_32px.png) Elixir LangChain
+
+**LangChain** is short for Language Chain. An LLM, or Large Language Model, is the "Language" part. This library makes it easier for Elixir applications to "chain" or connect different processes, integrations, libraries, services, or functionality together with an LLM.
 
 **LangChain** is a framework for developing applications powered by language models. It enables applications that are:
 
@@ -22,9 +24,13 @@ This library is aimed at assisting in the development of those types of applicat
 
 The online documentation can [found here](https://hexdocs.pm/langchain).
 
+## Demo
+
+Check out the [demo project](https://github.com/brainlid/langchain_demo) that you can download and review.
+
 ## Relationship with JavaScript and Python LangChain
 
-This library is written in [Elixir](https://elixir-lang.org/) and intended to be used with Elixir applications. The original libraries are [LangChain JS](https://js.langchain.com/) and [LangChain Python](https://python.langchain.com/).
+This library is written in [Elixir](https://elixir-lang.org/) and intended to be used with Elixir applications. The original libraries are [LangChain JS/TS](https://js.langchain.com/) and [LangChain Python](https://python.langchain.com/).
 
 The JavaScript and Python projects aim to integrate with each other as seamlessly as possible. The intended integration is so strong that that all objects (prompts, LLMs, chains, etc) are designed in a way where they can be serialized and shared between the two languages.
 
@@ -54,20 +60,24 @@ Currently, the library is written to use the `Req` library for making API calls.
 
 To make API calls, it is necessary to configure the API keys for the services you connect with. At this time, the library only supports ChatGPT and the OpenAI API key.
 
-```elixir
-import Config
+`config/config.exs`:
 
+```elixir
 config :langchain, openai_key: System.get_env("OPENAI_KEY")
+config :langchain, openai_org_id: System.get_env("OPENAI_ORG_ID")
 # OR
 config :langchain, openai_key: "YOUR SECRET KEY"
+config :langchain, openai_org_id: "YOUR_OPENAI_ORG_ID"
 ```
 
 It's possible to use a function or a tuple to resolve the secret:
 
 ```elixir
 config :langchain, openai_key: {MyApp.Secrets, :openai_key, []}
+config :langchain, openai_org_id: {MyApp.Secrets, :openai_org_id, []}
 # OR
 config :langchain, openai_key: fn -> System.get_env("OPENAI_KEY") end
+config :langchain, openai_org_id: fn -> System.get_env("OPENAI_ORG_ID") end
 ```
 
 ## Usage
@@ -75,6 +85,12 @@ config :langchain, openai_key: fn -> System.get_env("OPENAI_KEY") end
 The central module in this library is `LangChain.Chains.LLMChain`. Most other pieces are either inputs to this, or structures used by it. For understanding how to use the library, start there.
 
 ### Exposing a custom Elixir function to ChatGPT
+
+A really powerful feature of LangChain is making it easy to integrate an LLM into your application and expose features, data, and functionality _from_ your application to the LLM.
+
+<img src="https://github.com/brainlid/langchain/blob/main/langchain_functions_overview_sm_v1.png" style="text-align: center;" width=50% height=50% alt="Diagram showing LLM integration to application logic and data through a LangChain.Function">
+
+A `LangChain.Function` bridges the gap between the LLM and our application code. We choose what to expose and using `context`, we can ensure any actions are limited to what the user has permission to do and access.
 
 For an interactive example, refer to the project [Livebook notebook "LangChain: Executing Custom Elixir Functions"](notebooks/custom_functions.livemd).
 
@@ -148,7 +164,7 @@ Otherwise, running the following will only run local tests making no external AP
 mix test
 ```
 
-Executing a specific test, wether it is a `live_call` or not, will execute it creating a potentially billable event.
+Executing a specific test, whether it is a `live_call` or not, will execute it creating a potentially billable event.
 
 When doing local development on the `LangChain` library itself, rename the `.envrc_template` to `.envrc` and populate it with your private API values. This is only used when running live test when explicitly requested.
 
