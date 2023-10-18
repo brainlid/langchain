@@ -404,7 +404,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
   # Parse a new message response
   @doc false
-  @spec do_process_response(data :: %{String.t() => any()}) ::
+  @spec do_process_response(data :: %{String.t() => any()} | {:error, any()}) ::
           Message.t()
           | [Message.t()]
           | MessageDelta.t()
@@ -526,7 +526,19 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   end
 
   def do_process_response(%{"error" => %{"message" => reason}}) do
+    Logger.error("Received error from API: #{inspect(reason)}")
     {:error, reason}
+  end
+
+  def do_process_response({:error, %Jason.DecodeError{} = response}) do
+    error_message = "Failed to parse response from API."
+    Logger.error("#{error_message} #{inspect(response)}")
+    {:error, error_message}
+  end
+
+  def do_process_response(other) do
+    Logger.error("Trying to process an unexpected response. #{inspect(other)}")
+    {:error, "Unexpected response"}
   end
 
   defp maybe_add_org_id_header(%Req.Request{} = req) do
