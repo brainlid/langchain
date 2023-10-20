@@ -295,6 +295,18 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
     test "handles receiving error message from server"
 
+    test "handles json parse error from server" do
+      {:error, "Received invalid JSON: " <> _} =
+        Jason.decode("invalid json")
+        |> ChatOpenAI.do_process_response()
+    end
+
+    test "handles unexpected response" do
+      {:error, "Unexpected response"} =
+        "unexpected"
+        |> ChatOpenAI.do_process_response()
+    end
+
     test "return multiple responses when given multiple choices" do
       # received multiple responses because multiples were requested.
       response = %{
