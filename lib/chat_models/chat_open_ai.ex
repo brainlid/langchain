@@ -531,8 +531,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   end
 
   def do_process_response({:error, %Jason.DecodeError{} = response}) do
-    error_message = "Received invalid JSON"
-    Logger.error("#{error_message}. #{inspect(response)}")
+    error_message = "Received invalid JSON: #{inspect(response)}"
+    Logger.error(error_message)
     {:error, error_message}
   end
 

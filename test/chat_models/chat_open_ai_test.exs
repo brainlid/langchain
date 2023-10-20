@@ -296,7 +296,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     test "handles receiving error message from server"
 
     test "handles json parse error from server" do
-      {:error, "Received invalid JSON"} =
+      {:error, "Received invalid JSON: " <> _} =
         Jason.decode("invalid json")
         |> ChatOpenAI.do_process_response()
     end
