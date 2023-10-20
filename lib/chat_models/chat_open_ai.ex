@@ -531,7 +531,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   end
 
   def do_process_response({:error, %Jason.DecodeError{} = response}) do
-    error_message = "Failed to parse response from API"
+    error_message = "Received invalid JSON"
     Logger.error("#{error_message}. #{inspect(response)}")
     {:error, error_message}
   end
