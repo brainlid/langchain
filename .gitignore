@@ -32,3 +32,10 @@ langchain-*.tar
 
 DEV_NOTES.md
 /logo/
+
+# Ingore IDEA files
+.idea/
+langchain.iml
+
+# Ignore Mac DS_Store files
+**/.DS_Store
