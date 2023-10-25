@@ -293,7 +293,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert delta_3 == expected_3
     end
 
-    test "handles receiving error message from server"
+    # test "handles receiving error message from server"
 
     test "handles json parse error from server" do
       {:error, "Received invalid JSON: " <> _} =

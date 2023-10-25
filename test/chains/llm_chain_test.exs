@@ -594,13 +594,13 @@ defmodule LangChain.Chains.LLMChainTest do
     end
   end
 
-  describe "execute_function/2" do
-    test "fires callback with function result message"
+  # describe "execute_function/2" do
+  #   test "fires callback with function result message"
 
-    test "adds the function result message to chain"
+  #   test "adds the function result message to chain"
 
-    test "returns chain and logs warning when function_call is a hallucination"
-  end
+  #   test "returns chain and logs warning when function_call is a hallucination"
+  # end
 
   # TODO: Sequential chains
   # https://js.langchain.com/docs/modules/chains/sequential_chain
