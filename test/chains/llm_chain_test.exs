@@ -478,6 +478,52 @@ defmodule LangChain.Chains.LLMChainTest do
     end
 
     @tag :live_call
+    test "custom_context can be updated from functions" do
+      # map of data we want to be passed as `context` to the function when
+      # executed.
+      custom_context = %{
+        "user_id" => 123
+      }
+
+      updated_context = %{
+        "user_id" => 456
+      }
+
+      # a custom Elixir function made available to the LLM
+      custom_fn =
+        Function.new!(%{
+          name: "custom",
+          description: "Returns the location of the requested element or item.",
+          parameters_schema: %{
+            type: "object",
+            properties: %{
+              thing: %{
+                type: "string",
+                description: "The thing whose location is being requested."
+              }
+            },
+            required: ["thing"]
+          },
+          function: fn _arguments, _context ->
+            {"In the shed", updated_context}
+          end
+        })
+
+      # create and run the chain
+      {:ok, updated_chain, %Message{}} =
+        LLMChain.new!(%{
+          llm: ChatOpenAI.new!(),
+          custom_context: custom_context,
+          verbose: true
+        })
+        |> LLMChain.add_functions(custom_fn)
+        |> LLMChain.add_message(Message.new_user!("Where is the hairbrush located?"))
+        |> LLMChain.run(while_needs_response: true)
+
+      assert updated_chain.custom_context == updated_context
+    end
+
+    @tag :live_call
     test "NON-STREAMING handles receiving an error when no messages sent" do
       # create and run the chain
       {:error, reason} =
