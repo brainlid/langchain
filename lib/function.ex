@@ -56,6 +56,8 @@ defmodule LangChain.Function do
   Context examples may be user_id, account_id, account struct, billing level,
   etc.
 
+  This Context can be updated by Functions. Simply return a tuple of `{response, new_context}` - the response for the LLM to _see_ and the new Context value. This is especially useful when you want to maintain some kind of state between function invocations.
+
   The `parameters_schema` is an Elixir map that follows a
   [JSONSchema](https://json-schema.org/learn/getting-started-step-by-step.html)
   structure. It is used to define the required data structure format for

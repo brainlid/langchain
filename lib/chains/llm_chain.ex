@@ -400,13 +400,24 @@ defmodule LangChain.Chains.LLMChain do
           if chain.verbose, do: IO.inspect(function.name, label: "EXECUTING FUNCTION")
 
           # execute the function
-          result = Function.execute(function, message.arguments, use_context)
+          {result, context} =
+            case Function.execute(function, message.arguments, use_context) do
+              {result, new_context} ->
+                {result, new_context}
+
+              result ->
+                {result, use_context}
+            end
+
+          chain = %LLMChain{chain | custom_context: context}
+
           if chain.verbose, do: IO.inspect(result, label: "FUNCTION RESULT")
 
           # add the :function response to the chain
           function_result = Message.new_function!(function.name, result)
           # fire the callback as this is newly generated message
           fire_callback(chain, function_result)
+
           LLMChain.add_message(chain, function_result)
 
         nil ->
