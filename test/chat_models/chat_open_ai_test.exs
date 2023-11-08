@@ -43,6 +43,23 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert data.model == "gpt-3.5-turbo-0613"
       assert data.temperature == 1
       assert data.frequency_penalty == 0.5
+      assert data.response_format == %{"type" => "text"}
+    end
+
+    test "generates a map for an API call with JSON response set to true" do
+      {:ok, openai} =
+        ChatOpenAI.new(%{
+          "model" => "gpt-3.5-turbo-0613",
+          "temperature" => 1,
+          "frequency_penalty" => 0.5,
+          "json_response" => true
+        })
+
+      data = ChatOpenAI.for_api(openai, [], [])
+      assert data.model == "gpt-3.5-turbo-0613"
+      assert data.temperature == 1
+      assert data.frequency_penalty == 0.5
+      assert data.response_format == %{"type" => "json_object"}
     end
   end
 

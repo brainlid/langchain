@@ -47,6 +47,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     field :receive_timeout, :integer, default: @receive_timeout
     # How many chat completion choices to generate for each input message.
     field :n, :integer, default: 1
+    field :json_response, :boolean, default: false
     field :stream, :boolean, default: false
   end
 
@@ -57,7 +58,15 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           {:ok, Message.t() | MessageDelta.t() | [Message.t() | MessageDelta.t()]}
           | {:error, String.t()}
 
-  @create_fields [:model, :temperature, :frequency_penalty, :n, :stream, :receive_timeout]
+  @create_fields [
+    :model,
+    :temperature,
+    :frequency_penalty,
+    :n,
+    :stream,
+    :receive_timeout,
+    :json_response
+  ]
   @required_fields [:model]
 
   @spec get_api_key() :: String.t()
@@ -116,7 +125,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       frequency_penalty: openai.frequency_penalty,
       n: openai.n,
       stream: openai.stream,
-      messages: Enum.map(messages, &ForOpenAIApi.for_api/1)
+      messages: Enum.map(messages, &ForOpenAIApi.for_api/1),
+      response_format: set_response_format(openai)
     }
     |> Utils.conditionally_add_to_map(:functions, get_functions_for_api(functions))
   end
@@ -126,6 +136,12 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   defp get_functions_for_api(functions) do
     Enum.map(functions, &ForOpenAIApi.for_api/1)
   end
+
+  defp set_response_format(%ChatOpenAI{json_response: true}),
+    do: %{"type" => "json_object"}
+
+  defp set_response_format(%ChatOpenAI{json_response: false}),
+    do: %{"type" => "text"}
 
   @doc """
   Calls the OpenAI API passing the ChatOpenAI struct with configuration, plus
