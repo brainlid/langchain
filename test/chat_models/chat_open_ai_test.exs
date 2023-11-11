@@ -69,7 +69,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       # set_fake_llm_response({:ok, Message.new_assistant("\n\nRainbow Sox Co.")})
 
       # https://js.langchain.com/docs/modules/models/chat/
-      {:ok, chat} = ChatOpenAI.new(%{temperature: 1})
+      {:ok, chat} = ChatOpenAI.new(%{temperature: 1, seed: 0})
 
       {:ok, [%Message{role: :assistant, content: response}]} =
         ChatOpenAI.call(chat, [
@@ -81,7 +81,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
     @tag :live_call
     test "executing a function", %{hello_world: hello_world} do
-      {:ok, chat} = ChatOpenAI.new(%{verbose: true})
+      {:ok, chat} = ChatOpenAI.new(%{seed: 0})
 
       {:ok, message} =
         Message.new_user("Only using the functions you have been provided with, give a greeting.")
@@ -100,13 +100,13 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       end
 
       # https://js.langchain.com/docs/modules/models/chat/
-      {:ok, chat} = ChatOpenAI.new(%{temperature: 1, stream: true})
+      {:ok, chat} = ChatOpenAI.new(%{seed: 0, temperature: 1, stream: true})
 
       {:ok, _post_results} =
         ChatOpenAI.call(
           chat,
           [
-            Message.new_user!("Return the response 'Hi'.")
+            Message.new_user!("Return the exact response 'Hi'.")
           ],
           [],
           callback
@@ -139,7 +139,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
       # https://js.langchain.com/docs/modules/models/chat/
       # NOTE streamed. Should receive complete message.
-      {:ok, chat} = ChatOpenAI.new(%{temperature: 1, stream: false})
+      {:ok, chat} = ChatOpenAI.new(%{seed: 0, temperature: 1, stream: false})
 
       {:ok, [message]} =
         ChatOpenAI.call(
@@ -162,7 +162,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
     @tag :live_call
     test "handles when request is too large" do
-      {:ok, chat} = ChatOpenAI.new(%{model: "gpt-3.5-turbo-0301", stream: false, temperature: 1})
+      {:ok, chat} = ChatOpenAI.new(%{model: "gpt-3.5-turbo-0301", seed: 0, stream: false, temperature: 1})
 
       {:error, reason} = ChatOpenAI.call(chat, [too_large_user_request()])
       assert reason =~ "maximum context length"
@@ -357,7 +357,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
         send(self(), {:streamed_fn, data})
       end
 
-      {:ok, chat} = ChatOpenAI.new(%{stream: true, verbose: true})
+      {:ok, chat} = ChatOpenAI.new(%{seed: 0, stream: true})
 
       {:ok, message} =
         Message.new_user("Answer the following math question: What is 100 + 300 - 200?")
@@ -375,7 +375,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
     @tag :live_call
     test "STREAMING handles receiving an error when no messages sent" do
-      chat = ChatOpenAI.new!(%{stream: true})
+      chat = ChatOpenAI.new!(%{seed: 0, stream: true})
 
       {:error, reason} = ChatOpenAI.call(chat, [], [], nil)
 
@@ -388,7 +388,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
         send(self(), {:streamed_fn, data})
       end
 
-      {:ok, chat} = ChatOpenAI.new(%{stream: true, receive_timeout: 50, verbose: true})
+      {:ok, chat} = ChatOpenAI.new(%{seed: 0, stream: true, receive_timeout: 50})
 
       {:error, reason} =
         ChatOpenAI.call(chat, [Message.new_user!("Why is the sky blue?")], [], callback)
