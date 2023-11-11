@@ -54,28 +54,36 @@ defmodule LangChain.Tools.CalculatorTest do
 
       {:ok, updated_chain, %Message{} = message} =
         LLMChain.new!(%{
-          llm: ChatOpenAI.new!(%{temperature: 0, callback_fn: callback}),
+          llm: ChatOpenAI.new!(%{seed: 0, temperature: 0, stream: false}),
           verbose: true
         })
         |> LLMChain.add_message(
           Message.new_user!("Answer the following math question: What is 100 + 300 - 200?")
         )
         |> LLMChain.add_functions(Calculator.new!())
-        |> LLMChain.run(while_needs_response: true)
+        |> LLMChain.run(while_needs_response: true, callback_fn: callback)
 
       assert updated_chain.last_message == message
       assert message.role == :assistant
-      assert message.content == "The answer is 200."
+
+      assert message.content ==
+               "The answer to the math question \"What is 100 + 300 - 200?\" is 200."
 
       # assert received multiple messages as callbacks
       assert_received {:callback_msg, message}
-      assert message.role == :function_call
+      assert message.role == :assistant
       assert message.function_name == "calculator"
       assert message.arguments == %{"expression" => "100 + 300 - 200"}
 
+      # the function result message
+      assert_received {:callback_msg, message}
+      assert message.role == :function
+      assert message.function_name == "calculator"
+      assert message.content == "200"
+
       assert_received {:callback_msg, message}
       assert message.role == :assistant
-      assert message.content == "The answer is 200."
+      assert message.content == "The answer to the math question \"What is 100 + 300 - 200?\" is 200."
 
       assert updated_chain.last_message == message
     end
