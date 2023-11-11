@@ -56,10 +56,19 @@ defmodule LangChain.Function do
   Context examples may be user_id, account_id, account struct, billing level,
   etc.
 
+  ## Function Parameters
+
+  The `parameters` field is a list of `LangChain.FunctionParam` structs. This is
+  a convenience for defining the parameters to the function. If it does not work
+  for more complex use-cases, then use the `parameters_schema` to declare it as
+  needed.
+
   The `parameters_schema` is an Elixir map that follows a
   [JSONSchema](https://json-schema.org/learn/getting-started-step-by-step.html)
   structure. It is used to define the required data structure format for
   receiving data to the function from the LLM.
+
+  NOTE: Only `parameters` or `parameters_schema` can be used. Not both.
 
   """
   use Ecto.Schema
@@ -76,13 +85,16 @@ defmodule LangChain.Function do
     # requiring an explicit step to perform the evaluation.
     # field :auto_evaluate, :boolean, default: false
     field :function, :any, virtual: true
-    # parameters is a map used to express a JSONSchema structure of inputs and what's required
+
+    # parameters_schema is a map used to express a JSONSchema structure of inputs and what's required
     field :parameters_schema, :map
+    # parameters is a list of `LangChain.FunctionParam` structs.
+    field :parameters, {:array, :any}, default: []
   end
 
   @type t :: %Function{}
 
-  @create_fields [:name, :description, :parameters_schema, :function]
+  @create_fields [:name, :description, :parameters_schema, :parameters, :function]
   @required_fields [:name]
 
   @doc """
@@ -114,6 +126,7 @@ defmodule LangChain.Function do
     changeset
     |> validate_required(@required_fields)
     |> validate_length(:name, max: 64)
+    |> ensure_single_parameter_option()
   end
 
   @doc """
@@ -125,10 +138,25 @@ defmodule LangChain.Function do
     Logger.debug("Executing function #{inspect(function.name)}")
     fun.(arguments, context)
   end
+
+  defp ensure_single_parameter_option(changeset) do
+    params_list = get_field(changeset, :parameters)
+    schema_map = get_field(changeset, :parameters_schema)
+
+    cond do
+      # can't have both
+      is_map(schema_map) and !Enum.empty?(params_list) ->
+        add_error(changeset, :parameters, "Cannot use both parameters and parameters_schema")
+
+      true ->
+        changeset
+    end
+  end
 end
 
 defimpl LangChain.ForOpenAIApi, for: LangChain.Function do
   alias LangChain.Function
+  alias LangChain.FunctionParam
 
   def for_api(%Function{} = fun) do
     %{
@@ -138,14 +166,19 @@ defimpl LangChain.ForOpenAIApi, for: LangChain.Function do
     }
   end
 
-  defp get_parameters(%Function{parameters_schema: nil} = _fun) do
+  defp get_parameters(%Function{parameters: [], parameters_schema: nil} = _fun) do
     %{
       "type" => "object",
       "properties" => %{}
     }
   end
 
-  defp get_parameters(%Function{parameters_schema: schema} = _fun) do
+  defp get_parameters(%Function{parameters: [], parameters_schema: schema} = _fun)
+       when is_map(schema) do
     schema
+  end
+
+  defp get_parameters(%Function{parameters: params} = _fun) do
+    FunctionParam.to_parameters_schema(params)
   end
 end

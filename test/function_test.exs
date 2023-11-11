@@ -4,6 +4,7 @@ defmodule LangChain.FunctionTest do
   doctest LangChain.Function
 
   alias LangChain.Function
+  alias LangChain.FunctionParam
   alias LangChain.ForOpenAIApi
 
   defp hello_world(_args, _context) do
@@ -74,6 +75,41 @@ defmodule LangChain.FunctionTest do
       params_def = %{
         "type" => "object",
         "properties" => %{
+          "p1" => %{"type" => "string"},
+          "p2" => %{"description" => "Param 2", "type" => "number"},
+          "p3" => %{
+            "enum" => ["yellow", "red", "green"],
+            "type" => "string"
+          }
+        },
+        "required" => ["p1"]
+      }
+
+      {:ok, fun} =
+        Function.new(%{
+          name: "say_hi",
+          description: "Provide a friendly greeting.",
+          parameters: [
+            FunctionParam.new!(%{name: "p1", type: :string, required: true}),
+            FunctionParam.new!(%{name: "p2", type: :number, description: "Param 2"}),
+            FunctionParam.new!(%{name: "p3", type: :string, enum: ["yellow", "red", "green"]})
+          ]
+        })
+
+      # result = Function.for_api(fun)
+      result = ForOpenAIApi.for_api(fun)
+
+      assert result == %{
+               "name" => "say_hi",
+               "description" => "Provide a friendly greeting.",
+               "parameters" => params_def
+             }
+    end
+
+    test "supports parameters_schema" do
+      params_def = %{
+        "type" => "object",
+        "properties" => %{
           "p1" => %{"description" => nil, "type" => "string"},
           "p2" => %{"description" => "Param 2", "type" => "number"},
           "p3" => %{
@@ -100,6 +136,20 @@ defmodule LangChain.FunctionTest do
                "description" => "Provide a friendly greeting.",
                "parameters" => params_def
              }
+    end
+
+    test "does not allow both parameters and parameters_schema" do
+      {:error, changeset} =
+        Function.new(%{
+          name: "problem",
+          parameters: [
+            FunctionParam.new!(%{name: "p1", type: :string, required: true})
+          ],
+          parameters_schema: %{stuff: true}
+        })
+
+      assert {"Cannot use both parameters and parameters_schema", _} =
+               changeset.errors[:parameters]
     end
 
     test "does not include the function to execute" do
