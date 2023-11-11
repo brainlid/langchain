@@ -20,8 +20,8 @@ defmodule LangChain.Chains.DataExtractionChainTest do
       required: []
     }
 
-    # Model setup
-    {:ok, chat} = ChatOpenAI.new(%{temperature: 0})
+    # Model setup - specify the model and seed
+    {:ok, chat} = ChatOpenAI.new(%{model: "gpt-4", temperature: 0, seed: 0})
 
     # run the chain, chain.run(prompt to extract data from)
     data_prompt =

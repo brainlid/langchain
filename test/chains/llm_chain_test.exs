@@ -126,7 +126,7 @@ defmodule LangChain.Chains.LLMChainTest do
 
       # We can construct an LLMChain from a PromptTemplate and an LLM.
       {:ok, updated_chain, response} =
-        %{llm: ChatOpenAI.new!(%{temperature: 1, stream: false}), verbose: true}
+        %{llm: ChatOpenAI.new!(%{temperature: 1, seed: 0, stream: false}), verbose: true}
         |> LLMChain.new!()
         |> LLMChain.apply_prompt_templates([prompt], %{product: "colorful socks"})
         |> LLMChain.run()
@@ -152,7 +152,7 @@ defmodule LangChain.Chains.LLMChainTest do
           send(self(), {:test_stream_message, message})
       end
 
-      model = ChatOpenAI.new!(%{temperature: 1, stream: true})
+      model = ChatOpenAI.new!(%{temperature: 1, seed: 0, stream: true})
 
       # We can construct an LLMChain from a PromptTemplate and an LLM.
       {:ok, updated_chain, response} =
@@ -459,7 +459,7 @@ defmodule LangChain.Chains.LLMChainTest do
       # create and run the chain
       {:ok, updated_chain, %Message{} = message} =
         LLMChain.new!(%{
-          llm: ChatOpenAI.new!(),
+          llm: ChatOpenAI.new!(%{seed: 0}),
           custom_context: custom_context,
           verbose: true
         })
@@ -482,7 +482,7 @@ defmodule LangChain.Chains.LLMChainTest do
       # create and run the chain
       {:error, reason} =
         LLMChain.new!(%{
-          llm: ChatOpenAI.new!(%{stream: false}),
+          llm: ChatOpenAI.new!(%{seed: 0, stream: false}),
           verbose: true
         })
         |> LLMChain.run()
@@ -495,7 +495,7 @@ defmodule LangChain.Chains.LLMChainTest do
       # create and run the chain
       {:error, reason} =
         LLMChain.new!(%{
-          llm: ChatOpenAI.new!(%{stream: true}),
+          llm: ChatOpenAI.new!(%{seed: 0, stream: true}),
           verbose: true
         })
         |> LLMChain.run()
@@ -538,7 +538,7 @@ defmodule LangChain.Chains.LLMChainTest do
 
       {:ok, _updated_chain, %Message{} = response} =
         LLMChain.new!(%{
-          llm: ChatOpenAI.new!(%{stream: false}),
+          llm: ChatOpenAI.new!(%{seed: 0, stream: false}),
           custom_context: nil,
           verbose: true
         })
