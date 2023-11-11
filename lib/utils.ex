@@ -5,16 +5,19 @@ defmodule LangChain.Utils do
 
   @doc """
   Only add the key to the map if the value is present. When the value is a list,
-  the key will not be added when the list is empty.
+  the key will not be added when the list is empty. If the value is `nil`, it
+  will not be added.
   """
   @spec conditionally_add_to_map(%{atom() => any()}, key :: atom(), value :: nil | list()) :: %{
           atom() => any()
         }
   def conditionally_add_to_map(map, key, value)
 
+  def conditionally_add_to_map(map, _key, nil), do: map
+
   def conditionally_add_to_map(map, _key, []), do: map
 
-  def conditionally_add_to_map(map, key, value) when is_list(value) do
+  def conditionally_add_to_map(map, key, value) do
     Map.put(map, key, value)
   end
 

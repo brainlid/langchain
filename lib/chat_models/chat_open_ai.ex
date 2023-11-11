@@ -45,6 +45,9 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     # lengthy response, a longer time limit may be required. However, when it
     # goes on too long by itself, it tends to hallucinate more.
     field :receive_timeout, :integer, default: @receive_timeout
+    # Seed for more deterministic output. Helpful for testing.
+    # https://platform.openai.com/docs/guides/text-generation/reproducible-outputs
+    field :seed, :integer
     # How many chat completion choices to generate for each input message.
     field :n, :integer, default: 1
     field :json_response, :boolean, default: false
@@ -62,6 +65,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     :model,
     :temperature,
     :frequency_penalty,
+    :seed,
     :n,
     :stream,
     :receive_timeout,
@@ -128,6 +132,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       messages: Enum.map(messages, &ForOpenAIApi.for_api/1),
       response_format: set_response_format(openai)
     }
+    |> Utils.conditionally_add_to_map(:seed, openai.seed)
     |> Utils.conditionally_add_to_map(:functions, get_functions_for_api(functions))
   end
 
