@@ -84,22 +84,6 @@ defmodule LangChain.Function do
         FunctionParam.new!(%{name: "user_name", type: :string, required: true})
       ]})
 
-  Define a function that takes a single complex argument:
-
-      alias LangChain.FunctionParam
-      Function.new!(%{name: "update_user_data", parameters: [
-        FunctionParam.new!(%{name: "data", type: :object,
-          description: "Known data about the user"},
-          object_properties: [
-            FunctionParam.new!(%{name: "first_name", type: :string, description: "The user's first name"}),
-            FunctionParam.new!(%{name: "age", type: :integer}),
-            FunctionParam.new!(%{name: "favorite_color", type: :string,
-              enum: ["red", "blue", "yellow", "gray"]}),
-            FunctionParam.new!(%{name: "has_pet", type: :boolean,
-              description: "Does the user have a pet?"}),
-          ]),
-      ]})
-
   """
   use Ecto.Schema
   import Ecto.Changeset
