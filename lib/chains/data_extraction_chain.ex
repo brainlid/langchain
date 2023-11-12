@@ -7,7 +7,7 @@ defmodule LangChain.Chains.DataExtractionChain do
   information is returned as an array.
 
   Originally based on:
-  - https://github.com/hwchase17/langchainjs/blob/main/langchain/src/chains/openai_functions/extraction.ts#L42
+  - https://github.com/langchain-ai/langchainjs/blob/main/langchain/src/chains/openai_functions/extraction.ts#L43
 
   ## Example
 
@@ -51,6 +51,22 @@ defmodule LangChain.Chains.DataExtractionChain do
           "person_name" => "Claudia"
         }
       ]
+
+  The `schema_parameters` in the previous example can also be expressed using a
+  list of `LangChain.FunctionParam` structs. An equivalent version looks like
+  this:
+
+      alias LangChain.FunctionParam
+
+      schema_parameters = [
+        FunctionParam.new!(%{name: "person_name", type: :string}),
+        FunctionParam.new!(%{name: "person_age", type: :number}),
+        FunctionParam.new!(%{name: "person_hair_color", type: :string}),
+        FunctionParam.new!(%{name: "dog_name", type: :string}),
+        FunctionParam.new!(%{name: "dog_breed", type: :string})
+      ]
+      |> FunctionParam.to_parameters_schema()
+
   """
   use Ecto.Schema
   require Logger
