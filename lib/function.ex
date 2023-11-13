@@ -14,12 +14,18 @@ defmodule LangChain.Function do
     should describe what the function is used for or what it returns. This
     information is used by the LLM to decide which function to call and for what
     purpose.
+  * ` parameters` - A list of `Function.FunctionParam` structs that are
+    converted to a JSONSchema format. (Use in place of `parameters_schema`)
   * ` parameters_schema` - A [JSONSchema
     structure](https://json-schema.org/learn/getting-started-step-by-step.html)
     that describes the required data structure format for how arguments are
-    passed to the function.
+    passed to the function. (Use if greater control or unsupported features are
+    needed.)
   * `function` - An Elixir function to execute when an LLM requests to execute
     the function.
+
+  When passing arguments from an LLM to a function, they go through a single
+  `map` argument. This allows for multiple keys or named parameters.
 
   ## Example
 
@@ -70,20 +76,40 @@ defmodule LangChain.Function do
 
   NOTE: Only use `parameters` or `parameters_schema`, not both.
 
-  ## Examples:
+  ## Expanded Parameter Examples
 
-  Define a function with no arguments:
+  Function with no arguments:
 
       alias LangChain.Function
+
       Function.new!(%{name: "get_current_user_info"})
 
-  Define a function that takes a simple argument:
+  Function that takes a simple required argument:
 
       alias LangChain.FunctionParam
+
       Function.new!(%{name: "set_user_name", parameters: [
         FunctionParam.new!(%{name: "user_name", type: :string, required: true})
       ]})
 
+  Function that takes an array of strings:
+
+      Function.new!(%{name: "set_tags", parameters: [
+        FunctionParam.new!(%{name: "tags", type: :array, item_type: "string"})
+      ]})
+
+  Function that takes two arguments and one is an object/map:
+
+      Function.new!(%{name: "update_preferences", parameters: [
+        FunctionParam.new!(%{name: "unique_code", type: :string, required: true})
+        FunctionParam.new!(%{name: "data", type: :object, object_properties: [
+          FunctionParam.new!(%{name: "auto_complete_email", type: :boolean}),
+          FunctionParam.new!(%{name: "items_per_page", type: :integer}),
+        ]})
+      ]})
+
+  The `LangChain.FunctionParam` is nestable allowing for arrays of object and
+  objects with nested objects.
   """
   use Ecto.Schema
   import Ecto.Changeset
