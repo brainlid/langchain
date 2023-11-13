@@ -111,18 +111,28 @@ defmodule LangChain.FunctionParam do
 
   defp validate_object_type(changeset) do
     props = get_field(changeset, :object_properties)
+    item = get_field(changeset, :item_type)
     type = get_field(changeset, :type)
 
     cond do
+      # allowed case for object_properties
       type == :object and !Enum.empty?(props) ->
+        changeset
+
+      # allowed case for object_properties
+      type == :array and item == "object" and !Enum.empty?(props) ->
         changeset
 
       # object type but missing the properties. Add error
       type == :object ->
         add_error(changeset, :object_properties, "is required for object type")
 
-      # not an :object field but gave object_properties, error
-      !Enum.empty?(props) ->
+      # when an array of objects, object_properties is required
+      type == :array and item == "object" and Enum.empty?(props) ->
+        add_error(changeset, :object_properties, "required when array type of object is used")
+
+      # has object_properties but not one of the allowed cases
+      !Enum.empty?(props) and (!(type == :array and item == "object") and !(type == :object)) ->
         add_error(changeset, :object_properties, "not allowed for type #{inspect(type)}")
 
       # not an object and didn't give object_properties
@@ -178,6 +188,14 @@ defmodule LangChain.FunctionParam do
   def to_json_schema(%{} = data, %FunctionParam{type: :array, item_type: nil} = param) do
     settings =
       %{"type" => "array"}
+      |> description_for_schema(param.description)
+
+    Map.put(data, param.name, settings)
+  end
+
+  def to_json_schema(%{} = data, %FunctionParam{type: :array, item_type: "object"} = param) do
+    settings =
+      %{"type" => "array", "items" => to_parameters_schema(param.object_properties)}
       |> description_for_schema(param.description)
 
     Map.put(data, param.name, settings)

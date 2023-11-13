@@ -65,7 +65,26 @@ defmodule LangChain.FunctionParamTest do
       assert param.object_properties == person_properties
     end
 
-    test "supports nested objects type"
+    test "supports nested objects type" do
+      education = [
+        FunctionParam.new!(%{name: "institution_name", type: :string, required: true}),
+        FunctionParam.new!(%{name: "completed", type: :boolean})
+      ]
+
+      person_properties = [
+        FunctionParam.new!(%{name: "name", type: :string, required: true}),
+        FunctionParam.new!(%{name: "education", type: :object, object_properties: education})
+      ]
+
+      person =
+        FunctionParam.new!(%{name: "person", type: :object, object_properties: person_properties})
+
+      # IO.inspect(person)
+
+      assert person.name == "person"
+      assert person.type == :object
+      assert person.object_properties == person_properties
+    end
 
     test "does not allow field data for non-matching types" do
       {:error, changeset} =
@@ -81,6 +100,14 @@ defmodule LangChain.FunctionParamTest do
         })
 
       assert {"not allowed for type :string", _} = changeset.errors[:object_properties]
+    end
+
+    test "requires object_properties when array of object" do
+      {:error, changeset} =
+        FunctionParam.new(%{name: "thing", type: :array, item_type: "object"})
+
+      assert {"required when array type of object is used", _} =
+               changeset.errors[:object_properties]
     end
   end
 
@@ -229,7 +256,34 @@ defmodule LangChain.FunctionParamTest do
       assert expected == FunctionParam.to_json_schema(%{}, param)
     end
 
-    test "array of objects"
+    test "array of objects" do
+      array =
+        FunctionParam.new!(%{
+          name: "info",
+          type: :array,
+          item_type: "object",
+          object_properties: [
+            FunctionParam.new!(%{name: "name", type: :string}),
+            FunctionParam.new!(%{name: "age", type: :number})
+          ]
+        })
+
+      schema = FunctionParam.to_json_schema(%{}, array)
+
+      assert schema == %{
+               "info" => %{
+                 "type" => "array",
+                 "items" => %{
+                   "type" => "object",
+                   "properties" => %{
+                     "age" => %{"type" => "number"},
+                     "name" => %{"type" => "string"}
+                   },
+                   "required" => []
+                 }
+               }
+             }
+    end
   end
 
   describe "to_parameters_schema/1" do
@@ -264,9 +318,76 @@ defmodule LangChain.FunctionParamTest do
       assert expected == FunctionParam.to_parameters_schema(params)
     end
 
-    test "generates the full JSONSchema structured map for the list of parameters"
-    test "supports nested objects"
-    test "supports listing required parameters"
+    test "supports nested objects" do
+      education = [
+        FunctionParam.new!(%{name: "institution_name", type: :string, required: true}),
+        FunctionParam.new!(%{name: "completed", type: :boolean})
+      ]
+
+      person_properties = [
+        FunctionParam.new!(%{name: "name", type: :string, required: true}),
+        FunctionParam.new!(%{name: "age", type: :integer}),
+        FunctionParam.new!(%{name: "education", type: :object, object_properties: education})
+      ]
+
+      person =
+        FunctionParam.new!(%{name: "person", type: :object, object_properties: person_properties})
+
+      schema = FunctionParam.to_parameters_schema([person])
+
+      expected =
+        %{
+          "type" => "object",
+          "properties" => %{
+            "person" => %{
+              "type" => "object",
+              "properties" => %{
+                "age" => %{"type" => "integer"},
+                "education" => %{
+                  "type" => "object",
+                  "properties" => %{
+                    "completed" => %{"type" => "boolean"},
+                    "institution_name" => %{"type" => "string"}
+                  },
+                  "required" => ["institution_name"]
+                },
+                "name" => %{"type" => "string"}
+              },
+              "required" => ["name"]
+            }
+          },
+          "required" => []
+        }
+
+      assert schema == expected
+    end
+
+    test "supports listing required parameters" do
+      params = [
+        FunctionParam.new!(%{
+          name: "code",
+          type: "string",
+          required: true
+        }),
+        FunctionParam.new!(%{
+          name: "other",
+          type: "string"
+        })
+      ]
+
+      result = FunctionParam.to_parameters_schema(params)
+      assert result["required"] == ["code"]
+
+      params = [
+        FunctionParam.new!(%{
+          name: "other",
+          type: "string"
+        })
+      ]
+
+      result = FunctionParam.to_parameters_schema(params)
+      assert result["required"] == []
+    end
   end
 
   describe "required_properties/1" do
