@@ -171,13 +171,14 @@ end
 defimpl LangChain.ForOpenAIApi, for: LangChain.Function do
   alias LangChain.Function
   alias LangChain.FunctionParam
+  alias LangChain.Utils
 
   def for_api(%Function{} = fun) do
     %{
       "name" => fun.name,
-      "description" => fun.description,
       "parameters" => get_parameters(fun)
     }
+    |> Utils.conditionally_add_to_map("description", fun.description)
   end
 
   defp get_parameters(%Function{parameters: [], parameters_schema: nil} = _fun) do
