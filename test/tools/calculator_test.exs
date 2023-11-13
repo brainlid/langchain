@@ -83,7 +83,9 @@ defmodule LangChain.Tools.CalculatorTest do
 
       assert_received {:callback_msg, message}
       assert message.role == :assistant
-      assert message.content == "The answer to the math question \"What is 100 + 300 - 200?\" is 200."
+
+      assert message.content ==
+               "The answer to the math question \"What is 100 + 300 - 200?\" is 200."
 
       assert updated_chain.last_message == message
     end

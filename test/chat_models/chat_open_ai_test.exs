@@ -162,7 +162,8 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
     @tag :live_call
     test "handles when request is too large" do
-      {:ok, chat} = ChatOpenAI.new(%{model: "gpt-3.5-turbo-0301", seed: 0, stream: false, temperature: 1})
+      {:ok, chat} =
+        ChatOpenAI.new(%{model: "gpt-3.5-turbo-0301", seed: 0, stream: false, temperature: 1})
 
       {:error, reason} = ChatOpenAI.call(chat, [too_large_user_request()])
       assert reason =~ "maximum context length"
