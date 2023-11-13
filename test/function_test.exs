@@ -65,7 +65,6 @@ defmodule LangChain.FunctionTest do
 
       assert result == %{
                "name" => "hello_world",
-               "description" => nil,
                #  NOTE: Sends the required empty parameter definition when none set
                "parameters" => %{"properties" => %{}, "type" => "object"}
              }
