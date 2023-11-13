@@ -10,6 +10,21 @@ defmodule LangChain.FunctionParam do
   is intended to be a convenience for working with the most common situations
   when working with an LLM that understands JSONSchema.
 
+  Supports:
+
+  * simple values - string, integer, number, boolean
+  * enum values - `enum: ["alpha", "beta"]`. The values can be strings,
+    integers, etc.
+  * array values - `type: :array` couples with `item_type: "string"` to express
+    it is an array of.
+    * `item_type` is optional. When omitted, it can be a mixed array.
+    * `item_type: "object"` allows for creating an array of objects. Use
+      `object_properties: [...]` to describe the structure of the objects.
+  * objects - Define the object's expected values or supported structure using
+    `object_properties`.
+
+  The function `to_parameters_schema/1` is used to convert a list of
+  `FunctionParam` structs into a JSONSchema formatted data map.
   """
   use Ecto.Schema
   import Ecto.Changeset
