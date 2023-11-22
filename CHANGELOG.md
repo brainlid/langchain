@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.3 (2023-11-?)
+
+- Created `LangChain.FunctionParam` to express JSONSchema-friendly data structures. Supports basic types, arrays, enums, objects, arrays of objects and nested objects.
+  - Still allows for full control over JSONSchema by providing an override `parameters_schema` object to full self-describe it.
+
 ## v0.1.2 (2023-10-26)
 
 - refactor(chat_open_ai): Harden `do_process_response` by @Cardosaum in https://github.com/brainlid/langchain/pull/21
