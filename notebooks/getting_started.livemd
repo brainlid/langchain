@@ -21,13 +21,13 @@ We need to setup the LangChain library to connect with ChatGPT using our API key
 <!-- livebook:{"force_markdown":true} -->
 
 ```elixir
-config :langchain, :openai_key, fn -> System.fetch_env!("OPENAI_KEY") end
+config :langchain, :openai_key, fn -> System.fetch_env!("OPENAI_API_KEY") end
 ```
 
-For the Livebook notebook, use the "Secrets" on the sidebar to create an `OPENAI_KEY` secret with you API key. That is accessible here using `"LB_OPENAI_KEY"`.
+For the Livebook notebook, use the "Secrets" on the sidebar to create an `OPENAI_API_KEY` secret with you API key. That is accessible here using `"LB_OPENAI_API_KEY"`.
 
 ```elixir
-Application.put_env(:langchain, :openai_key, System.fetch_env!("LB_OPENAI_KEY"))
+Application.put_env(:langchain, :openai_key, System.fetch_env!("LB_OPENAI_API_KEY"))
 ```
 
 <!-- livebook:{"output":true} -->
@@ -40,7 +40,7 @@ Application.put_env(:langchain, :openai_key, System.fetch_env!("LB_OPENAI_KEY"))
 
 Let's build the simplest full LLMChain example so we can see how to make a call to ChatGPT from our Elixir application.
 
-**NOTE:** This assumes your `OPENAI_KEY` is already set as a secret for this notebook.
+**NOTE:** This assumes your `OPENAI_API_KEY` is already set as a secret for this notebook.
 
 ```elixir
 alias LangChain.Chains.LLMChain

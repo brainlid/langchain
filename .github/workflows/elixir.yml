@@ -12,8 +12,8 @@ on:
     branches: [ "main" ]
 
 env:
-  OPENAI_KEY: invalid
-  
+  OPENAI_API_KEY: invalid
+
 permissions:
   contents: read
 
