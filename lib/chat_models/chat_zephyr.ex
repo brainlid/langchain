@@ -199,11 +199,12 @@ defmodule LangChain.ChatModels.ChatZephyr do
   #
   # If a callback_fn is provided, it will fire with each
 
-  # When `stream: true` is
-  # If `stream: false`, the completed message is returned.
+  # When `stream: true` is If `stream: false`, the completed message is
+  # returned.
   #
-  # If `stream: true`, the `callback_fn` is executed for the returned MessageDelta
-  # responses.
+  # If `stream: true`, the `callback_fn` is executed for the returned
+  # MessageDelta responses. The deltas are accumulated and merged together into
+  # the complete Message.
   #
   # Executes the callback function passing the response only parsed to the data
   # structures.
@@ -272,19 +273,6 @@ defmodule LangChain.ChatModels.ChatZephyr do
             {:error, reason}
         end
     end
-
-    # IO.inspect(stream, label: "RECEIVED FROM BATCHED_RUN")
-    # result = Enum.reduce(stream, "", fn data, acc -> acc <> data end)
-    # IO.inspect(result, label: "IN STREAM")
-
-    # %{
-    #   results: [
-    #     %{
-    #       text: "<|system|>\nYou are a helpful assistant. \n<|user|>\nhowdy \n<|assistant|>\nGreetings! I do not have the ability to speak, but I can respond to your message. \"Howdy\" is a friendly greeting commonly used in the western United States and in some parts of Canada. It's a contraction of \"how do you do\", and it's often followed by the response \"howdy yourself\" or \"just fine, thanks\". I hope that helps! Let me know if you have any other questions."
-    #     }
-    #   ]
-    # }
-    # If stream: true and result received like above: raise error that the serving did not return a stream.
   end
 
   def message_to_text(%Message{role: :system} = message, text) do
