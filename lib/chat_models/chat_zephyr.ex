@@ -37,6 +37,11 @@ defmodule LangChain.ChatModels.ChatZephyr do
     # # Seed for randomizing behavior or giving more deterministic output. Helpful for testing.
     # field :seed, :integer
 
+    # The bumblebee model may compile differently based on the stream true/false
+    # option on the serving. Therefore, streaming should be enabled on the
+    # serving and a stream option here can change the way data is received in
+    # code. - https://github.com/elixir-nx/bumblebee/issues/295
+
     field :stream, :boolean, default: true
   end
 
@@ -46,6 +51,7 @@ defmodule LangChain.ChatModels.ChatZephyr do
   @type callback_data ::
           {:ok, Message.t() | MessageDelta.t() | [Message.t() | MessageDelta.t()]}
           | {:error, String.t()}
+  @type callback_fn :: (Message.t() | MessageDelta.t() -> any())
 
   @create_fields [
     :serving,
@@ -92,9 +98,9 @@ defmodule LangChain.ChatModels.ChatZephyr do
     |> validate_required(@required_fields)
   end
 
-  @doc """
-  Return the params formatted for an API request.
-  """
+  # @doc """
+  # Return the params formatted for an API request.
+  # """
 
   # @spec for_api(t, message :: [map()], functions :: [map()]) :: %{atom() => any()}
   # def for_api(%ChatZephyr{} = zephyr, messages, functions) do
@@ -140,7 +146,7 @@ defmodule LangChain.ChatModels.ChatZephyr do
           t(),
           String.t() | [Message.t()],
           [LangChain.Function.t()],
-          nil | (Message.t() | MessageDelta.t() -> any())
+          nil | callback_fn()
         ) :: call_response()
   def call(zephyr, prompt, functions \\ [], callback_fn \\ nil)
 
@@ -170,7 +176,7 @@ defmodule LangChain.ChatModels.ChatZephyr do
     else
       try do
         # make base api request and perform high-level success/failure checks
-        case do_api_request(zephyr, messages, functions, callback_fn) do
+        case do_serving_request(zephyr, messages, functions, callback_fn) do
           {:error, reason} ->
             {:error, reason}
 
@@ -184,7 +190,7 @@ defmodule LangChain.ChatModels.ChatZephyr do
     end
   end
 
-  # Make the API request from the zephyr server.
+  # Make the request from the bumblebee zephyr serving.
   #
   # The result of the function is:
   #
@@ -202,100 +208,83 @@ defmodule LangChain.ChatModels.ChatZephyr do
   # Executes the callback function passing the response only parsed to the data
   # structures.
   @doc false
-  @spec do_api_request(t(), [Message.t()], [Function.t()], (any() -> any())) ::
+  @spec do_serving_request(t(), [Message.t()], [Function.t()], callback_fn()) ::
           list() | struct() | {:error, String.t()}
-  def do_api_request(%ChatZephyr{stream: false} = zephyr, messages, functions, callback_fn) do
-    # req =
-    #   Req.new(
-    #     url: zephyr.endpoint,
-    #     json: for_api(zephyr, messages, functions),
-    #     auth: {:bearer, get_api_key()},
-    #     receive_timeout: zephyr.receive_timeout
-    #   )
+  def do_serving_request(%ChatZephyr{stream: false} = zephyr, messages, _functions, callback_fn) do
+    prompt = messages_to_prompt(messages)
 
-    # req
-    # |> maybe_add_org_id_header()
-    # |> Req.post()
-    # # parse the body and return it as parsed structs
-    # |> case do
-    #   {:ok, %Req.Response{body: data}} ->
-    #     case do_process_response(data) do
-    #       {:error, reason} ->
-    #         {:error, reason}
+    raw_response =
+      case Nx.Serving.batched_run(zephyr.serving, prompt) do
+        # model serving set to stream: false. Received map response. Extract data.
+        %{results: [%{text: content}]} ->
+          content
 
-    #       result ->
-    #         fire_callback(zephyr, result, callback_fn)
-    #         result
-    #     end
+        stream ->
+          # Model serving setup for streaming. Requested to not stream response.
+          # Consume the full stream and return as the content.
+          Enum.reduce(stream, "", fn data, acc -> acc <> data end)
+      end
 
-    #   {:error, %Mint.TransportError{reason: :timeout}} ->
-    #     {:error, "Request timed out"}
-
-    #   other ->
-    #     Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
-    #     other
-    # end
-    raise "Not yet implemented"
-  end
-
-  def do_api_request(%ChatZephyr{stream: true} = zephyr, messages, functions, callback_fn) do
-    # TODO: Create the content from the messages.
-    content =
-      Enum.reduce(messages, "", fn msg, acc ->
-        message_to_text(msg, acc)
-      end)
-
-    stream = Nx.Serving.batched_run(zephyr.serving, content)
-    # reduce, function pattern match. If nil, start new MessageDelta. Next and after adds to it.
-    # at the end, have a merged message. Will have to assume it's complete for now.
-    final_delta =
-      Enum.reduce(stream, nil, fn data, acc ->
-        # TODO: NEED TO TEST FOR RECEIVING A FUNCTION EXECUTION
-        new_delta =
-          case MessageDelta.new(%{role: :assistant, content: data}) do
-            {:ok, delta} ->
-              delta
-
-            {:error, changeset} ->
-              reason = Utils.changeset_error_to_string(changeset)
-
-              Logger.error(
-                "Failed to process received Zephyr MessageDelta data: #{inspect(reason)}"
-              )
-
-              raise LangChainError, reason
-          end
-
-        # processed the delta, fire the callback
-        callback_fn.(new_delta)
-
-        # merge the delta to accumulate the full message
-        case acc do
-          # first time through. Set delta as the initial message chunk
-          nil ->
-            new_delta
-
-          %MessageDelta{} = _previous ->
-            MessageDelta.merge_delta(acc, new_delta)
-        end
-      end)
-
-    # fire the callback of the completed message
-    # Assuming it's complete at this point.
-    # Want a `:done` message to know it's officially complete.
-    # https://github.com/elixir-nx/bumblebee/issues/287
-    case MessageDelta.to_message(%MessageDelta{final_delta | status: :complete}) do
+    case Message.new(%{role: :assistant, status: :complete, content: raw_response}) do
       {:ok, message} ->
         # execute the callback with the final message
-        callback_fn.(message)
-        # return a list of the complete message. For compatibility.
+        fire_callback(zephyr, message, callback_fn)
+        # return a list of the complete message. As a list for compatibility.
         [message]
 
       {:error, changeset} ->
         reason = Utils.changeset_error_to_string(changeset)
-        Logger.error("Failed to convert deltas to full message: #{inspect(reason)}")
+        Logger.error("Failed to create non-streamed full message: #{inspect(reason)}")
         {:error, reason}
     end
+  end
+
+  def do_serving_request(%ChatZephyr{stream: true} = zephyr, messages, _functions, callback_fn) do
+    # Create the content from the messages.
+    prompt = messages_to_prompt(messages)
+
+    case Nx.Serving.batched_run(zephyr.serving, prompt) do
+      # requested a stream but received a non-streaming result.
+      %{results: _results} ->
+        raise LangChainError, "Served model did not return a stream"
+
+      stream ->
+        # process the stream in to MessageDeltas. Fire off the callbacks as they
+        # are received. It accumulates the deltas into a final combined
+        # MessageDelta.
+        final_delta = stream_to_deltas!(zephyr, stream, callback_fn)
+
+        # fire the callback of the completed message
+        # Assuming it's complete at this point.
+        # Want a `:done` message to know it's officially complete.
+        # https://github.com/elixir-nx/bumblebee/issues/287
+        case MessageDelta.to_message(%MessageDelta{final_delta | status: :complete}) do
+          {:ok, message} ->
+            # TODO: NEED TO TEST FOR RECEIVING A FUNCTION EXECUTION
+
+            # execute the callback with the final message
+            fire_callback(zephyr, message, callback_fn)
+            # return a list of the complete message. For compatibility.
+            [message]
+
+          {:error, reason} ->
+            Logger.error("Failed to convert deltas to full message: #{inspect(reason)}")
+            {:error, reason}
+        end
+    end
+
+    # IO.inspect(stream, label: "RECEIVED FROM BATCHED_RUN")
+    # result = Enum.reduce(stream, "", fn data, acc -> acc <> data end)
+    # IO.inspect(result, label: "IN STREAM")
+
+    # %{
+    #   results: [
+    #     %{
+    #       text: "<|system|>\nYou are a helpful assistant. \n<|user|>\nhowdy \n<|assistant|>\nGreetings! I do not have the ability to speak, but I can respond to your message. \"Howdy\" is a friendly greeting commonly used in the western United States and in some parts of Canada. It's a contraction of \"how do you do\", and it's often followed by the response \"howdy yourself\" or \"just fine, thanks\". I hope that helps! Let me know if you have any other questions."
+    #     }
+    #   ]
+    # }
+    # If stream: true and result received like above: raise error that the serving did not return a stream.
   end
 
   def message_to_text(%Message{role: :system} = message, text) do
@@ -320,25 +309,66 @@ defmodule LangChain.ChatModels.ChatZephyr do
     text <> "#{message.content}\n"
   end
 
+  @doc """
+  Convert the list of messages into the expected single text format for a chat
+  prompt.
+  """
+  @spec messages_to_prompt([Message.t()]) :: String.t()
+  def messages_to_prompt(messages) do
+    Enum.reduce(messages, "", fn msg, acc ->
+      message_to_text(msg, acc)
+    end)
+  end
+
+  @spec stream_to_deltas!(t(), Stream.t(), callback_fn()) :: MessageDelta.t() | no_return()
+  def stream_to_deltas!(zephyr, stream, callback_fn) do
+    Enum.reduce(stream, nil, fn data, acc ->
+      new_delta =
+        case MessageDelta.new(%{role: :assistant, content: data}) do
+          {:ok, delta} ->
+            delta
+
+          {:error, changeset} ->
+            reason = Utils.changeset_error_to_string(changeset)
+
+            Logger.error(
+              "Failed to process received Zephyr MessageDelta data: #{inspect(reason)}"
+            )
+
+            raise LangChainError, reason
+        end
+
+      # processed the delta, fire the callback
+      fire_callback(zephyr, new_delta, callback_fn)
+
+      # merge the delta to accumulate the full message
+      case acc do
+        # first time through. Set delta as the initial message chunk
+        nil ->
+          new_delta
+
+        %MessageDelta{} = _previous ->
+          MessageDelta.merge_delta(acc, new_delta)
+      end
+    end)
+  end
+
   # fire the callback if present.
   @spec fire_callback(
           t(),
-          data :: callback_data() | [callback_data()],
-          (callback_data() -> any())
+          data :: callback_data(),
+          nil | callback_fn()
         ) :: :ok
   defp fire_callback(%ChatZephyr{stream: true}, _data, nil) do
     Logger.warning("Streaming call requested but no callback function was given.")
     :ok
   end
 
-  defp fire_callback(%ChatZephyr{}, _data, nil), do: :ok
+  defp fire_callback(%ChatZephyr{stream: false}, _data, nil), do: :ok
 
   defp fire_callback(%ChatZephyr{}, data, callback_fn) when is_function(callback_fn) do
     # OPTIONAL: Execute callback function
-    data
-    |> List.flatten()
-    |> Enum.each(fn item -> callback_fn.(item) end)
-
+    callback_fn.(data)
     :ok
   end
 end
