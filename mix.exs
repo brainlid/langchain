@@ -39,6 +39,7 @@ defmodule LangChain.MixProject do
       {:gettext, "~> 0.20"},
       {:req, "~> 0.4.4"},
       {:abacus, "~> 2.0.0"},
+      {:nx, "~> 0.6.2"},
       {:ex_doc, "~> 0.27", only: :dev, runtime: false}
     ]
   end
