@@ -225,7 +225,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         receive_timeout: openai.receive_timeout,
         retry: :transient,
         max_retries: 3,
-        retry_delay: fn attempt -> :timer.sleep(1000 * attempt) end
+        retry_delay: fn attempt -> :timer.sleep(300 * attempt) end
       )
 
     req
