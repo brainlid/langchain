@@ -233,6 +233,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   #
   # Executes the callback function passing the response only parsed to the data
   # structures.
+  # Retries the request up to 3 times on transient errors with a 1 second delay
   @doc false
   @spec do_api_request(t(), [Message.t()], [Function.t()], (any() -> any())) ::
           list() | struct() | {:error, String.t()}
@@ -242,7 +243,10 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         url: openai.endpoint,
         json: for_api(openai, messages, functions),
         auth: {:bearer, get_api_key()},
-        receive_timeout: openai.receive_timeout
+        receive_timeout: openai.receive_timeout,
+        retry: :transient,
+        max_retries: 3,
+        retry_delay: fn attempt -> :timer.sleep(300 * attempt) end
       )
 
     req
