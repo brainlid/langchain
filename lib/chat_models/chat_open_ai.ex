@@ -32,6 +32,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     field :endpoint, :string, default: "https://api.openai.com/v1/chat/completions"
     # field :model, :string, default: "gpt-4"
     field :model, :string, default: "gpt-3.5-turbo"
+    # API key for OpenAI. If not set, will use global api key.
+    field :api_key, :string
 
     # What sampling temperature to use, between 0 and 2. Higher values like 0.8
     # will make the output more random, while lower values like 0.2 will make it
@@ -65,6 +67,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     :model,
     :temperature,
     :frequency_penalty,
+    :api_key,
     :seed,
     :n,
     :stream,
@@ -125,6 +128,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   def for_api(%ChatOpenAI{} = openai, messages, functions) do
     %{
       model: openai.model,
+      api_key: openai.api_key,
       temperature: openai.temperature,
       frequency_penalty: openai.frequency_penalty,
       n: openai.n,
