@@ -32,6 +32,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     field :endpoint, :string, default: "https://api.openai.com/v1/chat/completions"
     # field :model, :string, default: "gpt-4"
     field :model, :string, default: "gpt-3.5-turbo"
+    # API key for OpenAI. If not set, will use global api key.
+    field :api_key, :string
 
     # What sampling temperature to use, between 0 and 2. Higher values like 0.8
     # will make the output more random, while lower values like 0.2 will make it
@@ -65,6 +67,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     :model,
     :temperature,
     :frequency_penalty,
+    :api_key,
     :seed,
     :n,
     :stream,
@@ -73,10 +76,10 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   ]
   @required_fields [:model]
 
-  @spec get_api_key() :: String.t()
-  defp get_api_key() do
+  @spec get_api_key(t) :: String.t()
+  defp get_api_key(%ChatOpenAI{api_key: api_key}) do
     # if no API key is set default to `""` which will raise a Stripe API error
-    Config.resolve(:openai_key, "")
+    api_key || Config.resolve(:openai_key, "")
   end
 
   @spec get_org_id() :: String.t() | nil
@@ -125,6 +128,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   def for_api(%ChatOpenAI{} = openai, messages, functions) do
     %{
       model: openai.model,
+      api_key: openai.api_key,
       temperature: openai.temperature,
       frequency_penalty: openai.frequency_penalty,
       n: openai.n,
@@ -242,7 +246,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       Req.new(
         url: openai.endpoint,
         json: for_api(openai, messages, functions),
-        auth: {:bearer, get_api_key()},
+        auth: {:bearer, get_api_key(openai)},
         receive_timeout: openai.receive_timeout,
         retry: :transient,
         max_retries: 3,
@@ -327,7 +331,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       Req.new(
         url: openai.endpoint,
         json: for_api(openai, messages, functions),
-        auth: {:bearer, get_api_key()},
+        auth: {:bearer, get_api_key(openai)},
         receive_timeout: openai.receive_timeout,
         finch_request: finch_fun
       )
