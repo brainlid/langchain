@@ -32,7 +32,9 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     field :endpoint, :string, default: "https://api.openai.com/v1/chat/completions"
     # field :model, :string, default: "gpt-4"
     field :model, :string, default: "gpt-3.5-turbo"
-    # API key for OpenAI. If not set, will use global api key.
+    # API key for OpenAI. If not set, will use global api key. Allows for usage
+    # of a different API key per-call if desired. For instance, allowing a
+    # customer to provide their own.
     field :api_key, :string
 
     # What sampling temperature to use, between 0 and 2. Higher values like 0.8
