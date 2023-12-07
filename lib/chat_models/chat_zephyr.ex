@@ -63,6 +63,8 @@ defmodule LangChain.ChatModels.ChatZephyr do
 
   # Tags used for formatting the messages. Don't allow the user to include these
   # themselves.
+  #
+  # https://huggingface.co/docs/transformers/main/chat_templating#how-do-i-use-chat-templates
   @system_tag "<|system|>"
   @user_tag "<|user|>"
   @assistant_tag "<|assistant|>"
@@ -242,7 +244,8 @@ defmodule LangChain.ChatModels.ChatZephyr do
 
   def do_serving_request(%ChatZephyr{stream: true} = zephyr, messages, _functions, callback_fn) do
     # Create the content from the messages.
-    prompt = messages_to_prompt(messages)
+    # prompt = messages_to_prompt(messages)
+    prompt = LangChain.Utils.ChatTemplates.apply_chat_template!(messages, :zephyr)
 
     case Nx.Serving.batched_run(zephyr.serving, prompt) do
       # requested a stream but received a non-streaming result.
