@@ -57,10 +57,10 @@ defmodule LangChain.Utils.ChatTemplates do
     [first_user | rest]
     |> Enum.with_index()
     |> Enum.each(fn
-      {%Message{role: :user}, index} when Integer.is_even(index) ->
+      {%Message{role: :user}, index} when is_even(index) ->
         :ok
 
-      {%Message{role: :assistant}, index} when Integer.is_odd(index) ->
+      {%Message{role: :assistant}, index} when is_odd(index) ->
         :ok
 
       _other ->
