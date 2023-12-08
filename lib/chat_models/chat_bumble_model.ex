@@ -15,6 +15,7 @@ defmodule LangChain.ChatModels.ChatBumbleModel do
   alias LangChain.LangChainError
   alias LangChain.Utils
   alias LangChain.MessageDelta
+  alias LangChain.Utils.ChatTemplates
 
   # allow up to 2 minutes for response.
   # @receive_timeout 60_000
@@ -100,7 +101,204 @@ defmodule LangChain.ChatModels.ChatBumbleModel do
     |> validate_required(@required_fields)
   end
 
-  def new_mistral() do
-    # https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1
+  # def new_mistral() do
+  #   # https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1
+  # end
+
+  @spec call(
+          t(),
+          String.t() | [Message.t()],
+          [LangChain.Function.t()],
+          nil | callback_fn()
+        ) :: call_response()
+  def call(model, prompt, functions \\ [], callback_fn \\ nil)
+
+  def call(%ChatBumbleModel{} = model, prompt, functions, callback_fn) when is_binary(prompt) do
+    messages = [
+      Message.new_system!(),
+      Message.new_user!(prompt)
+    ]
+
+    call(model, messages, functions, callback_fn)
+  end
+
+  def call(%ChatBumbleModel{} = model, messages, functions, callback_fn)
+      when is_list(messages) do
+    if override_api_return?() do
+      Logger.warning("Found override API response. Will not make live API call.")
+
+      case get_api_override() do
+        {:ok, {:ok, data} = response} ->
+          # fire callback for fake responses too
+          fire_callback(model, data, callback_fn)
+          response
+
+        _other ->
+          raise LangChainError,
+                "An unexpected fake API response was set. Should be an `{:ok, value}`"
+      end
+    else
+      try do
+        # make base api request and perform high-level success/failure checks
+        case do_serving_request(model, messages, functions, callback_fn) do
+          {:error, reason} ->
+            {:error, reason}
+
+          parsed_data ->
+            {:ok, parsed_data}
+        end
+      rescue
+        err in LangChainError ->
+          {:error, err.message}
+      end
+    end
+  end
+
+  # Make the request from the bumblebee zephyr serving.
+  #
+  # The result of the function is:
+  #
+  # - `result` - where `result` is a data-structure like a list or map.
+  # - `{:error, reason}` - Where reason is a string explanation of what went wrong.
+  #
+  # If a callback_fn is provided, it will fire with each
+
+  # When `stream: true` is If `stream: false`, the completed message is
+  # returned.
+  #
+  # If `stream: true`, the `callback_fn` is executed for the returned
+  # MessageDelta responses. The deltas are accumulated and merged together into
+  # the complete Message.
+  #
+  # Executes the callback function passing the response only parsed to the data
+  # structures.
+  @doc false
+  @spec do_serving_request(t(), [Message.t()], [Function.t()], callback_fn()) ::
+          list() | struct() | {:error, String.t()}
+  def do_serving_request(
+        %ChatBumbleModel{stream: false} = model,
+        messages,
+        _functions,
+        callback_fn
+      ) do
+    prompt = ChatTemplates.apply_chat_template!(messages, model.template_format)
+
+    raw_response =
+      case Nx.Serving.batched_run(model.serving, prompt) do
+        # model serving set to stream: false. Received map response. Extract data.
+        %{results: [%{text: content}]} ->
+          content
+
+        stream ->
+          # Model serving setup for streaming. Requested to not stream response.
+          # Consume the full stream and return as the content.
+          Enum.reduce(stream, "", fn data, acc -> acc <> data end)
+      end
+
+    case Message.new(%{role: :assistant, status: :complete, content: raw_response}) do
+      {:ok, message} ->
+        # execute the callback with the final message
+        fire_callback(model, message, callback_fn)
+        # return a list of the complete message. As a list for compatibility.
+        [message]
+
+      {:error, changeset} ->
+        reason = Utils.changeset_error_to_string(changeset)
+        Logger.error("Failed to create non-streamed full message: #{inspect(reason)}")
+        {:error, reason}
+    end
+  end
+
+  def do_serving_request(
+        %ChatBumbleModel{stream: true} = model,
+        messages,
+        _functions,
+        callback_fn
+      ) do
+    # Create the content from the messages.
+    # prompt = messages_to_prompt(messages)
+    prompt = ChatTemplates.apply_chat_template!(messages, model.template_format)
+
+    case Nx.Serving.batched_run(model.serving, prompt) do
+      # requested a stream but received a non-streaming result.
+      %{results: _results} ->
+        raise LangChainError, "Served model did not return a stream"
+
+      stream ->
+        # process the stream in to MessageDeltas. Fire off the callbacks as they
+        # are received. It accumulates the deltas into a final combined
+        # MessageDelta.
+        final_delta = stream_to_deltas!(model, stream, callback_fn)
+
+        # fire the callback of the completed message
+        # Assuming it's complete at this point.
+        # Want a `:done` message to know it's officially complete.
+        # https://github.com/elixir-nx/bumblebee/issues/287
+        case MessageDelta.to_message(%MessageDelta{final_delta | status: :complete}) do
+          {:ok, message} ->
+            # TODO: NEED TO TEST FOR RECEIVING A FUNCTION EXECUTION
+
+            # execute the callback with the final message
+            fire_callback(model, message, callback_fn)
+            # return a list of the complete message. For compatibility.
+            [message]
+
+          {:error, reason} ->
+            Logger.error("Failed to convert deltas to full message: #{inspect(reason)}")
+            {:error, reason}
+        end
+    end
+  end
+
+  @spec stream_to_deltas!(t(), Stream.t(), callback_fn()) :: MessageDelta.t() | no_return()
+  def stream_to_deltas!(zephyr, stream, callback_fn) do
+    Enum.reduce(stream, nil, fn data, acc ->
+      new_delta =
+        case MessageDelta.new(%{role: :assistant, content: data}) do
+          {:ok, delta} ->
+            delta
+
+          {:error, changeset} ->
+            reason = Utils.changeset_error_to_string(changeset)
+
+            Logger.error(
+              "Failed to process received Zephyr MessageDelta data: #{inspect(reason)}"
+            )
+
+            raise LangChainError, reason
+        end
+
+      # processed the delta, fire the callback
+      fire_callback(zephyr, new_delta, callback_fn)
+
+      # merge the delta to accumulate the full message
+      case acc do
+        # first time through. Set delta as the initial message chunk
+        nil ->
+          new_delta
+
+        %MessageDelta{} = _previous ->
+          MessageDelta.merge_delta(acc, new_delta)
+      end
+    end)
+  end
+
+  # fire the callback if present.
+  @spec fire_callback(
+          t(),
+          data :: callback_data(),
+          nil | callback_fn()
+        ) :: :ok
+  defp fire_callback(%ChatBumbleModel{stream: true}, _data, nil) do
+    Logger.warning("Streaming call requested but no callback function was given.")
+    :ok
+  end
+
+  defp fire_callback(%ChatBumbleModel{stream: false}, _data, nil), do: :ok
+
+  defp fire_callback(%ChatBumbleModel{}, data, callback_fn) when is_function(callback_fn) do
+    # OPTIONAL: Execute callback function
+    callback_fn.(data)
+    :ok
   end
 end
