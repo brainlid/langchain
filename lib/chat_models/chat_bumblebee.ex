@@ -1,4 +1,4 @@
-defmodule LangChain.ChatModels.ChatBumbleModel do
+defmodule LangChain.ChatModels.ChatBumblebee do
   @moduledoc """
   Represents a chat model hosted and accessed through Bumblebee.
 
@@ -46,7 +46,7 @@ defmodule LangChain.ChatModels.ChatBumbleModel do
     field :stream, :boolean, default: true
   end
 
-  @type t :: %ChatBumbleModel{}
+  @type t :: %ChatBumblebee{}
 
   @type call_response :: {:ok, Message.t() | [Message.t()]} | {:error, String.t()}
   @type callback_data ::
@@ -72,18 +72,18 @@ defmodule LangChain.ChatModels.ChatBumbleModel do
   @text_end_tag "</s>"
 
   @doc """
-  Setup a ChatBumbleModel client configuration.
+  Setup a ChatBumblebee client configuration.
   """
   @spec new(attrs :: map()) :: {:ok, t} | {:error, Ecto.Changeset.t()}
   def new(%{} = attrs \\ %{}) do
-    %ChatBumbleModel{}
+    %ChatBumblebee{}
     |> cast(attrs, @create_fields)
     |> common_validation()
     |> apply_action(:insert)
   end
 
   @doc """
-  Setup a ChatBumbleModel client configuration and return it or raise an error if invalid.
+  Setup a ChatBumblebee client configuration and return it or raise an error if invalid.
   """
   @spec new!(attrs :: map()) :: t() | no_return()
   def new!(attrs \\ %{}) do
@@ -113,7 +113,7 @@ defmodule LangChain.ChatModels.ChatBumbleModel do
         ) :: call_response()
   def call(model, prompt, functions \\ [], callback_fn \\ nil)
 
-  def call(%ChatBumbleModel{} = model, prompt, functions, callback_fn) when is_binary(prompt) do
+  def call(%ChatBumblebee{} = model, prompt, functions, callback_fn) when is_binary(prompt) do
     messages = [
       Message.new_system!(),
       Message.new_user!(prompt)
@@ -122,7 +122,7 @@ defmodule LangChain.ChatModels.ChatBumbleModel do
     call(model, messages, functions, callback_fn)
   end
 
-  def call(%ChatBumbleModel{} = model, messages, functions, callback_fn)
+  def call(%ChatBumblebee{} = model, messages, functions, callback_fn)
       when is_list(messages) do
     if override_api_return?() do
       Logger.warning("Found override API response. Will not make live API call.")
@@ -176,7 +176,7 @@ defmodule LangChain.ChatModels.ChatBumbleModel do
   @spec do_serving_request(t(), [Message.t()], [Function.t()], callback_fn()) ::
           list() | struct() | {:error, String.t()}
   def do_serving_request(
-        %ChatBumbleModel{stream: false} = model,
+        %ChatBumblebee{stream: false} = model,
         messages,
         _functions,
         callback_fn
@@ -210,7 +210,7 @@ defmodule LangChain.ChatModels.ChatBumbleModel do
   end
 
   def do_serving_request(
-        %ChatBumbleModel{stream: true} = model,
+        %ChatBumblebee{stream: true} = model,
         messages,
         _functions,
         callback_fn
@@ -289,14 +289,14 @@ defmodule LangChain.ChatModels.ChatBumbleModel do
           data :: callback_data(),
           nil | callback_fn()
         ) :: :ok
-  defp fire_callback(%ChatBumbleModel{stream: true}, _data, nil) do
+  defp fire_callback(%ChatBumblebee{stream: true}, _data, nil) do
     Logger.warning("Streaming call requested but no callback function was given.")
     :ok
   end
 
-  defp fire_callback(%ChatBumbleModel{stream: false}, _data, nil), do: :ok
+  defp fire_callback(%ChatBumblebee{stream: false}, _data, nil), do: :ok
 
-  defp fire_callback(%ChatBumbleModel{}, data, callback_fn) when is_function(callback_fn) do
+  defp fire_callback(%ChatBumblebee{}, data, callback_fn) when is_function(callback_fn) do
     # OPTIONAL: Execute callback function
     callback_fn.(data)
     :ok

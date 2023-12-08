@@ -52,6 +52,9 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     field :n, :integer, default: 1
     field :json_response, :boolean, default: false
     field :stream, :boolean, default: false
+
+    # For compatibility between models, reflect that functions are supported
+    field :supports_functions, :boolean, default: true
   end
 
   @type t :: %ChatOpenAI{}

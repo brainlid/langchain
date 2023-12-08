@@ -8,6 +8,7 @@ defmodule LangChain.Chains.LLMChainTest do
   alias LangChain.Function
   alias LangChain.Message
   alias LangChain.MessageDelta
+  alias LangChain.ChatModels.ChatBumblebee
 
   setup do
     {:ok, chat} = ChatOpenAI.new(%{temperature: 0})
@@ -70,6 +71,13 @@ defmodule LangChain.Chains.LLMChainTest do
       # includes function in the list and map
       assert updated_chain2.functions == [function, howdy_fn]
       assert updated_chain2.function_map == %{"hello_world" => function, "howdy" => howdy_fn}
+    end
+
+    test "raises an exception when the model does not support functions" do
+      chain = LLMChain.new!(%{llm: %ChatBumblebee{supports_functions: false}})
+      assert_raise LangChain.LangChainError, "The LLM does not support functions.", fn ->
+        LLMChain.add_functions(chain, Function.new!(%{name: "test"}))
+      end
     end
   end
 
