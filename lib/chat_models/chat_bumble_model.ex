@@ -32,6 +32,8 @@ defmodule LangChain.ChatModels.ChatBumbleModel do
     # # Seed for randomizing behavior or giving more deterministic output. Helpful for testing.
     # field :seed, :integer
 
+    field :template_format, Ecto.Enum, values: [:inst, :im_start, :zephyr, :llama_2]
+
     # Track if the model supports functions.
     field :supports_functions, :boolean, default: false
 
@@ -55,6 +57,7 @@ defmodule LangChain.ChatModels.ChatBumbleModel do
     :serving,
     # :temperature,
     # :seed,
+    :template_format,
     :supports_functions,
     :stream
   ]
