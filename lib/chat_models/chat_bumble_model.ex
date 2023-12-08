@@ -55,6 +55,7 @@ defmodule LangChain.ChatModels.ChatBumbleModel do
     :serving,
     # :temperature,
     # :seed,
+    :supports_functions,
     :stream
   ]
   @required_fields [:serving]
