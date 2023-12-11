@@ -1,7 +1,7 @@
 defmodule LangChain.MixProject do
   use Mix.Project
 
-  @version "0.1.3"
+  @version "0.1.4"
 
   def project do
     [
@@ -37,7 +37,7 @@ defmodule LangChain.MixProject do
     [
       {:ecto, "~> 3.10.3"},
       {:gettext, "~> 0.20"},
-      {:req, "~> 0.4.4"},
+      {:req, "~> 0.4.7"},
       {:abacus, "~> 2.0.0"},
       {:ex_doc, "~> 0.27", only: :dev, runtime: false}
     ]
