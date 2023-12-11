@@ -148,6 +148,21 @@ IO.put message.content
 #=> "The hairbrush is located in the drawer."
 ```
 
+### Alternative OpenAI compatible APIs
+
+There are several of services or self-hosted applications that provide an OpenAI compatible API for ChatGPT-like behavior. To use a service like that, the `endpoint` of the `ChatOpenAI` struct can be pointed to an API compatible `endpoint` for chats.
+
+For example, if a locally running service provided that feature, the following code could connect to the service:
+
+```elixir
+{:ok, updated_chain, %Message{} = message} =
+  LLMChain.new!(%{
+    llm: ChatOpenAI.new!(%{endpoint: "http://localhost:1234/v1/chat/completions"}),
+  })
+  |> LLMChain.add_message(Message.new_user!("Hello!"))
+  |> LLMChain.run()
+```
+
 ## Testing
 
 To run all the tests including the ones that perform live calls against the OpenAI API, use the following command:
