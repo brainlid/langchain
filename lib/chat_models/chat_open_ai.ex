@@ -66,6 +66,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           | {:error, String.t()}
 
   @create_fields [
+    :endpoint,
     :model,
     :temperature,
     :frequency_penalty,
@@ -76,7 +77,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     :receive_timeout,
     :json_response
   ]
-  @required_fields [:model]
+  @required_fields [:endpoint, :model]
 
   @spec get_api_key(t) :: String.t()
   defp get_api_key(%ChatOpenAI{api_key: api_key}) do
