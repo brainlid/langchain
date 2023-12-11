@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.1.4 (2023-12-11)
+
+- Merged PR #45 - https://github.com/brainlid/langchain/pull/45
+  - Added `LangChain.Utils.ChainResult` for helper functions when working with LLMChain result values.
+- Merged PR #46 - https://github.com/brainlid/langchain/pull/46
+  - Add possibility to use api_key per chat invocation.
+- Merged PR #51 - https://github.com/brainlid/langchain/pull/51
+  - Update req 0.4.7
+  - Hopefully resolves issue where Finch connections would be closed and a now does a built-in retry.
+- Merged PR #52 - https://github.com/brainlid/langchain/pull/52
+  - Allow overriding OpenAI compatible API endpoint. Caller can pass an alternate `endpoint`.
+
 ## v0.1.3 (2023-12-01)
 
 - Merged PR #43 - https://github.com/brainlid/langchain/pull/43
