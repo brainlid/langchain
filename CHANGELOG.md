@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.1.6 (2023-12-12)
+
+- Fix for correct usage of new Req retry setting. PR #57
+
 ## v0.1.5 (2023-12-11)
 
 - Upgraded Req to v0.4.8. It contains a needed retry fix for certain situations.
