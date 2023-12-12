@@ -63,7 +63,7 @@ To make API calls, it is necessary to configure the API keys for the services yo
 `config/config.exs`:
 
 ```elixir
-config :langchain, openai_key: System.get_env("OPENAI_KEY")
+config :langchain, openai_key: System.get_env("OPENAI_API_KEY")
 config :langchain, openai_org_id: System.get_env("OPENAI_ORG_ID")
 # OR
 config :langchain, openai_key: "YOUR SECRET KEY"
@@ -73,10 +73,10 @@ config :langchain, openai_org_id: "YOUR_OPENAI_ORG_ID"
 It's possible to use a function or a tuple to resolve the secret:
 
 ```elixir
-config :langchain, openai_key: {MyApp.Secrets, :openai_key, []}
+config :langchain, openai_key: {MyApp.Secrets, :openai_api_key, []}
 config :langchain, openai_org_id: {MyApp.Secrets, :openai_org_id, []}
 # OR
-config :langchain, openai_key: fn -> System.get_env("OPENAI_KEY") end
+config :langchain, openai_key: fn -> System.get_env("OPENAI_API_KEY") end
 config :langchain, openai_org_id: fn -> System.get_env("OPENAI_ORG_ID") end
 ```
 
@@ -146,6 +146,21 @@ custom_fn =
 # print the LLM's answer
 IO.put message.content
 #=> "The hairbrush is located in the drawer."
+```
+
+### Alternative OpenAI compatible APIs
+
+There are several of services or self-hosted applications that provide an OpenAI compatible API for ChatGPT-like behavior. To use a service like that, the `endpoint` of the `ChatOpenAI` struct can be pointed to an API compatible `endpoint` for chats.
+
+For example, if a locally running service provided that feature, the following code could connect to the service:
+
+```elixir
+{:ok, updated_chain, %Message{} = message} =
+  LLMChain.new!(%{
+    llm: ChatOpenAI.new!(%{endpoint: "http://localhost:1234/v1/chat/completions"}),
+  })
+  |> LLMChain.add_message(Message.new_user!("Hello!"))
+  |> LLMChain.run()
 ```
 
 ## Testing

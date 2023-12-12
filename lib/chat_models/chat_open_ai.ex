@@ -32,6 +32,10 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     field :endpoint, :string, default: "https://api.openai.com/v1/chat/completions"
     # field :model, :string, default: "gpt-4"
     field :model, :string, default: "gpt-3.5-turbo"
+    # API key for OpenAI. If not set, will use global api key. Allows for usage
+    # of a different API key per-call if desired. For instance, allowing a
+    # customer to provide their own.
+    field :api_key, :string
 
     # What sampling temperature to use, between 0 and 2. Higher values like 0.8
     # will make the output more random, while lower values like 0.2 will make it
@@ -65,21 +69,23 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           | {:error, String.t()}
 
   @create_fields [
+    :endpoint,
     :model,
     :temperature,
     :frequency_penalty,
+    :api_key,
     :seed,
     :n,
     :stream,
     :receive_timeout,
     :json_response
   ]
-  @required_fields [:model]
+  @required_fields [:endpoint, :model]
 
-  @spec get_api_key() :: String.t()
-  defp get_api_key() do
+  @spec get_api_key(t) :: String.t()
+  defp get_api_key(%ChatOpenAI{api_key: api_key}) do
     # if no API key is set default to `""` which will raise a Stripe API error
-    Config.resolve(:openai_key, "")
+    api_key || Config.resolve(:openai_key, "")
   end
 
   @spec get_org_id() :: String.t() | nil
@@ -236,6 +242,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   #
   # Executes the callback function passing the response only parsed to the data
   # structures.
+  # Retries the request up to 3 times on transient errors with a 1 second delay
   @doc false
   @spec do_api_request(t(), [Message.t()], [Function.t()], (any() -> any())) ::
           list() | struct() | {:error, String.t()}
@@ -244,8 +251,11 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       Req.new(
         url: openai.endpoint,
         json: for_api(openai, messages, functions),
-        auth: {:bearer, get_api_key()},
-        receive_timeout: openai.receive_timeout
+        auth: {:bearer, get_api_key(openai)},
+        receive_timeout: openai.receive_timeout,
+        retry: :transient,
+        max_retries: 3,
+        retry_delay: fn attempt -> 300 * attempt end
       )
 
     req
@@ -326,7 +336,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       Req.new(
         url: openai.endpoint,
         json: for_api(openai, messages, functions),
-        auth: {:bearer, get_api_key()},
+        auth: {:bearer, get_api_key(openai)},
         receive_timeout: openai.receive_timeout,
         finch_request: finch_fun
       )

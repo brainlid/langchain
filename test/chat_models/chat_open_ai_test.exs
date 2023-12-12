@@ -28,6 +28,17 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       refute changeset.valid?
       assert {"can't be blank", _} = changeset.errors[:model]
     end
+
+    test "supports overriding the API endpoint" do
+      override_url = "http://localhost:1234/v1/chat/completions"
+
+      model =
+        ChatOpenAI.new!(%{
+          endpoint: override_url
+        })
+
+      assert model.endpoint == override_url
+    end
   end
 
   describe "for_api/3" do
@@ -36,7 +47,8 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
         ChatOpenAI.new(%{
           "model" => "gpt-3.5-turbo-0613",
           "temperature" => 1,
-          "frequency_penalty" => 0.5
+          "frequency_penalty" => 0.5,
+          "api_key" => "api_key"
         })
 
       data = ChatOpenAI.for_api(openai, [], [])
