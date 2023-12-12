@@ -64,13 +64,6 @@ defmodule LangChain.ChatModels.ChatBumblebee do
   ]
   @required_fields [:serving]
 
-  # Tags used for formatting the messages. Don't allow the user to include these
-  # themselves.
-  @system_tag "<|system|>"
-  @user_tag "<|user|>"
-  @assistant_tag "<|assistant|>"
-  @text_end_tag "</s>"
-
   @doc """
   Setup a ChatBumblebee client configuration.
   """
@@ -250,8 +243,8 @@ defmodule LangChain.ChatModels.ChatBumblebee do
     end
   end
 
-  @spec stream_to_deltas!(t(), Stream.t(), callback_fn()) :: MessageDelta.t() | no_return()
-  def stream_to_deltas!(zephyr, stream, callback_fn) do
+  @spec stream_to_deltas!(t(), Stream.t(), callback_fn()) :: nil | MessageDelta.t() | no_return()
+  def stream_to_deltas!(model, stream, callback_fn) do
     Enum.reduce(stream, nil, fn data, acc ->
       new_delta =
         case MessageDelta.new(%{role: :assistant, content: data}) do
@@ -262,14 +255,14 @@ defmodule LangChain.ChatModels.ChatBumblebee do
             reason = Utils.changeset_error_to_string(changeset)
 
             Logger.error(
-              "Failed to process received Zephyr MessageDelta data: #{inspect(reason)}"
+              "Failed to process received model's MessageDelta data: #{inspect(reason)}"
             )
 
             raise LangChainError, reason
         end
 
       # processed the delta, fire the callback
-      fire_callback(zephyr, new_delta, callback_fn)
+      fire_callback(model, new_delta, callback_fn)
 
       # merge the delta to accumulate the full message
       case acc do
