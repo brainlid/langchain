@@ -131,7 +131,6 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   def for_api(%ChatOpenAI{} = openai, messages, functions) do
     %{
       model: openai.model,
-      api_key: openai.api_key,
       temperature: openai.temperature,
       frequency_penalty: openai.frequency_penalty,
       n: openai.n,

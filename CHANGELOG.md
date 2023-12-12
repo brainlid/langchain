@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.5 (2023-12-11)
+
+- Upgraded Req to v0.4.8. It contains a needed retry fix for certain situations.
+- Fix OpenAI returns "Unrecognized request argument supplied: api_key" PR #54
+
 ## v0.1.4 (2023-12-11)
 
 - Merged PR #45 - https://github.com/brainlid/langchain/pull/45
