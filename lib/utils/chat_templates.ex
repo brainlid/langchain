@@ -41,6 +41,12 @@ defmodule LangChain.Utils.ChatTemplates do
         [%Message{role: :system} = system, %Message{role: :user} = first_user | rest] ->
           {system, first_user, rest}
 
+        [%Message{role: :system} = _system | _rest] ->
+          raise LangChainError, "Messages must include a user prompt after a system message."
+
+        [] ->
+          raise LangChainError, "Messages are required."
+
         _other ->
           raise LangChainError, "Messages must start with either a system or user message."
       end
@@ -86,7 +92,7 @@ defmodule LangChain.Utils.ChatTemplates do
     is a user prompt. Depending on the format, when a user message is the last
     message, then the text prompt should begin the portion for the assistant to
     trigger the assistant's text generation.
-  - `:tokenizer` -
+
   """
   @spec apply_chat_template!([Message.t()], chat_format, opts :: Keyword.t()) ::
           String.t() | no_return()
@@ -179,13 +185,32 @@ defmodule LangChain.Utils.ChatTemplates do
         add_generation_prompt: add_generation_prompt
       ]
     )
-
   end
 
   # Does LLaMa 2 formatted text
-  def apply_chat_template!(_messages, :llama_2, _opts) do
+  def apply_chat_template!(messages, :llama_2, _opts) do
     # https://huggingface.co/blog/llama2#how-to-prompt-llama-2
-    raise LangChainError, "Not yet implemented!"
+
+    # <s>[INST] <<SYS>>
+    # {{ system_prompt }}
+    # <</SYS>>
+
+    # {{ user_msg_1 }} [/INST] {{ model_answer_1 }} </s><s>[INST] {{ user_msg_2 }} [/INST]
+
+    {system, first_user, rest} = prep_and_validate_messages(messages)
+
+    system_text =
+      if system do
+        "<<SYS>>\n#{system.content}\n<</SYS>>\n\n"
+      else
+        ""
+      end
+
+    # intentionally as a single line for explicit control of newlines and spaces.
+    text =
+      "<s>[INST] <%= @system_text %><%= @first_user.content %> [/INST] <%= for m <- @rest do %><%= if m.role == :user do %><s>[INST] <%= m.content %> [/INST] <% else %><%= m.content %> </s><% end %><% end %>"
+
+    EEx.eval_string(text, assigns: [system_text: system_text, first_user: first_user, rest: rest])
   end
 
   # return the desired true/false value. Only set to true when the last message
