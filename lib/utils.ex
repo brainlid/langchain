@@ -3,6 +3,7 @@ defmodule LangChain.Utils do
   Collection of helpful utilities mostly for internal use.
   """
   alias Ecto.Changeset
+  require Logger
 
   @doc """
   Only add the key to the map if the value is present. When the value is a list,
@@ -80,5 +81,33 @@ defmodule LangChain.Utils do
       llm when is_struct(llm) -> changeset
       _other -> Changeset.add_error(changeset, :llm, "LLM must be a struct")
     end
+  end
+
+  @type callback_data ::
+          {:ok, Message.t() | MessageDelta.t() | [Message.t() | MessageDelta.t()]}
+          | {:error, String.t()}
+
+  @doc """
+  Fire a streaming callback if present.
+  """
+  @spec fire_callback(
+          %{optional(:stream) => boolean()},
+          data :: callback_data() | [callback_data()],
+          (callback_data() -> any())
+        ) :: :ok
+  def fire_callback(%{stream: true}, _data, nil) do
+    Logger.warning("Streaming call requested but no callback function was given.")
+    :ok
+  end
+
+  def fire_callback(_model, _data, nil), do: :ok
+
+  def fire_callback(_model, data, callback_fn) when is_function(callback_fn) do
+    # OPTIONAL: Execute callback function
+    data
+    |> List.flatten()
+    |> Enum.each(fn item -> callback_fn.(item) end)
+
+    :ok
   end
 end

@@ -15,11 +15,14 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   import LangChain.Utils.ApiOverride
   alias __MODULE__
   alias LangChain.Config
+  alias LangChain.ChatModels.ChatModel
   alias LangChain.Message
   alias LangChain.LangChainError
   alias LangChain.ForOpenAIApi
   alias LangChain.Utils
   alias LangChain.MessageDelta
+
+  @behaviour ChatModel
 
   # NOTE: As of gpt-4 and gpt-3.5, only one function_call is issued at a time
   # even when multiple requests could be issued based on the prompt.
@@ -59,11 +62,6 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   end
 
   @type t :: %ChatOpenAI{}
-
-  @type call_response :: {:ok, Message.t() | [Message.t()]} | {:error, String.t()}
-  @type callback_data ::
-          {:ok, Message.t() | MessageDelta.t() | [Message.t() | MessageDelta.t()]}
-          | {:error, String.t()}
 
   @create_fields [
     :endpoint,
@@ -174,12 +172,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   structs as they are are received, then converting those to the full
   `LangChain.Message` once fully complete.
   """
-  @spec call(
-          t(),
-          String.t() | [Message.t()],
-          [LangChain.Function.t()],
-          nil | (Message.t() | MessageDelta.t() -> any())
-        ) :: call_response()
+  @impl ChatModel
   def call(openai, prompt, functions \\ [], callback_fn \\ nil)
 
   def call(%ChatOpenAI{} = openai, prompt, functions, callback_fn) when is_binary(prompt) do
@@ -198,7 +191,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       case get_api_override() do
         {:ok, {:ok, data} = response} ->
           # fire callback for fake responses too
-          fire_callback(openai, data, callback_fn)
+          Utils.fire_callback(openai, data, callback_fn)
           response
 
         # fake error response
@@ -270,7 +263,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
             {:error, reason}
 
           result ->
-            fire_callback(openai, result, callback_fn)
+            Utils.fire_callback(openai, result, callback_fn)
             result
         end
 
@@ -296,7 +289,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         # cleanup data because it isn't structured well for JSON.
         new_data = decode_streamed_data(raw_data)
         # execute the callback function for each MessageDelta
-        fire_callback(openai, new_data, callback_fn)
+        Utils.fire_callback(openai, new_data, callback_fn)
         old_body = if response.body == "", do: [], else: response.body
 
         # Returns %Req.Response{} where the body contains ALL the stream delta
@@ -392,28 +385,6 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       other ->
         other
     end
-  end
-
-  # fire the callback if present.
-  @spec fire_callback(
-          t(),
-          data :: callback_data() | [callback_data()],
-          (callback_data() -> any())
-        ) :: :ok
-  defp fire_callback(%ChatOpenAI{stream: true}, _data, nil) do
-    Logger.warning("Streaming call requested but no callback function was given.")
-    :ok
-  end
-
-  defp fire_callback(%ChatOpenAI{}, _data, nil), do: :ok
-
-  defp fire_callback(%ChatOpenAI{}, data, callback_fn) when is_function(callback_fn) do
-    # OPTIONAL: Execute callback function
-    data
-    |> List.flatten()
-    |> Enum.each(fn item -> callback_fn.(item) end)
-
-    :ok
   end
 
   # Parse a new message response

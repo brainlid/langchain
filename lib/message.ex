@@ -47,13 +47,14 @@ defmodule LangChain.Message do
       default: :user
 
     field :function_name, :string
+    field :function_response, :any, virtual: true
     field :arguments, :any, virtual: true
   end
 
   @type t :: %Message{}
   @type status :: :complete | :cancelled | :length
 
-  @create_fields [:role, :content, :status, :function_name, :arguments, :index]
+  @create_fields [:role, :content, :status, :function_name, :function_response, :arguments, :index]
   @required_fields [:role]
 
   @doc """
@@ -283,7 +284,7 @@ defmodule LangChain.Message do
   @spec new_function(name :: String.t(), result :: any()) ::
           {:ok, t()} | {:error, Ecto.Changeset.t()}
   def new_function(name, result) do
-    new(%{role: :function, function_name: name, content: result})
+    new(%{role: :function, function_name: name, function_response: result})
   end
 
   @doc """
@@ -330,7 +331,7 @@ defimpl LangChain.ForOpenAIApi, for: LangChain.Message do
     %{
       "role" => :function,
       "name" => fun.function_name,
-      "content" => fun.content
+      "content" => Jason.encode!(fun.function_response)
     }
   end
 
