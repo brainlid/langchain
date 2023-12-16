@@ -81,7 +81,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
   @spec get_api_key(t) :: String.t()
   defp get_api_key(%ChatOpenAI{api_key: api_key}) do
-    # if no API key is set default to `""` which will raise a Stripe API error
+    # if no API key is set default to `""` which will raise a OpenAI API error
     api_key || Config.resolve(:openai_key, "")
   end
 
