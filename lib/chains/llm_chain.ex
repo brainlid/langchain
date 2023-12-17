@@ -288,21 +288,35 @@ defmodule LangChain.Chains.LLMChain do
 
     # if the merged delta is now complete, updates as a message.
     if merged.status in [:complete, :length] do
-      case MessageDelta.to_message(merged) do
-        {:ok, %Message{} = message} ->
-          fire_callback(chain, message)
-          add_message(%LLMChain{chain | delta: nil}, message)
-
-        {:error, reason} ->
-          # should not have failed, but it did. Log the error and return
-          # the chain unmodified.
-          Logger.warning("Error applying delta message. Reason: #{inspect(reason)}")
-          chain
-      end
+      delta_to_message(%LLMChain{chain | delta: merged})
     else
       # the delta message is not yet complete. Update the delta with the merged
       # result.
       %LLMChain{chain | delta: merged}
+    end
+  end
+
+  @doc """
+  Convert any hanging delta of the chain to a message and append to the chain.
+
+  If the delta is `nil`, the chain is returned unmodified.
+  """
+  @spec delta_to_message(t()) :: t()
+  def delta_to_message(%LLMChain{delta: nil} = chain) do
+    chain
+  end
+
+  def delta_to_message(%LLMChain{delta: delta} = chain) do
+    case MessageDelta.to_message(delta) do
+      {:ok, %Message{} = message} ->
+        fire_callback(chain, message)
+        add_message(%LLMChain{chain | delta: nil}, message)
+
+      {:error, reason} ->
+        # should not have failed, but it did. Log the error and return
+        # the chain unmodified.
+        Logger.warning("Error applying delta message. Reason: #{inspect(reason)}")
+        chain
     end
   end
 
@@ -314,6 +328,7 @@ defmodule LangChain.Chains.LLMChain do
     deltas
     |> List.flatten()
     |> Enum.reduce(chain, fn d, acc -> apply_delta(acc, d) end)
+    |> delta_to_message()
   end
 
   @doc """

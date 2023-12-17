@@ -11,6 +11,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   alias LangChain.Config
   alias LangChain.ChatModels.ChatModel
   alias LangChain.Message
+  alias LangChain.MessageDelta
   alias LangChain.LangChainError
   alias LangChain.ForOpenAIApi
   alias LangChain.Utils
@@ -288,26 +289,67 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     end
   end
 
+  def do_api_request(%ChatGoogleAI{stream: true} = google_ai, messages, functions, callback_fn) do
+    Req.new(
+      url: build_url(google_ai),
+      json: for_api(google_ai, messages, functions),
+      receive_timeout: google_ai.receive_timeout,
+      finch_request:
+        Utils.finch_stream_fn(google_ai, &do_process_response(&1, MessageDelta), callback_fn)
+    )
+    |> Req.Request.put_header("accept-encoding", "utf-8")
+    |> Req.post()
+    |> case do
+      {:ok, %Req.Response{body: data}} ->
+        # Google AI uses `finishReason: "STOP` for all messages in the stream.
+        # This field can't be used to terminate the list of deltas, so simulate
+        # this behavior by forcing the final delta to have `status: :complete`.
+        complete_final_delta(data)
+
+      {:error, %LangChainError{message: reason}} ->
+        {:error, reason}
+
+      other ->
+        Logger.error(
+          "Unhandled and unexpected response from streamed post call. #{inspect(other)}"
+        )
+
+        {:error, "Unexpected response"}
+    end
+  end
+
   @spec build_url(t()) :: String.t()
   defp build_url(%ChatGoogleAI{endpoint: endpoint, version: version, model: model} = google_ai) do
     "#{endpoint}/#{version}/models/#{model}:#{get_action(google_ai)}?key=#{get_api_key(google_ai)}"
+    |> use_sse(google_ai)
   end
+
+  @spec use_sse(String.t(), t()) :: String.t()
+  defp use_sse(url, %ChatGoogleAI{stream: true}), do: url <> "&alt=sse"
+  defp use_sse(url, _model), do: url
 
   @spec get_action(t()) :: String.t()
   defp get_action(%ChatGoogleAI{stream: false}), do: "generateContent"
   defp get_action(%ChatGoogleAI{stream: true}), do: "streamGenerateContent"
 
-  def do_process_response(%{"candidates" => candidates}) when is_list(candidates) do
+  def complete_final_delta(data) when is_list(data) do
+    update_in(data, [Access.at(-1), Access.at(-1)], &%{&1 | status: :complete})
+  end
+
+  def do_process_response(response, message_type \\ Message)
+
+  def do_process_response(%{"candidates" => candidates}, message_type) when is_list(candidates) do
     candidates
-    |> Enum.map(&do_process_response/1)
+    |> Enum.map(&do_process_response(&1, message_type))
   end
 
   def do_process_response(
         %{
           "content" => %{"parts" => [%{"functionCall" => %{"args" => raw_args, "name" => name}}]}
-        } = data
+        } = data,
+        message_type
       ) do
-    case Message.new(%{
+    case message_type.new(%{
            "role" => "assistant",
            "function_name" => name,
            "arguments" => raw_args,
@@ -322,11 +364,14 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     end
   end
 
-  def do_process_response(%{
-        "finishReason" => finish,
-        "content" => %{"parts" => parts, "role" => role},
-        "index" => index
-      })
+  def do_process_response(
+        %{
+          "finishReason" => finish,
+          "content" => %{"parts" => parts, "role" => role},
+          "index" => index
+        },
+        message_type
+      )
       when is_list(parts) do
     status =
       case finish do
@@ -343,7 +388,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
 
     content = Enum.map_join(parts, & &1["text"])
 
-    case Message.new(%{
+    case message_type.new(%{
            "content" => content,
            "role" => unmap_role(role),
            "status" => status,
@@ -357,18 +402,18 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     end
   end
 
-  def do_process_response(%{"error" => %{"message" => reason}}) do
+  def do_process_response(%{"error" => %{"message" => reason}}, _) do
     Logger.error("Received error from API: #{inspect(reason)}")
     {:error, reason}
   end
 
-  def do_process_response({:error, %Jason.DecodeError{} = response}) do
+  def do_process_response({:error, %Jason.DecodeError{} = response}, _) do
     error_message = "Received invalid JSON: #{inspect(response)}"
     Logger.error(error_message)
     {:error, error_message}
   end
 
-  def do_process_response(other) do
+  def do_process_response(other, _) do
     Logger.error("Trying to process an unexpected response. #{inspect(other)}")
     {:error, "Unexpected response"}
   end
