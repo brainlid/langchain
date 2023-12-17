@@ -273,62 +273,13 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   end
 
   def do_api_request(%ChatOpenAI{stream: true} = openai, messages, functions, callback_fn) do
-    finch_fun = fn request, finch_request, finch_name, finch_options ->
-      resp_fun = fn
-        {:status, status}, response ->
-          %{response | status: status}
-
-        {:headers, headers}, response ->
-          %{response | headers: headers}
-
-        {:data, raw_data}, response ->
-          # cleanup data because it isn't structured well for JSON.
-          new_data = decode_streamed_data(raw_data)
-          # execute the callback function for each MessageDelta
-          Utils.fire_callback(openai, new_data, callback_fn)
-          old_body = if response.body == "", do: [], else: response.body
-
-          # Returns %Req.Response{} where the body contains ALL the stream delta
-          # chunks converted to MessageDelta structs. The body is a list of lists like this...
-          #
-          # body: [
-          #         [
-          #           %LangChain.MessageDelta{
-          #             content: nil,
-          #             index: 0,
-          #             function_name: nil,
-          #             role: :assistant,
-          #             arguments: nil,
-          #             complete: false
-          #           }
-          #         ],
-          #         ...
-          #       ]
-          #
-          # The reason for the inner list is for each entry in the "n" choices. By default only 1.
-          %{response | body: old_body ++ new_data}
-      end
-
-      case Finch.stream(finch_request, finch_name, Req.Response.new(), resp_fun, finch_options) do
-        {:ok, response} ->
-          {request, response}
-
-        {:error, %Mint.TransportError{reason: :timeout}} ->
-          {request, LangChainError.exception("Request timed out")}
-
-        {:error, exception} ->
-          Logger.error("Failed request to API: #{inspect(exception)}")
-          {request, exception}
-      end
-    end
-
     req =
       Req.new(
         url: openai.endpoint,
         json: for_api(openai, messages, functions),
         auth: {:bearer, get_api_key(openai)},
         receive_timeout: openai.receive_timeout,
-        finch_request: finch_fun
+        finch_request: Utils.finch_stream_fn(openai, &do_process_response/1, callback_fn)
       )
 
     # NOTE: The POST response includes a list of body messages that were
