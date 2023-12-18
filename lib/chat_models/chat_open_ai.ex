@@ -339,54 +339,6 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     end
   end
 
-  defp decode_streamed_data(data) do
-    # Data comes back like this:
-    #
-    # "data: {\"id\":\"chatcmpl-7e8yp1xBhriNXiqqZ0xJkgNrmMuGS\",\"object\":\"chat.completion.chunk\",\"created\":1689801995,\"model\":\"gpt-4-0613\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":null,\"function_call\":{\"name\":\"calculator\",\"arguments\":\"\"}},\"finish_reason\":null}]}\n\n
-    #  data: {\"id\":\"chatcmpl-7e8yp1xBhriNXiqqZ0xJkgNrmMuGS\",\"object\":\"chat.completion.chunk\",\"created\":1689801995,\"model\":\"gpt-4-0613\",\"choices\":[{\"index\":0,\"delta\":{\"function_call\":{\"arguments\":\"{\\n\"}},\"finish_reason\":null}]}\n\n"
-    #
-    # In that form, the data is not ready to be interpreted as JSON. Let's clean
-    # it up first.
-
-    data
-    |> String.split("data: ")
-    |> Enum.map(fn str ->
-      str
-      |> String.trim()
-      |> case do
-        "" ->
-          :empty
-
-        "[DONE]" ->
-          :empty
-
-        json ->
-          json
-          |> Jason.decode()
-          |> case do
-            {:ok, parsed} ->
-              parsed
-
-            {:error, reason} ->
-              {:error, reason}
-          end
-          |> do_process_response()
-      end
-    end)
-    # returning a list of elements. "junk" elements were replaced with `:empty`.
-    # Filter those out down and return the final list of MessageDelta structs.
-    |> Enum.filter(fn d -> d != :empty end)
-    # if there was a single error returned in a list, flatten it out to just
-    # return the error
-    |> case do
-      [{:error, reason}] ->
-        raise LangChainError, reason
-
-      other ->
-        other
-    end
-  end
-
   # Parse a new message response
   @doc false
   @spec do_process_response(data :: %{String.t() => any()} | {:error, any()}) ::

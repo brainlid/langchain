@@ -47,14 +47,20 @@ defmodule LangChain.Message do
       default: :user
 
     field :function_name, :string
-    field :function_response, :any, virtual: true
     field :arguments, :any, virtual: true
   end
 
   @type t :: %Message{}
   @type status :: :complete | :cancelled | :length
 
-  @create_fields [:role, :content, :status, :function_name, :function_response, :arguments, :index]
+  @create_fields [
+    :role,
+    :content,
+    :status,
+    :function_name,
+    :arguments,
+    :index
+  ]
   @required_fields [:role]
 
   @doc """
@@ -284,8 +290,12 @@ defmodule LangChain.Message do
   @spec new_function(name :: String.t(), result :: any()) ::
           {:ok, t()} | {:error, Ecto.Changeset.t()}
   def new_function(name, result) do
-    new(%{role: :function, function_name: name, function_response: result})
+    new(%{role: :function, function_name: name, content: serialize_result(result)})
   end
+
+  @spec serialize_result(result :: any()) :: String.t()
+  defp serialize_result(result) when is_binary(result), do: result
+  defp serialize_result(result) when is_map(result), do: Jason.encode!(result)
 
   @doc """
   Create a new function message to represent the result of an executed
@@ -331,7 +341,7 @@ defimpl LangChain.ForOpenAIApi, for: LangChain.Message do
     %{
       "role" => :function,
       "name" => fun.function_name,
-      "content" => Jason.encode!(fun.function_response)
+      "content" => fun.content
     }
   end
 

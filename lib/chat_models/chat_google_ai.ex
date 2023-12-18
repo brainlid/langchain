@@ -68,6 +68,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
 
   @create_fields [
     :endpoint,
+    :version,
     :model,
     :api_key,
     :temperature,
@@ -142,6 +143,8 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
           "functionDeclarations" => Enum.map(functions, &ForOpenAIApi.for_api/1)
         }
       ])
+    else
+      req
     end
   end
 
@@ -167,7 +170,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
         %{
           "functionResponse" => %{
             "name" => message.function_name,
-            "response" => message.function_response
+            "response" => Jason.decode!(message.content)
           }
         }
       ]
@@ -374,16 +377,22 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
       )
       when is_list(parts) do
     status =
-      case finish do
-        "STOP" ->
-          :complete
+      case message_type do
+        MessageDelta ->
+          :incomplete
 
-        "LENGTH" ->
-          :length
+        Message ->
+          case finish do
+            "STOP" ->
+              :complete
 
-        other ->
-          Logger.warning("Unsupported finishReason in response. Reason: #{inspect(other)}")
-          nil
+            "SAFETY" ->
+              :complete
+
+            other ->
+              Logger.warning("Unsupported finishReason in response. Reason: #{inspect(other)}")
+              nil
+          end
       end
 
     content = Enum.map_join(parts, & &1["text"])
