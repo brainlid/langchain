@@ -13,8 +13,20 @@ defmodule LangChain.Utils.ChainResult do
   - The last message of the chain is not an `:assistant` message.
   - The last message of the chain is incomplete.
   - There is no last message.
+
+  This supports passing in the final, updated LLMChain, or the result of the
+  `LLMChain.run/2` function.
   """
-  @spec to_string(LLMChain.t()) :: {:ok, String.t()} | {:error, String.t()}
+  @spec to_string(LLMChain.t() | {:ok, LLMChain.t(), Message.t()} | {:error, String.t()}) :: {:ok, String.t()} | {:error, String.t()}
+  def to_string({:error, reason}) when is_binary(reason) do
+    # if an error was passed in, forward it through.
+    {:error, reason}
+  end
+
+  def to_string({:ok, %LLMChain{} = chain, _message}) do
+    ChainResult.to_string(chain)
+  end
+
   def to_string(%LLMChain{last_message: %Message{role: :assistant, status: :complete}} = chain) do
     {:ok, chain.last_message.content}
   end
@@ -36,7 +48,7 @@ defmodule LangChain.Utils.ChainResult do
   raises and exception with the reason why it cannot be used. See the docs for
   `LangChain.Utils.ChainResult.to_string/2` for details.
   """
-  @spec to_string!(LLMChain.t()) :: String.t() | no_return()
+  @spec to_string!(LLMChain.t() | {:ok, LLMChain.t(), Message.t()} | {:error, String.t()}) :: String.t() | no_return()
   def to_string!(%LLMChain{} = chain) do
     case ChainResult.to_string(chain) do
       {:ok, result} -> result

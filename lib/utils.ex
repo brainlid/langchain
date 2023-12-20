@@ -2,6 +2,7 @@ defmodule LangChain.Utils do
   @moduledoc """
   Collection of helpful utilities mostly for internal use.
   """
+  alias Ecto.Changeset
 
   @doc """
   Only add the key to the map if the value is present. When the value is a list,
@@ -67,5 +68,17 @@ defmodule LangChain.Utils do
       acc ++ ["#{f}: #{field_errors}"]
     end)
     |> Enum.join("; ")
+  end
+
+  @doc """
+  Validation helper. Validates a struct changeset that the LLM is a struct.
+  """
+  @spec validate_llm_is_struct(Ecto.Changeset.t()) :: Ecto.Changeset.t()
+  def validate_llm_is_struct(changeset) do
+    case Changeset.get_change(changeset, :llm) do
+      nil -> changeset
+      llm when is_struct(llm) -> changeset
+      _other -> Changeset.add_error(changeset, :llm, "LLM must be a struct")
+    end
   end
 end

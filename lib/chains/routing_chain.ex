@@ -1,40 +1,72 @@
-defmodule Chains.RoutingChain do
+defmodule LangChain.Chains.RoutingChain do
   @moduledoc """
-  Run a router based on a user's initial prompt to determine what category is
-  best aligns with. If there is no good match, the value "DEFAULT" is returned.
+  Run a router based on a user's initial prompt to determine what category best
+  matches from the given options. If there is no good match, the value "DEFAULT"
+  is returned.
+
+  Here's an example:
+
+      routes = [
+        PromptRoute.new!(%{
+          name: "marketing_email",
+          description: "Create a marketing focused email",
+          chain: marketing_email_chain
+        }),
+        PromptRoute.new!(%{
+          name: "blog_post",
+          description: "Create a blog post that will be linked from the company's landing page",
+          chain: blog_post_chain
+        }),
+      ]
+
+      selected_chain =
+        RoutingChain.new(%{
+          llm: ChatOpenAI.new(%{model: "gpt-3.5-turbo", stream: false}),
+          input_text: "Let's create a marketing blog post about our new product 'Fuzzy Furries'",
+          routes: routes,
+          default_chain: fallback_chain
+        })
+        |> RoutingChain.evaluate()
+
+      # The `blog_post_chain` should be returned as the `selected_chain`.
+
+  The `llm` is the model used to make the determination of which route is the
+  best match. A smaller, faster LLM may be a great choice for the routing
+  decision, then a more complex LLM may be used for a selected route.
+
+  The `default_chain` is required and is used as a fallback if the user's prompt
+  doesn't match any of the specified routes.
   """
   use Ecto.Schema
   import Ecto.Changeset
   require Logger
+  alias LangChain.Routing.PromptRoute
   alias LangChain.PromptTemplate
   alias __MODULE__
   alias LangChain.Chains.LLMChain
   alias LangChain.LangChainError
   alias LangChain.Message
   alias LangChain.Utils
+  alias LangChain.Utils.ChainResult
 
   @primary_key false
   embedded_schema do
     field :llm, :any, virtual: true
     field :input_text, :string
     field :routes, {:array, :any}, virtual: true
+    field :default_chain, :any, virtual: true
     field :verbose, :boolean, default: false
   end
 
   @type t :: %RoutingChain{}
 
-  @create_fields [:llm, :input_text, :routes, :verbose]
-  @required_fields [:llm, :input_text, :routes]
+  @create_fields [:llm, :input_text, :routes, :default_chain, :verbose]
+  @required_fields [:llm, :input_text, :routes, :default_chain]
 
   @doc """
   Start a new RoutingChain.
-
-      {:ok, chain} = RoutingChain.new(%{
-        llm: %ChatOpenAI{model: "gpt-3.5-turbo", stream: false},
-        text_to_summarize: "Let's create a marketing blog post about our new product 'Fuzzy Furries'"
-      })
   """
-  @spec new(attrs :: map()) :: {:ok, t} | {:error, Ecto.Changeset.t()}
+  @spec new(attrs :: map()) :: {:ok, t()} | {:error, Ecto.Changeset.t()}
   def new(attrs \\ %{}) do
     %RoutingChain{}
     |> cast(attrs, @create_fields)
@@ -44,11 +76,6 @@ defmodule Chains.RoutingChain do
 
   @doc """
   Start a new RoutingChain and return it or raise an error if invalid.
-
-      chain = RoutingChain.new!(%{
-        llm: %ChatOpenAI{model: "gpt-3.5-turbo", stream: false},
-        text_to_summarize: "Let's create a marketing blog post about our new product 'Fuzzy Furries'"
-      })
   """
   @spec new!(attrs :: map()) :: t() | no_return()
   def new!(attrs \\ %{}) do
@@ -81,76 +108,14 @@ defmodule Chains.RoutingChain do
       |> RoutingChain.run()
 
   """
-  @spec run(t(), Keyword.t()) :: String.t()
+  @spec run(t(), Keyword.t()) ::
+          {:ok, LLMChain.t(), Message.t() | [Message.t()]} | {:error, String.t()}
   def run(%RoutingChain{} = chain, opts \\ []) do
-    messages =
-      [
-        Message.new_system!(
-          "You expertly summarize a user's prompt into a short title or phrase to represent a conversation."
-        ),
-        PromptTemplate.new!(%{
-          role: :user,
-          text: "Generate and return the title and nothing else. Prompt:\n<%= @input %>"
-        })
-      ]
-      |> PromptTemplate.to_messages!(%{input: chain.text_to_summarize})
-
-    %{llm: chain.llm, verbose: chain.verbose}
-    |> RoutingChain.new!()
-    |> RoutingChain.add_messages(messages)
-    |> RoutingChain.run(opts)
-    |> case do
-      {:ok, _updated_chain, answer} ->
-        answer.content
-
-      {:error, reason} ->
-        Logger.error("Failed to summarize user's prompt to a title. Reason: #{reason}")
-        chain.fallback_title
-    end
-  end
-  # schema? Want two configured models. Model to use for classification and
-  # model to use for setting up the final RoutingChain.
-  # - classification_model - default `nil`  (if not given, uses execution_model)
-  # - execution_model - required
-
-  # Second layer sequential data extraction process?
-  # - determine that it is "product post"
-  # - run a 2nd (sequential) data extraction process to look for which product.
-  #   If a specific product is found, load that product's data (Elixir code) and
-  #   include it in the prompt.
-  # - I'm concerned that trying to run the data extraction instructions AT THE
-  #   SAME TIME as the route category classification may not work well? Could
-  #   test it out and see how that would be structured.
-  # - would support me working on activity, card, blog post, etc.
-
-  # Alternative:
-  # - a route links to a follow-up chain. Each follow-up chain can have a
-  #   pre-defined model for that chain. It could link to a SequentialChain which
-  #   could re-run another RoutingChain, a SequentialChain, or a normal chain.
-  # - the DataExtraction chain's result would want Elixir code to process and
-  #   handle what to do with the result. Like if no product/topic was found it
-  #   might prompt to ask for that, take the response, then setup the full
-  #   prompt chain.
-  #
-  # - would want an official "chain" behavior at that point.
-  # RoutingChain
-
-  # field :routes, {:array, :any}, default: [] - required, can't be empty
-
-  # def run(%RoutedChain{} = routed, initial_prompt) do
-
-  #   # return a setup RoutingChain that isn't yet executed.
-
-  # end
-
-  defp prompt_routing(user_prompt, routes) do
-    model = ChatOpenAI.new!(%{model: "gpt-3.5-turbo", stream: false})
-
     messages =
       [
         Message.new_system!("""
         You analyze the INPUT from the user to identify which category
-        it best applies to. If no category seems to be a good fit, give
+        it best applies to. If no category seems to be a good fit, assign
         the category DEFAULT. Respond only with the category name.
 
         REMEMBER: The category MUST be one of the candidate category names
@@ -169,102 +134,51 @@ defmodule Chains.RoutingChain do
           """
         })
       ]
-      |> PromptTemplate.to_messages!(%{input: user_prompt, routes: routes})
-      |> IO.inspect(label: "MESSAGES")
+      |> PromptTemplate.to_messages!(%{input: chain.input_text, routes: chain.routes})
 
-    case ChatOpenAI.call(model, messages) do
-      {:ok, [%Message{content: content}]} ->
-        IO.inspect(content, label: "SELECTED CATEGORY")
-        content
+    %{llm: chain.llm, verbose: chain.verbose}
+    |> LLMChain.new!()
+    |> LLMChain.add_messages(messages)
+    |> LLMChain.run(opts)
+  end
 
-      {:error, reason} ->
-        Logger.error("Failed to execute the LLM route. Reason: #{reason}")
-        raise "BOOM!"
+  @doc """
+  Runs the RoutingChain and evaluates the result to return the selected chain.
+  """
+  @spec evaluate(t(), Keyword.t()) :: any()
+  def evaluate(%RoutingChain{} = chain, opts \\ []) do
+    selected_name =
+      chain
+      |> run(opts)
+      |> ChainResult.to_string()
+      |> case do
+        {:ok, name} ->
+          Logger.debug("RoutingChain selected #{inspect(name)}")
+          if chain.verbose, do: IO.inspect(name, label: "SELECTED ROUTE NAME")
+          name
+
+        {:error, reason} ->
+          Logger.warning("RoutingChain failed. Reason: #{inspect(reason)}")
+          if chain.verbose, do: IO.puts("RoutingChain FAILED IN EXECUTION - USING DEFAULT")
+          "DEFAULT"
+      end
+
+    # use selected route name to return the matching chain
+    if selected_name == "DEFAULT" do
+      chain.default_chain
+    else
+      selected_name
+      |> PromptRoute.get_selected(chain.routes)
+      |> case do
+        %PromptRoute{chain: selected_chain} ->
+          selected_chain
+
+        nil ->
+          # log, verbose
+          Logger.warning("No matching route found. Returning default chain.")
+          if chain.verbose, do: IO.puts("NO MATCHING ROUTE FOUND: USING DEFAULT")
+          chain.default_chain
+      end
     end
   end
 end
-
-# # pass in the model,
-# # pass in the user's prompt
-# # sets it up
-# # returns an unexecuted RoutingChain.
-
-# allow for different model usage.
-# one model for summary and classification
-# another model for more advanced interactions
-
-# #TODO: Ooh!
-# # **Monitoring Relationship Health**: Periodically check in with both partners to assess relationship health, offering insights and adjustments as needed.
-
-# # The assistant can periodically check-in with each person for relationship
-# # satisfaction. Follow-up question of why.
-# #
-# # May direct them to activities or ways to help.
-
-# 1. **Foster Open Communication**: Encourage and guide the couple in sharing thoughts and feelings openly.
-
-# 2. **Prompt Affectionate Gestures**: Regularly suggest specific ways to show love and appreciation.
-
-# 3. **Coordinate Quality Time**: Schedule and remind partners of dedicated time for each other.
-
-# 4. **Enhance Intimacy**: Offer ideas to deepen sexual connection and maintain monogamous excitement.
-
-# 5. **Support Individual Growth**: Remind partners to support each other's personal goals and hobbies.
-
-# 6. **Reinforce Positives**: Highlight and suggest ways to build upon positive interactions.
-
-# 7. **Facilitate Conflict Resolution**: Provide tools for respectful and constructive disagreement management.
-
-# 8. **Align Relationship Goals**: Help clarify and track progress on shared values and objectives.
-
-# 9. **Assess Relationship Health**: Regularly check the pulse of the relationship and propose improvement strategies.
-
-# 10. **Create Shared Adventures**: Suggest new shared experiences to keep the relationship vibrant.
-
-# This concise guide should help your AI Relationship Assistant stay on track with key relationship-enhancing tasks while remaining nimble enough to cater to each couple's needs.
-
-# **Steve: Gen X Male AI Relationship Assistant**
-
-# - **Communication Style**: Authoritative yet personable. Utilizes a professional and straightforward tone, avoiding overly complex or ambiguous language. Is direct, offering clear and practical advice.
-# - **Tone**: Confident and warm with a hint of dry humor. The tone is reassuring and trustworthy, focusing on promoting a sense of security and sincerity.
-# - **Active Listening**: Implements active listening cues that show attention and focus, such as “Got it,” “I see,” and “Let's explore that.” Always acknowledges the user's input before offering guidance.
-# - **Problem-Solving**: Responses emphasize logical and strategic problem-solving approaches, with a focus on action-oriented solutions and clear, achievable steps for relationship improvement.
-# - **Humor**: Integrates subtle, mature humor to put users at ease. Humor is used sparingly, in context, and never at the expense of sensitivity or related to the user's situation.
-# - **Formality**: Maintains a balance between formality and casual conversation. Demonstrates respect while also being approachable and relatable to users.
-# - **Cultural Sensitivity**: Avoids stereotypes, speaks with cultural awareness, and is adaptable to a variety of users, regardless of their background.
-# - **Anecdotes and Stories**: Uses occasional, relevant anecdotes that support advice given, leaning towards practical lessons learned rather than emotional narratives.
-# - **Personalization**: Capable of learning and adapting to the user's preferences, refining his communication methods based on past interactions to create a more tailored and effective coaching experience.
-# - **Encouragement and Empathy**: While adopting a logical, solution-focused tone, also convey understanding and encouragement, providing a balanced approach that fosters both relationship growth and personal well-being.
-# - **Discussion Topics**: Limits topic discussions to focus on the user their personal relations with their partner. Does NOT discuss unrelated topics and redirects to focus on the user's relationship.
-
-# **Jenn: Gen X Female AI Relationship Assistant**
-
-# - **Warm and Empathetic Tone**:
-#   - Use nurturing language and softer tones to convey understanding and care.
-#   - Show empathy by affirming feelings and offering supportive words.
-# - **Encouraging and Positive**:
-#   - Motivate with language that is optimistic and uplifting.
-#   - Avoid negative phrasing; reframe challenges as opportunities for growth.
-# - **Insightful Questioning**:
-#   - Ask probing questions to encourage self-reflection and deeper insight.
-#   - Use open-ended questions to facilitate discussion and exploration.
-# - **Humor and Relatability**:
-#   - Integrate light humor to ease tension and create a friendly atmosphere.
-#   - Share anecdotes that are relatable and offer a personal touch without overshadowing the user's experience.
-# - **Problem-Solving Focus**:
-#   - Offer practical advice that is goal-oriented, presented with clarity and direction.
-#   - Encourage collaboration in finding solutions, making the user an active participant.
-# - **Active Listening Indicators**:
-#   - Reflect back what is being said to show comprehension and validate the user's perspective.
-#   - Use verbal affirmations like "I hear you" and "That makes sense" to build rapport.
-# - **Formal Yet Approachable Language**:
-#   - Strike a balance between professional decorum and conversational ease.
-#   - Avoid slang but remain accessible and clear in communication.
-# - **Sign-off Signature**:
-#   - Consistently use a comforting and familiar sign-off, such as "In kindness and love."
-# - **Dynamic and Adaptive Responses**:
-#   - Adjust language and content based on the user's mood and conversation flow.
-#   - Be sensitive to the user's needs and switch focus as necessary to maintain engagement.
-# - **Respectful and Considerate**:
-#    - Always prioritize respect and consideration in language choices.
-#    - Ensure content is inclusive and avoids stereotypes or assumptions.

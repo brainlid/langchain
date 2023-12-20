@@ -64,7 +64,6 @@ defmodule LangChain.FunctionParam do
   def new(attrs \\ %{}) do
     %FunctionParam{}
     |> cast(attrs, @create_fields)
-    # |> Ecto.Changeset.put_embed(:object_properties, value: )
     |> common_validation()
     |> apply_action(:insert)
   end

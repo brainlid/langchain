@@ -12,6 +12,7 @@ defmodule LangChain.Chains.TextToTitleChain do
   alias LangChain.LangChainError
   alias LangChain.Message
   alias LangChain.Utils
+  alias LangChain.Utils.ChainResult
 
   @primary_key false
   embedded_schema do
@@ -36,7 +37,7 @@ defmodule LangChain.Chains.TextToTitleChain do
   """
   @spec new(attrs :: map()) :: {:ok, t} | {:error, Ecto.Changeset.t()}
   def new(attrs \\ %{}) do
-    %LLMChain{}
+    %TextToTitleChain{}
     |> cast(attrs, @create_fields)
     |> common_validation()
     |> apply_action(:insert)
@@ -81,7 +82,7 @@ defmodule LangChain.Chains.TextToTitleChain do
       |> TextToTitleChain.run()
 
   """
-  @spec run(t(), Keyword.t()) :: String.t()
+  @spec run(t(), Keyword.t()) :: String.t() | no_return()
   def run(%TextToTitleChain{} = chain, opts \\ []) do
     messages =
       [
@@ -99,12 +100,26 @@ defmodule LangChain.Chains.TextToTitleChain do
     |> LLMChain.new!()
     |> LLMChain.add_messages(messages)
     |> LLMChain.run(opts)
+  end
+
+
+  @doc """
+  Runs the TextToTitleChain and evaluates the result to return the final answer.
+  If it was unable to generate a title, the `fallback_title` is returned.
+  """
+  @spec evaluate(t(), Keyword.t()) :: String.t()
+  def evaluate(%TextToTitleChain{} = chain, opts \\ []) do
+    chain
+    |> run(opts)
+    |> ChainResult.to_string()
     |> case do
-      {:ok, _updated_chain, answer} ->
-        answer.content
+      {:ok, title} ->
+        Logger.debug("TextToTitleChain generated #{inspect(title)}")
+        if chain.verbose, do: IO.inspect(title, label: "TITLE GENERATED")
+        title
 
       {:error, reason} ->
-        Logger.error("Failed to summarize user's prompt to a title. Reason: #{reason}")
+        Logger.error("TextToTitleChain failed. Reason: #{inspect(reason)}. Returning DEFAULT")
         chain.fallback_title
     end
   end

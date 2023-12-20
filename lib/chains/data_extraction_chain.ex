@@ -77,8 +77,8 @@ defmodule LangChain.Chains.DataExtractionChain do
   @function_name "information_extraction"
   @extraction_template ~s"Extract and save the relevant entities mentioned in the following passage together with their properties. Use the value `null` when missing in the passage.
 
-  Passage:
-  <%= @input %>"
+Passage:
+<%= @input %>"
 
   @doc """
   Run the data extraction chain.

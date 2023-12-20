@@ -79,7 +79,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   ]
   @required_fields [:endpoint, :model]
 
-  @spec get_api_key(t) :: String.t()
+  @spec get_api_key(t()) :: String.t()
   defp get_api_key(%ChatOpenAI{api_key: api_key}) do
     # if no API key is set default to `""` which will raise a OpenAI API error
     api_key || Config.resolve(:openai_key, "")
@@ -199,6 +199,10 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         {:ok, {:ok, data} = response} ->
           # fire callback for fake responses too
           fire_callback(openai, data, callback_fn)
+          response
+
+        # fake error response
+        {:ok, {:error, _reason} = response} ->
           response
 
         _other ->
