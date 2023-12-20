@@ -201,6 +201,10 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           fire_callback(openai, data, callback_fn)
           response
 
+        # fake error response
+        {:ok, {:error, _reason} = response} ->
+          response
+
         _other ->
           raise LangChainError,
                 "An unexpected fake API response was set. Should be an `{:ok, value}`"
