@@ -259,11 +259,6 @@ defmodule LangChain.ChatModels.ChatAzureOpenAI do
   end
 
   def do_api_request(%ChatAzureOpenAI{stream: true} = openai, messages, functions, callback_fn) do
-
-
-    openai |> IO.inspect(label: "openai bahhhh")
-
-
     finch_fun = fn request, finch_request, finch_name, finch_options ->
       resp_fun = fn
         {:status, status}, response ->
@@ -273,9 +268,6 @@ defmodule LangChain.ChatModels.ChatAzureOpenAI do
           %{response | headers: headers}
 
         {:data, raw_data}, response ->
-
-          response |> IO.inspect(label: "bahhhh")
-
           # JSON strings can be split over multiple responses
           # we need to buffer the response until we have valid
           # JSON strings to decode. JSON strings are delimited by two new lines
