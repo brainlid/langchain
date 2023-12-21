@@ -73,6 +73,19 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert data.frequency_penalty == 0.5
       assert data.response_format == %{"type" => "json_object"}
     end
+
+    test "generates a map for an API call and doesn't include response_format for vision" do
+      {:ok, openai} =
+        ChatOpenAI.new(%{
+          "model" => "gpt-4-vision-preview",
+          "temperature" => 1,
+          "frequency_penalty" => 0.5,
+          "api_key" => "api_key"
+        })
+
+      data = ChatOpenAI.for_api(openai, [], [])
+      refute Map.has_key?(data, :response_format)
+    end
   end
 
   describe "call/2" do

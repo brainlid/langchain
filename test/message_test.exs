@@ -143,6 +143,10 @@ defmodule LangChain.MessageTest do
     end
   end
 
+  describe "add_image/1" do
+    assert %Message{role: :user, images: ["https://yahoo.com"], content: "yep"} = Message.add_image(%Message{role: :user, content: "yep"}, "https://yahoo.com")
+  end
+
   describe "new_assistant/1" do
     test "creates a assistant message" do
       assert {:ok, %Message{role: :assistant} = msg} =
@@ -226,4 +230,10 @@ defmodule LangChain.MessageTest do
       assert msg.content == "RESULT"
     end
   end
+
+  describe "has_images?/1" do
+      refute Message.has_images?(%Message{images: []})
+      assert Message.has_images?(%Message{images: ["https://images.com"]})
+  end
+
 end

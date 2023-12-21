@@ -317,6 +317,11 @@ defmodule LangChain.Chains.LLMChain do
   """
   @spec add_message(t(), Message.t()) :: t()
   def add_message(%LLMChain{} = chain, %Message{} = new_message) do
+    if Message.has_images?(new_message) and chain.llm.model != "gpt-4-vision-preview" do
+      raise LangChain.LangChainError,
+            "Only gpt-4-vision-preview model supports images"
+    end
+
     needs_response =
       cond do
         new_message.role in [:user, :function_call, :function] -> true

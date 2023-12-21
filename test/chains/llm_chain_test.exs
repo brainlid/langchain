@@ -386,6 +386,19 @@ defmodule LangChain.Chains.LLMChainTest do
       updated_chain = LLMChain.add_message(chain, assistant_msg)
       refute updated_chain.needs_response
     end
+
+    test "raises when tries to add message with images", %{chain: chain} do
+      assert_raise LangChain.LangChainError,
+            "Only gpt-4-vision-preview model supports images", fn -> LLMChain.add_message(chain, %Message{images: ["https://yahoo.com"]}) end
+    end
+
+    test "doesn't raise" do
+      {:ok, chat} = ChatOpenAI.new(%{model: "gpt-4-vision-preview"})
+      {:ok, chain} = LLMChain.new(%{prompt: [], llm: chat, verbose: true})
+      assert LLMChain.add_message(chain, %Message{images: ["https://yahoo.com"]})
+    end
+
+
   end
 
   describe "apply_prompt_templates/3" do

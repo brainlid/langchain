@@ -48,6 +48,7 @@ defmodule LangChain.Message do
 
     field :function_name, :string
     field :arguments, :any, virtual: true
+    field :images, {:array, :any}, default: []
   end
 
   @type t :: %Message{}
@@ -309,10 +310,22 @@ defmodule LangChain.Message do
       do: true
 
   def is_function_call?(%Message{}), do: false
+
+  def add_image(%Message{role: :user, images: images} = message, image) do
+    %Message{
+      message | images: images ++ [image]
+    }
+  end
+
+  def has_images?(%Message{images: images}) do
+    length(images) > 0
+  end
+
 end
 
 defimpl LangChain.ForOpenAIApi, for: LangChain.Message do
   alias LangChain.Message
+
 
   def for_api(%Message{role: :assistant, function_name: fun_name} = fun)
       when is_binary(fun_name) do
@@ -334,10 +347,29 @@ defimpl LangChain.ForOpenAIApi, for: LangChain.Message do
     }
   end
 
+  def for_api(%Message{role: :user} = fun) do
+    %{
+      "role" => :user,
+      "content" => [
+        %{"type" => :text, "text" => fun.content}
+        | images_for_api(fun.images)
+      ]
+    }
+  end
+
   def for_api(%Message{} = fun) do
     %{
       "role" => fun.role,
       "content" => fun.content
     }
+  end
+
+  defp images_for_api(images) do
+    Enum.map(images, fn i ->
+      %{
+        "type" => :image_url,
+        "image_url" => %{ url: i },
+      }
+    end)
   end
 end

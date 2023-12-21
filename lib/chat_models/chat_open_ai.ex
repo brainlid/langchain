@@ -54,6 +54,9 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     field :seed, :integer
     # How many chat completion choices to generate for each input message.
     field :n, :integer, default: 1
+
+    # Max number of tokens to process
+    field :max_tokens, :integer, default: nil
     field :json_response, :boolean, default: false
     field :stream, :boolean, default: false
   end
@@ -133,11 +136,12 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       model: openai.model,
       temperature: openai.temperature,
       frequency_penalty: openai.frequency_penalty,
+      max_tokens: openai.max_tokens,
       n: openai.n,
       stream: openai.stream,
       messages: Enum.map(messages, &ForOpenAIApi.for_api/1),
-      response_format: set_response_format(openai)
     }
+    |> conditionally_add_response_format(openai)
     |> Utils.conditionally_add_to_map(:seed, openai.seed)
     |> Utils.conditionally_add_to_map(:functions, get_functions_for_api(functions))
   end
@@ -148,11 +152,14 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     Enum.map(functions, &ForOpenAIApi.for_api/1)
   end
 
-  defp set_response_format(%ChatOpenAI{json_response: true}),
-    do: %{"type" => "json_object"}
+  defp conditionally_add_response_format(output, %ChatOpenAI{model: "gpt-4-vision-preview"}), do: output
 
-  defp set_response_format(%ChatOpenAI{json_response: false}),
-    do: %{"type" => "text"}
+  defp conditionally_add_response_format(output, %ChatOpenAI{json_response: true}),
+    do: Map.put(output, :response_format, %{"type" => "json_object"})
+
+  defp conditionally_add_response_format(output, %ChatOpenAI{json_response: false}),
+    do: Map.put(output, :response_format, %{"type" => "text"})
+
 
   @doc """
   Calls the OpenAI API passing the ChatOpenAI struct with configuration, plus
@@ -556,7 +563,12 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     end
   end
 
-  def do_process_response(%{"error" => %{"message" => reason}}) do
+  def do_process_response(%{"finish_details" => finish} = msg) do
+    do_process_response(Map.put(msg, "finish_reason", finish))
+  end
+
+
+  def do_process_response(%{"error" => %{"message" => reason}} = _response) do
     Logger.error("Received error from API: #{inspect(reason)}")
     {:error, reason}
   end
