@@ -76,6 +76,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     :api_key,
     :seed,
     :n,
+    :max_tokens,
     :stream,
     :receive_timeout,
     :json_response
@@ -124,6 +125,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     |> validate_number(:temperature, greater_than_or_equal_to: 0, less_than_or_equal_to: 2)
     |> validate_number(:frequency_penalty, greater_than_or_equal_to: -2, less_than_or_equal_to: 2)
     |> validate_number(:n, greater_than_or_equal_to: 1)
+    |> validate_number(:max_tokens, greater_than_or_equal_to: 1)
     |> validate_number(:receive_timeout, greater_than_or_equal_to: 0)
   end
 
@@ -136,11 +138,11 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       model: openai.model,
       temperature: openai.temperature,
       frequency_penalty: openai.frequency_penalty,
-      max_tokens: openai.max_tokens,
       n: openai.n,
       stream: openai.stream,
       messages: Enum.map(messages, &ForOpenAIApi.for_api/1),
     }
+    |> conditionally_add_max_tokens(openai)
     |> conditionally_add_response_format(openai)
     |> Utils.conditionally_add_to_map(:seed, openai.seed)
     |> Utils.conditionally_add_to_map(:functions, get_functions_for_api(functions))
@@ -160,6 +162,10 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   defp conditionally_add_response_format(output, %ChatOpenAI{json_response: false}),
     do: Map.put(output, :response_format, %{"type" => "text"})
 
+
+  defp conditionally_add_max_tokens(output, %ChatOpenAI{max_tokens: nil}), do: output
+  defp conditionally_add_max_tokens(output, %ChatOpenAI{max_tokens: max_tokens}),
+    do: Map.put(output, :max_tokens, max_tokens)
 
   @doc """
   Calls the OpenAI API passing the ChatOpenAI struct with configuration, plus
