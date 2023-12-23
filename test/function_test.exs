@@ -159,4 +159,24 @@ defmodule LangChain.FunctionTest do
       refute Map.has_key?(result, "function")
     end
   end
+
+  describe "get_display_text/3" do
+    setup do
+      functions = [
+        Function.new!(%{name: "speak", display_text: "Speaking..."}),
+        Function.new!(%{name: "walk", display_text: "Walking..."})
+      ]
+
+      %{functions: functions}
+    end
+    test "finds and returns function display text", %{functions: functions} do
+      assert "Speaking..." == Function.get_display_text(functions, "speak")
+      assert "Walking..." == Function.get_display_text(functions, "walk")
+    end
+
+    test "when function not found, returns default text", %{functions: functions} do
+      assert "Perform action" == Function.get_display_text(functions, "missing")
+      assert "Other" == Function.get_display_text(functions, "missing", "Other")
+    end
+  end
 end
