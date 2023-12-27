@@ -92,6 +92,73 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     end
 
     @tag :live_call
+    test "basic streamed content example's final result" do
+      # set_fake_llm_response({:ok, Message.new_assistant("\n\nRainbow Sox Co.")})
+
+      # https://js.langchain.com/docs/modules/models/chat/
+      {:ok, chat} = ChatOpenAI.new(%{temperature: 1, seed: 0, stream: true})
+
+      {:ok, result} =
+        ChatOpenAI.call(chat, [
+          Message.new_user!("Return the response 'Colorful Threads'.")
+        ])
+
+      # returns a list of MessageDeltas. A list of a list because it's "n" choices.
+      assert result == [
+               [
+                 %LangChain.MessageDelta{
+                   content: "",
+                   status: :incomplete,
+                   index: 0,
+                   function_name: nil,
+                   role: :assistant,
+                   arguments: nil
+                 }
+               ],
+               [
+                 %LangChain.MessageDelta{
+                   content: "Color",
+                   status: :incomplete,
+                   index: 0,
+                   function_name: nil,
+                   role: :unknown,
+                   arguments: nil
+                 }
+               ],
+               [
+                 %LangChain.MessageDelta{
+                   content: "ful",
+                   status: :incomplete,
+                   index: 0,
+                   function_name: nil,
+                   role: :unknown,
+                   arguments: nil
+                 }
+               ],
+               [
+                 %LangChain.MessageDelta{
+                   content: " Threads",
+                   status: :incomplete,
+                   index: 0,
+                   function_name: nil,
+                   role: :unknown,
+                   arguments: nil
+                 }
+               ],
+               [
+                 %LangChain.MessageDelta{
+                   content: nil,
+                   status: :complete,
+                   index: 0,
+                   function_name: nil,
+                   role: :unknown,
+                   arguments: nil
+                 }
+               ]
+             ]
+    end
+
+    @tag :live_call
     test "executing a function", %{hello_world: hello_world} do
       {:ok, chat} = ChatOpenAI.new(%{seed: 0})
 
