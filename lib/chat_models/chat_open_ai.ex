@@ -284,79 +284,58 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   end
 
   def do_api_request(%ChatOpenAI{stream: true} = openai, messages, functions, callback_fn) do
-    finch_fun = fn request, finch_request, finch_name, finch_options ->
-      resp_fun = fn
-        {:status, status}, response ->
-          %{response | status: status}
-
-        {:headers, headers}, response ->
-          %{response | headers: headers}
-
-        {:data, raw_data}, response ->
-          # cleanup data because it isn't structured well for JSON.
-          new_data = decode_streamed_data(raw_data)
-          # execute the callback function for each MessageDelta
-          fire_callback(openai, new_data, callback_fn)
-          old_body = if response.body == "", do: [], else: response.body
-
-          # Returns %Req.Response{} where the body contains ALL the stream delta
-          # chunks converted to MessageDelta structs. The body is a list of lists like this...
-          #
-          # body: [
-          #         [
-          #           %LangChain.MessageDelta{
-          #             content: nil,
-          #             index: 0,
-          #             function_name: nil,
-          #             role: :assistant,
-          #             arguments: nil,
-          #             complete: false
-          #           }
-          #         ],
-          #         ...
-          #       ]
-          #
-          # The reason for the inner list is for each entry in the "n" choices. By default only 1.
-          %{response | body: old_body ++ new_data}
-      end
-
-      case Finch.stream(finch_request, finch_name, Req.Response.new(), resp_fun, finch_options) do
-        {:ok, response} ->
-          {request, response}
-
-        {:error, %Mint.TransportError{reason: :timeout}} ->
-          {request, LangChainError.exception("Request timed out")}
-
-        {:error, exception} ->
-          Logger.error("Failed request to API: #{inspect(exception)}")
-          {request, exception}
-      end
-    end
-
-    req =
-      Req.new(
-        url: openai.endpoint,
-        json: for_api(openai, messages, functions),
-        auth: {:bearer, get_api_key(openai)},
-        receive_timeout: openai.receive_timeout,
-        finch_request: finch_fun
-      )
-
-    # NOTE: The POST response includes a list of body messages that were
-    # received during the streaming process. However, the messages in the
-    # response all come at once when the stream is complete. It is blocking
-    # until it completes. This means the streaming call should happen in a
-    # separate process from the UI and the callback function will process the
-    # chunks and should notify the UI process of the additional data.
-    req
+    Req.new(
+      url: openai.endpoint,
+      json: for_api(openai, messages, functions),
+      auth: {:bearer, get_api_key(openai)},
+      receive_timeout: openai.receive_timeout
+    )
     |> maybe_add_org_id_header()
-    |> Req.post()
+    |> Req.post(
+      into: fn {:data, raw_data}, {req, response} ->
+        # cleanup data because it isn't structured well for JSON.
+        new_data = decode_streamed_data(raw_data)
+        # execute the callback function for each MessageDelta
+        fire_callback(openai, new_data, callback_fn)
+        old_body = if response.body == "", do: [], else: response.body
+
+        # Returns %Req.Response{} where the body contains ALL the stream delta
+        # chunks converted to MessageDelta structs. The body is a list of lists like this...
+        #
+        # body: [
+        #         [
+        #           %LangChain.MessageDelta{
+        #             content: nil,
+        #             index: 0,
+        #             function_name: nil,
+        #             role: :assistant,
+        #             arguments: nil,
+        #             complete: false
+        #           }
+        #         ],
+        #         ...
+        #       ]
+        #
+        # The reason for the inner list is for each entry in the "n" choices. By default only 1.
+        updated_response = %{response | body: old_body ++ new_data}
+
+        {:cont, {req, updated_response}}
+      end
+    )
     |> case do
       {:ok, %Req.Response{body: data}} ->
         data
 
       {:error, %LangChainError{message: reason}} ->
         {:error, reason}
+
+      {:error, %Mint.TransportError{reason: :timeout}} ->
+        {:error, "Request timed out"}
+
+      {:error, %Mint.TransportError{reason: :closed}} ->
+        # EXPERIMENT: Force a retry by making a recursive call. Could become
+        # looping?
+        do_api_request(openai, messages, functions, callback_fn)
 
       other ->
         Logger.error(
