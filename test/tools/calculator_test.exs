@@ -7,6 +7,8 @@ defmodule LangChain.Tools.CalculatorTest do
   alias LangChain.Function
   alias LangChain.ChatModels.ChatOpenAI
 
+  import ExUnit.CaptureIO
+
   describe "new/0" do
     test "defines the function correctly" do
       assert {:ok, %Function{} = function} = Calculator.new()
@@ -41,7 +43,10 @@ defmodule LangChain.Tools.CalculatorTest do
     end
 
     test "returns an error when evaluation fails" do
-      assert "ERROR" == Calculator.execute(%{"expression" => "cow + dog"}, nil)
+      {result, _} = with_io(:standard_error, fn ->
+        Calculator.execute(%{"expression" => "cow + dog"}, nil)
+      end)
+      assert "ERROR" == result
     end
   end
 
