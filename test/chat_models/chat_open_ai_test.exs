@@ -48,13 +48,15 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
           "model" => "gpt-3.5-turbo-0613",
           "temperature" => 1,
           "frequency_penalty" => 0.5,
-          "api_key" => "api_key"
+          "api_key" => "api_key",
+          "max_tokens" => 10
         })
 
       data = ChatOpenAI.for_api(openai, [], [])
       assert data.model == "gpt-3.5-turbo-0613"
       assert data.temperature == 1
       assert data.frequency_penalty == 0.5
+      assert data.max_tokens == 10
       assert data.response_format == %{"type" => "text"}
     end
 
@@ -72,6 +74,29 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert data.temperature == 1
       assert data.frequency_penalty == 0.5
       assert data.response_format == %{"type" => "json_object"}
+    end
+
+    test "generates a map for an API call and doesn't include response_format for vision" do
+      {:ok, openai} =
+        ChatOpenAI.new(%{
+          "model" => "gpt-4-vision-preview",
+          "temperature" => 1,
+          "frequency_penalty" => 0.5,
+          "api_key" => "api_key"
+        })
+
+      data = ChatOpenAI.for_api(openai, [], [])
+      refute Map.has_key?(data, :response_format)
+    end
+
+    test "doesn't include max_tokens if it is nil" do
+      {:ok, openai} =
+        ChatOpenAI.new(%{
+          "max_tokens" => nil,
+        })
+
+      data = ChatOpenAI.for_api(openai, [], [])
+      refute Map.has_key?(data, :max_tokens)
     end
   end
 
