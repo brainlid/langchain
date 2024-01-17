@@ -113,61 +113,42 @@ defmodule LangChain.Utils do
   end
 
   @doc """
-  Create a function to handle the Finch streaming request. 
+  Create a function to handle the streaming request. 
   """
-  @spec finch_stream_fn(
+  @spec handle_stream_fn(
           %{optional(:stream) => boolean()},
           process_response_fn :: function(),
           callback_fn :: function()
         ) :: function()
-  def finch_stream_fn(model, process_response_fn, callback_fn) do
-    fn request, finch_request, finch_name, finch_options ->
-      resp_fun = fn
-        {:status, status}, response ->
-          %{response | status: status}
+  def handle_stream_fn(model, process_response_fn, callback_fn) do
+    fn {:data, raw_data}, {req, response} ->
+      # cleanup data because it isn't structured well for JSON.
+      new_data = decode_streamed_data(raw_data, process_response_fn)
+      # execute the callback function for each MessageDelta
+      fire_callback(model, new_data, callback_fn)
+      old_body = if response.body == "", do: [], else: response.body
 
-        {:headers, headers}, response ->
-          %{response | headers: headers}
+      # Returns %Req.Response{} where the body contains ALL the stream delta
+      # chunks converted to MessageDelta structs. The body is a list of lists like this...
+      #
+      # body: [
+      #         [
+      #           %LangChain.MessageDelta{
+      #             content: nil,
+      #             index: 0,
+      #             function_name: nil,
+      #             role: :assistant,
+      #             arguments: nil,
+      #             complete: false
+      #           }
+      #         ],
+      #         ...
+      #       ]
+      #
+      # The reason for the inner list is for each entry in the "n" choices. By default only 1.
+      updated_response = %{response | body: old_body ++ new_data}
 
-        {:data, raw_data}, response ->
-          # cleanup data because it isn't structured well for JSON.
-          new_data = decode_streamed_data(raw_data, process_response_fn)
-          # execute the callback function for each MessageDelta
-          fire_callback(model, new_data, callback_fn)
-          old_body = if response.body == "", do: [], else: response.body
-
-          # Returns %Req.Response{} where the body contains ALL the stream delta
-          # chunks converted to MessageDelta structs. The body is a list of lists like this...
-          #
-          # body: [
-          #         [
-          #           %LangChain.MessageDelta{
-          #             content: nil,
-          #             index: 0,
-          #             function_name: nil,
-          #             role: :assistant,
-          #             arguments: nil,
-          #             complete: false
-          #           }
-          #         ],
-          #         ...
-          #       ]
-          #
-          # The reason for the inner list is for each entry in the "n" choices. By default only 1.
-          %{response | body: old_body ++ new_data}
-      end
-
-      case Finch.stream(finch_request, finch_name, Req.Response.new(), resp_fun, finch_options) do
-        {:ok, response} ->
-          {request, response}
-
-        {:error, %Mint.TransportError{reason: :timeout}} ->
-          {request, LangChainError.exception("Request timed out")}
-
-        {:error, exception} ->
-          Logger.error("Failed request to API: #{inspect(exception)}")
-          {request, exception}
-      end
+      {:cont, {req, updated_response}}
     end
   end
 

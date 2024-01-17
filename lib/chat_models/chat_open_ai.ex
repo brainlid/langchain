@@ -284,37 +284,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       receive_timeout: openai.receive_timeout
     )
     |> maybe_add_org_id_header()
-    |> Req.post(
-      into: fn {:data, raw_data}, {req, response} ->
-        # cleanup data because it isn't structured well for JSON.
-        new_data = decode_streamed_data(raw_data)
-        # execute the callback function for each MessageDelta
-        Utils.fire_callback(openai, new_data, callback_fn)
-        old_body = if response.body == "", do: [], else: response.body
-
-        # Returns %Req.Response{} where the body contains ALL the stream delta
-        # chunks converted to MessageDelta structs. The body is a list of lists like this...
-        #
-        # body: [
-        #         [
-        #           %LangChain.MessageDelta{
-        #             content: nil,
-        #             index: 0,
-        #             function_name: nil,
-        #             role: :assistant,
-        #             arguments: nil,
-        #             complete: false
-        #           }
-        #         ],
-        #         ...
-        #       ]
-        #
-        # The reason for the inner list is for each entry in the "n" choices. By default only 1.
-        updated_response = %{response | body: old_body ++ new_data}
-
-        {:cont, {req, updated_response}}
-      end
-    )
+    |> Req.post(into: Utils.handle_stream_fn(openai, &do_process_response/1, callback_fn))
     |> case do
       {:ok, %Req.Response{body: data}} ->
         data

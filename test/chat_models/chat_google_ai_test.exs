@@ -1,7 +1,6 @@
 defmodule ChatModels.ChatGoogleAITest do
   alias LangChain.ChatModels.ChatGoogleAI
   use LangChain.BaseCase
-  import LangChain.Fixtures
 
   doctest LangChain.ChatModels.ChatGoogleAI
   alias LangChain.ChatModels.ChatGoogleAI

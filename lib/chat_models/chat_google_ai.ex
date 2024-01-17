@@ -296,12 +296,12 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     Req.new(
       url: build_url(google_ai),
       json: for_api(google_ai, messages, functions),
-      receive_timeout: google_ai.receive_timeout,
-      finch_request:
-        Utils.finch_stream_fn(google_ai, &do_process_response(&1, MessageDelta), callback_fn)
+      receive_timeout: google_ai.receive_timeout
     )
     |> Req.Request.put_header("accept-encoding", "utf-8")
-    |> Req.post()
+    |> Req.post(
+      into: Utils.handle_stream_fn(google_ai, &do_process_response(&1, MessageDelta), callback_fn)
+    )
     |> case do
       {:ok, %Req.Response{body: data}} ->
         # Google AI uses `finishReason: "STOP` for all messages in the stream.
@@ -311,6 +311,9 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
 
       {:error, %LangChainError{message: reason}} ->
         {:error, reason}
+
+      {:error, %Mint.TransportError{reason: :timeout}} ->
+        {:error, "Request timed out"}
 
       other ->
         Logger.error(
