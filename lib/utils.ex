@@ -3,6 +3,8 @@ defmodule LangChain.Utils do
   Collection of helpful utilities mostly for internal use.
   """
   alias Ecto.Changeset
+  require Logger
+  alias LangChain.LangChainError
 
   @doc """
   Only add the key to the map if the value is present. When the value is a list,
@@ -79,6 +81,122 @@ defmodule LangChain.Utils do
       nil -> changeset
       llm when is_struct(llm) -> changeset
       _other -> Changeset.add_error(changeset, :llm, "LLM must be a struct")
+    end
+  end
+
+  @type callback_data ::
+          {:ok, Message.t() | MessageDelta.t() | [Message.t() | MessageDelta.t()]}
+          | {:error, String.t()}
+
+  @doc """
+  Fire a streaming callback if present.
+  """
+  @spec fire_callback(
+          %{optional(:stream) => boolean()},
+          data :: callback_data() | [callback_data()],
+          (callback_data() -> any())
+        ) :: :ok
+  def fire_callback(%{stream: true}, _data, nil) do
+    Logger.warning("Streaming call requested but no callback function was given.")
+    :ok
+  end
+
+  def fire_callback(_model, _data, nil), do: :ok
+
+  def fire_callback(_model, data, callback_fn) when is_function(callback_fn) do
+    # OPTIONAL: Execute callback function
+    data
+    |> List.flatten()
+    |> Enum.each(fn item -> callback_fn.(item) end)
+
+    :ok
+  end
+
+  @doc """
+  Create a function to handle the streaming request. 
+  """
+  @spec handle_stream_fn(
+          %{optional(:stream) => boolean()},
+          process_response_fn :: function(),
+          callback_fn :: function()
+        ) :: function()
+  def handle_stream_fn(model, process_response_fn, callback_fn) do
+    fn {:data, raw_data}, {req, response} ->
+      # cleanup data because it isn't structured well for JSON.
+      new_data = decode_streamed_data(raw_data, process_response_fn)
+      # execute the callback function for each MessageDelta
+      fire_callback(model, new_data, callback_fn)
+      old_body = if response.body == "", do: [], else: response.body
+
+      # Returns %Req.Response{} where the body contains ALL the stream delta
+      # chunks converted to MessageDelta structs. The body is a list of lists like this...
+      #
+      # body: [
+      #         [
+      #           %LangChain.MessageDelta{
+      #             content: nil,
+      #             index: 0,
+      #             function_name: nil,
+      #             role: :assistant,
+      #             arguments: nil,
+      #             complete: false
+      #           }
+      #         ],
+      #         ...
+      #       ]
+      #
+      # The reason for the inner list is for each entry in the "n" choices. By default only 1.
+      updated_response = %{response | body: old_body ++ new_data}
+
+      {:cont, {req, updated_response}}
+    end
+  end
+
+  defp decode_streamed_data(data, process_response_fn) do
+    # Data comes back like this:
+    #
+    # "data: {\"id\":\"chatcmpl-7e8yp1xBhriNXiqqZ0xJkgNrmMuGS\",\"object\":\"chat.completion.chunk\",\"created\":1689801995,\"model\":\"gpt-4-0613\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":null,\"function_call\":{\"name\":\"calculator\",\"arguments\":\"\"}},\"finish_reason\":null}]}\n\n
+    #  data: {\"id\":\"chatcmpl-7e8yp1xBhriNXiqqZ0xJkgNrmMuGS\",\"object\":\"chat.completion.chunk\",\"created\":1689801995,\"model\":\"gpt-4-0613\",\"choices\":[{\"index\":0,\"delta\":{\"function_call\":{\"arguments\":\"{\\n\"}},\"finish_reason\":null}]}\n\n"
+    #
+    # In that form, the data is not ready to be interpreted as JSON. Let's clean
+    # it up first.
+
+    data
+    |> String.split("data: ")
+    |> Enum.map(fn str ->
+      str
+      |> String.trim()
+      |> case do
+        "" ->
+          :empty
+
+        "[DONE]" ->
+          :empty
+
+        json ->
+          json
+          |> Jason.decode()
+          |> case do
+            {:ok, parsed} ->
+              parsed
+
+            {:error, reason} ->
+              {:error, reason}
+          end
+          |> process_response_fn.()
+      end
+    end)
+    # returning a list of elements. "junk" elements were replaced with `:empty`.
+    # Filter those out down and return the final list of MessageDelta structs.
+    |> Enum.filter(fn d -> d != :empty end)
+    # if there was a single error returned in a list, flatten it out to just
+    # return the error
+    |> case do
+      [{:error, reason}] ->
+        raise LangChainError, reason
+
+      other ->
+        other
     end
   end
 end

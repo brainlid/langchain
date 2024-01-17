@@ -44,7 +44,7 @@ defmodule LangChain.MessageDelta do
 
     field :role, Ecto.Enum, values: [:unknown, :assistant], default: :unknown
 
-    field :arguments, :string
+    field :arguments, :any, virtual: true
   end
 
   @type t :: %MessageDelta{}
