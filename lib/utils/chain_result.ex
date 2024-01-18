@@ -46,7 +46,7 @@ defmodule LangChain.Utils.ChainResult do
   @doc """
   Return the last message's content when it is valid to use it. Otherwise it
   raises and exception with the reason why it cannot be used. See the docs for
-  `LangChain.Utils.ChainResult.to_string/2` for details.
+  `to_string/2` for details.
   """
   @spec to_string!(LLMChain.t() | {:ok, LLMChain.t(), Message.t()} | {:error, String.t()}) :: String.t() | no_return()
   def to_string!(%LLMChain{} = chain) do
