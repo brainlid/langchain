@@ -240,7 +240,19 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   @doc false
   @spec do_api_request(t(), [Message.t()], [Function.t()], (any() -> any())) ::
           list() | struct() | {:error, String.t()}
-  def do_api_request(%ChatOpenAI{stream: false} = openai, messages, functions, callback_fn) do
+  def do_api_request(openai, messages, functions, callback_fn, retry_count \\ 3)
+
+  def do_api_request(_openai, _messages, _functions, _callback_fn, 0) do
+    raise LangChainError, "Retries exceeded. Connection failed."
+  end
+
+  def do_api_request(
+        %ChatOpenAI{stream: false} = openai,
+        messages,
+        functions,
+        callback_fn,
+        retry_count
+      ) do
     req =
       Req.new(
         url: openai.endpoint,
@@ -270,13 +282,24 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       {:error, %Mint.TransportError{reason: :timeout}} ->
         {:error, "Request timed out"}
 
+      {:error, %Mint.TransportError{reason: :closed}} ->
+        # Force a retry by making a recursive call decrementing the counter
+        Logger.debug(fn -> "Mint connection closed: retry count = #{inspect(retry_count)}" end)
+        do_api_request(openai, messages, functions, callback_fn, retry_count - 1)
+
       other ->
         Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
         other
     end
   end
 
-  def do_api_request(%ChatOpenAI{stream: true} = openai, messages, functions, callback_fn) do
+  def do_api_request(
+        %ChatOpenAI{stream: true} = openai,
+        messages,
+        functions,
+        callback_fn,
+        retry_count
+      ) do
     Req.new(
       url: openai.endpoint,
       json: for_api(openai, messages, functions),
@@ -296,9 +319,9 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         {:error, "Request timed out"}
 
       {:error, %Mint.TransportError{reason: :closed}} ->
-        # EXPERIMENT: Force a retry by making a recursive call. Could become
-        # looping?
-        do_api_request(openai, messages, functions, callback_fn)
+        # Force a retry by making a recursive call decrementing the counter
+        Logger.debug(fn -> "Mint connection closed: retry count = #{inspect(retry_count)}" end)
+        do_api_request(openai, messages, functions, callback_fn, retry_count - 1)
 
       other ->
         Logger.error(
