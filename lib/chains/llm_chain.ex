@@ -20,14 +20,17 @@ defmodule LangChain.Chains.LLMChain do
   alias LangChain.MessageDelta
   alias LangChain.Function
   alias LangChain.LangChainError
+  alias LangChain.Utils
 
   @primary_key false
   embedded_schema do
     field :llm, :any, virtual: true
     field :verbose, :boolean, default: false
+    # verbosely log each delta message.
+    field :verbose_deltas, :boolean, default: false
     field :functions, {:array, :any}, default: [], virtual: true
     # set and managed privately through functions
-    field :function_map, :map, default: %{}, virtual: true
+    field :_function_map, :map, default: %{}, virtual: true
 
     # List of `Message` structs for creating the conversation with the LLM.
     field :messages, {:array, :any}, default: [], virtual: true
@@ -62,6 +65,11 @@ defmodule LangChain.Chains.LLMChain do
 
   @doc """
   Start a new LLMChain configuration.
+
+      {:ok, chain} = LLMChain.new(%{
+        llm: %ChatOpenAI{model: "gpt-3.5-turbo", stream: true},
+        messages: [%Message.new_system!("You are a helpful assistant.")]
+      })
   """
   @spec new(attrs :: map()) :: {:ok, t} | {:error, Ecto.Changeset.t()}
   def new(attrs \\ %{}) do
@@ -73,6 +81,11 @@ defmodule LangChain.Chains.LLMChain do
 
   @doc """
   Start a new LLMChain configuration and return it or raise an error if invalid.
+
+      chain = LLMChain.new!(%{
+        llm: %ChatOpenAI{model: "gpt-3.5-turbo", stream: true},
+        messages: [%Message.new_system!("You are a helpful assistant.")]
+      })
   """
   @spec new!(attrs :: map()) :: t() | no_return()
   def new!(attrs \\ %{}) do
@@ -88,16 +101,8 @@ defmodule LangChain.Chains.LLMChain do
   def common_validation(changeset) do
     changeset
     |> validate_required(@required_fields)
-    |> validate_llm_is_struct()
+    |> Utils.validate_llm_is_struct()
     |> build_functions_map_from_functions()
-  end
-
-  defp validate_llm_is_struct(changeset) do
-    case get_change(changeset, :llm) do
-      nil -> changeset
-      llm when is_struct(llm) -> changeset
-      _other -> add_error(changeset, :llm, "LLM must be a struct")
-    end
   end
 
   @doc false
@@ -110,7 +115,7 @@ defmodule LangChain.Chains.LLMChain do
         Map.put(acc, f.name, f)
       end)
 
-    put_change(changeset, :function_map, fun_map)
+    put_change(changeset, :_function_map, fun_map)
   end
 
   @doc """
@@ -220,8 +225,10 @@ defmodule LangChain.Chains.LLMChain do
         {:ok, add_message(chain, message)}
 
       {:ok, [[%MessageDelta{} | _] | _] = deltas} ->
-        if chain.verbose, do: IO.inspect(deltas, label: "DELTA MESSAGE LIST RESPONSE")
-        {:ok, apply_deltas(chain, deltas)}
+        if chain.verbose_deltas, do: IO.inspect(deltas, label: "DELTA MESSAGE LIST RESPONSE")
+        updated_chain = apply_deltas(chain, deltas)
+        if chain.verbose, do: IO.inspect(updated_chain.last_message, label: "COMBINED DELTA MESSAGE RESPONSE")
+        {:ok, updated_chain}
 
       {:error, reason} ->
         if chain.verbose, do: IO.inspect(reason, label: "ERROR")
@@ -288,21 +295,35 @@ defmodule LangChain.Chains.LLMChain do
 
     # if the merged delta is now complete, updates as a message.
     if merged.status in [:complete, :length] do
-      case MessageDelta.to_message(merged) do
-        {:ok, %Message{} = message} ->
-          fire_callback(chain, message)
-          add_message(%LLMChain{chain | delta: nil}, message)
-
-        {:error, reason} ->
-          # should not have failed, but it did. Log the error and return
-          # the chain unmodified.
-          Logger.warning("Error applying delta message. Reason: #{inspect(reason)}")
-          chain
-      end
+      delta_to_message(%LLMChain{chain | delta: merged})
     else
       # the delta message is not yet complete. Update the delta with the merged
       # result.
       %LLMChain{chain | delta: merged}
+    end
+  end
+
+  @doc """
+  Convert any hanging delta of the chain to a message and append to the chain.
+
+  If the delta is `nil`, the chain is returned unmodified.
+  """
+  @spec delta_to_message(t()) :: t()
+  def delta_to_message(%LLMChain{delta: nil} = chain) do
+    chain
+  end
+
+  def delta_to_message(%LLMChain{delta: delta} = chain) do
+    case MessageDelta.to_message(delta) do
+      {:ok, %Message{} = message} ->
+        fire_callback(chain, message)
+        add_message(%LLMChain{chain | delta: nil}, message)
+
+      {:error, reason} ->
+        # should not have failed, but it did. Log the error and return
+        # the chain unmodified.
+        Logger.warning("Error applying delta message. Reason: #{inspect(reason)}")
+        chain
     end
   end
 
@@ -314,6 +335,7 @@ defmodule LangChain.Chains.LLMChain do
     deltas
     |> List.flatten()
     |> Enum.reduce(chain, fn d, acc -> apply_delta(acc, d) end)
+    |> delta_to_message()
   end
 
   @doc """
@@ -402,7 +424,7 @@ defmodule LangChain.Chains.LLMChain do
       use_context = context || chain.custom_context
 
       # find and execute the linked function
-      case chain.function_map[message.function_name] do
+      case chain._function_map[message.function_name] do
         %Function{} = function ->
           if chain.verbose, do: IO.inspect(function.name, label: "EXECUTING FUNCTION")
 

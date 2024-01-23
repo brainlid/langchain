@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.1.7 (2024-01-18)
+
+- Improvements for more intelligent agents - https://github.com/brainlid/langchain/pull/61
+  - adds `LangChain.Chains.RoutingChain` - first-pass LLM chain to select the best route to take given the user's initial prompt
+  - adds `LangChain.Chains.TextToTitleChain` - turn the user's prompt into a title for the conversation
+- Removed the need for a function to send a message to the process for how to display the function being executed
+- Updated dependencies
+- Add support for Google AI / Gemini Pro model by @jadengis in https://github.com/brainlid/langchain/pull/59
+- Built-in automatic retries when underlying Mint connection is closed in https://github.com/brainlid/langchain/pull/68
+
 ## v0.1.6 (2023-12-12)
 
 - Fix for correct usage of new Req retry setting. PR #57

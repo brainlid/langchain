@@ -121,6 +121,8 @@ defmodule LangChain.Function do
   embedded_schema do
     field :name, :string
     field :description, :string
+    # Optional text the UI can display for when the function is executed.
+    field :display_text, :string
     # flag if the function should be auto-evaluated. Defaults to `false`
     # requiring an explicit step to perform the evaluation.
     # field :auto_evaluate, :boolean, default: false
@@ -134,7 +136,7 @@ defmodule LangChain.Function do
 
   @type t :: %Function{}
 
-  @create_fields [:name, :description, :parameters_schema, :parameters, :function]
+  @create_fields [:name, :description, :display_text, :parameters_schema, :parameters, :function]
   @required_fields [:name]
 
   @doc """
@@ -190,6 +192,18 @@ defmodule LangChain.Function do
 
       true ->
         changeset
+    end
+  end
+
+  @doc """
+  Given a list of functions, return the `display_text` for the named function.
+  If it not found, return the fallback text.
+  """
+  @spec get_display_text([t()], String.t(), String.t()) :: String.t()
+  def get_display_text(functions, function_name, fallback_text \\ "Perform action") do
+    case Enum.find(functions, &(&1.name == function_name)) do
+      nil -> fallback_text
+      %Function{} = func -> func.display_text
     end
   end
 end
