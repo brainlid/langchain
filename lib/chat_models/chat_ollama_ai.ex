@@ -212,7 +212,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   Calls the Ollama Chat Completion API struct with configuration, plus
   either a simple message or the list of messages to act as the prompt.
 
-  **NOTE:** This API as of right now does not take any functions. More
+  **NOTE:** This API as of right now does not support functions. More
   information here: https://github.com/jmorganca/ollama/issues/1729
 
   **NOTE:** This function *can* be used directly, but the primary interface
