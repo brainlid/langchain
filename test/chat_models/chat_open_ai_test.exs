@@ -73,6 +73,22 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert data.frequency_penalty == 0.5
       assert data.response_format == %{"type" => "json_object"}
     end
+
+    test "generates a map for an API call with max_tokens set" do
+      {:ok, openai} =
+        ChatOpenAI.new(%{
+          "model" => "gpt-3.5-turbo-0613",
+          "temperature" => 1,
+          "frequency_penalty" => 0.5,
+          "max_tokens" => 1234
+        })
+
+      data = ChatOpenAI.for_api(openai, [], [])
+      assert data.model == "gpt-3.5-turbo-0613"
+      assert data.temperature == 1
+      assert data.frequency_penalty == 0.5
+      assert data.max_tokens == 1234
+    end
   end
 
   describe "call/2" do
