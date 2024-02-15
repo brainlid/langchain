@@ -223,6 +223,10 @@ defmodule LangChain.Chains.LLMChain do
         if chain.verbose, do: IO.inspect(updated_chain.last_message, label: "COMBINED DELTA MESSAGE RESPONSE")
         {:ok, updated_chain}
 
+      {:ok, %Message{} = message} ->
+        if chain.verbose, do: IO.inspect(message, label: "SINGLE MESSAGE RESPONSE NO WRAPPED ARRAY")
+        {:ok, add_message(chain, message)}
+
       {:error, reason} ->
         if chain.verbose, do: IO.inspect(reason, label: "ERROR")
         Logger.error("Error during chat call. Reason: #{inspect(reason)}")
