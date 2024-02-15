@@ -57,6 +57,9 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     field :seed, :integer
     # How many chat completion choices to generate for each input message.
     field :n, :integer, default: 1
+
+    # Max number of tokens to process
+    field :max_tokens, :integer, default: nil
     field :json_response, :boolean, default: false
     field :stream, :boolean, default: false
   end
@@ -71,6 +74,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     :api_key,
     :seed,
     :n,
+    :max_tokens,
     :stream,
     :receive_timeout,
     :json_response
@@ -119,6 +123,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     |> validate_number(:temperature, greater_than_or_equal_to: 0, less_than_or_equal_to: 2)
     |> validate_number(:frequency_penalty, greater_than_or_equal_to: -2, less_than_or_equal_to: 2)
     |> validate_number(:n, greater_than_or_equal_to: 1)
+    |> validate_number(:max_tokens, greater_than_or_equal_to: 1)
     |> validate_number(:receive_timeout, greater_than_or_equal_to: 0)
   end
 
@@ -134,8 +139,9 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       n: openai.n,
       stream: openai.stream,
       messages: Enum.map(messages, &ForOpenAIApi.for_api/1),
-      response_format: set_response_format(openai)
     }
+    |> conditionally_add_max_tokens(openai)
+    |> conditionally_add_response_format(openai)
     |> Utils.conditionally_add_to_map(:seed, openai.seed)
     |> Utils.conditionally_add_to_map(:functions, get_functions_for_api(functions))
   end
@@ -146,11 +152,18 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     Enum.map(functions, &ForOpenAIApi.for_api/1)
   end
 
-  defp set_response_format(%ChatOpenAI{json_response: true}),
-    do: %{"type" => "json_object"}
+  defp conditionally_add_response_format(output, %ChatOpenAI{model: "gpt-4-vision-preview"}), do: output
 
-  defp set_response_format(%ChatOpenAI{json_response: false}),
-    do: %{"type" => "text"}
+  defp conditionally_add_response_format(output, %ChatOpenAI{json_response: true}),
+    do: Map.put(output, :response_format, %{"type" => "json_object"})
+
+  defp conditionally_add_response_format(output, %ChatOpenAI{json_response: false}),
+    do: Map.put(output, :response_format, %{"type" => "text"})
+
+
+  defp conditionally_add_max_tokens(output, %ChatOpenAI{max_tokens: nil}), do: output
+  defp conditionally_add_max_tokens(output, %ChatOpenAI{max_tokens: max_tokens}),
+    do: Map.put(output, :max_tokens, max_tokens)
 
   @doc """
   Calls the OpenAI API passing the ChatOpenAI struct with configuration, plus
@@ -455,7 +468,12 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     end
   end
 
-  def do_process_response(%{"error" => %{"message" => reason}}) do
+  def do_process_response(%{"finish_details" => finish} = msg) do
+    do_process_response(Map.put(msg, "finish_reason", finish))
+  end
+
+
+  def do_process_response(%{"error" => %{"message" => reason}} = _response) do
     Logger.error("Received error from API: #{inspect(reason)}")
     {:error, reason}
   end

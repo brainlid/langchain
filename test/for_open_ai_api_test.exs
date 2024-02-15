@@ -5,6 +5,25 @@ defmodule LangChain.ForOpenAIApiTest do
   alias LangChain.Message
 
   describe "for_api/1" do
+
+    test "turns a user message with images into the expected json format" do
+      msg = %Message{content: "hello_world", images: ["https://image.com"]}
+      json = ForOpenAIApi.for_api(msg)
+      assert json == %{
+        "content" => [
+          %{
+            "type" => :text,
+            "text" => "hello_world"
+          },
+          %{
+            "type" => :image_url,
+            "image_url" => %{url: "https://image.com"}
+          }
+        ],
+        "role" => :user
+      }
+    end
+
     test "turns a function_call into expected JSON format" do
       msg = Message.new_function_call!("hello_world", "{}")
 
