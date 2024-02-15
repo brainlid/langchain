@@ -9,6 +9,10 @@ defmodule LangChain.Utils.ChainResultTest do
   alias LangChain.LangChainError
 
   describe "to_string/1" do
+    test "passes an error tuple through" do
+      assert {:error, "original error"} == ChainResult.to_string({:error, "original error"})
+    end
+
     test "returns {:ok, answer} when valid" do
       chain = %LLMChain{last_message: Message.new_assistant!("the answer")}
       assert {:ok, "the answer"} == ChainResult.to_string(chain)
@@ -33,6 +37,12 @@ defmodule LangChain.Utils.ChainResultTest do
       }
 
       assert {:error, "Message is not from assistant"} == ChainResult.to_string(chain)
+    end
+
+    test "handles an LLMChain.run/2 success result" do
+      message = Message.new_assistant!("the answer")
+      chain = %LLMChain{last_message: message}
+      assert {:ok, "the answer"} == ChainResult.to_string({:ok, chain, message})
     end
   end
 

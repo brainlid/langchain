@@ -1,28 +1,28 @@
-defmodule Routing.PromptRoute do
+defmodule LangChain.Routing.PromptRoute do
   @moduledoc """
   Defines a route or direction a prompting interaction with an LLM can take.
 
-  This helps add complexity and specificity to a the LLM's instructions without
-  using many tokens and trying to combine many things into a single prompt
+  This helps add complexity and specificity to an LLM's instructions without
+  using many tokens and helps avoid combining many things into a single prompt
   setup. This works by letting the user's initial prompt define how the next
-  prompt is setup.
+  prompt is setup. A first pass is run on the prompt to determine which of the
+  provided PromptRoutes is the best match.
 
   To better understand, let's see example of taking the user's input and
-  classifying what supported activity or specialty it is best aligned with.
+  classifying what supported activity or specialty it is best matched with.
 
   User prompt:
   > Let's create a marketing focused blog post comparing three types of our
   > trailer hitch products.
 
   We want our assistant to use different prompts for the different types of
-  activities it's setup to do. Let's define the activities like this:
+  activities it's capable of doing. Let's define the activities like this:
 
       [
         PromptRoute.new!(%{
           name: "marketing_email",
-          description: "Create marketing focused emails",
-          chain: marketing_email_chain,
-          final: true
+          description: "Create a marketing focused email",
+          chain: marketing_email_chain
         }),
         PromptRoute.new!(%{
           name: "blog_post",
@@ -32,16 +32,21 @@ defmodule Routing.PromptRoute do
         PromptRoute.new!(%{
           name: "support_triage",
           description: "Triage a customer support request for severity and requested resolution",
-          chain: support_triage_chain, # not the final chain. Execution is not displayed?
-          final: false
-        }),
+          chain: support_triage_chain
+        })
       ]
 
   Given the user's prompt and the routes we provided, it will choose
-  "marketing_email". This leads to an LLMChain being setup for that purpose
-  where the user's initial prompt can be re-run against the prompts we define
-  for that route.
+  "blog_post". This leads to an LLMChain being setup for that purpose where the
+  user's initial prompt can be re-run against the prompts we define for that
+  route.
 
+  Because a `chain` is linked to each route, we can specify the model to use,
+  the prompt templates we want, and associate functions that can be used to
+  accomplish the task.
+
+  The selected LLMChain can then be run through a UI for chat interactions where
+  the user and AI work together.
   """
   use Ecto.Schema
   import Ecto.Changeset
@@ -55,17 +60,8 @@ defmodule Routing.PromptRoute do
     field :description, :string
 
     # The LLMChain to use if the route matches.
-    # Contains prompt templates, model config, and functions
+    # Contains prompt templates, model config, and any desired functions.
     field :chain, :any, virtual: true
-
-    # if the chain is the final one or not. If true, the callback_fn should be
-    # executed while running for realtime display. If false, the execution of
-    # the chain may lead to future chains which should instead be displayed as
-    # realtime execution.
-    field :final, :boolean, default: true
-
-    # field :prompts, {:array, :any}, default: []
-    # field :functions, {:array, :any}, default: []
   end
 
   @type t :: %PromptRoute{}
@@ -73,10 +69,7 @@ defmodule Routing.PromptRoute do
   @create_fields [
     :name,
     :description,
-    :chain,
-    :final
-    # :prompts,
-    # :functions
+    :chain
   ]
   @required_fields [:name, :description, :chain]
 
@@ -113,8 +106,8 @@ defmodule Routing.PromptRoute do
   @doc """
   Return the selected route based on the route name.
   """
-  @spec get_selected([t()], route_name :: String.t()) :: nil | t()
-  def get_selected(routes, route_name) do
+  @spec get_selected(route_name :: String.t(), [t()]) :: nil | t()
+  def get_selected(route_name, routes) when is_binary(route_name) and is_list(routes) do
     Enum.find(routes, &(&1.name == route_name))
   end
 end

@@ -2,6 +2,7 @@ defmodule LangChain.Chains.LLMChainTest do
   use LangChain.BaseCase
 
   doctest LangChain.Chains.LLMChain
+
   alias LangChain.ChatModels.ChatOpenAI
   alias LangChain.Chains.LLMChain
   alias LangChain.PromptTemplate
@@ -41,7 +42,7 @@ defmodule LangChain.Chains.LLMChainTest do
       # include them in the list
       assert chain.functions == [function]
       # functions get mapped to a dictionary by name
-      assert chain.function_map == %{"hello_world" => function}
+      assert chain._function_map == %{"hello_world" => function}
     end
   end
 
@@ -56,7 +57,7 @@ defmodule LangChain.Chains.LLMChainTest do
       updated_chain = LLMChain.add_functions(chain, [function])
       # includes function in the list and map
       assert updated_chain.functions == [function]
-      assert updated_chain.function_map == %{"hello_world" => function}
+      assert updated_chain._function_map == %{"hello_world" => function}
 
       # test adding more when not empty
       {:ok, howdy_fn} =
@@ -69,7 +70,7 @@ defmodule LangChain.Chains.LLMChainTest do
       updated_chain2 = LLMChain.add_functions(updated_chain, [howdy_fn])
       # includes function in the list and map
       assert updated_chain2.functions == [function, howdy_fn]
-      assert updated_chain2.function_map == %{"hello_world" => function, "howdy" => howdy_fn}
+      assert updated_chain2._function_map == %{"hello_world" => function, "howdy" => howdy_fn}
     end
   end
 

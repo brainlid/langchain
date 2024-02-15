@@ -15,11 +15,14 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   import LangChain.Utils.ApiOverride
   alias __MODULE__
   alias LangChain.Config
+  alias LangChain.ChatModels.ChatModel
   alias LangChain.Message
   alias LangChain.LangChainError
   alias LangChain.ForOpenAIApi
   alias LangChain.Utils
   alias LangChain.MessageDelta
+
+  @behaviour ChatModel
 
   # NOTE: As of gpt-4 and gpt-3.5, only one function_call is issued at a time
   # even when multiple requests could be issued based on the prompt.
@@ -63,11 +66,6 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
   @type t :: %ChatOpenAI{}
 
-  @type call_response :: {:ok, Message.t() | [Message.t()]} | {:error, String.t()}
-  @type callback_data ::
-          {:ok, Message.t() | MessageDelta.t() | [Message.t() | MessageDelta.t()]}
-          | {:error, String.t()}
-
   @create_fields [
     :endpoint,
     :model,
@@ -83,7 +81,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   ]
   @required_fields [:endpoint, :model]
 
-  @spec get_api_key(t) :: String.t()
+  @spec get_api_key(t()) :: String.t()
   defp get_api_key(%ChatOpenAI{api_key: api_key}) do
     # if no API key is set default to `""` which will raise a OpenAI API error
     api_key || Config.resolve(:openai_key, "")
@@ -187,12 +185,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   structs as they are are received, then converting those to the full
   `LangChain.Message` once fully complete.
   """
-  @spec call(
-          t(),
-          String.t() | [Message.t()],
-          [LangChain.Function.t()],
-          nil | (Message.t() | MessageDelta.t() -> any())
-        ) :: call_response()
+  @impl ChatModel
   def call(openai, prompt, functions \\ [], callback_fn \\ nil)
 
   def call(%ChatOpenAI{} = openai, prompt, functions, callback_fn) when is_binary(prompt) do
@@ -211,7 +204,11 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       case get_api_override() do
         {:ok, {:ok, data} = response} ->
           # fire callback for fake responses too
-          fire_callback(openai, data, callback_fn)
+          Utils.fire_callback(openai, data, callback_fn)
+          response
+
+        # fake error response
+        {:ok, {:error, _reason} = response} ->
           response
 
         _other ->
@@ -256,7 +253,19 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   @doc false
   @spec do_api_request(t(), [Message.t()], [Function.t()], (any() -> any())) ::
           list() | struct() | {:error, String.t()}
-  def do_api_request(%ChatOpenAI{stream: false} = openai, messages, functions, callback_fn) do
+  def do_api_request(openai, messages, functions, callback_fn, retry_count \\ 3)
+
+  def do_api_request(_openai, _messages, _functions, _callback_fn, 0) do
+    raise LangChainError, "Retries exceeded. Connection failed."
+  end
+
+  def do_api_request(
+        %ChatOpenAI{stream: false} = openai,
+        messages,
+        functions,
+        callback_fn,
+        retry_count
+      ) do
     req =
       Req.new(
         url: openai.endpoint,
@@ -279,12 +288,17 @@ defmodule LangChain.ChatModels.ChatOpenAI do
             {:error, reason}
 
           result ->
-            fire_callback(openai, result, callback_fn)
+            Utils.fire_callback(openai, result, callback_fn)
             result
         end
 
       {:error, %Mint.TransportError{reason: :timeout}} ->
         {:error, "Request timed out"}
+
+      {:error, %Mint.TransportError{reason: :closed}} ->
+        # Force a retry by making a recursive call decrementing the counter
+        Logger.debug(fn -> "Mint connection closed: retry count = #{inspect(retry_count)}" end)
+        do_api_request(openai, messages, functions, callback_fn, retry_count - 1)
 
       other ->
         Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
@@ -292,80 +306,35 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     end
   end
 
-  def do_api_request(%ChatOpenAI{stream: true} = openai, messages, functions, callback_fn) do
-    finch_fun = fn request, finch_request, finch_name, finch_options ->
-      resp_fun = fn
-        {:status, status}, response ->
-          %{response | status: status}
-
-        {:headers, headers}, response ->
-          %{response | headers: headers}
-
-        {:data, raw_data}, response ->
-          # cleanup data because it isn't structured well for JSON.
-          new_data = decode_streamed_data(raw_data)
-          # execute the callback function for each MessageDelta
-          fire_callback(openai, new_data, callback_fn)
-          old_body = if response.body == "", do: [], else: response.body
-
-          # Returns %Req.Response{} where the body contains ALL the stream delta
-          # chunks converted to MessageDelta structs. The body is a list of lists like this...
-          #
-          # body: [
-          #         [
-          #           %LangChain.MessageDelta{
-          #             content: nil,
-          #             index: 0,
-          #             function_name: nil,
-          #             role: :assistant,
-          #             arguments: nil,
-          #             complete: false
-          #           }
-          #         ],
-          #         ...
-          #       ]
-          #
-          # The reason for the inner list is for each entry in the "n" choices. By default only 1.
-          %{response | body: old_body ++ new_data}
-      end
-
-      case Finch.stream(finch_request, finch_name, Req.Response.new(), resp_fun, finch_options) do
-        {:ok, response} ->
-          {request, response}
-
-        {:error, %Mint.TransportError{reason: :timeout}} ->
-          {request, LangChainError.exception("Request timed out")}
-
-        {:error, exception} ->
-          Logger.error("Failed request to API: #{inspect(exception)}")
-          {request, exception}
-      end
-    end
-
-    req =
-      Req.new(
-        url: openai.endpoint,
-        json: for_api(openai, messages, functions),
-        auth: {:bearer, get_api_key(openai)},
-        receive_timeout: openai.receive_timeout,
-        finch_request: finch_fun
-      )
-
-    # NOTE: The POST response includes a list of body messages that were
-    # received during the streaming process. However, the messages in the
-    # response all come at once when the stream is complete. It is blocking
-    # until it completes. This means the streaming call should happen in a
-    # separate process from the UI and the callback function will process the
-    # chunks and should notify the UI process of the additional data.
-    req
+  def do_api_request(
+        %ChatOpenAI{stream: true} = openai,
+        messages,
+        functions,
+        callback_fn,
+        retry_count
+      ) do
+    Req.new(
+      url: openai.endpoint,
+      json: for_api(openai, messages, functions),
+      auth: {:bearer, get_api_key(openai)},
+      receive_timeout: openai.receive_timeout
+    )
     |> maybe_add_org_id_header()
-    |> Req.post()
+    |> Req.post(into: Utils.handle_stream_fn(openai, &do_process_response/1, callback_fn))
     |> case do
       {:ok, %Req.Response{body: data}} ->
         data
 
       {:error, %LangChainError{message: reason}} ->
         {:error, reason}
+
+      {:error, %Mint.TransportError{reason: :timeout}} ->
+        {:error, "Request timed out"}
+
+      {:error, %Mint.TransportError{reason: :closed}} ->
+        # Force a retry by making a recursive call decrementing the counter
+        Logger.debug(fn -> "Mint connection closed: retry count = #{inspect(retry_count)}" end)
+        do_api_request(openai, messages, functions, callback_fn, retry_count - 1)
 
       other ->
         Logger.error(
@@ -374,76 +343,6 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
         {:error, "Unexpected response"}
     end
-  end
-
-  defp decode_streamed_data(data) do
-    # Data comes back like this:
-    #
-    # "data: {\"id\":\"chatcmpl-7e8yp1xBhriNXiqqZ0xJkgNrmMuGS\",\"object\":\"chat.completion.chunk\",\"created\":1689801995,\"model\":\"gpt-4-0613\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":null,\"function_call\":{\"name\":\"calculator\",\"arguments\":\"\"}},\"finish_reason\":null}]}\n\n
-    #  data: {\"id\":\"chatcmpl-7e8yp1xBhriNXiqqZ0xJkgNrmMuGS\",\"object\":\"chat.completion.chunk\",\"created\":1689801995,\"model\":\"gpt-4-0613\",\"choices\":[{\"index\":0,\"delta\":{\"function_call\":{\"arguments\":\"{\\n\"}},\"finish_reason\":null}]}\n\n"
-    #
-    # In that form, the data is not ready to be interpreted as JSON. Let's clean
-    # it up first.
-
-    data
-    |> String.split("data: ")
-    |> Enum.map(fn str ->
-      str
-      |> String.trim()
-      |> case do
-        "" ->
-          :empty
-
-        "[DONE]" ->
-          :empty
-
-        json ->
-          json
-          |> Jason.decode()
-          |> case do
-            {:ok, parsed} ->
-              parsed
-
-            {:error, reason} ->
-              {:error, reason}
-          end
-          |> do_process_response()
-      end
-    end)
-    # returning a list of elements. "junk" elements were replaced with `:empty`.
-    # Filter those out down and return the final list of MessageDelta structs.
-    |> Enum.filter(fn d -> d != :empty end)
-    # if there was a single error returned in a list, flatten it out to just
-    # return the error
-    |> case do
-      [{:error, reason}] ->
-        raise LangChainError, reason
-
-      other ->
-        other
-    end
-  end
-
-  # fire the callback if present.
-  @spec fire_callback(
-          t(),
-          data :: callback_data() | [callback_data()],
-          (callback_data() -> any())
-        ) :: :ok
-  defp fire_callback(%ChatOpenAI{stream: true}, _data, nil) do
-    Logger.warning("Streaming call requested but no callback function was given.")
-    :ok
-  end
-
-  defp fire_callback(%ChatOpenAI{}, _data, nil), do: :ok
-
-  defp fire_callback(%ChatOpenAI{}, data, callback_fn) when is_function(callback_fn) do
-    # OPTIONAL: Execute callback function
-    data
-    |> List.flatten()
-    |> Enum.each(fn item -> callback_fn.(item) end)
-
-    :ok
   end
 
   # Parse a new message response

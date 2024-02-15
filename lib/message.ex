@@ -54,7 +54,14 @@ defmodule LangChain.Message do
   @type t :: %Message{}
   @type status :: :complete | :cancelled | :length
 
-  @create_fields [:role, :content, :status, :function_name, :arguments, :index]
+  @create_fields [
+    :role,
+    :content,
+    :status,
+    :function_name,
+    :arguments,
+    :index
+  ]
   @required_fields [:role]
 
   @doc """
@@ -284,8 +291,12 @@ defmodule LangChain.Message do
   @spec new_function(name :: String.t(), result :: any()) ::
           {:ok, t()} | {:error, Ecto.Changeset.t()}
   def new_function(name, result) do
-    new(%{role: :function, function_name: name, content: result})
+    new(%{role: :function, function_name: name, content: serialize_result(result)})
   end
+
+  @spec serialize_result(result :: any()) :: String.t()
+  defp serialize_result(result) when is_binary(result), do: result
+  defp serialize_result(result) when is_map(result), do: Jason.encode!(result)
 
   @doc """
   Create a new function message to represent the result of an executed

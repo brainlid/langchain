@@ -1,7 +1,7 @@
 defmodule LangChain.MixProject do
   use Mix.Project
 
-  @version "0.1.6"
+  @version "0.1.7"
 
   def project do
     [
@@ -35,7 +35,7 @@ defmodule LangChain.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:ecto, "~> 3.10.3"},
+      {:ecto, "~> 3.10 or ~> 3.11"},
       {:gettext, "~> 0.20"},
       {:req, "~> 0.4.8"},
       {:abacus, "~> 2.0.0"},

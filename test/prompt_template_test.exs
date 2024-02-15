@@ -5,6 +5,8 @@ defmodule LangChain.PromptTemplateTest do
   alias LangChain.LangChainError
   alias LangChain.Message
 
+  import ExUnit.CaptureIO
+
   describe "new/1" do
     test "create with text and no inputs" do
       {:ok, %PromptTemplate{} = p} = PromptTemplate.new(%{text: "text"})
@@ -112,7 +114,9 @@ defmodule LangChain.PromptTemplateTest do
     end
 
     test "returns substitutions removed when replacement missing" do
-      result = PromptTemplate.format_text("This is <%= @missing %>", %{other: "something"})
+      {result, _} = with_io(:standard_error, fn ->
+        PromptTemplate.format_text("This is <%= @missing %>", %{other: "something"})
+      end)
       assert result == "This is "
     end
   end
