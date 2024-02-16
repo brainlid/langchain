@@ -27,6 +27,10 @@ This was changed to make it easier to use a `PromptChain` when there isn't an as
 
 This includes the change of not requiring a `%PromptChain{}`'s `description` or `chain` field.
 
+**Other Changes**
+* Add support for Ollama open source models by @medoror in https://github.com/brainlid/langchain/pull/70
+* Add clause to match call_response spec by @medoror in https://github.com/brainlid/langchain/pull/72
+* Add max_tokens option for OpenAI calls by @matthusby in https://github.com/brainlid/langchain/pull/73
 
 ## v0.1.7 (2024-01-18)
 
