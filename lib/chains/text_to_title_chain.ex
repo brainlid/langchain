@@ -102,7 +102,6 @@ defmodule LangChain.Chains.TextToTitleChain do
     |> LLMChain.run(opts)
   end
 
-
   @doc """
   Runs the TextToTitleChain and evaluates the result to return the final answer.
   If it was unable to generate a title, the `fallback_title` is returned.
