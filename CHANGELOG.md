@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.1.8 (2024-02-16)
+
+**Breaking change**: `RoutingChain`'s required values changed. Previously, `default_chain` was assigned an `%LLMChain{}` to return when no more specific routes matched.
+
+This was changed to be `default_route`. It now expects a `%PromptRoute{}` to be provided.
+
+Here's how to make the change:
+
+      selected_route =
+        RoutingChain.new(%{
+          llm: ChatOpenAI.new(%{model: "gpt-3.5-turbo", stream: false}),
+          input_text: user_input_text,
+          routes: routes,
+          default_route: PromptRoute.new!(%{name: "DEFAULT", chain: fallback_chain})
+        })
+        |> RoutingChain.evaluate()
+
+Previously, the returned value was a `selected_chain`. It now returns the `selected_route`.
+
+**Why was this changed?**
+
+This was changed to make it easier to use a `PromptChain` when there isn't an associated `%LLMChain{}` for it. The application must just need the answer of which route was selected.
+
+This includes the change of not requiring a `%PromptChain{}`'s `description` or `chain` field.
+
+
 ## v0.1.7 (2024-01-18)
 
 - Improvements for more intelligent agents - https://github.com/brainlid/langchain/pull/61
