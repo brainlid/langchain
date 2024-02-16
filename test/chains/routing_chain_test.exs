@@ -15,7 +15,7 @@ defmodule LangChain.Chains.RoutingChainTest do
     llm = ChatOpenAI.new!(%{model: "gpt-3.5-turbo", stream: false, seed: 0})
     input_text = "Let's start a new blog post about the magical properties of pineapple cookies."
 
-    default_chain =
+    default_route =
       %{llm: llm}
       |> LLMChain.new!()
       |> LLMChain.add_message(Message.new_system!("You are a helpful assistant."))
@@ -43,6 +43,13 @@ defmodule LangChain.Chains.RoutingChainTest do
         )
       )
 
+    default_route =
+      PromptRoute.new!(%{
+        name: "default",
+        description: "When no other route is a good match",
+        chain: default_route
+      })
+
     routes = [
       PromptRoute.new!(%{
         name: "blog",
@@ -65,7 +72,7 @@ defmodule LangChain.Chains.RoutingChainTest do
       llm: llm,
       input_text: input_text,
       routes: routes,
-      default_chain: default_chain,
+      default_route: default_route,
       blog_chain: blog_chain,
       memo_chain: memo_chain,
       support_chain: support_chain
@@ -84,13 +91,19 @@ defmodule LangChain.Chains.RoutingChainTest do
       assert router == data[:routing_chain]
     end
 
-    test "requires llm, input_text, routes, and default_chain" do
+    test "requires llm, input_text, routes, and default_route" do
       assert {:error, changeset} = RoutingChain.new(%{})
       refute changeset.valid?
       assert {"can't be blank", _} = changeset.errors[:llm]
       assert {"can't be blank", _} = changeset.errors[:input_text]
       assert {"can't be blank", _} = changeset.errors[:routes]
-      assert {"can't be blank", _} = changeset.errors[:default_chain]
+      assert {"can't be blank", _} = changeset.errors[:default_route]
+    end
+
+    test "requires a PromptRoute assigned to default_route" do
+      assert {:error, changeset} = RoutingChain.new(%{default_route: "invalid"})
+      refute changeset.valid?
+      assert {"must be a PromptRoute", _} = changeset.errors[:default_route]
     end
   end
 
@@ -126,31 +139,32 @@ defmodule LangChain.Chains.RoutingChainTest do
   describe "evaluate/2" do
     test "returns the selected chain to use", %{
       routing_chain: routing_chain,
-      blog_chain: blog_chain,
-      memo_chain: memo_chain,
-      default_chain: default_chain
+      default_route: default_route
     } do
       ApiOverride.set_api_override({:ok, [Message.new_assistant!("blog")]})
-      assert blog_chain == RoutingChain.evaluate(routing_chain)
+      assert %PromptRoute{name: "blog"} = RoutingChain.evaluate(routing_chain)
 
       ApiOverride.set_api_override({:ok, [Message.new_assistant!("memo")]})
-      assert memo_chain == RoutingChain.evaluate(routing_chain)
+      assert %PromptRoute{name: "memo"} = RoutingChain.evaluate(routing_chain)
 
       ApiOverride.set_api_override({:ok, [Message.new_assistant!("DEFAULT")]})
-      assert default_chain == RoutingChain.evaluate(routing_chain)
+      assert default_route == RoutingChain.evaluate(routing_chain)
     end
 
-    test "returns default_chain when an invalid selection is made", %{routing_chain: routing_chain, default_chain: default_chain} do
-      ApiOverride.set_api_override({:ok, [Message.new_assistant!("invalid")]})
-      assert default_chain == RoutingChain.evaluate(routing_chain)
-    end
-
-    test "returns default_chain when something goes wrong", %{
+    test "returns default_route when an invalid selection is made", %{
       routing_chain: routing_chain,
-      default_chain: default_chain
+      default_route: default_route
+    } do
+      ApiOverride.set_api_override({:ok, [Message.new_assistant!("invalid")]})
+      assert default_route == RoutingChain.evaluate(routing_chain)
+    end
+
+    test "returns default_route when something goes wrong", %{
+      routing_chain: routing_chain,
+      default_route: default_route
     } do
       ApiOverride.set_api_override({:error, "FAKE API call failure"})
-      assert default_chain == RoutingChain.evaluate(routing_chain)
+      assert default_route == RoutingChain.evaluate(routing_chain)
     end
   end
 end

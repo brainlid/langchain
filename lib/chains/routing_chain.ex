@@ -24,7 +24,7 @@ defmodule LangChain.Chains.RoutingChain do
           llm: ChatOpenAI.new(%{model: "gpt-3.5-turbo", stream: false}),
           input_text: "Let's create a marketing blog post about our new product 'Fuzzy Furries'",
           routes: routes,
-          default_chain: fallback_chain
+          default_route: fallback_chain
         })
         |> RoutingChain.evaluate()
 
@@ -34,8 +34,9 @@ defmodule LangChain.Chains.RoutingChain do
   best match. A smaller, faster LLM may be a great choice for the routing
   decision, then a more complex LLM may be used for a selected route.
 
-  The `default_chain` is required and is used as a fallback if the user's prompt
-  doesn't match any of the specified routes.
+  The `default_route` is required and is used as a fallback if the user's prompt
+  doesn't match any of the specified routes. It may also be used in some
+  fallback error situations as well.
   """
   use Ecto.Schema
   import Ecto.Changeset
@@ -54,14 +55,14 @@ defmodule LangChain.Chains.RoutingChain do
     field :llm, :any, virtual: true
     field :input_text, :string
     field :routes, {:array, :any}, virtual: true
-    field :default_chain, :any, virtual: true
+    field :default_route, :any, virtual: true
     field :verbose, :boolean, default: false
   end
 
   @type t :: %RoutingChain{}
 
-  @create_fields [:llm, :input_text, :routes, :default_chain, :verbose]
-  @required_fields [:llm, :input_text, :routes, :default_chain]
+  @create_fields [:llm, :input_text, :routes, :default_route, :verbose]
+  @required_fields [:llm, :input_text, :routes, :default_route]
 
   @doc """
   Start a new RoutingChain.
@@ -91,6 +92,7 @@ defmodule LangChain.Chains.RoutingChain do
   defp common_validation(changeset) do
     changeset
     |> validate_required(@required_fields)
+    |> validate_default_route()
     |> Utils.validate_llm_is_struct()
   end
 
@@ -111,22 +113,24 @@ defmodule LangChain.Chains.RoutingChain do
   @spec run(t(), Keyword.t()) ::
           {:ok, LLMChain.t(), Message.t() | [Message.t()]} | {:error, String.t()}
   def run(%RoutingChain{} = chain, opts \\ []) do
+    default_name = chain.default_route.name
+
     messages =
       [
         Message.new_system!("""
         You analyze the INPUT from the user to identify which category
         it best applies to. If no category seems to be a good fit, assign
-        the category DEFAULT. Respond only with the category name.
+        the category #{default_name}. Respond only with the category name.
 
         REMEMBER: The category MUST be one of the candidate category names
-        specified below OR it can be "DEFAULT" if the input is not well
+        specified below OR it can be "#{default_name}" if the input is not well
         suited for any of the candidate categories.
         """),
         PromptTemplate.new!(%{
           role: :user,
           text: """
           << CANDIDATE CATEGORIES >>
-          <%= for route <- @routes do %>- <%= route.name %>: <%= route.description %>
+          <%= for route <- @routes do %>- <%= route.name %><%= if route.description do %>: <%= route.description %><% end %>
           <% end %>
 
           << INPUT >>
@@ -145,7 +149,7 @@ defmodule LangChain.Chains.RoutingChain do
   @doc """
   Runs the RoutingChain and evaluates the result to return the selected chain.
   """
-  @spec evaluate(t(), Keyword.t()) :: any()
+  @spec evaluate(t(), Keyword.t()) :: PromptRoute.t()
   def evaluate(%RoutingChain{} = chain, opts \\ []) do
     selected_name =
       chain
@@ -165,20 +169,37 @@ defmodule LangChain.Chains.RoutingChain do
 
     # use selected route name to return the matching chain
     if selected_name == "DEFAULT" do
-      chain.default_chain
+      chain.default_route
     else
       selected_name
       |> PromptRoute.get_selected(chain.routes)
       |> case do
-        %PromptRoute{chain: selected_chain} ->
-          selected_chain
+        %PromptRoute{} = route ->
+          route
 
         nil ->
           # log, verbose
           Logger.warning("No matching route found. Returning default chain.")
           if chain.verbose, do: IO.puts("NO MATCHING ROUTE FOUND: USING DEFAULT")
-          chain.default_chain
+          chain.default_route
       end
+    end
+  end
+
+  defp validate_default_route(changeset) do
+    case get_field(changeset, :default_route) do
+      nil ->
+        changeset
+
+      %PromptRoute{} ->
+        changeset
+
+      _other ->
+        add_error(
+          changeset,
+          :default_route,
+          "must be a PromptRoute"
+        )
     end
   end
 end
