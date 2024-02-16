@@ -19,16 +19,16 @@ defmodule LangChain.Chains.RoutingChain do
         }),
       ]
 
-      selected_chain =
+      selected_route =
         RoutingChain.new(%{
           llm: ChatOpenAI.new(%{model: "gpt-3.5-turbo", stream: false}),
           input_text: "Let's create a marketing blog post about our new product 'Fuzzy Furries'",
           routes: routes,
-          default_route: fallback_chain
+          default_route: PromptRoute.new!(%{name: "DEFAULT", chain: fallback_chain})
         })
         |> RoutingChain.evaluate()
 
-      # The `blog_post_chain` should be returned as the `selected_chain`.
+      # The PromptRoute for the `blog_post` should be returned as the `selected_route`.
 
   The `llm` is the model used to make the determination of which route is the
   best match. A smaller, faster LLM may be a great choice for the routing
@@ -97,18 +97,13 @@ defmodule LangChain.Chains.RoutingChain do
   end
 
   @doc """
-  Run a simple RoutingChain to summarize the user's prompt into a title for the
-  conversation. Uses the provided model. Recommend faster, simpler LLMs without
-  streaming.
+  Run a simple RoutingChain to analyze the input_text and determine which of the
+  given routes is the best match.
 
-  If it fails to summarize to a title, it returns the default text.
-
-      new_title = RoutingChain.new!(%{
-        llm: %ChatOpenAI{model: "gpt-3.5-turbo", stream: false},
-        text_to_summarize: "Let's create a marketing blog post about our new product 'Fuzzy Furries'"
-      })
-      |> RoutingChain.run()
-
+  A simpler, faster LLM may be a great fit for running the analysis. If it fails
+  to find a good match, the `default_route` is used. The `default_route`'s name
+  is supplied to the LLM as well. The name "DEFAULT" is suggested for this
+  route.
   """
   @spec run(t(), Keyword.t()) ::
           {:ok, LLMChain.t(), Message.t() | [Message.t()]} | {:error, String.t()}
