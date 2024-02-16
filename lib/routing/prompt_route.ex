@@ -41,12 +41,17 @@ defmodule LangChain.Routing.PromptRoute do
   user's initial prompt can be re-run against the prompts we define for that
   route.
 
-  Because a `chain` is linked to each route, we can specify the model to use,
-  the prompt templates we want, and associate functions that can be used to
+  When a `chain` is linked to each route, we can specify the model to use, the
+  prompt templates we want, and associate functions that can be used to
   accomplish the task.
 
   The selected LLMChain can then be run through a UI for chat interactions where
   the user and AI work together.
+
+  The `name` will be returned by the LLM when a particular route is selected.
+
+  The `description` is given to the LLM to help it determine if the route should
+  be selected based on the current input prompt.
   """
   use Ecto.Schema
   import Ecto.Changeset
@@ -71,7 +76,7 @@ defmodule LangChain.Routing.PromptRoute do
     :description,
     :chain
   ]
-  @required_fields [:name, :description, :chain]
+  @required_fields [:name]
 
   @doc """
   Build a new PromptRoute struct.
