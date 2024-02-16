@@ -43,9 +43,11 @@ defmodule LangChain.Tools.CalculatorTest do
     end
 
     test "returns an error when evaluation fails" do
-      {result, _} = with_io(:standard_error, fn ->
-        Calculator.execute(%{"expression" => "cow + dog"}, nil)
-      end)
+      {result, _} =
+        with_io(:standard_error, fn ->
+          Calculator.execute(%{"expression" => "cow + dog"}, nil)
+        end)
+
       assert "ERROR" == result
     end
   end

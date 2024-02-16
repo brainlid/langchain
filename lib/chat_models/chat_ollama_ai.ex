@@ -277,7 +277,13 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
     raise LangChainError, "Retries exceeded. Connection failed."
   end
 
-  def do_api_request(%ChatOllamaAI{stream: false} = ollama_ai, messages, functions, callback_fn, retry_count) do
+  def do_api_request(
+        %ChatOllamaAI{stream: false} = ollama_ai,
+        messages,
+        functions,
+        callback_fn,
+        retry_count
+      ) do
     req =
       Req.new(
         url: ollama_ai.endpoint,
@@ -300,21 +306,27 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
             result
         end
 
-        {:error, %Mint.TransportError{reason: :timeout}} ->
-          {:error, "Request timed out"}
+      {:error, %Mint.TransportError{reason: :timeout}} ->
+        {:error, "Request timed out"}
 
-        {:error, %Mint.TransportError{reason: :closed}} ->
-          # Force a retry by making a recursive call decrementing the counter
-          Logger.debug(fn -> "Mint connection closed: retry count = #{inspect(retry_count)}" end)
-          do_api_request(ollama_ai, messages, functions, callback_fn, retry_count - 1)
+      {:error, %Mint.TransportError{reason: :closed}} ->
+        # Force a retry by making a recursive call decrementing the counter
+        Logger.debug(fn -> "Mint connection closed: retry count = #{inspect(retry_count)}" end)
+        do_api_request(ollama_ai, messages, functions, callback_fn, retry_count - 1)
 
-        other ->
-          Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
-          other
+      other ->
+        Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
+        other
     end
   end
 
-  def do_api_request(%ChatOllamaAI{stream: true} = ollama_ai, messages, functions, callback_fn, retry_count) do
+  def do_api_request(
+        %ChatOllamaAI{stream: true} = ollama_ai,
+        messages,
+        functions,
+        callback_fn,
+        retry_count
+      ) do
     Req.new(
       url: ollama_ai.endpoint,
       json: for_api(ollama_ai, messages, functions),

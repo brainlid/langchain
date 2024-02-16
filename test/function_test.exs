@@ -169,6 +169,7 @@ defmodule LangChain.FunctionTest do
 
       %{functions: functions}
     end
+
     test "finds and returns function display text", %{functions: functions} do
       assert "Speaking..." == Function.get_display_text(functions, "speak")
       assert "Walking..." == Function.get_display_text(functions, "walk")
