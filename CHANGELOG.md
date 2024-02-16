@@ -17,7 +17,9 @@ Here's how to make the change:
         })
         |> RoutingChain.evaluate()
 
-Previously, the returned value was a `selected_chain`. It now returns the `selected_route`.
+The `default_chain` was changed to `default_route` and now expects a `PromptRoute` to be provided. The above example includes a sample default route that includes an optional `fallback_chain`.
+
+Previously, the returned value from `RoutingChain.evaluate/1` was a `selected_chain`; it now returns the `selected_route`.
 
 **Why was this changed?**
 
