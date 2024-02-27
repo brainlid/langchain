@@ -27,7 +27,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   # NOTE: As of gpt-4 and gpt-3.5, only one function_call is issued at a time
   # even when multiple requests could be issued based on the prompt.
 
-  # allow up to 2 minutes for response.
+  # allow up to 1 minute for response.
   @receive_timeout 60_000
 
   @primary_key false

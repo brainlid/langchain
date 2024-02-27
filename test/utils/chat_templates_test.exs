@@ -86,7 +86,7 @@ defmodule LangChain.Utils.ChatTemplatesTest do
                    end
     end
 
-    test "removes special tokens from the message content"
+    # test "removes special tokens from the message content"
   end
 
   describe "apply_chat_template!/3 - :inst format" do

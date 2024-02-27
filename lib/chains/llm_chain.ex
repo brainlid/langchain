@@ -122,13 +122,6 @@ defmodule LangChain.Chains.LLMChain do
   Add more functions to an LLMChain.
   """
   @spec add_functions(t(), Function.t() | [Function.t()]) :: t() | no_return()
-  def add_functions(
-        %LLMChain{llm: %{supports_functions: false}} = _chain,
-        _functions
-      ) do
-    raise LangChainError, "The LLM does not support functions."
-  end
-
   def add_functions(%LLMChain{} = chain, %Function{} = function) do
     add_functions(chain, [function])
   end

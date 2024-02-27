@@ -11,14 +11,14 @@ defmodule LangChain.ChatModels.ChatBumblebee do
   import Ecto.Changeset
   import LangChain.Utils.ApiOverride
   alias __MODULE__
+  alias LangChain.ChatModels.ChatModel
   alias LangChain.Message
   alias LangChain.LangChainError
   alias LangChain.Utils
   alias LangChain.MessageDelta
   alias LangChain.Utils.ChatTemplates
 
-  # allow up to 2 minutes for response.
-  # @receive_timeout 60_000
+  @behaviour ChatModel
 
   @primary_key false
   embedded_schema do
@@ -30,13 +30,7 @@ defmodule LangChain.ChatModels.ChatBumblebee do
     # # more focused and deterministic.
     # field :temperature, :float, default: 1.0
 
-    # # Seed for randomizing behavior or giving more deterministic output. Helpful for testing.
-    # field :seed, :integer
-
     field :template_format, Ecto.Enum, values: [:inst, :im_start, :zephyr, :llama_2]
-
-    # Track if the model supports functions.
-    field :supports_functions, :boolean, default: false
 
     # The bumblebee model may compile differently based on the stream true/false
     # option on the serving. Therefore, streaming should be enabled on the
@@ -44,22 +38,25 @@ defmodule LangChain.ChatModels.ChatBumblebee do
     # code. - https://github.com/elixir-nx/bumblebee/issues/295
 
     field :stream, :boolean, default: true
+
+    # Seed for randomizing behavior or giving more deterministic output. Helpful
+    # for testing.
+    field :seed, :integer
   end
 
   @type t :: %ChatBumblebee{}
 
-  @type call_response :: {:ok, Message.t() | [Message.t()]} | {:error, String.t()}
-  @type callback_data ::
-          {:ok, Message.t() | MessageDelta.t() | [Message.t() | MessageDelta.t()]}
-          | {:error, String.t()}
+  # @type call_response :: {:ok, Message.t() | [Message.t()]} | {:error, String.t()}
+  # @type callback_data ::
+  #         {:ok, Message.t() | MessageDelta.t() | [Message.t() | MessageDelta.t()]}
+  #         | {:error, String.t()}
   @type callback_fn :: (Message.t() | MessageDelta.t() -> any())
 
   @create_fields [
     :serving,
     # :temperature,
-    # :seed,
+    :seed,
     :template_format,
-    :supports_functions,
     :stream
   ]
   @required_fields [:serving]
@@ -94,16 +91,13 @@ defmodule LangChain.ChatModels.ChatBumblebee do
     |> validate_required(@required_fields)
   end
 
-  # def new_mistral() do
-  #   # https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1
-  # end
-
-  @spec call(
-          t(),
-          String.t() | [Message.t()],
-          [LangChain.Function.t()],
-          nil | callback_fn()
-        ) :: call_response()
+  # @spec call(
+  #         t(),
+  #         String.t() | [Message.t()],
+  #         [LangChain.Function.t()],
+  #         nil | callback_fn()
+  #       ) :: call_response()
+  @impl ChatModel
   def call(model, prompt, functions \\ [], callback_fn \\ nil)
 
   def call(%ChatBumblebee{} = model, prompt, functions, callback_fn) when is_binary(prompt) do
@@ -123,7 +117,7 @@ defmodule LangChain.ChatModels.ChatBumblebee do
       case get_api_override() do
         {:ok, {:ok, data} = response} ->
           # fire callback for fake responses too
-          fire_callback(model, data, callback_fn)
+          Utils.fire_callback(model, data, callback_fn)
           response
 
         _other ->
@@ -147,24 +141,6 @@ defmodule LangChain.ChatModels.ChatBumblebee do
     end
   end
 
-  # Make the request from the bumblebee zephyr serving.
-  #
-  # The result of the function is:
-  #
-  # - `result` - where `result` is a data-structure like a list or map.
-  # - `{:error, reason}` - Where reason is a string explanation of what went wrong.
-  #
-  # If a callback_fn is provided, it will fire with each
-
-  # When `stream: true` is If `stream: false`, the completed message is
-  # returned.
-  #
-  # If `stream: true`, the `callback_fn` is executed for the returned
-  # MessageDelta responses. The deltas are accumulated and merged together into
-  # the complete Message.
-  #
-  # Executes the callback function passing the response only parsed to the data
-  # structures.
   @doc false
   @spec do_serving_request(t(), [Message.t()], [Function.t()], callback_fn()) ::
           list() | struct() | {:error, String.t()}
@@ -191,7 +167,7 @@ defmodule LangChain.ChatModels.ChatBumblebee do
     case Message.new(%{role: :assistant, status: :complete, content: raw_response}) do
       {:ok, message} ->
         # execute the callback with the final message
-        fire_callback(model, message, callback_fn)
+        Utils.fire_callback(model, message, callback_fn)
         # return a list of the complete message. As a list for compatibility.
         [message]
 
@@ -229,10 +205,8 @@ defmodule LangChain.ChatModels.ChatBumblebee do
         # https://github.com/elixir-nx/bumblebee/issues/287
         case MessageDelta.to_message(%MessageDelta{final_delta | status: :complete}) do
           {:ok, message} ->
-            # TODO: NEED TO TEST FOR RECEIVING A FUNCTION EXECUTION
-
             # execute the callback with the final message
-            fire_callback(model, message, callback_fn)
+            Utils.fire_callback(model, message, callback_fn)
             # return a list of the complete message. For compatibility.
             [message]
 
@@ -262,7 +236,7 @@ defmodule LangChain.ChatModels.ChatBumblebee do
         end
 
       # processed the delta, fire the callback
-      fire_callback(model, new_delta, callback_fn)
+      Utils.fire_callback(model, new_delta, callback_fn)
 
       # merge the delta to accumulate the full message
       case acc do
@@ -274,24 +248,5 @@ defmodule LangChain.ChatModels.ChatBumblebee do
           MessageDelta.merge_delta(acc, new_delta)
       end
     end)
-  end
-
-  # fire the callback if present.
-  @spec fire_callback(
-          t(),
-          data :: callback_data(),
-          nil | callback_fn()
-        ) :: :ok
-  defp fire_callback(%ChatBumblebee{stream: true}, _data, nil) do
-    Logger.warning("Streaming call requested but no callback function was given.")
-    :ok
-  end
-
-  defp fire_callback(%ChatBumblebee{stream: false}, _data, nil), do: :ok
-
-  defp fire_callback(%ChatBumblebee{}, data, callback_fn) when is_function(callback_fn) do
-    # OPTIONAL: Execute callback function
-    callback_fn.(data)
-    :ok
   end
 end

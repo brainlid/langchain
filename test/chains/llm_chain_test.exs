@@ -73,13 +73,6 @@ defmodule LangChain.Chains.LLMChainTest do
       assert updated_chain2.functions == [function, howdy_fn]
       assert updated_chain2._function_map == %{"hello_world" => function, "howdy" => howdy_fn}
     end
-
-    test "raises an exception when the model does not support functions" do
-      chain = LLMChain.new!(%{llm: %ChatBumblebee{supports_functions: false}})
-      assert_raise LangChain.LangChainError, "The LLM does not support functions.", fn ->
-        LLMChain.add_functions(chain, Function.new!(%{name: "test"}))
-      end
-    end
   end
 
   describe "cancelled_delta/1" do
