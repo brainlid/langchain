@@ -4,7 +4,6 @@ defmodule LangChain.Utils do
   """
   alias Ecto.Changeset
   require Logger
-  alias LangChain.LangChainError
 
   @doc """
   Only add the key to the map if the value is present. When the value is a list,
@@ -113,7 +112,7 @@ defmodule LangChain.Utils do
   end
 
   @doc """
-  Create a function to handle the streaming request. 
+  Creates and returns an anonymous function to handle the streaming request.
   """
   @spec handle_stream_fn(
           %{optional(:stream) => boolean()},
@@ -123,9 +122,14 @@ defmodule LangChain.Utils do
   def handle_stream_fn(model, process_response_fn, callback_fn) do
     fn {:data, raw_data}, {req, response} ->
       # cleanup data because it isn't structured well for JSON.
-      new_data = decode_streamed_data(raw_data, process_response_fn)
+
+      # Fetch any previously incomplete messages that are buffered in the
+      # response struct. and pass that in with the data for decode
+      buffered = Req.Response.get_private(response, :lang_incomplete, "")
+      {parsed_data, incomplete} = decode_streamed_data({raw_data, buffered}, process_response_fn)
+
       # execute the callback function for each MessageDelta
-      fire_callback(model, new_data, callback_fn)
+      fire_callback(model, parsed_data, callback_fn)
       old_body = if response.body == "", do: [], else: response.body
 
       # Returns %Req.Response{} where the body contains ALL the stream delta
@@ -146,13 +150,17 @@ defmodule LangChain.Utils do
       #       ]
       #
       # The reason for the inner list is for each entry in the "n" choices. By default only 1.
-      updated_response = %{response | body: old_body ++ new_data}
+      updated_response = %{response | body: old_body ++ parsed_data}
+      # write any incomplete portion to the response's private data for when
+      # more data is received.
+      updated_response = Req.Response.put_private(updated_response, :lang_incomplete, incomplete)
 
       {:cont, {req, updated_response}}
     end
   end
 
-  defp decode_streamed_data(data, process_response_fn) do
+  @doc false
+  def decode_streamed_data({raw_data, buffer}, process_response_fn) do
     # Data comes back like this:
     #
     # "data: {\"id\":\"chatcmpl-7e8yp1xBhriNXiqqZ0xJkgNrmMuGS\",\"object\":\"chat.completion.chunk\",\"created\":1689801995,\"model\":\"gpt-4-0613\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":null,\"function_call\":{\"name\":\"calculator\",\"arguments\":\"\"}},\"finish_reason\":null}]}\n\n
@@ -161,42 +169,35 @@ defmodule LangChain.Utils do
     # In that form, the data is not ready to be interpreted as JSON. Let's clean
     # it up first.
 
-    data
+    # as we start, the initial accumulator is an empty set of parsed results and
+    # any left-over buffer from a previous processing.
+    raw_data
     |> String.split("data: ")
-    |> Enum.map(fn str ->
+    |> Enum.reduce({[], buffer}, fn str, {done, incomplete} = acc ->
+      # auto filter out "" and "[DONE]" by not including the accumulator
       str
       |> String.trim()
       |> case do
         "" ->
-          :empty
+          acc
 
         "[DONE]" ->
-          :empty
+          acc
 
         json ->
-          json
+          # combine with any previous incomplete data
+          starting_json = incomplete <> json
+
+          starting_json
           |> Jason.decode()
           |> case do
             {:ok, parsed} ->
-              parsed
+              {done ++ [process_response_fn.(parsed)], ""}
 
-            {:error, reason} ->
-              {:error, reason}
+            {:error, _reason} ->
+              {done, starting_json}
           end
-          |> process_response_fn.()
       end
     end)
-    # returning a list of elements. "junk" elements were replaced with `:empty`.
-    # Filter those out down and return the final list of MessageDelta structs.
-    |> Enum.filter(fn d -> d != :empty end)
-    # if there was a single error returned in a list, flatten it out to just
-    # return the error
-    |> case do
-      [{:error, reason}] ->
-        raise LangChainError, reason
-
-      other ->
-        other
-    end
   end
 end
