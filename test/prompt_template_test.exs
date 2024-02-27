@@ -114,9 +114,11 @@ defmodule LangChain.PromptTemplateTest do
     end
 
     test "returns substitutions removed when replacement missing" do
-      {result, _} = with_io(:standard_error, fn ->
-        PromptTemplate.format_text("This is <%= @missing %>", %{other: "something"})
-      end)
+      {result, _} =
+        with_io(:standard_error, fn ->
+          PromptTemplate.format_text("This is <%= @missing %>", %{other: "something"})
+        end)
+
       assert result == "This is "
     end
   end

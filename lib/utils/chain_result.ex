@@ -17,7 +17,8 @@ defmodule LangChain.Utils.ChainResult do
   This supports passing in the final, updated LLMChain, or the result of the
   `LLMChain.run/2` function.
   """
-  @spec to_string(LLMChain.t() | {:ok, LLMChain.t(), Message.t()} | {:error, String.t()}) :: {:ok, String.t()} | {:error, String.t()}
+  @spec to_string(LLMChain.t() | {:ok, LLMChain.t(), Message.t()} | {:error, String.t()}) ::
+          {:ok, String.t()} | {:error, String.t()}
   def to_string({:error, reason}) when is_binary(reason) do
     # if an error was passed in, forward it through.
     {:error, reason}
@@ -48,7 +49,8 @@ defmodule LangChain.Utils.ChainResult do
   raises and exception with the reason why it cannot be used. See the docs for
   `to_string/2` for details.
   """
-  @spec to_string!(LLMChain.t() | {:ok, LLMChain.t(), Message.t()} | {:error, String.t()}) :: String.t() | no_return()
+  @spec to_string!(LLMChain.t() | {:ok, LLMChain.t(), Message.t()} | {:error, String.t()}) ::
+          String.t() | no_return()
   def to_string!(%LLMChain{} = chain) do
     case ChainResult.to_string(chain) do
       {:ok, result} -> result

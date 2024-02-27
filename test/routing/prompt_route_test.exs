@@ -22,12 +22,20 @@ defmodule LangChain.Routing.PromptRouteTest do
       assert route.chain == %LLMChain{}
     end
 
-    test "requires name, description, and chain" do
+    test "requires name" do
       assert {:error, changeset} = PromptRoute.new(%{})
       refute changeset.valid?
       assert {"can't be blank", _} = changeset.errors[:name]
-      assert {"can't be blank", _} = changeset.errors[:description]
-      assert {"can't be blank", _} = changeset.errors[:chain]
+    end
+
+    test "does not require a chain" do
+      assert {:ok, %PromptRoute{}} =
+               PromptRoute.new(%{name: "thing", description: "stuff", chain: nil})
+    end
+
+    test "does not require a description" do
+      assert {:ok, %PromptRoute{}} =
+               PromptRoute.new(%{name: "thing", description: nil, chain: nil})
     end
   end
 
@@ -44,8 +52,8 @@ defmodule LangChain.Routing.PromptRouteTest do
     end
 
     test "raises exception when invalid" do
-      assert_raise LangChainError, "name: can't be blank; chain: can't be blank", fn ->
-        PromptRoute.new!(%{description: "d"})
+      assert_raise LangChainError, "name: can't be blank", fn ->
+        PromptRoute.new!(%{})
       end
     end
   end

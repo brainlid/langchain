@@ -227,8 +227,17 @@ defmodule LangChain.Chains.LLMChain do
       {:ok, [[%MessageDelta{} | _] | _] = deltas} ->
         if chain.verbose_deltas, do: IO.inspect(deltas, label: "DELTA MESSAGE LIST RESPONSE")
         updated_chain = apply_deltas(chain, deltas)
-        if chain.verbose, do: IO.inspect(updated_chain.last_message, label: "COMBINED DELTA MESSAGE RESPONSE")
+
+        if chain.verbose,
+          do: IO.inspect(updated_chain.last_message, label: "COMBINED DELTA MESSAGE RESPONSE")
+
         {:ok, updated_chain}
+
+      {:ok, %Message{} = message} ->
+        if chain.verbose,
+          do: IO.inspect(message, label: "SINGLE MESSAGE RESPONSE NO WRAPPED ARRAY")
+
+        {:ok, add_message(chain, message)}
 
       {:error, reason} ->
         if chain.verbose, do: IO.inspect(reason, label: "ERROR")

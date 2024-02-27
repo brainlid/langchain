@@ -59,9 +59,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     field :n, :integer, default: 1
     field :json_response, :boolean, default: false
     field :stream, :boolean, default: false
-
-    # For compatibility between models, reflect that functions are supported
-    field :supports_functions, :boolean, default: true
+    field :max_tokens, :integer, default: nil
   end
 
   @type t :: %ChatOpenAI{}
@@ -76,7 +74,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     :n,
     :stream,
     :receive_timeout,
-    :json_response
+    :json_response,
+    :max_tokens
   ]
   @required_fields [:endpoint, :model]
 
@@ -139,6 +138,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       messages: Enum.map(messages, &ForOpenAIApi.for_api/1),
       response_format: set_response_format(openai)
     }
+    |> Utils.conditionally_add_to_map(:max_tokens, openai.max_tokens)
     |> Utils.conditionally_add_to_map(:seed, openai.seed)
     |> Utils.conditionally_add_to_map(:functions, get_functions_for_api(functions))
   end
