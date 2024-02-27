@@ -167,7 +167,7 @@ defmodule LangChain.ChatModels.ChatBumblebee do
     case Message.new(%{role: :assistant, status: :complete, content: raw_response}) do
       {:ok, message} ->
         # execute the callback with the final message
-        Utils.fire_callback(model, message, callback_fn)
+        Utils.fire_callback(model, [message], callback_fn)
         # return a list of the complete message. As a list for compatibility.
         [message]
 
@@ -206,7 +206,7 @@ defmodule LangChain.ChatModels.ChatBumblebee do
         case MessageDelta.to_message(%MessageDelta{final_delta | status: :complete}) do
           {:ok, message} ->
             # execute the callback with the final message
-            Utils.fire_callback(model, message, callback_fn)
+            Utils.fire_callback(model, [message], callback_fn)
             # return a list of the complete message. For compatibility.
             [message]
 
@@ -236,7 +236,7 @@ defmodule LangChain.ChatModels.ChatBumblebee do
         end
 
       # processed the delta, fire the callback
-      Utils.fire_callback(model, new_delta, callback_fn)
+      Utils.fire_callback(model, [new_delta], callback_fn)
 
       # merge the delta to accumulate the full message
       case acc do
