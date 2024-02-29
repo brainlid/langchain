@@ -178,7 +178,7 @@ Currently, function calling is NOT supported with these models.
 
 The `serving` is the module name of the `Nx.Serving` that is hosting the model.
 
-See the `LangChain.ChatModels.ChatBumblebee` documentation for more details.
+See the [`LangChain.ChatModels.ChatBumblebee` documentation](https://hexdocs.pm/langchain/LangChain.ChatModels.ChatBumblebee.html) for more details.
 
 ## Testing
 
