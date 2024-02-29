@@ -68,8 +68,7 @@ defmodule LangChain.Chains.DataExtractionChainTest do
       "Alex is 5 feet tall. Claudia is 4 feet taller than Alex and jumps higher than him.
        Claudia is a brunette and Alex is blonde. Alex's dog Frosty is a labrador and likes to play hide and seek."
 
-    {:ok, result} =
-      DataExtractionChain.run(chat, schema_parameters, data_prompt, verbose: true)
+    {:ok, result} = DataExtractionChain.run(chat, schema_parameters, data_prompt, verbose: true)
 
     assert result == [
              %{

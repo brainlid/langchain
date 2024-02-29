@@ -137,8 +137,7 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
         ]
       }
 
-      assert [%MessageDelta{} = struct] =
-               ChatMistralAI.do_process_response(response)
+      assert [%MessageDelta{} = struct] = ChatMistralAI.do_process_response(response)
 
       assert struct.role == :assistant
       assert struct.content == "This is the first part of a mes"
