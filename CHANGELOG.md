@@ -12,6 +12,9 @@ This release includes an experimental change for better support of streamed resp
 
 Other library dependencies requirements were relaxed, making it easier to support different versions of libraries like `req` and `nx`.
 
+* Add mistral chat by @michalwarda in https://github.com/brainlid/langchain/pull/76
+* handle receiving JSON data broken up over multiple messages by @brainlid in https://github.com/brainlid/langchain/pull/80
+* Add initial support for Zephyr 7b Beta by @brainlid in https://github.com/brainlid/langchain/pull/41
 
 ## v0.1.8 (2024-02-16)
 
