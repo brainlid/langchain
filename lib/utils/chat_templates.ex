@@ -2,6 +2,68 @@ defmodule LangChain.Utils.ChatTemplates do
   @moduledoc """
   Functions for converting messages into the various commonly used chat template
   formats.
+
+  ## Format examples
+
+  There are currently no industry standards around model's chat formats. For any
+  given model, it's documentation and config may need to be inspected for it's
+  format, and it may be something not supported at this time.
+
+  ### `:inst`
+
+  ```
+  <s>[INST] System message. User message. [/INST]
+  Assistant response
+  [INST] User message. [/INST]</s>
+  Assistant response
+  ```
+
+  Note: The `:inst` format has no concept of a system message. It will be
+  combined with the first user message
+
+  ### `:im_start`
+
+  ```
+  <|im_start|>user
+  User message.<|im_end|>
+  <|im_start|>assistant
+  Assistant response.<|im_end|>
+  <|im_start|>user
+  User message.<|im_end|>
+  <|im_start|>assistant
+  ```
+
+  Note: The `:im_start` format has no concept of a system message. It will be
+  combined with the first user message.
+
+  ### `:llama_2`
+
+  ```
+  <s>[INST] <<SYS>>
+  System message.
+  <</SYS>>
+
+  User message [/INST] Assistant response </s><s>[INST] User message. [/INST]
+  ```
+
+  Note: The `:llama_2` format supports specific system messages. It is a
+  variation of the `:inst` format.
+
+  ### `:zephyr`
+
+  ```
+  <|system|>
+  System message.</s>
+  <|user|>
+  User message.</s>
+  <|assistant|>
+  Assistant message.
+  <|user|>
+  User message.</s>
+  ```
+
+  Note: The `:zephyr` format supports specific system messages.
+
   """
   import Integer, only: [is_even: 1, is_odd: 1]
   alias LangChain.LangChainError

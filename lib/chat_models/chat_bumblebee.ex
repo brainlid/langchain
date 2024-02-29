@@ -23,6 +23,28 @@ defmodule LangChain.ChatModels.ChatBumblebee do
 
   The `stream_done` option sends a final message to let us know when the stream
   is complete and includes some token information.
+
+  The chat model can be created like this and provided to an LLMChain:
+
+      ChatBumblebee.new!(%{
+        serving: @serving_name,
+        template_format: @template_format,
+        receive_timeout: @receive_timeout,
+        stream: true
+      })
+
+  The `serving` is the module name of the `Nx.Serving` that is hosting the
+  model.
+
+  The following are the supported values for `template_format`. These are
+  provided by `LangChain.Utils.ChatTemplates`.
+
+  Chat models are trained against specific content formats for the messages.
+  Some models have no special concept of a system message. See the
+  `LangChain.Utils.ChatTemplates` documentation for specific format examples.
+
+  Using the wrong format with a model may result in poor performance or
+  hallucinations. It will not result in an error.
   """
   use Ecto.Schema
   require Logger
