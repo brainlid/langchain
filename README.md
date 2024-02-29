@@ -163,6 +163,23 @@ For example, if a locally running service provided that feature, the following c
   |> LLMChain.run()
 ```
 
+### Bumblebee Chat Support
+
+Bumblebee hosted chat models are supported. There is built-in support for Llama 2, Mistral, and Zephyr models.
+
+Currently, function calling is NOT supported with these models.
+
+    ChatBumblebee.new!(%{
+      serving: @serving_name,
+      template_format: @template_format,
+      receive_timeout: @receive_timeout,
+      stream: true
+    })
+
+The `serving` is the module name of the `Nx.Serving` that is hosting the model.
+
+See the `LangChain.ChatModels.ChatBumblebee` documentation for more details.
+
 ## Testing
 
 To run all the tests including the ones that perform live calls against the OpenAI API, use the following command:
