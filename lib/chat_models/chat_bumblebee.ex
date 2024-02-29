@@ -1,10 +1,28 @@
 defmodule LangChain.ChatModels.ChatBumblebee do
   @moduledoc """
-  Represents a chat model hosted and accessed through Bumblebee.
+  Represents a chat model hosted by Bumblebee and accessed through an
+  `Nx.Serving`.
 
   Many types of models can be hosted through Bumblebee, so this attempts to
-  represent the most common features and provide a single implementation when
+  represent the most common features and provide a single implementation where
   possible.
+
+  For streaming responses, the Bumblebee serving must be configured with
+  `stream: true` and should include `stream_done: true` as well.
+
+  Example:
+
+      Bumblebee.Text.generation(model_info, tokenizer, generation_config,
+        # ...
+        stream: true,
+        stream_done: true
+      )
+
+  This supports a non streaming response as well, in which case, a completed
+  `LangChain.Message` is returned at the completion.
+
+  The `stream_done` option sends a final message to let us know when the stream
+  is complete and includes some token information.
   """
   use Ecto.Schema
   require Logger
@@ -41,7 +59,7 @@ defmodule LangChain.ChatModels.ChatBumblebee do
 
     # Seed for randomizing behavior or giving more deterministic output. Helpful
     # for testing.
-    field :seed, :integer
+    field :seed, :integer, default: nil
   end
 
   @type t :: %ChatBumblebee{}
@@ -91,12 +109,6 @@ defmodule LangChain.ChatModels.ChatBumblebee do
     |> validate_required(@required_fields)
   end
 
-  # @spec call(
-  #         t(),
-  #         String.t() | [Message.t()],
-  #         [LangChain.Function.t()],
-  #         nil | callback_fn()
-  #       ) :: call_response()
   @impl ChatModel
   def call(model, prompt, functions \\ [], callback_fn \\ nil)
 
@@ -144,27 +156,22 @@ defmodule LangChain.ChatModels.ChatBumblebee do
   @doc false
   @spec do_serving_request(t(), [Message.t()], [Function.t()], callback_fn()) ::
           list() | struct() | {:error, String.t()}
-  def do_serving_request(
-        %ChatBumblebee{stream: false} = model,
-        messages,
-        _functions,
-        callback_fn
-      ) do
+  def do_serving_request(%ChatBumblebee{} = model, messages, _functions, callback_fn) do
     prompt = ChatTemplates.apply_chat_template!(messages, model.template_format)
 
-    raw_response =
-      case Nx.Serving.batched_run(model.serving, prompt) do
-        # model serving set to stream: false. Received map response. Extract data.
-        %{results: [%{text: content}]} ->
-          content
+    model.serving
+    |> Nx.Serving.batched_run(%{text: prompt, seed: model.seed})
+    |> do_process_response(model, callback_fn)
+  end
 
-        stream ->
-          # Model serving setup for streaming. Requested to not stream response.
-          # Consume the full stream and return as the content.
-          Enum.reduce(stream, "", fn data, acc -> acc <> data end)
-      end
-
-    case Message.new(%{role: :assistant, status: :complete, content: raw_response}) do
+  @doc false
+  def do_process_response(
+        %{results: [%{text: content, token_summary: _token_summary}]},
+        %ChatBumblebee{} = model,
+        callback_fn
+      )
+      when is_binary(content) do
+    case Message.new(%{role: :assistant, status: :complete, content: content}) do
       {:ok, message} ->
         # execute the callback with the final message
         Utils.fire_callback(model, [message], callback_fn)
@@ -178,51 +185,32 @@ defmodule LangChain.ChatModels.ChatBumblebee do
     end
   end
 
-  def do_serving_request(
-        %ChatBumblebee{stream: true} = model,
-        messages,
-        _functions,
-        callback_fn
-      ) do
-    # Create the content from the messages.
-    # prompt = messages_to_prompt(messages)
-    prompt = ChatTemplates.apply_chat_template!(messages, model.template_format)
+  def do_process_response(stream, %ChatBumblebee{stream: false} = model, callback_fn) do
+    # Request is to NOT stream. Consume the full stream and format the data as
+    # though it had not been streamed.
+    full_data =
+      Enum.reduce(stream, %{text: "", token_summary: nil}, fn
+        {:done, token_data}, %{text: text} ->
+          %{text: text, token_summary: token_data}
 
-    case Nx.Serving.batched_run(model.serving, prompt) do
-      # requested a stream but received a non-streaming result.
-      %{results: _results} ->
-        raise LangChainError, "Served model did not return a stream"
+        data, %{text: text} = acc ->
+          Map.put(acc, :text, text <> data)
+      end)
 
-      stream ->
-        # process the stream in to MessageDeltas. Fire off the callbacks as they
-        # are received. It accumulates the deltas into a final combined
-        # MessageDelta.
-        final_delta = stream_to_deltas!(model, stream, callback_fn)
-
-        # fire the callback of the completed message
-        # Assuming it's complete at this point.
-        # Want a `:done` message to know it's officially complete.
-        # https://github.com/elixir-nx/bumblebee/issues/287
-        case MessageDelta.to_message(%MessageDelta{final_delta | status: :complete}) do
-          {:ok, message} ->
-            # execute the callback with the final message
-            Utils.fire_callback(model, [message], callback_fn)
-            # return a list of the complete message. For compatibility.
-            [message]
-
-          {:error, reason} ->
-            Logger.error("Failed to convert deltas to full message: #{inspect(reason)}")
-            {:error, reason}
-        end
-    end
+    do_process_response(%{results: [full_data]}, model, callback_fn)
   end
 
-  @spec stream_to_deltas!(t(), Stream.t(), callback_fn()) :: nil | MessageDelta.t() | no_return()
-  def stream_to_deltas!(model, stream, callback_fn) do
-    Enum.reduce(stream, nil, fn data, acc ->
-      new_delta =
-        case MessageDelta.new(%{role: :assistant, content: data}) do
+  def do_process_response(stream, %ChatBumblebee{} = model, callback_fn) do
+    chunk_processor = fn
+      {:done, _token_data} ->
+        final_delta = MessageDelta.new!(%{role: :assistant, status: :complete})
+        Utils.fire_callback(model, [final_delta], callback_fn)
+        final_delta
+
+      content when is_binary(content) ->
+        case MessageDelta.new(%{content: content, role: :assistant, status: :incomplete}) do
           {:ok, delta} ->
+            Utils.fire_callback(model, [delta], callback_fn)
             delta
 
           {:error, changeset} ->
@@ -234,19 +222,14 @@ defmodule LangChain.ChatModels.ChatBumblebee do
 
             raise LangChainError, reason
         end
+    end
 
-      # processed the delta, fire the callback
-      Utils.fire_callback(model, [new_delta], callback_fn)
+    result =
+      stream
+      |> Stream.map(&chunk_processor.(&1))
+      |> Enum.to_list()
 
-      # merge the delta to accumulate the full message
-      case acc do
-        # first time through. Set delta as the initial message chunk
-        nil ->
-          new_delta
-
-        %MessageDelta{} = _previous ->
-          MessageDelta.merge_delta(acc, new_delta)
-      end
-    end)
+    # return a list of a list to mirror the way ChatGPT returns data
+    [result]
   end
 end

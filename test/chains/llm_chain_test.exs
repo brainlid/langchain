@@ -9,7 +9,6 @@ defmodule LangChain.Chains.LLMChainTest do
   alias LangChain.Function
   alias LangChain.Message
   alias LangChain.MessageDelta
-  alias LangChain.ChatModels.ChatBumblebee
 
   setup do
     {:ok, chat} = ChatOpenAI.new(%{temperature: 0})
