@@ -103,8 +103,7 @@ defmodule LangChain.FunctionParamTest do
     end
 
     test "requires object_properties when array of object" do
-      {:error, changeset} =
-        FunctionParam.new(%{name: "thing", type: :array, item_type: "object"})
+      {:error, changeset} = FunctionParam.new(%{name: "thing", type: :array, item_type: "object"})
 
       assert {"required when array type of object is used", _} =
                changeset.errors[:object_properties]
@@ -234,24 +233,23 @@ defmodule LangChain.FunctionParamTest do
           ]
         })
 
-      expected =
-        %{
-          "attributes" => %{
-            "type" => "object",
-            "description" => "Set of attributes for a new thing",
-            "properties" => %{
-              "name" => %{
-                "type" => "string",
-                "description" => "The name of the thing"
-              },
-              "code" => %{
-                "type" => "string",
-                "description" => "Unique code"
-              }
+      expected = %{
+        "attributes" => %{
+          "type" => "object",
+          "description" => "Set of attributes for a new thing",
+          "properties" => %{
+            "name" => %{
+              "type" => "string",
+              "description" => "The name of the thing"
             },
-            "required" => ["code"]
-          }
+            "code" => %{
+              "type" => "string",
+              "description" => "Unique code"
+            }
+          },
+          "required" => ["code"]
         }
+      }
 
       assert expected == FunctionParam.to_json_schema(%{}, param)
     end
@@ -335,29 +333,28 @@ defmodule LangChain.FunctionParamTest do
 
       schema = FunctionParam.to_parameters_schema([person])
 
-      expected =
-        %{
-          "type" => "object",
-          "properties" => %{
-            "person" => %{
-              "type" => "object",
-              "properties" => %{
-                "age" => %{"type" => "integer"},
-                "education" => %{
-                  "type" => "object",
-                  "properties" => %{
-                    "completed" => %{"type" => "boolean"},
-                    "institution_name" => %{"type" => "string"}
-                  },
-                  "required" => ["institution_name"]
+      expected = %{
+        "type" => "object",
+        "properties" => %{
+          "person" => %{
+            "type" => "object",
+            "properties" => %{
+              "age" => %{"type" => "integer"},
+              "education" => %{
+                "type" => "object",
+                "properties" => %{
+                  "completed" => %{"type" => "boolean"},
+                  "institution_name" => %{"type" => "string"}
                 },
-                "name" => %{"type" => "string"}
+                "required" => ["institution_name"]
               },
-              "required" => ["name"]
-            }
-          },
-          "required" => []
-        }
+              "name" => %{"type" => "string"}
+            },
+            "required" => ["name"]
+          }
+        },
+        "required" => []
+      }
 
       assert schema == expected
     end

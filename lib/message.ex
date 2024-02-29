@@ -53,14 +53,8 @@ defmodule LangChain.Message do
   @type t :: %Message{}
   @type status :: :complete | :cancelled | :length
 
-  @create_fields [
-    :role,
-    :content,
-    :status,
-    :function_name,
-    :arguments,
-    :index
-  ]
+  @update_fields [:role, :content, :status, :function_name, :arguments, :index]
+  @create_fields @update_fields
   @required_fields [:role]
 
   @doc """
@@ -87,6 +81,13 @@ defmodule LangChain.Message do
       {:error, changeset} ->
         raise LangChainError, changeset
     end
+  end
+
+  @doc false
+  def changeset(message, attrs) do
+    message
+    |> cast(attrs, @update_fields)
+    |> common_validations()
   end
 
   defp changeset_is_function?(changeset) do

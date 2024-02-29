@@ -42,8 +42,7 @@ defmodule LangChain.Routing.PromptRouteTest do
   describe "new!/1" do
     test "returns the configured route" do
       assert %PromptRoute{} =
-               route =
-               PromptRoute.new!(%{name: "name", description: "desc", chain: %LLMChain{}})
+               route = PromptRoute.new!(%{name: "name", description: "desc", chain: %LLMChain{}})
 
       assert %PromptRoute{} = route
       assert route.name == "name"

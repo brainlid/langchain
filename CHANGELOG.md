@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.1.9 (2024-02-29) - The Leap Release!
+
+This adds support for Bumblebee as a Chat model, making it easy to have conversations with Llama 2, Mistral, and Zephyr LLMs.
+
+See the documentation in `LangChain.ChatModels.ChatBumblebee` for getting started.
+
+NOTE: That at this time, none of the models support the `function` ability, so that is not supported yet.
+
+This release includes an experimental change for better support of streamed responses that are broken up over multiple messages from services like ChatGPT and others.
+
+Other library dependencies requirements were relaxed, making it easier to support different versions of libraries like `req` and `nx`.
+
+
 ## v0.1.8 (2024-02-16)
 
 **Breaking change**: `RoutingChain`'s required values changed. Previously, `default_chain` was assigned an `%LLMChain{}` to return when no more specific routes matched.
