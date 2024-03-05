@@ -144,7 +144,7 @@ custom_fn =
   |> LLMChain.run(while_needs_response: true)
 
 # print the LLM's answer
-IO.put message.content
+IO.puts(message.content)
 #=> "The hairbrush is located in the drawer."
 ```
 
