@@ -20,7 +20,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
 
   @default_base_url "https://generativelanguage.googleapis.com"
   @default_api_version "v1beta"
-  @default_endpoint "#{@default_base_url}#{@default_api_version}"
+  @default_endpoint "#{@default_base_url}/#{@default_api_version}"
 
   # allow up to 2 minutes for response.
   @receive_timeout 60_000
