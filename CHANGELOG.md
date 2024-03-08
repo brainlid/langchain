@@ -2,6 +2,9 @@
 
 ## v0.1.10 (2024-03-07)
 
+**Changes**
+
+- Fix invalid default url for google ai by @pkrawat1 in https://github.com/brainlid/langchain/pull/82
 
 ## v0.1.9 (2024-02-29) - The Leap Release!
 
