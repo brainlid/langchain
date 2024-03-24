@@ -150,7 +150,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       nil ->
         nil
 
-      %{content: content} ->
+      %Message{content: content} ->
         content
     end
   end
@@ -384,52 +384,52 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         "content" => [%{"type" => "text", "text" => content}],
         "stop_reason" => stop_reason
       }) do
-    message_attrs = %{
+    %{
       role: :assistant,
       content: content,
       status: stop_reason_to_status(stop_reason)
     }
-
-    case Message.new(message_attrs) do
-      {:ok, message} ->
-        message
-
-      {:error, changeset} ->
-        {:error, Utils.changeset_error_to_string(changeset)}
-    end
+    |> Message.new()
+    |> to_response()
   end
 
   def do_process_response(%{
         "type" => "content_block_start",
         "content_block" => %{"type" => "text", "text" => content}
       }) do
-    new_delta_response(%{
+    %{
       role: :assistant,
       content: content,
       status: :incomplete
-    })
+    }
+    |> MessageDelta.new()
+    |> to_response()
   end
 
   def do_process_response(%{
         "type" => "content_block_delta",
         "delta" => %{"type" => "text_delta", "text" => content}
       }) do
-    new_delta_response(%{
+    %{
       role: :assistant,
       content: content,
       status: :incomplete
-    })
+    }
+    |> MessageDelta.new()
+    |> to_response()
   end
 
   def do_process_response(%{
         "type" => "message_delta",
         "delta" => %{"stop_reason" => stop_reason}
       }) do
-    new_delta_response(%{
+    %{
       role: :assistant,
       content: "",
       status: stop_reason_to_status(stop_reason)
-    })
+    }
+    |> MessageDelta.new()
+    |> to_response()
   end
 
   # These streaming events don't contain any useful data to return to callers. Ignore.
@@ -454,15 +454,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     {:error, "Unexpected response"}
   end
 
-  defp new_delta_response(delta_attrs) do
-    case MessageDelta.new(delta_attrs) do
-      {:ok, message} ->
-        message
-
-      {:error, changeset} ->
-        {:error, Utils.changeset_error_to_string(changeset)}
-    end
-  end
+  defp to_response({:ok, message}), do: message
+  defp to_response({:error, changeset}), do: {:error, Utils.changeset_error_to_string(changeset)}
 
   defp stop_reason_to_status("end_turn"), do: :complete
   defp stop_reason_to_status("max_tokens"), do: :length

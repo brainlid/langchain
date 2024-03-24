@@ -131,7 +131,8 @@ defmodule LangChain.Utils do
   @spec handle_stream_fn(
           %{optional(:stream) => boolean()},
           process_response_fn :: function(),
-          callback_fn :: function()
+          callback_fn :: function(),
+          decode_streaming_data_fn :: function()
         ) :: function()
   def handle_stream_fn(model, process_response_fn, callback_fn, decode_streaming_data_fn) do
     fn {:data, raw_data}, {req, response} ->
