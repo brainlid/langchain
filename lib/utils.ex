@@ -120,13 +120,27 @@ defmodule LangChain.Utils do
           callback_fn :: function()
         ) :: function()
   def handle_stream_fn(model, process_response_fn, callback_fn) do
-    fn {:data, raw_data}, {req, response} ->
-      # cleanup data because it isn't structured well for JSON.
+    handle_stream_fn(model, process_response_fn, callback_fn, &decode_streamed_data/2)
+  end
 
+  @doc """
+  Creates and returns an anonymous function to handle the streaming request.
+
+  Accepts a function responsible for decoding the streaming chunks.
+  """
+  @spec handle_stream_fn(
+          %{optional(:stream) => boolean()},
+          process_response_fn :: function(),
+          callback_fn :: function()
+        ) :: function()
+  def handle_stream_fn(model, process_response_fn, callback_fn, decode_streaming_data_fn) do
+    fn {:data, raw_data}, {req, response} ->
       # Fetch any previously incomplete messages that are buffered in the
-      # response struct. and pass that in with the data for decode
+      # response struct and pass that in with the data for decode.
       buffered = Req.Response.get_private(response, :lang_incomplete, "")
-      {parsed_data, incomplete} = decode_streamed_data({raw_data, buffered}, process_response_fn)
+
+      {parsed_data, incomplete} =
+        decode_streaming_data_fn.({raw_data, buffered}, process_response_fn)
 
       # execute the callback function for each MessageDelta
       fire_callback(model, parsed_data, callback_fn)
