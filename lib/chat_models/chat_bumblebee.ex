@@ -85,9 +85,9 @@ defmodule LangChain.ChatModels.ChatBumblebee do
             |> LLMChain.run(callback_fn: callback_fn)
 
           # print the LLM's fully assembled answer
-          IO.puts("\n\n")
+          IO.puts("\\n\\n")
           IO.puts(message.content)
-          IO.puts("\n\n")
+          IO.puts("\\n\\n")
         end
       end
 
