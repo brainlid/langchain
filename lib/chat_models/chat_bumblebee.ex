@@ -45,6 +45,55 @@ defmodule LangChain.ChatModels.ChatBumblebee do
 
   Using the wrong format with a model may result in poor performance or
   hallucinations. It will not result in an error.
+
+  ## Full example of chat through Bumblebee
+
+  Here's a full example of having a streaming conversation with Llama 2 through
+  Bumblebee.
+
+      defmodule MyApp.BumblebeeChat do
+        @doc false
+        alias LangChain.Message
+        alias LangChain.ChatModels.ChatBumblebee
+        alias LangChain.Chains.LLMChain
+
+        def run_chat do
+          # Used when streaming responses. The function fires as data is received.
+          callback_fn = fn
+            %LangChain.MessageDelta{} = delta ->
+              # write to the console as the response is streamed back
+              IO.write(delta.content)
+
+            %LangChain.Message{} = message ->
+              # inspect the fully finished message that was assembled from all the deltas
+              IO.inspect(message, label: "FULLY ASSEMBLED MESSAGE")
+          end
+
+          # create and run the chain
+          {:ok, _updated_chain, %Message{} = message} =
+            LLMChain.new!(%{
+              llm:
+                ChatBumblebee.new!(%{
+                  serving: Llama2ChatModel,
+                  template_format: :llama_2,
+                  stream: true
+                }),
+              verbose: true
+            })
+            |> LLMChain.add_message(Message.new_system!("You are a helpful assistant."))
+            |> LLMChain.add_message(Message.new_user!("What is the capital of Taiwan? And share up to 5 interesting facts about the city."))
+            |> LLMChain.run(callback_fn: callback_fn)
+
+          # print the LLM's fully assembled answer
+          IO.puts("\n\n")
+          IO.puts(message.content)
+          IO.puts("\n\n")
+        end
+      end
+
+  Then run the code in IEx:
+
+        recompile; MyApp.BumblebeeChat.run_chat
   """
   use Ecto.Schema
   require Logger
