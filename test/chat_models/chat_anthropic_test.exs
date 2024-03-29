@@ -143,28 +143,14 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
 
       assert [
                %{
-                 "message" => %{
-                   "content" => [],
-                   "id" => "msg_01CsrHBjq3eHRQjYG5ayuo5o",
-                   "model" => "claude-3-sonnet-20240229",
-                   "role" => "assistant",
-                   "stop_reason" => nil,
-                   "stop_sequence" => nil,
-                   "type" => "message",
-                   "usage" => %{"input_tokens" => 14, "output_tokens" => 1}
-                 },
-                 "type" => "message_start"
-               },
-               %{
+                 "type" => "content_block_start",
                  "content_block" => %{"text" => "", "type" => "text"},
-                 "index" => 0,
-                 "type" => "content_block_start"
+                 "index" => 0
                },
-               %{"type" => "ping"},
                %{
+                 "type" => "content_block_delta",
                  "delta" => %{"text" => "Hello", "type" => "text_delta"},
-                 "index" => 0,
-                 "type" => "content_block_delta"
+                 "index" => 0
                }
              ] = parsed
 
@@ -180,9 +166,9 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
 
       assert [
                %{
+                 "type" => "content_block_delta",
                  "delta" => %{"text" => "!", "type" => "text_delta"},
-                 "index" => 0,
-                 "type" => "content_block_delta"
+                 "index" => 0
                }
              ] = parsed
 
@@ -203,13 +189,11 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
       {parsed, buffer} = StreamingChunkDecoder.decode(chunk, "")
 
       assert [
-               %{"type" => "content_block_stop", "index" => 0},
                %{
                  "type" => "message_delta",
                  "delta" => %{"stop_reason" => "end_turn", "stop_sequence" => nil},
                  "usage" => %{"output_tokens" => 3}
-               },
-               %{"type" => "message_stop"}
+               }
              ] = parsed
 
       assert buffer == ""
@@ -244,33 +228,41 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
     end
 
     test "handles incomplete chunks" do
-      chunk =
-        "event: content_block_delta\n data: {\"type\":\"content_block_delta\",\"index\":0,\"de"
+      chunk_1 =
+        "event: content_blo"
 
-      {parsed, buffer} = StreamingChunkDecoder.decode(chunk, "")
+      {parsed, buffer} = StreamingChunkDecoder.decode(chunk_1, "")
 
       assert [] = parsed
-      assert buffer == chunk
+      assert buffer == chunk_1
 
-      chunk = """
+      chunk_2 =
+        "ck_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"de"
+
+      {parsed, buffer} = StreamingChunkDecoder.decode(chunk_2, buffer)
+
+      assert [] = parsed
+      assert buffer == chunk_1 <> chunk_2
+
+      chunk_3 = """
       lta":{"type":"text_delta","text":"!"}}
 
       event: content_block_delta
       data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Anthrop"}}
       """
 
-      {parsed, buffer} = StreamingChunkDecoder.decode(chunk, buffer)
+      {parsed, buffer} = StreamingChunkDecoder.decode(chunk_3, buffer)
 
       assert [
                %{
+                 "type" => "content_block_delta",
                  "delta" => %{"text" => "!", "type" => "text_delta"},
-                 "index" => 0,
-                 "type" => "content_block_delta"
+                 "index" => 0
                },
                %{
+                 "type" => "content_block_delta",
                  "delta" => %{"text" => " Anthrop", "type" => "text_delta"},
-                 "index" => 0,
-                 "type" => "content_block_delta"
+                 "index" => 0
                }
              ] = parsed
 

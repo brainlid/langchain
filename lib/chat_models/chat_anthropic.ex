@@ -322,20 +322,15 @@ defmodule LangChain.ChatModels.ChatAnthropic do
             {parsed_events, incomplete} =
               ChatAnthropic.StreamingChunkDecoder.decode(chunk, buffer)
 
-            parsed_events
-            |> Enum.reduce({[], incomplete}, fn parsed_data, {processed_data, incomplete} = acc ->
-              case process_response_fn.(parsed_data) do
-                :ignore ->
-                  acc
+            proccessed_and_wrapped_data =
+              Enum.map(parsed_events, fn parsed_data ->
+                # Anthropic's `messages` endpoint does not support generating N messages, only one.
+                # However, we wrap the result in an array to match the other providers who return a
+                # list of lists of deltas.
+                [process_response_fn.(parsed_data)]
+              end)
 
-                result ->
-                  # Anthropic's `messages` endpoint does not support generating N messages, only one.
-                  # However, we wrap the result in an array to match the other providers who return a
-                  # list of lists of deltas.
-                  result = [result]
-                  {processed_data ++ [result], incomplete}
-              end
-            end)
+            {proccessed_and_wrapped_data, incomplete}
           end
         )
     )
@@ -432,12 +427,6 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     |> to_response()
   end
 
-  # These streaming events don't contain any useful data to return to callers. Ignore.
-  def do_process_response(%{"type" => type})
-      when type in ["message_start", "ping", "content_block_stop", "message_stop"] do
-    :ignore
-  end
-
   def do_process_response(%{"error" => %{"message" => reason}}) do
     Logger.error("Received error from API: #{inspect(reason)}")
     {:error, reason}
@@ -467,8 +456,6 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   end
 
   defmodule StreamingChunkDecoder do
-    @moduledoc false
-
     # Data comes back from Anthropic in event/data pairs. See the following example:
     #
     #     event: message_start
@@ -498,16 +485,11 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     #
     # See Anthropic documentation: https://docs.anthropic.com/claude/reference/messages-streaming
 
-    # This captures `event` and `data`
-    @event_data_re ~r/^\s*event:\s*(?<event>\S*)\s*data:\s*(?<data>[^\n]+)\s*$/
-
-    @doc false
     def decode(chunk, buffer) do
       ((buffer || "") <> chunk)
-      # Split using the event separator to try to group event/data blocks together.
-      |> String.split("\n\n")
+      |> String.split("\n\n", trim: true)
       |> Enum.reduce({[], ""}, fn raw_event, {parsed_data_list, incomplete} ->
-        case do_decode(raw_event) do
+        case decode_event(raw_event) do
           :ignore ->
             {parsed_data_list, incomplete}
 
@@ -522,37 +504,56 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       end)
     end
 
-    # When splitting a chunk, we end up with empty strings. Ignore those.
-    defp do_decode("") do
+    defp decode_event("event: content_block_delta\ndata: " <> data = raw_event) do
+      parse_event_data(data, raw_event)
+    end
+
+    defp decode_event("event: content_block_start\ndata: " <> data = raw_event) do
+      parse_event_data(data, raw_event)
+    end
+
+    defp decode_event("event: message_delta\ndata: " <> data = raw_event) do
+      parse_event_data(data, raw_event)
+    end
+
+    defp decode_event("event: message_start\n" <> _rest) do
       :ignore
     end
 
-    # This handles the case where `raw_event` looks like a "complete" event, e.g.:
-    #
-    #     event: content_block_start\ndata: {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}
-    #
-    # The above example contains the entire `event` and `data` values. We can pluck the `event` and `data`
-    # values out of this chunk using a regular expression. If the regular expression matches and we're able
-    # to JSON decode the `data`, then we have successfully parsed the event.
-    #
-    # However, this function can potentially be passed "incomplete" events. One example would be the following:
-    #
-    #     event: content_block_delta\ndata: {"type": "content_block_delta", "inde
-    #
-    # The above will match the regular expression, but will not successfully JSON decode.
-    #
-    defp do_decode(raw_event) do
-      case Regex.named_captures(@event_data_re, raw_event) do
-        %{"event" => _event, "data" => data} ->
-          case Jason.decode(data) do
-            {:ok, parsed_data} ->
-              {:complete, parsed_data}
+    defp decode_event("event: ping\n" <> _rest) do
+      :ignore
+    end
 
-            {:error, _reason} ->
-              {:incomplete, raw_event}
-          end
+    defp decode_event("event: content_block_stop\n" <> _rest) do
+      :ignore
+    end
 
-        _ ->
+    defp decode_event("event: message_stop\n" <> _rest) do
+      :ignore
+    end
+
+    defp decode_event(raw_event) do
+      case Regex.run(~r/^event:\s([^\n]+)\n/, raw_event) do
+        [_match, event] ->
+          # This means we have a complete event, but one we do not recognize.
+          # Perhaps Anthropic has added more events to their response, or have a bug.
+          Logger.error("Unsupported event received when parsing Anthropic response: #{event}")
+          :ignore
+
+        nil ->
+          # This is not an event we don't recognize, rather it's an incomplete stream of data.
+          # The other possibility is that Anthropic changed the format they send events in, or had a bug,
+          # breaking our assumptions above about the structure of the response.
+          {:incomplete, raw_event}
+      end
+    end
+
+    defp parse_event_data(data, raw_event) do
+      case Jason.decode(data) do
+        {:ok, parsed_data} ->
+          {:complete, parsed_data}
+
+        {:error, _reason} ->
           {:incomplete, raw_event}
       end
     end
