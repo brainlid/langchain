@@ -5,6 +5,13 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
   doctest LangChain.ChatModels.ChatOpenAI
   alias LangChain.ChatModels.ChatOpenAI
   alias LangChain.Function
+  alias LangChain.FunctionParam
+
+  @test_model "gpt-3.5-turbo"
+
+  defp hello_world(_args, _context) do
+    "Hello world!"
+  end
 
   setup do
     {:ok, hello_world} =
@@ -19,8 +26,8 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
   describe "new/1" do
     test "works with minimal attr" do
-      assert {:ok, %ChatOpenAI{} = openai} = ChatOpenAI.new(%{"model" => "gpt-3.5-turbo-0613"})
-      assert openai.model == "gpt-3.5-turbo-0613"
+      assert {:ok, %ChatOpenAI{} = openai} = ChatOpenAI.new(%{"model" => @test_model})
+      assert openai.model == @test_model
     end
 
     test "returns error when invalid" do
@@ -45,14 +52,14 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     test "generates a map for an API call" do
       {:ok, openai} =
         ChatOpenAI.new(%{
-          "model" => "gpt-3.5-turbo-0613",
+          "model" => @test_model,
           "temperature" => 1,
           "frequency_penalty" => 0.5,
           "api_key" => "api_key"
         })
 
       data = ChatOpenAI.for_api(openai, [], [])
-      assert data.model == "gpt-3.5-turbo-0613"
+      assert data.model == @test_model
       assert data.temperature == 1
       assert data.frequency_penalty == 0.5
       assert data.response_format == %{"type" => "text"}
@@ -61,14 +68,14 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     test "generates a map for an API call with JSON response set to true" do
       {:ok, openai} =
         ChatOpenAI.new(%{
-          "model" => "gpt-3.5-turbo-0613",
+          "model" => @test_model,
           "temperature" => 1,
           "frequency_penalty" => 0.5,
           "json_response" => true
         })
 
       data = ChatOpenAI.for_api(openai, [], [])
-      assert data.model == "gpt-3.5-turbo-0613"
+      assert data.model == @test_model
       assert data.temperature == 1
       assert data.frequency_penalty == 0.5
       assert data.response_format == %{"type" => "json_object"}
@@ -77,17 +84,157 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     test "generates a map for an API call with max_tokens set" do
       {:ok, openai} =
         ChatOpenAI.new(%{
-          "model" => "gpt-3.5-turbo-0613",
+          "model" => @test_model,
           "temperature" => 1,
           "frequency_penalty" => 0.5,
           "max_tokens" => 1234
         })
 
       data = ChatOpenAI.for_api(openai, [], [])
-      assert data.model == "gpt-3.5-turbo-0613"
+      assert data.model == @test_model
       assert data.temperature == 1
       assert data.frequency_penalty == 0.5
       assert data.max_tokens == 1234
+    end
+  end
+
+  describe "for_api/1" do
+    test "turns a function_call into expected JSON format" do
+      msg = Message.new_function_call!("hello_world", "{}")
+
+      json = ChatOpenAI.for_api(msg)
+
+      assert json == %{
+               "content" => nil,
+               "function_call" => %{"arguments" => "{}", "name" => "hello_world"},
+               "role" => :assistant
+             }
+    end
+
+    test "turns a function_call into expected JSON format with arguments" do
+      args = %{"expression" => "11 + 10"}
+      msg = Message.new_function_call!("hello_world", Jason.encode!(args))
+
+      json = ChatOpenAI.for_api(msg)
+
+      assert json == %{
+               "content" => nil,
+               "function_call" => %{
+                 "arguments" => "{\"expression\":\"11 + 10\"}",
+                 "name" => "hello_world"
+               },
+               "role" => :assistant
+             }
+    end
+
+    test "turns a function response into expected JSON format" do
+      msg = Message.new_function!("hello_world", "Hello World!")
+
+      json = ChatOpenAI.for_api(msg)
+
+      assert json == %{"content" => "Hello World!", "name" => "hello_world", "role" => :function}
+    end
+
+    test "works with minimal definition and no parameters" do
+      {:ok, fun} = Function.new(%{"name" => "hello_world"})
+
+      result = ChatOpenAI.for_api(fun)
+      # result = Function.for_api(fun)
+
+      assert result == %{
+               "name" => "hello_world",
+               #  NOTE: Sends the required empty parameter definition when none set
+               "parameters" => %{"properties" => %{}, "type" => "object"}
+             }
+    end
+
+    test "supports parameters" do
+      params_def = %{
+        "type" => "object",
+        "properties" => %{
+          "p1" => %{"type" => "string"},
+          "p2" => %{"description" => "Param 2", "type" => "number"},
+          "p3" => %{
+            "enum" => ["yellow", "red", "green"],
+            "type" => "string"
+          }
+        },
+        "required" => ["p1"]
+      }
+
+      {:ok, fun} =
+        Function.new(%{
+          name: "say_hi",
+          description: "Provide a friendly greeting.",
+          parameters: [
+            FunctionParam.new!(%{name: "p1", type: :string, required: true}),
+            FunctionParam.new!(%{name: "p2", type: :number, description: "Param 2"}),
+            FunctionParam.new!(%{name: "p3", type: :string, enum: ["yellow", "red", "green"]})
+          ]
+        })
+
+      # result = Function.for_api(fun)
+      result = ChatOpenAI.for_api(fun)
+
+      assert result == %{
+               "name" => "say_hi",
+               "description" => "Provide a friendly greeting.",
+               "parameters" => params_def
+             }
+    end
+
+    test "supports parameters_schema" do
+      params_def = %{
+        "type" => "object",
+        "properties" => %{
+          "p1" => %{"description" => nil, "type" => "string"},
+          "p2" => %{"description" => "Param 2", "type" => "number"},
+          "p3" => %{
+            "description" => nil,
+            "enum" => ["yellow", "red", "green"],
+            "type" => "string"
+          }
+        },
+        "required" => ["p1"]
+      }
+
+      {:ok, fun} =
+        Function.new(%{
+          "name" => "say_hi",
+          "description" => "Provide a friendly greeting.",
+          "parameters_schema" => params_def
+        })
+
+      # result = Function.for_api(fun)
+      result = ChatOpenAI.for_api(fun)
+
+      assert result == %{
+               "name" => "say_hi",
+               "description" => "Provide a friendly greeting.",
+               "parameters" => params_def
+             }
+    end
+
+    test "does not allow both parameters and parameters_schema" do
+      {:error, changeset} =
+        Function.new(%{
+          name: "problem",
+          parameters: [
+            FunctionParam.new!(%{name: "p1", type: :string, required: true})
+          ],
+          parameters_schema: %{stuff: true}
+        })
+
+      assert {"Cannot use both parameters and parameters_schema", _} =
+               changeset.errors[:parameters]
+    end
+
+    test "does not include the function to execute" do
+      # don't try and send an Elixir function ref through to the API
+      {:ok, fun} = Function.new(%{"name" => "hello_world", "function" => &hello_world/2})
+      # result = Function.for_api(fun)
+      result = ChatOpenAI.for_api(fun)
+      refute Map.has_key?(result, "function")
     end
   end
 

@@ -17,8 +17,9 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   alias LangChain.Config
   alias LangChain.ChatModels.ChatModel
   alias LangChain.Message
+  alias LangChain.Function
+  alias LangChain.FunctionParam
   alias LangChain.LangChainError
-  alias LangChain.ForOpenAIApi
   alias LangChain.Utils
   alias LangChain.MessageDelta
 
@@ -60,6 +61,11 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     field :json_response, :boolean, default: false
     field :stream, :boolean, default: false
     field :max_tokens, :integer, default: nil
+
+    # Can send a string user_id to help ChatGPT detect abuse by users of the
+    # application.
+    # https://platform.openai.com/docs/guides/safety-best-practices/end-user-ids
+    field :user, :string
   end
 
   @type t :: %ChatOpenAI{}
@@ -75,7 +81,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     :stream,
     :receive_timeout,
     :json_response,
-    :max_tokens
+    :max_tokens,
+    :user
   ]
   @required_fields [:endpoint, :model]
 
@@ -127,7 +134,9 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   @doc """
   Return the params formatted for an API request.
   """
-  @spec for_api(t, message :: [map()], functions :: [map()]) :: %{atom() => any()}
+  @spec for_api(t | Message.t() | Function.t(), message :: [map()], functions :: [map()]) :: %{
+          atom() => any()
+        }
   def for_api(%ChatOpenAI{} = openai, messages, functions) do
     %{
       model: openai.model,
@@ -135,8 +144,9 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       frequency_penalty: openai.frequency_penalty,
       n: openai.n,
       stream: openai.stream,
-      messages: Enum.map(messages, &ForOpenAIApi.for_api/1),
-      response_format: set_response_format(openai)
+      messages: Enum.map(messages, &for_api/1),
+      response_format: set_response_format(openai),
+      user: openai.user
     }
     |> Utils.conditionally_add_to_map(:max_tokens, openai.max_tokens)
     |> Utils.conditionally_add_to_map(:seed, openai.seed)
@@ -146,7 +156,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   defp get_functions_for_api(nil), do: []
 
   defp get_functions_for_api(functions) do
-    Enum.map(functions, &ForOpenAIApi.for_api/1)
+    Enum.map(functions, &for_api/1)
   end
 
   defp set_response_format(%ChatOpenAI{json_response: true}),
@@ -154,6 +164,62 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
   defp set_response_format(%ChatOpenAI{json_response: false}),
     do: %{"type" => "text"}
+
+  @doc """
+  Convert a LangChain structure to the expected map of data for the OpenAI API.
+  """
+  @spec for_api(Message.t() | Function.t()) :: %{String.t() => any()}
+  def for_api(%Message{role: :assistant, function_name: fun_name} = msg)
+      when is_binary(fun_name) do
+    %{
+      "role" => :assistant,
+      "function_call" => %{
+        "arguments" => Jason.encode!(msg.arguments),
+        "name" => msg.function_name
+      },
+      "content" => msg.content
+    }
+  end
+
+  def for_api(%Message{role: :function} = msg) do
+    %{
+      "role" => :function,
+      "name" => msg.function_name,
+      "content" => msg.content
+    }
+  end
+
+  def for_api(%Message{} = msg) do
+    %{
+      "role" => msg.role,
+      "content" => msg.content
+    }
+  end
+
+  # Function support
+  def for_api(%Function{} = fun) do
+    %{
+      "name" => fun.name,
+      "parameters" => get_parameters(fun)
+    }
+    |> Utils.conditionally_add_to_map("description", fun.description)
+  end
+
+  defp get_parameters(%Function{parameters: [], parameters_schema: nil} = _fun) do
+    %{
+      "type" => "object",
+      "properties" => %{}
+    }
+  end
+
+  defp get_parameters(%Function{parameters: [], parameters_schema: schema} = _fun)
+       when is_map(schema) do
+    schema
+  end
+
+  defp get_parameters(%Function{parameters: params} = _fun) do
+    FunctionParam.to_parameters_schema(params)
+  end
 
   @doc """
   Calls the OpenAI API passing the ChatOpenAI struct with configuration, plus

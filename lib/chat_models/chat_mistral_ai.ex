@@ -3,9 +3,9 @@ defmodule Langchain.ChatModels.ChatMistralAI do
   require Logger
   import Ecto.Changeset
   import LangChain.Utils.ApiOverride
-  alias LangChain.ForOpenAIApi
   alias __MODULE__
   alias LangChain.Config
+  alias LangChain.ChatModels.ChatOpenAI
   alias LangChain.ChatModels.ChatModel
   alias LangChain.Message
   alias LangChain.MessageDelta
@@ -119,7 +119,7 @@ defmodule Langchain.ChatModels.ChatMistralAI do
       top_p: mistral.top_p,
       safe_prompt: mistral.safe_prompt,
       stream: mistral.stream,
-      messages: Enum.map(messages, &ForOpenAIApi.for_api/1)
+      messages: Enum.map(messages, &ChatOpenAI.for_api/1)
     }
     |> Utils.conditionally_add_to_map(:random_seed, mistral.random_seed)
     |> Utils.conditionally_add_to_map(:max_tokens, mistral.max_tokens)
