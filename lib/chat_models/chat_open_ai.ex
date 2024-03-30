@@ -156,7 +156,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   defp get_functions_for_api(nil), do: []
 
   defp get_functions_for_api(functions) do
-    Enum.map(functions, &ForOpenAIApi.for_api/1)
+    Enum.map(functions, &for_api/1)
   end
 
   defp set_response_format(%ChatOpenAI{json_response: true}),
