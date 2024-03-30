@@ -61,6 +61,11 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     field :json_response, :boolean, default: false
     field :stream, :boolean, default: false
     field :max_tokens, :integer, default: nil
+
+    # Can send a string user_id to help ChatGPT detect abuse by users of the
+    # application.
+    # https://platform.openai.com/docs/guides/safety-best-practices/end-user-ids
+    field :user, :string
   end
 
   @type t :: %ChatOpenAI{}
@@ -76,7 +81,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     :stream,
     :receive_timeout,
     :json_response,
-    :max_tokens
+    :max_tokens,
+    :user
   ]
   @required_fields [:endpoint, :model]
 
