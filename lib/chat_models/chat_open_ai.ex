@@ -150,13 +150,16 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     }
     |> Utils.conditionally_add_to_map(:max_tokens, openai.max_tokens)
     |> Utils.conditionally_add_to_map(:seed, openai.seed)
-    |> Utils.conditionally_add_to_map(:functions, get_functions_for_api(functions))
+    |> Utils.conditionally_add_to_map(:tools, get_functions_for_api(functions))
   end
 
   defp get_functions_for_api(nil), do: []
 
   defp get_functions_for_api(functions) do
-    Enum.map(functions, &for_api/1)
+    Enum.map(functions, fn
+      %Function{} = function ->
+        %{"type" => "function", "function" => for_api(function)}
+    end)
   end
 
   defp set_response_format(%ChatOpenAI{json_response: true}),
@@ -339,6 +342,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     # parse the body and return it as parsed structs
     |> case do
       {:ok, %Req.Response{body: data}} ->
+        dbg(data)
+
         case do_process_response(data) do
           {:error, reason} ->
             {:error, reason}
@@ -417,9 +422,32 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   end
 
   def do_process_response(
+        %{"finish_reason" => "tool_calls", "message" => %{"tool_calls" => calls}} = data
+      ) do
+    case Message.new(%{
+           "role" => "assistant",
+           "function_name" => name,
+           "arguments" => raw_args,
+           "complete" => true,
+           "index" => data["index"]
+         }) do
+      {:ok, message} ->
+        message
+
+      {:error, changeset} ->
+        {:error, Utils.changeset_error_to_string(changeset)}
+    end
+  end
+
+  def do_process_response(
         %{
-          "finish_reason" => "function_call",
-          "message" => %{"function_call" => %{"arguments" => raw_args, "name" => name}}
+          "finish_reason" => "tool_calls",
+          "message" => %{
+            "tool_calls" => %{
+              "type" => "function",
+              "function" => %{"arguments" => raw_args, "name" => name}
+            }
+          }
         } = data
       ) do
     case Message.new(%{
@@ -451,7 +479,13 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         "length" ->
           :length
 
-        "function_call" ->
+        # "function_call" ->
+        #   :complete
+
+        "content_filter" ->
+          :complete
+
+        "tool_calls" ->
           :complete
 
         other ->
@@ -507,7 +541,13 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         "stop" ->
           :complete
 
-        "length" ->
+        "tool_calls" ->
+          :complete
+
+        "content_filter" ->
+          :complete
+
+          "length" ->
           :length
 
         other ->

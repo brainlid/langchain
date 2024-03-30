@@ -336,6 +336,30 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     end
 
     @tag :live_call
+    test "executing a function and explain", %{hello_world: hello_world} do
+      {:ok, chat} = ChatOpenAI.new(%{seed: 0, model: "gpt-4-1106-preview"})
+
+      {:ok, message} =
+        Message.new_user(
+          "Execute the function hello_world and explain what you are doing at the same time."
+        )
+
+      {:ok, [message]} = ChatOpenAI.call(chat, [message], [hello_world])
+
+      dbg(message)
+
+      assert %Message{role: :assistant} = message
+      assert message.arguments == %{}
+      assert message.content == nil
+    end
+
+    test "supports receiving multiple tool calls in a single response"
+    #TODO: Fake API response with multiples.
+    #TODO: LLMChain needs to support it as well. Perform multiple function call executions.
+    #TODO: Message structure needs to change for calling functions to support a single message executing multiples.
+    #      - make it easy to support only receiving a single function call.
+
+    @tag :live_call
     test "executes callback function when data is streamed" do
       callback = fn %MessageDelta{} = delta ->
         send(self(), {:message_delta, delta})
