@@ -207,33 +207,3 @@ defmodule LangChain.Function do
     end
   end
 end
-
-defimpl LangChain.ForOpenAIApi, for: LangChain.Function do
-  alias LangChain.Function
-  alias LangChain.FunctionParam
-  alias LangChain.Utils
-
-  def for_api(%Function{} = fun) do
-    %{
-      "name" => fun.name,
-      "parameters" => get_parameters(fun)
-    }
-    |> Utils.conditionally_add_to_map("description", fun.description)
-  end
-
-  defp get_parameters(%Function{parameters: [], parameters_schema: nil} = _fun) do
-    %{
-      "type" => "object",
-      "properties" => %{}
-    }
-  end
-
-  defp get_parameters(%Function{parameters: [], parameters_schema: schema} = _fun)
-       when is_map(schema) do
-    schema
-  end
-
-  defp get_parameters(%Function{parameters: params} = _fun) do
-    FunctionParam.to_parameters_schema(params)
-  end
-end

@@ -322,34 +322,3 @@ defmodule LangChain.Message do
 
   def is_function_call?(%Message{}), do: false
 end
-
-defimpl LangChain.ForOpenAIApi, for: LangChain.Message do
-  alias LangChain.Message
-
-  def for_api(%Message{role: :assistant, function_name: fun_name} = fun)
-      when is_binary(fun_name) do
-    %{
-      "role" => :assistant,
-      "function_call" => %{
-        "arguments" => Jason.encode!(fun.arguments),
-        "name" => fun.function_name
-      },
-      "content" => fun.content
-    }
-  end
-
-  def for_api(%Message{role: :function} = fun) do
-    %{
-      "role" => :function,
-      "name" => fun.function_name,
-      "content" => fun.content
-    }
-  end
-
-  def for_api(%Message{} = fun) do
-    %{
-      "role" => fun.role,
-      "content" => fun.content
-    }
-  end
-end

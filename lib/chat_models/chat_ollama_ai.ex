@@ -35,10 +35,10 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   import Ecto.Changeset
   alias __MODULE__
   alias LangChain.ChatModels.ChatModel
+  alias LangChain.ChatModels.ChatOpenAI
   alias LangChain.Message
   alias LangChain.MessageDelta
   alias LangChain.LangChainError
-  alias LangChain.ForOpenAIApi
   alias LangChain.Utils
 
   @behaviour ChatModel
@@ -187,7 +187,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
     %{
       model: model.model,
       temperature: model.temperature,
-      messages: messages |> Enum.map(&ForOpenAIApi.for_api/1),
+      messages: messages |> Enum.map(&ChatOpenAI.for_api/1),
       stream: model.stream,
       seed: model.seed,
       num_ctx: model.num_ctx,
