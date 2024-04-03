@@ -7,6 +7,7 @@ defmodule Langchain.ChatModels.ChatMistralAI do
   alias LangChain.Config
   alias LangChain.ChatModels.ChatOpenAI
   alias LangChain.ChatModels.ChatModel
+  alias LangChain.ChatModels.ChatOpenAI
   alias LangChain.Message
   alias LangChain.MessageDelta
   alias LangChain.LangChainError
@@ -239,7 +240,7 @@ defmodule Langchain.ChatModels.ChatMistralAI do
       headers: get_headers(mistral),
       receive_timeout: mistral.receive_timeout
     )
-    |> Req.post(into: Utils.handle_stream_fn(mistral, &do_process_response/1, callback_fn))
+    |> Req.post(into: Utils.handle_stream_fn(mistral, &ChatOpenAI.decode_stream/1, &do_process_response/1, callback_fn))
     |> case do
       {:ok, %Req.Response{body: data}} ->
         data
