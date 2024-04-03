@@ -186,6 +186,7 @@ To run all the tests including the ones that perform live calls against the Open
 
 ```
 mix test --include live_call
+mix test --include live_anthropic
 ```
 
 NOTE: This will use the configured API credentials which creates billable events.

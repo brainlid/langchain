@@ -35,6 +35,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   import Ecto.Changeset
   alias __MODULE__
   alias LangChain.ChatModels.ChatModel
+  alias LangChain.ChatModels.ChatOpenAI
   alias LangChain.Message
   alias LangChain.MessageDelta
   alias LangChain.LangChainError
@@ -332,7 +333,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
       json: for_api(ollama_ai, messages, functions),
       receive_timeout: ollama_ai.receive_timeout
     )
-    |> Req.post(into: Utils.handle_stream_fn(ollama_ai, &do_process_response/1, callback_fn))
+    |> Req.post(into: Utils.handle_stream_fn(ollama_ai, &ChatOpenAI.decode_stream/1, &do_process_response/1, callback_fn))
     |> case do
       {:ok, %Req.Response{body: data}} ->
         data

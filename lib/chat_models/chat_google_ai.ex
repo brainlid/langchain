@@ -10,6 +10,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   alias __MODULE__
   alias LangChain.Config
   alias LangChain.ChatModels.ChatModel
+  alias LangChain.ChatModels.ChatOpenAI
   alias LangChain.Message
   alias LangChain.MessageDelta
   alias LangChain.LangChainError
@@ -51,7 +52,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     # 1 means the selected token is the most probable among all the tokens in the
     # model's vocabulary (also called greedy decoding), while a topK of 3 means that
     # the next token is selected from among the 3 most probable using the temperature.
-    # For each token selection step, the topK tokens with the highest probabilities 
+    # For each token selection step, the topK tokens with the highest probabilities
     # are sampled. Tokens are then further filtered based on topP with the final token
     # selected using temperature sampling.
     field :top_k, :float, default: 1.0
@@ -300,7 +301,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     )
     |> Req.Request.put_header("accept-encoding", "utf-8")
     |> Req.post(
-      into: Utils.handle_stream_fn(google_ai, &do_process_response(&1, MessageDelta), callback_fn)
+      into: Utils.handle_stream_fn(google_ai, &ChatOpenAI.decode_stream/1, &do_process_response(&1, MessageDelta), callback_fn)
     )
     |> case do
       {:ok, %Req.Response{body: data}} ->

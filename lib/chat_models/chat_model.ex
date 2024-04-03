@@ -1,5 +1,8 @@
 defmodule LangChain.ChatModels.ChatModel do
-  @type call_response :: {:ok, Message.t() | [Message.t()]} | {:error, String.t()}
+  alias LangChain.Message
+  alias LangChain.MessageDelta
+
+  @type call_response :: {:ok, Message.t() | [Message.t()] | [MessageDelta.t()]} | {:error, String.t()}
 
   @type t :: Ecto.Schema.t()
 

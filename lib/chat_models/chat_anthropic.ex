@@ -314,25 +314,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     )
     |> Req.post(
       into:
-        Utils.handle_stream_fn(
-          anthropic,
-          &do_process_response/1,
-          callback_fn,
-          fn {chunk, buffer}, process_response_fn ->
-            {parsed_events, incomplete} =
-              ChatAnthropic.StreamingChunkDecoder.decode(chunk, buffer)
-
-            proccessed_and_wrapped_data =
-              Enum.map(parsed_events, fn parsed_data ->
-                # Anthropic's `messages` endpoint does not support generating N messages, only one.
-                # However, we wrap the result in an array to match the other providers who return a
-                # list of lists of deltas.
-                [process_response_fn.(parsed_data)]
-              end)
-
-            {proccessed_and_wrapped_data, incomplete}
-          end
-        )
+        Utils.handle_stream_fn(anthropic, &decode_stream/1, &do_process_response/1, callback_fn)
     )
     |> case do
       {:ok, %Req.Response{body: data}} ->
@@ -455,107 +437,72 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     nil
   end
 
-  defmodule StreamingChunkDecoder do
-    # Data comes back from Anthropic in event/data pairs. See the following example:
-    #
-    #     event: message_start
-    #     data: {"type": "message_start", "message": {"id": "msg_1nZdL29xx5MUA1yADyHTEsnR8uuvGzszyY", "type": "message", "role": "assistant", "content": [], "model": "claude-3-opus-20240229", "stop_reason": null, "stop_sequence": null, "usage": {"input_tokens": 25, "output_tokens": 1}}}
-    #
-    #     event: content_block_start
-    #     data: {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}
-    #
-    #     event: ping
-    #     data: {"type": "ping"}
-    #
-    #     event: content_block_delta
-    #     data: {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Hello"}}
-    #
-    #     event: content_block_delta
-    #     data: {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "!"}}
-    #
-    #     event: content_block_stop
-    #     data: {"type": "content_block_stop", "index": 0}
-    #
-    #     event: message_delta
-    #     data: {"type": "message_delta", "delta": {"stop_reason": "end_turn", "stop_sequence":null, "usage":{"output_tokens": 15}}}
-    #
-    #     event: message_stop
-    #     data: {"type": "message_stop"}
-    #
-    #
-    # See Anthropic documentation: https://docs.anthropic.com/claude/reference/messages-streaming
+  @doc false
+  def decode_stream({chunk, buffer}) do
+    # Combine the incoming data with the buffered incomplete data
+    combined_data = buffer <> chunk
+    # Split data by double newline to find complete messages
+    entries = String.split(combined_data, "\n\n", trim: true)
 
-    def decode(chunk, buffer) do
-      ((buffer || "") <> chunk)
-      |> String.split("\n\n", trim: true)
-      |> Enum.reduce({[], ""}, fn raw_event, {parsed_data_list, incomplete} ->
-        case decode_event(raw_event) do
-          :ignore ->
-            {parsed_data_list, incomplete}
+    # The last part may be incomplete if it doesn't end with "\n\n"
+    {to_process, incomplete} =
+      if String.ends_with?(combined_data, "\n\n") do
+        {entries, ""}
+      else
+        # process all but the last, keep the last as incomplete
+        {Enum.slice(entries, 0..-2//1), List.last(entries)}
+      end
 
-          {:complete, parsed_data} ->
-            {parsed_data_list ++ [parsed_data], incomplete}
+    processed =
+      to_process
+      # Trim whitespace from each line
+      |> Stream.map(&String.trim/1)
+      # Ignore empty lines
+      |> Stream.reject(&(&1 == ""))
+      # Filter lines based on some condition
+      |> Stream.filter(&relevant_event?/1)
+      # Split the event from the data into separate lines
+      |> Stream.map(&extract_data(&1))
+      |> Enum.reduce([], fn json, done ->
+        json
+        |> Jason.decode()
+        |> case do
+          {:ok, parsed} ->
+            # wrap each parsed response into an array of 1. This matches the
+            # return type of some LLMs where they return `n` number of responses.
+            # This is for compatibility.
+            # {done ++ Enum.map(parsed, &([&1])), ""}
+            done ++ [parsed]
 
-          # If we assume Anthropic is not sending corrupt events, then this can only
-          # ever happen with the last item in the list resulting from the "\n\n" split.
-          {:incomplete, remaining} ->
-            {parsed_data_list, remaining}
+          {:error, reason} ->
+            Logger.error("Failed to JSON decode streamed data: #{inspect(reason)}")
+            done
         end
       end)
-    end
 
-    defp decode_event("event: content_block_delta\ndata: " <> data = raw_event) do
-      parse_event_data(data, raw_event)
-    end
-
-    defp decode_event("event: content_block_start\ndata: " <> data = raw_event) do
-      parse_event_data(data, raw_event)
-    end
-
-    defp decode_event("event: message_delta\ndata: " <> data = raw_event) do
-      parse_event_data(data, raw_event)
-    end
-
-    defp decode_event("event: message_start\n" <> _rest) do
-      :ignore
-    end
-
-    defp decode_event("event: ping\n" <> _rest) do
-      :ignore
-    end
-
-    defp decode_event("event: content_block_stop\n" <> _rest) do
-      :ignore
-    end
-
-    defp decode_event("event: message_stop\n" <> _rest) do
-      :ignore
-    end
-
-    defp decode_event(raw_event) do
-      case Regex.run(~r/^event:\s([^\n]+)\n/, raw_event) do
-        [_match, event] ->
-          # This means we have a complete event, but one we do not recognize.
-          # Perhaps Anthropic has added more events to their response, or have a bug.
-          Logger.error("Unsupported event received when parsing Anthropic response: #{event}")
-          :ignore
-
-        nil ->
-          # This is not an event we don't recognize, rather it's an incomplete stream of data.
-          # The other possibility is that Anthropic changed the format they send events in, or had a bug,
-          # breaking our assumptions above about the structure of the response.
-          {:incomplete, raw_event}
-      end
-    end
-
-    defp parse_event_data(data, raw_event) do
-      case Jason.decode(data) do
-        {:ok, parsed_data} ->
-          {:complete, parsed_data}
-
-        {:error, _reason} ->
-          {:incomplete, raw_event}
-      end
-    end
+    {processed, incomplete}
   end
+
+  defp relevant_event?("event: content_block_delta\n" <> _rest), do: true
+  defp relevant_event?("event: content_block_start\n" <> _rest), do: true
+  defp relevant_event?("event: message_delta\n" <> _rest), do: true
+  # ignoring
+  defp relevant_event?("event: message_start\n" <> _rest), do: false
+  defp relevant_event?("event: ping\n" <> _rest), do: false
+  defp relevant_event?("event: content_block_stop\n" <> _rest), do: false
+  defp relevant_event?("event: message_stop\n" <> _rest), do: false
+  # catch-all for when we miss something
+  defp relevant_event?(event) do
+    Logger.error("Unsupported event received when parsing Anthropic response: #{inspect(event)}")
+    false
+  end
+
+  # process data for an event
+  defp extract_data("event: " <> line) do
+    [_prefix, json] = String.split(line, "data: ", trim: true)
+    json
+  end
+
+  # assumed the response is JSON. Return as-is
+  defp extract_data(json), do: json
 end

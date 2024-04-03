@@ -310,7 +310,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       receive_timeout: openai.receive_timeout
     )
     |> maybe_add_org_id_header()
-    |> Req.post(into: Utils.handle_stream_fn(openai, &do_process_response/1, callback_fn))
+    |> Req.post(into: Utils.handle_stream_fn(openai, &decode_stream/1, &do_process_response/1, callback_fn))
     |> case do
       {:ok, %Req.Response{body: data}} ->
         data
@@ -333,6 +333,57 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
         {:error, "Unexpected response"}
     end
+  end
+
+  @doc """
+  Decode a streamed response from an OpenAI-compatible server. Parses a string
+  of received content into an Elixir map data structure using string keys.
+
+  If a partial response was received, meaning the JSON text is split across
+  multiple data frames, then the incomplete portion is returned as-is in the
+  buffer. The function will be successively called, receiving the incomplete
+  buffer data from a previous call, and assembling it to parse.
+  """
+  @spec decode_stream({String.t(), String.t()}) :: {%{String.t() => any()}}
+  def decode_stream({raw_data, buffer}) do
+    # Data comes back like this:
+    #
+    # "data: {\"id\":\"chatcmpl-7e8yp1xBhriNXiqqZ0xJkgNrmMuGS\",\"object\":\"chat.completion.chunk\",\"created\":1689801995,\"model\":\"gpt-4-0613\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":null,\"function_call\":{\"name\":\"calculator\",\"arguments\":\"\"}},\"finish_reason\":null}]}\n\n
+    #  data: {\"id\":\"chatcmpl-7e8yp1xBhriNXiqqZ0xJkgNrmMuGS\",\"object\":\"chat.completion.chunk\",\"created\":1689801995,\"model\":\"gpt-4-0613\",\"choices\":[{\"index\":0,\"delta\":{\"function_call\":{\"arguments\":\"{\\n\"}},\"finish_reason\":null}]}\n\n"
+    #
+    # In that form, the data is not ready to be interpreted as JSON. Let's clean
+    # it up first.
+
+    # as we start, the initial accumulator is an empty set of parsed results and
+    # any left-over buffer from a previous processing.
+    raw_data
+    |> String.split("data: ")
+    |> Enum.reduce({[], buffer}, fn str, {done, incomplete} = acc ->
+      # auto filter out "" and "[DONE]" by not including the accumulator
+      str
+      |> String.trim()
+      |> case do
+        "" ->
+          acc
+
+        "[DONE]" ->
+          acc
+
+        json ->
+          # combine with any previous incomplete data
+          starting_json = incomplete <> json
+
+          starting_json
+          |> Jason.decode()
+          |> case do
+            {:ok, parsed} ->
+              {done ++ [parsed], ""}
+
+            {:error, _reason} ->
+              {done, starting_json}
+          end
+      end
+    end)
   end
 
   # Parse a new message response

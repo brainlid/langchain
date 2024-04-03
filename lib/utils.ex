@@ -2,6 +2,7 @@ defmodule LangChain.Utils do
   @moduledoc """
   Collection of helpful utilities mostly for internal use.
   """
+  alias LangChain.LangChainError
   alias Ecto.Changeset
   require Logger
 
@@ -112,107 +113,96 @@ defmodule LangChain.Utils do
   end
 
   @doc """
-  Creates and returns an anonymous function to handle the streaming request.
+  Creates and returns an anonymous function to handle the streaming response
+  from an API.
+
+  Accepts the following functions that handle the API-specific requirements:
+
+  - `decode_stream_fn` - a function that parses the raw results from an API. It
+    deals with the specifics or oddities of a data source. The results come back
+    as `{[list_of_parsed_json_maps], "incomplete text to buffer"}`. In some
+    cases, a API may span the JSON data response across messages. This function
+    assembles what is complete and returns any incomplete portion that is passed
+    in on the next iteration of the function.
+
+  - `transform_data_fn` - a function that is executed to process the parsed
+    JSON data in the form of an Elixir map into a LangChain struct of the
+    appropriate type.
+
+  - `callback_fn` - a function that receives a successful result of from the
+    `transform_data_fn`.
   """
   @spec handle_stream_fn(
           %{optional(:stream) => boolean()},
-          process_response_fn :: function(),
+          decode_stream_fn :: function(),
+          transform_data_fn :: function(),
           callback_fn :: function()
         ) :: function()
-  def handle_stream_fn(model, process_response_fn, callback_fn) do
-    handle_stream_fn(model, process_response_fn, callback_fn, &decode_streamed_data/2)
-  end
+  def handle_stream_fn(model, decode_stream_fn, transform_data_fn, callback_fn) do
+    fn
+      {:data, raw_data}, {req, %Req.Response{status: 200} = response} ->
+        # Fetch any previously incomplete messages that are buffered in the
+        # response struct and pass that in with the data for decode.
+        buffered = Req.Response.get_private(response, :lang_incomplete, "")
 
-  @doc """
-  Creates and returns an anonymous function to handle the streaming request.
+        # decode the received stream data
+        {parsed_data, incomplete} =
+          decode_stream_fn.({raw_data, buffered})
 
-  Accepts a function responsible for decoding the streaming chunks.
-  """
-  @spec handle_stream_fn(
-          %{optional(:stream) => boolean()},
-          process_response_fn :: function(),
-          callback_fn :: function(),
-          decode_streaming_data_fn :: function()
-        ) :: function()
-  def handle_stream_fn(model, process_response_fn, callback_fn, decode_streaming_data_fn) do
-    fn {:data, raw_data}, {req, response} ->
-      # Fetch any previously incomplete messages that are buffered in the
-      # response struct and pass that in with the data for decode.
-      buffered = Req.Response.get_private(response, :lang_incomplete, "")
+        # transform what was fully received into structs
+        parsed_data = Enum.map(parsed_data, transform_data_fn)
+        # parsed_data = Enum.map(parsed_data, &transform_data_fn.(&1))
 
-      {parsed_data, incomplete} =
-        decode_streaming_data_fn.({raw_data, buffered}, process_response_fn)
+        # execute the callback function for each MessageDelta
+        fire_callback(model, parsed_data, callback_fn)
+        old_body = if response.body == "", do: [], else: response.body
 
-      # execute the callback function for each MessageDelta
-      fire_callback(model, parsed_data, callback_fn)
-      old_body = if response.body == "", do: [], else: response.body
+        # Returns %Req.Response{} where the body contains ALL the stream delta
+        # chunks converted to MessageDelta structs. The body is a list of lists like this...
+        #
+        # body: [
+        #         [
+        #           %LangChain.MessageDelta{
+        #             content: nil,
+        #             index: 0,
+        #             function_name: nil,
+        #             role: :assistant,
+        #             arguments: nil,
+        #             complete: false
+        #           }
+        #         ],
+        #         ...
+        #       ]
+        #
+        # The reason for the inner list is for each entry in the "n" choices. By default only 1.
+        updated_response = %{response | body: old_body ++ parsed_data}
+        # write any incomplete portion to the response's private data for when
+        # more data is received.
+        updated_response =
+          Req.Response.put_private(updated_response, :lang_incomplete, incomplete)
 
-      # Returns %Req.Response{} where the body contains ALL the stream delta
-      # chunks converted to MessageDelta structs. The body is a list of lists like this...
-      #
-      # body: [
-      #         [
-      #           %LangChain.MessageDelta{
-      #             content: nil,
-      #             index: 0,
-      #             function_name: nil,
-      #             role: :assistant,
-      #             arguments: nil,
-      #             complete: false
-      #           }
-      #         ],
-      #         ...
-      #       ]
-      #
-      # The reason for the inner list is for each entry in the "n" choices. By default only 1.
-      updated_response = %{response | body: old_body ++ parsed_data}
-      # write any incomplete portion to the response's private data for when
-      # more data is received.
-      updated_response = Req.Response.put_private(updated_response, :lang_incomplete, incomplete)
+        {:cont, {req, updated_response}}
 
-      {:cont, {req, updated_response}}
+      {:data, _raw_data}, {req, %Req.Response{status: 401} = _response} ->
+        Logger.error("Check API key settings. Request rejected for authentication failure.")
+        {:halt, {req, LangChainError.exception("Authentication failure with request")}}
+
+      {:data, raw_data}, {req, %Req.Response{status: status} = response}
+      when status in 400..599 ->
+        case Jason.decode(raw_data) do
+          {:ok, data} ->
+            {:halt, {req, %{response | body: transform_data_fn.(data)}}}
+
+          {:error, reason} ->
+            Logger.error("Failed to JSON decode error response. ERROR: #{inspect(reason)}")
+
+            {:halt,
+             {req, LangChainError.exception("Failed to handle error response from server.")}}
+        end
+
+      {:data, _raw_data}, {req, response} ->
+        Logger.error("Unhandled API response!")
+        {:halt, {req, response}}
     end
-  end
-
-  @doc false
-  def decode_streamed_data({raw_data, buffer}, process_response_fn) do
-    # Data comes back like this:
-    #
-    # "data: {\"id\":\"chatcmpl-7e8yp1xBhriNXiqqZ0xJkgNrmMuGS\",\"object\":\"chat.completion.chunk\",\"created\":1689801995,\"model\":\"gpt-4-0613\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":null,\"function_call\":{\"name\":\"calculator\",\"arguments\":\"\"}},\"finish_reason\":null}]}\n\n
-    #  data: {\"id\":\"chatcmpl-7e8yp1xBhriNXiqqZ0xJkgNrmMuGS\",\"object\":\"chat.completion.chunk\",\"created\":1689801995,\"model\":\"gpt-4-0613\",\"choices\":[{\"index\":0,\"delta\":{\"function_call\":{\"arguments\":\"{\\n\"}},\"finish_reason\":null}]}\n\n"
-    #
-    # In that form, the data is not ready to be interpreted as JSON. Let's clean
-    # it up first.
-
-    # as we start, the initial accumulator is an empty set of parsed results and
-    # any left-over buffer from a previous processing.
-    raw_data
-    |> String.split("data: ")
-    |> Enum.reduce({[], buffer}, fn str, {done, incomplete} = acc ->
-      # auto filter out "" and "[DONE]" by not including the accumulator
-      str
-      |> String.trim()
-      |> case do
-        "" ->
-          acc
-
-        "[DONE]" ->
-          acc
-
-        json ->
-          # combine with any previous incomplete data
-          starting_json = incomplete <> json
-
-          starting_json
-          |> Jason.decode()
-          |> case do
-            {:ok, parsed} ->
-              {done ++ [process_response_fn.(parsed)], ""}
-
-            {:error, _reason} ->
-              {done, starting_json}
-          end
-      end
-    end)
   end
 end

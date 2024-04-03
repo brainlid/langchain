@@ -3,7 +3,8 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
 
   doctest LangChain.ChatModels.ChatAnthropic
   alias LangChain.ChatModels.ChatAnthropic
-  alias LangChain.ChatModels.ChatAnthropic.StreamingChunkDecoder
+  alias LangChain.Chains.LLMChain
+  alias LangChain.Message
 
   describe "new/1" do
     test "works with minimal attr" do
@@ -122,7 +123,146 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
     end
   end
 
-  describe "StreamingChunkDecoder.decode/2" do
+  describe "call/2" do
+    @tag live_call: true, live_anthropic: true
+    test "handles when invalid API key given" do
+      {:ok, chat} = ChatAnthropic.new(%{stream: true, api_key: "invalid"})
+
+      {:error, reason} =
+        ChatAnthropic.call(chat, [
+          Message.new_user!("Return the response 'Colorful Threads'.")
+        ])
+
+      assert reason == "Authentication failure with request"
+    end
+
+    @tag live_call: true, live_anthropic: true
+    test "basic streamed content example" do
+      {:ok, chat} = ChatAnthropic.new(%{stream: true})
+
+      {:ok, result} =
+        ChatAnthropic.call(chat, [
+          Message.new_user!("Return the response 'Colorful Threads'.")
+        ])
+
+      # returns a list of MessageDeltas.
+      assert result == [
+               [
+                 %LangChain.MessageDelta{
+                   content: "",
+                   status: :incomplete,
+                   index: nil,
+                   function_name: nil,
+                   role: :assistant,
+                   arguments: nil
+                 }
+               ],
+               [
+                 %LangChain.MessageDelta{
+                   content: "Color",
+                   status: :incomplete,
+                   index: nil,
+                   function_name: nil,
+                   role: :assistant,
+                   arguments: nil
+                 }
+               ],
+               [
+                 %LangChain.MessageDelta{
+                   content: "ful",
+                   status: :incomplete,
+                   index: nil,
+                   function_name: nil,
+                   role: :assistant,
+                   arguments: nil
+                 }
+               ],
+               [
+                 %LangChain.MessageDelta{
+                   content: " Threads",
+                   status: :incomplete,
+                   index: nil,
+                   function_name: nil,
+                   role: :assistant,
+                   arguments: nil
+                 }
+               ],
+               [
+                 %LangChain.MessageDelta{
+                   content: "",
+                   status: :complete,
+                   index: nil,
+                   function_name: nil,
+                   role: :assistant,
+                   arguments: nil
+                 }
+               ]
+             ]
+    end
+  end
+
+  describe "decode_stream/1" do
+    test "when data is broken" do
+      data1 = ~s|event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hr"}       }\n\n
+event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"asing"}      }\n\n
+event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" back"}           }\n\n
+event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" what"}             }\n\nevent: content_block_delta\ndata: {"type":"content_block_delta","index":0|
+
+      {processed1, incomplete} = ChatAnthropic.decode_stream({data1, ""})
+
+      assert incomplete ==
+               ~s|event: content_block_delta\ndata: {"type":"content_block_delta","index":0|
+
+      assert processed1 == [
+               %{
+                 "delta" => %{"text" => "hr", "type" => "text_delta"},
+                 "index" => 0,
+                 "type" => "content_block_delta"
+               },
+               %{
+                 "delta" => %{"text" => "asing", "type" => "text_delta"},
+                 "index" => 0,
+                 "type" => "content_block_delta"
+               },
+               %{
+                 "delta" => %{"text" => " back", "type" => "text_delta"},
+                 "index" => 0,
+                 "type" => "content_block_delta"
+               },
+               %{
+                 "delta" => %{"text" => " what", "type" => "text_delta"},
+                 "index" => 0,
+                 "type" => "content_block_delta"
+               }
+             ]
+
+      data2 = ~s|,"delta":{"type":"text_delta","text":" your"}    }\n\n
+event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" friend"}               }\n\n
+event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" said"}   }\n\n|
+
+      {processed2, incomplete} = ChatAnthropic.decode_stream({data2, incomplete})
+
+      assert incomplete == ""
+
+      assert processed2 == [
+               %{
+                 "delta" => %{"text" => " your", "type" => "text_delta"},
+                 "index" => 0,
+                 "type" => "content_block_delta"
+               },
+               %{
+                 "delta" => %{"text" => " friend", "type" => "text_delta"},
+                 "index" => 0,
+                 "type" => "content_block_delta"
+               },
+               %{
+                 "delta" => %{"text" => " said", "type" => "text_delta"},
+                 "index" => 0,
+                 "type" => "content_block_delta"
+               }
+             ]
+    end
+
     test "can parse streaming events" do
       chunk = """
       event: message_start
@@ -139,7 +279,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
 
       """
 
-      {parsed, buffer} = StreamingChunkDecoder.decode(chunk, "")
+      {parsed, buffer} = ChatAnthropic.decode_stream({chunk, ""})
 
       assert [
                %{
@@ -162,7 +302,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
 
       """
 
-      {parsed, buffer} = StreamingChunkDecoder.decode(chunk, "")
+      {parsed, buffer} = ChatAnthropic.decode_stream({chunk, ""})
 
       assert [
                %{
@@ -186,7 +326,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
 
       """
 
-      {parsed, buffer} = StreamingChunkDecoder.decode(chunk, "")
+      {parsed, buffer} = ChatAnthropic.decode_stream({chunk, ""})
 
       assert [
                %{
@@ -209,7 +349,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
 
       """
 
-      {parsed, buffer} = StreamingChunkDecoder.decode(chunk, "")
+      {parsed, buffer} = ChatAnthropic.decode_stream({chunk, ""})
 
       assert [
                %{
@@ -231,7 +371,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
       chunk_1 =
         "event: content_blo"
 
-      {parsed, buffer} = StreamingChunkDecoder.decode(chunk_1, "")
+      {parsed, buffer} = ChatAnthropic.decode_stream({chunk_1, ""})
 
       assert [] = parsed
       assert buffer == chunk_1
@@ -239,19 +379,19 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
       chunk_2 =
         "ck_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"de"
 
-      {parsed, buffer} = StreamingChunkDecoder.decode(chunk_2, buffer)
+      {parsed, buffer} = ChatAnthropic.decode_stream({chunk_2, buffer})
 
       assert [] = parsed
       assert buffer == chunk_1 <> chunk_2
 
-      chunk_3 = """
-      lta":{"type":"text_delta","text":"!"}}
+      chunk_3 = ~s|lta":{"type":"text_delta","text":"!"}}
 
-      event: content_block_delta
-      data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Anthrop"}}
-      """
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Anthrop"}}
 
-      {parsed, buffer} = StreamingChunkDecoder.decode(chunk_3, buffer)
+|
+
+      {parsed, buffer} = ChatAnthropic.decode_stream({chunk_3, buffer})
 
       assert [
                %{
@@ -267,6 +407,32 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
              ] = parsed
 
       assert buffer == ""
+    end
+  end
+
+  describe "works within a chain" do
+    @tag live_call: true, live_anthropic: true
+    test "works with a streaming response" do
+      {:ok, _result_chain, last_message} =
+        LLMChain.new!(%{llm: %ChatAnthropic{stream: true}})
+        |> LLMChain.add_message(Message.new_user!("Say, 'Hi!'!"))
+        |> LLMChain.run()
+
+      assert last_message.content == "Hi!"
+      assert last_message.status == :complete
+      assert last_message.role == :assistant
+    end
+
+    @tag live_call: true, live_anthropic: true
+    test "works with NON streaming response" do
+      {:ok, _result_chain, last_message} =
+        LLMChain.new!(%{llm: %ChatAnthropic{stream: false}})
+        |> LLMChain.add_message(Message.new_user!("Say, 'Hi!'!"))
+        |> LLMChain.run()
+
+      assert last_message.content == "Hi!"
+      assert last_message.status == :complete
+      assert last_message.role == :assistant
     end
   end
 end
