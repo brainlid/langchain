@@ -239,7 +239,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
   end
 
   describe "call/2" do
-    @tag :live_call
+    @tag live_call: true, live_open_ai: true
     test "basic content example" do
       # set_fake_llm_response({:ok, Message.new_assistant("\n\nRainbow Sox Co.")})
 
@@ -254,7 +254,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert response =~ "Colorful Threads"
     end
 
-    @tag :live_call
+    @tag live_call: true, live_open_ai: true
     test "basic streamed content example's final result" do
       # set_fake_llm_response({:ok, Message.new_assistant("\n\nRainbow Sox Co.")})
 
@@ -321,7 +321,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
              ]
     end
 
-    @tag :live_call
+    @tag live_call: true, live_open_ai: true
     test "executing a function", %{hello_world: hello_world} do
       {:ok, chat} = ChatOpenAI.new(%{seed: 0})
 
@@ -335,7 +335,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert message.content == nil
     end
 
-    @tag :live_call
+    @tag live_call: true, live_open_ai: true
     test "executing a function and explain", %{hello_world: hello_world} do
       {:ok, chat} = ChatOpenAI.new(%{seed: 0, model: "gpt-4-1106-preview"})
 
@@ -397,7 +397,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert merged.status == :complete
     end
 
-    @tag :live_call
+    @tag live_call: true, live_open_ai: true
     test "executes callback function when data is NOT streamed" do
       callback = fn %Message{} = new_message ->
         send(self(), {:message_received, new_message})
@@ -426,7 +426,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert received_item.index == 0
     end
 
-    @tag :live_call
+    @tag live_call: true, live_open_ai: true
     test "handles when request is too large" do
       {:ok, chat} =
         ChatOpenAI.new(%{model: "gpt-3.5-turbo-0301", seed: 0, stream: false, temperature: 1})
@@ -617,7 +617,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
   end
 
   describe "streaming examples" do
-    @tag :live_call
+    @tag live_call: true, live_open_ai: true
     test "supports streaming response calling function with args" do
       callback = fn data ->
         # IO.inspect(data, label: "DATA")
@@ -640,7 +640,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert received_data.index == 0
     end
 
-    @tag :live_call
+    @tag live_call: true, live_open_ai: true
     test "STREAMING handles receiving an error when no messages sent" do
       chat = ChatOpenAI.new!(%{seed: 0, stream: true})
 
@@ -649,7 +649,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert reason == "[] is too short - 'messages'"
     end
 
-    @tag :live_call
+    @tag live_call: true, live_open_ai: true
     test "STREAMING handles receiving a timeout error" do
       callback = fn data ->
         send(self(), {:streamed_fn, data})
@@ -661,6 +661,109 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
         ChatOpenAI.call(chat, [Message.new_user!("Why is the sky blue?")], [], callback)
 
       assert reason == "Request timed out"
+    end
+  end
+
+  def setup_expected_json(_) do
+    json_1 = %{
+      "choices" => [
+        %{
+          "delta" => %{
+            "content" => nil,
+            "function_call" => %{"arguments" => "", "name" => "calculator"},
+            "role" => "assistant"
+          },
+          "finish_reason" => nil,
+          "index" => 0
+        }
+      ],
+      "created" => 1_689_801_995,
+      "id" => "chatcmpl-7e8yp1xBhriNXiqqZ0xJkgNrmMuGS",
+      "model" => "gpt-4-0613",
+      "object" => "chat.completion.chunk"
+    }
+
+    json_2 = %{
+      "choices" => [
+        %{
+          "delta" => %{"function_call" => %{"arguments" => "{\n"}},
+          "finish_reason" => nil,
+          "index" => 0
+        }
+      ],
+      "created" => 1_689_801_995,
+      "id" => "chatcmpl-7e8yp1xBhriNXiqqZ0xJkgNrmMuGS",
+      "model" => "gpt-4-0613",
+      "object" => "chat.completion.chunk"
+    }
+
+    %{json_1: json_1, json_2: json_2}
+  end
+
+  describe "decode_stream/1" do
+    setup :setup_expected_json
+
+    test "correctly handles fully formed chat completion chunks", %{
+      json_1: json_1,
+      json_2: json_2
+    } do
+      data =
+        "data: {\"id\":\"chatcmpl-7e8yp1xBhriNXiqqZ0xJkgNrmMuGS\",\"object\":\"chat.completion.chunk\",\"created\":1689801995,\"model\":\"gpt-4-0613\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":null,\"function_call\":{\"name\":\"calculator\",\"arguments\":\"\"}},\"finish_reason\":null}]}\n\n
+         data: {\"id\":\"chatcmpl-7e8yp1xBhriNXiqqZ0xJkgNrmMuGS\",\"object\":\"chat.completion.chunk\",\"created\":1689801995,\"model\":\"gpt-4-0613\",\"choices\":[{\"index\":0,\"delta\":{\"function_call\":{\"arguments\":\"{\\n\"}},\"finish_reason\":null}]}\n\n"
+
+      {parsed, incomplete} = ChatOpenAI.decode_stream({data, ""})
+
+      # nothing incomplete. Parsed 2 objects.
+      assert incomplete == ""
+      assert parsed == [json_1, json_2]
+    end
+
+    test "correctly parses when data split over received messages", %{json_1: json_1} do
+      # split the data over multiple messages
+      data =
+        "data: {\"id\":\"chatcmpl-7e8yp1xBhriNXiqqZ0xJkgNrmMuGS\",\"object\":\"chat.comple
+         data: tion.chunk\",\"created\":1689801995,\"model\":\"gpt-4-0613\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":null,\"function_call\":{\"name\":\"calculator\",\"arguments\":\"\"}},\"finish_reason\":null}]}\n\n"
+
+      {parsed, incomplete} = ChatOpenAI.decode_stream({data, ""})
+
+      # nothing incomplete. Parsed 1 object.
+      assert incomplete == ""
+      assert parsed == [json_1]
+    end
+
+    test "correctly parses when data split over decode calls", %{json_1: json_1} do
+      buffered = "{\"id\":\"chatcmpl-7e8yp1xBhriNXiqqZ0xJkgNrmMuGS\",\"object\":\"chat.comple"
+
+      # incomplete message chunk processed in next call
+      data =
+        "data: tion.chunk\",\"created\":1689801995,\"model\":\"gpt-4-0613\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":null,\"function_call\":{\"name\":\"calculator\",\"arguments\":\"\"}},\"finish_reason\":null}]}\n\n"
+
+      {parsed, incomplete} = ChatOpenAI.decode_stream({data, buffered})
+
+      # nothing incomplete. Parsed 1 object.
+      assert incomplete == ""
+      assert parsed == [json_1]
+    end
+
+    test "correctly parses when data previously buffered and responses split and has leftovers",
+         %{json_1: json_1, json_2: json_2} do
+      buffered = "{\"id\":\"chatcmpl-7e8yp1xBhriNXiqqZ0xJkgNrmMuGS\",\"object\":\"chat.comple"
+
+      # incomplete message chunk processed in next call
+      data =
+        "data: tion.chunk\",\"created\":1689801995,\"model\":\"gpt-4-0613\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":null,\"function_call\":{\"name\":\"calculator\",\"arguments\":\"\"}},\"finish_reason\":null}]}\n\n
+         data: {\"id\":\"chatcmpl-7e8yp1xBhriNXiqqZ0xJkgNrmMuGS\",\"object\":\"chat.completion.chunk\",\"crea
+         data: ted\":1689801995,\"model\":\"gpt-4-0613\",\"choices\":[{\"index\":0,\"delta\":{\"function_call\":{\"argu
+         data: ments\":\"{\\n\"}},\"finish_reason\":null}]}\n\n
+         data: {\"id\":\"chatcmpl-7e8yp1xBhriNXiqqZ0xJkgNrmMuGS\",\"object\":\"chat.comp"
+
+      {parsed, incomplete} = ChatOpenAI.decode_stream({data, buffered})
+
+      # nothing incomplete. Parsed 1 object.
+      assert incomplete ==
+               "{\"id\":\"chatcmpl-7e8yp1xBhriNXiqqZ0xJkgNrmMuGS\",\"object\":\"chat.comp"
+
+      assert parsed == [json_1, json_2]
     end
   end
 end

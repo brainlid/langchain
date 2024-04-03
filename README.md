@@ -186,6 +186,10 @@ To run all the tests including the ones that perform live calls against the Open
 
 ```
 mix test --include live_call
+mix test --include live_open_ai
+mix test --include live_ollama_ai
+mix test --include live_anthropic
+mix test test/tools/calculator_test.exs --include live_call
 ```
 
 NOTE: This will use the configured API credentials which creates billable events.

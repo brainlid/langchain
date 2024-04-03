@@ -53,7 +53,7 @@ defmodule LangChain.Tools.CalculatorTest do
   end
 
   describe "live test" do
-    @tag :live_call
+    @tag live_call: true, live_open_ai: true
     test "performs repeated calls until complete with a live LLM" do
       callback = fn %Message{} = msg ->
         send(self(), {:callback_msg, msg})
@@ -74,7 +74,7 @@ defmodule LangChain.Tools.CalculatorTest do
       assert message.role == :assistant
 
       assert message.content ==
-               "The answer to the math question \"What is 100 + 300 - 200?\" is 200."
+               "The result of the math question \"100 + 300 - 200\" is 200."
 
       # assert received multiple messages as callbacks
       assert_received {:callback_msg, message}
@@ -92,7 +92,7 @@ defmodule LangChain.Tools.CalculatorTest do
       assert message.role == :assistant
 
       assert message.content ==
-               "The answer to the math question \"What is 100 + 300 - 200?\" is 200."
+        "The result of the math question \"100 + 300 - 200\" is 200."
 
       assert updated_chain.last_message == message
     end
