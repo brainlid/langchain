@@ -121,7 +121,7 @@ defmodule ChatModels.ChatOllamaAITest do
   end
 
   describe "call/2" do
-    @tag :live_call_ollama_ai
+    @tag live_call: true, live_ollama_ai: true
     test "basic content example with no streaming" do
       {:ok, chat} =
         ChatOllamaAI.new(%{
@@ -139,7 +139,7 @@ defmodule ChatModels.ChatOllamaAITest do
       assert response =~ "Colorful Threads"
     end
 
-    @tag :live_call_ollama_ai
+    @tag live_call: true, live_ollama_ai: true
     test "basic content example with streaming" do
       {:ok, chat} =
         ChatOllamaAI.new(%{
@@ -173,7 +173,7 @@ defmodule ChatModels.ChatOllamaAITest do
       assert last_delta.role == :assistant
     end
 
-    @tag :live_call_ollama_ai
+    @tag live_call: true, live_ollama_ai: true
     test "returns an error when given an invalid payload" do
       invalid_model = "invalid"
 

@@ -116,7 +116,7 @@ defmodule LangChain.Chains.LLMChainTest do
   end
 
   describe "JS inspired test" do
-    @tag :live_call
+    @tag live_call: true, live_open_ai: true
     test "live POST usage with LLM" do
       # https://js.langchain.com/docs/modules/chains/llm_chain
 
@@ -136,7 +136,7 @@ defmodule LangChain.Chains.LLMChainTest do
       assert updated_chain.last_message == response
     end
 
-    @tag :live_call
+    @tag live_call: true, live_open_ai: true
     test "live STREAM usage with LLM" do
       # https://js.langchain.com/docs/modules/chains/llm_chain
 
@@ -424,7 +424,7 @@ defmodule LangChain.Chains.LLMChainTest do
   end
 
   describe "run/1" do
-    @tag :live_call
+    @tag live_call: true, live_open_ai: true
     test "custom_context is passed to a custom function" do
       # map of data we want to be passed as `context` to the function when
       # executed.
@@ -478,7 +478,7 @@ defmodule LangChain.Chains.LLMChainTest do
       assert arguments == %{"thing" => "hairbrush"}
     end
 
-    @tag :live_call
+    @tag live_call: true, live_open_ai: true
     test "NON-STREAMING handles receiving an error when no messages sent" do
       # create and run the chain
       {:error, reason} =
@@ -491,7 +491,7 @@ defmodule LangChain.Chains.LLMChainTest do
       assert reason == "[] is too short - 'messages'"
     end
 
-    @tag :live_call
+    @tag live_call: true, live_open_ai: true
     test "STREAMING handles receiving an error when no messages sent" do
       # create and run the chain
       {:error, reason} =
@@ -505,7 +505,7 @@ defmodule LangChain.Chains.LLMChainTest do
     end
 
     # runs until functions are evaluated
-    @tag :live_call
+    @tag live_call: true, live_open_ai: true
     test "handles content response + function call" do
       test_pid = self()
 
