@@ -217,6 +217,14 @@ defmodule LangChain.Chains.LLMChain do
         # "choices" are returned from LLM by request.
         {:ok, add_message(chain, message)}
 
+      {:ok, [%MessageDelta{} | _] = deltas} ->
+        if chain.verbose_deltas, do: IO.inspect(deltas, label: "DELTA MESSAGE LIST RESPONSE")
+        updated_chain = apply_deltas(chain, deltas)
+
+        if chain.verbose,
+          do: IO.inspect(updated_chain.last_message, label: "COMBINED DELTA MESSAGE RESPONSE")
+
+        {:ok, updated_chain}
       {:ok, [[%MessageDelta{} | _] | _] = deltas} ->
         if chain.verbose_deltas, do: IO.inspect(deltas, label: "DELTA MESSAGE LIST RESPONSE")
         updated_chain = apply_deltas(chain, deltas)
