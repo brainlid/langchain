@@ -2,5 +2,6 @@
 Application.put_env(:langchain, :openai_key, System.fetch_env!("OPENAI_API_KEY"))
 Application.put_env(:langchain, :anthropic_key, System.fetch_env!("ANTHROPIC_API_KEY"))
 
-ExUnit.configure(capture_log: true, exclude: [live_call: true, live_call_ollama_ai: true])
+ExUnit.configure(capture_log: true, exclude: [live_call: true])
+
 ExUnit.start()
