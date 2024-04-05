@@ -135,13 +135,13 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
     test "turns an image MessagePart into the expected JSON format" do
       expected = %{"type" => "image_url", "image_url" => %{"url" => "image_base64_data"}}
-      result = ChatOpenAI.for_api(MessagePart.image_url!("image_base64_data"))
+      result = ChatOpenAI.for_api(MessagePart.image!("image_base64_data"))
       assert result == expected
     end
 
     test "turns an image_url MessagePart into the expected JSON format" do
       expected = %{"type" => "image_url", "image_url" => %{"url" => "url-to-image"}}
-      result = ChatOpenAI.for_api(MessagePart.image!("url-to-image"))
+      result = ChatOpenAI.for_api(MessagePart.image_url!("url-to-image"))
       assert result == expected
     end
 
