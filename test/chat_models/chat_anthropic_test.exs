@@ -5,6 +5,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
   alias LangChain.ChatModels.ChatAnthropic
   alias LangChain.Chains.LLMChain
   alias LangChain.Message
+  alias LangChain.Message.MessagePart
 
   describe "new/1" do
     test "works with minimal attr" do
@@ -203,7 +204,8 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
 
   describe "decode_stream/1" do
     test "when data is broken" do
-      data1 = ~s|event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hr"}       }\n\n
+      data1 =
+        ~s|event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hr"}       }\n\n
 event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"asing"}      }\n\n
 event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" back"}           }\n\n
 event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" what"}             }\n\nevent: content_block_delta\ndata: {"type":"content_block_delta","index":0|
@@ -236,7 +238,8 @@ event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta
                }
              ]
 
-      data2 = ~s|,"delta":{"type":"text_delta","text":" your"}    }\n\n
+      data2 =
+        ~s|,"delta":{"type":"text_delta","text":" your"}    }\n\n
 event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" friend"}               }\n\n
 event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" said"}   }\n\n|
 
@@ -433,6 +436,227 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       assert last_message.content == "Hi!"
       assert last_message.status == :complete
       assert last_message.role == :assistant
+    end
+  end
+
+  describe "split_system_message/1" do
+    test "returns system message and rest separately" do
+      system = Message.new_system!()
+      user_msg = Message.new_user!("Hi")
+      assert {system, [user_msg]} == ChatAnthropic.split_system_message([system, user_msg])
+    end
+
+    test "return nil when no system message set" do
+      user_msg = Message.new_user!("Hi")
+      assert {nil, [user_msg]} == ChatAnthropic.split_system_message([user_msg])
+    end
+
+    test "raises exception with multiple system messages" do
+      assert_raise LangChain.LangChainError,
+                   "Anthropic only supports a single System message",
+                   fn ->
+                     system = Message.new_system!()
+                     user_msg = Message.new_user!("Hi")
+                     ChatAnthropic.split_system_message([system, user_msg, system])
+                   end
+    end
+  end
+
+  describe "for_api/1" do
+    test "turns a basic user message into the expected JSON format" do
+      expected = %{"role" => :user, "content" => "Hi."}
+      result = ChatAnthropic.for_api(Message.new_user!("Hi."))
+      assert result == expected
+    end
+
+    test "turns a multi-modal user message into the expected JSON format" do
+      expected = %{
+        "role" => :user,
+        "content" => [
+          %{"type" => "text", "text" => "Tell me about this image:"},
+          %{
+            "type" => "image",
+            "source" => %{
+              "data" => "base64-text-data",
+              "type" => "base64",
+              "media_type" => "image/jpeg"
+            }
+          }
+        ]
+      }
+
+      result =
+        ChatAnthropic.for_api(
+          Message.new_user!([
+            MessagePart.text!("Tell me about this image:"),
+            MessagePart.image!("base64-text-data", media: "image/jpeg")
+          ])
+        )
+
+      assert result == expected
+    end
+
+    test "turns a text MessagePart into the expected JSON format" do
+      expected = %{"type" => "text", "text" => "Tell me about this image:"}
+      result = ChatAnthropic.for_api(MessagePart.text!("Tell me about this image:"))
+      assert result == expected
+    end
+
+    test "turns an image MessagePart into the expected JSON format" do
+      expected = %{
+        "type" => "image",
+        "source" => %{
+          "data" => "image_base64_data",
+          "type" => "base64",
+          "media_type" => "image/png"
+        }
+      }
+
+      result = ChatAnthropic.for_api(MessagePart.image!("image_base64_data", media: "image/png"))
+      assert result == expected
+    end
+
+    test "errors on MessagePart type image_url" do
+      assert_raise LangChain.LangChainError, "Anthropic does not support image_url", fn ->
+        ChatAnthropic.for_api(MessagePart.image_url!("url-to-image"))
+      end
+    end
+
+    # test "turns a function_call into expected JSON format" do
+    #   msg = Message.new_function_call!("hello_world", "{}")
+
+    #   json = ChatAnthropic.for_api(msg)
+
+    #   assert json == %{
+    #            "content" => nil,
+    #            "function_call" => %{"arguments" => "{}", "name" => "hello_world"},
+    #            "role" => :assistant
+    #          }
+    # end
+
+    # test "turns a function_call into expected JSON format with arguments" do
+    #   args = %{"expression" => "11 + 10"}
+    #   msg = Message.new_function_call!("hello_world", Jason.encode!(args))
+
+    #   json = ChatAnthropic.for_api(msg)
+
+    #   assert json == %{
+    #            "content" => nil,
+    #            "function_call" => %{
+    #              "arguments" => "{\"expression\":\"11 + 10\"}",
+    #              "name" => "hello_world"
+    #            },
+    #            "role" => :assistant
+    #          }
+    # end
+
+    # test "turns a function response into expected JSON format" do
+    #   msg = Message.new_function!("hello_world", "Hello World!")
+
+    #   json = ChatAnthropic.for_api(msg)
+
+    #   assert json == %{"content" => "Hello World!", "name" => "hello_world", "role" => :function}
+    # end
+
+    # test "works with minimal definition and no parameters" do
+    #   {:ok, fun} = Function.new(%{"name" => "hello_world"})
+
+    #   result = ChatAnthropic.for_api(fun)
+    #   # result = Function.for_api(fun)
+
+    #   assert result == %{
+    #            "name" => "hello_world",
+    #            #  NOTE: Sends the required empty parameter definition when none set
+    #            "parameters" => %{"properties" => %{}, "type" => "object"}
+    #          }
+    # end
+
+    # test "supports parameters" do
+    #   params_def = %{
+    #     "type" => "object",
+    #     "properties" => %{
+    #       "p1" => %{"type" => "string"},
+    #       "p2" => %{"description" => "Param 2", "type" => "number"},
+    #       "p3" => %{
+    #         "enum" => ["yellow", "red", "green"],
+    #         "type" => "string"
+    #       }
+    #     },
+    #     "required" => ["p1"]
+    #   }
+
+    #   {:ok, fun} =
+    #     Function.new(%{
+    #       name: "say_hi",
+    #       description: "Provide a friendly greeting.",
+    #       parameters: [
+    #         FunctionParam.new!(%{name: "p1", type: :string, required: true}),
+    #         FunctionParam.new!(%{name: "p2", type: :number, description: "Param 2"}),
+    #         FunctionParam.new!(%{name: "p3", type: :string, enum: ["yellow", "red", "green"]})
+    #       ]
+    #     })
+
+    #   # result = Function.for_api(fun)
+    #   result = ChatAnthropic.for_api(fun)
+
+    #   assert result == %{
+    #            "name" => "say_hi",
+    #            "description" => "Provide a friendly greeting.",
+    #            "parameters" => params_def
+    #          }
+    # end
+
+    # test "supports parameters_schema" do
+    #   params_def = %{
+    #     "type" => "object",
+    #     "properties" => %{
+    #       "p1" => %{"description" => nil, "type" => "string"},
+    #       "p2" => %{"description" => "Param 2", "type" => "number"},
+    #       "p3" => %{
+    #         "description" => nil,
+    #         "enum" => ["yellow", "red", "green"],
+    #         "type" => "string"
+    #       }
+    #     },
+    #     "required" => ["p1"]
+    #   }
+
+    #   {:ok, fun} =
+    #     Function.new(%{
+    #       "name" => "say_hi",
+    #       "description" => "Provide a friendly greeting.",
+    #       "parameters_schema" => params_def
+    #     })
+
+    #   # result = Function.for_api(fun)
+    #   result = ChatAnthropic.for_api(fun)
+
+    #   assert result == %{
+    #            "name" => "say_hi",
+    #            "description" => "Provide a friendly greeting.",
+    #            "parameters" => params_def
+    #          }
+    # end
+  end
+
+  describe "image vision using message parts" do
+    @tag live_call: true, live_anthropic: true
+    test "supports multi-modal user message with image prompt" do
+      image_data = load_image_base64("barn_owl.jpg")
+
+      # https://docs.anthropic.com/claude/reference/messages-examples#vision
+      {:ok, chat} = ChatAnthropic.new(%{model: "claude-3-opus-20240229"})
+
+      message =
+        Message.new_user!([
+          MessagePart.text!("Identify what this is a picture of:"),
+          MessagePart.image!(image_data, media: "image/jpeg")
+        ])
+
+      {:ok, response} = ChatAnthropic.call(chat, [message], [])
+
+      assert %Message{role: :assistant} = response
+      assert String.contains?(response.content, "barn owl")
     end
   end
 end

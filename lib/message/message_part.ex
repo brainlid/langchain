@@ -23,12 +23,13 @@ defmodule LangChain.Message.MessagePart do
   embedded_schema do
     field :type, Ecto.Enum, values: [:text, :image_url, :image], default: :text
     field :content, :string
+    field :options, :any, virtual: true
   end
 
   @type t :: %MessagePart{}
   # @type type :: :text | :image_url | :image
 
-  @update_fields [:type, :content]
+  @update_fields [:type, :content, :options]
   @create_fields @update_fields
   @required_fields [:type, :content]
 
@@ -68,10 +69,15 @@ defmodule LangChain.Message.MessagePart do
   @doc """
   Create a new MessagePart that contains an image encoded as base64 data. Raises
   an exception if not valid.
+
+  ## Options
+
+  - `:media` - Provide the "media type" for the image. Examples: "image/jpeg",
+    "image/png", etc. ChatGPT does not require this but other LLMs may.
   """
-  @spec image!(String.t()) :: t() | no_return()
-  def image!(content) do
-    new!(%{type: :image, content: content})
+  @spec image!(String.t(), Keyword.t()) :: t() | no_return()
+  def image!(content, opts \\ []) do
+    new!(%{type: :image, content: content, options: opts})
   end
 
   @doc """

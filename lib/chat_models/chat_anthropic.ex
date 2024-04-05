@@ -15,6 +15,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   alias LangChain.ChatModels.ChatModel
   alias LangChain.LangChainError
   alias LangChain.Message
+  alias LangChain.Message.MessagePart
   alias LangChain.MessageDelta
   alias LangChain.Utils
 
@@ -131,35 +132,93 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   """
   @spec for_api(t, message :: [map()]) :: %{atom() => any()}
   def for_api(%ChatAnthropic{} = anthropic, messages) do
+    # separate the system message from the rest. Handled separately.
+    {system, messages} = split_system_message(messages)
+
     %{
       model: anthropic.model,
       temperature: anthropic.temperature,
       stream: anthropic.stream,
-      messages: messages_for_api(messages)
+      messages: Enum.map(messages, &for_api/1)
     }
     # Anthropic sets the `system` message on the request body, not as part of the messages list.
-    |> Utils.conditionally_add_to_map(:system, get_system_message_content(messages))
+    |> Utils.conditionally_add_to_map(:system, system)
     |> Utils.conditionally_add_to_map(:max_tokens, anthropic.max_tokens)
     |> Utils.conditionally_add_to_map(:top_p, anthropic.top_p)
     |> Utils.conditionally_add_to_map(:top_k, anthropic.top_k)
   end
 
   # Unlike OpenAI, Anthropic only supports one system message.
-  defp get_system_message_content(messages) do
-    case Enum.find(messages, &(&1.role == :system)) do
-      nil ->
-        nil
+  @doc false
+  @spec split_system_message([Message.t()]) :: {nil | Message.t(), [Message.t()]} | no_return()
+  def split_system_message(messages) do
+    # split the messages into "system" and "other". Error if more than 1 system
+    # message. Return the other messages as a separate list.
+    {system, other} = Enum.split_with(messages, &(&1.role == :system))
 
-      %Message{content: content} ->
-        content
+    if length(system) > 1 do
+      raise LangChainError, "Anthropic only supports a single System message"
     end
+
+    {List.first(system), other}
   end
 
-  # Anthropic currently only supports two roles in their message list, "user" and "assistant".
-  defp messages_for_api(messages) do
-    messages
-    |> Enum.filter(&(&1.role in [:user, :assistant]))
-    |> Enum.map(&Map.take(&1, [:role, :content]))
+  @doc """
+  Convert a LangChain structure to the expected map of data for the OpenAI API.
+  """
+  @spec for_api(Message.t() | MessagePart.t() | Function.t()) ::
+          %{String.t() => any()} | no_return()
+  # def for_api(%Message{role: :assistant, function_name: fun_name} = msg)
+  #     when is_binary(fun_name) do
+  #   %{
+  #     "role" => :assistant,
+  #     "function_call" => %{
+  #       "arguments" => Jason.encode!(msg.arguments),
+  #       "name" => msg.function_name
+  #     },
+  #     "content" => msg.content
+  #   }
+  # end
+
+  # def for_api(%Message{role: :function} = msg) do
+  #   %{
+  #     "role" => :function,
+  #     "name" => msg.function_name,
+  #     "content" => msg.content
+  #   }
+  # end
+
+  def for_api(%Message{content: content} = msg) when is_binary(content) do
+    %{
+      "role" => msg.role,
+      "content" => msg.content
+    }
+  end
+
+  def for_api(%Message{role: :user, content: content} = msg) when is_list(content) do
+    %{
+      "role" => msg.role,
+      "content" => Enum.map(content, &for_api(&1))
+    }
+  end
+
+  def for_api(%MessagePart{type: :text} = part) do
+    %{"type" => "text", "text" => part.content}
+  end
+
+  def for_api(%MessagePart{type: :image} = part) do
+    %{
+      "type" => "image",
+      "source" => %{
+        "type" => "base64",
+        "data" => part.content,
+        "media_type" => Keyword.fetch!(part.options, :media)
+      }
+    }
+  end
+
+  def for_api(%MessagePart{type: :image_url} = _part) do
+    raise LangChainError, "Anthropic does not support image_url"
   end
 
   @doc """
