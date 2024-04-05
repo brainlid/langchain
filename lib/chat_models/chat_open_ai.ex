@@ -193,7 +193,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     }
   end
 
-  def for_api(%Message{role: :user, content: content} = msg) when is_binary(content) do
+  def for_api(%Message{content: content} = msg) when is_binary(content) do
     %{
       "role" => msg.role,
       "content" => msg.content
