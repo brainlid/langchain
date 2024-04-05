@@ -2,6 +2,7 @@ defmodule LangChain.MessageTest do
   use ExUnit.Case
   doctest LangChain.Message
   alias LangChain.Message
+  alias LangChain.Message.MessagePart
 
   describe "new/1" do
     test "works with minimal attrs" do
@@ -127,6 +128,32 @@ defmodule LangChain.MessageTest do
       assert {:error, changeset} = Message.new_user(nil)
       assert {"can't be blank", _} = changeset.errors[:content]
     end
+
+    test "accepts list of MessageParts for content" do
+      assert {:ok, %Message{} = msg} =
+               Message.new_user([
+                 MessagePart.text!("Describe what is in this image:"),
+                 MessagePart.image!(:base64.encode("fake_image_data"))
+               ])
+
+      assert msg.role == :user
+
+      assert msg.content == [
+               %MessagePart{type: :text, content: "Describe what is in this image:"},
+               %MessagePart{type: :image, content: "ZmFrZV9pbWFnZV9kYXRh"}
+             ]
+    end
+
+    test "does not accept invalid contents" do
+      assert {:error, changeset} = Message.new_user(123)
+      assert {"must be text or a list of MessageParts", _} = changeset.errors[:content]
+
+      assert {:error, changeset} = Message.new_user([123, "ABC"])
+      assert {"must be text or a list of MessageParts", _} = changeset.errors[:content]
+
+      assert {:error, changeset} = Message.new_user([MessagePart.text!("CCC"), "invalid"])
+      assert {"must be text or a list of MessageParts", _} = changeset.errors[:content]
+    end
   end
 
   describe "new_user!/1" do
@@ -140,6 +167,21 @@ defmodule LangChain.MessageTest do
       assert_raise LangChain.LangChainError, "content: can't be blank", fn ->
         Message.new_user!(nil)
       end
+    end
+
+    test "accepts list of MessageParts for content" do
+      assert msg =
+               Message.new_user!([
+                 MessagePart.text!("Describe what is in this image:"),
+                 MessagePart.image!(:base64.encode("fake_image_data"))
+               ])
+
+      assert msg.role == :user
+
+      assert msg.content == [
+               %MessagePart{type: :text, content: "Describe what is in this image:"},
+               %MessagePart{type: :image, content: "ZmFrZV9pbWFnZV9kYXRh"}
+             ]
     end
   end
 

@@ -17,6 +17,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   alias LangChain.Config
   alias LangChain.ChatModels.ChatModel
   alias LangChain.Message
+  alias LangChain.Message.MessagePart
   alias LangChain.Function
   alias LangChain.FunctionParam
   alias LangChain.LangChainError
@@ -171,7 +172,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   @doc """
   Convert a LangChain structure to the expected map of data for the OpenAI API.
   """
-  @spec for_api(Message.t() | Function.t()) :: %{String.t() => any()}
+  @spec for_api(Message.t() | MessagePart.t() | Function.t()) :: %{String.t() => any()}
   def for_api(%Message{role: :assistant, function_name: fun_name} = msg)
       when is_binary(fun_name) do
     %{
@@ -192,11 +193,26 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     }
   end
 
-  def for_api(%Message{} = msg) do
+  def for_api(%Message{role: :user, content: content} = msg) when is_binary(content) do
     %{
       "role" => msg.role,
       "content" => msg.content
     }
+  end
+
+  def for_api(%Message{role: :user, content: content} = msg) when is_list(content) do
+    %{
+      "role" => msg.role,
+      "content" => Enum.map(content, &for_api(&1))
+    }
+  end
+
+  def for_api(%MessagePart{type: :text} = part) do
+    %{"type" => "text", "text" => part.content}
+  end
+
+  def for_api(%MessagePart{type: image} = part) when image in [:image, :image_url] do
+    %{"type" => "image_url", "image_url" => %{"url" => part.content}}
   end
 
   # Function support
@@ -342,8 +358,6 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     # parse the body and return it as parsed structs
     |> case do
       {:ok, %Req.Response{body: data}} ->
-        dbg(data)
-
         case do_process_response(data) do
           {:error, reason} ->
             {:error, reason}

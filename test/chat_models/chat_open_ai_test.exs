@@ -6,6 +6,8 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
   alias LangChain.ChatModels.ChatOpenAI
   alias LangChain.Function
   alias LangChain.FunctionParam
+  alias LangChain.Message
+  alias LangChain.Message.MessagePart
 
   @test_model "gpt-3.5-turbo"
 
@@ -99,6 +101,50 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
   end
 
   describe "for_api/1" do
+    test "turns a basic user message into the expected JSON format" do
+      expected = %{"role" => :user, "content" => "Hi."}
+      result = ChatOpenAI.for_api(Message.new_user!("Hi."))
+      assert result == expected
+    end
+
+    test "turns a multi-modal user message into the expected JSON format" do
+      expected = %{
+        "role" => :user,
+        "content" => [
+          %{"type" => "text", "text" => "Tell me about this image:"},
+          %{"type" => "image_url", "image_url" => %{"url" => "url-to-image"}}
+        ]
+      }
+
+      result =
+        ChatOpenAI.for_api(
+          Message.new_user!([
+            MessagePart.text!("Tell me about this image:"),
+            MessagePart.image_url!("url-to-image")
+          ])
+        )
+
+      assert result == expected
+    end
+
+    test "turns a text MessagePart into the expected JSON format" do
+      expected = %{"type" => "text", "text" => "Tell me about this image:"}
+      result = ChatOpenAI.for_api(MessagePart.text!("Tell me about this image:"))
+      assert result == expected
+    end
+
+    test "turns an image MessagePart into the expected JSON format" do
+      expected = %{"type" => "image_url", "image_url" => %{"url" => "image_base64_data"}}
+      result = ChatOpenAI.for_api(MessagePart.image_url!("image_base64_data"))
+      assert result == expected
+    end
+
+    test "turns an image_url MessagePart into the expected JSON format" do
+      expected = %{"type" => "image_url", "image_url" => %{"url" => "url-to-image"}}
+      result = ChatOpenAI.for_api(MessagePart.image!("url-to-image"))
+      assert result == expected
+    end
+
     test "turns a function_call into expected JSON format" do
       msg = Message.new_function_call!("hello_world", "{}")
 
@@ -764,6 +810,29 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
                "{\"id\":\"chatcmpl-7e8yp1xBhriNXiqqZ0xJkgNrmMuGS\",\"object\":\"chat.comp"
 
       assert parsed == [json_1, json_2]
+    end
+  end
+
+  describe "image vision using message parts" do
+    @tag live_call: true, live_open_ai: true
+    test "supports multi-modal user message with image prompt" do
+      # https://platform.openai.com/docs/guides/vision
+      {:ok, chat} = ChatOpenAI.new(%{model: "gpt-4-vision-preview", seed: 0})
+
+      url =
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg"
+
+      message =
+        Message.new_user!([
+          MessagePart.text!("Identify what this is a picture of:"),
+          MessagePart.image_url!(url)
+        ])
+
+      {:ok, [response]} = ChatOpenAI.call(chat, [message], [])
+
+      assert %Message{role: :assistant} = response
+      assert String.contains?(response.content, "boardwalk")
+      assert String.contains?(response.content, "grass")
     end
   end
 end

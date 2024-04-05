@@ -29,16 +29,49 @@ defmodule LangChain.Message do
 
   Create a message of role `:function` to provide the function response.
 
+  ## Message Parts
+
+  Some LLMs support multi-modal messages. This means the message content can be
+  text and/or image data. Within the LLMs, these are often referred to as
+  "Vision", meaning you can provide text like "Please identify the what this is
+  an image of" and provide an image.
+
+  Message Parts are implemented through `LangChain.Message.MessagePart`. A list
+  of them can be supplied as the "content" for a message. Only a few LLMs
+  support it, and they may require using specific models trained for it. See the
+  documentation for the LLM or service for details on their level of support.
+
+  ## Examples
+
+  A basic system message example:
+
+      alias LangChain.Message
+
+      Message.new_system!("You are a helpful assistant.")
+
+  A basic user message:
+
+      Message.new_user!("Who is Prime Minister of the moon?")
+
+  A multi-part user message:
+      alias LangChain.Message.MessagePart
+
+      Message.new_user!([
+        MessagePart.text!("What is in this picture?"),
+        MessagePart.image_url!("https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg")
+      ]
+
   """
   use Ecto.Schema
   import Ecto.Changeset
   require Logger
   alias __MODULE__
+  alias LangChain.Message.MessagePart
   alias LangChain.LangChainError
 
   @primary_key false
   embedded_schema do
-    field :content, :string
+    field :content, :any, virtual: true
     field :index, :integer
     field :status, Ecto.Enum, values: [:complete, :cancelled, :length], default: :complete
 
@@ -128,7 +161,8 @@ defmodule LangChain.Message do
   defp common_validations(changeset) do
     changeset
     |> validate_required(@required_fields)
-    |> validate_content()
+    |> validate_content_required()
+    |> validate_content_type()
     |> validate_function_name_for_role()
     |> validate_function_name_when_args()
   end
@@ -137,12 +171,38 @@ defmodule LangChain.Message do
   # "assistant" message to be created where we don't have content yet because it
   # can be streamed in through deltas from an LLM and not yet receive the
   # content.
-  defp validate_content(changeset) do
-    case fetch_field!(changeset, :role) do
+  defp validate_content_required(changeset) do
+    role = fetch_field!(changeset, :role)
+
+    case role do
       role when role in [:system, :user] ->
         validate_required(changeset, [:content])
 
       _other ->
+        changeset
+    end
+  end
+
+  defp validate_content_type(changeset) do
+    case fetch_change(changeset, :content) do
+      # string message content is valid for any role
+      {:ok, text} when is_binary(text) ->
+        changeset
+
+      {:ok, [%MessagePart{} | _] = value} ->
+        # if a list, verify all elements are a MessagePart
+        if Enum.all?(value, &match?(%MessagePart{}, &1)) do
+          changeset
+        else
+          add_error(changeset, :content, "must be text or a list of MessageParts")
+        end
+
+      # any other value is not valid
+      {:ok, _} ->
+        add_error(changeset, :content, "must be text or a list of MessageParts")
+
+      # unchanged
+      :error ->
         changeset
     end
   end
@@ -207,7 +267,8 @@ defmodule LangChain.Message do
   Create a new user message which represents a human message or a message from
   the application.
   """
-  @spec new_user(content :: String.t()) :: {:ok, t()} | {:error, Ecto.Changeset.t()}
+  @spec new_user(content :: String.t() | [MessagePart.t()]) ::
+          {:ok, t()} | {:error, Ecto.Changeset.t()}
   def new_user(content) do
     new(%{role: :user, content: content, status: :complete})
   end
@@ -216,7 +277,7 @@ defmodule LangChain.Message do
   Create a new user message which represents a human message or a message from
   the application.
   """
-  @spec new_user!(content :: String.t()) :: t() | no_return()
+  @spec new_user!(content :: String.t() | [MessagePart.t()]) :: t() | no_return()
   def new_user!(content) do
     case new_user(content) do
       {:ok, msg} ->
