@@ -92,7 +92,7 @@ defmodule LangChain.Tools.CalculatorTest do
       assert message.role == :assistant
 
       assert message.content ==
-        "The result of the math question \"100 + 300 - 200\" is 200."
+               "The result of the math question \"100 + 300 - 200\" is 200."
 
       assert updated_chain.last_message == message
     end

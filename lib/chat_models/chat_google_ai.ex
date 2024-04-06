@@ -300,7 +300,13 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     )
     |> Req.Request.put_header("accept-encoding", "utf-8")
     |> Req.post(
-      into: Utils.handle_stream_fn(google_ai, &ChatOpenAI.decode_stream/1, &do_process_response(&1, MessageDelta), callback_fn)
+      into:
+        Utils.handle_stream_fn(
+          google_ai,
+          &ChatOpenAI.decode_stream/1,
+          &do_process_response(&1, MessageDelta),
+          callback_fn
+        )
     )
     |> case do
       {:ok, %Req.Response{body: data}} ->

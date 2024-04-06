@@ -203,7 +203,8 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
 
   describe "decode_stream/1" do
     test "when data is broken" do
-      data1 = ~s|event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hr"}       }\n\n
+      data1 =
+        ~s|event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hr"}       }\n\n
 event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"asing"}      }\n\n
 event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" back"}           }\n\n
 event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" what"}             }\n\nevent: content_block_delta\ndata: {"type":"content_block_delta","index":0|
@@ -236,7 +237,8 @@ event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta
                }
              ]
 
-      data2 = ~s|,"delta":{"type":"text_delta","text":" your"}    }\n\n
+      data2 =
+        ~s|,"delta":{"type":"text_delta","text":" your"}    }\n\n
 event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" friend"}               }\n\n
 event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" said"}   }\n\n|
 
