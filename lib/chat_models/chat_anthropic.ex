@@ -368,6 +368,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     }
     |> Message.new()
     |> to_response()
+    |> List.wrap()
   end
 
   def do_process_response(%{
