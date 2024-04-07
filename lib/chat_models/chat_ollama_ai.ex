@@ -332,15 +332,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
       json: for_api(ollama_ai, messages, functions),
       receive_timeout: ollama_ai.receive_timeout
     )
-    |> Req.post(
-      into:
-        Utils.handle_stream_fn(
-          ollama_ai,
-          &ChatOpenAI.decode_stream/1,
-          &do_process_response/1,
-          callback_fn
-        )
-    )
+    |> Req.post(into: Utils.handle_stream_fn(ollama_ai, &ChatOpenAI.decode_stream/1, &do_process_response/1, callback_fn))
     |> case do
       {:ok, %Req.Response{body: data}} ->
         data
