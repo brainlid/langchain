@@ -345,7 +345,12 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       Req.new(
         url: openai.endpoint,
         json: for_api(openai, messages, functions),
+        # required for OpenAI API
         auth: {:bearer, get_api_key(openai)},
+        # required for Azure OpenAI version
+        headers: [
+          {"api-key", get_api_key(openai)}
+        ],
         receive_timeout: openai.receive_timeout,
         retry: :transient,
         max_retries: 3,
@@ -391,11 +396,18 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     Req.new(
       url: openai.endpoint,
       json: for_api(openai, messages, functions),
+      # required for OpenAI API
       auth: {:bearer, get_api_key(openai)},
+      # required for Azure OpenAI version
+      headers: [
+        {"api-key", get_api_key(openai)}
+      ],
       receive_timeout: openai.receive_timeout
     )
     |> maybe_add_org_id_header()
-    |> Req.post(into: Utils.handle_stream_fn(openai, &decode_stream/1, &do_process_response/1, callback_fn))
+    |> Req.post(
+      into: Utils.handle_stream_fn(openai, &decode_stream/1, &do_process_response/1, callback_fn)
+    )
     |> case do
       {:ok, %Req.Response{body: data}} ->
         data

@@ -416,26 +416,42 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
   describe "works within a chain" do
     @tag live_call: true, live_anthropic: true
     test "works with a streaming response" do
+      callback_fn = fn data ->
+        # IO.inspect(data, label: "DATA")
+        send(self(), {:streamed_fn, data})
+      end
+
       {:ok, _result_chain, last_message} =
         LLMChain.new!(%{llm: %ChatAnthropic{stream: true}})
         |> LLMChain.add_message(Message.new_user!("Say, 'Hi!'!"))
-        |> LLMChain.run()
+        |> LLMChain.run(callback_fn: callback_fn)
 
       assert last_message.content == "Hi!"
       assert last_message.status == :complete
       assert last_message.role == :assistant
+
+      assert_received {:streamed_fn, data}
+      assert %MessageDelta{role: :assistant} = data
     end
 
     @tag live_call: true, live_anthropic: true
     test "works with NON streaming response" do
+      callback_fn = fn data ->
+        # IO.inspect(data, label: "DATA")
+        send(self(), {:streamed_fn, data})
+      end
+
       {:ok, _result_chain, last_message} =
         LLMChain.new!(%{llm: %ChatAnthropic{stream: false}})
         |> LLMChain.add_message(Message.new_user!("Say, 'Hi!'!"))
-        |> LLMChain.run()
+        |> LLMChain.run(callback_fn: callback_fn)
 
       assert last_message.content == "Hi!"
       assert last_message.status == :complete
       assert last_message.role == :assistant
+
+      assert_received {:streamed_fn, data}
+      assert %Message{role: :assistant} = data
     end
   end
 
