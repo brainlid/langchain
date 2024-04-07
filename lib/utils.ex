@@ -103,11 +103,19 @@ defmodule LangChain.Utils do
 
   def fire_callback(_model, _data, nil), do: :ok
 
-  def fire_callback(_model, data, callback_fn) when is_function(callback_fn) do
+  # fire a set of callbacks when receiving a list
+  def fire_callback(_model, data, callback_fn) when is_list(data) and is_function(callback_fn) do
     # OPTIONAL: Execute callback function
     data
     |> List.flatten()
     |> Enum.each(fn item -> callback_fn.(item) end)
+
+    :ok
+  end
+
+  def fire_callback(_model, data, callback_fn) when is_struct(data) and is_function(callback_fn) do
+    # OPTIONAL: Execute callback function
+    callback_fn.(data)
 
     :ok
   end
