@@ -2,6 +2,7 @@ defmodule LangChain.Message.MessagePartTest do
   use ExUnit.Case
   doctest LangChain.Message.MessagePart
   alias LangChain.Message.MessagePart
+  alias LangChain.LangChainError
 
   describe "new/1" do
     test "accepts valid settings" do
@@ -56,6 +57,63 @@ defmodule LangChain.Message.MessagePartTest do
       %MessagePart{} = part = MessagePart.image_url!(url)
       assert part.type == :image_url
       assert part.content == url
+    end
+  end
+
+  describe "tool_call/1" do
+    test "returns MessagePart configured for tool_call" do
+      assert {:ok, %MessagePart{} = part} =
+               MessagePart.tool_call(%{
+                 tool_name: "greeting",
+                 tool_type: :function,
+                 tool_arguments: Jason.encode!(%{name: "Tom"})
+               })
+
+      assert part.type == :tool_call
+      assert part.tool_type == :function
+      assert part.tool_name == "greeting"
+      assert part.tool_arguments == %{"name" => "Tom"}
+      assert part.options == nil
+    end
+
+    test "adds error when JSON is invalid" do
+      {:error, changeset} =
+        MessagePart.tool_call(%{
+          tool_name: "greeting",
+          tool_type: :function,
+          tool_arguments: "{\"invalid\"}"
+        })
+
+      assert {"invalid json", _} = changeset.errors[:tool_arguments]
+    end
+
+    test "returns error when required values missing" do
+      {:error, changeset} = MessagePart.tool_call(%{tool_name: nil})
+      assert {"can't be blank", _} = changeset.errors[:tool_name]
+    end
+  end
+
+  describe "tool_call!/1" do
+    test "returns valid MessagePart" do
+      %MessagePart{} =
+        part =
+        MessagePart.tool_call!(%{
+          tool_name: "greeting",
+          tool_type: :function,
+          tool_arguments: Jason.encode!(%{name: "Tom"})
+        })
+
+      assert part.type == :tool_call
+      assert part.tool_type == :function
+      assert part.tool_name == "greeting"
+      assert part.tool_arguments == %{"name" => "Tom"}
+      assert part.options == nil
+    end
+
+    test "raises error when invalid" do
+      assert_raise LangChainError, "tool_name: can't be blank", fn ->
+        MessagePart.tool_call!(%{tool_name: nil})
+      end
     end
   end
 end
