@@ -413,6 +413,7 @@ defmodule LangChain.Fixtures do
     ]
   end
 
+  #TODO: These are specific to OpenAI. Move into that test module?
   def raw_deltas_for_content() do
     [
       %{
@@ -821,6 +822,7 @@ defmodule LangChain.Fixtures do
     ]
   end
 
+  #TODO: DELETE THIS?
   def delta_content_with_function_call() do
     # OpenAI treats a function_call as extra information with an `:assistant`
     # response. We treat a function_call as it's own thing.

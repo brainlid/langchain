@@ -29,14 +29,14 @@ defmodule LangChain.Message do
 
   Create a message of role `:function` to provide the function response.
 
-  ## Message Parts
+  ## User Content Parts
 
-  Some LLMs support multi-modal messages. This means the message content can be
-  text and/or image data. Within the LLMs, these are often referred to as
+  Some LLMs support multi-modal messages. This means the user's message content
+  can be text and/or image data. Within the LLMs, these are often referred to as
   "Vision", meaning you can provide text like "Please identify the what this is
   an image of" and provide an image.
 
-  Message Parts are implemented through `LangChain.Message.MessagePart`. A list
+  User Content Parts are implemented through `LangChain.Message.UserContentPart`. A list
   of them can be supplied as the "content" for a message. Only a few LLMs
   support it, and they may require using specific models trained for it. See the
   documentation for the LLM or service for details on their level of support.
@@ -53,12 +53,11 @@ defmodule LangChain.Message do
 
       Message.new_user!("Who is Prime Minister of the moon?")
 
-  A multi-part user message:
-      alias LangChain.Message.MessagePart
+  A multi-part user message: alias LangChain.Message.UserContentPart
 
       Message.new_user!([
-        MessagePart.text!("What is in this picture?"),
-        MessagePart.image_url!("https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg")
+        UserContentPart.text!("What is in this picture?"),
+        UserContentPart.image_url!("https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg")
       ]
 
   """
@@ -66,7 +65,7 @@ defmodule LangChain.Message do
   import Ecto.Changeset
   require Logger
   alias __MODULE__
-  alias LangChain.Message.MessagePart
+  alias LangChain.Message.UserContentPart
   alias LangChain.LangChainError
 
   @primary_key false
@@ -78,6 +77,10 @@ defmodule LangChain.Message do
     field :role, Ecto.Enum,
       values: [:system, :user, :assistant, :function],
       default: :user
+
+    # Optional name of the participant. Helps separate input from different
+    # individuals of the same role. Like multiple people are all acting as "user".
+    field :name, :string
 
     field :function_name, :string
     field :arguments, :any, virtual: true
@@ -189,17 +192,17 @@ defmodule LangChain.Message do
       {:ok, text} when is_binary(text) ->
         changeset
 
-      {:ok, [%MessagePart{} | _] = value} ->
-        # if a list, verify all elements are a MessagePart
-        if Enum.all?(value, &match?(%MessagePart{}, &1)) do
+      {:ok, [%UserContentPart{} | _] = value} ->
+        # if a list, verify all elements are a UserContentPart
+        if Enum.all?(value, &match?(%UserContentPart{}, &1)) do
           changeset
         else
-          add_error(changeset, :content, "must be text or a list of MessageParts")
+          add_error(changeset, :content, "must be text or a list of UserContentParts")
         end
 
       # any other value is not valid
       {:ok, _} ->
-        add_error(changeset, :content, "must be text or a list of MessageParts")
+        add_error(changeset, :content, "must be text or a list of UserContentParts")
 
       # unchanged
       :error ->
@@ -267,7 +270,7 @@ defmodule LangChain.Message do
   Create a new user message which represents a human message or a message from
   the application.
   """
-  @spec new_user(content :: String.t() | [MessagePart.t()]) ::
+  @spec new_user(content :: String.t() | [UserContentPart.t()]) ::
           {:ok, t()} | {:error, Ecto.Changeset.t()}
   def new_user(content) do
     new(%{role: :user, content: content, status: :complete})
@@ -277,7 +280,7 @@ defmodule LangChain.Message do
   Create a new user message which represents a human message or a message from
   the application.
   """
-  @spec new_user!(content :: String.t() | [MessagePart.t()]) :: t() | no_return()
+  @spec new_user!(content :: String.t() | [UserContentPart.t()]) :: t() | no_return()
   def new_user!(content) do
     case new_user(content) do
       {:ok, msg} ->

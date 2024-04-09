@@ -16,8 +16,7 @@ defmodule LangChain.Function do
     purpose.
   * ` parameters` - A list of `Function.FunctionParam` structs that are
     converted to a JSONSchema format. (Use in place of `parameters_schema`)
-  * ` parameters_schema` - A [JSONSchema
-    structure](https://json-schema.org/learn/getting-started-step-by-step.html)
+  * ` parameters_schema` - A [JSONSchema structure](https://json-schema.org/learn/getting-started-step-by-step.html)
     that describes the required data structure format for how arguments are
     passed to the function. (Use if greater control or unsupported features are
     needed.)

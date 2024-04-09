@@ -15,8 +15,9 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   alias LangChain.ChatModels.ChatModel
   alias LangChain.LangChainError
   alias LangChain.Message
-  alias LangChain.Message.MessagePart
+  alias LangChain.Message.UserContentPart
   alias LangChain.MessageDelta
+  alias LangChain.Function
   alias LangChain.Utils
 
   @behaviour ChatModel
@@ -130,8 +131,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   @doc """
   Return the params formatted for an API request.
   """
-  @spec for_api(t, message :: [map()]) :: %{atom() => any()}
-  def for_api(%ChatAnthropic{} = anthropic, messages) do
+  @spec for_api(t, message :: [map()], ChatModel.tools()) :: %{atom() => any()}
+  def for_api(%ChatAnthropic{} = anthropic, messages, tools) do
     # separate the system message from the rest. Handled separately.
     {system, messages} = split_system_message(messages)
 
@@ -143,9 +144,19 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     }
     # Anthropic sets the `system` message on the request body, not as part of the messages list.
     |> Utils.conditionally_add_to_map(:system, system)
+    |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(tools))
     |> Utils.conditionally_add_to_map(:max_tokens, anthropic.max_tokens)
     |> Utils.conditionally_add_to_map(:top_p, anthropic.top_p)
     |> Utils.conditionally_add_to_map(:top_k, anthropic.top_k)
+  end
+
+  defp get_tools_for_api(nil), do: []
+
+  defp get_tools_for_api(tools) do
+    Enum.map(tools, fn
+      %Function{} = function ->
+        for_api(function)
+    end)
   end
 
   # Unlike OpenAI, Anthropic only supports one system message.
@@ -161,64 +172,6 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     end
 
     {List.first(system), other}
-  end
-
-  @doc """
-  Convert a LangChain structure to the expected map of data for the OpenAI API.
-  """
-  @spec for_api(Message.t() | MessagePart.t() | Function.t()) ::
-          %{String.t() => any()} | no_return()
-  # def for_api(%Message{role: :assistant, function_name: fun_name} = msg)
-  #     when is_binary(fun_name) do
-  #   %{
-  #     "role" => :assistant,
-  #     "function_call" => %{
-  #       "arguments" => Jason.encode!(msg.arguments),
-  #       "name" => msg.function_name
-  #     },
-  #     "content" => msg.content
-  #   }
-  # end
-
-  # def for_api(%Message{role: :function} = msg) do
-  #   %{
-  #     "role" => :function,
-  #     "name" => msg.function_name,
-  #     "content" => msg.content
-  #   }
-  # end
-
-  def for_api(%Message{content: content} = msg) when is_binary(content) do
-    %{
-      "role" => msg.role,
-      "content" => msg.content
-    }
-  end
-
-  def for_api(%Message{role: :user, content: content} = msg) when is_list(content) do
-    %{
-      "role" => msg.role,
-      "content" => Enum.map(content, &for_api(&1))
-    }
-  end
-
-  def for_api(%MessagePart{type: :text} = part) do
-    %{"type" => "text", "text" => part.content}
-  end
-
-  def for_api(%MessagePart{type: :image} = part) do
-    %{
-      "type" => "image",
-      "source" => %{
-        "type" => "base64",
-        "data" => part.content,
-        "media_type" => Keyword.fetch!(part.options, :media)
-      }
-    }
-  end
-
-  def for_api(%MessagePart{type: :image_url} = _part) do
-    raise LangChainError, "Anthropic does not support image_url"
   end
 
   @doc """
@@ -304,9 +257,9 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   # structures.
   # Retries the request up to 3 times on transient errors with a 1 second delay
   @doc false
-  @spec do_api_request(t(), [Message.t()], [Function.t()], (any() -> any())) ::
+  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), (any() -> any())) ::
           list() | struct() | {:error, String.t()}
-  def do_api_request(anthropic, messages, functions, callback_fn, retry_count \\ 3)
+  def do_api_request(anthropic, messages, tools, callback_fn, retry_count \\ 3)
 
   def do_api_request(_anthropic, _messages, _functions, _callback_fn, 0) do
     raise LangChainError, "Retries exceeded. Connection failed."
@@ -315,14 +268,14 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   def do_api_request(
         %ChatAnthropic{stream: false} = anthropic,
         messages,
-        functions,
+        tools,
         callback_fn,
         retry_count
       ) do
     req =
       Req.new(
         url: anthropic.endpoint,
-        json: for_api(anthropic, messages),
+        json: for_api(anthropic, messages, tools),
         headers: headers(get_api_key(anthropic), anthropic.api_version),
         receive_timeout: anthropic.receive_timeout,
         retry: :transient,
@@ -350,7 +303,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       {:error, %Mint.TransportError{reason: :closed}} ->
         # Force a retry by making a recursive call decrementing the counter
         Logger.debug(fn -> "Mint connection closed: retry count = #{inspect(retry_count)}" end)
-        do_api_request(anthropic, messages, functions, callback_fn, retry_count - 1)
+        do_api_request(anthropic, messages, tools, callback_fn, retry_count - 1)
 
       other ->
         Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
@@ -361,13 +314,13 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   def do_api_request(
         %ChatAnthropic{stream: true} = anthropic,
         messages,
-        functions,
+        tools,
         callback_fn,
         retry_count
       ) do
     Req.new(
       url: anthropic.endpoint,
-      json: for_api(anthropic, messages),
+      json: for_api(anthropic, messages, tools),
       headers: headers(get_api_key(anthropic), anthropic.api_version),
       receive_timeout: anthropic.receive_timeout
     )
@@ -388,7 +341,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       {:error, %Mint.TransportError{reason: :closed}} ->
         # Force a retry by making a recursive call decrementing the counter
         Logger.debug(fn -> "Mint connection closed: retry count = #{inspect(retry_count)}" end)
-        do_api_request(anthropic, messages, functions, callback_fn, retry_count - 1)
+        do_api_request(anthropic, messages, tools, callback_fn, retry_count - 1)
 
       other ->
         Logger.error(
@@ -403,7 +356,9 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     %{
       "x-api-key" => api_key,
       "content-type" => "application/json",
-      "anthropic-version" => api_version
+      "anthropic-version" => api_version,
+      # https://docs.anthropic.com/claude/docs/tool-use - requires this header during beta
+      "anthropic-beta" => "tools-2024-04-04"
     }
   end
 
@@ -415,6 +370,21 @@ defmodule LangChain.ChatModels.ChatAnthropic do
           | MessageDelta.t()
           | [MessageDelta.t()]
           | {:error, String.t()}
+  def do_process_response(%{
+        "type" => "message",
+        "content" => [%{"type" => "tool_use", "name" => tool_name}],
+        "stop_reason" => stop_reason
+      }) do
+    %{
+      role: :assistant,
+      #TODO: WORKING HERE
+      # content: content,
+      status: stop_reason_to_status(stop_reason)
+    }
+    |> Message.new()
+    |> to_response()
+  end
+
   def do_process_response(%{
         "type" => "message",
         "content" => [%{"type" => "text", "text" => content}],
@@ -488,6 +458,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   defp to_response({:error, changeset}), do: {:error, Utils.changeset_error_to_string(changeset)}
 
   defp stop_reason_to_status("end_turn"), do: :complete
+  defp stop_reason_to_status("tool_use"), do: :complete
   defp stop_reason_to_status("max_tokens"), do: :length
   defp stop_reason_to_status("stop_sequence"), do: :complete
 
@@ -564,4 +535,87 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
   # assumed the response is JSON. Return as-is
   defp extract_data(json), do: json
+
+  @doc """
+  Convert a LangChain structure to the expected map of data for the OpenAI API.
+  """
+  @spec for_api(Message.t() | UserContentPart.t() | Function.t()) ::
+          %{String.t() => any()} | no_return()
+  # def for_api(%Message{role: :assistant, function_name: fun_name} = msg)
+  #     when is_binary(fun_name) do
+  #   %{
+  #     "role" => :assistant,
+  #     "function_call" => %{
+  #       "arguments" => Jason.encode!(msg.arguments),
+  #       "name" => msg.function_name
+  #     },
+  #     "content" => msg.content
+  #   }
+  # end
+
+  # def for_api(%Message{role: :function} = msg) do
+  #   %{
+  #     "role" => :function,
+  #     "name" => msg.function_name,
+  #     "content" => msg.content
+  #   }
+  # end
+
+  def for_api(%Message{content: content} = msg) when is_binary(content) do
+    %{
+      "role" => msg.role,
+      "content" => msg.content
+    }
+  end
+
+  def for_api(%Message{role: :user, content: content} = msg) when is_list(content) do
+    %{
+      "role" => msg.role,
+      "content" => Enum.map(content, &for_api(&1))
+    }
+  end
+
+  def for_api(%UserContentPart{type: :text} = part) do
+    %{"type" => "text", "text" => part.content}
+  end
+
+  def for_api(%UserContentPart{type: :image} = part) do
+    %{
+      "type" => "image",
+      "source" => %{
+        "type" => "base64",
+        "data" => part.content,
+        "media_type" => Keyword.fetch!(part.options, :media)
+      }
+    }
+  end
+
+  def for_api(%UserContentPart{type: :image_url} = _part) do
+    raise LangChainError, "Anthropic does not support image_url"
+  end
+
+  # Function support
+  def for_api(%Function{} = fun) do
+    %{
+      "name" => fun.name,
+      "input_schema" => get_parameters(fun)
+    }
+    |> Utils.conditionally_add_to_map("description", fun.description)
+  end
+
+  defp get_parameters(%Function{parameters: [], parameters_schema: nil} = _fun) do
+    %{
+      "type" => "object",
+      "properties" => %{}
+    }
+  end
+
+  defp get_parameters(%Function{parameters: [], parameters_schema: schema} = _fun)
+       when is_map(schema) do
+    schema
+  end
+
+  defp get_parameters(%Function{parameters: params} = _fun) do
+    FunctionParam.to_parameters_schema(params)
+  end
 end

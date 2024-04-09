@@ -1,8 +1,8 @@
 defmodule LangChain.MessageDelta do
   @moduledoc """
   Models a "delta" message from a chat LLM. A delta is a small chunk, or piece
-  of a much larger complete message. A series of deltas can are used to
-  construct a complete message.
+  of a much larger complete message. A series of deltas are used to construct
+  the complete message.
 
   Delta messages must be applied in order for them to be valid. Delta messages
   can be combined and transformed into a `LangChain.Message` once the final
@@ -12,6 +12,12 @@ defmodule LangChain.MessageDelta do
 
   * `:unknown` - The role data is missing for the delta.
   * `:assistant` - Responses coming back from the LLM.
+
+  ## Tool Usage
+
+  Tools can be used or called by the assistant (LLM). A tool call is also split
+  across many message deltas and must be fully assembled before it can be
+  executed.
 
   ## Function calling
 
@@ -30,26 +36,30 @@ defmodule LangChain.MessageDelta do
   alias __MODULE__
   alias LangChain.LangChainError
   alias LangChain.Message
+  alias LangChain.Message.ToolCall
   alias LangChain.Utils
 
   @primary_key false
   embedded_schema do
-    field :content, :string
+    field :content, :any, virtual: true
     # Marks if the delta completes the message.
     field :status, Ecto.Enum, values: [:incomplete, :complete, :length], default: :incomplete
     # When requesting multiple choices for a response, the `index` represents
     # which choice it is. It is a 0 based list.()
     field :index, :integer
-    field :function_name, :string
 
     field :role, Ecto.Enum, values: [:unknown, :assistant], default: :unknown
 
+    field :tool_calls, :any, virtual: true
+
+    # TODO: REMOVE THESE vvv
+    field :function_name, :string
     field :arguments, :any, virtual: true
   end
 
   @type t :: %MessageDelta{}
 
-  @create_fields [:role, :content, :function_name, :arguments, :index, :status]
+  @create_fields [:role, :content, :function_name, :arguments, :index, :status, :tool_calls]
   @required_fields []
 
   @doc """
@@ -118,8 +128,9 @@ defmodule LangChain.MessageDelta do
   def merge_delta(%MessageDelta{role: :assistant} = primary, %MessageDelta{} = delta_part) do
     primary
     |> append_content(delta_part)
-    |> append_function_name(delta_part)
-    |> append_arguments(delta_part)
+    |> merge_tool_calls(delta_part)
+    # |> append_function_name(delta_part)
+    # |> append_arguments(delta_part)
     |> update_index(delta_part)
     |> update_status(delta_part)
   end
@@ -133,6 +144,27 @@ defmodule LangChain.MessageDelta do
 
   defp append_content(%MessageDelta{} = primary, %MessageDelta{} = _delta_part) do
     # no content to merge
+    primary
+  end
+
+  defp merge_tool_calls(
+         %MessageDelta{} = primary,
+         %MessageDelta{tool_calls: [delta_call]} = delta_part
+       ) do
+    # TODO: If the delta_part includes a tools_call, get the merge starting
+    # point from the primary delta.
+    primary_calls = primary.tool_calls || []
+    # get the index of the call being merged
+    initial = Enum.at(primary_calls, delta_call.index)
+    # merge them and put it back in the correct spot of the list
+    merged_call = ToolCall.merge(initial, delta_call)
+    updated_calls = List.replace_at(primary_calls, delta_call.index, merged_call)
+    # return updated MessageDelta
+    %MessageDelta{primary | tool_calls: updated_calls}
+  end
+
+  defp merge_tool_calls(%MessageDelta{} = primary, %MessageDelta{} = _delta_part) do
+    # nothing to merge
     primary
   end
 

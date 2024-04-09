@@ -6,6 +6,23 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
   alias LangChain.Chains.LLMChain
   alias LangChain.Message
   alias LangChain.Message.MessagePart
+  alias LangChain.Function
+  alias LangChain.FunctionParam
+
+  defp hello_world(_args, _context) do
+    "Hello world!"
+  end
+
+  setup do
+    {:ok, hello_world} =
+      Function.new(%{
+        name: "hello_world",
+        description: "Give a hello world greeting.",
+        function: fn -> IO.puts("Hello world!") end
+      })
+
+    %{hello_world: hello_world}
+  end
 
   describe "new/1" do
     test "works with minimal attr" do
@@ -43,7 +60,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
           "api_key" => "api_key"
         })
 
-      data = ChatAnthropic.for_api(anthropic, [])
+      data = ChatAnthropic.for_api(anthropic, [], [])
       assert data.model == "claude-3-opus-20240229"
       assert data.temperature == 1
       assert data.top_p == 0.5
@@ -58,7 +75,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
           "max_tokens" => 1234
         })
 
-      data = ChatAnthropic.for_api(anthropic, [])
+      data = ChatAnthropic.for_api(anthropic, [], [])
       assert data.model == "claude-3-opus-20240229"
       assert data.temperature == 1
       assert data.top_p == 0.5
@@ -121,6 +138,31 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
       assert struct.content == ""
       assert struct.status == :complete
       assert is_nil(struct.index)
+    end
+
+    test "handles receiving a function tool call with no parameters" do
+      response = %{
+        "content" => [
+          %{"id" => "toolu_0123", "input" => %{}, "name" => "hello_world", "type" => "tool_use"}
+        ],
+        "id" => "msg_0123",
+        "model" => "claude-3-haiku-20240307",
+        "role" => "assistant",
+        "stop_reason" => "tool_use",
+        "stop_sequence" => nil,
+        "type" => "message",
+        "usage" => %{"input_tokens" => 324, "output_tokens" => 36}
+      }
+
+      assert %Message{} = struct = ChatAnthropic.do_process_response(response)
+
+      assert struct.role == :assistant
+      [%MessagePart{} = part] = struct.content
+      assert part.type == :tool_call
+      assert part.tool_id == "toolu_0123"
+      assert part.tool_name == "hello_world"
+      assert part.tool_arguments == nil
+      assert part.tool_type == :function
     end
   end
 
@@ -199,6 +241,22 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
                  }
                ]
              ]
+    end
+
+    @tag live_call: true, live_open_ai: true
+    test "executing a function", %{hello_world: hello_world} do
+      {:ok, chat} = ChatAnthropic.new()
+
+      {:ok, message} =
+        Message.new_user("Using only the functions you have been provided with, give a greeting.")
+
+      {:ok, message} = ChatAnthropic.call(chat, [message], [hello_world])
+
+      dbg(message)
+
+      assert %Message{role: :assistant} = message
+      assert message.arguments == %{}
+      assert message.content == nil
     end
   end
 
@@ -574,18 +632,17 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
     #   assert json == %{"content" => "Hello World!", "name" => "hello_world", "role" => :function}
     # end
 
-    # test "works with minimal definition and no parameters" do
-    #   {:ok, fun} = Function.new(%{"name" => "hello_world"})
+    test "tools work with minimal definition and no parameters" do
+      {:ok, fun} = Function.new(%{"name" => "hello_world"})
 
-    #   result = ChatAnthropic.for_api(fun)
-    #   # result = Function.for_api(fun)
+      result = ChatAnthropic.for_api(fun)
 
-    #   assert result == %{
-    #            "name" => "hello_world",
-    #            #  NOTE: Sends the required empty parameter definition when none set
-    #            "parameters" => %{"properties" => %{}, "type" => "object"}
-    #          }
-    # end
+      assert result == %{
+               "name" => "hello_world",
+               #  NOTE: Sends the required empty parameter definition when none set
+               "input_schema" => %{"properties" => %{}, "type" => "object"}
+             }
+    end
 
     # test "supports parameters" do
     #   params_def = %{

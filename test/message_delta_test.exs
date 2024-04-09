@@ -115,6 +115,26 @@ defmodule LangChain.MessageDeltaTest do
       assert merged == expected
     end
 
+    test "correctly merges multiple tool calls in a delta" do
+      [first | rest] = deltas_for_multiple_tool_calls()
+
+      merged =
+        Enum.reduce(rest, first, fn new_delta, acc ->
+          MessageDelta.merge_delta(acc, new_delta)
+        end)
+
+      expected = %LangChain.MessageDelta{
+        content: nil,
+        index: 0,
+        function_name: "GOES AWAY",
+        role: :assistant,
+        arguments: "{}",
+        status: :complete
+      }
+
+      assert merged == expected
+    end
+
     test "correctly merges function_call message with no arguments" do
       [first | rest] = delta_function_no_args()
 

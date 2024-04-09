@@ -17,7 +17,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   alias LangChain.Config
   alias LangChain.ChatModels.ChatModel
   alias LangChain.Message
-  alias LangChain.Message.MessagePart
+  alias LangChain.Message.UserContentPart
+  alias LangChain.Message.ToolCall
   alias LangChain.Function
   alias LangChain.FunctionParam
   alias LangChain.LangChainError
@@ -135,10 +136,10 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   @doc """
   Return the params formatted for an API request.
   """
-  @spec for_api(t | Message.t() | Function.t(), message :: [map()], functions :: [map()]) :: %{
+  @spec for_api(t | Message.t() | Function.t(), message :: [map()], ChatModel.tools()) :: %{
           atom() => any()
         }
-  def for_api(%ChatOpenAI{} = openai, messages, functions) do
+  def for_api(%ChatOpenAI{} = openai, messages, tools) do
     %{
       model: openai.model,
       temperature: openai.temperature,
@@ -151,13 +152,13 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     }
     |> Utils.conditionally_add_to_map(:max_tokens, openai.max_tokens)
     |> Utils.conditionally_add_to_map(:seed, openai.seed)
-    |> Utils.conditionally_add_to_map(:tools, get_functions_for_api(functions))
+    |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(tools))
   end
 
-  defp get_functions_for_api(nil), do: []
+  defp get_tools_for_api(nil), do: []
 
-  defp get_functions_for_api(functions) do
-    Enum.map(functions, fn
+  defp get_tools_for_api(tools) do
+    Enum.map(tools, fn
       %Function{} = function ->
         %{"type" => "function", "function" => for_api(function)}
     end)
@@ -172,7 +173,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   @doc """
   Convert a LangChain structure to the expected map of data for the OpenAI API.
   """
-  @spec for_api(Message.t() | MessagePart.t() | Function.t()) :: %{String.t() => any()}
+  @spec for_api(Message.t() | UserContentPart.t() | Function.t()) :: %{String.t() => any()}
   def for_api(%Message{role: :assistant, function_name: fun_name} = msg)
       when is_binary(fun_name) do
     %{
@@ -196,6 +197,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   def for_api(%Message{content: content} = msg) when is_binary(content) do
     %{
       "role" => msg.role,
+      "name" => msg.name,
       "content" => msg.content
     }
   end
@@ -203,15 +205,16 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   def for_api(%Message{role: :user, content: content} = msg) when is_list(content) do
     %{
       "role" => msg.role,
+      "name" => msg.name,
       "content" => Enum.map(content, &for_api(&1))
     }
   end
 
-  def for_api(%MessagePart{type: :text} = part) do
+  def for_api(%UserContentPart{type: :text} = part) do
     %{"type" => "text", "text" => part.content}
   end
 
-  def for_api(%MessagePart{type: image} = part) when image in [:image, :image_url] do
+  def for_api(%UserContentPart{type: image} = part) when image in [:image, :image_url] do
     %{"type" => "image_url", "image_url" => %{"url" => part.content}}
   end
 
@@ -244,35 +247,36 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   Calls the OpenAI API passing the ChatOpenAI struct with configuration, plus
   either a simple message or the list of messages to act as the prompt.
 
-  Optionally pass in a list of functions available to the LLM for requesting
+  Optionally pass in a list of tools available to the LLM for requesting
   execution in response.
 
   Optionally pass in a callback function that can be executed as data is
   received from the API.
 
   **NOTE:** This function *can* be used directly, but the primary interface
-  should be through `LangChain.Chains.LLMChain`. The `ChatOpenAI` module is more focused on
-  translating the `LangChain` data structures to and from the OpenAI API.
+  should be through `LangChain.Chains.LLMChain`. The `ChatOpenAI` module is more
+  focused on translating the `LangChain` data structures to and from the OpenAI
+  API.
 
   Another benefit of using `LangChain.Chains.LLMChain` is that it combines the
-  storage of messages, adding functions, adding custom context that should be
-  passed to functions, and automatically applying `LangChain.MessageDelta`
+  storage of messages, adding tools, adding custom context that should be
+  passed to tools, and automatically applying `LangChain.MessageDelta`
   structs as they are are received, then converting those to the full
   `LangChain.Message` once fully complete.
   """
   @impl ChatModel
-  def call(openai, prompt, functions \\ [], callback_fn \\ nil)
+  def call(openai, prompt, tools \\ [], callback_fn \\ nil)
 
-  def call(%ChatOpenAI{} = openai, prompt, functions, callback_fn) when is_binary(prompt) do
+  def call(%ChatOpenAI{} = openai, prompt, tools, callback_fn) when is_binary(prompt) do
     messages = [
       Message.new_system!(),
       Message.new_user!(prompt)
     ]
 
-    call(openai, messages, functions, callback_fn)
+    call(openai, messages, tools, callback_fn)
   end
 
-  def call(%ChatOpenAI{} = openai, messages, functions, callback_fn) when is_list(messages) do
+  def call(%ChatOpenAI{} = openai, messages, tools, callback_fn) when is_list(messages) do
     if override_api_return?() do
       Logger.warning("Found override API response. Will not make live API call.")
 
@@ -293,7 +297,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     else
       try do
         # make base api request and perform high-level success/failure checks
-        case do_api_request(openai, messages, functions, callback_fn) do
+        case do_api_request(openai, messages, tools, callback_fn) do
           {:error, reason} ->
             {:error, reason}
 
@@ -326,25 +330,25 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   # structures.
   # Retries the request up to 3 times on transient errors with a 1 second delay
   @doc false
-  @spec do_api_request(t(), [Message.t()], [Function.t()], (any() -> any())) ::
+  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), (any() -> any())) ::
           list() | struct() | {:error, String.t()}
-  def do_api_request(openai, messages, functions, callback_fn, retry_count \\ 3)
+  def do_api_request(openai, messages, tools, callback_fn, retry_count \\ 3)
 
-  def do_api_request(_openai, _messages, _functions, _callback_fn, 0) do
+  def do_api_request(_openai, _messages, _tools, _callback_fn, 0) do
     raise LangChainError, "Retries exceeded. Connection failed."
   end
 
   def do_api_request(
         %ChatOpenAI{stream: false} = openai,
         messages,
-        functions,
+        tools,
         callback_fn,
         retry_count
       ) do
     req =
       Req.new(
         url: openai.endpoint,
-        json: for_api(openai, messages, functions),
+        json: for_api(openai, messages, tools),
         # required for OpenAI API
         auth: {:bearer, get_api_key(openai)},
         # required for Azure OpenAI version
@@ -378,7 +382,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       {:error, %Mint.TransportError{reason: :closed}} ->
         # Force a retry by making a recursive call decrementing the counter
         Logger.debug(fn -> "Mint connection closed: retry count = #{inspect(retry_count)}" end)
-        do_api_request(openai, messages, functions, callback_fn, retry_count - 1)
+        do_api_request(openai, messages, tools, callback_fn, retry_count - 1)
 
       other ->
         Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
@@ -389,13 +393,13 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   def do_api_request(
         %ChatOpenAI{stream: true} = openai,
         messages,
-        functions,
+        tools,
         callback_fn,
         retry_count
       ) do
     Req.new(
       url: openai.endpoint,
-      json: for_api(openai, messages, functions),
+      json: for_api(openai, messages, tools),
       # required for OpenAI API
       auth: {:bearer, get_api_key(openai)},
       # required for Azure OpenAI version
@@ -421,7 +425,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       {:error, %Mint.TransportError{reason: :closed}} ->
         # Force a retry by making a recursive call decrementing the counter
         Logger.debug(fn -> "Mint connection closed: retry count = #{inspect(retry_count)}" end)
-        do_api_request(openai, messages, functions, callback_fn, retry_count - 1)
+        do_api_request(openai, messages, tools, callback_fn, retry_count - 1)
 
       other ->
         Logger.error(
@@ -491,7 +495,9 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           | MessageDelta.t()
           | [MessageDelta.t()]
           | {:error, String.t()}
-  def do_process_response(%{"choices" => choices}) when is_list(choices) do
+  def do_process_response(%{"choices" => choices} = data) when is_list(choices) do
+    IO.inspect(data)
+
     # process each response individually. Return a list of all processed choices
     for choice <- choices do
       do_process_response(choice)
@@ -501,12 +507,15 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   def do_process_response(
         %{"finish_reason" => "tool_calls", "message" => %{"tool_calls" => calls}} = data
       ) do
+    # TODO: FIRST ensure we can parse all the UserContentParts. If they are all valid, continue. Otherwise, report the error.
+
     case Message.new(%{
            "role" => "assistant",
-           "function_name" => name,
-           "arguments" => raw_args,
+           #  "function_name" => name,
+           #  "arguments" => raw_args,
            "complete" => true,
-           "index" => data["index"]
+           "index" => data["index"],
+           "content" => Enum.map(calls, &do_process_response/1)
          }) do
       {:ok, message} ->
         message
@@ -516,6 +525,29 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     end
   end
 
+  # TODO: I do need a full message parse for tool_calls
+  # # tool_call for ToolCall
+  # def do_process_response(%{
+  #       "type" => "function",
+  #       "id" => tool_id,
+  #       "function" => %{"arguments" => args, "name" => tool_name}
+  #     }) do
+  #   case UserContentPart.tool_call(%{
+  #          type: :tool_call,
+  #          tool_id: tool_id,
+  #          tool_type: :function,
+  #          tool_name: tool_name,
+  #          tool_arguments: args
+  #        }) do
+  #     {:ok, message_part} ->
+  #       message_part
+
+  #     {:error, changeset} ->
+  #       {:error, Utils.changeset_error_to_string(changeset)}
+  #   end
+  # end
+
+  # Full message tool call
   def do_process_response(
         %{
           "finish_reason" => "tool_calls",
@@ -542,43 +574,17 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     end
   end
 
+  # Delta message tool call
   def do_process_response(
         %{"delta" => delta_body, "finish_reason" => finish, "index" => index} = _msg
       ) do
-    status =
-      case finish do
-        nil ->
-          :incomplete
+    status = finish_reason_to_status(finish)
 
-        "stop" ->
-          :complete
-
-        "length" ->
-          :length
-
-        # "function_call" ->
-        #   :complete
-
-        "content_filter" ->
-          :complete
-
-        "tool_calls" ->
-          :complete
-
-        other ->
-          Logger.warning("Unsupported finish_reason in delta message. Reason: #{inspect(other)}")
-          nil
-      end
-
-    function_name =
+    tool_calls =
       case delta_body do
-        %{"function_call" => %{"name" => name}} -> name
-        _other -> nil
-      end
+        %{"tool_calls" => tools_data} when is_list(tools_data) ->
+          Enum.map(tools_data, &do_process_response(&1))
 
-    arguments =
-      case delta_body do
-        %{"function_call" => %{"arguments" => args}} when is_binary(args) -> args
         _other -> nil
       end
 
@@ -596,8 +602,9 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       |> Map.put("role", role)
       |> Map.put("index", index)
       |> Map.put("status", status)
-      |> Map.put("function_name", function_name)
-      |> Map.put("arguments", arguments)
+      # |> Map.put("function_name", function_name)
+      # |> Map.put("arguments", arguments)
+      |> Map.put("tool_calls", tool_calls)
 
     case MessageDelta.new(data) do
       {:ok, message} ->
@@ -608,29 +615,33 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     end
   end
 
+  # Tool call as part of a delta message
+  def do_process_response(%{"function" => func_body, "index" => index}) do
+    # function parts may or may not be present on any given delta chunk
+    case ToolCall.new(%{
+           status: :incomplete,
+           type: :function,
+           tool_id: Map.get(func_body, "id", nil),
+           name: Map.get(func_body, "name", nil),
+           arguments: Map.get(func_body, "arguments", nil),
+           index: index
+         }) do
+      {:ok, %ToolCall{} = call} ->
+        call
+
+      {:error, changeset} ->
+        reason = Utils.changeset_error_to_string(changeset)
+        Logger.error("Failed to process ToolCall for a function. Reason: #{reason}")
+        {:error, reason}
+    end
+  end
+
   def do_process_response(%{
         "finish_reason" => finish_reason,
         "message" => message,
         "index" => index
       }) do
-    status =
-      case finish_reason do
-        "stop" ->
-          :complete
-
-        "tool_calls" ->
-          :complete
-
-        "content_filter" ->
-          :complete
-
-          "length" ->
-          :length
-
-        other ->
-          Logger.warning("Unsupported finish_reason in message. Reason: #{inspect(other)}")
-          nil
-      end
+    status = finish_reason_to_status(finish_reason)
 
     case Message.new(Map.merge(message, %{"status" => status, "index" => index})) do
       {:ok, message} ->
@@ -655,6 +666,18 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   def do_process_response(other) do
     Logger.error("Trying to process an unexpected response. #{inspect(other)}")
     {:error, "Unexpected response"}
+  end
+
+  defp finish_reason_to_status(nil), do: :incomplete
+  defp finish_reason_to_status("stop"), do: :complete
+  defp finish_reason_to_status("tool_calls"), do: :complete
+  defp finish_reason_to_status("content_filter"), do: :complete
+  defp finish_reason_to_status("length"), do: :length
+  defp finish_reason_to_status("max_tokens"), do: :length
+
+  defp finish_reason_to_status(other) do
+    Logger.warning("Unsupported finish_reason in message. Reason: #{inspect(other)}")
+    nil
   end
 
   defp maybe_add_org_id_header(%Req.Request{} = req) do
