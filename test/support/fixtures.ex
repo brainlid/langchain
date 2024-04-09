@@ -225,6 +225,194 @@ defmodule LangChain.Fixtures do
     |> Enum.flat_map(&ChatOpenAI.do_process_response(&1))
   end
 
+  @doc """
+  Return a list of MessageDelta structs that includes multiple tool calls.
+  """
+  def deltas_for_multiple_tool_calls() do
+    [
+      %LangChain.MessageDelta{
+        content: nil,
+        status: :incomplete,
+        index: 0,
+        role: :assistant,
+        tool_calls: nil,
+        function_name: nil,
+        arguments: nil
+      },
+      %LangChain.MessageDelta{
+        content: nil,
+        status: :incomplete,
+        index: 0,
+        role: :unknown,
+        tool_calls: [
+          %LangChain.Message.ToolCall{
+            status: :incomplete,
+            type: :function,
+            tool_id: nil,
+            name: "get_weather",
+            arguments: nil,
+            index: 0
+          }
+        ],
+        function_name: nil,
+        arguments: nil
+      },
+      %LangChain.MessageDelta{
+        content: nil,
+        status: :incomplete,
+        index: 0,
+        role: :unknown,
+        tool_calls: [
+          %LangChain.Message.ToolCall{
+            status: :incomplete,
+            type: :function,
+            tool_id: nil,
+            name: nil,
+            arguments: "{\"ci",
+            index: 0
+          }
+        ],
+        function_name: nil,
+        arguments: nil
+      },
+      %LangChain.MessageDelta{
+        content: nil,
+        status: :incomplete,
+        index: 0,
+        role: :unknown,
+        tool_calls: [
+          %LangChain.Message.ToolCall{
+            status: :incomplete,
+            type: :function,
+            tool_id: nil,
+            name: nil,
+            arguments: "ty\": \"Moab\", \"state\": \"UT\"}",
+            index: 0
+          }
+        ],
+        function_name: nil,
+        arguments: nil
+      },
+      %LangChain.MessageDelta{
+        content: nil,
+        status: :incomplete,
+        index: 0,
+        role: :unknown,
+        tool_calls: [
+          %LangChain.Message.ToolCall{
+            status: :incomplete,
+            type: :function,
+            tool_id: nil,
+            name: "get_weather",
+            arguments: nil,
+            index: 1
+          }
+        ],
+        function_name: nil,
+        arguments: nil
+      },
+      %LangChain.MessageDelta{
+        content: nil,
+        status: :incomplete,
+        index: 0,
+        role: :unknown,
+        tool_calls: [
+          %LangChain.Message.ToolCall{
+            status: :incomplete,
+            type: :function,
+            tool_id: nil,
+            name: nil,
+            arguments: "{\"ci",
+            index: 1
+          }
+        ],
+        function_name: nil,
+        arguments: nil
+      },
+      %LangChain.MessageDelta{
+        content: nil,
+        status: :incomplete,
+        index: 0,
+        role: :unknown,
+        tool_calls: [
+          %LangChain.Message.ToolCall{
+            status: :incomplete,
+            type: :function,
+            tool_id: nil,
+            name: nil,
+            arguments: "ty\": \"Portland\", \"state\": \"OR\"}",
+            index: 1
+          }
+        ],
+        function_name: nil,
+        arguments: nil
+      },
+      %LangChain.MessageDelta{
+        content: nil,
+        status: :incomplete,
+        index: 0,
+        role: :unknown,
+        tool_calls: [
+          %LangChain.Message.ToolCall{
+            status: :incomplete,
+            type: :function,
+            tool_id: nil,
+            name: "get_weather",
+            arguments: nil,
+            index: 2
+          }
+        ],
+        function_name: nil,
+        arguments: nil
+      },
+      %LangChain.MessageDelta{
+        content: nil,
+        status: :incomplete,
+        index: 0,
+        role: :unknown,
+        tool_calls: [
+          %LangChain.Message.ToolCall{
+            status: :incomplete,
+            type: :function,
+            tool_id: nil,
+            name: nil,
+            arguments: "{\"ci",
+            index: 2
+          }
+        ],
+        function_name: nil,
+        arguments: nil
+      },
+      %LangChain.MessageDelta{
+        content: nil,
+        status: :incomplete,
+        index: 0,
+        role: :unknown,
+        tool_calls: [
+          %LangChain.Message.ToolCall{
+            status: :incomplete,
+            type: :function,
+            tool_id: nil,
+            name: nil,
+            arguments: "ty\": \"Baltimore\", \"state\": \"MD\"}",
+            index: 2
+          }
+        ],
+        function_name: nil,
+        arguments: nil
+      },
+      %LangChain.MessageDelta{
+        content: nil,
+        status: :complete,
+        index: 0,
+        role: :unknown,
+        tool_calls: nil,
+        function_name: nil,
+        arguments: nil
+      }
+    ]
+  end
+
   def raw_deltas_for_content() do
     [
       %{
