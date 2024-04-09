@@ -1,11 +1,8 @@
-defmodule LangChain.Message.MessagePart do
+defmodule LangChain.Message.UserContentPart do
   @moduledoc """
-  Models a `MessagePart`. Some LLMs support combining text, images, and possibly
-  other content as part of a single user message. A `MessagePart` represents a
+  Models a `UserContentPart`. Some LLMs support combining text, images, and possibly
+  other content as part of a single user message. A `UserContentPart` represents a
   block, or part, of a message's content that is all of one type.
-
-  Likewise, some LLMs will return assistant response messages that contain both
-  text content a tool call. For
 
   ## Types
 
@@ -38,12 +35,14 @@ defmodule LangChain.Message.MessagePart do
     field :type, Ecto.Enum, values: [:text, :image_url, :image, :tool_call], default: :text
     # tool results are sent through content as well.
     field :content, :string
+    field :options, :any, virtual: true
+
+
     # tool id links the result back to a specific tool request
     field :tool_id, :string
     field :tool_type, Ecto.Enum, values: [:function], default: :function
     field :tool_name, :string
     field :tool_arguments, :any, virtual: true
-    field :options, :any, virtual: true
   end
 
   # https://cookbook.openai.com/examples/how_to_call_functions_with_chat_models
@@ -52,7 +51,7 @@ defmodule LangChain.Message.MessagePart do
   #   results = execute_function_call(assistant_message)
   #   messages.append({"role": "function", "tool_call_id": assistant_message.tool_calls[0].id, "name": assistant_message.tool_calls[0].function.name, "content": results})
 
-  @type t :: %MessagePart{}
+  @type t :: %UserContentPart{}
 
   @update_fields [:type, :content, :options]
   @create_fields @update_fields
@@ -65,7 +64,7 @@ defmodule LangChain.Message.MessagePart do
   """
   @spec new(attrs :: map()) :: {:ok, t()} | {:error, Ecto.Changeset.t()}
   def new(attrs \\ %{}) do
-    %MessagePart{}
+    %UserContentPart{}
     |> cast(attrs, @create_fields)
     |> common_validations()
     |> apply_action(:insert)
@@ -86,7 +85,7 @@ defmodule LangChain.Message.MessagePart do
   end
 
   @doc """
-  Create a new MessagePart that contains text. Raises an exception if not valid.
+  Create a new UserContentPart that contains text. Raises an exception if not valid.
   """
   @spec text!(String.t()) :: t() | no_return()
   def text!(content) do
@@ -94,7 +93,7 @@ defmodule LangChain.Message.MessagePart do
   end
 
   @doc """
-  Create a new MessagePart that contains an image encoded as base64 data. Raises
+  Create a new UserContentPart that contains an image encoded as base64 data. Raises
   an exception if not valid.
 
   ## Options
@@ -108,7 +107,7 @@ defmodule LangChain.Message.MessagePart do
   end
 
   @doc """
-  Create a new MessagePart that contains a URL to an image. Raises an exception if not valid.
+  Create a new UserContentPart that contains a URL to an image. Raises an exception if not valid.
   """
   @spec image_url!(String.t()) :: t() | no_return()
   def image_url!(content) do
@@ -116,7 +115,7 @@ defmodule LangChain.Message.MessagePart do
   end
 
   @doc """
-  Create a new MessagePart that represents a tool call.
+  Create a new UserContentPart that represents a tool call.
   """
   @spec tool_call(attrs :: map()) :: {:ok, t()} | {:error, Ecto.Changeset.t()}
   def tool_call(attrs) do
@@ -126,7 +125,7 @@ defmodule LangChain.Message.MessagePart do
   end
 
   @doc """
-  Create a new MessagePart that represents a tool call. Returns the MessagePart
+  Create a new UserContentPart that represents a tool call. Returns the UserContentPart
   or raises an exception if invalid.
   """
   @spec tool_call!(attrs :: map()) :: t() | no_return()
@@ -144,7 +143,7 @@ defmodule LangChain.Message.MessagePart do
   Changeset when setting up a tool_call.
   """
   def tool_changeset(attrs) do
-    %MessagePart{}
+    %UserContentPart{}
     |> cast(attrs, @tool_create_fields)
     |> put_change(:type, :tool_call)
     |> validate_required([:type, :tool_name])
