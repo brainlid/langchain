@@ -73,11 +73,11 @@ defmodule LangChain.Message.ToolCall do
       :complete ->
         changeset
         |> validate_required([:status, :type, :tool_id, :name])
-        |> parse_arguments()
+        |> validate_and_parse_arguments()
     end
   end
 
-  defp parse_arguments(changeset) do
+  defp validate_and_parse_arguments(changeset) do
     case get_change(changeset, :arguments) do
       # the "arguments" did not change
       nil ->
@@ -86,10 +86,13 @@ defmodule LangChain.Message.ToolCall do
       text when is_binary(text) ->
         # assume JSON and convert. If invalid, add an error
         case Jason.decode(text) do
-          {:ok, json} ->
+          {:ok, json} when is_map(json) ->
             put_change(changeset, :arguments, json)
 
-          {:error, reason} ->
+          {:ok, _json} ->
+            add_error(changeset, :arguments, "a json object is expected for tool arguments")
+
+          {:error, _reason} ->
             add_error(changeset, :arguments, "invalid json")
         end
 
@@ -109,6 +112,10 @@ defmodule LangChain.Message.ToolCall do
   @spec merge(nil | t(), t()) :: t()
   def merge(primary, call_part)
   def merge(nil, %ToolCall{} = call_part), do: call_part
+
+  def merge(%ToolCall{index: t1}, %ToolCall{index: t2}) when t1 != t2 do
+    raise LangChainError, "Can only merge tool calls with the same index"
+  end
 
   def merge(%ToolCall{} = primary, %ToolCall{} = call_part) do
     # merge the "part" into the primary.

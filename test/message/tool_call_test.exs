@@ -56,11 +56,150 @@ defmodule LangChain.Message.ToolCallTest do
   end
 
   describe "merge/2" do
-    test "takes new part when nothing existing found"
+    test "takes new part when nothing existing found" do
+      received = %ToolCall{
+        status: :incomplete,
+        type: :function,
+        tool_id: nil,
+        name: "get_weather",
+        arguments: nil,
+        index: 0
+      }
 
-    test "updates tool name"
-    test "updates status to complete"
-    test "appends arguments"
-    test "updates tool_id"
+      result = ToolCall.merge(nil, received)
+      assert result == received
+    end
+
+    test "updates tool name" do
+      call_1 = %ToolCall{
+        status: :incomplete,
+        type: :function,
+        tool_id: nil,
+        name: "get_weat",
+        arguments: nil,
+        index: 0
+      }
+
+      call_2 = %ToolCall{
+        status: :incomplete,
+        type: :function,
+        tool_id: nil,
+        name: "her",
+        arguments: nil,
+        index: 0
+      }
+
+      result = ToolCall.merge(call_1, call_2)
+      assert result.name == "get_weather"
+      assert result.type == :function
+      assert result.status == :incomplete
+    end
+
+    test "updates status to complete and tool id" do
+      call_1 = %ToolCall{
+        status: :incomplete,
+        type: :function,
+        tool_id: nil,
+        name: "get_weather",
+        arguments: nil,
+        index: 0
+      }
+
+      call_2 = %ToolCall{
+        status: :complete,
+        type: :function,
+        tool_id: "tool-123",
+        name: nil,
+        arguments: nil,
+        index: 0
+      }
+
+      result = ToolCall.merge(call_1, call_2)
+      assert result.status == :complete
+      assert result.tool_id == "tool-123"
+    end
+
+    test "appends arguments" do
+      call_1 = %ToolCall{
+        status: :incomplete,
+        type: :function,
+        tool_id: "tool-123",
+        name: "get_weather",
+        arguments: nil,
+        index: 1
+      }
+
+      call_2 = %ToolCall{
+        status: :incomplete,
+        type: :function,
+        tool_id: nil,
+        name: nil,
+        arguments: "{\"ci",
+        index: 1
+      }
+
+      call_3 = %ToolCall{
+        status: :incomplete,
+        type: :function,
+        tool_id: nil,
+        name: nil,
+        arguments: "ty\": \"Portland\", \"state\": \"OR\"}",
+        index: 1
+      }
+
+      result =
+        call_1
+        |> ToolCall.merge(call_2)
+        |> ToolCall.merge(call_3)
+
+      assert result.status == :incomplete
+      assert result.arguments == "{\"city\": \"Portland\", \"state\": \"OR\"}"
+    end
+
+    test "does not unset tool_id, function name or arguments" do
+      call_1 = %ToolCall{
+        status: :complete,
+        type: :function,
+        tool_id: "tool-123",
+        name: "get_weather",
+        arguments: "{\"city\": \"Portland\", \"state\": \"OR\"}",
+        index: 1
+      }
+
+      call_2 = %ToolCall{
+        status: :incomplete,
+        type: :function,
+        tool_id: nil,
+        name: nil,
+        arguments: nil,
+        index: 1
+      }
+
+      result = ToolCall.merge(call_1, call_2)
+      assert result.status == :complete
+      assert result.arguments == "{\"city\": \"Portland\", \"state\": \"OR\"}"
+    end
+
+    test "raises exception if merging different indexes together" do
+      # the index indicates which, of several, tool calls it refers to. It is
+      # invalid to merge tool call parts from different indexes.
+      call_1 = %ToolCall{
+        status: :incomplete,
+        type: :function,
+        name: "get_weat",
+        index: 0
+      }
+
+      call_2 = %ToolCall{
+        status: :incomplete,
+        type: :function,
+        name: "her",
+        index: 2
+      }
+
+      assert_raise LangChainError, "Can only merge tool calls with the same index", fn ->
+        ToolCall.merge(call_1, call_2)
+      end
+    end
   end
 end

@@ -10,22 +10,16 @@ defmodule LangChain.Message do
   - `:user` - The user or application responses. Typically represents the
     "human" element of the exchange.
 
-  - `:assistant` - Responses coming back from the LLM.
+  - `:assistant` - Responses coming back from the LLM. This includes one or more
+    "tool calls", requesting that the system execute a tool on behalf of the LLM
+    and return the response.
 
-  - `:arguments` - The `arguments` can be set as a map where each key is an
-    "argument". If set as a String, it is expected to be a JSON formatted string
-    and will be parsed to a map. If there is an error parsing the arguments to
-    JSON, it is considered an error.
+  - `:tool` - A message for returning the result of executing a `tool` request.
 
-    An empty map `%{}` means no arguments are passed.
+  ## Tools
 
-  - `:function` - A message for returning the result of executing a
-    `function_call`.
-
-  ## Functions
-
-  A `function_call` comes from the `:assistant` role. The `function_name`
-  identifies the named function to execute.
+  A `tool_call` comes from the `:assistant` role. The `tool_id`
+  identifies which of the available tool's to execute.
 
   Create a message of role `:function` to provide the function response.
 
@@ -36,10 +30,11 @@ defmodule LangChain.Message do
   "Vision", meaning you can provide text like "Please identify the what this is
   an image of" and provide an image.
 
-  User Content Parts are implemented through `LangChain.Message.UserContentPart`. A list
-  of them can be supplied as the "content" for a message. Only a few LLMs
-  support it, and they may require using specific models trained for it. See the
-  documentation for the LLM or service for details on their level of support.
+  User Content Parts are implemented through
+  `LangChain.Message.UserContentPart`. A list of them can be supplied as the
+  "content" for a message. Only a few LLMs support it, and they may require
+  using specific models trained for it. See the documentation for the LLM or
+  service for details on their level of support.
 
   ## Examples
 
@@ -75,21 +70,29 @@ defmodule LangChain.Message do
     field :status, Ecto.Enum, values: [:complete, :cancelled, :length], default: :complete
 
     field :role, Ecto.Enum,
-      values: [:system, :user, :assistant, :function],
+      values: [:system, :user, :assistant, :tool],
       default: :user
 
     # Optional name of the participant. Helps separate input from different
     # individuals of the same role. Like multiple people are all acting as "user".
     field :name, :string
 
+    # An `:assistant` role can request one or more `tool_calls` to be performed.
+    field :tool_calls, :any, virtual: true
+
+    # When responding to a tool call, the `tool_call_id` specifies which tool
+    # call this is giving a response to.
+    field :tool_call_id, :string
+    #TODO: Remove "function_name"
     field :function_name, :string
+    #TODO: Remove "arguments"
     field :arguments, :any, virtual: true
   end
 
   @type t :: %Message{}
   @type status :: :complete | :cancelled | :length
 
-  @update_fields [:role, :content, :status, :function_name, :arguments, :index]
+  @update_fields [:role, :content, :status, :tool_calls, :tool_call_id, :index]
   @create_fields @update_fields
   @required_fields [:role]
 
@@ -100,7 +103,8 @@ defmodule LangChain.Message do
   def new(attrs \\ %{}) do
     %Message{}
     |> cast(attrs, @create_fields)
-    |> parse_arguments()
+    # |> parse_arguments()
+    |> parse_tool_calls()
     |> common_validations()
     |> apply_action(:insert)
   end
@@ -126,15 +130,51 @@ defmodule LangChain.Message do
     |> common_validations()
   end
 
-  defp changeset_is_function?(changeset) do
+  defp changeset_is_tool_call?(changeset) do
     get_field(changeset, :role) == :assistant and
-      is_binary(get_field(changeset, :function_name)) and
+      is_list(get_field(changeset, :tool_calls)) and
       get_field(changeset, :status) == :complete
+  end
+
+  defp parse_tool_calls(changeset) do
+    # TODO: If not changed, can be nil
+    # TODO: must be a list.
+    # TODO: enumerate and parse each tool using ToolCall.
+    #TODO: Need to gather or stop on the first tool call argument parsing issue. Return an error.
+    #TODO: ToolCall is parsing arguments when status is completed.
+    # - this function should mark as complete? If the message is complete?
+ changeset
+
+    # [first | _rest] = tools = get_field(changeset, :tool_calls)
+
+    # # only
+    # cond do
+    #   is_binary(first) && is_list(tools) ->
+    #     # decode the tools
+    #     case Jason.decode(args) do
+    #       {:ok, parsed} when is_map(parsed) ->
+    #         put_change(changeset, :tools, parsed)
+
+    #       {:ok, parsed} ->
+    #         Logger.warning(
+    #           "Parsed unexpected function argument format. Expected a map but received: #{inspect(parsed)}"
+    #         )
+
+    #         add_error(changeset, :tools, "unexpected JSON tools format")
+
+    #       {:error, error} ->
+    #         Logger.warning("Received invalid argument JSON data. Error: #{inspect(error)}")
+    #         add_error(changeset, :tools, "invalid JSON function tools")
+    #     end
+
+    #   true ->
+    #     changeset
+    # end
   end
 
   defp parse_arguments(changeset) do
     args = get_field(changeset, :arguments)
-    is_function = changeset_is_function?(changeset)
+    is_function = changeset_is_tool_call?(changeset)
 
     # only
     cond do
@@ -166,19 +206,21 @@ defmodule LangChain.Message do
     |> validate_required(@required_fields)
     |> validate_content_required()
     |> validate_content_type()
-    |> validate_function_name_for_role()
-    |> validate_function_name_when_args()
+    |> validate_tool_call_id_for_role()
+    # |> validate_function_name_when_args()
   end
 
   # validate that a "user" and "system" message has content. Allow an
   # "assistant" message to be created where we don't have content yet because it
   # can be streamed in through deltas from an LLM and not yet receive the
   # content.
+  #
+  # A tool result message must have content if it is returned.
   defp validate_content_required(changeset) do
     role = fetch_field!(changeset, :role)
 
     case role do
-      role when role in [:system, :user] ->
+      role when role in [:system, :user, :tool] ->
         validate_required(changeset, [:content])
 
       _other ->
@@ -187,22 +229,29 @@ defmodule LangChain.Message do
   end
 
   defp validate_content_type(changeset) do
+    role = fetch_field!(changeset, :role)
+
     case fetch_change(changeset, :content) do
       # string message content is valid for any role
       {:ok, text} when is_binary(text) ->
         changeset
 
       {:ok, [%UserContentPart{} | _] = value} ->
+        if role == :user do
         # if a list, verify all elements are a UserContentPart
         if Enum.all?(value, &match?(%UserContentPart{}, &1)) do
           changeset
         else
           add_error(changeset, :content, "must be text or a list of UserContentParts")
         end
+      else
+        # only a user message can have UserContentParts
+        add_error(changeset, :content, "is invalid for role #{role}")
+      end
 
       # any other value is not valid
       {:ok, _} ->
-        add_error(changeset, :content, "must be text or a list of UserContentParts")
+        add_error(changeset, :content, "is not valid")
 
       # unchanged
       :error ->
@@ -210,20 +259,20 @@ defmodule LangChain.Message do
     end
   end
 
-  # validate that "function_name" can only be set if the role is "function_call"
-  # for requesting execution or "function" for the returning a function result.
+  # validate that "tool_call_id" can only be set if the role is "tool"
+  # for responding to a "tool_call". For the returning a tool result.
   #
-  # The function_name is required for those message types.
-  defp validate_function_name_for_role(changeset) do
+  # The `tool` role is required for those message types.
+  defp validate_tool_call_id_for_role(changeset) do
     case fetch_field!(changeset, :role) do
-      role when role in [:function] ->
-        validate_required(changeset, [:function_name])
+      role when role in [:tool] ->
+        validate_required(changeset, [:tool_call_id])
 
       role when role in [:system, :user] ->
-        if get_field(changeset, :function_name) == nil do
+        if get_field(changeset, :tool_call_id) == nil do
           changeset
         else
-          add_error(changeset, :function_name, "can't be set with role #{inspect(role)}")
+          add_error(changeset, :tool_call_id, "can't be set with role #{inspect(role)}")
         end
 
       _other ->
@@ -231,16 +280,16 @@ defmodule LangChain.Message do
     end
   end
 
-  # validate that "function_name" is required if arguments are set.
-  defp validate_function_name_when_args(changeset) do
-    function_name = get_field(changeset, :function_name)
+  # # validate that "function_name" is required if arguments are set.
+  # defp validate_function_name_when_args(changeset) do
+  #   function_name = get_field(changeset, :function_name)
 
-    if get_field(changeset, :arguments) != nil && is_nil(function_name) do
-      add_error(changeset, :function_name, "is required when arguments are given")
-    else
-      changeset
-    end
-  end
+  #   if get_field(changeset, :arguments) != nil && is_nil(function_name) do
+  #     add_error(changeset, :function_name, "is required when arguments are given")
+  #   else
+  #     changeset
+  #   end
+  # end
 
   @doc """
   Create a new system message which can prime the AI/Assistant for how to
@@ -294,18 +343,20 @@ defmodule LangChain.Message do
   @doc """
   Create a new assistant message which represents a response from the AI or LLM.
   """
-  @spec new_assistant(content :: String.t(), status()) ::
-          {:ok, t()} | {:error, Ecto.Changeset.t()}
-  def new_assistant(content, status \\ :complete) do
-    new(%{role: :assistant, content: content, status: status})
+  @spec new_assistant(attr :: map()) :: {:ok, t()} | {:error, Ecto.Changeset.t()}
+  def new_assistant(attr) do
+    attr
+    |> Map.put(:role, :assistant)
+    |> Map.put_new(:status, :complete)
+    |> new()
   end
 
   @doc """
   Create a new assistant message which represents a response from the AI or LLM.
   """
-  @spec new_assistant!(content :: String.t(), status()) :: t() | no_return()
-  def new_assistant!(content, status \\ :complete) do
-    case new_assistant(content, status) do
+  @spec new_assistant!(attr :: map()) :: t() | no_return()
+  def new_assistant!(attr) do
+    case new_assistant(attr) do
       {:ok, msg} ->
         msg
 
@@ -315,47 +366,12 @@ defmodule LangChain.Message do
   end
 
   @doc """
-  Create a new function_call message to represent the request for a function to
-  be executed.
+  Create a new `tool` message to represent the result of a tool's execution.
   """
-  @spec new_function_call(name :: String.t(), raw_args :: String.t()) ::
+  @spec new_tool(tool_call_id :: String.t(), result :: any()) ::
           {:ok, t()} | {:error, Ecto.Changeset.t()}
-  def new_function_call(name, raw_args) do
-    case Jason.decode(raw_args) do
-      {:ok, parsed} ->
-        new(%{role: :assistant, function_name: name, arguments: parsed, status: :complete})
-
-      {:error, %Jason.DecodeError{data: reason}} ->
-        {:error,
-         %Message{role: :assistant, function_name: name}
-         |> change()
-         |> add_error(:arguments, "Failed to parse arguments: #{inspect(reason)}")}
-    end
-  end
-
-  @doc """
-  Create a new function_call message to represent the request for a function to
-  be executed.
-  """
-  @spec new_function_call!(name :: String.t(), raw_args :: String.t()) :: t() | no_return()
-  def new_function_call!(name, raw_args) do
-    case new_function_call(name, raw_args) do
-      {:ok, msg} ->
-        msg
-
-      {:error, %Ecto.Changeset{} = changeset} ->
-        raise LangChainError, changeset
-    end
-  end
-
-  @doc """
-  Create a new function message to represent the result of an executed
-  function.
-  """
-  @spec new_function(name :: String.t(), result :: any()) ::
-          {:ok, t()} | {:error, Ecto.Changeset.t()}
-  def new_function(name, result) do
-    new(%{role: :function, function_name: name, content: serialize_result(result)})
+  def new_tool(tool_call_id, result) do
+    new(%{role: :tool, tool_call_id: tool_call_id, content: serialize_result(result)})
   end
 
   @spec serialize_result(result :: any()) :: String.t()
@@ -363,12 +379,12 @@ defmodule LangChain.Message do
   defp serialize_result(result) when is_map(result), do: Jason.encode!(result)
 
   @doc """
-  Create a new function message to represent the result of an executed
-  function.
+  Create a new tool response message to return the result of an executed
+  tool.
   """
-  @spec new_function!(name :: String.t(), result :: any()) :: t() | no_return()
-  def new_function!(name, result) do
-    case new_function(name, result) do
+  @spec new_tool!(name :: String.t(), result :: any()) :: t() | no_return()
+  def new_tool!(name, result) do
+    case new_tool(name, result) do
       {:ok, msg} ->
         msg
 
@@ -380,9 +396,9 @@ defmodule LangChain.Message do
   @doc """
   Return if a Message is a function_call.
   """
-  def is_function_call?(%Message{role: :assistant, status: :complete, function_name: fun_name})
-      when is_binary(fun_name),
+  def is_tool_call?(%Message{role: :assistant, status: :complete, tool_calls: tool_calls})
+      when is_list(tool_calls),
       do: true
 
-  def is_function_call?(%Message{}), do: false
+  def is_tool_call?(%Message{}), do: false
 end

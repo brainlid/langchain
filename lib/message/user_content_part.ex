@@ -114,41 +114,41 @@ defmodule LangChain.Message.UserContentPart do
     new!(%{type: :image_url, content: content})
   end
 
-  @doc """
-  Create a new UserContentPart that represents a tool call.
-  """
-  @spec tool_call(attrs :: map()) :: {:ok, t()} | {:error, Ecto.Changeset.t()}
-  def tool_call(attrs) do
-    attrs
-    |> tool_changeset()
-    |> apply_action(:insert)
-  end
+  # @doc """
+  # Create a new UserContentPart that represents a tool call.
+  # """
+  # @spec tool_call(attrs :: map()) :: {:ok, t()} | {:error, Ecto.Changeset.t()}
+  # def tool_call(attrs) do
+  #   attrs
+  #   |> tool_changeset()
+  #   |> apply_action(:insert)
+  # end
 
-  @doc """
-  Create a new UserContentPart that represents a tool call. Returns the UserContentPart
-  or raises an exception if invalid.
-  """
-  @spec tool_call!(attrs :: map()) :: t() | no_return()
-  def tool_call!(attrs) do
-    case tool_call(attrs) do
-      {:ok, part} ->
-        part
+  # @doc """
+  # Create a new UserContentPart that represents a tool call. Returns the UserContentPart
+  # or raises an exception if invalid.
+  # """
+  # @spec tool_call!(attrs :: map()) :: t() | no_return()
+  # def tool_call!(attrs) do
+  #   case tool_call(attrs) do
+  #     {:ok, part} ->
+  #       part
 
-      {:error, changeset} ->
-        raise LangChainError, changeset
-    end
-  end
+  #     {:error, changeset} ->
+  #       raise LangChainError, changeset
+  #   end
+  # end
 
-  @doc """
-  Changeset when setting up a tool_call.
-  """
-  def tool_changeset(attrs) do
-    %UserContentPart{}
-    |> cast(attrs, @tool_create_fields)
-    |> put_change(:type, :tool_call)
-    |> validate_required([:type, :tool_name])
-    |> parse_tool_arguments()
-  end
+  # @doc """
+  # Changeset when setting up a tool_call.
+  # """
+  # def tool_changeset(attrs) do
+  #   %UserContentPart{}
+  #   |> cast(attrs, @tool_create_fields)
+  #   |> put_change(:type, :tool_call)
+  #   |> validate_required([:type, :tool_name])
+  #   |> parse_tool_arguments()
+  # end
 
   @doc false
   def changeset(message, attrs) do

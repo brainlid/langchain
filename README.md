@@ -209,3 +209,14 @@ Use a tool like [Direnv](https://direnv.net/) or [Dotenv](https://github.com/mot
 
 TODO: explicitly return JSON formatted data only to a request. Use in an example? Use for data extraction chain? (assuming only OpenAI?)
 - https://platform.openai.com/docs/guides/text-generation/json-mode
+
+TODO: For data extraction with OpenAI, can set the "tool_choice" to extra force that function use.
+
+TODO: Multiple tool calls must mean that multiple tool messages can be returned in a sequence.
+
+TODO: Pull the "before" OpenAI module for legacy API support? Allow for using it against OTHER APIs that have OpenAI compatibility and may not be updated yet.
+- still need to be updated to use "Tool" related messages. Assistant "tool_calls" would be different too.
+
+TODO: add a `version` to the structs. The version is set by the model. So it using an OpenAI assistant message with tool_calls is either a string date or "v2" or something. It can be pattern matched on when writing to a newer model.
+
+- Perhaps the ChatOpenAI struct has the version number on it. Then it converts a `for_api` call differently for a tool to look like a function when targeting an older version.

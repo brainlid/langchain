@@ -124,13 +124,13 @@ defmodule LangChain.MessageDelta do
       end)
 
   """
-  @spec merge_delta(t(), t()) :: t()
+  @spec merge_delta(nil | t(), t()) :: t()
+  def merge_delta(nil, %MessageDelta{} = delta_part), do: delta_part
+
   def merge_delta(%MessageDelta{role: :assistant} = primary, %MessageDelta{} = delta_part) do
     primary
     |> append_content(delta_part)
     |> merge_tool_calls(delta_part)
-    # |> append_function_name(delta_part)
-    # |> append_arguments(delta_part)
     |> update_index(delta_part)
     |> update_status(delta_part)
   end
@@ -149,34 +149,22 @@ defmodule LangChain.MessageDelta do
 
   defp merge_tool_calls(
          %MessageDelta{} = primary,
-         %MessageDelta{tool_calls: [delta_call]} = delta_part
+         %MessageDelta{tool_calls: [delta_call]} = _delta_part
        ) do
-    # TODO: If the delta_part includes a tools_call, get the merge starting
     # point from the primary delta.
     primary_calls = primary.tool_calls || []
     # get the index of the call being merged
     initial = Enum.at(primary_calls, delta_call.index)
     # merge them and put it back in the correct spot of the list
     merged_call = ToolCall.merge(initial, delta_call)
-    updated_calls = List.replace_at(primary_calls, delta_call.index, merged_call)
+    # if the index exists, update it, otherwise insert it
+    updated_calls = Utils.put_in_list(primary_calls, delta_call.index, merged_call)
     # return updated MessageDelta
     %MessageDelta{primary | tool_calls: updated_calls}
   end
 
   defp merge_tool_calls(%MessageDelta{} = primary, %MessageDelta{} = _delta_part) do
     # nothing to merge
-    primary
-  end
-
-  defp append_function_name(%MessageDelta{role: :assistant} = primary, %MessageDelta{
-         function_name: new_function
-       })
-       when is_binary(new_function) do
-    %MessageDelta{primary | function_name: (primary.function_name || "") <> new_function}
-  end
-
-  defp append_function_name(%MessageDelta{} = primary, %MessageDelta{} = _delta_part) do
-    # no function name to merge
     primary
   end
 
@@ -204,18 +192,6 @@ defmodule LangChain.MessageDelta do
 
   defp update_status(%MessageDelta{} = primary, %MessageDelta{} = _delta_part) do
     # status flag not updated
-    primary
-  end
-
-  defp append_arguments(%MessageDelta{role: :assistant} = primary, %MessageDelta{
-         arguments: new_arguments
-       })
-       when is_binary(new_arguments) do
-    %MessageDelta{primary | arguments: (primary.arguments || "") <> new_arguments}
-  end
-
-  defp append_arguments(%MessageDelta{} = primary, %MessageDelta{} = _delta_part) do
-    # no arguments to merge
     primary
   end
 

@@ -2,7 +2,8 @@ defmodule LangChain.MessageTest do
   use ExUnit.Case
   doctest LangChain.Message
   alias LangChain.Message
-  alias LangChain.Message.MessagePart
+  alias LangChain.Message.ToolCall
+  alias LangChain.Message.UserContentPart
 
   describe "new/1" do
     test "works with minimal attrs" do
@@ -26,32 +27,17 @@ defmodule LangChain.MessageTest do
       assert {"can't be blank", _} = changeset.errors[:role]
     end
 
-    test "parses arguments" do
-      json = Jason.encode!(%{name: "Tim", age: 40})
-
-      assert {:ok, %Message{role: :assistant} = msg} =
-               Message.new(%{
-                 role: :assistant,
-                 function_name: "my_fun",
-                 arguments: json
-               })
-
-      assert msg.role == :assistant
-      assert msg.function_name == "my_fun"
-      assert msg.arguments == %{"name" => "Tim", "age" => 40}
-      assert msg.content == nil
-      assert msg.status == :complete
-      assert Message.is_function_call?(msg)
-    end
-
-    test "adds error to arguments when valid JSON but not a map" do
+    test "adds error when tool arguments are valid JSON but not a map" do
       json = Jason.encode!([true, 1, 2, 3])
 
       assert {:error, changeset} =
-               Message.new(%{
-                 role: :assistant,
-                 function_name: "my_fun",
-                 arguments: json
+               Message.new_assistant(%{
+                 tool_calls: [
+                   tool_id: "call_abc123",
+                   name: "my_fun",
+                   arguments: json
+                 ],
+                 status: :complete
                })
 
       refute changeset.valid?
@@ -84,6 +70,50 @@ defmodule LangChain.MessageTest do
 
       assert {:error, changeset} = Message.new(%{role: :user, content: nil})
       assert {"can't be blank", _} = changeset.errors[:content]
+    end
+
+    test "requires content to be text or UserContentParts when a user message" do
+      # can be a content part
+      part = UserContentPart.text!("Hi")
+      {:ok, message} = Message.new_user([part])
+      assert message.content == [part]
+
+      # can be a string
+      {:ok, message} = Message.new_user("Hi")
+      assert message.content == "Hi"
+
+      # content parts not allowed for other role types
+      {:error, changeset} = Message.new_assistant(%{content: [part]})
+      assert {"is invalid for role assistant", _} = changeset.errors[:content]
+
+      {:error, changeset} = Message.new_system([part])
+      assert {"is invalid for role system", _} = changeset.errors[:content]
+
+      {:error, changeset} = Message.new(%{role: :tool, tool_id: "tool_123", content: [part]})
+      assert {"is invalid for role tool", _} = changeset.errors[:content]
+    end
+
+    test "requires tool_call to be present when no content" do
+      {:error, changeset} =
+        Message.new_assistant(%{
+          content: nil,
+          tool_calls: []
+        })
+
+      assert {"is required when no tool_calls", _} = changeset.errors[:content]
+    end
+
+    test "content can be nil when an assistant message (tool calls)" do
+      tool_call = ToolCall.new!(%{tool_id: "1", name: "hello"})
+
+      {:ok, message} =
+        Message.new_assistant(%{
+          content: nil,
+          tool_calls: [tool_call]
+        })
+
+      assert message.content == nil
+      assert message.tool_calls == [tool_call]
     end
 
     test "requires function_name when role is function" do
@@ -129,30 +159,30 @@ defmodule LangChain.MessageTest do
       assert {"can't be blank", _} = changeset.errors[:content]
     end
 
-    test "accepts list of MessageParts for content" do
+    test "accepts list of UserContentParts for content" do
       assert {:ok, %Message{} = msg} =
                Message.new_user([
-                 MessagePart.text!("Describe what is in this image:"),
-                 MessagePart.image!(:base64.encode("fake_image_data"))
+                 UserContentPart.text!("Describe what is in this image:"),
+                 UserContentPart.image!(:base64.encode("fake_image_data"))
                ])
 
       assert msg.role == :user
 
       assert msg.content == [
-               %MessagePart{type: :text, content: "Describe what is in this image:"},
-               %MessagePart{type: :image, content: "ZmFrZV9pbWFnZV9kYXRh"}
+               %UserContentPart{type: :text, content: "Describe what is in this image:"},
+               %UserContentPart{type: :image, content: "ZmFrZV9pbWFnZV9kYXRh"}
              ]
     end
 
     test "does not accept invalid contents" do
       assert {:error, changeset} = Message.new_user(123)
-      assert {"must be text or a list of MessageParts", _} = changeset.errors[:content]
+      assert {"must be text or a list of UserContentParts", _} = changeset.errors[:content]
 
       assert {:error, changeset} = Message.new_user([123, "ABC"])
-      assert {"must be text or a list of MessageParts", _} = changeset.errors[:content]
+      assert {"must be text or a list of UserContentParts", _} = changeset.errors[:content]
 
-      assert {:error, changeset} = Message.new_user([MessagePart.text!("CCC"), "invalid"])
-      assert {"must be text or a list of MessageParts", _} = changeset.errors[:content]
+      assert {:error, changeset} = Message.new_user([UserContentPart.text!("CCC"), "invalid"])
+      assert {"must be text or a list of UserContentParts", _} = changeset.errors[:content]
     end
   end
 
@@ -169,18 +199,18 @@ defmodule LangChain.MessageTest do
       end
     end
 
-    test "accepts list of MessageParts for content" do
+    test "accepts list of UserContentParts for content" do
       assert msg =
                Message.new_user!([
-                 MessagePart.text!("Describe what is in this image:"),
-                 MessagePart.image!(:base64.encode("fake_image_data"))
+                 UserContentPart.text!("Describe what is in this image:"),
+                 UserContentPart.image!(:base64.encode("fake_image_data"))
                ])
 
       assert msg.role == :user
 
       assert msg.content == [
-               %MessagePart{type: :text, content: "Describe what is in this image:"},
-               %MessagePart{type: :image, content: "ZmFrZV9pbWFnZV9kYXRh"}
+               %UserContentPart{type: :text, content: "Describe what is in this image:"},
+               %UserContentPart{type: :image, content: "ZmFrZV9pbWFnZV9kYXRh"}
              ]
     end
   end

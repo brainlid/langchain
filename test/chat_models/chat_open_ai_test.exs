@@ -126,7 +126,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
   describe "for_api/1" do
     test "turns a basic user message into the expected JSON format" do
-      expected = %{"role" => :user, "content" => "Hi."}
+      expected = %{"role" => :user, "content" => "Hi.", "name" => nil}
       result = ChatOpenAI.for_api(Message.new_user!("Hi."))
       assert result == expected
     end
@@ -134,6 +134,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     test "turns a multi-modal user message into the expected JSON format" do
       expected = %{
         "role" => :user,
+        "name" => nil,
         "content" => [
           %{"type" => "text", "text" => "Tell me about this image:"},
           %{"type" => "image_url", "image_url" => %{"url" => "url-to-image"}}
@@ -181,9 +182,10 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
              }
     end
 
-    test "turns a function_call into expected JSON format with arguments" do
-      args = %{"expression" => "11 + 10"}
-      msg = Message.new_function_call!("hello_world", Jason.encode!(args))
+    test "turns an assistant tool_call into expected JSON format with arguments" do
+      # Needed when restoring a conversation from structs for history.
+      # args = %{"expression" => "11 + 10"}
+      msg = Message.new_assistant!(%{tool_calls: [ToolCall.new!(%{tool_id: "call_abc123", name: "hello_world", arguments: %{expression: "11 + 10"}})]})
 
       json = ChatOpenAI.for_api(msg)
 
@@ -197,12 +199,12 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
              }
     end
 
-    test "turns a function response into expected JSON format" do
-      msg = Message.new_function!("hello_world", "Hello World!")
+    test "turns a tool execution response into expected JSON format" do
+      msg = Message.new_tool!("tool_abc123", "Hello World!")
 
       json = ChatOpenAI.for_api(msg)
 
-      assert json == %{"content" => "Hello World!", "name" => "hello_world", "role" => :function}
+      assert json == %{"content" => "Hello World!", "tool_call_id" => "tool_abc123", "role" => :tool}
     end
 
     test "tools work with minimal definition and no parameters" do
@@ -465,7 +467,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     end
 
     @tag live_call: true, live_open_ai: true
-    test "supports receiving multiple tool calls in a single response", %{weather: weather} do
+    test "LIVE: supports receiving multiple tool calls in a single response", %{weather: weather} do
       {:ok, chat} = ChatOpenAI.new(%{seed: 0, stream: false, model: "gpt-4-1106-preview"})
 
       {:ok, message} =
@@ -660,24 +662,27 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
       assert struct.role == :assistant
 
-      assert struct.content == [
-               UserContentPart.tool_call!(%{
-                 tool_type: :function,
+      assert struct.tool_calls == [
+               ToolCall.new!(%{
+                 type: :function,
                  tool_id: "call_4L8NfePhSW8PdoHUWkvhzguu",
-                 tool_name: "get_weather",
-                 tool_arguments: %{"city" => "Moab", "state" => "UT"}
+                 name: "get_weather",
+                 arguments: %{"city" => "Moab", "state" => "UT"},
+                 status: :complete
                }),
-               UserContentPart.tool_call!(%{
-                 tool_type: :function,
+               ToolCall.new!(%{
+                 type: :function,
                  tool_id: "call_ylRu5SPegST9tppLEj6IJ0Rs",
-                 tool_name: "get_weather",
-                 tool_arguments: %{"city" => "Portland", "state" => "OR"}
+                 name: "get_weather",
+                 arguments: %{"city" => "Portland", "state" => "OR"},
+                 status: :complete
                }),
-               UserContentPart.tool_call!(%{
-                 tool_type: :function,
+               ToolCall.new!(%{
+                 type: :function,
                  tool_id: "call_G17PCZZBTyK0gwpzIzD4OBep",
-                 tool_name: "get_weather",
-                 tool_arguments: %{"city" => "Baltimore", "state" => "MD"}
+                 name: "get_weather",
+                 arguments: %{"city" => "Baltimore", "state" => "MD"},
+                 status: :complete
                })
              ]
     end
@@ -725,12 +730,12 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
         "type" => "function"
       }
 
-      assert %UserContentPart{} = part = ChatOpenAI.do_process_response(call)
-      assert part.type == :tool_call
-      assert part.tool_type == :function
-      assert part.tool_id == "call_4L8NfePhSW8PdoHUWkvhzguu"
-      assert part.tool_name == "get_weather"
-      assert part.tool_arguments == %{"city" => "Moab", "state" => "UT"}
+      assert %ToolCall{} = call = ChatOpenAI.do_process_response(call)
+      assert call.type == :function
+      assert call.status == :complete
+      assert call.tool_id == "call_4L8NfePhSW8PdoHUWkvhzguu"
+      assert call.name == "get_weather"
+      assert call.arguments == %{"city" => "Moab", "state" => "UT"}
     end
 
     test "handles receiving a tool_call with invalid JSON" do
@@ -749,15 +754,48 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     end
 
     test "handles streamed deltas for multiple tool calls" do
-      response = get_streamed_deltas_multiple_tool_calls()
+      deltas =
+        Enum.map(get_streamed_deltas_multiple_tool_calls(), &ChatOpenAI.do_process_response(&1))
 
-      deltas = ChatOpenAI.do_process_response(response)
+      combined =
+        deltas
+        |> List.flatten()
+        |> Enum.reduce(nil, &MessageDelta.merge_delta(&2, &1))
 
-      # TODO: WORKING HERE
-      assert final_delta = Enum.reduce(deltas, %MessageDelta{}, &MessageDelta.merge_delta(&1, &2))
-      IO.inspect(final_delta)
+      expected = %MessageDelta{
+        content: nil,
+        status: :complete,
+        index: 0,
+        role: :assistant,
+        tool_calls: [
+          %ToolCall{
+            status: :incomplete,
+            type: :function,
+            tool_id: nil,
+            name: "get_weather",
+            arguments: "{\"city\": \"Moab\", \"state\": \"UT\"}",
+            index: 0
+          },
+          %ToolCall{
+            status: :incomplete,
+            type: :function,
+            tool_id: nil,
+            name: "get_weather",
+            arguments: "{\"city\": \"Portland\", \"state\": \"OR\"}",
+            index: 1
+          },
+          %ToolCall{
+            status: :incomplete,
+            type: :function,
+            tool_id: nil,
+            name: "get_weather",
+            arguments: "{\"city\": \"Baltimore\", \"state\": \"MD\"}",
+            index: 2
+          }
+        ]
+      }
 
-      assert false
+      assert combined == expected
     end
 
     test "handles error from server that the max length has been reached" do
@@ -822,53 +860,6 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert delta_10 == expected_10
     end
 
-    test "handles receiving a delta message for a function_call" do
-      delta_function = LangChain.Fixtures.raw_deltas_for_function_call()
-
-      msg_1 = Enum.at(delta_function, 0)
-      msg_2 = Enum.at(delta_function, 1)
-      msg_3 = Enum.at(delta_function, 2)
-
-      expected_1 = %MessageDelta{
-        content: nil,
-        index: 0,
-        function_name: "hello_world",
-        role: :assistant,
-        arguments: "",
-        status: :incomplete
-      }
-
-      [%MessageDelta{} = delta_1] = ChatOpenAI.do_process_response(msg_1)
-      assert delta_1 == expected_1
-
-      expected_2 = %MessageDelta{
-        content: nil,
-        index: 0,
-        function_name: nil,
-        role: :unknown,
-        arguments: "{}",
-        status: :incomplete
-      }
-
-      [%MessageDelta{} = delta_2] = ChatOpenAI.do_process_response(msg_2)
-      assert delta_2 == expected_2
-
-      expected_3 = %MessageDelta{
-        content: nil,
-        index: 0,
-        function_name: nil,
-        role: :unknown,
-        arguments: nil,
-        status: :complete
-      }
-
-      # it should not trim the arguments text
-      [%MessageDelta{} = delta_3] = ChatOpenAI.do_process_response(msg_3)
-      assert delta_3 == expected_3
-    end
-
-    # test "handles receiving error message from server"
-
     test "handles json parse error from server" do
       {:error, "Received invalid JSON: " <> _} =
         Jason.decode("invalid json")
@@ -903,22 +894,6 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert %Message{role: :assistant, index: 1} = msg2
       assert msg1.content == "Greetings!"
       assert msg2.content == "Howdy!"
-    end
-
-    test "handles receiving multiple streamed tool_calls in deltas" do
-      deltas = get_streamed_deltas_multiple_tool_calls()
-
-      # TODO: WORKING HERE
-      deltas
-      |> Enum.map(&ChatOpenAI.do_process_response(&1))
-      |> IO.inspect(label: "BLARG!!")
-
-      msg_1 = List.first(deltas)
-
-      [%MessageDelta{} = delta_1] = ChatOpenAI.do_process_response([msg_1])
-
-      dbg(delta_1)
-      assert false
     end
   end
 

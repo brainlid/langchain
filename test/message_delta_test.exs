@@ -4,6 +4,7 @@ defmodule LangChain.MessageDeltaTest do
   import LangChain.Fixtures
   alias LangChain.Message
   alias LangChain.MessageDelta
+  alias LangChain.Message.ToolCall
   alias LangChain.LangChainError
 
   describe "new/1" do
@@ -95,6 +96,17 @@ defmodule LangChain.MessageDeltaTest do
   end
 
   describe "merge_delta/2" do
+    test "handles merging when no existing delta to merge into" do
+      delta = %MessageDelta{
+        content: "Hello! How can I assist you today?",
+        index: 0,
+        role: :assistant,
+        status: :incomplete
+      }
+
+      assert delta == MessageDelta.merge_delta(nil, delta)
+    end
+
     test "correctly merges assistant content message" do
       [first | rest] = delta_content_sample()
 
@@ -115,7 +127,7 @@ defmodule LangChain.MessageDeltaTest do
       assert merged == expected
     end
 
-    test "correctly merges multiple tool calls in a delta" do
+    test "correctly merge multiple tool calls in a delta" do
       [first | rest] = deltas_for_multiple_tool_calls()
 
       merged =
@@ -123,57 +135,123 @@ defmodule LangChain.MessageDeltaTest do
           MessageDelta.merge_delta(acc, new_delta)
         end)
 
-      expected = %LangChain.MessageDelta{
+      expected = %MessageDelta{
         content: nil,
         index: 0,
-        function_name: "GOES AWAY",
+        tool_calls: [
+          %ToolCall{
+            status: :incomplete,
+            type: :function,
+            tool_id: nil,
+            name: "get_weather",
+            arguments: "{\"city\": \"Moab\", \"state\": \"UT\"}",
+            index: 0
+          },
+          %ToolCall{
+            status: :incomplete,
+            type: :function,
+            tool_id: nil,
+            name: "get_weather",
+            arguments: "{\"city\": \"Portland\", \"state\": \"OR\"}",
+            index: 1
+          },
+          %ToolCall{
+            status: :incomplete,
+            type: :function,
+            tool_id: nil,
+            name: "get_weather",
+            arguments: "{\"city\": \"Baltimore\", \"state\": \"MD\"}",
+            index: 2
+          }
+        ],
         role: :assistant,
-        arguments: "{}",
         status: :complete
       }
 
       assert merged == expected
     end
 
-    test "correctly merges function_call message with no arguments" do
-      [first | rest] = delta_function_no_args()
-
-      merged =
-        Enum.reduce(rest, first, fn new_delta, acc ->
-          MessageDelta.merge_delta(acc, new_delta)
-        end)
-
-      expected = %LangChain.MessageDelta{
+    test "completing a delta with tool calls parses arguments" do
+      delta_incomplete = %MessageDelta{
         content: nil,
         index: 0,
-        function_name: "hello_world",
+        tool_calls: [
+          %ToolCall{
+            status: :incomplete,
+            type: :function,
+            tool_id: nil,
+            name: "get_weather",
+            arguments: "{\"city\": \"Moab\", \"state\": \"UT\"}",
+            index: 0
+          },
+          %ToolCall{
+            status: :incomplete,
+            type: :function,
+            tool_id: nil,
+            name: "get_weather",
+            arguments: "{\"city\": \"Portland\", \"state\": \"OR\"}",
+            index: 1
+          },
+          %ToolCall{
+            status: :incomplete,
+            type: :function,
+            tool_id: nil,
+            name: "get_weather",
+            arguments: "{\"city\": \"Baltimore\", \"state\": \"MD\"}",
+            index: 2
+          }
+        ],
         role: :assistant,
-        arguments: "{}",
         status: :complete
       }
 
-      assert merged == expected
+      completing = MessageDelta.new!(%{status: :complete})
+
+      result = MessageDelta.merge_delta(delta_incomplete, completing)
+      IO.inspect(result)
+      assert false
+      # assert merged == completing
     end
 
-    test "correctly merges function_call message with streamed arguments" do
-      [first | rest] = delta_function_streamed_args()
+    # test "correctly merges function_call message with no arguments" do
+    #   [first | rest] = delta_function_no_args()
 
-      merged =
-        Enum.reduce(rest, first, fn new_delta, acc ->
-          MessageDelta.merge_delta(acc, new_delta)
-        end)
+    #   merged =
+    #     Enum.reduce(rest, first, fn new_delta, acc ->
+    #       MessageDelta.merge_delta(acc, new_delta)
+    #     end)
 
-      expected = %LangChain.MessageDelta{
-        content: nil,
-        index: 0,
-        function_name: "calculator",
-        role: :assistant,
-        arguments: "{\n  \"expression\": \"100 + 300 - 200\"\n}",
-        status: :complete
-      }
+    #   expected = %LangChain.MessageDelta{
+    #     content: nil,
+    #     index: 0,
+    #     function_name: "hello_world",
+    #     role: :assistant,
+    #     arguments: "{}",
+    #     status: :complete
+    #   }
 
-      assert merged == expected
-    end
+    #   assert merged == expected
+    # end
+
+    # test "correctly merges function_call message with streamed arguments" do
+    #   [first | rest] = delta_function_streamed_args()
+
+    #   merged =
+    #     Enum.reduce(rest, first, fn new_delta, acc ->
+    #       MessageDelta.merge_delta(acc, new_delta)
+    #     end)
+
+    #   expected = %LangChain.MessageDelta{
+    #     content: nil,
+    #     index: 0,
+    #     function_name: "calculator",
+    #     role: :assistant,
+    #     arguments: "{\n  \"expression\": \"100 + 300 - 200\"\n}",
+    #     status: :complete
+    #   }
+
+    #   assert merged == expected
+    # end
 
     test "correctly merges assistant content with function_call" do
       [first | rest] = delta_content_with_function_call() |> List.flatten()

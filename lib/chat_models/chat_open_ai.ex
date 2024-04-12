@@ -176,6 +176,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   @spec for_api(Message.t() | UserContentPart.t() | Function.t()) :: %{String.t() => any()}
   def for_api(%Message{role: :assistant, function_name: fun_name} = msg)
       when is_binary(fun_name) do
+    # TODO: THIS FUNCTION IS OUT OF DATE
     %{
       "role" => :assistant,
       "function_call" => %{
@@ -186,10 +187,10 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     }
   end
 
-  def for_api(%Message{role: :function} = msg) do
+  def for_api(%Message{role: :tool} = msg) do
     %{
-      "role" => :function,
-      "name" => msg.function_name,
+      "role" => :tool,
+      "tool_call_id" => msg.tool_call_id,
       "content" => msg.content
     }
   end
@@ -505,7 +506,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   end
 
   def do_process_response(
-        %{"finish_reason" => "tool_calls", "message" => %{"tool_calls" => calls}} = data
+        %{"finish_reason" => "tool_calls", "message" => %{"tool_calls" => calls} = message} = data
       ) do
     # TODO: FIRST ensure we can parse all the UserContentParts. If they are all valid, continue. Otherwise, report the error.
 
@@ -513,9 +514,10 @@ defmodule LangChain.ChatModels.ChatOpenAI do
            "role" => "assistant",
            #  "function_name" => name,
            #  "arguments" => raw_args,
+           "content" => message["content"],
            "complete" => true,
            "index" => data["index"],
-           "content" => Enum.map(calls, &do_process_response/1)
+           "tool_calls" => Enum.map(calls, &do_process_response/1)
          }) do
       {:ok, message} ->
         message
@@ -547,25 +549,26 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   #   end
   # end
 
-  # Full message tool call
+  # Full message with tool call
   def do_process_response(
         %{
           "finish_reason" => "tool_calls",
-          "message" => %{
-            "tool_calls" => %{
-              "type" => "function",
-              "function" => %{"arguments" => raw_args, "name" => name}
-            }
-          }
+          "message" =>
+            %{
+              "tool_calls" => tool_calls
+            } = message
         } = data
       ) do
     case Message.new(%{
            "role" => "assistant",
-           "function_name" => name,
-           "arguments" => raw_args,
+           "content" => message["content"],
+           #  "function_name" => name,
+           #  "arguments" => raw_args,
            "complete" => true,
-           "index" => data["index"]
-         }) do
+           "index" => data["index"],
+           "tool_calls" => tool_calls
+         })
+         |> IO.inspect(label: "CRAP") do
       {:ok, message} ->
         message
 
@@ -585,7 +588,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         %{"tool_calls" => tools_data} when is_list(tools_data) ->
           Enum.map(tools_data, &do_process_response(&1))
 
-        _other -> nil
+        _other ->
+          nil
       end
 
     # more explicitly interpret the role. We treat a "function_call" as a a role
@@ -634,6 +638,25 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         Logger.error("Failed to process ToolCall for a function. Reason: #{reason}")
         {:error, reason}
     end
+  end
+
+  # Tool call from a complete message
+  def do_process_response(%{
+        "function" => %{
+          "arguments" => args,
+          "name" => name
+        },
+        "id" => tool_id,
+        "type" => "function"
+      }) do
+    # No "index". It is a complete message.
+    ToolCall.new!(%{
+      type: :function,
+      status: :complete,
+      name: name,
+      arguments: args,
+      tool_id: tool_id
+    })
   end
 
   def do_process_response(%{

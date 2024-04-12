@@ -92,4 +92,28 @@ defmodule LangChain.UtilsTest do
       assert result == "role: is important, is invalid; index: is numeric, is invalid"
     end
   end
+
+  describe "put_in_list/3" do
+    test "adds to empty list" do
+      assert [1] == Utils.put_in_list([], 0, 1)
+    end
+
+    test "adds to list with values" do
+      result =
+        [1, 2]
+        |> Utils.put_in_list(2, "3")
+
+      assert result == [1, 2, "3"]
+    end
+
+    test "replaces existing value at the index" do
+      result =
+        [1, 2, 3]
+        |> Utils.put_in_list(0, "a")
+        |> Utils.put_in_list(1, "b")
+        |> Utils.put_in_list(2, "c")
+
+      assert result == ["a", "b", "c"]
+    end
+  end
 end
