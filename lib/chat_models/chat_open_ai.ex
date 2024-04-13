@@ -505,8 +505,6 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           | [MessageDelta.t()]
           | {:error, String.t()}
   def do_process_response(%{"choices" => choices} = data) when is_list(choices) do
-    IO.inspect(data)
-
     # process each response individually. Return a list of all processed choices
     for choice <- choices do
       do_process_response(choice)
