@@ -504,14 +504,15 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           | MessageDelta.t()
           | [MessageDelta.t()]
           | {:error, String.t()}
-  def do_process_response(%{"choices" => choices} = data) when is_list(choices) do
+  def do_process_response(%{"choices" => choices} = _data) when is_list(choices) do
     # process each response individually. Return a list of all processed choices
     for choice <- choices do
       do_process_response(choice)
     end
   end
 
-  def do_process_response(
+   # Full message with tool call
+   def do_process_response(
         %{"finish_reason" => "tool_calls", "message" => %{"tool_calls" => calls} = message} = data
       ) do
     case Message.new(%{
@@ -520,31 +521,6 @@ defmodule LangChain.ChatModels.ChatOpenAI do
            "complete" => true,
            "index" => data["index"],
            "tool_calls" => Enum.map(calls, &do_process_response/1)
-         }) do
-      {:ok, message} ->
-        message
-
-      {:error, changeset} ->
-        {:error, Utils.changeset_error_to_string(changeset)}
-    end
-  end
-
-  # Full message with tool call
-  def do_process_response(
-        %{
-          "finish_reason" => "tool_calls",
-          "message" =>
-            %{
-              "tool_calls" => tool_calls
-            } = message
-        } = data
-      ) do
-    case Message.new(%{
-           "role" => "assistant",
-           "content" => message["content"],
-           "complete" => true,
-           "index" => data["index"],
-           "tool_calls" => tool_calls
          }) do
       {:ok, message} ->
         message
