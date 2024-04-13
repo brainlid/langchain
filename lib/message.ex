@@ -94,7 +94,7 @@ defmodule LangChain.Message do
   @type t :: %Message{}
   @type status :: :complete | :cancelled | :length
 
-  @update_fields [:role, :content, :status, :tool_calls, :tool_call_id, :index]
+  @update_fields [:role, :content, :status, :tool_calls, :tool_call_id, :index, :name]
   @create_fields @update_fields
   @required_fields [:role]
 

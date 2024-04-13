@@ -127,15 +127,20 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
   describe "for_api/1" do
     test "turns a basic user message into the expected JSON format" do
-      expected = %{"role" => :user, "content" => "Hi.", "name" => nil}
+      expected = %{"role" => :user, "content" => "Hi."}
       result = ChatOpenAI.for_api(Message.new_user!("Hi."))
+      assert result == expected
+    end
+
+    test "includes 'name' when set" do
+      expected = %{"role" => :user, "content" => "Hi.", "name" => "Harold"}
+      result = ChatOpenAI.for_api(Message.new!(%{role: :user, content: "Hi.", name: "Harold"}))
       assert result == expected
     end
 
     test "turns a multi-modal user message into the expected JSON format" do
       expected = %{
         "role" => :user,
-        "name" => nil,
         "content" => [
           %{"type" => "text", "text" => "Tell me about this image:"},
           %{"type" => "image_url", "image_url" => %{"url" => "url-to-image"}}
@@ -422,9 +427,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       {:ok, chat} = ChatOpenAI.new(%{seed: 0, stream: false, model: @gpt4})
 
       {:ok, message} =
-        Message.new_user(
-          "What is the weather like in Moab Utah?"
-        )
+        Message.new_user("What is the weather like in Moab Utah?")
 
       {:ok, [message]} = ChatOpenAI.call(chat, [message], [weather])
 
