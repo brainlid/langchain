@@ -2,7 +2,6 @@ defmodule LangChain.Message.UserContentPartTest do
   use ExUnit.Case
   doctest LangChain.Message.UserContentPart
   alias LangChain.Message.UserContentPart
-  alias LangChain.LangChainError
 
   describe "new/1" do
     test "accepts valid settings" do
@@ -57,63 +56,6 @@ defmodule LangChain.Message.UserContentPartTest do
       %UserContentPart{} = part = UserContentPart.image_url!(url)
       assert part.type == :image_url
       assert part.content == url
-    end
-  end
-
-  describe "tool_call/1" do
-    test "returns UserContentPart configured for tool_call" do
-      assert {:ok, %UserContentPart{} = part} =
-               UserContentPart.tool_call(%{
-                 tool_name: "greeting",
-                 tool_type: :function,
-                 tool_arguments: Jason.encode!(%{name: "Tom"})
-               })
-
-      assert part.type == :tool_call
-      assert part.tool_type == :function
-      assert part.tool_name == "greeting"
-      assert part.tool_arguments == %{"name" => "Tom"}
-      assert part.options == nil
-    end
-
-    test "adds error when JSON is invalid" do
-      {:error, changeset} =
-        UserContentPart.tool_call(%{
-          tool_name: "greeting",
-          tool_type: :function,
-          tool_arguments: "{\"invalid\"}"
-        })
-
-      assert {"invalid json", _} = changeset.errors[:tool_arguments]
-    end
-
-    test "returns error when required values missing" do
-      {:error, changeset} = UserContentPart.tool_call(%{tool_name: nil})
-      assert {"can't be blank", _} = changeset.errors[:tool_name]
-    end
-  end
-
-  describe "tool_call!/1" do
-    test "returns valid UserContentPart" do
-      %UserContentPart{} =
-        part =
-        UserContentPart.tool_call!(%{
-          tool_name: "greeting",
-          tool_type: :function,
-          tool_arguments: Jason.encode!(%{name: "Tom"})
-        })
-
-      assert part.type == :tool_call
-      assert part.tool_type == :function
-      assert part.tool_name == "greeting"
-      assert part.tool_arguments == %{"name" => "Tom"}
-      assert part.options == nil
-    end
-
-    test "raises error when invalid" do
-      assert_raise LangChainError, "tool_name: can't be blank", fn ->
-        UserContentPart.tool_call!(%{tool_name: nil})
-      end
     end
   end
 end

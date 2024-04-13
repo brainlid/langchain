@@ -2,7 +2,6 @@ defmodule LangChain.Message.ToolCallTest do
   use ExUnit.Case
   doctest LangChain.Message.ToolCall
   alias LangChain.Message.ToolCall
-  import LangChain.Fixtures
   alias LangChain.LangChainError
 
   describe "new/1" do
@@ -52,6 +51,58 @@ defmodule LangChain.Message.ToolCallTest do
       assert msg.arguments == %{"key" => 1}
       assert msg.tool_id == "tool_asdf"
       assert msg.index == 0
+    end
+  end
+
+  describe "complete/1" do
+    test "returns already complete as unchanged" do
+      call =
+        ToolCall.new!(%{
+          "status" => :complete,
+          "type" => "function",
+          "index" => 0,
+          "tool_id" => "tool_asdf",
+          "name" => "hello_world",
+          "arguments" => "{\"key\": 1}"
+        })
+
+      assert {:ok, call} == ToolCall.complete(call)
+    end
+
+    test "completes an incomplete and converts the arguments" do
+      call =
+        ToolCall.new!(%{
+          "status" => :incomplete,
+          "type" => "function",
+          "index" => 0,
+          "tool_id" => "tool_asdf",
+          "name" => "hello_world",
+          "arguments" => "{\"key\": 1}"
+        })
+
+      # incomplete to start with
+      assert call.status == :incomplete
+      # arguments are still a string
+      assert call.arguments == "{\"key\": 1}"
+
+      {:ok, updated} = ToolCall.complete(call)
+      assert updated.status == :complete
+      assert updated.arguments == %{"key" => 1}
+    end
+
+    test "adds errors when argument json is invalid" do
+      call =
+        ToolCall.new!(%{
+          "status" => :incomplete,
+          "type" => "function",
+          "index" => 0,
+          "tool_id" => "tool_asdf",
+          "name" => "hello_world",
+          "arguments" => "invalid"
+        })
+
+      {:error, changeset} = ToolCall.complete(call)
+      assert {"invalid json", _} = changeset.errors[:arguments]
     end
   end
 

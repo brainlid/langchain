@@ -60,6 +60,22 @@ defmodule LangChain.Message.ToolCall do
     end
   end
 
+  @doc """
+  Ensure the ToolCall's status is set to `:complete`. The process of completing
+  it parses the tool arguments, which may be invalid. Any problems parsing are
+  returned as a changeset error.
+  """
+  @spec complete(t()) :: {:ok, t()} | {:error, Ecto.Changeset.t()}
+  def complete(%ToolCall{status: :complete} = tool_call), do: {:ok, tool_call}
+
+  def complete(%ToolCall{} = tool_call) do
+    tool_call
+    |> change()
+    |> put_change(:status, :complete)
+    |> common_validations()
+    |> apply_action(:insert)
+  end
+
   defp common_validations(changeset) do
     case get_field(changeset, :status) do
       nil ->
@@ -78,8 +94,8 @@ defmodule LangChain.Message.ToolCall do
   end
 
   defp validate_and_parse_arguments(changeset) do
-    case get_change(changeset, :arguments) do
-      # the "arguments" did not change
+    case get_field(changeset, :arguments) do
+      # the "arguments" are not set
       nil ->
         changeset
 

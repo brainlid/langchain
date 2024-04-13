@@ -359,7 +359,7 @@ defmodule LangChain.Chains.LLMChain do
     needs_response =
       cond do
         new_message.role in [:user, :function_call, :function] -> true
-        Message.is_function_call?(new_message) -> true
+        Message.is_tool_call?(new_message) -> true
         new_message.role in [:system, :assistant] -> false
       end
 
@@ -429,7 +429,7 @@ defmodule LangChain.Chains.LLMChain do
         %LLMChain{last_message: %Message{} = message} = chain,
         context
       ) do
-    if Message.is_function_call?(message) do
+    if Message.is_tool_call?(message) do
       # context to use
       use_context = context || chain.custom_context
 

@@ -55,6 +55,7 @@ defmodule LangChain.Utils do
   @doc """
   Return changeset errors as text with comma separated description.
   """
+  @spec changeset_error_to_string(Ecto.Changeset.t()) :: nil | String.t()
   def changeset_error_to_string(%Ecto.Changeset{valid?: true}), do: nil
 
   def changeset_error_to_string(%Ecto.Changeset{valid?: false} = changeset) do

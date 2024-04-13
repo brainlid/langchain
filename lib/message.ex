@@ -61,7 +61,9 @@ defmodule LangChain.Message do
   require Logger
   alias __MODULE__
   alias LangChain.Message.UserContentPart
+  alias LangChain.Message.ToolCall
   alias LangChain.LangChainError
+  alias LangChain.Utils
 
   @primary_key false
   embedded_schema do
@@ -83,9 +85,9 @@ defmodule LangChain.Message do
     # When responding to a tool call, the `tool_call_id` specifies which tool
     # call this is giving a response to.
     field :tool_call_id, :string
-    #TODO: Remove "function_name"
+    # TODO: Remove "function_name"
     field :function_name, :string
-    #TODO: Remove "arguments"
+    # TODO: Remove "arguments"
     field :arguments, :any, virtual: true
   end
 
@@ -103,8 +105,6 @@ defmodule LangChain.Message do
   def new(attrs \\ %{}) do
     %Message{}
     |> cast(attrs, @create_fields)
-    # |> parse_arguments()
-    |> parse_tool_calls()
     |> common_validations()
     |> apply_action(:insert)
   end
@@ -130,84 +130,13 @@ defmodule LangChain.Message do
     |> common_validations()
   end
 
-  defp changeset_is_tool_call?(changeset) do
-    get_field(changeset, :role) == :assistant and
-      is_list(get_field(changeset, :tool_calls)) and
-      get_field(changeset, :status) == :complete
-  end
-
-  defp parse_tool_calls(changeset) do
-    # TODO: If not changed, can be nil
-    # TODO: must be a list.
-    # TODO: enumerate and parse each tool using ToolCall.
-    #TODO: Need to gather or stop on the first tool call argument parsing issue. Return an error.
-    #TODO: ToolCall is parsing arguments when status is completed.
-    # - this function should mark as complete? If the message is complete?
- changeset
-
-    # [first | _rest] = tools = get_field(changeset, :tool_calls)
-
-    # # only
-    # cond do
-    #   is_binary(first) && is_list(tools) ->
-    #     # decode the tools
-    #     case Jason.decode(args) do
-    #       {:ok, parsed} when is_map(parsed) ->
-    #         put_change(changeset, :tools, parsed)
-
-    #       {:ok, parsed} ->
-    #         Logger.warning(
-    #           "Parsed unexpected function argument format. Expected a map but received: #{inspect(parsed)}"
-    #         )
-
-    #         add_error(changeset, :tools, "unexpected JSON tools format")
-
-    #       {:error, error} ->
-    #         Logger.warning("Received invalid argument JSON data. Error: #{inspect(error)}")
-    #         add_error(changeset, :tools, "invalid JSON function tools")
-    #     end
-
-    #   true ->
-    #     changeset
-    # end
-  end
-
-  defp parse_arguments(changeset) do
-    args = get_field(changeset, :arguments)
-    is_function = changeset_is_tool_call?(changeset)
-
-    # only
-    cond do
-      is_function && is_binary(args) ->
-        # decode the arguments
-        case Jason.decode(args) do
-          {:ok, parsed} when is_map(parsed) ->
-            put_change(changeset, :arguments, parsed)
-
-          {:ok, parsed} ->
-            Logger.warning(
-              "Parsed unexpected function argument format. Expected a map but received: #{inspect(parsed)}"
-            )
-
-            add_error(changeset, :arguments, "unexpected JSON arguments format")
-
-          {:error, error} ->
-            Logger.warning("Received invalid argument JSON data. Error: #{inspect(error)}")
-            add_error(changeset, :arguments, "invalid JSON function arguments")
-        end
-
-      true ->
-        changeset
-    end
-  end
-
   defp common_validations(changeset) do
     changeset
     |> validate_required(@required_fields)
     |> validate_content_required()
     |> validate_content_type()
     |> validate_tool_call_id_for_role()
-    # |> validate_function_name_when_args()
+    |> validate_and_parse_tool_calls()
   end
 
   # validate that a "user" and "system" message has content. Allow an
@@ -238,20 +167,20 @@ defmodule LangChain.Message do
 
       {:ok, [%UserContentPart{} | _] = value} ->
         if role == :user do
-        # if a list, verify all elements are a UserContentPart
-        if Enum.all?(value, &match?(%UserContentPart{}, &1)) do
-          changeset
+          # if a list, verify all elements are a UserContentPart
+          if Enum.all?(value, &match?(%UserContentPart{}, &1)) do
+            changeset
+          else
+            add_error(changeset, :content, "must be text or a list of UserContentParts")
+          end
         else
-          add_error(changeset, :content, "must be text or a list of UserContentParts")
+          # only a user message can have UserContentParts
+          add_error(changeset, :content, "is invalid for role #{role}")
         end
-      else
-        # only a user message can have UserContentParts
-        add_error(changeset, :content, "is invalid for role #{role}")
-      end
 
       # any other value is not valid
       {:ok, _} ->
-        add_error(changeset, :content, "is not valid")
+        add_error(changeset, :content, "must be text or a list of UserContentParts")
 
       # unchanged
       :error ->
@@ -280,16 +209,52 @@ defmodule LangChain.Message do
     end
   end
 
-  # # validate that "function_name" is required if arguments are set.
-  # defp validate_function_name_when_args(changeset) do
-  #   function_name = get_field(changeset, :function_name)
+  # When the message is "complete", fully validate the tool calls by parsing the
+  # JSON arguments to Elixir maps. If something is invalid, errors are added to
+  # the changeset.
+  defp validate_and_parse_tool_calls(changeset) do
+    status = get_field(changeset, :status) || :incomplete
 
-  #   if get_field(changeset, :arguments) != nil && is_nil(function_name) do
-  #     add_error(changeset, :function_name, "is required when arguments are given")
-  #   else
-  #     changeset
-  #   end
-  # end
+    case status do
+      :complete ->
+        # fully process the tool calls
+        tool_calls = get_field(changeset, :tool_calls) || []
+
+        # Go through each tool call and "complete" it.
+        # Collect any errors and report them on the changeset
+        completed_calls =
+          tool_calls
+          |> Enum.map(fn c ->
+            with %ToolCall{} = call <- c,
+                 {:ok, %ToolCall{} = call} <- ToolCall.complete(call) do
+              call
+            else
+              {:error, %Ecto.Changeset{} = changeset} ->
+                # convert the error to text and return error tuple
+                {:error, Utils.changeset_error_to_string(changeset)}
+
+              {:error, reason} ->
+                {:error, reason}
+            end
+          end)
+
+        # If ANY of the completed_calls is an error, add the error to the message
+        # changeset
+        completed = Enum.filter(completed_calls, &match?(%ToolCall{}, &1))
+        errors = Enum.filter(completed_calls, &match?({:error, _reason}, &1))
+
+        # add all valid returned tool_calls
+        changeset = put_change(changeset, :tool_calls, completed)
+
+        # add errors to the changeset for invalid entries
+        Enum.reduce(errors, changeset, fn {:error, reason}, acc ->
+          add_error(acc, :tool_calls, reason)
+        end)
+
+      _other ->
+        changeset
+    end
+  end
 
   @doc """
   Create a new system message which can prime the AI/Assistant for how to
@@ -343,20 +308,19 @@ defmodule LangChain.Message do
   @doc """
   Create a new assistant message which represents a response from the AI or LLM.
   """
-  @spec new_assistant(attr :: map()) :: {:ok, t()} | {:error, Ecto.Changeset.t()}
-  def new_assistant(attr) do
-    attr
+  @spec new_assistant(attrs :: map()) :: {:ok, t()} | {:error, Ecto.Changeset.t()}
+  def new_assistant(attrs \\ %{}) do
+    attrs
     |> Map.put(:role, :assistant)
-    |> Map.put_new(:status, :complete)
     |> new()
   end
 
   @doc """
   Create a new assistant message which represents a response from the AI or LLM.
   """
-  @spec new_assistant!(attr :: map()) :: t() | no_return()
-  def new_assistant!(attr) do
-    case new_assistant(attr) do
+  @spec new_assistant!(attrs :: map()) :: t() | no_return()
+  def new_assistant!(attrs \\ %{}) do
+    case new_assistant(attrs) do
       {:ok, msg} ->
         msg
 

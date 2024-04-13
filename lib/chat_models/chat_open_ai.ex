@@ -174,15 +174,11 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   Convert a LangChain structure to the expected map of data for the OpenAI API.
   """
   @spec for_api(Message.t() | UserContentPart.t() | Function.t()) :: %{String.t() => any()}
-  def for_api(%Message{role: :assistant, function_name: fun_name} = msg)
-      when is_binary(fun_name) do
-    # TODO: THIS FUNCTION IS OUT OF DATE
+  def for_api(%Message{role: :assistant, tool_calls: tool_calls} = msg)
+      when is_list(tool_calls) do
     %{
       "role" => :assistant,
-      "function_call" => %{
-        "arguments" => Jason.encode!(msg.arguments),
-        "name" => msg.function_name
-      },
+      "tool_calls" => Enum.map(tool_calls, &for_api(&1)),
       "content" => msg.content
     }
   end
@@ -198,17 +194,17 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   def for_api(%Message{content: content} = msg) when is_binary(content) do
     %{
       "role" => msg.role,
-      "name" => msg.name,
       "content" => msg.content
     }
+    |> Utils.conditionally_add_to_map("name", msg.name)
   end
 
   def for_api(%Message{role: :user, content: content} = msg) when is_list(content) do
     %{
       "role" => msg.role,
-      "name" => msg.name,
       "content" => Enum.map(content, &for_api(&1))
     }
+    |> Utils.conditionally_add_to_map("name", msg.name)
   end
 
   def for_api(%UserContentPart{type: :text} = part) do
@@ -217,6 +213,18 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
   def for_api(%UserContentPart{type: image} = part) when image in [:image, :image_url] do
     %{"type" => "image_url", "image_url" => %{"url" => part.content}}
+  end
+
+  # ToolCall support
+  def for_api(%ToolCall{type: :function} = fun) do
+    %{
+      "id" => fun.tool_id,
+      "type" => "function",
+      "function" => %{
+        "name" => fun.name,
+        "arguments" => Jason.encode!(fun.arguments)
+      }
+    }
   end
 
   # Function support
@@ -508,12 +516,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   def do_process_response(
         %{"finish_reason" => "tool_calls", "message" => %{"tool_calls" => calls} = message} = data
       ) do
-    # TODO: FIRST ensure we can parse all the UserContentParts. If they are all valid, continue. Otherwise, report the error.
-
     case Message.new(%{
            "role" => "assistant",
-           #  "function_name" => name,
-           #  "arguments" => raw_args,
            "content" => message["content"],
            "complete" => true,
            "index" => data["index"],
@@ -526,28 +530,6 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         {:error, Utils.changeset_error_to_string(changeset)}
     end
   end
-
-  # TODO: I do need a full message parse for tool_calls
-  # # tool_call for ToolCall
-  # def do_process_response(%{
-  #       "type" => "function",
-  #       "id" => tool_id,
-  #       "function" => %{"arguments" => args, "name" => tool_name}
-  #     }) do
-  #   case UserContentPart.tool_call(%{
-  #          type: :tool_call,
-  #          tool_id: tool_id,
-  #          tool_type: :function,
-  #          tool_name: tool_name,
-  #          tool_arguments: args
-  #        }) do
-  #     {:ok, message_part} ->
-  #       message_part
-
-  #     {:error, changeset} ->
-  #       {:error, Utils.changeset_error_to_string(changeset)}
-  #   end
-  # end
 
   # Full message with tool call
   def do_process_response(
@@ -562,13 +544,10 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     case Message.new(%{
            "role" => "assistant",
            "content" => message["content"],
-           #  "function_name" => name,
-           #  "arguments" => raw_args,
            "complete" => true,
            "index" => data["index"],
            "tool_calls" => tool_calls
-         })
-         |> IO.inspect(label: "CRAP") do
+         }) do
       {:ok, message} ->
         message
 
@@ -606,8 +585,6 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       |> Map.put("role", role)
       |> Map.put("index", index)
       |> Map.put("status", status)
-      # |> Map.put("function_name", function_name)
-      # |> Map.put("arguments", arguments)
       |> Map.put("tool_calls", tool_calls)
 
     case MessageDelta.new(data) do
@@ -650,13 +627,21 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         "type" => "function"
       }) do
     # No "index". It is a complete message.
-    ToolCall.new!(%{
-      type: :function,
-      status: :complete,
-      name: name,
-      arguments: args,
-      tool_id: tool_id
-    })
+    case ToolCall.new(%{
+           type: :function,
+           status: :complete,
+           name: name,
+           arguments: args,
+           tool_id: tool_id
+         }) do
+      {:ok, %ToolCall{} = call} ->
+        call
+
+      {:error, changeset} ->
+        reason = Utils.changeset_error_to_string(changeset)
+        Logger.error("Failed to process ToolCall for a function. Reason: #{reason}")
+        {:error, reason}
+    end
   end
 
   def do_process_response(%{

@@ -11,6 +11,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
   alias LangChain.Message.ToolCall
 
   @test_model "gpt-3.5-turbo"
+  @gpt4 "gpt-4-1106-preview"
 
   defp hello_world(_args, _context) do
     "Hello world!"
@@ -170,32 +171,52 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert result == expected
     end
 
-    test "turns a function_call into expected JSON format" do
-      msg = Message.new_function_call!("hello_world", "{}")
+    test "turns a tool_call into expected JSON format" do
+      tool_call =
+        ToolCall.new!(%{tool_id: "call_abc123", name: "hello_world", arguments: "{}"})
 
-      json = ChatOpenAI.for_api(msg)
+      json = ChatOpenAI.for_api(tool_call)
 
-      assert json == %{
-               "content" => nil,
-               "function_call" => %{"arguments" => "{}", "name" => "hello_world"},
-               "role" => :assistant
-             }
+      assert json ==
+               %{
+                 "id" => "call_abc123",
+                 "type" => "function",
+                 "function" => %{
+                   "name" => "hello_world",
+                   "arguments" => "\"{}\""
+                 }
+               }
     end
 
     test "turns an assistant tool_call into expected JSON format with arguments" do
       # Needed when restoring a conversation from structs for history.
       # args = %{"expression" => "11 + 10"}
-      msg = Message.new_assistant!(%{tool_calls: [ToolCall.new!(%{tool_id: "call_abc123", name: "hello_world", arguments: %{expression: "11 + 10"}})]})
+      msg =
+        Message.new_assistant!(%{
+          tool_calls: [
+            ToolCall.new!(%{
+              tool_id: "call_abc123",
+              name: "hello_world",
+              arguments: %{expression: "11 + 10"}
+            })
+          ]
+        })
 
       json = ChatOpenAI.for_api(msg)
 
       assert json == %{
+               "role" => :assistant,
                "content" => nil,
-               "function_call" => %{
-                 "arguments" => "{\"expression\":\"11 + 10\"}",
-                 "name" => "hello_world"
-               },
-               "role" => :assistant
+               "tool_calls" => [
+                 %{
+                   "function" => %{
+                     "arguments" => "{\"expression\":\"11 + 10\"}",
+                     "name" => "hello_world"
+                   },
+                   "id" => "call_abc123",
+                   "type" => "function"
+                 }
+               ]
              }
     end
 
@@ -204,7 +225,11 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
       json = ChatOpenAI.for_api(msg)
 
-      assert json == %{"content" => "Hello World!", "tool_call_id" => "tool_abc123", "role" => :tool}
+      assert json == %{
+               "content" => "Hello World!",
+               "tool_call_id" => "tool_abc123",
+               "role" => :tool
+             }
     end
 
     test "tools work with minimal definition and no parameters" do
@@ -393,96 +418,53 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     end
 
     @tag live_call: true, live_open_ai: true
-    test "executing a function", %{hello_world: hello_world} do
-      {:ok, chat} = ChatOpenAI.new(%{seed: 0})
-
-      {:ok, message} =
-        Message.new_user("Using only the tools you have been provided, give a greeting.")
-
-      {:ok, [message]} = ChatOpenAI.call(chat, [message], [hello_world])
-
-      assert %Message{role: :assistant} = message
-      assert message.arguments == %{}
-      assert message.content == nil
-    end
-
-    # TODO: TESTING MAX LENGTH OF FUNCTION AND SPLITTING CONCERN FOR DELTAS
-
-    # TODO: DELETE THIS WHOLE TEST AFTER VERIFYING
-    @tag live_call: true, live_open_ai: true
-    test "executing a function with arguments and explaining", %{weather: weather} do
-      {:ok, chat} = ChatOpenAI.new(%{seed: 0, stream: true, model: "gpt-4-1106-preview"})
-
-      weather =
-        Function.new!(%{
-          name: "get_weather_from_a_specific_location_in_usa_country_boundary",
-          description: "Get the current weather in a given US location",
-          parameters: [
-            FunctionParam.new!(%{
-              name: "city",
-              type: "string",
-              description: "The city name, e.g. San Francisco",
-              required: true
-            }),
-            FunctionParam.new!(%{
-              name: "state",
-              type: "string",
-              description: "The 2 letter US state abbreviation, e.g. CA, NY, UT",
-              required: true
-            })
-          ],
-          function: fn -> IO.puts("75 degrees") end
-        })
-
-      {:ok, message} =
-        Message.new_user(
-          "What is the weather like in Moab Utah? Explain what you are about before you do it."
-        )
-
-      {:ok, [message]} = ChatOpenAI.call(chat, [message], [weather])
-
-      dbg(message)
-
-      assert %Message{role: :assistant} = message
-      assert message.arguments == %{}
-      assert message.content == nil
-    end
-
-    @tag live_call: true, live_open_ai: true
     test "executing a function with arguments", %{weather: weather} do
-      {:ok, chat} = ChatOpenAI.new(%{seed: 0, stream: false, model: "gpt-4-1106-preview"})
+      {:ok, chat} = ChatOpenAI.new(%{seed: 0, stream: false, model: @gpt4})
 
       {:ok, message} =
         Message.new_user(
-          "What is the weather like in Moab Utah? Explain what you are about before you do it."
+          "What is the weather like in Moab Utah?"
         )
 
       {:ok, [message]} = ChatOpenAI.call(chat, [message], [weather])
 
-      dbg(message)
-
       assert %Message{role: :assistant} = message
-      assert message.arguments == %{}
+      assert message.status == :complete
+      assert message.role == :assistant
       assert message.content == nil
+      [call] = message.tool_calls
+      assert call.status == :complete
+      assert call.type == :function
+      assert call.tool_id != nil
+      assert call.arguments == %{"city" => "Moab", "state" => "UT"}
     end
 
     @tag live_call: true, live_open_ai: true
     test "LIVE: supports receiving multiple tool calls in a single response", %{weather: weather} do
-      {:ok, chat} = ChatOpenAI.new(%{seed: 0, stream: false, model: "gpt-4-1106-preview"})
+      {:ok, chat} = ChatOpenAI.new(%{seed: 0, stream: false, model: @gpt4})
 
       {:ok, message} =
         Message.new_user(
-          "What is the weather like in Moab Utah, Portland Oregon, and Baltimore MD? Explain what you are about before you do it."
+          "What is the weather like in Moab Utah, Portland Oregon, and Baltimore MD? Explain your thought process."
         )
 
       {:ok, [message]} = ChatOpenAI.call(chat, [message], [weather])
 
-      dbg(message)
-
       assert %Message{role: :assistant} = message
-      assert message.arguments == %{}
+      assert message.status == :complete
       assert message.content == nil
-      assert false
+      [call1, call2, call3] = message.tool_calls
+
+      assert call1.status == :complete
+      assert call1.type == :function
+      assert call1.name == "get_weather"
+      assert call1.arguments == %{"city" => "Moab", "state" => "UT"}
+
+      assert call2.name == "get_weather"
+      assert call2.arguments == %{"city" => "Portland", "state" => "OR"}
+
+      assert call3.name == "get_weather"
+      assert call3.arguments == %{"city" => "Baltimore", "state" => "MD"}
     end
 
     # TODO: Fake API response with multiples.
@@ -606,18 +588,11 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
       assert struct.role == :assistant
 
-      assert struct.content == [
-               %LangChain.Message.UserContentPart{
-                 type: :tool_call,
-                 content: nil,
-                 tool_id: "call_mMSPuyLd915TQ9bcrk4NvLDX",
-                 tool_type: :function,
-                 tool_name: "get_weather",
-                 tool_arguments: %{"city" => "Moab", "state" => "UT"},
-                 options: nil
-               }
-             ]
-
+      assert [%ToolCall{} = call] = struct.tool_calls
+      assert call.tool_id == "call_mMSPuyLd915TQ9bcrk4NvLDX"
+      assert call.type == :function
+      assert call.name == "get_weather"
+      assert call.arguments == %{"city" => "Moab", "state" => "UT"}
       assert struct.index == 0
     end
 
@@ -687,7 +662,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
              ]
     end
 
-    test "handles receiving multiple tool_calls messages and one has invalid JSON" do
+    test "handles receiving multiple tool_calls and one has invalid JSON" do
       response = %{
         "finish_reason" => "tool_calls",
         "index" => 0,
@@ -717,7 +692,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       }
 
       assert {:error, reason} = ChatOpenAI.do_process_response(response)
-      assert reason == "content: must be text or a list of UserContentParts"
+      assert reason == "tool_calls: arguments: invalid json"
     end
 
     test "handles a single tool_call from list" do
@@ -750,7 +725,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
       assert {:error, message} = ChatOpenAI.do_process_response(call)
 
-      assert message == "tool_arguments: invalid json"
+      assert message == "arguments: invalid json"
     end
 
     test "handles streamed deltas for multiple tool calls" do
