@@ -5,10 +5,11 @@ defmodule LangChain.Fixtures do
   """
   alias LangChain.ChatModels.ChatOpenAI
   alias LangChain.Message
+  alias LangChain.Message.ToolCall
 
-  def raw_deltas_for_function_call(function_name \\ "hello_world")
+  def raw_deltas_for_tool_call(tool_name \\ "hello_world")
 
-  def raw_deltas_for_function_call("hello_world") do
+  def raw_deltas_for_tool_call("hello_world") do
     [
       %{
         "choices" => [
@@ -52,176 +53,82 @@ defmodule LangChain.Fixtures do
     ]
   end
 
-  def raw_deltas_for_function_call("calculator") do
+  @doc """
+  Return a list of MessageDelta structs for requesting a tool_call.
+  """
+  def deltas_for_tool_call(tool_name \\ "hello_world")
+
+  # TODO: NEEDS call_id
+  def deltas_for_tool_call("calculator") do
     [
-      %{
-        "choices" => [
-          %{
-            "delta" => %{
-              "content" => nil,
-              "function_call" => %{"arguments" => "", "name" => "calculator"},
-              "role" => "assistant"
-            },
-            "finish_reason" => nil,
-            "index" => 0
+      %LangChain.MessageDelta{
+        content: nil,
+        status: :incomplete,
+        index: 0,
+        role: :assistant,
+        tool_calls: nil
+      },
+      %LangChain.MessageDelta{
+        content: nil,
+        status: :incomplete,
+        index: 0,
+        role: :unknown,
+        tool_calls: [
+          %LangChain.Message.ToolCall{
+            status: :incomplete,
+            type: :function,
+            call_id: "call_IBDsG5rtgR9rt1CNrWkPMvXG",
+            name: "calculator",
+            arguments: nil,
+            index: 0
           }
         ]
       },
-      %{
-        "choices" => [
-          %{
-            "delta" => %{"function_call" => %{"arguments" => "{\n"}},
-            "finish_reason" => nil,
-            "index" => 0
+      %LangChain.MessageDelta{
+        content: nil,
+        status: :incomplete,
+        index: 0,
+        role: :unknown,
+        tool_calls: [
+          %LangChain.Message.ToolCall{
+            status: :incomplete,
+            type: :function,
+            call_id: nil,
+            name: nil,
+            arguments: "{\n \"",
+            index: 0
           }
         ]
       },
-      %{
-        "choices" => [
-          %{
-            "delta" => %{"function_call" => %{"arguments" => " "}},
-            "finish_reason" => nil,
-            "index" => 0
+      %LangChain.MessageDelta{
+        content: nil,
+        status: :incomplete,
+        index: 0,
+        role: :unknown,
+        tool_calls: [
+          %LangChain.Message.ToolCall{
+            status: :incomplete,
+            type: :function,
+            call_id: nil,
+            name: nil,
+            arguments: "expression\": \"100 + 300 - 200\"}",
+            index: 0
           }
         ]
       },
-      %{
-        "choices" => [
-          %{
-            "delta" => %{"function_call" => %{"arguments" => " \""}},
-            "finish_reason" => nil,
-            "index" => 0
-          }
-        ]
-      },
-      %{
-        "choices" => [
-          %{
-            "delta" => %{"function_call" => %{"arguments" => "expression"}},
-            "finish_reason" => nil,
-            "index" => 0
-          }
-        ]
-      },
-      %{
-        "choices" => [
-          %{
-            "delta" => %{"function_call" => %{"arguments" => "\":"}},
-            "finish_reason" => nil,
-            "index" => 0
-          }
-        ]
-      },
-      %{
-        "choices" => [
-          %{
-            "delta" => %{"function_call" => %{"arguments" => " \""}},
-            "finish_reason" => nil,
-            "index" => 0
-          }
-        ]
-      },
-      %{
-        "choices" => [
-          %{
-            "delta" => %{"function_call" => %{"arguments" => "100"}},
-            "finish_reason" => nil,
-            "index" => 0
-          }
-        ]
-      },
-      %{
-        "choices" => [
-          %{
-            "delta" => %{"function_call" => %{"arguments" => " +"}},
-            "finish_reason" => nil,
-            "index" => 0
-          }
-        ]
-      },
-      %{
-        "choices" => [
-          %{
-            "delta" => %{"function_call" => %{"arguments" => " "}},
-            "finish_reason" => nil,
-            "index" => 0
-          }
-        ]
-      },
-      %{
-        "choices" => [
-          %{
-            "delta" => %{"function_call" => %{"arguments" => "300"}},
-            "finish_reason" => nil,
-            "index" => 0
-          }
-        ]
-      },
-      %{
-        "choices" => [
-          %{
-            "delta" => %{"function_call" => %{"arguments" => " -"}},
-            "finish_reason" => nil,
-            "index" => 0
-          }
-        ]
-      },
-      %{
-        "choices" => [
-          %{
-            "delta" => %{"function_call" => %{"arguments" => " "}},
-            "finish_reason" => nil,
-            "index" => 0
-          }
-        ]
-      },
-      %{
-        "choices" => [
-          %{
-            "delta" => %{"function_call" => %{"arguments" => "200"}},
-            "finish_reason" => nil,
-            "index" => 0
-          }
-        ]
-      },
-      %{
-        "choices" => [
-          %{
-            "delta" => %{"function_call" => %{"arguments" => "\"\n"}},
-            "finish_reason" => nil,
-            "index" => 0
-          }
-        ]
-      },
-      %{
-        "choices" => [
-          %{
-            "delta" => %{"function_call" => %{"arguments" => "}"}},
-            "finish_reason" => nil,
-            "index" => 0
-          }
-        ]
-      },
-      %{
-        "choices" => [
-          %{
-            "delta" => %{},
-            "finish_reason" => "function_call",
-            "index" => 0
-          }
-        ]
+      %LangChain.MessageDelta{
+        content: nil,
+        status: :complete,
+        index: 0,
+        role: :unknown,
+        tool_calls: nil
       }
     ]
   end
 
-  @doc """
-  Return a list of MessageDelta structs for requesting a function_call.
-  """
-  def deltas_for_function_call(function_name \\ "hello_world")
-
-  def deltas_for_function_call(function_name) do
-    function_name
-    |> raw_deltas_for_function_call()
+  def deltas_for_tool_call(tool_name) do
+    tool_name
+    |> raw_deltas_for_tool_call()
     |> Enum.flat_map(&ChatOpenAI.do_process_response(&1))
   end
 
@@ -235,9 +142,7 @@ defmodule LangChain.Fixtures do
         status: :incomplete,
         index: 0,
         role: :assistant,
-        tool_calls: nil,
-        function_name: nil,
-        arguments: nil
+        tool_calls: nil
       },
       %LangChain.MessageDelta{
         content: nil,
@@ -248,14 +153,12 @@ defmodule LangChain.Fixtures do
           %LangChain.Message.ToolCall{
             status: :incomplete,
             type: :function,
-            tool_id: nil,
+            call_id: nil,
             name: "get_weather",
             arguments: nil,
             index: 0
           }
-        ],
-        function_name: nil,
-        arguments: nil
+        ]
       },
       %LangChain.MessageDelta{
         content: nil,
@@ -266,14 +169,12 @@ defmodule LangChain.Fixtures do
           %LangChain.Message.ToolCall{
             status: :incomplete,
             type: :function,
-            tool_id: nil,
+            call_id: nil,
             name: nil,
             arguments: "{\"ci",
             index: 0
           }
-        ],
-        function_name: nil,
-        arguments: nil
+        ]
       },
       %LangChain.MessageDelta{
         content: nil,
@@ -284,14 +185,12 @@ defmodule LangChain.Fixtures do
           %LangChain.Message.ToolCall{
             status: :incomplete,
             type: :function,
-            tool_id: nil,
+            call_id: nil,
             name: nil,
             arguments: "ty\": \"Moab\", \"state\": \"UT\"}",
             index: 0
           }
-        ],
-        function_name: nil,
-        arguments: nil
+        ]
       },
       %LangChain.MessageDelta{
         content: nil,
@@ -302,14 +201,12 @@ defmodule LangChain.Fixtures do
           %LangChain.Message.ToolCall{
             status: :incomplete,
             type: :function,
-            tool_id: nil,
+            call_id: nil,
             name: "get_weather",
             arguments: nil,
             index: 1
           }
-        ],
-        function_name: nil,
-        arguments: nil
+        ]
       },
       %LangChain.MessageDelta{
         content: nil,
@@ -320,14 +217,12 @@ defmodule LangChain.Fixtures do
           %LangChain.Message.ToolCall{
             status: :incomplete,
             type: :function,
-            tool_id: nil,
+            call_id: nil,
             name: nil,
             arguments: "{\"ci",
             index: 1
           }
-        ],
-        function_name: nil,
-        arguments: nil
+        ]
       },
       %LangChain.MessageDelta{
         content: nil,
@@ -338,14 +233,12 @@ defmodule LangChain.Fixtures do
           %LangChain.Message.ToolCall{
             status: :incomplete,
             type: :function,
-            tool_id: nil,
+            call_id: nil,
             name: nil,
             arguments: "ty\": \"Portland\", \"state\": \"OR\"}",
             index: 1
           }
-        ],
-        function_name: nil,
-        arguments: nil
+        ]
       },
       %LangChain.MessageDelta{
         content: nil,
@@ -356,14 +249,12 @@ defmodule LangChain.Fixtures do
           %LangChain.Message.ToolCall{
             status: :incomplete,
             type: :function,
-            tool_id: nil,
+            call_id: nil,
             name: "get_weather",
             arguments: nil,
             index: 2
           }
-        ],
-        function_name: nil,
-        arguments: nil
+        ]
       },
       %LangChain.MessageDelta{
         content: nil,
@@ -374,14 +265,12 @@ defmodule LangChain.Fixtures do
           %LangChain.Message.ToolCall{
             status: :incomplete,
             type: :function,
-            tool_id: nil,
+            call_id: nil,
             name: nil,
             arguments: "{\"ci",
             index: 2
           }
-        ],
-        function_name: nil,
-        arguments: nil
+        ]
       },
       %LangChain.MessageDelta{
         content: nil,
@@ -392,28 +281,24 @@ defmodule LangChain.Fixtures do
           %LangChain.Message.ToolCall{
             status: :incomplete,
             type: :function,
-            tool_id: nil,
+            call_id: nil,
             name: nil,
             arguments: "ty\": \"Baltimore\", \"state\": \"MD\"}",
             index: 2
           }
-        ],
-        function_name: nil,
-        arguments: nil
+        ]
       },
       %LangChain.MessageDelta{
         content: nil,
         status: :complete,
         index: 0,
         role: :unknown,
-        tool_calls: nil,
-        function_name: nil,
-        arguments: nil
+        tool_calls: nil
       }
     ]
   end
 
-  #TODO: These are specific to OpenAI. Move into that test module?
+  # TODO: These are specific to OpenAI. Move into that test module?
   def raw_deltas_for_content() do
     [
       %{
@@ -564,89 +449,67 @@ defmodule LangChain.Fixtures do
       %LangChain.MessageDelta{
         content: nil,
         index: 0,
-        function_name: nil,
         role: :assistant,
-        arguments: nil,
         status: :incomplete
       },
       %LangChain.MessageDelta{
         content: "Hello",
         index: 0,
-        function_name: nil,
         role: :unknown,
-        arguments: nil,
         status: :incomplete
       },
       %LangChain.MessageDelta{
         content: "!",
         index: 0,
-        function_name: nil,
         role: :unknown,
-        arguments: nil,
         status: :incomplete
       },
       %LangChain.MessageDelta{
         content: " How",
         index: 0,
-        function_name: nil,
         role: :unknown,
-        arguments: nil,
         status: :incomplete
       },
       %LangChain.MessageDelta{
         content: " can",
         index: 0,
-        function_name: nil,
         role: :unknown,
-        arguments: nil,
         status: :incomplete
       },
       %LangChain.MessageDelta{
         content: " I",
         index: 0,
-        function_name: nil,
         role: :unknown,
-        arguments: nil,
         status: :incomplete
       },
       %LangChain.MessageDelta{
         content: " assist",
         index: 0,
-        function_name: nil,
         role: :unknown,
-        arguments: nil,
         status: :incomplete
       },
       %LangChain.MessageDelta{
         content: " you",
         index: 0,
-        function_name: nil,
         role: :unknown,
-        arguments: nil,
         status: :incomplete
       },
       %LangChain.MessageDelta{
         content: " today",
         index: 0,
-        function_name: nil,
         role: :unknown,
-        arguments: nil,
         status: :incomplete
       },
       %LangChain.MessageDelta{
         content: "?",
         index: 0,
-        function_name: nil,
         role: :unknown,
-        arguments: nil,
         status: :incomplete
       },
       %LangChain.MessageDelta{
         content: nil,
         index: 0,
-        function_name: nil,
         role: :unknown,
-        arguments: nil,
         status: :complete
       }
     ]
@@ -659,13 +522,11 @@ defmodule LangChain.Fixtures do
         index: 0,
         function_name: "hello_world",
         role: :assistant,
-        arguments: nil,
         status: :incomplete
       },
       %LangChain.MessageDelta{
         content: nil,
         index: 0,
-        function_name: nil,
         role: :assistant,
         arguments: "{}",
         status: :incomplete
@@ -673,9 +534,7 @@ defmodule LangChain.Fixtures do
       %LangChain.MessageDelta{
         content: nil,
         index: 0,
-        function_name: nil,
         role: :unknown,
-        arguments: nil,
         status: :complete
       }
     ]
@@ -694,7 +553,6 @@ defmodule LangChain.Fixtures do
       %LangChain.MessageDelta{
         content: nil,
         index: 0,
-        function_name: nil,
         role: :assistant,
         arguments: "{\n",
         status: :incomplete
@@ -702,7 +560,6 @@ defmodule LangChain.Fixtures do
       %LangChain.MessageDelta{
         content: nil,
         index: 0,
-        function_name: nil,
         role: :assistant,
         arguments: " ",
         status: :incomplete
@@ -710,7 +567,6 @@ defmodule LangChain.Fixtures do
       %LangChain.MessageDelta{
         content: nil,
         index: 0,
-        function_name: nil,
         role: :assistant,
         arguments: " \"",
         status: :incomplete
@@ -718,7 +574,6 @@ defmodule LangChain.Fixtures do
       %LangChain.MessageDelta{
         content: nil,
         index: 0,
-        function_name: nil,
         role: :assistant,
         arguments: "expression",
         status: :incomplete
@@ -726,7 +581,6 @@ defmodule LangChain.Fixtures do
       %LangChain.MessageDelta{
         content: nil,
         index: 0,
-        function_name: nil,
         role: :assistant,
         arguments: "\":",
         status: :incomplete
@@ -734,7 +588,6 @@ defmodule LangChain.Fixtures do
       %LangChain.MessageDelta{
         content: nil,
         index: 0,
-        function_name: nil,
         role: :assistant,
         arguments: " \"",
         status: :incomplete
@@ -742,7 +595,6 @@ defmodule LangChain.Fixtures do
       %LangChain.MessageDelta{
         content: nil,
         index: 0,
-        function_name: nil,
         role: :assistant,
         arguments: "100",
         status: :incomplete
@@ -750,7 +602,6 @@ defmodule LangChain.Fixtures do
       %LangChain.MessageDelta{
         content: nil,
         index: 0,
-        function_name: nil,
         role: :assistant,
         arguments: " +",
         status: :incomplete
@@ -758,7 +609,6 @@ defmodule LangChain.Fixtures do
       %LangChain.MessageDelta{
         content: nil,
         index: 0,
-        function_name: nil,
         role: :assistant,
         arguments: " ",
         status: :incomplete
@@ -766,7 +616,6 @@ defmodule LangChain.Fixtures do
       %LangChain.MessageDelta{
         content: nil,
         index: 0,
-        function_name: nil,
         role: :assistant,
         arguments: "300",
         status: :incomplete
@@ -774,7 +623,6 @@ defmodule LangChain.Fixtures do
       %LangChain.MessageDelta{
         content: nil,
         index: 0,
-        function_name: nil,
         role: :assistant,
         arguments: " -",
         status: :incomplete
@@ -782,7 +630,6 @@ defmodule LangChain.Fixtures do
       %LangChain.MessageDelta{
         content: nil,
         index: 0,
-        function_name: nil,
         role: :assistant,
         arguments: " ",
         status: :incomplete
@@ -790,7 +637,6 @@ defmodule LangChain.Fixtures do
       %LangChain.MessageDelta{
         content: nil,
         index: 0,
-        function_name: nil,
         role: :assistant,
         arguments: "200",
         status: :incomplete
@@ -798,7 +644,6 @@ defmodule LangChain.Fixtures do
       %LangChain.MessageDelta{
         content: nil,
         index: 0,
-        function_name: nil,
         role: :assistant,
         arguments: "\"\n",
         status: :incomplete
@@ -806,7 +651,6 @@ defmodule LangChain.Fixtures do
       %LangChain.MessageDelta{
         content: nil,
         index: 0,
-        function_name: nil,
         role: :assistant,
         arguments: "}",
         status: :incomplete
@@ -814,15 +658,13 @@ defmodule LangChain.Fixtures do
       %LangChain.MessageDelta{
         content: nil,
         index: 0,
-        function_name: nil,
         role: :unknown,
-        arguments: nil,
         status: :complete
       }
     ]
   end
 
-  #TODO: DELETE THIS?
+  # TODO: DELETE THIS?
   def delta_content_with_function_call() do
     # OpenAI treats a function_call as extra information with an `:assistant`
     # response. We treat a function_call as it's own thing.
@@ -834,9 +676,7 @@ defmodule LangChain.Fixtures do
           content: "",
           status: :incomplete,
           index: 0,
-          function_name: nil,
-          role: :assistant,
-          arguments: nil
+          role: :assistant
         }
       ],
       [
@@ -844,9 +684,7 @@ defmodule LangChain.Fixtures do
           content: "Sure",
           status: :incomplete,
           index: 0,
-          function_name: nil,
-          role: :unknown,
-          arguments: nil
+          role: :unknown
         }
       ],
       [
@@ -854,9 +692,7 @@ defmodule LangChain.Fixtures do
           content: ",",
           status: :incomplete,
           index: 0,
-          function_name: nil,
-          role: :unknown,
-          arguments: nil
+          role: :unknown
         }
       ],
       [
@@ -864,9 +700,7 @@ defmodule LangChain.Fixtures do
           content: " I",
           status: :incomplete,
           index: 0,
-          function_name: nil,
-          role: :unknown,
-          arguments: nil
+          role: :unknown
         }
       ],
       [
@@ -874,9 +708,7 @@ defmodule LangChain.Fixtures do
           content: " can",
           status: :incomplete,
           index: 0,
-          function_name: nil,
-          role: :unknown,
-          arguments: nil
+          role: :unknown
         }
       ],
       [
@@ -884,9 +716,7 @@ defmodule LangChain.Fixtures do
           content: " help",
           status: :incomplete,
           index: 0,
-          function_name: nil,
-          role: :unknown,
-          arguments: nil
+          role: :unknown
         }
       ],
       [
@@ -894,9 +724,7 @@ defmodule LangChain.Fixtures do
           content: " with",
           status: :incomplete,
           index: 0,
-          function_name: nil,
-          role: :unknown,
-          arguments: nil
+          role: :unknown
         }
       ],
       [
@@ -904,9 +732,7 @@ defmodule LangChain.Fixtures do
           content: " that",
           status: :incomplete,
           index: 0,
-          function_name: nil,
-          role: :unknown,
-          arguments: nil
+          role: :unknown
         }
       ],
       [
@@ -914,9 +740,7 @@ defmodule LangChain.Fixtures do
           content: ".",
           status: :incomplete,
           index: 0,
-          function_name: nil,
-          role: :unknown,
-          arguments: nil
+          role: :unknown
         }
       ],
       [
@@ -924,9 +748,7 @@ defmodule LangChain.Fixtures do
           content: " First",
           status: :incomplete,
           index: 0,
-          function_name: nil,
-          role: :unknown,
-          arguments: nil
+          role: :unknown
         }
       ],
       [
@@ -934,9 +756,7 @@ defmodule LangChain.Fixtures do
           content: ",",
           status: :incomplete,
           index: 0,
-          function_name: nil,
-          role: :unknown,
-          arguments: nil
+          role: :unknown
         }
       ],
       [
@@ -944,9 +764,7 @@ defmodule LangChain.Fixtures do
           content: " let",
           status: :incomplete,
           index: 0,
-          function_name: nil,
-          role: :unknown,
-          arguments: nil
+          role: :unknown
         }
       ],
       [
@@ -954,9 +772,7 @@ defmodule LangChain.Fixtures do
           content: "'s",
           status: :incomplete,
           index: 0,
-          function_name: nil,
-          role: :unknown,
-          arguments: nil
+          role: :unknown
         }
       ],
       [
@@ -964,9 +780,7 @@ defmodule LangChain.Fixtures do
           content: " check",
           status: :incomplete,
           index: 0,
-          function_name: nil,
-          role: :unknown,
-          arguments: nil
+          role: :unknown
         }
       ],
       [
@@ -974,9 +788,7 @@ defmodule LangChain.Fixtures do
           content: " which",
           status: :incomplete,
           index: 0,
-          function_name: nil,
-          role: :unknown,
-          arguments: nil
+          role: :unknown
         }
       ],
       [
@@ -984,9 +796,7 @@ defmodule LangChain.Fixtures do
           content: " regions",
           status: :incomplete,
           index: 0,
-          function_name: nil,
-          role: :unknown,
-          arguments: nil
+          role: :unknown
         }
       ],
       [
@@ -994,9 +804,7 @@ defmodule LangChain.Fixtures do
           content: " are",
           status: :incomplete,
           index: 0,
-          function_name: nil,
-          role: :unknown,
-          arguments: nil
+          role: :unknown
         }
       ],
       [
@@ -1004,9 +812,7 @@ defmodule LangChain.Fixtures do
           content: " currently",
           status: :incomplete,
           index: 0,
-          function_name: nil,
-          role: :unknown,
-          arguments: nil
+          role: :unknown
         }
       ],
       [
@@ -1014,9 +820,7 @@ defmodule LangChain.Fixtures do
           content: " available",
           status: :incomplete,
           index: 0,
-          function_name: nil,
-          role: :unknown,
-          arguments: nil
+          role: :unknown
         }
       ],
       [
@@ -1024,9 +828,7 @@ defmodule LangChain.Fixtures do
           content: " for",
           status: :incomplete,
           index: 0,
-          function_name: nil,
-          role: :unknown,
-          arguments: nil
+          role: :unknown
         }
       ],
       [
@@ -1034,9 +836,7 @@ defmodule LangChain.Fixtures do
           content: " deployment",
           status: :incomplete,
           index: 0,
-          function_name: nil,
-          role: :unknown,
-          arguments: nil
+          role: :unknown
         }
       ],
       [
@@ -1044,9 +844,7 @@ defmodule LangChain.Fixtures do
           content: " on",
           status: :incomplete,
           index: 0,
-          function_name: nil,
-          role: :unknown,
-          arguments: nil
+          role: :unknown
         }
       ],
       [
@@ -1054,9 +852,7 @@ defmodule LangChain.Fixtures do
           content: " Fly",
           status: :incomplete,
           index: 0,
-          function_name: nil,
-          role: :unknown,
-          arguments: nil
+          role: :unknown
         }
       ],
       [
@@ -1064,9 +860,7 @@ defmodule LangChain.Fixtures do
           content: ".io",
           status: :incomplete,
           index: 0,
-          function_name: nil,
-          role: :unknown,
-          arguments: nil
+          role: :unknown
         }
       ],
       [
@@ -1074,9 +868,7 @@ defmodule LangChain.Fixtures do
           content: ".",
           status: :incomplete,
           index: 0,
-          function_name: nil,
-          role: :unknown,
-          arguments: nil
+          role: :unknown
         }
       ],
       [
@@ -1084,9 +876,7 @@ defmodule LangChain.Fixtures do
           content: " Please",
           status: :incomplete,
           index: 0,
-          function_name: nil,
-          role: :unknown,
-          arguments: nil
+          role: :unknown
         }
       ],
       [
@@ -1094,9 +884,7 @@ defmodule LangChain.Fixtures do
           content: " wait",
           status: :incomplete,
           index: 0,
-          function_name: nil,
-          role: :unknown,
-          arguments: nil
+          role: :unknown
         }
       ],
       [
@@ -1104,9 +892,7 @@ defmodule LangChain.Fixtures do
           content: " a",
           status: :incomplete,
           index: 0,
-          function_name: nil,
-          role: :unknown,
-          arguments: nil
+          role: :unknown
         }
       ],
       [
@@ -1114,9 +900,7 @@ defmodule LangChain.Fixtures do
           content: " moment",
           status: :incomplete,
           index: 0,
-          function_name: nil,
-          role: :unknown,
-          arguments: nil
+          role: :unknown
         }
       ],
       [
@@ -1124,9 +908,7 @@ defmodule LangChain.Fixtures do
           content: " while",
           status: :incomplete,
           index: 0,
-          function_name: nil,
-          role: :unknown,
-          arguments: nil
+          role: :unknown
         }
       ],
       [
@@ -1134,9 +916,7 @@ defmodule LangChain.Fixtures do
           content: " I",
           status: :incomplete,
           index: 0,
-          function_name: nil,
-          role: :unknown,
-          arguments: nil
+          role: :unknown
         }
       ],
       [
@@ -1144,9 +924,7 @@ defmodule LangChain.Fixtures do
           content: " fetch",
           status: :incomplete,
           index: 0,
-          function_name: nil,
-          role: :unknown,
-          arguments: nil
+          role: :unknown
         }
       ],
       [
@@ -1154,9 +932,7 @@ defmodule LangChain.Fixtures do
           content: " this",
           status: :incomplete,
           index: 0,
-          function_name: nil,
-          role: :unknown,
-          arguments: nil
+          role: :unknown
         }
       ],
       [
@@ -1164,9 +940,7 @@ defmodule LangChain.Fixtures do
           content: " information",
           status: :incomplete,
           index: 0,
-          function_name: nil,
-          role: :unknown,
-          arguments: nil
+          role: :unknown
         }
       ],
       [
@@ -1174,9 +948,7 @@ defmodule LangChain.Fixtures do
           content: " for",
           status: :incomplete,
           index: 0,
-          function_name: nil,
-          role: :unknown,
-          arguments: nil
+          role: :unknown
         }
       ],
       [
@@ -1184,9 +956,7 @@ defmodule LangChain.Fixtures do
           content: " you",
           status: :incomplete,
           index: 0,
-          function_name: nil,
-          role: :unknown,
-          arguments: nil
+          role: :unknown
         }
       ],
       [
@@ -1194,9 +964,7 @@ defmodule LangChain.Fixtures do
           content: ".",
           status: :incomplete,
           index: 0,
-          function_name: nil,
-          role: :unknown,
-          arguments: nil
+          role: :unknown
         }
       ],
       [
@@ -1214,7 +982,6 @@ defmodule LangChain.Fixtures do
           content: nil,
           status: :incomplete,
           index: 0,
-          function_name: nil,
           role: :function_call,
           arguments: "{}"
         }
@@ -1224,11 +991,27 @@ defmodule LangChain.Fixtures do
           content: nil,
           status: :complete,
           index: 0,
-          function_name: nil,
-          role: :unknown,
-          arguments: nil
+          role: :unknown
         }
       ]
     ]
+  end
+
+  def new_function_call!(call_id, name, arguments) do
+    Message.new_assistant!(%{
+      tool_calls: [
+        ToolCall.new!(%{
+          type: :function,
+          status: :complete,
+          call_id: call_id,
+          name: name,
+          arguments: arguments
+        })
+      ]
+    })
+  end
+
+  def new_function_call!(%ToolCall{} = call) do
+    Message.new_assistant!(%{tool_calls: [call]})
   end
 end
