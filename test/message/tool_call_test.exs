@@ -9,7 +9,7 @@ defmodule LangChain.Message.ToolCallTest do
       assert {:ok, %ToolCall{} = msg} = ToolCall.new(%{})
       assert msg.status == :incomplete
       assert msg.type == :function
-      assert msg.tool_id == nil
+      assert msg.call_id == nil
       assert msg.name == nil
       assert msg.arguments == nil
       assert msg.index == nil
@@ -21,7 +21,7 @@ defmodule LangChain.Message.ToolCallTest do
                  "status" => :incomplete,
                  "type" => "function",
                  "index" => 1,
-                 "tool_id" => "tool_asdf",
+                 "call_id" => "call_asdf",
                  "name" => "hello_world",
                  "arguments" => "{\"key\": 1}"
                })
@@ -30,7 +30,7 @@ defmodule LangChain.Message.ToolCallTest do
       assert msg.type == :function
       assert msg.name == "hello_world"
       assert msg.arguments == "{\"key\": 1}"
-      assert msg.tool_id == "tool_asdf"
+      assert msg.call_id == "call_asdf"
       assert msg.index == 1
     end
 
@@ -40,7 +40,7 @@ defmodule LangChain.Message.ToolCallTest do
                  "status" => :complete,
                  "type" => "function",
                  "index" => 0,
-                 "tool_id" => "tool_asdf",
+                 "call_id" => "call_asdf",
                  "name" => "hello_world",
                  "arguments" => "{\"key\": 1}"
                })
@@ -49,7 +49,7 @@ defmodule LangChain.Message.ToolCallTest do
       assert msg.type == :function
       assert msg.name == "hello_world"
       assert msg.arguments == %{"key" => 1}
-      assert msg.tool_id == "tool_asdf"
+      assert msg.call_id == "call_asdf"
       assert msg.index == 0
     end
   end
@@ -61,7 +61,7 @@ defmodule LangChain.Message.ToolCallTest do
           "status" => :complete,
           "type" => "function",
           "index" => 0,
-          "tool_id" => "tool_asdf",
+          "call_id" => "call_asdf",
           "name" => "hello_world",
           "arguments" => "{\"key\": 1}"
         })
@@ -75,7 +75,7 @@ defmodule LangChain.Message.ToolCallTest do
           "status" => :incomplete,
           "type" => "function",
           "index" => 0,
-          "tool_id" => "tool_asdf",
+          "call_id" => "call_asdf",
           "name" => "hello_world",
           "arguments" => "{\"key\": 1}"
         })
@@ -96,7 +96,7 @@ defmodule LangChain.Message.ToolCallTest do
           "status" => :incomplete,
           "type" => "function",
           "index" => 0,
-          "tool_id" => "tool_asdf",
+          "call_id" => "call_asdf",
           "name" => "hello_world",
           "arguments" => "invalid"
         })
@@ -111,7 +111,7 @@ defmodule LangChain.Message.ToolCallTest do
       received = %ToolCall{
         status: :incomplete,
         type: :function,
-        tool_id: nil,
+        call_id: nil,
         name: "get_weather",
         arguments: nil,
         index: 0
@@ -125,7 +125,7 @@ defmodule LangChain.Message.ToolCallTest do
       call_1 = %ToolCall{
         status: :incomplete,
         type: :function,
-        tool_id: nil,
+        call_id: nil,
         name: "get_weat",
         arguments: nil,
         index: 0
@@ -134,7 +134,7 @@ defmodule LangChain.Message.ToolCallTest do
       call_2 = %ToolCall{
         status: :incomplete,
         type: :function,
-        tool_id: nil,
+        call_id: nil,
         name: "her",
         arguments: nil,
         index: 0
@@ -150,7 +150,7 @@ defmodule LangChain.Message.ToolCallTest do
       call_1 = %ToolCall{
         status: :incomplete,
         type: :function,
-        tool_id: nil,
+        call_id: nil,
         name: "get_weather",
         arguments: nil,
         index: 0
@@ -159,7 +159,7 @@ defmodule LangChain.Message.ToolCallTest do
       call_2 = %ToolCall{
         status: :complete,
         type: :function,
-        tool_id: "tool-123",
+        call_id: "call_123",
         name: nil,
         arguments: nil,
         index: 0
@@ -167,14 +167,14 @@ defmodule LangChain.Message.ToolCallTest do
 
       result = ToolCall.merge(call_1, call_2)
       assert result.status == :complete
-      assert result.tool_id == "tool-123"
+      assert result.call_id == "call_123"
     end
 
     test "appends arguments" do
       call_1 = %ToolCall{
         status: :incomplete,
         type: :function,
-        tool_id: "tool-123",
+        call_id: "call_123",
         name: "get_weather",
         arguments: nil,
         index: 1
@@ -183,7 +183,7 @@ defmodule LangChain.Message.ToolCallTest do
       call_2 = %ToolCall{
         status: :incomplete,
         type: :function,
-        tool_id: nil,
+        call_id: nil,
         name: nil,
         arguments: "{\"ci",
         index: 1
@@ -192,7 +192,7 @@ defmodule LangChain.Message.ToolCallTest do
       call_3 = %ToolCall{
         status: :incomplete,
         type: :function,
-        tool_id: nil,
+        call_id: nil,
         name: nil,
         arguments: "ty\": \"Portland\", \"state\": \"OR\"}",
         index: 1
@@ -207,11 +207,11 @@ defmodule LangChain.Message.ToolCallTest do
       assert result.arguments == "{\"city\": \"Portland\", \"state\": \"OR\"}"
     end
 
-    test "does not unset tool_id, function name or arguments" do
+    test "does not unset call_id, function name or arguments" do
       call_1 = %ToolCall{
         status: :complete,
         type: :function,
-        tool_id: "tool-123",
+        call_id: "call_123",
         name: "get_weather",
         arguments: "{\"city\": \"Portland\", \"state\": \"OR\"}",
         index: 1
@@ -220,7 +220,7 @@ defmodule LangChain.Message.ToolCallTest do
       call_2 = %ToolCall{
         status: :incomplete,
         type: :function,
-        tool_id: nil,
+        call_id: nil,
         name: nil,
         arguments: nil,
         index: 1

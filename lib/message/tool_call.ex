@@ -16,7 +16,7 @@ defmodule LangChain.Message.ToolCall do
   embedded_schema do
     field :status, Ecto.Enum, values: [:incomplete, :complete], default: :incomplete
     field :type, Ecto.Enum, values: [:function], default: :function
-    field :tool_id, :string
+    field :call_id, :string
     field :name, :string
     field :arguments, :any, virtual: true
     # when the tool call is incomplete, the index indicates which tool call to
@@ -32,7 +32,7 @@ defmodule LangChain.Message.ToolCall do
 
   @type t :: %ToolCall{}
 
-  @update_fields [:status, :type, :tool_id, :name, :arguments, :index]
+  @update_fields [:status, :type, :call_id, :name, :arguments, :index]
   @create_fields @update_fields
 
   @doc """
@@ -88,7 +88,7 @@ defmodule LangChain.Message.ToolCall do
       # when the message should be complete, we are more strict
       :complete ->
         changeset
-        |> validate_required([:status, :type, :tool_id, :name])
+        |> validate_required([:status, :type, :call_id, :name])
         |> validate_and_parse_arguments()
     end
   end
@@ -139,7 +139,7 @@ defmodule LangChain.Message.ToolCall do
     |> append_tool_name(call_part)
     |> append_arguments(call_part)
     |> update_index(call_part)
-    |> update_tool_id(call_part)
+    |> update_call_id(call_part)
     |> update_type(call_part)
     |> update_status(call_part)
   end
@@ -164,12 +164,12 @@ defmodule LangChain.Message.ToolCall do
     primary
   end
 
-  defp update_tool_id(%ToolCall{} = primary, %ToolCall{tool_id: id}) when is_binary(id) do
-    %ToolCall{primary | tool_id: id}
+  defp update_call_id(%ToolCall{} = primary, %ToolCall{call_id: id}) when is_binary(id) do
+    %ToolCall{primary | call_id: id}
   end
 
-  defp update_tool_id(%ToolCall{} = primary, %ToolCall{} = _delta_part) do
-    # no tool_id update
+  defp update_call_id(%ToolCall{} = primary, %ToolCall{} = _delta_part) do
+    # no call_id update
     primary
   end
 
