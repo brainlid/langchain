@@ -16,12 +16,16 @@ defmodule LangChain.Function do
     purpose.
   * ` parameters` - A list of `Function.FunctionParam` structs that are
     converted to a JSONSchema format. (Use in place of `parameters_schema`)
-  * ` parameters_schema` - A [JSONSchema structure](https://json-schema.org/learn/getting-started-step-by-step.html)
+  * ` parameters_schema` - A [JSONSchema
+    structure](https://json-schema.org/learn/getting-started-step-by-step.html)
     that describes the required data structure format for how arguments are
     passed to the function. (Use if greater control or unsupported features are
     needed.)
   * `function` - An Elixir function to execute when an LLM requests to execute
     the function.
+  * `async` - Boolean value that flags if this can function can be executed
+    asynchronously, potentially concurrently with other calls to the same
+    function. Defaults to `true`.
 
   When passing arguments from an LLM to a function, they go through a single
   `map` argument. This allows for multiple keys or named parameters.
@@ -127,6 +131,9 @@ defmodule LangChain.Function do
     # field :auto_evaluate, :boolean, default: false
     field :function, :any, virtual: true
 
+    # Track if the function can be executed async. Defaults to `true`.
+    field :async, :boolean, default: true
+
     # parameters_schema is a map used to express a JSONSchema structure of inputs and what's required
     field :parameters_schema, :map
     # parameters is a list of `LangChain.FunctionParam` structs.
@@ -135,7 +142,7 @@ defmodule LangChain.Function do
 
   @type t :: %Function{}
 
-  @create_fields [:name, :description, :display_text, :parameters_schema, :parameters, :function]
+  @create_fields [:name, :description, :display_text, :parameters_schema, :parameters, :function, :async]
   @required_fields [:name]
 
   @doc """

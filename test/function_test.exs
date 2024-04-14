@@ -13,6 +13,12 @@ defmodule LangChain.FunctionTest do
     test "works with minimal attrs" do
       assert {:ok, %Function{} = fun} = Function.new(%{"name" => "hello_world"})
       assert fun.name == "hello_world"
+      assert fun.async == true
+    end
+
+    test "allows for tracking async setting" do
+      assert {:ok, %Function{} = fun} = Function.new(%{"name" => "hello_world", "async"=> false})
+      assert fun.async == false
     end
 
     test "returns error when invalid" do
