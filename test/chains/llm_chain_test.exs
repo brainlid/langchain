@@ -2,25 +2,27 @@ defmodule LangChain.Chains.LLMChainTest do
   use LangChain.BaseCase
 
   doctest LangChain.Chains.LLMChain
+  import LangChain.Fixtures
 
   alias LangChain.ChatModels.ChatOpenAI
   alias LangChain.Chains.LLMChain
   alias LangChain.PromptTemplate
   alias LangChain.Function
   alias LangChain.Message
+  alias LangChain.Message.ToolCall
   alias LangChain.MessageDelta
 
   setup do
     {:ok, chat} = ChatOpenAI.new(%{temperature: 0})
 
-    {:ok, function} =
+    {:ok, tool} =
       Function.new(%{
         name: "hello_world",
         description: "Responds with a greeting.",
         function: fn -> IO.puts("Hello world!") end
       })
 
-    %{chat: chat, function: function}
+    %{chat: chat, tool: tool}
   end
 
   describe "new/1" do
@@ -30,34 +32,34 @@ defmodule LangChain.Chains.LLMChainTest do
       assert chain.llm == chat
     end
 
-    test "accepts and includes functions to list and map", %{chat: chat, function: function} do
+    test "accepts and includes tools to list and map", %{chat: chat, tool: tool} do
       assert {:ok, %LLMChain{} = chain} =
                LLMChain.new(%{
-                 prompt: "Execute the hello_world function",
+                 prompt: "Execute the hello_world tool",
                  llm: chat,
-                 functions: [function]
+                 tools: [tool]
                })
 
       assert chain.llm == chat
       # include them in the list
-      assert chain.functions == [function]
-      # functions get mapped to a dictionary by name
-      assert chain._function_map == %{"hello_world" => function}
+      assert chain.tools == [tool]
+      # tools get mapped to a dictionary by name
+      assert chain._tool_map == %{"hello_world" => tool}
     end
   end
 
-  describe "add_functions/2" do
-    test "adds a list of functions to the LLM list and map", %{chat: chat, function: function} do
+  describe "add_tools/2" do
+    test "adds a list of tools to the LLM list and map", %{chat: chat, tool: tool} do
       assert {:ok, %LLMChain{} = chain} =
-               LLMChain.new(%{prompt: "Execute the hello_world function", llm: chat})
+               LLMChain.new(%{prompt: "Execute the hello_world tool", llm: chat})
 
-      assert chain.functions == []
+      assert chain.tools == []
 
       # test adding when empty
-      updated_chain = LLMChain.add_functions(chain, [function])
-      # includes function in the list and map
-      assert updated_chain.functions == [function]
-      assert updated_chain._function_map == %{"hello_world" => function}
+      updated_chain = LLMChain.add_tools(chain, [tool])
+      # includes tool in the list and map
+      assert updated_chain.tools == [tool]
+      assert updated_chain._tool_map == %{"hello_world" => tool}
 
       # test adding more when not empty
       {:ok, howdy_fn} =
@@ -67,10 +69,10 @@ defmodule LangChain.Chains.LLMChainTest do
           function: fn -> IO.puts("HOWDY!!") end
         })
 
-      updated_chain2 = LLMChain.add_functions(updated_chain, [howdy_fn])
+      updated_chain2 = LLMChain.add_tools(updated_chain, [howdy_fn])
       # includes function in the list and map
-      assert updated_chain2.functions == [function, howdy_fn]
-      assert updated_chain2._function_map == %{"hello_world" => function, "howdy" => howdy_fn}
+      assert updated_chain2.tools == [tool, howdy_fn]
+      assert updated_chain2._tool_map == %{"hello_world" => tool, "howdy" => howdy_fn}
     end
   end
 
@@ -320,8 +322,8 @@ defmodule LangChain.Chains.LLMChainTest do
       assert new_message.status == :length
     end
 
-    test "applies list of deltas for function_call with arguments", %{chain: chain} do
-      deltas = LangChain.Fixtures.deltas_for_function_call("calculator")
+    test "applies list of deltas for tool_call with arguments", %{chain: chain} do
+      deltas = deltas_for_tool_call("calculator")
 
       updated_chain =
         Enum.reduce(deltas, chain, fn delta, acc ->
@@ -332,8 +334,9 @@ defmodule LangChain.Chains.LLMChainTest do
       assert updated_chain.delta == nil
       last = updated_chain.last_message
       assert last.role == :assistant
-      assert last.function_name == "calculator"
-      assert last.arguments == %{"expression" => "100 + 300 - 200"}
+      [%ToolCall{} = tool_call] = last.tool_calls
+      assert tool_call.name == "calculator"
+      assert tool_call.arguments == %{"expression" => "100 + 300 - 200"}
       assert updated_chain.messages == [last]
     end
   end
@@ -357,7 +360,7 @@ defmodule LangChain.Chains.LLMChainTest do
       assert updated_chain.last_message == user_msg
 
       # add assistant response
-      assist_msg = Message.new_assistant!("Well hello to you too.")
+      assist_msg = Message.new_assistant!(%{content: "Well hello to you too."})
       updated_chain = LLMChain.add_message(updated_chain, assist_msg)
       assert updated_chain.messages == [user_msg, assist_msg]
       assert updated_chain.last_message == assist_msg
@@ -370,12 +373,13 @@ defmodule LangChain.Chains.LLMChainTest do
       updated_chain = LLMChain.add_message(chain, user_msg)
       assert updated_chain.needs_response
 
-      function_call_msg = Message.new_function_call!("hello_world", "{}")
-      updated_chain = LLMChain.add_message(chain, function_call_msg)
+      call_msg = new_function_call!("call_abc123", "hello_world", "{}")
+      # function_call_msg = Message.new_function_call!("hello_world", "{}")
+      updated_chain = LLMChain.add_message(chain, call_msg)
       assert updated_chain.needs_response
 
-      function_msg = Message.new_function!("hello_world", "Hello world!")
-      updated_chain = LLMChain.add_message(chain, function_msg)
+      tool_msg = Message.new_tool!("call_abc123", "Hello world!")
+      updated_chain = LLMChain.add_message(chain, tool_msg)
       assert updated_chain.needs_response
 
       # set to false with a :system or :assistant message.
@@ -383,7 +387,7 @@ defmodule LangChain.Chains.LLMChainTest do
       updated_chain = LLMChain.add_message(chain, system_msg)
       refute updated_chain.needs_response
 
-      assistant_msg = Message.new_assistant!("Yes, that's correct.")
+      assistant_msg = Message.new_assistant!(%{content: "Yes, that's correct."})
       updated_chain = LLMChain.add_message(chain, assistant_msg)
       refute updated_chain.needs_response
     end
@@ -464,7 +468,7 @@ defmodule LangChain.Chains.LLMChainTest do
           custom_context: custom_context,
           verbose: true
         })
-        |> LLMChain.add_functions(custom_fn)
+        |> LLMChain.add_tools(custom_fn)
         |> LLMChain.add_message(Message.new_user!("Where is the hairbrush located?"))
         |> LLMChain.run(while_needs_response: true)
 
@@ -504,7 +508,7 @@ defmodule LangChain.Chains.LLMChainTest do
       assert reason == "[] is too short - 'messages'"
     end
 
-    # runs until functions are evaluated
+    # runs until tools are evaluated
     @tag live_call: true, live_open_ai: true
     test "handles content response + function call" do
       test_pid = self()
@@ -543,7 +547,7 @@ defmodule LangChain.Chains.LLMChainTest do
           custom_context: nil,
           verbose: true
         })
-        |> LLMChain.add_functions(regions_function)
+        |> LLMChain.add_tools(regions_function)
         |> LLMChain.add_message(message)
         |> LLMChain.run(while_needs_response: true)
 

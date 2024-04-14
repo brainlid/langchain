@@ -2,13 +2,11 @@ defmodule LangChain.Chains.LLMChain do
   @doc """
   Define an LLMChain. This is the heart of the LangChain library.
 
-  The chain deals with functions, a function map, delta tracking, last_message
+  The chain deals with tools, a tool map, delta tracking, last_message
   tracking, conversation messages, and verbose logging. This helps by separating
   these responsibilities from the LLM making it easier to support additional
   LLMs because the focus is on communication and formats instead of all the
   extra logic.
-
-
 
   """
   use Ecto.Schema
@@ -28,14 +26,14 @@ defmodule LangChain.Chains.LLMChain do
     field :verbose, :boolean, default: false
     # verbosely log each delta message.
     field :verbose_deltas, :boolean, default: false
-    field :functions, {:array, :any}, default: [], virtual: true
-    # set and managed privately through functions
-    field :_function_map, :map, default: %{}, virtual: true
+    field :tools, {:array, :any}, default: [], virtual: true
+    # set and managed privately through tools
+    field :_tool_map, :map, default: %{}, virtual: true
 
     # List of `Message` structs for creating the conversation with the LLM.
     field :messages, {:array, :any}, default: [], virtual: true
 
-    # Custom context data made available to functions when executed.
+    # Custom context data made available to tools when executed.
     # Could include information like account ID, user data, etc.
     field :custom_context, :any, virtual: true
 
@@ -47,8 +45,8 @@ defmodule LangChain.Chains.LLMChain do
     # Track the last `%Message{}` received in the chain.
     field :last_message, :any, virtual: true
     # Track if the state of the chain expects a response from the LLM. This
-    # happens after sending a user message or when a function_call is received,
-    # we've provided a function response and the LLM needs to respond.
+    # happens after sending a user message or when a tool_call is received, or
+    # when we've provided a tool response and the LLM needs to respond.
     field :needs_response, :boolean, default: false
 
     # A callback function to execute when messages are added. Don't allow caller
@@ -60,7 +58,7 @@ defmodule LangChain.Chains.LLMChain do
 
   @type t :: %LLMChain{}
 
-  @create_fields [:llm, :functions, :custom_context, :verbose]
+  @create_fields [:llm, :tools, :custom_context, :verbose]
   @required_fields [:llm]
 
   @doc """
@@ -102,37 +100,33 @@ defmodule LangChain.Chains.LLMChain do
     changeset
     |> validate_required(@required_fields)
     |> Utils.validate_llm_is_struct()
-    |> build_functions_map_from_functions()
+    |> build_tools_map_from_tools()
   end
 
   @doc false
-  def build_functions_map_from_functions(changeset) do
-    functions = get_field(changeset, :functions, [])
+  def build_tools_map_from_tools(changeset) do
+    tools = get_field(changeset, :tools, [])
 
-    # get a list of all the functions indexed into a map by name
+    # get a list of all the tools indexed into a map by name
     fun_map =
-      Enum.reduce(functions, %{}, fn f, acc ->
+      Enum.reduce(tools, %{}, fn f, acc ->
         Map.put(acc, f.name, f)
       end)
 
-    put_change(changeset, :_function_map, fun_map)
+    put_change(changeset, :_tool_map, fun_map)
   end
 
   @doc """
-  Add more functions to an LLMChain.
+  Add a tool to an LLMChain.
   """
-  @spec add_functions(t(), Function.t() | [Function.t()]) :: t() | no_return()
-  def add_functions(%LLMChain{} = chain, %Function{} = function) do
-    add_functions(chain, [function])
-  end
-
-  def add_functions(%LLMChain{functions: existing} = chain, functions) when is_list(functions) do
-    updated = existing ++ functions
+  @spec add_tools(t(), Function.t() | [Function.t()]) :: t() | no_return()
+  def add_tools(%LLMChain{tools: existing} = chain, tools) do
+    updated = existing ++ List.wrap(tools)
 
     chain
     |> change()
-    |> cast(%{functions: updated}, [:functions])
-    |> build_functions_map_from_functions()
+    |> cast(%{tools: updated}, [:tools])
+    |> build_tools_map_from_tools()
     |> apply_action!(:update)
   end
 
@@ -160,8 +154,8 @@ defmodule LangChain.Chains.LLMChain do
 
     if chain.verbose, do: IO.inspect(chain.messages, label: "MESSAGES")
 
-    functions = chain.functions
-    if chain.verbose, do: IO.inspect(functions, label: "FUNCTIONS")
+    tools = chain.tools
+    if chain.verbose, do: IO.inspect(tools, label: "TOOLS")
 
     if Keyword.get(opts, :while_needs_response, false) do
       run_while_needs_response(chain)
@@ -178,8 +172,8 @@ defmodule LangChain.Chains.LLMChain do
   end
 
   # Repeatedly run the chain while `needs_response` is true. This will execute
-  # functions and re-submit the function result to the LLM giving the LLM an
-  # opportunity to execute more functions or return a response.
+  # tools and re-submit the tool result to the LLM giving the LLM an
+  # opportunity to execute more tools or return a response.
   @spec run_while_needs_response(t()) :: {:ok, t(), Message.t()} | {:error, String.t()}
   defp run_while_needs_response(%LLMChain{needs_response: false} = chain) do
     {:ok, chain, chain.last_message}
@@ -206,7 +200,7 @@ defmodule LangChain.Chains.LLMChain do
     %module{} = chain.llm
 
     # handle and output response
-    case module.call(chain.llm, chain.messages, chain.functions, chain.callback_fn) do
+    case module.call(chain.llm, chain.messages, chain.tools, chain.callback_fn) do
       {:ok, [%Message{} = message]} ->
         if chain.verbose, do: IO.inspect(message, label: "SINGLE MESSAGE RESPONSE")
         {:ok, add_message(chain, message)}
@@ -225,6 +219,7 @@ defmodule LangChain.Chains.LLMChain do
           do: IO.inspect(updated_chain.last_message, label: "COMBINED DELTA MESSAGE RESPONSE")
 
         {:ok, updated_chain}
+
       {:ok, [[%MessageDelta{} | _] | _] = deltas} ->
         if chain.verbose_deltas, do: IO.inspect(deltas, label: "DELTA MESSAGE LIST RESPONSE")
         updated_chain = apply_deltas(chain, deltas)
@@ -358,7 +353,7 @@ defmodule LangChain.Chains.LLMChain do
   def add_message(%LLMChain{} = chain, %Message{} = new_message) do
     needs_response =
       cond do
-        new_message.role in [:user, :function_call, :function] -> true
+        new_message.role in [:user, :tool] -> true
         Message.is_tool_call?(new_message) -> true
         new_message.role in [:system, :assistant] -> false
       end
@@ -434,7 +429,7 @@ defmodule LangChain.Chains.LLMChain do
       use_context = context || chain.custom_context
 
       # find and execute the linked function
-      case chain._function_map[message.function_name] do
+      case chain._tool_map[message.function_name] do
         %Function{} = function ->
           if chain.verbose, do: IO.inspect(function.name, label: "EXECUTING FUNCTION")
 
@@ -442,11 +437,11 @@ defmodule LangChain.Chains.LLMChain do
           result = Function.execute(function, message.arguments, use_context)
           if chain.verbose, do: IO.inspect(result, label: "FUNCTION RESULT")
 
-          # add the :function response to the chain
-          function_result = Message.new_function!(function.name, result)
+          # add the :tool response to the chain
+          tool_result = Message.new_tool!(function.name, result)
           # fire the callback as this is newly generated message
-          fire_callback(chain, function_result)
-          LLMChain.add_message(chain, function_result)
+          fire_callback(chain, tool_result)
+          LLMChain.add_message(chain, tool_result)
 
         nil ->
           Logger.warning(
