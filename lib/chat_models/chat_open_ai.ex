@@ -218,7 +218,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   # ToolCall support
   def for_api(%ToolCall{type: :function} = fun) do
     %{
-      "id" => fun.tool_id,
+      "id" => fun.call_id,
       "type" => "function",
       "function" => %{
         "name" => fun.name,
@@ -576,7 +576,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     case ToolCall.new(%{
            status: :incomplete,
            type: :function,
-           tool_id: Map.get(func_body, "id", nil),
+           call_id: Map.get(func_body, "id", nil),
            name: Map.get(func_body, "name", nil),
            arguments: Map.get(func_body, "arguments", nil),
            index: index
@@ -597,7 +597,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           "arguments" => args,
           "name" => name
         },
-        "id" => tool_id,
+        "id" => call_id,
         "type" => "function"
       }) do
     # No "index". It is a complete message.
@@ -606,7 +606,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
            status: :complete,
            name: name,
            arguments: args,
-           tool_id: tool_id
+           call_id: call_id
          }) do
       {:ok, %ToolCall{} = call} ->
         call
