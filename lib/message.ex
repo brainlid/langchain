@@ -346,9 +346,9 @@ defmodule LangChain.Message do
   Create a new tool response message to return the result of an executed
   tool.
   """
-  @spec new_tool!(name :: String.t(), result :: any()) :: t() | no_return()
-  def new_tool!(name, result) do
-    case new_tool(name, result) do
+  @spec new_tool!(tool_call_id :: String.t(), result :: any()) :: t() | no_return()
+  def new_tool!(tool_call_id, result) do
+    case new_tool(tool_call_id, result) do
       {:ok, msg} ->
         msg
 
@@ -361,7 +361,7 @@ defmodule LangChain.Message do
   Return if a Message is a function_call.
   """
   def is_tool_call?(%Message{role: :assistant, status: :complete, tool_calls: tool_calls})
-      when is_list(tool_calls),
+      when is_list(tool_calls) and tool_calls != [],
       do: true
 
   def is_tool_call?(%Message{}), do: false
