@@ -18,10 +18,16 @@ defmodule LangChain.Message do
 
   ## Tools
 
-  A `tool_call` comes from the `:assistant` role. The `tool_id`
-  identifies which of the available tool's to execute.
+  A `tool_call` comes from the `:assistant` role. The `tool_id` identifies which
+  of the available tool's to execute.
 
   Create a message of role `:function` to provide the function response.
+
+  - `:is_error` - Boolean value used to track a tool response message as being
+    an error or not. The error state may be returned to an LLM in different
+    ways, whichever is most appropriate for the LLM. When a response is an
+    error, the `content` explains the error to the LLM and depending on the
+    situation, the LLM may choose try again.
 
   ## User Content Parts
 
@@ -85,6 +91,8 @@ defmodule LangChain.Message do
     # When responding to a tool call, the `tool_call_id` specifies which tool
     # call this is giving a response to.
     field :tool_call_id, :string
+    # A tool response state that flags that an error occurred with the tool call
+    field :is_error, :boolean, default: false
     # TODO: Remove "function_name"
     field :function_name, :string
     # TODO: Remove "arguments"
@@ -94,7 +102,7 @@ defmodule LangChain.Message do
   @type t :: %Message{}
   @type status :: :complete | :cancelled | :length
 
-  @update_fields [:role, :content, :status, :tool_calls, :tool_call_id, :index, :name]
+  @update_fields [:role, :content, :status, :tool_calls, :tool_call_id, :is_error, :index, :name]
   @create_fields @update_fields
   @required_fields [:role]
 
@@ -332,10 +340,15 @@ defmodule LangChain.Message do
   @doc """
   Create a new `tool` message to represent the result of a tool's execution.
   """
-  @spec new_tool(tool_call_id :: String.t(), result :: any()) ::
+  @spec new_tool(tool_call_id :: String.t(), result :: any(), Keyword.t()) ::
           {:ok, t()} | {:error, Ecto.Changeset.t()}
-  def new_tool(tool_call_id, result) do
-    new(%{role: :tool, tool_call_id: tool_call_id, content: serialize_result(result)})
+  def new_tool(tool_call_id, result, opts \\ []) do
+    new(%{
+      role: :tool,
+      tool_call_id: tool_call_id,
+      content: serialize_result(result),
+      is_error: Keyword.get(opts, :is_error, false)
+    })
   end
 
   @spec serialize_result(result :: any()) :: String.t()
@@ -346,9 +359,9 @@ defmodule LangChain.Message do
   Create a new tool response message to return the result of an executed
   tool.
   """
-  @spec new_tool!(tool_call_id :: String.t(), result :: any()) :: t() | no_return()
-  def new_tool!(tool_call_id, result) do
-    case new_tool(tool_call_id, result) do
+  @spec new_tool!(tool_call_id :: String.t(), result :: any(), Keyword.t()) :: t() | no_return()
+  def new_tool!(tool_call_id, result, opts \\ []) do
+    case new_tool(tool_call_id, result, opts) do
       {:ok, msg} ->
         msg
 

@@ -34,7 +34,7 @@ defmodule LangChain.MessageTest do
                Message.new_assistant(%{
                  tool_calls: [
                    ToolCall.new!(%{
-                     tool_id: "call_abc123",
+                     call_id: "call_abc123",
                      name: "my_fun",
                      arguments: json
                    })
@@ -53,7 +53,7 @@ defmodule LangChain.MessageTest do
                Message.new_assistant(%{
                  tool_calls: [
                    ToolCall.new!(%{
-                     tool_id: "call_abc123",
+                     call_id: "call_abc123",
                      name: "my_fun",
                      arguments: "invalid"
                    })
@@ -98,12 +98,12 @@ defmodule LangChain.MessageTest do
       {:error, changeset} = Message.new_system([part])
       assert {"is invalid for role system", _} = changeset.errors[:content]
 
-      {:error, changeset} = Message.new(%{role: :tool, tool_id: "tool_123", content: [part]})
+      {:error, changeset} = Message.new(%{role: :tool, call_id: "tool_123", content: [part]})
       assert {"is invalid for role tool", _} = changeset.errors[:content]
     end
 
     test "content can be nil when an assistant message (tool calls)" do
-      tool_call = ToolCall.new!(%{tool_id: "1", name: "hello"})
+      tool_call = ToolCall.new!(%{call_id: "1", name: "hello"})
 
       {:ok, message} =
         Message.new_assistant(%{
@@ -214,7 +214,7 @@ defmodule LangChain.MessageTest do
                Message.new_assistant(%{
                  tool_calls: [
                    ToolCall.new!(%{
-                     tool_id: "call_abc123",
+                     call_id: "call_abc123",
                      name: "my_fun",
                      arguments: Jason.encode!(%{name: "Tim", age: 40})
                    })
@@ -244,6 +244,14 @@ defmodule LangChain.MessageTest do
       assert {:ok, %Message{role: :tool} = msg} = Message.new_tool("my_fun", "APP ANSWER")
       assert msg.tool_call_id == "my_fun"
       assert msg.content == "APP ANSWER"
+      assert msg.is_error == false
+    end
+
+    test "flags message as is_error true when option passed" do
+      assert {:ok, %Message{role: :tool} = msg} = Message.new_tool("my_fun", "STUFF BROKE!", is_error: true)
+      assert msg.tool_call_id == "my_fun"
+      assert msg.content == "STUFF BROKE!"
+      assert msg.is_error == true
     end
   end
 
