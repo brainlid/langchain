@@ -1,7 +1,3 @@
-# {:ok, f} = LangChain.Function.new(%{name: "register_person", description: "Register a new person in the system", required: ["name"], parameters: [p_name, p_age]})
-# NOTE: New in OpenAI - https://openai.com/blog/function-calling-and-other-api-updates
-#  - 13 June 2023
-# NOTE: Pretty much takes the place of a LangChain "Tool".
 defmodule LangChain.Function do
   @moduledoc """
   Defines a "function" that can be provided to an LLM for the LLM to optionally
@@ -22,7 +18,9 @@ defmodule LangChain.Function do
     passed to the function. (Use if greater control or unsupported features are
     needed.)
   * `function` - An Elixir function to execute when an LLM requests to execute
-    the function.
+    the function. The function should return `{:ok, "and a text response"}`,
+    `{:error, "and text explanation of the error"}` or just plain `"text
+    response"`, which is returned to the LLM.
   * `async` - Boolean value that flags if this can function can be executed
     asynchronously, potentially concurrently with other calls to the same
     function. Defaults to `true`.
@@ -141,8 +139,18 @@ defmodule LangChain.Function do
   end
 
   @type t :: %Function{}
+  @type arguments :: %{String.t() => any()}
+  @type context :: nil | %{atom() => any()}
 
-  @create_fields [:name, :description, :display_text, :parameters_schema, :parameters, :function, :async]
+  @create_fields [
+    :name,
+    :description,
+    :display_text,
+    :parameters_schema,
+    :parameters,
+    :function,
+    :async
+  ]
   @required_fields [:name]
 
   @doc """
@@ -175,6 +183,7 @@ defmodule LangChain.Function do
     |> validate_required(@required_fields)
     |> validate_length(:name, max: 64)
     |> ensure_single_parameter_option()
+    |> validate_function_and_arity()
   end
 
   @doc """
@@ -182,9 +191,55 @@ defmodule LangChain.Function do
   This is called by a `LangChain.Chains.LLMChain` when a `Function` execution is
   requested by the LLM.
   """
+  @spec execute(t(), arguments(), context()) :: any() | no_return()
   def execute(%Function{function: fun} = function, arguments, context) do
     Logger.debug("Executing function #{inspect(function.name)}")
-    fun.(arguments, context)
+
+    try do
+      # execute the function and normalize the results. Want :ok/:error tuples
+      case fun.(arguments, context) do
+        {:ok, result} ->
+          # successful execution.
+          {:ok, result}
+
+        {:error, reason} when is_binary(reason) ->
+          {:error, reason}
+
+        {:error, reason} ->
+          # turn the error response into a string.
+          {:error, "#{inspect(reason)}"}
+
+        text when is_binary(text) ->
+          {:ok, text}
+
+        other ->
+          Logger.error(
+            "Function #{function.name} unexpectedly returned #{inspect(other)}. Expect a string. Unable to present as response to LLM."
+          )
+
+          {:error, "An unexpected response was returned from the tool."}
+      end
+    rescue
+      err ->
+        Logger.error("Function #{function.name} failed in execution. Exception: #{inspect(err)}")
+        {:error, inspect(err)}
+    end
+  end
+
+  defp validate_function_and_arity(changeset) do
+    function = get_field(changeset, :function)
+
+    if is_function(function) do
+      case Elixir.Function.info(function, :arity) do
+        {:arity, 2} ->
+          changeset
+
+        {:arity, n} ->
+          add_error(changeset, :function, "expected arity of 2 but has arity #{inspect(n)}")
+      end
+    else
+      add_error(changeset, :function, "is not an Elixir function")
+    end
   end
 
   defp ensure_single_parameter_option(changeset) do
