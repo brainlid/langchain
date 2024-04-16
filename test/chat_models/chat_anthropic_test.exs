@@ -5,7 +5,8 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
   alias LangChain.ChatModels.ChatAnthropic
   alias LangChain.Chains.LLMChain
   alias LangChain.Message
-  alias LangChain.Message.MessagePart
+  alias LangChain.Message.UserContentPart
+  alias LangChain.Message.ToolCall
   alias LangChain.Function
   alias LangChain.FunctionParam
 
@@ -18,7 +19,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
       Function.new(%{
         name: "hello_world",
         description: "Give a hello world greeting.",
-        function: fn -> IO.puts("Hello world!") end
+        function: fn _args, _context -> "Hello world!" end
       })
 
     %{hello_world: hello_world}
@@ -140,7 +141,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
       assert is_nil(struct.index)
     end
 
-    test "handles receiving a function tool call with no parameters" do
+    test "handles receiving a tool call with no parameters" do
       response = %{
         "content" => [
           %{"id" => "toolu_0123", "input" => %{}, "name" => "hello_world", "type" => "tool_use"}
@@ -157,12 +158,49 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
       assert %Message{} = struct = ChatAnthropic.do_process_response(response)
 
       assert struct.role == :assistant
-      [%MessagePart{} = part] = struct.content
-      assert part.type == :tool_call
-      assert part.tool_id == "toolu_0123"
-      assert part.tool_name == "hello_world"
-      assert part.tool_arguments == nil
-      assert part.tool_type == :function
+      [%ToolCall{} = call] = struct.tool_calls
+      assert call.type == :function
+      assert call.status == :complete
+      assert call.call_id == "toolu_0123"
+      assert call.name == "hello_world"
+      assert call.arguments == %{}
+    end
+
+    test "handles receiving text and a tool_use in same message" do
+      response = %{
+        "id" => "msg_01Aq9w938a90dw8q",
+        "model" => "claude-3-opus-20240229",
+        "stop_reason" => "tool_use",
+        "role" => "assistant",
+        "content" => [
+          %{
+            "type" => "text",
+            "text" =>
+              "<thinking>I need to use the get_weather, and the user wants SF, which is likely San Francisco, CA.</thinking>"
+          },
+          %{
+            "type" => "tool_use",
+            "id" => "toolu_0123",
+            "name" => "get_weather",
+            "input" => %{"location" => "San Francisco, CA", "unit" => "celsius"}
+          }
+        ]
+      }
+
+      assert %Message{} = struct = ChatAnthropic.do_process_response(response)
+
+      assert struct.role == :assistant
+      assert struct.status == :complete
+
+      assert struct.content ==
+               "<thinking>I need to use the get_weather, and the user wants SF, which is likely San Francisco, CA.</thinking>"
+
+      [%ToolCall{} = call] = struct.tool_calls
+      assert call.type == :function
+      assert call.status == :complete
+      assert call.call_id == "toolu_0123"
+      assert call.name == "get_weather"
+      assert call.arguments == %{"location" => "San Francisco, CA", "unit" => "celsius"}
     end
   end
 
@@ -190,56 +228,46 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
 
       # returns a list of MessageDeltas.
       assert result == [
-               [
-                 %LangChain.MessageDelta{
-                   content: "",
-                   status: :incomplete,
-                   index: nil,
-                   function_name: nil,
-                   role: :assistant,
-                   arguments: nil
-                 }
-               ],
-               [
-                 %LangChain.MessageDelta{
-                   content: "Color",
-                   status: :incomplete,
-                   index: nil,
-                   function_name: nil,
-                   role: :assistant,
-                   arguments: nil
-                 }
-               ],
-               [
-                 %LangChain.MessageDelta{
-                   content: "ful",
-                   status: :incomplete,
-                   index: nil,
-                   function_name: nil,
-                   role: :assistant,
-                   arguments: nil
-                 }
-               ],
-               [
-                 %LangChain.MessageDelta{
-                   content: " Threads",
-                   status: :incomplete,
-                   index: nil,
-                   function_name: nil,
-                   role: :assistant,
-                   arguments: nil
-                 }
-               ],
-               [
-                 %LangChain.MessageDelta{
-                   content: "",
-                   status: :complete,
-                   index: nil,
-                   function_name: nil,
-                   role: :assistant,
-                   arguments: nil
-                 }
-               ]
+               %LangChain.MessageDelta{
+                 content: "",
+                 status: :incomplete,
+                 index: nil,
+                 function_name: nil,
+                 role: :assistant,
+                 arguments: nil
+               },
+               %LangChain.MessageDelta{
+                 content: "Color",
+                 status: :incomplete,
+                 index: nil,
+                 function_name: nil,
+                 role: :assistant,
+                 arguments: nil
+               },
+               %LangChain.MessageDelta{
+                 content: "ful",
+                 status: :incomplete,
+                 index: nil,
+                 function_name: nil,
+                 role: :assistant,
+                 arguments: nil
+               },
+               %LangChain.MessageDelta{
+                 content: " Threads",
+                 status: :incomplete,
+                 index: nil,
+                 function_name: nil,
+                 role: :assistant,
+                 arguments: nil
+               },
+               %LangChain.MessageDelta{
+                 content: "",
+                 status: :complete,
+                 index: nil,
+                 function_name: nil,
+                 role: :assistant,
+                 arguments: nil
+               }
              ]
     end
 
@@ -252,10 +280,8 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
 
       {:ok, message} = ChatAnthropic.call(chat, [message], [hello_world])
 
-      dbg(message)
-
       assert %Message{role: :assistant} = message
-      assert message.arguments == %{}
+      assert message.arguments == nil
       assert message.content == nil
     end
   end
@@ -474,9 +500,10 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
   describe "works within a chain" do
     @tag live_call: true, live_anthropic: true
     test "works with a streaming response" do
+      test_pid = self()
+
       callback_fn = fn data ->
-        # IO.inspect(data, label: "DATA")
-        send(self(), {:streamed_fn, data})
+        send(test_pid, {:streamed_fn, data})
       end
 
       {:ok, _result_chain, last_message} =
@@ -494,9 +521,11 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 
     @tag live_call: true, live_anthropic: true
     test "works with NON streaming response" do
+      test_pid = self()
+
       callback_fn = fn data ->
         # IO.inspect(data, label: "DATA")
-        send(self(), {:streamed_fn, data})
+        send(test_pid, {:streamed_fn, data})
       end
 
       {:ok, _result_chain, last_message} =
@@ -562,21 +591,21 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       result =
         ChatAnthropic.for_api(
           Message.new_user!([
-            MessagePart.text!("Tell me about this image:"),
-            MessagePart.image!("base64-text-data", media: "image/jpeg")
+            UserContentPart.text!("Tell me about this image:"),
+            UserContentPart.image!("base64-text-data", media: "image/jpeg")
           ])
         )
 
       assert result == expected
     end
 
-    test "turns a text MessagePart into the expected JSON format" do
+    test "turns a text UserContentPart into the expected JSON format" do
       expected = %{"type" => "text", "text" => "Tell me about this image:"}
-      result = ChatAnthropic.for_api(MessagePart.text!("Tell me about this image:"))
+      result = ChatAnthropic.for_api(UserContentPart.text!("Tell me about this image:"))
       assert result == expected
     end
 
-    test "turns an image MessagePart into the expected JSON format" do
+    test "turns an image UserContentPart into the expected JSON format" do
       expected = %{
         "type" => "image",
         "source" => %{
@@ -586,13 +615,15 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
         }
       }
 
-      result = ChatAnthropic.for_api(MessagePart.image!("image_base64_data", media: "image/png"))
+      result =
+        ChatAnthropic.for_api(UserContentPart.image!("image_base64_data", media: "image/png"))
+
       assert result == expected
     end
 
-    test "errors on MessagePart type image_url" do
+    test "errors on UserContentPart type image_url" do
       assert_raise LangChain.LangChainError, "Anthropic does not support image_url", fn ->
-        ChatAnthropic.for_api(MessagePart.image_url!("url-to-image"))
+        ChatAnthropic.for_api(UserContentPart.image_url!("url-to-image"))
       end
     end
 
@@ -633,7 +664,8 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
     # end
 
     test "tools work with minimal definition and no parameters" do
-      {:ok, fun} = Function.new(%{"name" => "hello_world"})
+      {:ok, fun} =
+        Function.new(%{name: "hello_world", function: &hello_world/2})
 
       result = ChatAnthropic.for_api(fun)
 
@@ -722,8 +754,8 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 
       message =
         Message.new_user!([
-          MessagePart.text!("Identify what this is a picture of:"),
-          MessagePart.image!(image_data, media: "image/jpeg")
+          UserContentPart.text!("Identify what this is a picture of:"),
+          UserContentPart.image!(image_data, media: "image/jpeg")
         ])
 
       {:ok, response} = ChatAnthropic.call(chat, [message], [])

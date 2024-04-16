@@ -16,6 +16,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   alias LangChain.LangChainError
   alias LangChain.Message
   alias LangChain.Message.UserContentPart
+  alias LangChain.Message.ToolCall
   alias LangChain.MessageDelta
   alias LangChain.Function
   alias LangChain.Utils
@@ -371,32 +372,22 @@ defmodule LangChain.ChatModels.ChatAnthropic do
           | [MessageDelta.t()]
           | {:error, String.t()}
   def do_process_response(%{
-        "type" => "message",
-        "content" => [%{"type" => "tool_use", "name" => tool_name}],
+        "role" => "assistant",
+        "content" => contents,
         "stop_reason" => stop_reason
       }) do
-    %{
-      role: :assistant,
-      #TODO: WORKING HERE
-      # content: content,
-      status: stop_reason_to_status(stop_reason)
-    }
-    |> Message.new()
-    |> to_response()
-  end
+    new_message =
+      %{
+        role: :assistant,
+        status: stop_reason_to_status(stop_reason)
+      }
+      |> Message.new()
+      |> to_response()
 
-  def do_process_response(%{
-        "type" => "message",
-        "content" => [%{"type" => "text", "text" => content}],
-        "stop_reason" => stop_reason
-      }) do
-    %{
-      role: :assistant,
-      content: content,
-      status: stop_reason_to_status(stop_reason)
-    }
-    |> Message.new()
-    |> to_response()
+    # reduce over the contents and accumulate to the message
+    Enum.reduce(contents, new_message, fn content, acc ->
+      do_process_content_response(acc, content)
+    end)
   end
 
   def do_process_response(%{
@@ -452,6 +443,36 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   def do_process_response(other) do
     Logger.error("Trying to process an unexpected response. #{inspect(other)}")
     {:error, "Unexpected response"}
+  end
+
+  # for parsing a list of received content JSON objects
+  defp do_process_content_response(%Message{} = message, %{"type" => "text", "text" => text}) do
+    initial_content = message.content || ""
+    %Message{message | content: initial_content <> text}
+  end
+
+  defp do_process_content_response(
+         %Message{} = message,
+         %{"type" => "tool_use", "id" => call_id, "name" => name} = call
+       ) do
+    %Message{
+      message
+      | tool_calls:
+          message.tool_calls ++
+            [
+              ToolCall.new!(%{
+                type: :function,
+                call_id: call_id,
+                name: name,
+                arguments: call["input"],
+                status: :complete
+              })
+            ]
+    }
+  end
+
+  defp do_process_content_response({:error, _reason} = error, _content) do
+    error
   end
 
   defp to_response({:ok, message}), do: message
