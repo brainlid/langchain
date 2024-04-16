@@ -178,7 +178,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
     test "turns a tool_call into expected JSON format" do
       tool_call =
-        ToolCall.new!(%{tool_id: "call_abc123", name: "hello_world", arguments: "{}"})
+        ToolCall.new!(%{call_id: "call_abc123", name: "hello_world", arguments: "{}"})
 
       json = ChatOpenAI.for_api(tool_call)
 
@@ -200,7 +200,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
         Message.new_assistant!(%{
           tool_calls: [
             ToolCall.new!(%{
-              tool_id: "call_abc123",
+              call_id: "call_abc123",
               name: "hello_world",
               arguments: %{expression: "11 + 10"}
             })
@@ -643,21 +643,21 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert struct.tool_calls == [
                ToolCall.new!(%{
                  type: :function,
-                 tool_id: "call_4L8NfePhSW8PdoHUWkvhzguu",
+                 call_id: "call_4L8NfePhSW8PdoHUWkvhzguu",
                  name: "get_weather",
                  arguments: %{"city" => "Moab", "state" => "UT"},
                  status: :complete
                }),
                ToolCall.new!(%{
                  type: :function,
-                 tool_id: "call_ylRu5SPegST9tppLEj6IJ0Rs",
+                 call_id: "call_ylRu5SPegST9tppLEj6IJ0Rs",
                  name: "get_weather",
                  arguments: %{"city" => "Portland", "state" => "OR"},
                  status: :complete
                }),
                ToolCall.new!(%{
                  type: :function,
-                 tool_id: "call_G17PCZZBTyK0gwpzIzD4OBep",
+                 call_id: "call_G17PCZZBTyK0gwpzIzD4OBep",
                  name: "get_weather",
                  arguments: %{"city" => "Baltimore", "state" => "MD"},
                  status: :complete
@@ -749,7 +749,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
           %ToolCall{
             status: :incomplete,
             type: :function,
-            tool_id: nil,
+            call_id: nil,
             name: "get_weather",
             arguments: "{\"city\": \"Moab\", \"state\": \"UT\"}",
             index: 0
@@ -757,7 +757,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
           %ToolCall{
             status: :incomplete,
             type: :function,
-            tool_id: nil,
+            call_id: nil,
             name: "get_weather",
             arguments: "{\"city\": \"Portland\", \"state\": \"OR\"}",
             index: 1
@@ -765,7 +765,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
           %ToolCall{
             status: :incomplete,
             type: :function,
-            tool_id: nil,
+            call_id: nil,
             name: "get_weather",
             arguments: "{\"city\": \"Baltimore\", \"state\": \"MD\"}",
             index: 2
