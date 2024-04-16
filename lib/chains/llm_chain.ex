@@ -15,6 +15,7 @@ defmodule LangChain.Chains.LLMChain do
   alias LangChain.PromptTemplate
   alias __MODULE__
   alias LangChain.Message
+  alias LangChain.Message.ToolCall
   alias LangChain.MessageDelta
   alias LangChain.Function
   alias LangChain.LangChainError
@@ -181,7 +182,7 @@ defmodule LangChain.Chains.LLMChain do
 
   defp run_while_needs_response(%LLMChain{needs_response: true} = chain) do
     chain
-    |> execute_function()
+    |> execute_tool_calls()
     |> do_run()
     |> case do
       {:ok, updated_chain} ->
@@ -405,54 +406,108 @@ defmodule LangChain.Chains.LLMChain do
   end
 
   @doc """
-  If the `last_message` is a `%Message{role: :function_call}`, then the linked
-  function is executed. If there is no `last_message` or the `last_message` is
-  not a `:function_call`, the LLMChain is returned with no action performed.
+  If the `last_message` from the Assistant includes one or more `ToolCall`s, then the linked
+  tool is executed. If there is no `last_message` or the `last_message` is
+  not a `tool_call`, the LLMChain is returned with no action performed.
   This makes it safe to call any time.
 
-  The `context` is additional data that will be passed to the executed function.
+  The `context` is additional data that will be passed to the executed tool.
   The value given here will override any `custom_context` set on the LLMChain.
   If not set, the global `custom_context` is used.
-
-  https://platform.openai.com/docs/guides/gpt/function-calling
   """
-  @spec execute_function(t(), context :: any()) :: t()
-  def execute_function(chain, context \\ nil)
-  def execute_function(%LLMChain{last_message: nil} = chain, _context), do: chain
+  @spec execute_tool_calls(t(), context :: nil | %{atom() => any()}) :: t()
+  def execute_tool_calls(chain, context \\ nil)
+  def execute_tool_calls(%LLMChain{last_message: nil} = chain, _context), do: chain
 
-  def execute_function(
+  def execute_tool_calls(
         %LLMChain{last_message: %Message{} = message} = chain,
         context
       ) do
     if Message.is_tool_call?(message) do
       # context to use
       use_context = context || chain.custom_context
+      verbose = chain.verbose
 
-      # find and execute the linked function
-      case chain._tool_map[message.function_name] do
-        %Function{} = function ->
-          if chain.verbose, do: IO.inspect(function.name, label: "EXECUTING FUNCTION")
+      # Get all the tools to call. Accumulate them into a map.
+      # Stored as
+      grouped =
+        Enum.reduce(message.tool_calls, %{async: [], sync: [], invalid: []}, fn call, acc ->
+          case chain._tool_map[call.name] do
+            %Function{async: true} = func ->
+              Map.put(acc, :async, acc.async ++ [{call, func}])
 
-          # execute the function
-          result = Function.execute(function, message.arguments, use_context)
-          if chain.verbose, do: IO.inspect(result, label: "FUNCTION RESULT")
+            %Function{async: false} = func ->
+              Map.put(acc, :sync, acc.sync ++ [{call, func}])
 
-          # add the :tool response to the chain
-          tool_result = Message.new_tool!(function.name, result)
-          # fire the callback as this is newly generated message
-          fire_callback(chain, tool_result)
-          LLMChain.add_message(chain, tool_result)
+            # invalid tool call
+            nil ->
+              Map.put(acc, :invalid, acc.invalid ++ [{call, nil}])
+          end
+        end)
 
-        nil ->
-          Logger.warning(
-            "Received function_call for missing function #{inspect(message.function_name)}"
-          )
+      # execute all the async calls. This keeps the responses in order too.
+      async_results =
+        grouped[:async]
+        |> Enum.map(fn {call, func} ->
+          Task.async(fn ->
+            execute_tool_call(call, func, verbose: verbose, context: use_context)
+          end)
+        end)
+        |> Task.await_many()
 
-          chain
-      end
+      sync_results =
+        Enum.map(grouped[:sync], fn {call, func} ->
+          execute_tool_call(call, func, verbose: verbose, context: use_context)
+        end)
+
+      # log invalid tool calls
+      invalid_calls =
+        Enum.map(grouped[:invalid], fn {call, _} ->
+          text = "Tool call made to #{call.name} but tool not found"
+          Logger.warning(text)
+          Message.new_tool!(call.call_id, text, is_error: true)
+        end)
+
+      combined_messages = async_results ++ sync_results ++ invalid_calls
+
+      # fire the callback as this is newly generated message
+      Enum.each(combined_messages, fn tool_response ->
+        if chain.verbose, do: IO.inspect(tool_response, label: "TOOL RESPONSE")
+        fire_callback(chain, tool_response)
+      end)
+
+      # add all the messages to the chain
+      LLMChain.add_messages(chain, combined_messages)
     else
-      # Either not a function_call or an incomplete function_call, do nothing.
+      # Not a complete tool call
       chain
+    end
+  end
+
+  @doc """
+  Execute the tool call with the tool. Returns the tool's message response.
+  """
+  @spec execute_tool_call(ToolCall.t(), Function.t(), Keyword.t()) :: Message.t()
+  def execute_tool_call(%ToolCall{} = call, %Function{} = function, opts \\ []) do
+    verbose = Keyword.get(opts, :verbose, false)
+    context = Keyword.get(opts, :context, nil)
+
+    try do
+      if verbose, do: IO.inspect(function.name, label: "EXECUTING FUNCTION")
+
+      case Function.execute(function, call.arguments, context) do
+        {:ok, result} ->
+          if verbose, do: IO.inspect(result, label: "FUNCTION RESULT")
+          # successful execution.
+          Message.new_tool!(call.call_id, result)
+
+        {:error, reason} when is_binary(reason) ->
+          Message.new_tool!(call.call_id, reason, is_error: true)
+      end
+    rescue
+      err ->
+        Logger.error("Function #{function.name} failed in execution. Exception: #{inspect(err)}")
+        Message.new_tool!(call.call_id, "ERROR executing tool: #{inspect(err)}", is_error: true)
     end
   end
 
@@ -461,19 +516,12 @@ defmodule LangChain.Chains.LLMChain do
 
   # OPTIONAL: Execute callback function
   defp fire_callback(%LLMChain{callback_fn: callback_fn}, data) when is_function(callback_fn) do
-    case data do
-      value when is_list(value) ->
-        value
-        |> List.flatten()
-        |> Enum.each(fn item -> callback_fn.(item) end)
+    data
+    |> List.wrap()
+    |> List.flatten()
+    |> Enum.each(fn item -> callback_fn.(item) end)
 
-        :ok
-
-      # not a list, pass the item as-is
-      item ->
-        callback_fn.(item)
-        :ok
-    end
+    :ok
   end
 
   @doc """
