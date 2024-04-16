@@ -1014,4 +1014,8 @@ defmodule LangChain.Fixtures do
   def new_function_call!(%ToolCall{} = call) do
     Message.new_assistant!(%{tool_calls: [call]})
   end
+
+  def new_function_calls!(calls) do
+    Message.new_assistant!(%{tool_calls: calls})
+  end
 end
