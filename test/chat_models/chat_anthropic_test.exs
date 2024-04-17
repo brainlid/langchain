@@ -10,6 +10,8 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
   alias LangChain.Function
   alias LangChain.FunctionParam
 
+  @test_model "claude-3-opus-20240229"
+
   defp hello_world(_args, _context) do
     "Hello world!"
   end
@@ -28,9 +30,9 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
   describe "new/1" do
     test "works with minimal attr" do
       assert {:ok, %ChatAnthropic{} = anthropic} =
-               ChatAnthropic.new(%{"model" => "claude-3-opus-20240229"})
+               ChatAnthropic.new(%{"model" => @test_model})
 
-      assert anthropic.model == "claude-3-opus-20240229"
+      assert anthropic.model == @test_model
     end
 
     test "returns error when invalid" do
@@ -55,29 +57,44 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
     test "generates a map for an API call" do
       {:ok, anthropic} =
         ChatAnthropic.new(%{
-          "model" => "claude-3-opus-20240229",
+          "model" => @test_model,
           "temperature" => 1,
           "top_p" => 0.5,
           "api_key" => "api_key"
         })
 
       data = ChatAnthropic.for_api(anthropic, [], [])
-      assert data.model == "claude-3-opus-20240229"
+      assert data.model == @test_model
       assert data.temperature == 1
       assert data.top_p == 0.5
+    end
+
+    test "correctly applies the system message" do
+      {:ok, anthropic} = ChatAnthropic.new()
+
+      data =
+        ChatAnthropic.for_api(
+          anthropic,
+          [
+            Message.new_system!("You are my helpful hero.")
+          ],
+          []
+        )
+
+      assert "You are my helpful hero." == data[:system]
     end
 
     test "generates a map for an API call with max_tokens set" do
       {:ok, anthropic} =
         ChatAnthropic.new(%{
-          "model" => "claude-3-opus-20240229",
+          "model" => @test_model,
           "temperature" => 1,
           "top_p" => 0.5,
           "max_tokens" => 1234
         })
 
       data = ChatAnthropic.for_api(anthropic, [], [])
-      assert data.model == "claude-3-opus-20240229"
+      assert data.model == @test_model
       assert data.temperature == 1
       assert data.top_p == 0.5
       assert data.max_tokens == 1234
@@ -315,7 +332,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
     test "handles receiving text and a tool_use in same message" do
       response = %{
         "id" => "msg_01Aq9w938a90dw8q",
-        "model" => "claude-3-opus-20240229",
+        "model" => @test_model,
         "stop_reason" => "tool_use",
         "role" => "assistant",
         "content" => [
@@ -626,51 +643,6 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
              ] = parsed
 
       assert buffer == ""
-    end
-  end
-
-  describe "works within a chain" do
-    @tag live_call: true, live_anthropic: true
-    test "works with a streaming response" do
-      test_pid = self()
-
-      callback_fn = fn data ->
-        send(test_pid, {:streamed_fn, data})
-      end
-
-      {:ok, _result_chain, last_message} =
-        LLMChain.new!(%{llm: %ChatAnthropic{stream: true}})
-        |> LLMChain.add_message(Message.new_user!("Say, 'Hi!'!"))
-        |> LLMChain.run(callback_fn: callback_fn)
-
-      assert last_message.content == "Hi!"
-      assert last_message.status == :complete
-      assert last_message.role == :assistant
-
-      assert_received {:streamed_fn, data}
-      assert %MessageDelta{role: :assistant} = data
-    end
-
-    @tag live_call: true, live_anthropic: true
-    test "works with NON streaming response" do
-      test_pid = self()
-
-      callback_fn = fn data ->
-        # IO.inspect(data, label: "DATA")
-        send(test_pid, {:streamed_fn, data})
-      end
-
-      {:ok, _result_chain, last_message} =
-        LLMChain.new!(%{llm: %ChatAnthropic{stream: false}})
-        |> LLMChain.add_message(Message.new_user!("Say, 'Hi!'!"))
-        |> LLMChain.run(callback_fn: callback_fn)
-
-      assert last_message.content == "Hi!"
-      assert last_message.status == :complete
-      assert last_message.role == :assistant
-
-      assert_received {:streamed_fn, data}
-      assert %Message{role: :assistant} = data
     end
   end
 
@@ -1061,7 +1033,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       image_data = load_image_base64("barn_owl.jpg")
 
       # https://docs.anthropic.com/claude/reference/messages-examples#vision
-      {:ok, chat} = ChatAnthropic.new(%{model: "claude-3-opus-20240229"})
+      {:ok, chat} = ChatAnthropic.new(%{model: @test_model})
 
       message =
         Message.new_user!([
@@ -1080,7 +1052,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
     @tag live_call: true, live_anthropic: true
     test "uses a tool with no parameters" do
       # https://docs.anthropic.com/claude/reference/messages-examples#vision
-      {:ok, chat} = ChatAnthropic.new(%{model: "claude-3-opus-20240229"})
+      {:ok, chat} = ChatAnthropic.new(%{model: @test_model})
 
       message = Message.new_user!("Use the 'do_something' tool.")
 
@@ -1127,7 +1099,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
     @tag live_call: true, live_anthropic: true
     test "uses a tool with parameters" do
       # https://docs.anthropic.com/claude/reference/messages-examples#vision
-      {:ok, chat} = ChatAnthropic.new(%{model: "claude-3-opus-20240229"})
+      {:ok, chat} = ChatAnthropic.new(%{model: @test_model})
 
       message = Message.new_user!("Use the 'do_something' tool with the value 'cat'.")
 
@@ -1168,6 +1140,76 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       #   function_name: nil,
       #   arguments: nil
       # }
+    end
+  end
+
+  describe "works within a chain" do
+    @tag live_call: true, live_anthropic: true
+    test "works with a streaming response" do
+      test_pid = self()
+
+      callback_fn = fn data ->
+        send(test_pid, {:streamed_fn, data})
+      end
+
+      {:ok, _result_chain, last_message} =
+        LLMChain.new!(%{llm: %ChatAnthropic{stream: true}})
+        |> LLMChain.add_message(Message.new_user!("Say, 'Hi!'!"))
+        |> LLMChain.run(callback_fn: callback_fn)
+
+      assert last_message.content == "Hi!"
+      assert last_message.status == :complete
+      assert last_message.role == :assistant
+
+      assert_received {:streamed_fn, data}
+      assert %MessageDelta{role: :assistant} = data
+    end
+
+    @tag live_call: true, live_anthropic: true
+    test "works with NON streaming response" do
+      test_pid = self()
+
+      callback_fn = fn data ->
+        # IO.inspect(data, label: "DATA")
+        send(test_pid, {:streamed_fn, data})
+      end
+
+      {:ok, _result_chain, last_message} =
+        LLMChain.new!(%{llm: %ChatAnthropic{stream: false}})
+        |> LLMChain.add_message(Message.new_user!("Say, 'Hi!'!"))
+        |> LLMChain.run(callback_fn: callback_fn)
+
+      assert last_message.content == "Hi!"
+      assert last_message.status == :complete
+      assert last_message.role == :assistant
+
+      assert_received {:streamed_fn, data}
+      assert %Message{role: :assistant} = data
+    end
+
+    @tag live_call: true, live_anthropic: true
+    test "supports continuing a conversation with streaming" do
+      test_pid = self()
+
+      callback_fn = fn data ->
+        # IO.inspect(data, label: "DATA")
+        send(test_pid, {:streamed_fn, data})
+      end
+
+      {:ok, result_chain, last_message} =
+        LLMChain.new!(%{llm: %ChatAnthropic{model: @test_model, stream: true}})
+        |> LLMChain.add_message(Message.new_system!("You are a helpful and concise assistant."))
+        |> LLMChain.add_message(Message.new_user!("Say, 'Hi!'!"))
+        |> LLMChain.add_message(Message.new_assistant!("Hi!"))
+        |> LLMChain.add_message(Message.new_user!("What's the capitol of Norway?"))
+        |> LLMChain.run(callback_fn: callback_fn)
+
+      assert last_message.content =~ "Oslo"
+      assert last_message.status == :complete
+      assert last_message.role == :assistant
+
+      assert_received {:streamed_fn, data}
+      assert %MessageDelta{role: :assistant} = data
     end
   end
 end

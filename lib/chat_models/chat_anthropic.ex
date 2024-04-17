@@ -138,6 +138,15 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     # separate the system message from the rest. Handled separately.
     {system, messages} = split_system_message(messages)
 
+    system_text =
+      case system do
+        nil ->
+          nil
+
+        %Message{role: :system, content: content} ->
+          content
+      end
+
     messages =
       messages
       |> Enum.map(&for_api/1)
@@ -150,7 +159,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       messages: messages
     }
     # Anthropic sets the `system` message on the request body, not as part of the messages list.
-    |> Utils.conditionally_add_to_map(:system, system)
+    |> Utils.conditionally_add_to_map(:system, system_text)
     |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(tools))
     |> Utils.conditionally_add_to_map(:max_tokens, anthropic.max_tokens)
     |> Utils.conditionally_add_to_map(:top_p, anthropic.top_p)
