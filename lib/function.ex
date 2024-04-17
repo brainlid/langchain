@@ -46,7 +46,7 @@ defmodule LangChain.Function do
         },
         function:
           fn(%{"expression" => expr} = _args, _context) ->
-            "Uh... I don't know!"
+            {:ok, "42?"}
           end)
       })
 
