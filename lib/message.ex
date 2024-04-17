@@ -326,8 +326,12 @@ defmodule LangChain.Message do
   @doc """
   Create a new assistant message which represents a response from the AI or LLM.
   """
-  @spec new_assistant!(attrs :: map()) :: t() | no_return()
-  def new_assistant!(attrs \\ %{}) do
+  @spec new_assistant!(String.t() | map()) :: t() | no_return()
+  def new_assistant!(content) when is_binary(content) do
+    new_assistant!(%{content: content})
+  end
+
+  def new_assistant!(attrs) when is_map(attrs) do
     case new_assistant(attrs) do
       {:ok, msg} ->
         msg

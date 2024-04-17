@@ -13,7 +13,7 @@ defmodule ChatModels.ChatGoogleAITest do
       Function.new(%{
         name: "hello_world",
         description: "Give a hello world greeting.",
-        function: fn -> IO.puts("Hello world!") end
+        function: fn _args, _context -> {:ok, "Hello world!"} end
       })
 
     %{hello_world: hello_world}

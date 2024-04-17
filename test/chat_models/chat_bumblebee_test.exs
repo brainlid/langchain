@@ -58,7 +58,7 @@ defmodule LangChain.ChatModels.ChatBumblebeeTest do
         ]
       }
 
-      expected_message = Message.new_assistant!("Hello.", :complete)
+      expected_message = Message.new_assistant!(%{content: "Hello.", status: :complete})
 
       [message] = ChatBumblebee.do_process_response(response, model, callback_fn)
       assert message == expected_message
@@ -70,7 +70,7 @@ defmodule LangChain.ChatModels.ChatBumblebeeTest do
     test "handles stream when stream: false", %{callback_fn: callback_fn} do
       model = ChatBumblebee.new!(%{serving: Fake, stream: false})
 
-      expected_message = Message.new_assistant!("Hello.", :complete)
+      expected_message = Message.new_assistant!(%{content: "Hello.", status: :complete})
 
       stream =
         ["He", "ll", "o", ".", {:done, %{input: 38, output: 4, padding: 4058}}]
@@ -88,7 +88,7 @@ defmodule LangChain.ChatModels.ChatBumblebeeTest do
     } do
       model = ChatBumblebee.new!(%{serving: Fake, stream: false})
 
-      expected_message = Message.new_assistant!("Hello.", :complete)
+      expected_message = Message.new_assistant!(%{content: "Hello.", status: :complete})
 
       stream =
         ["He", "ll", "o", "."]
