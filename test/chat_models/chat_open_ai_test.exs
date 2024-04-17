@@ -24,7 +24,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       Function.new(%{
         name: "hello_world",
         description: "Give a hello world greeting",
-        function: fn -> IO.puts("Hello world!") end
+        function: fn _args, _context -> {:ok, "Hello world!"} end
       })
 
     {:ok, weather} =
@@ -45,7 +45,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
             required: true
           })
         ],
-        function: fn -> IO.puts("75 degrees") end
+        function: fn _args, _context -> {:ok, "75 degrees"} end
       })
 
     %{hello_world: hello_world, weather: weather}
@@ -237,13 +237,12 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
              }
     end
 
-    test "tools work with minimal definition and no parameters" do
-      {:ok, fun} = Function.new(%{"name" => "hello_world"})
-
-      result = ChatOpenAI.for_api(fun)
+    test "tools work with minimal definition and no parameters", %{hello_world: hello_world} do
+      result = ChatOpenAI.for_api(hello_world)
 
       assert result == %{
                "name" => "hello_world",
+               "description" => "Give a hello world greeting",
                #  NOTE: Sends the required empty parameter definition when none set
                "parameters" => %{"properties" => %{}, "type" => "object"}
              }
@@ -271,7 +270,8 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
             FunctionParam.new!(%{name: "p1", type: :string, required: true}),
             FunctionParam.new!(%{name: "p2", type: :number, description: "Param 2"}),
             FunctionParam.new!(%{name: "p3", type: :string, enum: ["yellow", "red", "green"]})
-          ]
+          ],
+          function: fn _args, _context -> {:ok, "SUCCESS"} end
         })
 
       # result = Function.for_api(fun)
@@ -301,9 +301,10 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
       {:ok, fun} =
         Function.new(%{
-          "name" => "say_hi",
-          "description" => "Provide a friendly greeting.",
-          "parameters_schema" => params_def
+          name: "say_hi",
+          description: "Provide a friendly greeting.",
+          parameters_schema: params_def,
+          function: fn _args, _context -> {:ok, "SUCCESS"} end
         })
 
       # result = Function.for_api(fun)
@@ -438,7 +439,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       [call] = message.tool_calls
       assert call.status == :complete
       assert call.type == :function
-      assert call.tool_id != nil
+      assert call.call_id != nil
       assert call.arguments == %{"city" => "Moab", "state" => "UT"}
     end
 
@@ -592,7 +593,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert struct.role == :assistant
 
       assert [%ToolCall{} = call] = struct.tool_calls
-      assert call.tool_id == "call_mMSPuyLd915TQ9bcrk4NvLDX"
+      assert call.call_id == "call_mMSPuyLd915TQ9bcrk4NvLDX"
       assert call.type == :function
       assert call.name == "get_weather"
       assert call.arguments == %{"city" => "Moab", "state" => "UT"}
@@ -711,7 +712,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert %ToolCall{} = call = ChatOpenAI.do_process_response(call)
       assert call.type == :function
       assert call.status == :complete
-      assert call.tool_id == "call_4L8NfePhSW8PdoHUWkvhzguu"
+      assert call.call_id == "call_4L8NfePhSW8PdoHUWkvhzguu"
       assert call.name == "get_weather"
       assert call.arguments == %{"city" => "Moab", "state" => "UT"}
     end
