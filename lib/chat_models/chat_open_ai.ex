@@ -178,9 +178,9 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       when is_list(tool_calls) do
     %{
       "role" => :assistant,
-      "tool_calls" => Enum.map(tool_calls, &for_api(&1)),
       "content" => msg.content
     }
+    |> Utils.conditionally_add_to_map("tool_calls", Enum.map(tool_calls, &for_api(&1)))
   end
 
   def for_api(%Message{role: :tool} = msg) do

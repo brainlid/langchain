@@ -138,6 +138,13 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert result == expected
     end
 
+    test "turns an assistant message into expected JSON format" do
+      # NOTE: Does not include tool_calls if empty
+      expected = %{"role" => :assistant, "content" => "Hi."}
+      result = ChatOpenAI.for_api(Message.new_assistant!(%{content: "Hi.", tool_calls: []}))
+      assert result == expected
+    end
+
     test "turns a multi-modal user message into the expected JSON format" do
       expected = %{
         "role" => :user,
