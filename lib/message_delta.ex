@@ -98,22 +98,20 @@ defmodule LangChain.MessageDelta do
       ...>   %LangChain.MessageDelta{
       ...>     content: nil,
       ...>     index: 0,
-      ...>     function_name: nil,
+      ...>     tool_calls: [],
       ...>     role: :assistant,
-      ...>     arguments: nil,
       ...>     status: :incomplete
       ...>   }
       iex> delta_2 =
       ...>   %LangChain.MessageDelta{
       ...>     content: "Hello",
       ...>     index: 0,
-      ...>     function_name: nil,
+      ...>     tool_calls: [],
       ...>     role: :unknown,
-      ...>     arguments: nil,
       ...>     status: :incomplete
       ...>   }
       iex> LangChain.MessageDelta.merge_delta(delta_1, delta_2)
-      %LangChain.MessageDelta{content: "Hello", status: :incomplete, index: 0, function_name: nil, role: :assistant, arguments: nil}
+      %LangChain.MessageDelta{content: "Hello", status: :incomplete, index: 0, role: :assistant, tool_calls: []}
 
   A set of deltas can be easily merged like this:
 

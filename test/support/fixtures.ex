@@ -972,9 +972,8 @@ defmodule LangChain.Fixtures do
           content: nil,
           status: :incomplete,
           index: 0,
-          function_name: "regions_list",
-          role: :function_call,
-          arguments: ""
+          tool_calls: [%ToolCall{call_id: "call_123", name: "regions_list", index: 0}],
+          role: :tool_call,
         }
       ],
       [
@@ -982,8 +981,8 @@ defmodule LangChain.Fixtures do
           content: nil,
           status: :incomplete,
           index: 0,
-          role: :function_call,
-          arguments: "{}"
+          role: :tool_call,
+          tool_calls: [%ToolCall{arguments: "{}", index: 0}],
         }
       ],
       [

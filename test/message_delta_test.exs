@@ -142,7 +142,7 @@ defmodule LangChain.MessageDeltaTest do
           %ToolCall{
             status: :incomplete,
             type: :function,
-            tool_id: nil,
+            call_id: nil,
             name: "get_weather",
             arguments: "{\"city\": \"Moab\", \"state\": \"UT\"}",
             index: 0
@@ -150,7 +150,7 @@ defmodule LangChain.MessageDeltaTest do
           %ToolCall{
             status: :incomplete,
             type: :function,
-            tool_id: nil,
+            call_id: nil,
             name: "get_weather",
             arguments: "{\"city\": \"Portland\", \"state\": \"OR\"}",
             index: 1
@@ -158,7 +158,7 @@ defmodule LangChain.MessageDeltaTest do
           %ToolCall{
             status: :incomplete,
             type: :function,
-            tool_id: nil,
+            call_id: nil,
             name: "get_weather",
             arguments: "{\"city\": \"Baltimore\", \"state\": \"MD\"}",
             index: 2
@@ -171,89 +171,7 @@ defmodule LangChain.MessageDeltaTest do
       assert merged == expected
     end
 
-    test "completing a delta with tool calls parses arguments" do
-      delta_incomplete = %MessageDelta{
-        content: nil,
-        index: 0,
-        tool_calls: [
-          %ToolCall{
-            status: :incomplete,
-            type: :function,
-            tool_id: nil,
-            name: "get_weather",
-            arguments: "{\"city\": \"Moab\", \"state\": \"UT\"}",
-            index: 0
-          },
-          %ToolCall{
-            status: :incomplete,
-            type: :function,
-            tool_id: nil,
-            name: "get_weather",
-            arguments: "{\"city\": \"Portland\", \"state\": \"OR\"}",
-            index: 1
-          },
-          %ToolCall{
-            status: :incomplete,
-            type: :function,
-            tool_id: nil,
-            name: "get_weather",
-            arguments: "{\"city\": \"Baltimore\", \"state\": \"MD\"}",
-            index: 2
-          }
-        ],
-        role: :assistant,
-        status: :complete
-      }
-
-      completing = MessageDelta.new!(%{status: :complete})
-
-      result = MessageDelta.merge_delta(delta_incomplete, completing)
-      IO.inspect(result)
-      assert false
-      # assert merged == completing
-    end
-
-    # test "correctly merges function_call message with no arguments" do
-    #   [first | rest] = delta_function_no_args()
-
-    #   merged =
-    #     Enum.reduce(rest, first, fn new_delta, acc ->
-    #       MessageDelta.merge_delta(acc, new_delta)
-    #     end)
-
-    #   expected = %LangChain.MessageDelta{
-    #     content: nil,
-    #     index: 0,
-    #     function_name: "hello_world",
-    #     role: :assistant,
-    #     arguments: "{}",
-    #     status: :complete
-    #   }
-
-    #   assert merged == expected
-    # end
-
-    # test "correctly merges function_call message with streamed arguments" do
-    #   [first | rest] = delta_function_streamed_args()
-
-    #   merged =
-    #     Enum.reduce(rest, first, fn new_delta, acc ->
-    #       MessageDelta.merge_delta(acc, new_delta)
-    #     end)
-
-    #   expected = %LangChain.MessageDelta{
-    #     content: nil,
-    #     index: 0,
-    #     function_name: "calculator",
-    #     role: :assistant,
-    #     arguments: "{\n  \"expression\": \"100 + 300 - 200\"\n}",
-    #     status: :complete
-    #   }
-
-    #   assert merged == expected
-    # end
-
-    test "correctly merges assistant content with function_call" do
+    test "correctly merges assistant content with a tool_call" do
       [first | rest] = delta_content_with_function_call() |> List.flatten()
 
       merged =
@@ -265,9 +183,10 @@ defmodule LangChain.MessageDeltaTest do
         content:
           "Sure, I can help with that. First, let's check which regions are currently available for deployment on Fly.io. Please wait a moment while I fetch this information for you.",
         index: 0,
-        function_name: "regions_list",
+        tool_calls: [
+          ToolCall.new!(%{call_id: "call_123", name: "regions_list", arguments: "{}", index: 0})
+        ],
         role: :assistant,
-        arguments: "{}",
         status: :complete
       }
 
@@ -291,16 +210,22 @@ defmodule LangChain.MessageDeltaTest do
       # :assistant type
       delta = %LangChain.MessageDelta{
         role: :assistant,
-        function_name: "calculator",
-        arguments: "{\n  \"expression\": \"100 + 300 - 200\"\n}",
+        tool_calls: [
+          ToolCall.new!(%{
+            call_id: "call_123",
+            name: "calculator",
+            arguments: "{\n  \"expression\": \"100 + 300 - 200\"\n}"
+          })
+        ],
         status: :complete
       }
 
       {:ok, %Message{} = msg} = MessageDelta.to_message(delta)
       assert msg.role == :assistant
-      assert msg.function_name == "calculator"
+      assert [%ToolCall{} = call] = msg.tool_calls
+      assert call.name == "calculator"
       # parses the arguments
-      assert msg.arguments == %{"expression" => "100 + 300 - 200"}
+      assert call.arguments == %{"expression" => "100 + 300 - 200"}
       assert msg.content == nil
     end
 
@@ -333,13 +258,18 @@ defmodule LangChain.MessageDeltaTest do
       # to_message function will fail.
       delta = %LangChain.MessageDelta{
         role: :assistant,
-        function_name: "calculator",
-        arguments: "{\n  \"expression\": \"100 + 300 - 200\"",
+        tool_calls: [
+          ToolCall.new!(%{
+            call_id: "call_123",
+            name: "calculator",
+            arguments: "{\n  \"expression\": \"100 + 300 - 200\""
+          })
+        ],
         status: :complete
       }
 
       {:error, reason} = MessageDelta.to_message(delta)
-      assert reason == "arguments: invalid JSON function arguments"
+      assert reason == "tool_calls: arguments: invalid json"
     end
   end
 end
