@@ -19,6 +19,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   alias LangChain.Message.ToolCall
   alias LangChain.MessageDelta
   alias LangChain.Function
+  alias LangChain.FunctionParam
   alias LangChain.Utils
 
   @behaviour ChatModel
@@ -137,11 +138,16 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     # separate the system message from the rest. Handled separately.
     {system, messages} = split_system_message(messages)
 
+    messages =
+      messages
+      |> Enum.map(&for_api/1)
+      |> post_process_and_combine_messages()
+
     %{
       model: anthropic.model,
       temperature: anthropic.temperature,
       stream: anthropic.stream,
-      messages: Enum.map(messages, &for_api/1)
+      messages: messages
     }
     # Anthropic sets the `system` message on the request body, not as part of the messages list.
     |> Utils.conditionally_add_to_map(:system, system)
@@ -446,15 +452,32 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   end
 
   # for parsing a list of received content JSON objects
+  defp do_process_content_response(%Message{} = message, %{"type" => "text", "text" => ""}),
+    do: message
+
   defp do_process_content_response(%Message{} = message, %{"type" => "text", "text" => text}) do
-    initial_content = message.content || ""
-    %Message{message | content: initial_content <> text}
+    %Message{message | content: text}
   end
 
   defp do_process_content_response(
          %Message{} = message,
          %{"type" => "tool_use", "id" => call_id, "name" => name} = call
        ) do
+    arguments =
+      case call["input"] do
+        # when properties is an empty map, treat it as nil
+        %{"properties" => %{} = props} when props == %{} ->
+          nil
+
+        # when an empty map, return nil
+        %{} = data when data == %{} ->
+          nil
+
+        # when a map with data
+        %{} = data ->
+          data
+      end
+
     %Message{
       message
       | tool_calls:
@@ -464,7 +487,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
                 type: :function,
                 call_id: call_id,
                 name: name,
-                arguments: call["input"],
+                arguments: arguments,
                 status: :complete
               })
             ]
@@ -562,36 +585,53 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   """
   @spec for_api(Message.t() | UserContentPart.t() | Function.t()) ::
           %{String.t() => any()} | no_return()
-  # def for_api(%Message{role: :assistant, function_name: fun_name} = msg)
-  #     when is_binary(fun_name) do
-  #   %{
-  #     "role" => :assistant,
-  #     "function_call" => %{
-  #       "arguments" => Jason.encode!(msg.arguments),
-  #       "name" => msg.function_name
-  #     },
-  #     "content" => msg.content
-  #   }
-  # end
+  def for_api(%Message{role: :assistant, tool_calls: calls} = msg)
+      when is_list(calls) and calls != [] do
+    text_content =
+      if is_binary(msg.content) do
+        [
+          %{
+            "type" => "text",
+            "text" => msg.content
+          }
+        ]
+      else
+        []
+      end
 
-  # def for_api(%Message{role: :function} = msg) do
-  #   %{
-  #     "role" => :function,
-  #     "name" => msg.function_name,
-  #     "content" => msg.content
-  #   }
-  # end
+    tool_calls = Enum.map(calls, &for_api(&1))
 
+    %{
+      "role" => "assistant",
+      "content" => text_content ++ tool_calls
+    }
+  end
+
+  def for_api(%Message{role: :tool} = msg) do
+    %{
+      "role" => "user",
+      "content" => [
+        %{
+          "type" => "tool_result",
+          "tool_use_id" => msg.tool_call_id,
+          "content" => msg.content
+        }
+        |> Utils.conditionally_add_to_map("is_error", msg.is_error)
+      ]
+    }
+  end
+
+  # when content is plain text
   def for_api(%Message{content: content} = msg) when is_binary(content) do
     %{
-      "role" => msg.role,
+      "role" => Atom.to_string(msg.role),
       "content" => msg.content
     }
   end
 
-  def for_api(%Message{role: :user, content: content} = msg) when is_list(content) do
+  def for_api(%Message{role: :user, content: content}) when is_list(content) do
     %{
-      "role" => msg.role,
+      "role" => "user",
       "content" => Enum.map(content, &for_api(&1))
     }
   end
@@ -617,11 +657,22 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
   # Function support
   def for_api(%Function{} = fun) do
+    # I'm here
     %{
       "name" => fun.name,
       "input_schema" => get_parameters(fun)
     }
     |> Utils.conditionally_add_to_map("description", fun.description)
+  end
+
+  # ToolCall support
+  def for_api(%ToolCall{} = call) do
+    %{
+      "type" => "tool_use",
+      "id" => call.call_id,
+      "name" => call.name,
+      "input" => call.arguments || %{}
+    }
   end
 
   defp get_parameters(%Function{parameters: [], parameters_schema: nil} = _fun) do
@@ -638,5 +689,48 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
   defp get_parameters(%Function{parameters: params} = _fun) do
     FunctionParam.to_parameters_schema(params)
+  end
+
+  @doc """
+  After all the messages have been converted using `for_api/1`, this combines
+  multiple sequential tool response messages. The Anthropic API is very strict
+  about user, assistant, user, assistant sequenced messages.
+  """
+  def post_process_and_combine_messages(messages) do
+    messages
+    |> Enum.reverse()
+    |> Enum.reduce([], fn
+      # when two "user" role messages are listed together, combine them. This
+      # can happen because multiple ToolCalls require multiple tool response
+      # messages, but Anthropic does those as a User message and strictly
+      # enforces that multiple user messages in a row are not permitted.
+      %{"role" => "user"} = item, [%{"role" => "user"} = prev | rest] = _acc ->
+        updated_prev = merge_user_messages(item, prev)
+        # merge current item into the previous and return the updated list
+        # updated_prev = Map.put(prev, "content", item["content"] ++ prev["content"])
+        [updated_prev | rest]
+
+      item, acc ->
+        [item | acc]
+    end)
+  end
+
+  # Merge the two user messages
+  defp merge_user_messages(%{"role" => "user"} = item, %{"role" => "user"} = prev) do
+    item = get_merge_friendly_user_content(item)
+    prev = get_merge_friendly_user_content(prev)
+
+    Map.put(prev, "content", item["content"] ++ prev["content"])
+  end
+
+  defp get_merge_friendly_user_content(%{"role" => "user", "content" => content} = item)
+       when is_binary(content) do
+    # replace the string content with text object
+    Map.put(item, "content", [%{"type" => "text", "text" => content}])
+  end
+
+  defp get_merge_friendly_user_content(%{"role" => "user", "content" => content} = item)
+       when is_list(content) do
+    item
   end
 end
