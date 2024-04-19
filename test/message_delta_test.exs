@@ -142,7 +142,7 @@ defmodule LangChain.MessageDeltaTest do
           %ToolCall{
             status: :incomplete,
             type: :function,
-            call_id: nil,
+            call_id: "call_123",
             name: "get_weather",
             arguments: "{\"city\": \"Moab\", \"state\": \"UT\"}",
             index: 0
@@ -150,7 +150,7 @@ defmodule LangChain.MessageDeltaTest do
           %ToolCall{
             status: :incomplete,
             type: :function,
-            call_id: nil,
+            call_id: "call_234",
             name: "get_weather",
             arguments: "{\"city\": \"Portland\", \"state\": \"OR\"}",
             index: 1
@@ -158,7 +158,7 @@ defmodule LangChain.MessageDeltaTest do
           %ToolCall{
             status: :incomplete,
             type: :function,
-            call_id: nil,
+            call_id: "call_345",
             name: "get_weather",
             arguments: "{\"city\": \"Baltimore\", \"state\": \"MD\"}",
             index: 2

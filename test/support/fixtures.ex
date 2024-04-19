@@ -153,7 +153,7 @@ defmodule LangChain.Fixtures do
           %LangChain.Message.ToolCall{
             status: :incomplete,
             type: :function,
-            call_id: nil,
+            call_id: "call_123",
             name: "get_weather",
             arguments: nil,
             index: 0
@@ -201,7 +201,7 @@ defmodule LangChain.Fixtures do
           %LangChain.Message.ToolCall{
             status: :incomplete,
             type: :function,
-            call_id: nil,
+            call_id: "call_234",
             name: "get_weather",
             arguments: nil,
             index: 1
@@ -249,7 +249,7 @@ defmodule LangChain.Fixtures do
           %LangChain.Message.ToolCall{
             status: :incomplete,
             type: :function,
-            call_id: nil,
+            call_id: "call_345",
             name: "get_weather",
             arguments: nil,
             index: 2

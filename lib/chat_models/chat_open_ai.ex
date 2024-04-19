@@ -571,12 +571,12 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   end
 
   # Tool call as part of a delta message
-  def do_process_response(%{"function" => func_body, "index" => index}) do
+  def do_process_response(%{"function" => func_body, "index" => index} = tool_call) do
     # function parts may or may not be present on any given delta chunk
     case ToolCall.new(%{
            status: :incomplete,
            type: :function,
-           call_id: Map.get(func_body, "id", nil),
+           call_id: tool_call["id"],
            name: Map.get(func_body, "name", nil),
            arguments: Map.get(func_body, "arguments", nil),
            index: index

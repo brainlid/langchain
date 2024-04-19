@@ -1,11 +1,8 @@
 defmodule LangChain.Message.ToolCall do
-  # work as a delta as well? Both?
-  #  function for merging them?
-  #  support :incomplete and :index
-
-  # need ToolCall has content, tool_calls[].
-  #   Message delta needs merge function for an incomplete tool_call delta
-
+  @moduledoc """
+  Represents an LLM's request to use tool. It specifies the tool to execute and
+  may provide arguments for the tool to use.
+  """
   use Ecto.Schema
   import Ecto.Changeset
   require Logger
