@@ -19,6 +19,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   alias LangChain.Message
   alias LangChain.Message.UserContentPart
   alias LangChain.Message.ToolCall
+  alias LangChain.Message.ToolResult
   alias LangChain.Function
   alias LangChain.FunctionParam
   alias LangChain.LangChainError
@@ -146,7 +147,19 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       frequency_penalty: openai.frequency_penalty,
       n: openai.n,
       stream: openai.stream,
-      messages: Enum.map(messages, &for_api/1),
+      # a single ToolResult can expand into multiple tool messages for OpenAI
+      messages:
+        messages
+        |> Enum.reduce([], fn m, acc ->
+          case for_api(m) do
+            %{} = data ->
+              [data | acc]
+
+            data when is_list(data) ->
+              Enum.reverse(data) ++ acc
+          end
+        end)
+        |> Enum.reverse(),
       response_format: set_response_format(openai),
       user: openai.user
     }
@@ -173,7 +186,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   @doc """
   Convert a LangChain structure to the expected map of data for the OpenAI API.
   """
-  @spec for_api(Message.t() | UserContentPart.t() | Function.t()) :: %{String.t() => any()}
+  @spec for_api(Message.t() | UserContentPart.t() | Function.t()) ::
+          %{String.t() => any()} | [%{String.t() => any()}]
   def for_api(%Message{role: :assistant, tool_calls: tool_calls} = msg)
       when is_list(tool_calls) do
     %{
@@ -183,12 +197,16 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     |> Utils.conditionally_add_to_map("tool_calls", Enum.map(tool_calls, &for_api(&1)))
   end
 
-  def for_api(%Message{role: :tool} = msg) do
-    %{
-      "role" => :tool,
-      "tool_call_id" => msg.tool_call_id,
-      "content" => msg.content
-    }
+  def for_api(%Message{role: :tool, tool_results: tool_results} = _msg)
+      when is_list(tool_results) do
+        # ToolResults turn into a list of tool messages for OpenAI
+    Enum.map(tool_results, fn result ->
+      %{
+        "role" => :tool,
+        "tool_call_id" => result.tool_call_id,
+        "content" => result.content
+      }
+    end)
   end
 
   def for_api(%Message{content: content} = msg) when is_binary(content) do
@@ -205,6 +223,15 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       "content" => Enum.map(content, &for_api(&1))
     }
     |> Utils.conditionally_add_to_map("name", msg.name)
+  end
+
+  def for_api(%ToolResult{type: :function} = result) do
+    # a ToolResult becomes a stand-alone %Message{role: :tool} response.
+    %{
+      "role" => :tool,
+      "tool_call_id" => result.tool_call_id,
+      "content" => result.content
+    }
   end
 
   def for_api(%UserContentPart{type: :text} = part) do
@@ -511,8 +538,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     end
   end
 
-   # Full message with tool call
-   def do_process_response(
+  # Full message with tool call
+  def do_process_response(
         %{"finish_reason" => "tool_calls", "message" => %{"tool_calls" => calls} = message} = data
       ) do
     case Message.new(%{

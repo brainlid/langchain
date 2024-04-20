@@ -2,11 +2,11 @@ defmodule LangChain.Chains.LLMChain do
   @doc """
   Define an LLMChain. This is the heart of the LangChain library.
 
-  The chain deals with tools, a tool map, delta tracking, last_message
-  tracking, conversation messages, and verbose logging. This helps by separating
-  these responsibilities from the LLM making it easier to support additional
-  LLMs because the focus is on communication and formats instead of all the
-  extra logic.
+  The chain deals with tools, a tool map, delta tracking, last_message tracking,
+  conversation messages, and verbose logging. This helps by separating these
+  responsibilities from the LLM making it easier to support additional LLMs
+  because the focus is on communication and formats instead of all the extra
+  logic.
 
   """
   use Ecto.Schema
@@ -16,6 +16,7 @@ defmodule LangChain.Chains.LLMChain do
   alias __MODULE__
   alias LangChain.Message
   alias LangChain.Message.ToolCall
+  alias LangChain.Message.ToolResult
   alias LangChain.MessageDelta
   alias LangChain.Function
   alias LangChain.LangChainError
@@ -143,6 +144,9 @@ defmodule LangChain.Chains.LLMChain do
     LLM so long as we still expect to get a response.
   - `:callback_fn` - the callback function to execute as messages are received.
 
+  The `callback_fn` is a function that receives one argument. It is the
+  LangChain structure for the received message or event. It may be a
+  `MessageDelta` or a `Message`. Use pattern matching to respond as desired.
   """
   @spec run(t(), Keyword.t()) :: {:ok, t(), Message.t() | [Message.t()]} | {:error, String.t()}
   def run(chain, opts \\ [])
@@ -298,15 +302,7 @@ defmodule LangChain.Chains.LLMChain do
 
   def apply_delta(%LLMChain{delta: %MessageDelta{} = delta} = chain, %MessageDelta{} = new_delta) do
     merged = MessageDelta.merge_delta(delta, new_delta)
-
-    # if the merged delta is now complete, updates as a message.
-    if merged.status in [:complete, :length] do
-      delta_to_message(%LLMChain{chain | delta: merged})
-    else
-      # the delta message is not yet complete. Update the delta with the merged
-      # result.
-      %LLMChain{chain | delta: merged}
-    end
+    delta_to_message_when_complete(%LLMChain{chain | delta: merged})
   end
 
   @doc """
@@ -314,12 +310,12 @@ defmodule LangChain.Chains.LLMChain do
 
   If the delta is `nil`, the chain is returned unmodified.
   """
-  @spec delta_to_message(t()) :: t()
-  def delta_to_message(%LLMChain{delta: nil} = chain) do
-    chain
-  end
-
-  def delta_to_message(%LLMChain{delta: delta} = chain) do
+  @spec delta_to_message_when_complete(t()) :: t()
+  def delta_to_message_when_complete(
+        %LLMChain{delta: %MessageDelta{status: status} = delta} = chain
+      )
+      when status in [:complete, :length] do
+    # it's complete. Attempt to convert delta to a message
     case MessageDelta.to_message(delta) do
       {:ok, %Message{} = message} ->
         fire_callback(chain, message)
@@ -333,6 +329,11 @@ defmodule LangChain.Chains.LLMChain do
     end
   end
 
+  def delta_to_message_when_complete(%LLMChain{} = chain) do
+    # either no delta or incomplete
+    chain
+  end
+
   @doc """
   Apply a list of deltas to the chain.
   """
@@ -341,7 +342,6 @@ defmodule LangChain.Chains.LLMChain do
     deltas
     |> List.flatten()
     |> Enum.reduce(chain, fn d, acc -> apply_delta(acc, d) end)
-    |> delta_to_message()
   end
 
   @doc """
@@ -465,19 +465,19 @@ defmodule LangChain.Chains.LLMChain do
         Enum.map(grouped[:invalid], fn {call, _} ->
           text = "Tool call made to #{call.name} but tool not found"
           Logger.warning(text)
-          Message.new_tool!(call.call_id, text, is_error: true)
+
+          ToolResult.new!(%{tool_call_id: call.call_id, content: text, is_error: true})
         end)
 
-      combined_messages = async_results ++ sync_results ++ invalid_calls
+      combined_results = async_results ++ sync_results ++ invalid_calls
 
-      # fire the callback as this is newly generated message
-      Enum.each(combined_messages, fn tool_response ->
-        if chain.verbose, do: IO.inspect(tool_response, label: "TOOL RESPONSE")
-        fire_callback(chain, tool_response)
-      end)
+      # create a single tool message that contains all the tool results
+      message = Message.new_tool_result!(combined_results)
+      if chain.verbose, do: IO.inspect(message, label: "TOOL RESULTS")
+      fire_callback(chain, message)
 
-      # add all the messages to the chain
-      LLMChain.add_messages(chain, combined_messages)
+      # add all the message to the chain
+      LLMChain.add_message(chain, message)
     else
       # Not a complete tool call
       chain
@@ -487,7 +487,7 @@ defmodule LangChain.Chains.LLMChain do
   @doc """
   Execute the tool call with the tool. Returns the tool's message response.
   """
-  @spec execute_tool_call(ToolCall.t(), Function.t(), Keyword.t()) :: Message.t()
+  @spec execute_tool_call(ToolCall.t(), Function.t(), Keyword.t()) :: ToolResult.t()
   def execute_tool_call(%ToolCall{} = call, %Function{} = function, opts \\ []) do
     verbose = Keyword.get(opts, :verbose, false)
     context = Keyword.get(opts, :context, nil)
@@ -499,15 +499,20 @@ defmodule LangChain.Chains.LLMChain do
         {:ok, result} ->
           if verbose, do: IO.inspect(result, label: "FUNCTION RESULT")
           # successful execution.
-          Message.new_tool!(call.call_id, result)
+          ToolResult.new!(%{tool_call_id: call.call_id, content: result})
 
         {:error, reason} when is_binary(reason) ->
-          Message.new_tool!(call.call_id, reason, is_error: true)
+          ToolResult.new!(%{tool_call_id: call.call_id, content: reason, is_error: true})
       end
     rescue
       err ->
         Logger.error("Function #{function.name} failed in execution. Exception: #{inspect(err)}")
-        Message.new_tool!(call.call_id, "ERROR executing tool: #{inspect(err)}", is_error: true)
+
+        ToolResult.new!(%{
+          tool_call_id: call.call_id,
+          content: "ERROR executing tool: #{inspect(err)}",
+          is_error: true
+        })
     end
   end
 

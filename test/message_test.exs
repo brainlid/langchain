@@ -3,7 +3,9 @@ defmodule LangChain.MessageTest do
   doctest LangChain.Message
   alias LangChain.Message
   alias LangChain.Message.ToolCall
+  alias LangChain.Message.ToolResult
   alias LangChain.Message.UserContentPart
+  alias LangChain.LangChainError
 
   describe "new/1" do
     test "works with minimal attrs" do
@@ -98,7 +100,13 @@ defmodule LangChain.MessageTest do
       {:error, changeset} = Message.new_system([part])
       assert {"is invalid for role system", _} = changeset.errors[:content]
 
-      {:error, changeset} = Message.new(%{role: :tool, call_id: "tool_123", content: [part]})
+      {:error, changeset} =
+        Message.new(%{
+          role: :tool,
+          tool_results: [ToolResult.new!(%{tool_call_id: "call_123", content: "woof"})],
+          content: [part]
+        })
+
       assert {"is invalid for role tool", _} = changeset.errors[:content]
     end
 
@@ -239,27 +247,70 @@ defmodule LangChain.MessageTest do
     end
   end
 
-   describe "new_tool/1" do
+  describe "new_tool_result/1" do
     test "creates a tool response message" do
-      assert {:ok, %Message{role: :tool} = msg} = Message.new_tool("my_fun", "APP ANSWER")
-      assert msg.tool_call_id == "my_fun"
-      assert msg.content == "APP ANSWER"
-      assert msg.is_error == false
-    end
+      result =
+        ToolResult.new!(%{
+          tool_call_id: "call_123",
+          content: "STUFF_BROKE!",
+          is_error: true
+        })
 
-    test "flags message as is_error true when option passed" do
-      assert {:ok, %Message{role: :tool} = msg} = Message.new_tool("my_fun", "STUFF BROKE!", is_error: true)
-      assert msg.tool_call_id == "my_fun"
-      assert msg.content == "STUFF BROKE!"
-      assert msg.is_error == true
+      {:ok, %Message{} = msg} = Message.new_tool_result(result)
+
+      assert msg.role == :tool
+      assert [result] == msg.tool_results
     end
   end
 
-  describe "new_tool!/1" do
+  describe "new_tool_result!/1" do
     test "creates a function response message" do
-      assert %Message{role: :tool} = msg = Message.new_tool!("test_fun", "RESULT")
-      assert msg.tool_call_id == "test_fun"
-      assert msg.content == "RESULT"
+      result = ToolResult.new!(%{tool_call_id: "call_123", content: "RESULT"})
+
+      %Message{} = msg = Message.new_tool_result!(result)
+
+      assert msg.role == :tool
+      assert [result] == msg.tool_results
+    end
+  end
+
+  describe "append_tool_result/2" do
+    test "appends a ToolResult to a tool message" do
+      result1 =
+        ToolResult.new!(%{
+          tool_call_id: "call_123",
+          name: "hello_world",
+          content: "Hello world!"
+        })
+
+      result2 =
+        ToolResult.new!(%{
+          tool_call_id: "call_234",
+          name: "hello_world",
+          content: "Hello world! x2"
+        })
+
+      message =
+        result1
+        |> Message.new_tool_result!()
+        |> Message.append_tool_result(result2)
+
+      assert [result1, result2] == message.tool_results
+    end
+
+    test "raises error adding ToolResult to other roles" do
+      user_message = Message.new_user!("Hi")
+
+      result =
+        ToolResult.new!(%{
+          tool_call_id: "call_123",
+          name: "hello_world",
+          content: "Hello world!"
+        })
+
+      assert_raise LangChainError, "Can only append tool results to a tool role message.", fn ->
+        Message.append_tool_result(user_message, result)
+      end
     end
   end
 end

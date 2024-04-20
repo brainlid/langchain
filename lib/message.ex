@@ -68,6 +68,7 @@ defmodule LangChain.Message do
   alias __MODULE__
   alias LangChain.Message.UserContentPart
   alias LangChain.Message.ToolCall
+  alias LangChain.Message.ToolResult
   alias LangChain.LangChainError
   alias LangChain.Utils
 
@@ -88,11 +89,15 @@ defmodule LangChain.Message do
     # An `:assistant` role can request one or more `tool_calls` to be performed.
     field :tool_calls, :any, virtual: true
 
-    # When responding to a tool call, the `tool_call_id` specifies which tool
-    # call this is giving a response to.
-    field :tool_call_id, :string
-    # A tool response state that flags that an error occurred with the tool call
-    field :is_error, :boolean, default: false
+    # A `:tool` role contains one or more `tool_results` from the system having
+    # used tools.
+    field :tool_results, :any, virtual: true
+
+    # # When responding to a tool call, the `tool_call_id` specifies which tool
+    # # call this is giving a response to.
+    # field :tool_call_id, :string
+    # # A tool response state that flags that an error occurred with the tool call
+    # field :is_error, :boolean, default: false
     # TODO: Remove "function_name"
     field :function_name, :string
     # TODO: Remove "arguments"
@@ -102,7 +107,7 @@ defmodule LangChain.Message do
   @type t :: %Message{}
   @type status :: :complete | :cancelled | :length
 
-  @update_fields [:role, :content, :status, :tool_calls, :tool_call_id, :is_error, :index, :name]
+  @update_fields [:role, :content, :status, :tool_calls, :tool_results, :index, :name]
   @create_fields @update_fields
   @required_fields [:role]
 
@@ -143,8 +148,8 @@ defmodule LangChain.Message do
     |> validate_required(@required_fields)
     |> validate_content_required()
     |> validate_content_type()
-    |> validate_tool_call_id_for_role()
     |> validate_and_parse_tool_calls()
+    |> validate_tool_results()
   end
 
   # validate that a "user" and "system" message has content. Allow an
@@ -157,7 +162,7 @@ defmodule LangChain.Message do
     role = fetch_field!(changeset, :role)
 
     case role do
-      role when role in [:system, :user, :tool] ->
+      role when role in [:system, :user] ->
         validate_required(changeset, [:content])
 
       _other ->
@@ -192,27 +197,6 @@ defmodule LangChain.Message do
 
       # unchanged
       :error ->
-        changeset
-    end
-  end
-
-  # validate that "tool_call_id" can only be set if the role is "tool"
-  # for responding to a "tool_call". For the returning a tool result.
-  #
-  # The `tool` role is required for those message types.
-  defp validate_tool_call_id_for_role(changeset) do
-    case fetch_field!(changeset, :role) do
-      role when role in [:tool] ->
-        validate_required(changeset, [:tool_call_id])
-
-      role when role in [:system, :user] ->
-        if get_field(changeset, :tool_call_id) == nil do
-          changeset
-        else
-          add_error(changeset, :tool_call_id, "can't be set with role #{inspect(role)}")
-        end
-
-      _other ->
         changeset
     end
   end
@@ -258,6 +242,26 @@ defmodule LangChain.Message do
         Enum.reduce(errors, changeset, fn {:error, reason}, acc ->
           add_error(acc, :tool_calls, reason)
         end)
+
+      _other ->
+        changeset
+    end
+  end
+
+  def validate_tool_results(changeset) do
+    # validate that tool_results are only set when role is :tool
+
+    # The `tool` role is required for those message types.
+    case fetch_field!(changeset, :role) do
+      role when role in [:tool] ->
+        validate_required(changeset, [:tool_results])
+
+      role when role in [:system, :user] ->
+        if get_field(changeset, :tool_results) == nil do
+          changeset
+        else
+          add_error(changeset, :tool_results, "can't be set with role #{inspect(role)}")
+        end
 
       _other ->
         changeset
@@ -344,34 +348,43 @@ defmodule LangChain.Message do
   @doc """
   Create a new `tool` message to represent the result of a tool's execution.
   """
-  @spec new_tool(tool_call_id :: String.t(), result :: any(), Keyword.t()) ::
+  @spec new_tool_result(ToolResult.t() | [ToolResult.t()]) ::
           {:ok, t()} | {:error, Ecto.Changeset.t()}
-  def new_tool(tool_call_id, result, opts \\ []) do
+  def new_tool_result(tool_result_or_list_of_results) do
     new(%{
       role: :tool,
-      tool_call_id: tool_call_id,
-      content: serialize_result(result),
-      is_error: Keyword.get(opts, :is_error, false)
+      tool_results: List.wrap(tool_result_or_list_of_results),
+      content: nil
     })
   end
-
-  @spec serialize_result(result :: any()) :: String.t()
-  defp serialize_result(result) when is_binary(result), do: result
-  defp serialize_result(result) when is_map(result), do: Jason.encode!(result)
 
   @doc """
   Create a new tool response message to return the result of an executed
   tool.
   """
-  @spec new_tool!(tool_call_id :: String.t(), result :: any(), Keyword.t()) :: t() | no_return()
-  def new_tool!(tool_call_id, result, opts \\ []) do
-    case new_tool(tool_call_id, result, opts) do
+  @spec new_tool_result!(ToolResult.t() | [ToolResult.t()]) :: t() | no_return()
+  def new_tool_result!(tool_result_or_list_of_results) do
+    case new_tool_result(tool_result_or_list_of_results) do
       {:ok, msg} ->
         msg
 
       {:error, %Ecto.Changeset{} = changeset} ->
         raise LangChainError, changeset
     end
+  end
+
+  @doc """
+  Append a `ToolResult` to a message. A result can only be added to a `:tool`
+  role message.
+  """
+  @spec append_tool_result(t(), ToolResult.t()) :: t() | no_return()
+  def append_tool_result(%Message{role: :tool} = message, %ToolResult{} = result) do
+    existing_results = message.tool_results || []
+    %Message{message | tool_results: existing_results ++ [result]}
+  end
+
+  def append_tool_result(%Message{} = _message, %ToolResult{} = _result) do
+    raise LangChainError, "Can only append tool results to a tool role message."
   end
 
   @doc """
