@@ -9,6 +9,8 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
   alias LangChain.Message
   alias LangChain.Message.UserContentPart
   alias LangChain.Message.ToolCall
+  alias LangChain.Message.ToolResult
+  alias LangChain.Chains.LLMChain
 
   @test_model "gpt-3.5-turbo"
   @gpt4 "gpt-4-1106-preview"
@@ -232,14 +234,67 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
              }
     end
 
-    test "turns a tool execution response into expected JSON format" do
-      msg = Message.new_tool!("tool_abc123", "Hello World!")
+    test "turns a ToolResult into the expected JSON format" do
+      result = ToolResult.new!(%{tool_call_id: "tool_abc123", content: "Hello World!"})
 
-      json = ChatOpenAI.for_api(msg)
+      json = ChatOpenAI.for_api(result)
 
       assert json == %{
                "content" => "Hello World!",
                "tool_call_id" => "tool_abc123",
+               "role" => :tool
+             }
+    end
+
+    test "turns a tool message into expected JSON format" do
+      msg =
+        Message.new_tool_result!(
+          ToolResult.new!(%{tool_call_id: "tool_abc123", content: "Hello World!"})
+        )
+
+      [json] = ChatOpenAI.for_api(msg)
+
+      assert json == %{
+               "content" => "Hello World!",
+               "tool_call_id" => "tool_abc123",
+               "role" => :tool
+             }
+    end
+
+    test "turns multiple tool results into expected JSON format" do
+      # Should generate multiple tool entries.
+      message =
+        Message.new_tool_result!(
+          ToolResult.new!(%{tool_call_id: "tool_abc123", content: "Hello World!"})
+        )
+        |> Message.append_tool_result(
+          ToolResult.new!(%{tool_call_id: "tool_abc234", content: "Hello"})
+        )
+        |> Message.append_tool_result(
+          ToolResult.new!(%{tool_call_id: "tool_abc345", content: "World!"})
+        )
+
+      list = ChatOpenAI.for_api(message)
+
+      assert is_list(list)
+
+      [r1, r2, r3] = list
+
+      assert r1 == %{
+               "content" => "Hello World!",
+               "tool_call_id" => "tool_abc123",
+               "role" => :tool
+             }
+
+      assert r2 == %{
+               "content" => "Hello",
+               "tool_call_id" => "tool_abc234",
+               "role" => :tool
+             }
+
+      assert r3 == %{
+               "content" => "World!",
+               "tool_call_id" => "tool_abc345",
                "role" => :tool
              }
     end
@@ -757,7 +812,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
           %ToolCall{
             status: :incomplete,
             type: :function,
-            call_id: nil,
+            call_id: "call_fFRRtPwaroz9wbs2eWR7dpcW",
             name: "get_weather",
             arguments: "{\"city\": \"Moab\", \"state\": \"UT\"}",
             index: 0
@@ -765,7 +820,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
           %ToolCall{
             status: :incomplete,
             type: :function,
-            call_id: nil,
+            call_id: "call_sEmznyM1sGqYQ4dbNGdubmxa",
             name: "get_weather",
             arguments: "{\"city\": \"Portland\", \"state\": \"OR\"}",
             index: 1
@@ -773,7 +828,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
           %ToolCall{
             status: :incomplete,
             type: :function,
-            call_id: nil,
+            call_id: "call_cPufqMGm4TOFtqiqFPfz7pcp",
             name: "get_weather",
             arguments: "{\"city\": \"Baltimore\", \"state\": \"MD\"}",
             index: 2
@@ -1098,6 +1153,34 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
              } = delta4
     end
 
+    test "parses initial tool call delta message correctly" do
+      raw_delta = %{
+        "delta" => %{
+          "content" => nil,
+          "role" => "assistant",
+          "tool_calls" => [
+            %{
+              "function" => %{"arguments" => "", "name" => "find_by_code"},
+              "id" => "call_567",
+              "index" => 0,
+              "type" => "function"
+            }
+          ]
+        },
+        "finish_reason" => nil,
+        "index" => 0
+      }
+
+      %MessageDelta{} = delta = ChatOpenAI.do_process_response(raw_delta)
+      assert delta.content == nil
+      assert delta.role == :assistant
+      assert [%ToolCall{} = call] = delta.tool_calls
+      assert call.call_id == "call_567"
+      assert call.index == 0
+      assert call.type == :function
+      assert call.arguments == nil
+    end
+
     test "parses individual tool_calls in a delta message" do
       # chunk 1
       tool_call_response = %{
@@ -1148,7 +1231,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
       expected_call =
         ToolCall.new!(%{
-          id: "call_fFRRtPwaroz9wbs2eWR7dpcW",
+          call_id: "call_fFRRtPwaroz9wbs2eWR7dpcW",
           index: 0,
           type: :function,
           status: :incomplete,
@@ -1182,6 +1265,49 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert delta4.content == nil
       assert delta4.index == 0
       assert delta4.tool_calls == nil
+    end
+  end
+
+  describe "works within a chain" do
+    @tag live_call: true, live_open_ai: true
+    test "supports starting the assistant's response message and continuing it" do
+      test_pid = self()
+
+      callback_fn = fn data ->
+        # IO.inspect(data, label: "DATA")
+        send(test_pid, {:streamed_fn, data})
+      end
+
+      {:ok, _result_chain, last_message} =
+        LLMChain.new!(%{llm: %ChatOpenAI{model: @gpt4, stream: true}})
+        |> LLMChain.add_message(Message.new_system!("You are a helpful and concise assistant."))
+        |> LLMChain.add_message(
+          Message.new_user!(
+            "What's the capitol of Norway? Please respond with the answer <answer>{{ANSWER}}</answer>"
+          )
+        )
+        # |> LLMChain.add_message(Message.new_assistant!("<answer>"))
+        |> LLMChain.run(callback_fn: callback_fn)
+
+      # %LangChain.Message{
+      #   content: "<answer>Oslo</answer>",
+      #   index: 0,
+      #   status: :complete,
+      #   role: :assistant,
+      #   name: nil,
+      #   tool_calls: [],
+      #   tool_call_id: nil,
+      #   is_error: false,
+      #   function_name: nil,
+      #   arguments: nil
+      # },
+
+      assert last_message.content =~ "Oslo"
+      assert last_message.status == :complete
+      assert last_message.role == :assistant
+
+      assert_received {:streamed_fn, data}
+      assert %MessageDelta{role: :assistant} = data
     end
   end
 

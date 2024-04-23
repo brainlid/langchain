@@ -256,7 +256,7 @@ defmodule LangChain.MessageTest do
           is_error: true
         })
 
-      {:ok, %Message{} = msg} = Message.new_tool_result(result)
+      {:ok, %Message{} = msg} = Message.new_tool_result(%{tool_results: [result]})
 
       assert msg.role == :tool
       assert [result] == msg.tool_results
@@ -264,10 +264,10 @@ defmodule LangChain.MessageTest do
   end
 
   describe "new_tool_result!/1" do
-    test "creates a function response message" do
+    test "creates a tool response message" do
       result = ToolResult.new!(%{tool_call_id: "call_123", content: "RESULT"})
 
-      %Message{} = msg = Message.new_tool_result!(result)
+      %Message{} = msg = Message.new_tool_result!(%{tool_results: [result]})
 
       assert msg.role == :tool
       assert [result] == msg.tool_results
@@ -291,7 +291,7 @@ defmodule LangChain.MessageTest do
         })
 
       message =
-        result1
+        %{tool_results: [result1]}
         |> Message.new_tool_result!()
         |> Message.append_tool_result(result2)
 

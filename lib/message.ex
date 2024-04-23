@@ -149,7 +149,8 @@ defmodule LangChain.Message do
     |> validate_content_required()
     |> validate_content_type()
     |> validate_and_parse_tool_calls()
-    |> validate_tool_results()
+    |> validate_tool_results_required()
+    |> validate_tool_results_list_type()
   end
 
   # validate that a "user" and "system" message has content. Allow an
@@ -248,7 +249,7 @@ defmodule LangChain.Message do
     end
   end
 
-  def validate_tool_results(changeset) do
+  def validate_tool_results_required(changeset) do
     # validate that tool_results are only set when role is :tool
 
     # The `tool` role is required for those message types.
@@ -265,6 +266,26 @@ defmodule LangChain.Message do
 
       _other ->
         changeset
+    end
+  end
+
+  def validate_tool_results_list_type(changeset) do
+    # ensure it is a list of ToolResult structs. Testing only the first one. Dev
+    # check
+    role = get_field(changeset, :role)
+
+    if role == :tool do
+      case get_field(changeset, :tool_results) do
+        [first | _rest] ->
+          if match?(%ToolResult{}, first) do
+            # valid
+            changeset
+          else
+            add_error(changeset, :tool_results, "must be a list of ToolResult")
+          end
+      end
+    else
+      changeset
     end
   end
 
@@ -347,14 +368,18 @@ defmodule LangChain.Message do
 
   @doc """
   Create a new `tool` message to represent the result of a tool's execution.
+
+  ## Attributes
+
+  - `:tool_results` - a list of tool `ToolResult` structs.
+  - `:content` - Text content returned from the LLM.
   """
-  @spec new_tool_result(ToolResult.t() | [ToolResult.t()]) ::
-          {:ok, t()} | {:error, Ecto.Changeset.t()}
-  def new_tool_result(tool_result_or_list_of_results) do
+  @spec new_tool_result(attrs :: map()) :: {:ok, t()} | {:error, Ecto.Changeset.t()}
+  def new_tool_result(attrs \\ %{}) do
     new(%{
       role: :tool,
-      tool_results: List.wrap(tool_result_or_list_of_results),
-      content: nil
+      tool_results: List.wrap(Map.get(attrs, :tool_results, [])),
+      content: Map.get(attrs, :content, nil)
     })
   end
 
@@ -362,9 +387,9 @@ defmodule LangChain.Message do
   Create a new tool response message to return the result of an executed
   tool.
   """
-  @spec new_tool_result!(ToolResult.t() | [ToolResult.t()]) :: t() | no_return()
-  def new_tool_result!(tool_result_or_list_of_results) do
-    case new_tool_result(tool_result_or_list_of_results) do
+  @spec new_tool_result!(attrs :: map()) :: t() | no_return()
+  def new_tool_result!(attrs \\ %{}) do
+    case new_tool_result(attrs) do
       {:ok, msg} ->
         msg
 
