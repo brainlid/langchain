@@ -13,7 +13,7 @@ defmodule ChatModels.ChatGoogleAITest do
       Function.new(%{
         name: "hello_world",
         description: "Give a hello world greeting.",
-        function: fn -> IO.puts("Hello world!") end
+        function: fn -> "Hello world!" end
       })
 
     %{hello_world: hello_world}
@@ -69,10 +69,8 @@ defmodule ChatModels.ChatGoogleAITest do
 
     test "generates a map for an API call", %{google_ai: google_ai} do
       data = ChatGoogleAI.for_api(google_ai, [], [])
-      assert data["contents"] == []
-      assert data["generationConfig"]["temperature"] == 1.0
-      assert data["generationConfig"]["topP"] == 1.0
-      assert data["generationConfig"]["topK"] == 1.0
+      assert %{"contents" => [], "generationConfig" => config} = data
+      assert %{"temperature" => 1.0, "topK" => 1.0, "topP" => 1.0} = config
     end
 
     test "generates a map containing user and assistant messages", %{google_ai: google_ai} do
@@ -82,19 +80,16 @@ defmodule ChatModels.ChatGoogleAITest do
       data =
         ChatGoogleAI.for_api(
           google_ai,
-          [Message.new_user!(user_message), Message.new_assistant!(assistant_message)],
+          [
+            Message.new_user!(user_message),
+            Message.new_assistant!(assistant_message)
+          ],
           []
         )
 
-      assert get_in(data, ["contents", Access.at(0), "role"]) == :user
-
-      assert get_in(data, ["contents", Access.at(0), "parts", Access.at(0), "text"]) ==
-               user_message
-
-      assert get_in(data, ["contents", Access.at(1), "role"]) == :model
-
-      assert get_in(data, ["contents", Access.at(1), "parts", Access.at(0), "text"]) ==
-               assistant_message
+      assert %{"contents" => [msg1, msg2]} = data
+      assert %{"role" => :user, "parts" => [%{"text" => ^user_message}]} = msg1
+      assert %{"role" => :model, "parts" => [%{"text" => ^assistant_message}]} = msg2
     end
 
     test "generates a map containing function and function call messages", %{google_ai: google_ai} do
@@ -113,64 +108,34 @@ defmodule ChatModels.ChatGoogleAITest do
           []
         )
 
-      assert get_in(data, ["contents", Access.at(0), "role"]) == :user
+      assert %{"contents" => [msg1, msg2, msg3]} = data
+      assert %{"role" => :user, "parts" => [%{"text" => ^message}]} = msg1
+      assert %{"role" => :model, "parts" => [tool_call]} = msg2
+      assert %{"role" => :function, "parts" => [tool_result]} = msg3
 
-      assert get_in(data, ["contents", Access.at(0), "parts", Access.at(0), "text"]) ==
-               message
+      assert %{
+               "functionCall" => %{
+                 "args" => ^arguments,
+                 "name" => "userland_action"
+               }
+             } = tool_call
 
-      assert get_in(data, ["contents", Access.at(1), "role"]) == :model
-
-      assert get_in(data, [
-               "contents",
-               Access.at(1),
-               "parts",
-               Access.at(0),
-               "functionCall",
-               "name"
-             ]) == "userland_action"
-
-      assert get_in(data, [
-               "contents",
-               Access.at(1),
-               "parts",
-               Access.at(0),
-               "functionCall",
-               "args"
-             ]) == arguments
-
-      assert get_in(data, ["contents", Access.at(2), "role"]) == :function
-
-      assert get_in(data, [
-               "contents",
-               Access.at(2),
-               "parts",
-               Access.at(0),
-               "functionResponse",
-               "name"
-             ]) == "userland_action"
-
-      assert get_in(data, [
-               "contents",
-               Access.at(2),
-               "parts",
-               Access.at(0),
-               "functionResponse",
-               "response"
-             ]) == function_result
+      assert %{
+               "functionResponse" => %{
+                 "name" => "userland_action",
+                 "response" => ^function_result
+               }
+             } = tool_result
     end
 
     test "expands system messages into two", %{google_ai: google_ai} do
       message = "These are some instructions."
 
       data = ChatGoogleAI.for_api(google_ai, [Message.new_system!(message)], [])
-      assert get_in(data, ["contents", Access.at(0), "role"]) == :user
 
-      assert get_in(data, ["contents", Access.at(0), "parts", Access.at(0), "text"]) ==
-               message
-
-      assert get_in(data, ["contents", Access.at(1), "role"]) == :model
-
-      assert get_in(data, ["contents", Access.at(1), "parts", Access.at(0), "text"]) == ""
+      assert %{"contents" => [msg1, msg2]} = data
+      assert %{"role" => :user, "parts" => [%{"text" => ^message}]} = msg1
+      assert %{"role" => :model, "parts" => [%{"text" => ""}]} = msg2
     end
 
     test "generates a map containing function declarations", %{
@@ -178,25 +143,19 @@ defmodule ChatModels.ChatGoogleAITest do
       hello_world: hello_world
     } do
       data = ChatGoogleAI.for_api(google_ai, [], [hello_world])
-      assert data["contents"] == []
 
-      assert get_in(data, [
-               "tools",
-               Access.at(0),
-               "functionDeclarations",
-               Access.at(0),
-               "name"
-             ]) ==
-               "hello_world"
+      assert %{"contents" => []} = data
+      assert %{"tools" => [tool_call]} = data
 
-      assert get_in(data, [
-               "tools",
-               Access.at(0),
-               "functionDeclarations",
-               Access.at(0),
-               "description"
-             ]) ==
-               "Give a hello world greeting."
+      assert %{
+               "functionDeclarations" => [
+                 %{
+                   "name" => "hello_world",
+                   "description" => "Give a hello world greeting.",
+                   "parameters" => %{"properties" => %{}, "type" => "object"}
+                 }
+               ]
+             } = tool_call
     end
   end
 
