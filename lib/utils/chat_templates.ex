@@ -49,6 +49,21 @@ defmodule LangChain.Utils.ChatTemplates do
   Note: The `:llama_2` format supports specific system messages. It is a
   variation of the `:inst` format.
 
+  ### `:llama_3`
+
+  ```
+  <|begin_of_text|>
+  <|start_header_id|>system<|end_header_id|>
+
+  System message.<|eot_id|>
+  <|start_header_id|>user<|end_header_id|>
+
+  User message.<|eot_id|>
+  <|start_header_id|>assistant<|end_header_id|>
+
+  Assistant message.<|eot_id|>
+  ```
+
   ### `:zephyr`
 
   ```
@@ -69,7 +84,7 @@ defmodule LangChain.Utils.ChatTemplates do
   alias LangChain.LangChainError
   alias LangChain.Message
 
-  @type chat_format :: :inst | :im_start | :llama_2 | :zephyr
+  @type chat_format :: :inst | :im_start | :llama_2 | :llama_3 | :zephyr
 
   # Option:
   # - `add_generation_prompt`: boolean. Defaults to False.
@@ -273,6 +288,34 @@ defmodule LangChain.Utils.ChatTemplates do
       "<s>[INST] <%= @system_text %><%= @first_user.content %> [/INST] <%= for m <- @rest do %><%= if m.role == :user do %><s>[INST] <%= m.content %> [/INST] <% else %><%= m.content %> </s><% end %><% end %>"
 
     EEx.eval_string(text, assigns: [system_text: system_text, first_user: first_user, rest: rest])
+  end
+
+  # Does LLaMa 3 formatted text
+  def apply_chat_template!(messages, :llama_3, opts) do
+    # <|begin_of_text|>
+    # <|start_header_id|>system<|end_header_id|>
+    #
+    # You are a helpful assistant.<|eot_id|>
+    # <|start_header_id|>user<|end_header_id|>
+    #
+    # What do you know about elixir?<|eot_id|>
+    # <|start_header_id|>assistant<|end_header_id|>
+
+    add_generation_prompt =
+      Keyword.get(opts, :add_generation_prompt, default_add_generation_prompt_value(messages))
+
+    {system, first_user, rest} = prep_and_validate_messages(messages)
+
+    # intentionally as a single line for explicit control of newlines and spaces.
+    text =
+      "<|begin_of_text|>\n<%= for message <- @messages do %><|start_header_id|><%= message.role %><|end_header_id|>\n\n<%= message.content %><|eot_id|>\n<% end %><%= if @add_generation_prompt do %><|start_header_id|>assistant<|end_header_id|>\n\n<% end %>"
+
+    EEx.eval_string(text,
+      assigns: [
+        messages: [system, first_user | rest] |> Enum.drop_while(&(&1 == nil)),
+        add_generation_prompt: add_generation_prompt
+      ]
+    )
   end
 
   # return the desired true/false value. Only set to true when the last message

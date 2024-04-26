@@ -399,4 +399,70 @@ defmodule LangChain.Utils.ChatTemplatesTest do
       assert result == expected
     end
   end
+
+  describe "apply_chat_template!/3 - :llama_3 format" do
+    test "includes provided system message" do
+      messages = [
+        Message.new_system!("system_message"),
+        Message.new_user!("user_prompt")
+      ]
+
+      expected = "<|begin_of_text|>\n<|start_header_id|>system<|end_header_id|>\n\nsystem_message<|eot_id|>\n<|start_header_id|>user<|end_header_id|>\n\nuser_prompt<|eot_id|>\n<|start_header_id|>assistant<|end_header_id|>\n\n"
+
+      result = ChatTemplates.apply_chat_template!(messages, :llama_3)
+      assert result == expected
+    end
+
+    test "does not add generation prompt when set to false" do
+      messages = [
+        Message.new_system!("system_message"),
+        Message.new_user!("user_prompt")
+      ]
+
+      expected = "<|begin_of_text|>\n<|start_header_id|>system<|end_header_id|>\n\nsystem_message<|eot_id|>\n<|start_header_id|>user<|end_header_id|>\n\nuser_prompt<|eot_id|>\n"
+
+      result =
+        ChatTemplates.apply_chat_template!(messages, :llama_3, add_generation_prompt: false)
+
+      assert result == expected
+    end
+
+    test "no system message when not provided" do
+      messages = [Message.new_user!("user_prompt")]
+
+      expected = "<|begin_of_text|>\n<|start_header_id|>user<|end_header_id|>\n\nuser_prompt<|eot_id|>\n<|start_header_id|>assistant<|end_header_id|>\n\n"
+
+      result = ChatTemplates.apply_chat_template!(messages, :llama_3)
+      assert result == expected
+    end
+
+    test "formats answered question correctly" do
+      messages = [
+        Message.new_system!("system_message"),
+        Message.new_user!("user_prompt"),
+        Message.new_assistant!("assistant_response")
+      ]
+
+      expected =
+        "<|begin_of_text|>\n<|start_header_id|>system<|end_header_id|>\n\nsystem_message<|eot_id|>\n<|start_header_id|>user<|end_header_id|>\n\nuser_prompt<|eot_id|>\n<|start_header_id|>assistant<|end_header_id|>\n\nassistant_response<|eot_id|>\n"
+
+      result = ChatTemplates.apply_chat_template!(messages, :llama_3)
+      assert result == expected
+    end
+
+    test "formats 2nd question correctly" do
+      messages = [
+        Message.new_system!("system_message"),
+        Message.new_user!("user_prompt"),
+        Message.new_assistant!("assistant_response"),
+        Message.new_user!("user_2nd")
+      ]
+
+      expected =
+        "<|begin_of_text|>\n<|start_header_id|>system<|end_header_id|>\n\nsystem_message<|eot_id|>\n<|start_header_id|>user<|end_header_id|>\n\nuser_prompt<|eot_id|>\n<|start_header_id|>assistant<|end_header_id|>\n\nassistant_response<|eot_id|>\n<|start_header_id|>user<|end_header_id|>\n\nuser_2nd<|eot_id|>\n<|start_header_id|>assistant<|end_header_id|>\n\n"
+
+      result = ChatTemplates.apply_chat_template!(messages, :llama_3)
+      assert result == expected
+    end
+  end
 end
