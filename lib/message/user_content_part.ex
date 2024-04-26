@@ -50,6 +50,12 @@ defmodule LangChain.Message.UserContentPart do
 
   @doc """
   Build a new message and return it or raise an error if invalid.
+
+  ## Example
+
+      UserContentPart.new!(%{type: :text, content: "Greetings!"})
+
+      UserContentPart.new!(%{type: :image_url, content: "https://example.com/images/house.jpg"})
   """
   @spec new!(attrs :: map()) :: t() | no_return()
   def new!(attrs \\ %{}) do
