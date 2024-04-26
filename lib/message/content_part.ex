@@ -1,7 +1,7 @@
-defmodule LangChain.Message.UserContentPart do
+defmodule LangChain.Message.ContentPart do
   @moduledoc """
-  Models a `UserContentPart`. Some LLMs support combining text, images, and possibly
-  other content as part of a single user message. A `UserContentPart` represents a
+  Models a `ContentPart`. Some LLMs support combining text, images, and possibly
+  other content as part of a single user message. A `ContentPart` represents a
   block, or part, of a message's content that is all of one type.
 
   ## Types
@@ -31,7 +31,7 @@ defmodule LangChain.Message.UserContentPart do
     field :options, :any, virtual: true
   end
 
-  @type t :: %UserContentPart{}
+  @type t :: %ContentPart{}
 
   @update_fields [:type, :content, :options]
   @create_fields @update_fields
@@ -42,7 +42,7 @@ defmodule LangChain.Message.UserContentPart do
   """
   @spec new(attrs :: map()) :: {:ok, t()} | {:error, Ecto.Changeset.t()}
   def new(attrs \\ %{}) do
-    %UserContentPart{}
+    %ContentPart{}
     |> cast(attrs, @create_fields)
     |> common_validations()
     |> apply_action(:insert)
@@ -53,9 +53,9 @@ defmodule LangChain.Message.UserContentPart do
 
   ## Example
 
-      UserContentPart.new!(%{type: :text, content: "Greetings!"})
+      ContentPart.new!(%{type: :text, content: "Greetings!"})
 
-      UserContentPart.new!(%{type: :image_url, content: "https://example.com/images/house.jpg"})
+      ContentPart.new!(%{type: :image_url, content: "https://example.com/images/house.jpg"})
   """
   @spec new!(attrs :: map()) :: t() | no_return()
   def new!(attrs \\ %{}) do
@@ -69,7 +69,7 @@ defmodule LangChain.Message.UserContentPart do
   end
 
   @doc """
-  Create a new UserContentPart that contains text. Raises an exception if not valid.
+  Create a new ContentPart that contains text. Raises an exception if not valid.
   """
   @spec text!(String.t()) :: t() | no_return()
   def text!(content) do
@@ -77,7 +77,7 @@ defmodule LangChain.Message.UserContentPart do
   end
 
   @doc """
-  Create a new UserContentPart that contains an image encoded as base64 data. Raises
+  Create a new ContentPart that contains an image encoded as base64 data. Raises
   an exception if not valid.
 
   ## Options
@@ -91,7 +91,7 @@ defmodule LangChain.Message.UserContentPart do
   end
 
   @doc """
-  Create a new UserContentPart that contains a URL to an image. Raises an exception if not valid.
+  Create a new ContentPart that contains a URL to an image. Raises an exception if not valid.
   """
   @spec image_url!(String.t()) :: t() | no_return()
   def image_url!(content) do

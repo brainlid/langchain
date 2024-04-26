@@ -15,7 +15,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   alias LangChain.ChatModels.ChatModel
   alias LangChain.LangChainError
   alias LangChain.Message
-  alias LangChain.Message.UserContentPart
+  alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult
   alias LangChain.MessageDelta
@@ -593,7 +593,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   @doc """
   Convert a LangChain structure to the expected map of data for the OpenAI API.
   """
-  @spec for_api(Message.t() | UserContentPart.t() | Function.t()) ::
+  @spec for_api(Message.t() | ContentPart.t() | Function.t()) ::
           %{String.t() => any()} | no_return()
   def for_api(%Message{role: :assistant, tool_calls: calls} = msg)
       when is_list(calls) and calls != [] do
@@ -644,11 +644,11 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     }
   end
 
-  def for_api(%UserContentPart{type: :text} = part) do
+  def for_api(%ContentPart{type: :text} = part) do
     %{"type" => "text", "text" => part.content}
   end
 
-  def for_api(%UserContentPart{type: :image} = part) do
+  def for_api(%ContentPart{type: :image} = part) do
     %{
       "type" => "image",
       "source" => %{
@@ -659,7 +659,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     }
   end
 
-  def for_api(%UserContentPart{type: :image_url} = _part) do
+  def for_api(%ContentPart{type: :image_url} = _part) do
     raise LangChainError, "Anthropic does not support image_url"
   end
 

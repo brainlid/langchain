@@ -5,7 +5,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
   alias LangChain.ChatModels.ChatAnthropic
   alias LangChain.Chains.LLMChain
   alias LangChain.Message
-  alias LangChain.Message.UserContentPart
+  alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult
   alias LangChain.Function
@@ -700,21 +700,21 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       result =
         ChatAnthropic.for_api(
           Message.new_user!([
-            UserContentPart.text!("Tell me about this image:"),
-            UserContentPart.image!("base64-text-data", media: "image/jpeg")
+            ContentPart.text!("Tell me about this image:"),
+            ContentPart.image!("base64-text-data", media: "image/jpeg")
           ])
         )
 
       assert result == expected
     end
 
-    test "turns a text UserContentPart into the expected JSON format" do
+    test "turns a text ContentPart into the expected JSON format" do
       expected = %{"type" => "text", "text" => "Tell me about this image:"}
-      result = ChatAnthropic.for_api(UserContentPart.text!("Tell me about this image:"))
+      result = ChatAnthropic.for_api(ContentPart.text!("Tell me about this image:"))
       assert result == expected
     end
 
-    test "turns an image UserContentPart into the expected JSON format" do
+    test "turns an image ContentPart into the expected JSON format" do
       expected = %{
         "type" => "image",
         "source" => %{
@@ -725,14 +725,14 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       }
 
       result =
-        ChatAnthropic.for_api(UserContentPart.image!("image_base64_data", media: "image/png"))
+        ChatAnthropic.for_api(ContentPart.image!("image_base64_data", media: "image/png"))
 
       assert result == expected
     end
 
-    test "errors on UserContentPart type image_url" do
+    test "errors on ContentPart type image_url" do
       assert_raise LangChain.LangChainError, "Anthropic does not support image_url", fn ->
-        ChatAnthropic.for_api(UserContentPart.image_url!("url-to-image"))
+        ChatAnthropic.for_api(ContentPart.image_url!("url-to-image"))
       end
     end
 
@@ -985,7 +985,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
           Message.new_user!("Hi."),
           Message.new_assistant!(%{content: "Well, hi to you too."}),
           Message.new_user!([
-            UserContentPart.new!(%{type: :text, content: "No, I said 'hi' first."})
+            ContentPart.new!(%{type: :text, content: "No, I said 'hi' first."})
           ]),
           Message.new_assistant!(%{
             tool_calls: [ToolCall.new!(%{call_id: "call_123", name: "greet", arguments: %{}})]
@@ -1021,8 +1021,8 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 
       message =
         Message.new_user!([
-          UserContentPart.text!("Identify what this is a picture of:"),
-          UserContentPart.image!(image_data, media: "image/jpeg")
+          ContentPart.text!("Identify what this is a picture of:"),
+          ContentPart.image!(image_data, media: "image/jpeg")
         ])
 
       {:ok, response} = ChatAnthropic.call(chat, [message], [])

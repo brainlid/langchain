@@ -7,7 +7,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
   alias LangChain.Function
   alias LangChain.FunctionParam
   alias LangChain.Message
-  alias LangChain.Message.UserContentPart
+  alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult
   alias LangChain.Chains.LLMChain
@@ -159,29 +159,29 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       result =
         ChatOpenAI.for_api(
           Message.new_user!([
-            UserContentPart.text!("Tell me about this image:"),
-            UserContentPart.image_url!("url-to-image")
+            ContentPart.text!("Tell me about this image:"),
+            ContentPart.image_url!("url-to-image")
           ])
         )
 
       assert result == expected
     end
 
-    test "turns a text UserContentPart into the expected JSON format" do
+    test "turns a text ContentPart into the expected JSON format" do
       expected = %{"type" => "text", "text" => "Tell me about this image:"}
-      result = ChatOpenAI.for_api(UserContentPart.text!("Tell me about this image:"))
+      result = ChatOpenAI.for_api(ContentPart.text!("Tell me about this image:"))
       assert result == expected
     end
 
-    test "turns an image UserContentPart into the expected JSON format" do
+    test "turns an image ContentPart into the expected JSON format" do
       expected = %{"type" => "image_url", "image_url" => %{"url" => "image_base64_data"}}
-      result = ChatOpenAI.for_api(UserContentPart.image!("image_base64_data"))
+      result = ChatOpenAI.for_api(ContentPart.image!("image_base64_data"))
       assert result == expected
     end
 
-    test "turns an image_url UserContentPart into the expected JSON format" do
+    test "turns an image_url ContentPart into the expected JSON format" do
       expected = %{"type" => "image_url", "image_url" => %{"url" => "url-to-image"}}
-      result = ChatOpenAI.for_api(UserContentPart.image_url!("url-to-image"))
+      result = ChatOpenAI.for_api(ContentPart.image_url!("url-to-image"))
       assert result == expected
     end
 
@@ -1106,8 +1106,8 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
       message =
         Message.new_user!([
-          UserContentPart.text!("Identify what this is a picture of:"),
-          UserContentPart.image_url!(url)
+          ContentPart.text!("Identify what this is a picture of:"),
+          ContentPart.image_url!(url)
         ])
 
       {:ok, [response]} = ChatOpenAI.call(chat, [message], [])

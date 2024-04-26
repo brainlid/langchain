@@ -37,7 +37,7 @@ defmodule LangChain.Message do
   an image of" and provide an image.
 
   User Content Parts are implemented through
-  `LangChain.Message.UserContentPart`. A list of them can be supplied as the
+  `LangChain.Message.ContentPart`. A list of them can be supplied as the
   "content" for a message. Only a few LLMs support it, and they may require
   using specific models trained for it. See the documentation for the LLM or
   service for details on their level of support.
@@ -54,11 +54,11 @@ defmodule LangChain.Message do
 
       Message.new_user!("Who is Prime Minister of the moon?")
 
-  A multi-part user message: alias LangChain.Message.UserContentPart
+  A multi-part user message: alias LangChain.Message.ContentPart
 
       Message.new_user!([
-        UserContentPart.text!("What is in this picture?"),
-        UserContentPart.image_url!("https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg")
+        ContentPart.text!("What is in this picture?"),
+        ContentPart.image_url!("https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg")
       ]
 
   """
@@ -66,7 +66,7 @@ defmodule LangChain.Message do
   import Ecto.Changeset
   require Logger
   alias __MODULE__
-  alias LangChain.Message.UserContentPart
+  alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult
   alias LangChain.LangChainError
@@ -179,16 +179,16 @@ defmodule LangChain.Message do
       {:ok, text} when is_binary(text) ->
         changeset
 
-      {:ok, [%UserContentPart{} | _] = value} ->
+      {:ok, [%ContentPart{} | _] = value} ->
         if role == :user do
-          # if a list, verify all elements are a UserContentPart
-          if Enum.all?(value, &match?(%UserContentPart{}, &1)) do
+          # if a list, verify all elements are a ContentPart
+          if Enum.all?(value, &match?(%ContentPart{}, &1)) do
             changeset
           else
-            add_error(changeset, :content, "must be text or a list of UserContentParts")
+            add_error(changeset, :content, "must be text or a list of ContentParts")
           end
         else
-          # only a user message can have UserContentParts
+          # only a user message can have ContentParts
           add_error(changeset, :content, "is invalid for role #{role}")
         end
 
@@ -197,7 +197,7 @@ defmodule LangChain.Message do
 
       # any other value is not valid
       {:ok, _value} ->
-        add_error(changeset, :content, "must be text or a list of UserContentParts")
+        add_error(changeset, :content, "must be text or a list of ContentParts")
 
       # unchanged
       :error ->
@@ -323,7 +323,7 @@ defmodule LangChain.Message do
   Create a new user message which represents a human message or a message from
   the application.
   """
-  @spec new_user(content :: String.t() | [UserContentPart.t()]) ::
+  @spec new_user(content :: String.t() | [ContentPart.t()]) ::
           {:ok, t()} | {:error, Ecto.Changeset.t()}
   def new_user(content) do
     new(%{role: :user, content: content, status: :complete})
@@ -333,7 +333,7 @@ defmodule LangChain.Message do
   Create a new user message which represents a human message or a message from
   the application.
   """
-  @spec new_user!(content :: String.t() | [UserContentPart.t()]) :: t() | no_return()
+  @spec new_user!(content :: String.t() | [ContentPart.t()]) :: t() | no_return()
   def new_user!(content) do
     case new_user(content) do
       {:ok, msg} ->

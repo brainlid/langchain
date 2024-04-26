@@ -4,7 +4,7 @@ defmodule LangChain.MessageTest do
   alias LangChain.Message
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult
-  alias LangChain.Message.UserContentPart
+  alias LangChain.Message.ContentPart
   alias LangChain.LangChainError
 
   describe "new/1" do
@@ -83,9 +83,9 @@ defmodule LangChain.MessageTest do
       assert {"can't be blank", _} = changeset.errors[:content]
     end
 
-    test "requires content to be text or UserContentParts when a user message" do
+    test "requires content to be text or ContentParts when a user message" do
       # can be a content part
-      part = UserContentPart.text!("Hi")
+      part = ContentPart.text!("Hi")
       {:ok, message} = Message.new_user([part])
       assert message.content == [part]
 
@@ -154,30 +154,30 @@ defmodule LangChain.MessageTest do
       assert {"can't be blank", _} = changeset.errors[:content]
     end
 
-    test "accepts list of UserContentParts for content" do
+    test "accepts list of ContentParts for content" do
       assert {:ok, %Message{} = msg} =
                Message.new_user([
-                 UserContentPart.text!("Describe what is in this image:"),
-                 UserContentPart.image!(:base64.encode("fake_image_data"))
+                 ContentPart.text!("Describe what is in this image:"),
+                 ContentPart.image!(:base64.encode("fake_image_data"))
                ])
 
       assert msg.role == :user
 
       assert msg.content == [
-               %UserContentPart{type: :text, content: "Describe what is in this image:"},
-               %UserContentPart{type: :image, content: "ZmFrZV9pbWFnZV9kYXRh", options: []}
+               %ContentPart{type: :text, content: "Describe what is in this image:"},
+               %ContentPart{type: :image, content: "ZmFrZV9pbWFnZV9kYXRh", options: []}
              ]
     end
 
     test "does not accept invalid contents" do
       assert {:error, changeset} = Message.new_user(123)
-      assert {"must be text or a list of UserContentParts", _} = changeset.errors[:content]
+      assert {"must be text or a list of ContentParts", _} = changeset.errors[:content]
 
       assert {:error, changeset} = Message.new_user([123, "ABC"])
-      assert {"must be text or a list of UserContentParts", _} = changeset.errors[:content]
+      assert {"must be text or a list of ContentParts", _} = changeset.errors[:content]
 
-      assert {:error, changeset} = Message.new_user([UserContentPart.text!("CCC"), "invalid"])
-      assert {"must be text or a list of UserContentParts", _} = changeset.errors[:content]
+      assert {:error, changeset} = Message.new_user([ContentPart.text!("CCC"), "invalid"])
+      assert {"must be text or a list of ContentParts", _} = changeset.errors[:content]
     end
   end
 

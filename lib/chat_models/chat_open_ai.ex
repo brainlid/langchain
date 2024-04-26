@@ -17,7 +17,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   alias LangChain.Config
   alias LangChain.ChatModels.ChatModel
   alias LangChain.Message
-  alias LangChain.Message.UserContentPart
+  alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult
   alias LangChain.Function
@@ -186,7 +186,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   @doc """
   Convert a LangChain structure to the expected map of data for the OpenAI API.
   """
-  @spec for_api(Message.t() | UserContentPart.t() | Function.t()) ::
+  @spec for_api(Message.t() | ContentPart.t() | Function.t()) ::
           %{String.t() => any()} | [%{String.t() => any()}]
   def for_api(%Message{role: :assistant, tool_calls: tool_calls} = msg)
       when is_list(tool_calls) do
@@ -234,11 +234,11 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     }
   end
 
-  def for_api(%UserContentPart{type: :text} = part) do
+  def for_api(%ContentPart{type: :text} = part) do
     %{"type" => "text", "text" => part.content}
   end
 
-  def for_api(%UserContentPart{type: image} = part) when image in [:image, :image_url] do
+  def for_api(%ContentPart{type: image} = part) when image in [:image, :image_url] do
     %{"type" => "image_url", "image_url" => %{"url" => part.content}}
   end
 
