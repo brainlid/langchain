@@ -381,7 +381,7 @@ defmodule LangChain.Message do
   - `:content` - Text content returned from the LLM.
   """
   @spec new_tool_result(attrs :: map()) :: {:ok, t()} | {:error, Ecto.Changeset.t()}
-  def new_tool_result(attrs \\ %{}) do
+  def new_tool_result(attrs \\ %{}) when is_map(attrs) and not is_struct(attrs) do
     new(%{
       role: :tool,
       tool_results: List.wrap(Map.get(attrs, :tool_results, [])),
@@ -392,6 +392,11 @@ defmodule LangChain.Message do
   @doc """
   Create a new tool response message to return the result of an executed
   tool.
+
+  ## Attributes
+
+  - `:tool_results` - a list of tool `ToolResult` structs.
+  - `:content` - Text content returned from the LLM.
   """
   @spec new_tool_result!(attrs :: map()) :: t() | no_return()
   def new_tool_result!(attrs \\ %{}) do

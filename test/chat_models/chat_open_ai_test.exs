@@ -248,9 +248,11 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
     test "turns a tool message into expected JSON format" do
       msg =
-        Message.new_tool_result!(
-          ToolResult.new!(%{tool_call_id: "tool_abc123", content: "Hello World!"})
-        )
+        Message.new_tool_result!(%{
+          tool_results: [
+            ToolResult.new!(%{tool_call_id: "tool_abc123", content: "Hello World!"})
+          ]
+        })
 
       [json] = ChatOpenAI.for_api(msg)
 
@@ -264,9 +266,11 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     test "turns multiple tool results into expected JSON format" do
       # Should generate multiple tool entries.
       message =
-        Message.new_tool_result!(
-          ToolResult.new!(%{tool_call_id: "tool_abc123", content: "Hello World!"})
-        )
+        Message.new_tool_result!(%{
+          tool_results: [
+            ToolResult.new!(%{tool_call_id: "tool_abc123", content: "Hello World!"})
+          ]
+        })
         |> Message.append_tool_result(
           ToolResult.new!(%{tool_call_id: "tool_abc234", content: "Hello"})
         )
@@ -274,6 +278,8 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
           ToolResult.new!(%{tool_call_id: "tool_abc345", content: "World!"})
         )
 
+      # ChatGPT expects each tool response to stand alone. This splits them out
+      # and returns them individually.
       list = ChatOpenAI.for_api(message)
 
       assert is_list(list)

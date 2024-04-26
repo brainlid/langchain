@@ -7,6 +7,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
   alias LangChain.Message
   alias LangChain.Message.UserContentPart
   alias LangChain.Message.ToolCall
+  alias LangChain.Message.ToolResult
   alias LangChain.Function
   alias LangChain.FunctionParam
 
@@ -140,7 +141,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
                ]
     end
 
-    test "combines sequential tool responses into a single user message" do
+    test "includes multiple tool responses into a single user message" do
       # ability to restore a conversation and continue it
       messages =
         [
@@ -153,9 +154,13 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
             ]
           }),
           Message.new_user!("That was a lot of stuff."),
-          Message.new_tool!("call_123", "sudo hi 1"),
-          Message.new_tool!("call_234", "sudo hi 2"),
-          Message.new_tool!("call_345", "sudo hi 3"),
+          Message.new_tool_result!(%{
+            tool_results: [
+              ToolResult.new!(%{tool_call_id: "call_123", content: "sudo hi 1"}),
+              ToolResult.new!(%{tool_call_id: "call_234", content: "sudo hi 2"}),
+              ToolResult.new!(%{tool_call_id: "call_345", content: "sudo hi 3"})
+            ]
+          }),
           Message.new_assistant!(%{content: "No, \"sudo hi\""})
         ]
 
@@ -188,7 +193,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
                      }
                    ]
                  },
-                 #  combined user responses
+                 #  tool result responses
                  %{
                    "role" => "user",
                    "content" => [
@@ -850,9 +855,15 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       assert json == expected
     end
 
-    test "turns a tool response into expected JSON format" do
-      tool_response = Message.new_tool!("toolu_123", "tool answer")
-      json = ChatAnthropic.for_api(tool_response)
+    test "turns a tool message into expected JSON format" do
+      tool_success_result =
+        Message.new_tool_result!(%{
+          tool_results: [
+            ToolResult.new!(%{tool_call_id: "toolu_123", content: "tool answer"})
+          ]
+        })
+
+      json = ChatAnthropic.for_api(tool_success_result)
 
       expected = %{
         "role" => "user",
@@ -868,8 +879,14 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 
       assert json == expected
 
-      tool_error_response = Message.new_tool!("toolu_234", "stuff failed", is_error: true)
-      json = ChatAnthropic.for_api(tool_error_response)
+      tool_error_result =
+        Message.new_tool_result!(%{
+          tool_results: [
+            ToolResult.new!(%{tool_call_id: "toolu_234", content: "stuff failed", is_error: true})
+          ]
+        })
+
+      json = ChatAnthropic.for_api(tool_error_result)
 
       expected = %{
         "role" => "user",
@@ -881,6 +898,35 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
             "is_error" => true
           }
         ]
+      }
+
+      assert json == expected
+    end
+
+    test "turns a tool result into expected JSON format" do
+      tool_success_result = ToolResult.new!(%{tool_call_id: "toolu_123", content: "tool answer"})
+
+      json = ChatAnthropic.for_api(tool_success_result)
+
+      expected = %{
+        "type" => "tool_result",
+        "tool_use_id" => "toolu_123",
+        "content" => "tool answer",
+        "is_error" => false
+      }
+
+      assert json == expected
+
+      tool_error_result =
+        ToolResult.new!(%{tool_call_id: "toolu_234", content: "stuff failed", is_error: true})
+
+      json = ChatAnthropic.for_api(tool_error_result)
+
+      expected = %{
+        "type" => "tool_result",
+        "tool_use_id" => "toolu_234",
+        "content" => "stuff failed",
+        "is_error" => true
       }
 
       assert json == expected
@@ -944,7 +990,16 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
           Message.new_assistant!(%{
             tool_calls: [ToolCall.new!(%{call_id: "call_123", name: "greet", arguments: %{}})]
           }),
-          Message.new_tool!("call_123", "sudo hi"),
+          Message.new_tool_result!(%{
+            tool_results: [
+              ToolResult.new!(%{
+                tool_call_id: "call_123",
+                content: "sudo hi",
+                name: "greet",
+                arguments: %{}
+              })
+            ]
+          }),
           Message.new_assistant!(%{content: "No, \"sudo hi\""}),
           Message.new_user!("Ah, yes, you win."),
           Message.new_assistant!(%{content: "Thank you for playing."})
@@ -953,79 +1008,8 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 
       assert messages == ChatAnthropic.post_process_and_combine_messages(messages)
     end
-
-    test "merges sequences of user messages with tool results into single message" do
-      # create multiple tool calls and multiple tool responses
-      messages =
-        [
-          Message.new_user!("Hi."),
-          Message.new_assistant!(%{
-            tool_calls: [
-              ToolCall.new!(%{call_id: "call_123", name: "greet1", arguments: %{}}),
-              ToolCall.new!(%{call_id: "call_234", name: "greet2", arguments: %{}}),
-              ToolCall.new!(%{call_id: "call_345", name: "greet3", arguments: %{}})
-            ]
-          }),
-          Message.new_user!("That was a lot of stuff."),
-          Message.new_tool!("call_123", "sudo hi 1"),
-          Message.new_tool!("call_234", "sudo hi 2"),
-          Message.new_tool!("call_345", "sudo hi 3"),
-          Message.new_assistant!(%{content: "No, \"sudo hi\""})
-        ]
-        |> Enum.map(&ChatAnthropic.for_api(&1))
-
-      merged_messages = ChatAnthropic.post_process_and_combine_messages(messages)
-
-      assert merged_messages == [
-               %{"content" => "Hi.", "role" => "user"},
-               #  tool calls
-               %{
-                 "role" => "assistant",
-                 "content" => [
-                   %{
-                     "id" => "call_123",
-                     "input" => %{},
-                     "name" => "greet1",
-                     "type" => "tool_use"
-                   },
-                   %{
-                     "id" => "call_234",
-                     "input" => %{},
-                     "name" => "greet2",
-                     "type" => "tool_use"
-                   },
-                   %{"id" => "call_345", "input" => %{}, "name" => "greet3", "type" => "tool_use"}
-                 ]
-               },
-               #  merged user text message with multiple tool responses
-               %{
-                 "role" => "user",
-                 "content" => [
-                   %{"text" => "That was a lot of stuff.", "type" => "text"},
-                   %{
-                     "content" => "sudo hi 1",
-                     "is_error" => false,
-                     "tool_use_id" => "call_123",
-                     "type" => "tool_result"
-                   },
-                   %{
-                     "content" => "sudo hi 2",
-                     "is_error" => false,
-                     "tool_use_id" => "call_234",
-                     "type" => "tool_result"
-                   },
-                   %{
-                     "content" => "sudo hi 3",
-                     "is_error" => false,
-                     "tool_use_id" => "call_345",
-                     "type" => "tool_result"
-                   }
-                 ]
-               },
-               %{"content" => "No, \"sudo hi\"", "role" => "assistant"}
-             ]
-    end
   end
+
 
   describe "image vision using message parts" do
     @tag live_call: true, live_anthropic: true

@@ -17,6 +17,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   alias LangChain.Message
   alias LangChain.Message.UserContentPart
   alias LangChain.Message.ToolCall
+  alias LangChain.Message.ToolResult
   alias LangChain.MessageDelta
   alias LangChain.Function
   alias LangChain.FunctionParam
@@ -616,17 +617,15 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     }
   end
 
-  def for_api(%Message{role: :tool} = msg) do
+  def for_api(%Message{role: :tool, tool_results: results}) when is_list(results) do
+    # convert ToolResult into the expected format for Anthropic.
+    #
+    # A tool result is returned as a list within the content of a user message.
+    tool_results = Enum.map(results, &for_api(&1))
+
     %{
       "role" => "user",
-      "content" => [
-        %{
-          "type" => "tool_result",
-          "tool_use_id" => msg.tool_call_id,
-          "content" => msg.content
-        }
-        |> Utils.conditionally_add_to_map("is_error", msg.is_error)
-      ]
+      "content" => tool_results
     }
   end
 
@@ -682,6 +681,16 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       "name" => call.name,
       "input" => call.arguments || %{}
     }
+  end
+
+  # ToolResult support
+  def for_api(%ToolResult{} = result) do
+    %{
+      "type" => "tool_result",
+      "tool_use_id" => result.tool_call_id,
+      "content" => result.content
+    }
+    |> Utils.conditionally_add_to_map("is_error", result.is_error)
   end
 
   defp get_parameters(%Function{parameters: [], parameters_schema: nil} = _fun) do

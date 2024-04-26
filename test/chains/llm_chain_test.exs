@@ -564,9 +564,11 @@ defmodule LangChain.Chains.LLMChainTest do
       assert updated_chain.needs_response
 
       tool_msg =
-        Message.new_tool_result!(
-          ToolResult.new!(%{tool_call_id: "call_abc123", content: "Hello world!"})
-        )
+        Message.new_tool_result!(%{
+          tool_results: [
+            ToolResult.new!(%{tool_call_id: "call_abc123", content: "Hello world!"})
+          ]
+        })
 
       updated_chain = LLMChain.add_message(chain, tool_msg)
       assert updated_chain.needs_response
