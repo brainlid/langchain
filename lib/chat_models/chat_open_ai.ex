@@ -199,7 +199,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
   def for_api(%Message{role: :tool, tool_results: tool_results} = _msg)
       when is_list(tool_results) do
-        # ToolResults turn into a list of tool messages for OpenAI
+    # ToolResults turn into a list of tool messages for OpenAI
     Enum.map(tool_results, fn result ->
       %{
         "role" => :tool,

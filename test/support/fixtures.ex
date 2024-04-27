@@ -973,7 +973,7 @@ defmodule LangChain.Fixtures do
           status: :incomplete,
           index: 0,
           tool_calls: [%ToolCall{call_id: "call_123", name: "regions_list", index: 0}],
-          role: :tool_call,
+          role: :tool_call
         }
       ],
       [
@@ -982,7 +982,7 @@ defmodule LangChain.Fixtures do
           status: :incomplete,
           index: 0,
           role: :tool_call,
-          tool_calls: [%ToolCall{arguments: "{}", index: 0}],
+          tool_calls: [%ToolCall{arguments: "{}", index: 0}]
         }
       ],
       [

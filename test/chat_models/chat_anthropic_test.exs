@@ -1010,7 +1010,6 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
     end
   end
 
-
   describe "image vision using message parts" do
     @tag live_call: true, live_anthropic: true
     test "supports multi-modal user message with image prompt" do

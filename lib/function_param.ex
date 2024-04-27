@@ -233,7 +233,8 @@ defmodule LangChain.FunctionParam do
   end
 
   def to_json_schema(%{} = _data, param) do
-    raise LangChainError, "Expected to receive a FunctionParam but instead received #{inspect param}"
+    raise LangChainError,
+          "Expected to receive a FunctionParam but instead received #{inspect(param)}"
   end
 
   # conditionally add the description field if set

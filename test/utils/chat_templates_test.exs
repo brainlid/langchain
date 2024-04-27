@@ -407,7 +407,8 @@ defmodule LangChain.Utils.ChatTemplatesTest do
         Message.new_user!("user_prompt")
       ]
 
-      expected = "<|begin_of_text|>\n<|start_header_id|>system<|end_header_id|>\n\nsystem_message<|eot_id|>\n<|start_header_id|>user<|end_header_id|>\n\nuser_prompt<|eot_id|>\n<|start_header_id|>assistant<|end_header_id|>\n\n"
+      expected =
+        "<|begin_of_text|>\n<|start_header_id|>system<|end_header_id|>\n\nsystem_message<|eot_id|>\n<|start_header_id|>user<|end_header_id|>\n\nuser_prompt<|eot_id|>\n<|start_header_id|>assistant<|end_header_id|>\n\n"
 
       result = ChatTemplates.apply_chat_template!(messages, :llama_3)
       assert result == expected
@@ -419,7 +420,8 @@ defmodule LangChain.Utils.ChatTemplatesTest do
         Message.new_user!("user_prompt")
       ]
 
-      expected = "<|begin_of_text|>\n<|start_header_id|>system<|end_header_id|>\n\nsystem_message<|eot_id|>\n<|start_header_id|>user<|end_header_id|>\n\nuser_prompt<|eot_id|>\n"
+      expected =
+        "<|begin_of_text|>\n<|start_header_id|>system<|end_header_id|>\n\nsystem_message<|eot_id|>\n<|start_header_id|>user<|end_header_id|>\n\nuser_prompt<|eot_id|>\n"
 
       result =
         ChatTemplates.apply_chat_template!(messages, :llama_3, add_generation_prompt: false)
@@ -430,7 +432,8 @@ defmodule LangChain.Utils.ChatTemplatesTest do
     test "no system message when not provided" do
       messages = [Message.new_user!("user_prompt")]
 
-      expected = "<|begin_of_text|>\n<|start_header_id|>user<|end_header_id|>\n\nuser_prompt<|eot_id|>\n<|start_header_id|>assistant<|end_header_id|>\n\n"
+      expected =
+        "<|begin_of_text|>\n<|start_header_id|>user<|end_header_id|>\n\nuser_prompt<|eot_id|>\n<|start_header_id|>assistant<|end_header_id|>\n\n"
 
       result = ChatTemplates.apply_chat_template!(messages, :llama_3)
       assert result == expected

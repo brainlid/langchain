@@ -472,7 +472,9 @@ defmodule LangChain.Chains.LLMChain do
       combined_results = async_results ++ sync_results ++ invalid_calls
 
       # create a single tool message that contains all the tool results
-      message = Message.new_tool_result!(%{content: message.content, tool_results: combined_results})
+      message =
+        Message.new_tool_result!(%{content: message.content, tool_results: combined_results})
+
       if chain.verbose, do: IO.inspect(message, label: "TOOL RESULTS")
       fire_callback(chain, message)
 
@@ -508,6 +510,7 @@ defmodule LangChain.Chains.LLMChain do
 
         {:error, reason} when is_binary(reason) ->
           if verbose, do: IO.inspect(reason, label: "FUNCTION ERROR")
+
           ToolResult.new!(%{
             tool_call_id: call.call_id,
             content: reason,

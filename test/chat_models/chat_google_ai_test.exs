@@ -131,6 +131,7 @@ defmodule ChatModels.ChatGoogleAITest do
       assert %{"role" => :user, "parts" => [%{"text" => ^message}]} = msg1
       assert %{"role" => :model, "parts" => [tool_call]} = msg2
       assert %{"role" => :function, "parts" => [tool_result]} = msg3
+
       assert %{
                "functionCall" => %{
                  "args" => ^arguments,
