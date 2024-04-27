@@ -180,7 +180,7 @@ defmodule LangChain.Message do
         changeset
 
       {:ok, [%ContentPart{} | _] = value} ->
-        if role == :user do
+        if role in [:user, :assistant] do
           # if a list, verify all elements are a ContentPart
           if Enum.all?(value, &match?(%ContentPart{}, &1)) do
             changeset

@@ -94,9 +94,6 @@ defmodule LangChain.MessageTest do
       assert message.content == "Hi"
 
       # content parts not allowed for other role types
-      {:error, changeset} = Message.new_assistant(%{content: [part]})
-      assert {"is invalid for role assistant", _} = changeset.errors[:content]
-
       {:error, changeset} = Message.new_system([part])
       assert {"is invalid for role system", _} = changeset.errors[:content]
 

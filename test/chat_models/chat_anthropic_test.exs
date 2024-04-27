@@ -1180,7 +1180,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
         send(test_pid, {:streamed_fn, data})
       end
 
-      {:ok, result_chain, last_message} =
+      {:ok, _result_chain, last_message} =
         LLMChain.new!(%{llm: %ChatAnthropic{model: @test_model, stream: true}})
         |> LLMChain.add_message(Message.new_system!("You are a helpful and concise assistant."))
         |> LLMChain.add_message(Message.new_user!("Say, 'Hi!'!"))
