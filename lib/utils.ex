@@ -55,6 +55,7 @@ defmodule LangChain.Utils do
   @doc """
   Return changeset errors as text with comma separated description.
   """
+  @spec changeset_error_to_string(Ecto.Changeset.t()) :: nil | String.t()
   def changeset_error_to_string(%Ecto.Changeset{valid?: true}), do: nil
 
   def changeset_error_to_string(%Ecto.Changeset{valid?: false} = changeset) do
@@ -113,7 +114,8 @@ defmodule LangChain.Utils do
     :ok
   end
 
-  def fire_callback(_model, data, callback_fn) when is_struct(data) and is_function(callback_fn) do
+  def fire_callback(_model, data, callback_fn)
+      when is_struct(data) and is_function(callback_fn) do
     # OPTIONAL: Execute callback function
     callback_fn.(data)
 
@@ -211,6 +213,19 @@ defmodule LangChain.Utils do
       {:data, _raw_data}, {req, response} ->
         Logger.error("Unhandled API response!")
         {:halt, {req, response}}
+    end
+  end
+
+  @doc """
+  Put the value in the list at the desired index. If the index does not exist,
+  return an updated list where it now exists with the value in that index.
+  """
+  @spec put_in_list([any()], integer(), any()) :: [any()]
+  def put_in_list(list, index, value) do
+    if index > Enum.count(list) - 1 do
+      list ++ [value]
+    else
+      List.replace_at(list, index, value)
     end
   end
 end

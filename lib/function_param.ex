@@ -188,7 +188,7 @@ defmodule LangChain.FunctionParam do
   Transform a `FunctionParam` to a JSONSchema compatible definition that is
   added to the passed in `data` map.
   """
-  @spec to_json_schema(data :: map(), t()) :: map()
+  @spec to_json_schema(data :: map(), t()) :: map() | no_return()
   def to_json_schema(%{} = data, %FunctionParam{type: type} = param)
       when type in [:string, :integer, :number, :boolean] do
     settings =
@@ -230,6 +230,11 @@ defmodule LangChain.FunctionParam do
       |> description_for_schema(param.description)
 
     Map.put(data, param.name, settings)
+  end
+
+  def to_json_schema(%{} = _data, param) do
+    raise LangChainError,
+          "Expected to receive a FunctionParam but instead received #{inspect(param)}"
   end
 
   # conditionally add the description field if set

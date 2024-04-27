@@ -98,11 +98,11 @@ defmodule LangChain.Tools.Calculator do
   def new() do
     Function.new(%{
       name: "calculator",
-      description: "Perform basic math calculations",
+      description: "Perform basic math calculations or expressions",
       parameters_schema: %{
         type: "object",
         properties: %{
-          expression: %{type: "string", description: "A simple mathematical expression."}
+          expression: %{type: "string", description: "A simple mathematical expression"}
         },
         required: ["expression"]
       },
@@ -123,28 +123,6 @@ defmodule LangChain.Tools.Calculator do
         raise LangChain.LangChainError, changeset
     end
   end
-
-  # @doc """
-  # Define the calculator tool using a JSON Schema.
-  # """
-  # def define do
-  #   # JSON Schema definition of the function. The name, description, and the
-  #   # parameters it takes.
-  #   %{
-  #     "name" => name(),
-  #     "description" => "Perform basic math calculations",
-  #     "parameters" => %{
-  #       "type" => "object",
-  #       "properties" => %{
-  #         "expression" => %{
-  #           "type" => "string",
-  #           "description" => "A simple mathematical expression."
-  #         }
-  #       },
-  #       "required" => ["expression"]
-  #     }
-  #   }
-  # end
 
   @doc """
   Performs the calculation specified in the expression and returns the response

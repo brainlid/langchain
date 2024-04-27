@@ -2,6 +2,10 @@ defmodule LangChain.MessageTest do
   use ExUnit.Case
   doctest LangChain.Message
   alias LangChain.Message
+  alias LangChain.Message.ToolCall
+  alias LangChain.Message.ToolResult
+  alias LangChain.Message.ContentPart
+  alias LangChain.LangChainError
 
   describe "new/1" do
     test "works with minimal attrs" do
@@ -25,48 +29,42 @@ defmodule LangChain.MessageTest do
       assert {"can't be blank", _} = changeset.errors[:role]
     end
 
-    test "parses arguments" do
-      json = Jason.encode!(%{name: "Tim", age: 40})
-
-      assert {:ok, %Message{role: :assistant} = msg} =
-               Message.new(%{
-                 role: :assistant,
-                 function_name: "my_fun",
-                 arguments: json
-               })
-
-      assert msg.role == :assistant
-      assert msg.function_name == "my_fun"
-      assert msg.arguments == %{"name" => "Tim", "age" => 40}
-      assert msg.content == nil
-      assert msg.status == :complete
-      assert Message.is_function_call?(msg)
-    end
-
-    test "adds error to arguments when valid JSON but not a map" do
+    test "adds error when tool arguments are valid JSON but not a map" do
       json = Jason.encode!([true, 1, 2, 3])
 
       assert {:error, changeset} =
-               Message.new(%{
-                 role: :assistant,
-                 function_name: "my_fun",
-                 arguments: json
+               Message.new_assistant(%{
+                 tool_calls: [
+                   ToolCall.new!(%{
+                     call_id: "call_abc123",
+                     name: "my_fun",
+                     arguments: json
+                   })
+                 ],
+                 status: :complete
                })
 
       refute changeset.valid?
-      assert {"unexpected JSON arguments format", _} = changeset.errors[:arguments]
+
+      assert {"arguments: a json object is expected for tool arguments", _} =
+               changeset.errors[:tool_calls]
     end
 
     test "adds error to arguments if it fails to parse" do
       assert {:error, changeset} =
-               Message.new(%{
-                 role: :assistant,
-                 function_name: "my_fun",
-                 arguments: "invalid"
+               Message.new_assistant(%{
+                 tool_calls: [
+                   ToolCall.new!(%{
+                     call_id: "call_abc123",
+                     name: "my_fun",
+                     arguments: "invalid"
+                   })
+                 ],
+                 status: :complete
                })
 
       refute changeset.valid?
-      assert {"invalid JSON function arguments", _} = changeset.errors[:arguments]
+      assert {"arguments: invalid json", _} = changeset.errors[:tool_calls]
     end
   end
 
@@ -85,17 +83,42 @@ defmodule LangChain.MessageTest do
       assert {"can't be blank", _} = changeset.errors[:content]
     end
 
-    test "requires function_name when role is function" do
-      assert {:error, changeset} = Message.new(%{role: :function, function_name: nil})
-      assert {"can't be blank", _} = changeset.errors[:function_name]
+    test "requires content to be text or ContentParts when a user message" do
+      # can be a content part
+      part = ContentPart.text!("Hi")
+      {:ok, message} = Message.new_user([part])
+      assert message.content == [part]
+
+      # can be a string
+      {:ok, message} = Message.new_user("Hi")
+      assert message.content == "Hi"
+
+      # content parts not allowed for other role types
+      {:error, changeset} = Message.new_system([part])
+      assert {"is invalid for role system", _} = changeset.errors[:content]
+
+      {:error, changeset} =
+        Message.new(%{
+          role: :tool,
+          tool_results: [ToolResult.new!(%{tool_call_id: "call_123", content: "woof"})],
+          content: [part]
+        })
+
+      assert {"is invalid for role tool", _} = changeset.errors[:content]
     end
 
-    test "function_name cannot be set when when role is not function" do
-      assert {:error, changeset} = Message.new(%{role: :user, function_name: "test"})
-      assert {"can't be set with role :user", _} = changeset.errors[:function_name]
+    test "content can be nil when an assistant message (tool calls)" do
+      tool_call = ToolCall.new!(%{call_id: "1", name: "hello"})
 
-      assert {:error, changeset} = Message.new(%{role: :system, function_name: "test"})
-      assert {"can't be set with role :system", _} = changeset.errors[:function_name]
+      {:ok, message} =
+        Message.new_assistant(%{
+          content: nil,
+          tool_calls: [tool_call]
+        })
+
+      assert message.content == nil
+      # the tool call gets completed
+      assert message.tool_calls == [Map.put(tool_call, :status, :complete)]
     end
   end
 
@@ -127,6 +150,32 @@ defmodule LangChain.MessageTest do
       assert {:error, changeset} = Message.new_user(nil)
       assert {"can't be blank", _} = changeset.errors[:content]
     end
+
+    test "accepts list of ContentParts for content" do
+      assert {:ok, %Message{} = msg} =
+               Message.new_user([
+                 ContentPart.text!("Describe what is in this image:"),
+                 ContentPart.image!(:base64.encode("fake_image_data"))
+               ])
+
+      assert msg.role == :user
+
+      assert msg.content == [
+               %ContentPart{type: :text, content: "Describe what is in this image:"},
+               %ContentPart{type: :image, content: "ZmFrZV9pbWFnZV9kYXRh", options: []}
+             ]
+    end
+
+    test "does not accept invalid contents" do
+      assert {:error, changeset} = Message.new_user(123)
+      assert {"must be text or a list of ContentParts", _} = changeset.errors[:content]
+
+      assert {:error, changeset} = Message.new_user([123, "ABC"])
+      assert {"must be text or a list of ContentParts", _} = changeset.errors[:content]
+
+      assert {:error, changeset} = Message.new_user([ContentPart.text!("CCC"), "invalid"])
+      assert {"must be text or a list of ContentParts", _} = changeset.errors[:content]
+    end
   end
 
   describe "new_user!/1" do
@@ -146,7 +195,7 @@ defmodule LangChain.MessageTest do
   describe "new_assistant/1" do
     test "creates a assistant message" do
       assert {:ok, %Message{role: :assistant} = msg} =
-               Message.new_assistant("Greetings non-AI!", "complete")
+               Message.new_assistant(%{content: "Greetings non-AI!", status: "complete"})
 
       assert msg.content == "Greetings non-AI!"
       assert msg.status == :complete
@@ -154,76 +203,111 @@ defmodule LangChain.MessageTest do
 
     test "creates a cancelled assistant message" do
       assert {:ok, %Message{role: :assistant} = msg} =
-               Message.new_assistant("Greetings ", :cancelled)
+               Message.new_assistant(%{content: "Greetings ", status: :cancelled})
 
       assert msg.content == "Greetings "
       assert msg.status == :cancelled
     end
 
     test "does not require content" do
-      assert {:ok, %Message{role: :assistant, content: nil}} = Message.new_assistant(nil)
+      assert {:ok, %Message{role: :assistant, content: nil}} =
+               Message.new_assistant(%{content: nil})
+    end
+
+    test "creates a tool_call execution request" do
+      assert {:ok, %Message{} = msg} =
+               Message.new_assistant(%{
+                 tool_calls: [
+                   ToolCall.new!(%{
+                     call_id: "call_abc123",
+                     name: "my_fun",
+                     arguments: Jason.encode!(%{name: "Tim", age: 40})
+                   })
+                 ]
+               })
+
+      [call] = msg.tool_calls
+      assert call.name == "my_fun"
+      assert call.arguments == %{"name" => "Tim", "age" => 40}
+      assert msg.role == :assistant
+      assert msg.content == nil
+      assert msg.status == :complete
+
+      assert Message.is_tool_call?(msg)
     end
   end
 
   describe "new_assistant!/1" do
     test "creates a assistant message" do
-      assert %Message{role: :assistant} = msg = Message.new_assistant!("Hello!")
+      assert %Message{role: :assistant} = msg = Message.new_assistant!(%{content: "Hello!"})
       assert msg.content == "Hello!"
     end
   end
 
-  describe "new_function_call/1" do
-    test "creates a function_call execution request message" do
-      assert {:ok, %Message{role: :assistant} = msg} =
-               Message.new_function_call("my_fun", Jason.encode!(%{name: "Tim", age: 40}))
+  describe "new_tool_result/1" do
+    test "creates a tool response message" do
+      result =
+        ToolResult.new!(%{
+          tool_call_id: "call_123",
+          content: "STUFF_BROKE!",
+          is_error: true
+        })
 
-      assert msg.function_name == "my_fun"
-      assert msg.arguments == %{"name" => "Tim", "age" => 40}
-      assert msg.content == nil
-      assert Message.is_function_call?(msg)
-    end
+      {:ok, %Message{} = msg} = Message.new_tool_result(%{tool_results: [result]})
 
-    test "requires function_name" do
-      assert {:error, changeset} = Message.new_function_call("", Jason.encode!(%{}))
-      assert {"is required when arguments are given", _} = changeset.errors[:function_name]
-    end
-
-    test "returns error if JSON parsing fails" do
-      assert {:error, changeset} = Message.new_function_call("", "invalid")
-      assert {"Failed to parse arguments: \"invalid\"", _} = changeset.errors[:arguments]
+      assert msg.role == :tool
+      assert [result] == msg.tool_results
     end
   end
 
-  describe "new_function_call!/1" do
-    test "creates a function_call execution request message" do
-      assert %Message{role: :assistant} =
-               msg = Message.new_function_call!("fun_name", Jason.encode!(%{name: "Herman"}))
+  describe "new_tool_result!/1" do
+    test "creates a tool response message" do
+      result = ToolResult.new!(%{tool_call_id: "call_123", content: "RESULT"})
 
-      assert msg.function_name == "fun_name"
-      assert msg.arguments == %{"name" => "Herman"}
-      assert msg.content == nil
-      assert Message.is_function_call?(msg)
+      %Message{} = msg = Message.new_tool_result!(%{tool_results: [result]})
+
+      assert msg.role == :tool
+      assert [result] == msg.tool_results
     end
   end
 
-  describe "new_function/1" do
-    test "creates a function response message" do
-      assert {:ok, %Message{role: :function} = msg} = Message.new_function("my_fun", "APP ANSWER")
-      assert msg.function_name == "my_fun"
-      assert msg.content == "APP ANSWER"
+  describe "append_tool_result/2" do
+    test "appends a ToolResult to a tool message" do
+      result1 =
+        ToolResult.new!(%{
+          tool_call_id: "call_123",
+          name: "hello_world",
+          content: "Hello world!"
+        })
+
+      result2 =
+        ToolResult.new!(%{
+          tool_call_id: "call_234",
+          name: "hello_world",
+          content: "Hello world! x2"
+        })
+
+      message =
+        %{tool_results: [result1]}
+        |> Message.new_tool_result!()
+        |> Message.append_tool_result(result2)
+
+      assert [result1, result2] == message.tool_results
     end
 
-    test "requires function_name" do
-      assert {:error, changeset} = Message.new_function("", "answer")
-      assert {"can't be blank", _} = changeset.errors[:function_name]
-    end
-  end
+    test "raises error adding ToolResult to other roles" do
+      user_message = Message.new_user!("Hi")
 
-  describe "new_function!/1" do
-    test "creates a function response message" do
-      assert %Message{role: :function} = msg = Message.new_function!("test_fun", "RESULT")
-      assert msg.function_name == "test_fun"
-      assert msg.content == "RESULT"
+      result =
+        ToolResult.new!(%{
+          tool_call_id: "call_123",
+          name: "hello_world",
+          content: "Hello world!"
+        })
+
+      assert_raise LangChainError, "Can only append tool results to a tool role message.", fn ->
+        Message.append_tool_result(user_message, result)
+      end
     end
   end
 end

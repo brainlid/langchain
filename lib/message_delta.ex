@@ -1,8 +1,8 @@
 defmodule LangChain.MessageDelta do
   @moduledoc """
   Models a "delta" message from a chat LLM. A delta is a small chunk, or piece
-  of a much larger complete message. A series of deltas can are used to
-  construct a complete message.
+  of a much larger complete message. A series of deltas are used to construct
+  the complete message.
 
   Delta messages must be applied in order for them to be valid. Delta messages
   can be combined and transformed into a `LangChain.Message` once the final
@@ -12,6 +12,12 @@ defmodule LangChain.MessageDelta do
 
   * `:unknown` - The role data is missing for the delta.
   * `:assistant` - Responses coming back from the LLM.
+
+  ## Tool Usage
+
+  Tools can be used or called by the assistant (LLM). A tool call is also split
+  across many message deltas and must be fully assembled before it can be
+  executed.
 
   ## Function calling
 
@@ -30,26 +36,30 @@ defmodule LangChain.MessageDelta do
   alias __MODULE__
   alias LangChain.LangChainError
   alias LangChain.Message
+  alias LangChain.Message.ToolCall
   alias LangChain.Utils
 
   @primary_key false
   embedded_schema do
-    field :content, :string
+    field :content, :any, virtual: true
     # Marks if the delta completes the message.
     field :status, Ecto.Enum, values: [:incomplete, :complete, :length], default: :incomplete
     # When requesting multiple choices for a response, the `index` represents
     # which choice it is. It is a 0 based list.()
     field :index, :integer
-    field :function_name, :string
 
     field :role, Ecto.Enum, values: [:unknown, :assistant], default: :unknown
 
+    field :tool_calls, :any, virtual: true
+
+    # TODO: REMOVE THESE vvv
+    field :function_name, :string
     field :arguments, :any, virtual: true
   end
 
   @type t :: %MessageDelta{}
 
-  @create_fields [:role, :content, :function_name, :arguments, :index, :status]
+  @create_fields [:role, :content, :function_name, :arguments, :index, :status, :tool_calls]
   @required_fields []
 
   @doc """
@@ -88,22 +98,20 @@ defmodule LangChain.MessageDelta do
       ...>   %LangChain.MessageDelta{
       ...>     content: nil,
       ...>     index: 0,
-      ...>     function_name: nil,
+      ...>     tool_calls: [],
       ...>     role: :assistant,
-      ...>     arguments: nil,
       ...>     status: :incomplete
       ...>   }
       iex> delta_2 =
       ...>   %LangChain.MessageDelta{
       ...>     content: "Hello",
       ...>     index: 0,
-      ...>     function_name: nil,
+      ...>     tool_calls: [],
       ...>     role: :unknown,
-      ...>     arguments: nil,
       ...>     status: :incomplete
       ...>   }
       iex> LangChain.MessageDelta.merge_delta(delta_1, delta_2)
-      %LangChain.MessageDelta{content: "Hello", status: :incomplete, index: 0, function_name: nil, role: :assistant, arguments: nil}
+      %LangChain.MessageDelta{content: "Hello", status: :incomplete, index: 0, role: :assistant, tool_calls: []}
 
   A set of deltas can be easily merged like this:
 
@@ -114,12 +122,13 @@ defmodule LangChain.MessageDelta do
       end)
 
   """
-  @spec merge_delta(t(), t()) :: t()
+  @spec merge_delta(nil | t(), t()) :: t()
+  def merge_delta(nil, %MessageDelta{} = delta_part), do: delta_part
+
   def merge_delta(%MessageDelta{role: :assistant} = primary, %MessageDelta{} = delta_part) do
     primary
     |> append_content(delta_part)
-    |> append_function_name(delta_part)
-    |> append_arguments(delta_part)
+    |> merge_tool_calls(delta_part)
     |> update_index(delta_part)
     |> update_status(delta_part)
   end
@@ -136,15 +145,24 @@ defmodule LangChain.MessageDelta do
     primary
   end
 
-  defp append_function_name(%MessageDelta{role: :assistant} = primary, %MessageDelta{
-         function_name: new_function
-       })
-       when is_binary(new_function) do
-    %MessageDelta{primary | function_name: (primary.function_name || "") <> new_function}
+  defp merge_tool_calls(
+         %MessageDelta{} = primary,
+         %MessageDelta{tool_calls: [delta_call]} = _delta_part
+       ) do
+    # point from the primary delta.
+    primary_calls = primary.tool_calls || []
+    # get the index of the call being merged
+    initial = Enum.at(primary_calls, delta_call.index)
+    # merge them and put it back in the correct spot of the list
+    merged_call = ToolCall.merge(initial, delta_call)
+    # if the index exists, update it, otherwise insert it
+    updated_calls = Utils.put_in_list(primary_calls, delta_call.index, merged_call)
+    # return updated MessageDelta
+    %MessageDelta{primary | tool_calls: updated_calls}
   end
 
-  defp append_function_name(%MessageDelta{} = primary, %MessageDelta{} = _delta_part) do
-    # no function name to merge
+  defp merge_tool_calls(%MessageDelta{} = primary, %MessageDelta{} = _delta_part) do
+    # nothing to merge
     primary
   end
 
@@ -172,18 +190,6 @@ defmodule LangChain.MessageDelta do
 
   defp update_status(%MessageDelta{} = primary, %MessageDelta{} = _delta_part) do
     # status flag not updated
-    primary
-  end
-
-  defp append_arguments(%MessageDelta{role: :assistant} = primary, %MessageDelta{
-         arguments: new_arguments
-       })
-       when is_binary(new_arguments) do
-    %MessageDelta{primary | arguments: (primary.arguments || "") <> new_arguments}
-  end
-
-  defp append_arguments(%MessageDelta{} = primary, %MessageDelta{} = _delta_part) do
-    # no arguments to merge
     primary
   end
 

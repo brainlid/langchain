@@ -6,22 +6,51 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
   alias LangChain.ChatModels.ChatOpenAI
   alias LangChain.Function
   alias LangChain.FunctionParam
+  alias LangChain.Message
+  alias LangChain.Message.ContentPart
+  alias LangChain.Message.ToolCall
+  alias LangChain.Message.ToolResult
+  alias LangChain.Chains.LLMChain
 
   @test_model "gpt-3.5-turbo"
+  @gpt4 "gpt-4-1106-preview"
 
   defp hello_world(_args, _context) do
     "Hello world!"
   end
 
+  # TODO: find and remove function_call references
+
   setup do
     {:ok, hello_world} =
       Function.new(%{
         name: "hello_world",
-        description: "Give a hello world greeting.",
-        function: fn -> IO.puts("Hello world!") end
+        description: "Give a hello world greeting",
+        function: fn _args, _context -> {:ok, "Hello world!"} end
       })
 
-    %{hello_world: hello_world}
+    {:ok, weather} =
+      Function.new(%{
+        name: "get_weather",
+        description: "Get the current weather in a given US location",
+        parameters: [
+          FunctionParam.new!(%{
+            name: "city",
+            type: "string",
+            description: "The city name, e.g. San Francisco",
+            required: true
+          }),
+          FunctionParam.new!(%{
+            name: "state",
+            type: "string",
+            description: "The 2 letter US state abbreviation, e.g. CA, NY, UT",
+            required: true
+          })
+        ],
+        function: fn _args, _context -> {:ok, "75 degrees"} end
+      })
+
+    %{hello_world: hello_world, weather: weather}
   end
 
   describe "new/1" do
@@ -99,50 +128,189 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
   end
 
   describe "for_api/1" do
-    test "turns a function_call into expected JSON format" do
-      msg = Message.new_function_call!("hello_world", "{}")
+    test "turns a basic user message into the expected JSON format" do
+      expected = %{"role" => :user, "content" => "Hi."}
+      result = ChatOpenAI.for_api(Message.new_user!("Hi."))
+      assert result == expected
+    end
+
+    test "includes 'name' when set" do
+      expected = %{"role" => :user, "content" => "Hi.", "name" => "Harold"}
+      result = ChatOpenAI.for_api(Message.new!(%{role: :user, content: "Hi.", name: "Harold"}))
+      assert result == expected
+    end
+
+    test "turns an assistant message into expected JSON format" do
+      # NOTE: Does not include tool_calls if empty
+      expected = %{"role" => :assistant, "content" => "Hi."}
+      result = ChatOpenAI.for_api(Message.new_assistant!(%{content: "Hi.", tool_calls: []}))
+      assert result == expected
+    end
+
+    test "turns a multi-modal user message into the expected JSON format" do
+      expected = %{
+        "role" => :user,
+        "content" => [
+          %{"type" => "text", "text" => "Tell me about this image:"},
+          %{"type" => "image_url", "image_url" => %{"url" => "url-to-image"}}
+        ]
+      }
+
+      result =
+        ChatOpenAI.for_api(
+          Message.new_user!([
+            ContentPart.text!("Tell me about this image:"),
+            ContentPart.image_url!("url-to-image")
+          ])
+        )
+
+      assert result == expected
+    end
+
+    test "turns a text ContentPart into the expected JSON format" do
+      expected = %{"type" => "text", "text" => "Tell me about this image:"}
+      result = ChatOpenAI.for_api(ContentPart.text!("Tell me about this image:"))
+      assert result == expected
+    end
+
+    test "turns an image ContentPart into the expected JSON format" do
+      expected = %{"type" => "image_url", "image_url" => %{"url" => "image_base64_data"}}
+      result = ChatOpenAI.for_api(ContentPart.image!("image_base64_data"))
+      assert result == expected
+    end
+
+    test "turns an image_url ContentPart into the expected JSON format" do
+      expected = %{"type" => "image_url", "image_url" => %{"url" => "url-to-image"}}
+      result = ChatOpenAI.for_api(ContentPart.image_url!("url-to-image"))
+      assert result == expected
+    end
+
+    test "turns a tool_call into expected JSON format" do
+      tool_call =
+        ToolCall.new!(%{call_id: "call_abc123", name: "hello_world", arguments: "{}"})
+
+      json = ChatOpenAI.for_api(tool_call)
+
+      assert json ==
+               %{
+                 "id" => "call_abc123",
+                 "type" => "function",
+                 "function" => %{
+                   "name" => "hello_world",
+                   "arguments" => "\"{}\""
+                 }
+               }
+    end
+
+    test "turns an assistant tool_call into expected JSON format with arguments" do
+      # Needed when restoring a conversation from structs for history.
+      # args = %{"expression" => "11 + 10"}
+      msg =
+        Message.new_assistant!(%{
+          tool_calls: [
+            ToolCall.new!(%{
+              call_id: "call_abc123",
+              name: "hello_world",
+              arguments: %{expression: "11 + 10"}
+            })
+          ]
+        })
 
       json = ChatOpenAI.for_api(msg)
 
       assert json == %{
+               "role" => :assistant,
                "content" => nil,
-               "function_call" => %{"arguments" => "{}", "name" => "hello_world"},
-               "role" => :assistant
+               "tool_calls" => [
+                 %{
+                   "function" => %{
+                     "arguments" => "{\"expression\":\"11 + 10\"}",
+                     "name" => "hello_world"
+                   },
+                   "id" => "call_abc123",
+                   "type" => "function"
+                 }
+               ]
              }
     end
 
-    test "turns a function_call into expected JSON format with arguments" do
-      args = %{"expression" => "11 + 10"}
-      msg = Message.new_function_call!("hello_world", Jason.encode!(args))
+    test "turns a ToolResult into the expected JSON format" do
+      result = ToolResult.new!(%{tool_call_id: "tool_abc123", content: "Hello World!"})
 
-      json = ChatOpenAI.for_api(msg)
+      json = ChatOpenAI.for_api(result)
 
       assert json == %{
-               "content" => nil,
-               "function_call" => %{
-                 "arguments" => "{\"expression\":\"11 + 10\"}",
-                 "name" => "hello_world"
-               },
-               "role" => :assistant
+               "content" => "Hello World!",
+               "tool_call_id" => "tool_abc123",
+               "role" => :tool
              }
     end
 
-    test "turns a function response into expected JSON format" do
-      msg = Message.new_function!("hello_world", "Hello World!")
+    test "turns a tool message into expected JSON format" do
+      msg =
+        Message.new_tool_result!(%{
+          tool_results: [
+            ToolResult.new!(%{tool_call_id: "tool_abc123", content: "Hello World!"})
+          ]
+        })
 
-      json = ChatOpenAI.for_api(msg)
+      [json] = ChatOpenAI.for_api(msg)
 
-      assert json == %{"content" => "Hello World!", "name" => "hello_world", "role" => :function}
+      assert json == %{
+               "content" => "Hello World!",
+               "tool_call_id" => "tool_abc123",
+               "role" => :tool
+             }
     end
 
-    test "works with minimal definition and no parameters" do
-      {:ok, fun} = Function.new(%{"name" => "hello_world"})
+    test "turns multiple tool results into expected JSON format" do
+      # Should generate multiple tool entries.
+      message =
+        Message.new_tool_result!(%{
+          tool_results: [
+            ToolResult.new!(%{tool_call_id: "tool_abc123", content: "Hello World!"})
+          ]
+        })
+        |> Message.append_tool_result(
+          ToolResult.new!(%{tool_call_id: "tool_abc234", content: "Hello"})
+        )
+        |> Message.append_tool_result(
+          ToolResult.new!(%{tool_call_id: "tool_abc345", content: "World!"})
+        )
 
-      result = ChatOpenAI.for_api(fun)
-      # result = Function.for_api(fun)
+      # ChatGPT expects each tool response to stand alone. This splits them out
+      # and returns them individually.
+      list = ChatOpenAI.for_api(message)
+
+      assert is_list(list)
+
+      [r1, r2, r3] = list
+
+      assert r1 == %{
+               "content" => "Hello World!",
+               "tool_call_id" => "tool_abc123",
+               "role" => :tool
+             }
+
+      assert r2 == %{
+               "content" => "Hello",
+               "tool_call_id" => "tool_abc234",
+               "role" => :tool
+             }
+
+      assert r3 == %{
+               "content" => "World!",
+               "tool_call_id" => "tool_abc345",
+               "role" => :tool
+             }
+    end
+
+    test "tools work with minimal definition and no parameters", %{hello_world: hello_world} do
+      result = ChatOpenAI.for_api(hello_world)
 
       assert result == %{
                "name" => "hello_world",
+               "description" => "Give a hello world greeting",
                #  NOTE: Sends the required empty parameter definition when none set
                "parameters" => %{"properties" => %{}, "type" => "object"}
              }
@@ -170,7 +338,8 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
             FunctionParam.new!(%{name: "p1", type: :string, required: true}),
             FunctionParam.new!(%{name: "p2", type: :number, description: "Param 2"}),
             FunctionParam.new!(%{name: "p3", type: :string, enum: ["yellow", "red", "green"]})
-          ]
+          ],
+          function: fn _args, _context -> {:ok, "SUCCESS"} end
         })
 
       # result = Function.for_api(fun)
@@ -200,9 +369,10 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
       {:ok, fun} =
         Function.new(%{
-          "name" => "say_hi",
-          "description" => "Provide a friendly greeting.",
-          "parameters_schema" => params_def
+          name: "say_hi",
+          description: "Provide a friendly greeting.",
+          parameters_schema: params_def,
+          function: fn _args, _context -> {:ok, "SUCCESS"} end
         })
 
       # result = Function.for_api(fun)
@@ -322,18 +492,57 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     end
 
     @tag live_call: true, live_open_ai: true
-    test "executing a function", %{hello_world: hello_world} do
-      {:ok, chat} = ChatOpenAI.new(%{seed: 0})
+    test "executing a function with arguments", %{weather: weather} do
+      {:ok, chat} = ChatOpenAI.new(%{seed: 0, stream: false, model: @gpt4})
 
       {:ok, message} =
-        Message.new_user("Only using the functions you have been provided with, give a greeting.")
+        Message.new_user("What is the weather like in Moab Utah?")
 
-      {:ok, [message]} = ChatOpenAI.call(chat, [message], [hello_world])
+      {:ok, [message]} = ChatOpenAI.call(chat, [message], [weather])
 
       assert %Message{role: :assistant} = message
-      assert message.arguments == %{}
+      assert message.status == :complete
+      assert message.role == :assistant
       assert message.content == nil
+      [call] = message.tool_calls
+      assert call.status == :complete
+      assert call.type == :function
+      assert call.call_id != nil
+      assert call.arguments == %{"city" => "Moab", "state" => "UT"}
     end
+
+    @tag live_call: true, live_open_ai: true
+    test "LIVE: supports receiving multiple tool calls in a single response", %{weather: weather} do
+      {:ok, chat} = ChatOpenAI.new(%{seed: 0, stream: false, model: @gpt4})
+
+      {:ok, message} =
+        Message.new_user(
+          "What is the weather like in Moab Utah, Portland Oregon, and Baltimore MD? Explain your thought process."
+        )
+
+      {:ok, [message]} = ChatOpenAI.call(chat, [message], [weather])
+
+      assert %Message{role: :assistant} = message
+      assert message.status == :complete
+      assert message.content == nil
+      [call1, call2, call3] = message.tool_calls
+
+      assert call1.status == :complete
+      assert call1.type == :function
+      assert call1.name == "get_weather"
+      assert call1.arguments == %{"city" => "Moab", "state" => "UT"}
+
+      assert call2.name == "get_weather"
+      assert call2.arguments == %{"city" => "Portland", "state" => "OR"}
+
+      assert call3.name == "get_weather"
+      assert call3.arguments == %{"city" => "Baltimore", "state" => "MD"}
+    end
+
+    # TODO: Fake API response with multiples.
+    # TODO: LLMChain needs to support it as well. Perform multiple function call executions.
+    # TODO: Message structure needs to change for calling functions to support a single message executing multiples.
+    #      - make it easy to support only receiving a single function call.
 
     @tag live_call: true, live_open_ai: true
     test "executes callback function when data is streamed" do
@@ -426,24 +635,214 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert struct.index == 1
     end
 
-    test "handles receiving a function_call message" do
+    test "handles receiving a single tool_calls message" do
       response = %{
-        "finish_reason" => "function_call",
+        "finish_reason" => "tool_calls",
         "index" => 0,
+        "logprobs" => nil,
         "message" => %{
           "content" => nil,
-          "function_call" => %{"arguments" => "{}", "name" => "hello_world"},
-          "role" => "assistant"
+          "role" => "assistant",
+          "tool_calls" => [
+            %{
+              "function" => %{
+                "arguments" => "{\"city\":\"Moab\",\"state\":\"UT\"}",
+                "name" => "get_weather"
+              },
+              "id" => "call_mMSPuyLd915TQ9bcrk4NvLDX",
+              "type" => "function"
+            }
+          ]
         }
       }
 
       assert %Message{} = struct = ChatOpenAI.do_process_response(response)
 
       assert struct.role == :assistant
-      assert struct.content == nil
-      assert struct.function_name == "hello_world"
-      assert struct.arguments == %{}
+
+      assert [%ToolCall{} = call] = struct.tool_calls
+      assert call.call_id == "call_mMSPuyLd915TQ9bcrk4NvLDX"
+      assert call.type == :function
+      assert call.name == "get_weather"
+      assert call.arguments == %{"city" => "Moab", "state" => "UT"}
       assert struct.index == 0
+    end
+
+    test "handles receiving multiple tool_calls messages" do
+      response = %{
+        "finish_reason" => "tool_calls",
+        "index" => 0,
+        "logprobs" => nil,
+        "message" => %{
+          "content" => nil,
+          "role" => "assistant",
+          "tool_calls" => [
+            %{
+              "function" => %{
+                "arguments" => "{\"city\": \"Moab\", \"state\": \"UT\"}",
+                "name" => "get_weather"
+              },
+              "id" => "call_4L8NfePhSW8PdoHUWkvhzguu",
+              "type" => "function"
+            },
+            %{
+              "function" => %{
+                "arguments" => "{\"city\": \"Portland\", \"state\": \"OR\"}",
+                "name" => "get_weather"
+              },
+              "id" => "call_ylRu5SPegST9tppLEj6IJ0Rs",
+              "type" => "function"
+            },
+            %{
+              "function" => %{
+                "arguments" => "{\"city\": \"Baltimore\", \"state\": \"MD\"}",
+                "name" => "get_weather"
+              },
+              "id" => "call_G17PCZZBTyK0gwpzIzD4OBep",
+              "type" => "function"
+            }
+          ]
+        }
+      }
+
+      assert %Message{} = struct = ChatOpenAI.do_process_response(response)
+
+      assert struct.role == :assistant
+
+      assert struct.tool_calls == [
+               ToolCall.new!(%{
+                 type: :function,
+                 call_id: "call_4L8NfePhSW8PdoHUWkvhzguu",
+                 name: "get_weather",
+                 arguments: %{"city" => "Moab", "state" => "UT"},
+                 status: :complete
+               }),
+               ToolCall.new!(%{
+                 type: :function,
+                 call_id: "call_ylRu5SPegST9tppLEj6IJ0Rs",
+                 name: "get_weather",
+                 arguments: %{"city" => "Portland", "state" => "OR"},
+                 status: :complete
+               }),
+               ToolCall.new!(%{
+                 type: :function,
+                 call_id: "call_G17PCZZBTyK0gwpzIzD4OBep",
+                 name: "get_weather",
+                 arguments: %{"city" => "Baltimore", "state" => "MD"},
+                 status: :complete
+               })
+             ]
+    end
+
+    test "handles receiving multiple tool_calls and one has invalid JSON" do
+      response = %{
+        "finish_reason" => "tool_calls",
+        "index" => 0,
+        "logprobs" => nil,
+        "message" => %{
+          "content" => nil,
+          "role" => "assistant",
+          "tool_calls" => [
+            %{
+              "function" => %{
+                "arguments" => "{\"city\": \"Moab\", \"state\": \"UT\"}",
+                "name" => "get_weather"
+              },
+              "id" => "call_4L8NfePhSW8PdoHUWkvhzguu",
+              "type" => "function"
+            },
+            %{
+              "function" => %{
+                "arguments" => "{\"invalid\"}",
+                "name" => "get_weather"
+              },
+              "id" => "call_ylRu5SPegST9tppLEj6IJ0Rs",
+              "type" => "function"
+            }
+          ]
+        }
+      }
+
+      assert {:error, reason} = ChatOpenAI.do_process_response(response)
+      assert reason == "tool_calls: arguments: invalid json"
+    end
+
+    test "handles a single tool_call from list" do
+      call = %{
+        "function" => %{
+          "arguments" => "{\"city\": \"Moab\", \"state\": \"UT\"}",
+          "name" => "get_weather"
+        },
+        "id" => "call_4L8NfePhSW8PdoHUWkvhzguu",
+        "type" => "function"
+      }
+
+      assert %ToolCall{} = call = ChatOpenAI.do_process_response(call)
+      assert call.type == :function
+      assert call.status == :complete
+      assert call.call_id == "call_4L8NfePhSW8PdoHUWkvhzguu"
+      assert call.name == "get_weather"
+      assert call.arguments == %{"city" => "Moab", "state" => "UT"}
+    end
+
+    test "handles receiving a tool_call with invalid JSON" do
+      call = %{
+        "function" => %{
+          "arguments" => "{\"invalid\"}",
+          "name" => "get_weather"
+        },
+        "id" => "call_4L8NfePhSW8PdoHUWkvhzguu",
+        "type" => "function"
+      }
+
+      assert {:error, message} = ChatOpenAI.do_process_response(call)
+
+      assert message == "arguments: invalid json"
+    end
+
+    test "handles streamed deltas for multiple tool calls" do
+      deltas =
+        Enum.map(get_streamed_deltas_multiple_tool_calls(), &ChatOpenAI.do_process_response(&1))
+
+      combined =
+        deltas
+        |> List.flatten()
+        |> Enum.reduce(nil, &MessageDelta.merge_delta(&2, &1))
+
+      expected = %MessageDelta{
+        content: nil,
+        status: :complete,
+        index: 0,
+        role: :assistant,
+        tool_calls: [
+          %ToolCall{
+            status: :incomplete,
+            type: :function,
+            call_id: "call_fFRRtPwaroz9wbs2eWR7dpcW",
+            name: "get_weather",
+            arguments: "{\"city\": \"Moab\", \"state\": \"UT\"}",
+            index: 0
+          },
+          %ToolCall{
+            status: :incomplete,
+            type: :function,
+            call_id: "call_sEmznyM1sGqYQ4dbNGdubmxa",
+            name: "get_weather",
+            arguments: "{\"city\": \"Portland\", \"state\": \"OR\"}",
+            index: 1
+          },
+          %ToolCall{
+            status: :incomplete,
+            type: :function,
+            call_id: "call_cPufqMGm4TOFtqiqFPfz7pcp",
+            name: "get_weather",
+            arguments: "{\"city\": \"Baltimore\", \"state\": \"MD\"}",
+            index: 2
+          }
+        ]
+      }
+
+      assert combined == expected
     end
 
     test "handles error from server that the max length has been reached" do
@@ -508,53 +907,6 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert delta_10 == expected_10
     end
 
-    test "handles receiving a delta message for a function_call" do
-      delta_function = LangChain.Fixtures.raw_deltas_for_function_call()
-
-      msg_1 = Enum.at(delta_function, 0)
-      msg_2 = Enum.at(delta_function, 1)
-      msg_3 = Enum.at(delta_function, 2)
-
-      expected_1 = %MessageDelta{
-        content: nil,
-        index: 0,
-        function_name: "hello_world",
-        role: :assistant,
-        arguments: "",
-        status: :incomplete
-      }
-
-      [%MessageDelta{} = delta_1] = ChatOpenAI.do_process_response(msg_1)
-      assert delta_1 == expected_1
-
-      expected_2 = %MessageDelta{
-        content: nil,
-        index: 0,
-        function_name: nil,
-        role: :unknown,
-        arguments: "{}",
-        status: :incomplete
-      }
-
-      [%MessageDelta{} = delta_2] = ChatOpenAI.do_process_response(msg_2)
-      assert delta_2 == expected_2
-
-      expected_3 = %MessageDelta{
-        content: nil,
-        index: 0,
-        function_name: nil,
-        role: :unknown,
-        arguments: nil,
-        status: :complete
-      }
-
-      # it should not trim the arguments text
-      [%MessageDelta{} = delta_3] = ChatOpenAI.do_process_response(msg_3)
-      assert delta_3 == expected_3
-    end
-
-    # test "handles receiving error message from server"
-
     test "handles json parse error from server" do
       {:error, "Received invalid JSON: " <> _} =
         Jason.decode("invalid json")
@@ -596,7 +948,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     @tag live_call: true, live_open_ai: true
     test "supports streaming response calling function with args" do
       callback = fn data ->
-        # IO.inspect(data, label: "DATA")
+        IO.inspect(data, label: "DATA")
         send(self(), {:streamed_fn, data})
       end
 
@@ -605,10 +957,10 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       {:ok, message} =
         Message.new_user("Answer the following math question: What is 100 + 300 - 200?")
 
-      _response =
+      response =
         ChatOpenAI.do_api_request(chat, [message], [LangChain.Tools.Calculator.new!()], callback)
 
-      # IO.inspect(response, label: "OPEN AI POST RESPONSE")
+      IO.inspect(response, label: "OPEN AI POST RESPONSE")
 
       assert_receive {:streamed_fn, received_data}, 300
       assert %MessageDelta{} = received_data
@@ -741,5 +1093,524 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
       assert parsed == [json_1, json_2]
     end
+  end
+
+  describe "image vision using message parts" do
+    @tag live_call: true, live_open_ai: true
+    test "supports multi-modal user message with image prompt" do
+      # https://platform.openai.com/docs/guides/vision
+      {:ok, chat} = ChatOpenAI.new(%{model: "gpt-4-vision-preview", seed: 0})
+
+      url =
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg"
+
+      message =
+        Message.new_user!([
+          ContentPart.text!("Identify what this is a picture of:"),
+          ContentPart.image_url!(url)
+        ])
+
+      {:ok, [response]} = ChatOpenAI.call(chat, [message], [])
+
+      assert %Message{role: :assistant} = response
+      assert String.contains?(response.content, "boardwalk")
+      assert String.contains?(response.content, "grass")
+    end
+  end
+
+  describe "do_process_response - MessageDeltas" do
+    test "parses basic text delta" do
+      [d1, d2, d3, d4] = get_streamed_deltas_basic_text()
+
+      [delta1] = ChatOpenAI.do_process_response(d1)
+
+      assert %MessageDelta{
+               role: :assistant,
+               content: "",
+               status: :incomplete,
+               index: 0
+             } = delta1
+
+      [delta2] = ChatOpenAI.do_process_response(d2)
+
+      assert %MessageDelta{
+               role: :unknown,
+               content: "Colorful",
+               status: :incomplete,
+               index: 0
+             } = delta2
+
+      [delta3] = ChatOpenAI.do_process_response(d3)
+
+      assert %MessageDelta{
+               role: :unknown,
+               content: " Threads",
+               status: :incomplete,
+               index: 0
+             } = delta3
+
+      [delta4] = ChatOpenAI.do_process_response(d4)
+
+      assert %MessageDelta{
+               role: :unknown,
+               content: nil,
+               status: :complete,
+               index: 0
+             } = delta4
+    end
+
+    test "parses initial tool call delta message correctly" do
+      raw_delta = %{
+        "delta" => %{
+          "content" => nil,
+          "role" => "assistant",
+          "tool_calls" => [
+            %{
+              "function" => %{"arguments" => "", "name" => "find_by_code"},
+              "id" => "call_567",
+              "index" => 0,
+              "type" => "function"
+            }
+          ]
+        },
+        "finish_reason" => nil,
+        "index" => 0
+      }
+
+      %MessageDelta{} = delta = ChatOpenAI.do_process_response(raw_delta)
+      assert delta.content == nil
+      assert delta.role == :assistant
+      assert [%ToolCall{} = call] = delta.tool_calls
+      assert call.call_id == "call_567"
+      assert call.index == 0
+      assert call.type == :function
+      assert call.arguments == nil
+    end
+
+    test "parses individual tool_calls in a delta message" do
+      # chunk 1
+      tool_call_response = %{
+        "function" => %{"arguments" => "", "name" => "get_weather"},
+        "id" => "call_1234",
+        "index" => 0,
+        "type" => "function"
+      }
+
+      assert %ToolCall{} = call = ChatOpenAI.do_process_response(tool_call_response)
+      assert call.status == :incomplete
+      assert call.type == :function
+      assert call.name == "get_weather"
+      assert call.arguments == nil
+      assert call.index == 0
+
+      # chunk 2
+      tool_call_response = %{
+        "function" => %{"arguments" => "{\"city\": \"Moab\", "},
+        "index" => 0
+      }
+
+      assert %ToolCall{} = call = ChatOpenAI.do_process_response(tool_call_response)
+      assert call.status == :incomplete
+      assert call.type == :function
+      assert call.name == nil
+      assert call.arguments == "{\"city\": \"Moab\", "
+      assert call.index == 0
+    end
+
+    test "parses a MessageDelta with tool_calls" do
+      response = get_streamed_deltas_multiple_tool_calls()
+      [d1, d2, d3 | _rest] = response
+      last = List.last(response)
+
+      assert [%MessageDelta{} = delta1] = ChatOpenAI.do_process_response(d1)
+      assert delta1.role == :assistant
+      assert delta1.status == :incomplete
+      assert delta1.content == nil
+      assert delta1.index == 0
+      assert delta1.tool_calls == nil
+
+      assert [%MessageDelta{} = delta2] = ChatOpenAI.do_process_response(d2)
+      assert delta2.role == :unknown
+      assert delta2.status == :incomplete
+      assert delta2.content == nil
+      assert delta2.index == 0
+
+      expected_call =
+        ToolCall.new!(%{
+          call_id: "call_fFRRtPwaroz9wbs2eWR7dpcW",
+          index: 0,
+          type: :function,
+          status: :incomplete,
+          name: "get_weather",
+          arguments: nil
+        })
+
+      assert [expected_call] == delta2.tool_calls
+
+      assert [%MessageDelta{} = delta3] = ChatOpenAI.do_process_response(d3)
+      assert delta3.role == :unknown
+      assert delta3.status == :incomplete
+      assert delta3.content == nil
+      assert delta3.index == 0
+
+      expected_call =
+        ToolCall.new!(%{
+          id: nil,
+          index: 0,
+          type: :function,
+          status: :incomplete,
+          name: nil,
+          arguments: "{\"ci"
+        })
+
+      assert [expected_call] == delta3.tool_calls
+
+      assert [%MessageDelta{} = delta4] = ChatOpenAI.do_process_response(last)
+      assert delta4.role == :unknown
+      assert delta4.status == :complete
+      assert delta4.content == nil
+      assert delta4.index == 0
+      assert delta4.tool_calls == nil
+    end
+  end
+
+  describe "works within a chain" do
+    @tag live_call: true, live_open_ai: true
+    test "supports starting the assistant's response message and continuing it" do
+      test_pid = self()
+
+      callback_fn = fn data ->
+        # IO.inspect(data, label: "DATA")
+        send(test_pid, {:streamed_fn, data})
+      end
+
+      {:ok, _result_chain, last_message} =
+        LLMChain.new!(%{llm: %ChatOpenAI{model: @gpt4, stream: true}})
+        |> LLMChain.add_message(Message.new_system!("You are a helpful and concise assistant."))
+        |> LLMChain.add_message(
+          Message.new_user!(
+            "What's the capitol of Norway? Please respond with the answer <answer>{{ANSWER}}</answer>"
+          )
+        )
+        # |> LLMChain.add_message(Message.new_assistant!("<answer>"))
+        |> LLMChain.run(callback_fn: callback_fn)
+
+      # %LangChain.Message{
+      #   content: "<answer>Oslo</answer>",
+      #   index: 0,
+      #   status: :complete,
+      #   role: :assistant,
+      #   name: nil,
+      #   tool_calls: [],
+      #   tool_call_id: nil,
+      #   is_error: false,
+      #   function_name: nil,
+      #   arguments: nil
+      # },
+
+      assert last_message.content =~ "Oslo"
+      assert last_message.status == :complete
+      assert last_message.role == :assistant
+
+      assert_received {:streamed_fn, data}
+      assert %MessageDelta{role: :assistant} = data
+    end
+  end
+
+  def get_streamed_deltas_basic_text do
+    [
+      %{
+        "choices" => [
+          %{
+            "delta" => %{"content" => "", "role" => "assistant"},
+            "finish_reason" => nil,
+            "index" => 0,
+            "logprobs" => nil
+          }
+        ],
+        "created" => 1_712_610_022,
+        "id" => "chatcmpl-9BqOELc5ktxtKeK1BtTBG2t0aaDty",
+        "model" => "gpt-3.5-turbo-0125",
+        "object" => "chat.completion.chunk",
+        "system_fingerprint" => "fp_b28b39ffa8"
+      },
+      %{
+        "choices" => [
+          %{
+            "delta" => %{"content" => "Colorful"},
+            "finish_reason" => nil,
+            "index" => 0,
+            "logprobs" => nil
+          }
+        ],
+        "created" => 1_712_610_022,
+        "id" => "chatcmpl-9BqOELc5ktxtKeK1BtTBG2t0aaDty",
+        "model" => "gpt-3.5-turbo-0125",
+        "object" => "chat.completion.chunk",
+        "system_fingerprint" => "fp_b28b39ffa8"
+      },
+      %{
+        "choices" => [
+          %{
+            "delta" => %{"content" => " Threads"},
+            "finish_reason" => nil,
+            "index" => 0,
+            "logprobs" => nil
+          }
+        ],
+        "created" => 1_712_610_022,
+        "id" => "chatcmpl-9BqOELc5ktxtKeK1BtTBG2t0aaDty",
+        "model" => "gpt-3.5-turbo-0125",
+        "object" => "chat.completion.chunk",
+        "system_fingerprint" => "fp_b28b39ffa8"
+      },
+      %{
+        "choices" => [
+          %{
+            "delta" => %{},
+            "finish_reason" => "stop",
+            "index" => 0,
+            "logprobs" => nil
+          }
+        ],
+        "created" => 1_712_610_022,
+        "id" => "chatcmpl-9BqOELc5ktxtKeK1BtTBG2t0aaDty",
+        "model" => "gpt-3.5-turbo-0125",
+        "object" => "chat.completion.chunk",
+        "system_fingerprint" => "fp_b28b39ffa8"
+      }
+    ]
+  end
+
+  def get_streamed_deltas_multiple_tool_calls() do
+    # NOTE: these are artificially condensed for brevity.
+
+    [
+      %{
+        "choices" => [
+          %{
+            "delta" => %{"content" => nil, "role" => "assistant"},
+            "finish_reason" => nil,
+            "index" => 0,
+            "logprobs" => nil
+          }
+        ],
+        "created" => 1_712_606_513,
+        "id" => "chatcmpl-9BpTdyN883PR9yKpIK2wYYypgWw1Q",
+        "model" => "gpt-4-1106-preview",
+        "object" => "chat.completion.chunk",
+        "system_fingerprint" => "fp_d6526cacfe"
+      },
+      %{
+        "choices" => [
+          %{
+            "delta" => %{
+              "tool_calls" => [
+                %{
+                  "function" => %{"arguments" => "", "name" => "get_weather"},
+                  "id" => "call_fFRRtPwaroz9wbs2eWR7dpcW",
+                  "index" => 0,
+                  "type" => "function"
+                }
+              ]
+            },
+            "finish_reason" => nil,
+            "index" => 0,
+            "logprobs" => nil
+          }
+        ],
+        "created" => 1_712_606_513,
+        "id" => "chatcmpl-9BpTdyN883PR9yKpIK2wYYypgWw1Q",
+        "model" => "gpt-4-1106-preview",
+        "object" => "chat.completion.chunk",
+        "system_fingerprint" => "fp_d6526cacfe"
+      },
+      %{
+        "choices" => [
+          %{
+            "delta" => %{
+              "tool_calls" => [
+                %{"function" => %{"arguments" => "{\"ci"}, "index" => 0}
+              ]
+            },
+            "finish_reason" => nil,
+            "index" => 0,
+            "logprobs" => nil
+          }
+        ],
+        "created" => 1_712_606_513,
+        "id" => "chatcmpl-9BpTdyN883PR9yKpIK2wYYypgWw1Q",
+        "model" => "gpt-4-1106-preview",
+        "object" => "chat.completion.chunk",
+        "system_fingerprint" => "fp_d6526cacfe"
+      },
+      %{
+        "choices" => [
+          %{
+            "delta" => %{
+              "tool_calls" => [
+                %{
+                  "function" => %{"arguments" => "ty\": \"Moab\", \"state\": \"UT\"}"},
+                  "index" => 0
+                }
+              ]
+            },
+            "finish_reason" => nil,
+            "index" => 0,
+            "logprobs" => nil
+          }
+        ],
+        "created" => 1_712_606_513,
+        "id" => "chatcmpl-9BpTdyN883PR9yKpIK2wYYypgWw1Q",
+        "model" => "gpt-4-1106-preview",
+        "object" => "chat.completion.chunk",
+        "system_fingerprint" => "fp_d6526cacfe"
+      },
+      %{
+        "choices" => [
+          %{
+            "delta" => %{
+              "tool_calls" => [
+                %{
+                  "function" => %{"arguments" => "", "name" => "get_weather"},
+                  "id" => "call_sEmznyM1sGqYQ4dbNGdubmxa",
+                  "index" => 1,
+                  "type" => "function"
+                }
+              ]
+            },
+            "finish_reason" => nil,
+            "index" => 0,
+            "logprobs" => nil
+          }
+        ],
+        "created" => 1_712_606_513,
+        "id" => "chatcmpl-9BpTdyN883PR9yKpIK2wYYypgWw1Q",
+        "model" => "gpt-4-1106-preview",
+        "object" => "chat.completion.chunk",
+        "system_fingerprint" => "fp_d6526cacfe"
+      },
+      %{
+        "choices" => [
+          %{
+            "delta" => %{
+              "tool_calls" => [
+                %{"function" => %{"arguments" => "{\"ci"}, "index" => 1}
+              ]
+            },
+            "finish_reason" => nil,
+            "index" => 0,
+            "logprobs" => nil
+          }
+        ],
+        "created" => 1_712_606_513,
+        "id" => "chatcmpl-9BpTdyN883PR9yKpIK2wYYypgWw1Q",
+        "model" => "gpt-4-1106-preview",
+        "object" => "chat.completion.chunk",
+        "system_fingerprint" => "fp_d6526cacfe"
+      },
+      %{
+        "choices" => [
+          %{
+            "delta" => %{
+              "tool_calls" => [
+                %{
+                  "function" => %{"arguments" => "ty\": \"Portland\", \"state\": \"OR\"}"},
+                  "index" => 1
+                }
+              ]
+            },
+            "finish_reason" => nil,
+            "index" => 0,
+            "logprobs" => nil
+          }
+        ],
+        "created" => 1_712_606_513,
+        "id" => "chatcmpl-9BpTdyN883PR9yKpIK2wYYypgWw1Q",
+        "model" => "gpt-4-1106-preview",
+        "object" => "chat.completion.chunk",
+        "system_fingerprint" => "fp_d6526cacfe"
+      },
+      %{
+        "choices" => [
+          %{
+            "delta" => %{
+              "tool_calls" => [
+                %{
+                  "function" => %{"arguments" => "", "name" => "get_weather"},
+                  "id" => "call_cPufqMGm4TOFtqiqFPfz7pcp",
+                  "index" => 2,
+                  "type" => "function"
+                }
+              ]
+            },
+            "finish_reason" => nil,
+            "index" => 0,
+            "logprobs" => nil
+          }
+        ],
+        "created" => 1_712_606_513,
+        "id" => "chatcmpl-9BpTdyN883PR9yKpIK2wYYypgWw1Q",
+        "model" => "gpt-4-1106-preview",
+        "object" => "chat.completion.chunk",
+        "system_fingerprint" => "fp_d6526cacfe"
+      },
+      %{
+        "choices" => [
+          %{
+            "delta" => %{
+              "tool_calls" => [
+                %{"function" => %{"arguments" => "{\"ci"}, "index" => 2}
+              ]
+            },
+            "finish_reason" => nil,
+            "index" => 0,
+            "logprobs" => nil
+          }
+        ],
+        "created" => 1_712_606_513,
+        "id" => "chatcmpl-9BpTdyN883PR9yKpIK2wYYypgWw1Q",
+        "model" => "gpt-4-1106-preview",
+        "object" => "chat.completion.chunk",
+        "system_fingerprint" => "fp_d6526cacfe"
+      },
+      %{
+        "choices" => [
+          %{
+            "delta" => %{
+              "tool_calls" => [
+                %{
+                  "function" => %{"arguments" => "ty\": \"Baltimore\", \"state\": \"MD\"}"},
+                  "index" => 2
+                }
+              ]
+            },
+            "finish_reason" => nil,
+            "index" => 0,
+            "logprobs" => nil
+          }
+        ],
+        "created" => 1_712_606_513,
+        "id" => "chatcmpl-9BpTdyN883PR9yKpIK2wYYypgWw1Q",
+        "model" => "gpt-4-1106-preview",
+        "object" => "chat.completion.chunk",
+        "system_fingerprint" => "fp_d6526cacfe"
+      },
+      %{
+        "choices" => [
+          %{
+            "delta" => %{},
+            "finish_reason" => "tool_calls",
+            "index" => 0,
+            "logprobs" => nil
+          }
+        ],
+        "created" => 1_712_606_513,
+        "id" => "chatcmpl-9BpTdyN883PR9yKpIK2wYYypgWw1Q",
+        "model" => "gpt-4-1106-preview",
+        "object" => "chat.completion.chunk",
+        "system_fingerprint" => "fp_d6526cacfe"
+      }
+    ]
   end
 end

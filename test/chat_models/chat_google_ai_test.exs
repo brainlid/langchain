@@ -5,6 +5,9 @@ defmodule ChatModels.ChatGoogleAITest do
   doctest LangChain.ChatModels.ChatGoogleAI
   alias LangChain.ChatModels.ChatGoogleAI
   alias LangChain.Message
+  alias LangChain.Message.ContentPart
+  alias LangChain.Message.ToolCall
+  alias LangChain.Message.ToolResult
   alias LangChain.MessageDelta
   alias LangChain.Function
 
@@ -13,7 +16,7 @@ defmodule ChatModels.ChatGoogleAITest do
       Function.new(%{
         name: "hello_world",
         description: "Give a hello world greeting.",
-        function: fn -> "Hello world!" end
+        function: fn _args, _context -> {:ok, "Hello world!"} end
       })
 
     %{hello_world: hello_world}
@@ -102,8 +105,24 @@ defmodule ChatModels.ChatGoogleAITest do
           google_ai,
           [
             Message.new_user!(message),
-            Message.new_function_call!("userland_action", Jason.encode!(arguments)),
-            Message.new_function!("userland_action", function_result)
+            Message.new_assistant!(%{
+              tool_calls: [
+                ToolCall.new!(%{
+                  call_id: "call_123",
+                  name: "userland_action",
+                  arguments: Jason.encode!(arguments)
+                })
+              ]
+            }),
+            Message.new_tool_result!(%{
+              tool_results: [
+                ToolResult.new!(%{
+                  tool_call_id: "call_123",
+                  name: "userland_action",
+                  content: Jason.encode!(function_result)
+                })
+              ]
+            })
           ],
           []
         )
@@ -173,7 +192,7 @@ defmodule ChatModels.ChatGoogleAITest do
 
       assert [%Message{} = struct] = ChatGoogleAI.do_process_response(response)
       assert struct.role == :assistant
-      assert struct.content == "Hello User!"
+      [%ContentPart{type: :text, content: "Hello User!"}] = struct.content
       assert struct.index == 0
       assert struct.status == :complete
     end
@@ -212,8 +231,9 @@ defmodule ChatModels.ChatGoogleAITest do
       assert [%Message{} = struct] = ChatGoogleAI.do_process_response(response)
       assert struct.role == :assistant
       assert struct.index == 0
-      assert struct.function_name == "hello_world"
-      assert struct.arguments == args
+      [call] = struct.tool_calls
+      assert call.name == "hello_world"
+      assert call.arguments == args
     end
 
     test "handles receiving MessageDeltas as well" do
@@ -260,6 +280,64 @@ defmodule ChatModels.ChatGoogleAITest do
     test "handles unexpected response with error" do
       response = %{}
       assert {:error, "Unexpected response"} = ChatGoogleAI.do_process_response(response)
+    end
+  end
+
+  describe "filter_parts_for_types/2" do
+    test "returns a single functionCall type" do
+      parts = [
+        %{"text" => "I think I'll call this function."},
+        %{
+          "functionCall" => %{
+            "args" => %{"args" => "data"},
+            "name" => "userland_action"
+          }
+        }
+      ]
+
+      assert [%{"text" => _}] = ChatGoogleAI.filter_parts_for_types(parts, ["text"])
+
+      assert [%{"functionCall" => _}] =
+               ChatGoogleAI.filter_parts_for_types(parts, ["functionCall"])
+    end
+
+    test "returns a set of types" do
+      parts = [
+        %{"text" => "I think I'll call this function."},
+        %{
+          "functionCall" => %{
+            "args" => %{"args" => "data"},
+            "name" => "userland_action"
+          }
+        }
+      ]
+
+      assert parts == ChatGoogleAI.filter_parts_for_types(parts, ["text", "functionCall"])
+    end
+  end
+
+  describe "get_message_contents/1" do
+    test "returns basic text as a ContentPart" do
+      message = Message.new_user!("Howdy!")
+
+      result = ChatGoogleAI.get_message_contents(message)
+
+      assert result == [%{"text" => "Howdy!"}]
+    end
+
+    test "supports a list of ContentParts" do
+      message =
+        Message.new_user!([
+          ContentPart.new!(%{type: :text, content: "Hello!"}),
+          ContentPart.new!(%{type: :text, content: "What's up?"})
+        ])
+
+      result = ChatGoogleAI.get_message_contents(message)
+
+      assert result == [
+               %{"text" => "Hello!"},
+               %{"text" => "What's up?"}
+             ]
     end
   end
 end

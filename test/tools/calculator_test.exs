@@ -6,6 +6,7 @@ defmodule LangChain.Tools.CalculatorTest do
   alias LangChain.Tools.Calculator
   alias LangChain.Function
   alias LangChain.ChatModels.ChatOpenAI
+  alias LangChain.Message.ToolCall
 
   import ExUnit.CaptureIO
 
@@ -13,13 +14,13 @@ defmodule LangChain.Tools.CalculatorTest do
     test "defines the function correctly" do
       assert {:ok, %Function{} = function} = Calculator.new()
       assert function.name == "calculator"
-      assert function.description == "Perform basic math calculations"
+      assert function.description == "Perform basic math calculations or expressions"
       assert function.function != nil
 
       assert function.parameters_schema == %{
                type: "object",
                properties: %{
-                 expression: %{type: "string", description: "A simple mathematical expression."}
+                 expression: %{type: "string", description: "A simple mathematical expression"}
                },
                required: ["expression"]
              }
@@ -55,8 +56,10 @@ defmodule LangChain.Tools.CalculatorTest do
   describe "live test" do
     @tag live_call: true, live_open_ai: true
     test "performs repeated calls until complete with a live LLM" do
+      test_pid = self()
+
       callback = fn %Message{} = msg ->
-        send(self(), {:callback_msg, msg})
+        send(test_pid, {:callback_msg, msg})
       end
 
       {:ok, updated_chain, %Message{} = message} =
@@ -67,7 +70,7 @@ defmodule LangChain.Tools.CalculatorTest do
         |> LLMChain.add_message(
           Message.new_user!("Answer the following math question: What is 100 + 300 - 200?")
         )
-        |> LLMChain.add_functions(Calculator.new!())
+        |> LLMChain.add_tools(Calculator.new!())
         |> LLMChain.run(while_needs_response: true, callback_fn: callback)
 
       assert updated_chain.last_message == message
@@ -79,20 +82,17 @@ defmodule LangChain.Tools.CalculatorTest do
       # assert received multiple messages as callbacks
       assert_received {:callback_msg, message}
       assert message.role == :assistant
-      assert message.function_name == "calculator"
-      assert message.arguments == %{"expression" => "100 + 300 - 200"}
+      assert [%ToolCall{name: "calculator", arguments: %{"expression" => _}}] = message.tool_calls
 
       # the function result message
       assert_received {:callback_msg, message}
-      assert message.role == :function
-      assert message.function_name == "calculator"
+      assert message.role == :tool
       assert message.content == "200"
 
       assert_received {:callback_msg, message}
       assert message.role == :assistant
 
-      assert message.content ==
-        "The result of the math question \"100 + 300 - 200\" is 200."
+      assert message.content =~ "200"
 
       assert updated_chain.last_message == message
     end
