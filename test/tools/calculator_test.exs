@@ -20,7 +20,7 @@ defmodule LangChain.Tools.CalculatorTest do
       assert function.parameters_schema == %{
                type: "object",
                properties: %{
-                 expression: %{type: "string", description: "A simple mathematical expression."}
+                 expression: %{type: "string", description: "A simple mathematical expression"}
                },
                required: ["expression"]
              }
