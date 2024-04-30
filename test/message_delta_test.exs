@@ -12,8 +12,6 @@ defmodule LangChain.MessageDeltaTest do
       assert {:ok, %MessageDelta{} = msg} = MessageDelta.new(%{})
       assert msg.role == :unknown
       assert msg.content == nil
-      assert msg.function_name == nil
-      assert msg.arguments == nil
       assert msg.status == :incomplete
       assert msg.index == nil
     end
@@ -29,47 +27,33 @@ defmodule LangChain.MessageDeltaTest do
 
       assert msg.role == :assistant
       assert msg.content == "Hi!"
-      assert msg.function_name == nil
-      assert msg.arguments == nil
       assert msg.status == :complete
       assert msg.index == 1
     end
 
-    test "accepts normal function attributes" do
+    test "accepts tool_call attributes" do
+      tool_call =
+        ToolCall.new!(%{
+          type: :function,
+          name: "hello_world",
+          call_id: "call_123",
+          arguments: Jason.encode!(%{greeting: "Howdy"})
+        })
+
       assert {:ok, %MessageDelta{} = msg} =
                MessageDelta.new(%{
                  "content" => nil,
                  "role" => "assistant",
-                 "function_name" => "hello_world",
-                 "arguments" => Jason.encode!(%{greeting: "Howdy"}),
+                 "tool_calls" => [tool_call],
                  "index" => 1,
                  "status" => "complete"
                })
 
       assert msg.role == :assistant
       assert msg.content == nil
-      assert msg.function_name == "hello_world"
-      assert msg.arguments == "{\"greeting\":\"Howdy\"}"
+      assert msg.tool_calls == [tool_call]
       assert msg.status == :complete
       assert msg.index == 1
-    end
-
-    test "accepts arguments as an empty string" do
-      {:ok, msg} = MessageDelta.new(%{"role" => "assistant", "arguments" => " "})
-      assert msg.role == :assistant
-      assert msg.arguments == " "
-
-      {:ok, msg} = MessageDelta.new(%{role: "assistant", arguments: " "})
-      assert msg.role == :assistant
-      assert msg.arguments == " "
-
-      {:ok, msg} = MessageDelta.new(%{role: "assistant", content: "\r\n"})
-      assert msg.role == :assistant
-      assert msg.content == "\r\n"
-
-      {:ok, msg} = MessageDelta.new(%{role: "assistant", content: "\n"})
-      assert msg.role == :assistant
-      assert msg.content == "\n"
     end
 
     test "returns error when invalid" do
@@ -118,9 +102,7 @@ defmodule LangChain.MessageDeltaTest do
       expected = %LangChain.MessageDelta{
         content: "Hello! How can I assist you today?",
         index: 0,
-        function_name: nil,
         role: :assistant,
-        arguments: nil,
         status: :complete
       }
 

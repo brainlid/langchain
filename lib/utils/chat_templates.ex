@@ -151,10 +151,6 @@ defmodule LangChain.Utils.ChatTemplates do
               "Conversation roles must alternate user/assistant/user/assistant/..."
     end)
 
-    # TODO: Check/replace/validate messages don't include tokens for the format.
-    # - pass in format tokens list? Exclude tokens?
-    # - need the model's tokenizer config passed in.
-
     # return 3 element tuple of critical message pieces
     {system, first_user, rest}
   end
