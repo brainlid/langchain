@@ -25,6 +25,49 @@ defmodule LangChain.FunctionParam do
 
   The function `to_parameters_schema/1` is used to convert a list of
   `FunctionParam` structs into a JSONSchema formatted data map.
+
+  ## Examples
+
+  Basic string field.
+
+      FunctionParam.new!(%{name: "name", type: :string})
+
+  Basic string field with description
+
+      FunctionParam.new!(%{name: "name",
+                           type: :string,
+                           description: "User's name"})
+
+  Basic required string field with description
+
+      FunctionParam.new!(%{name: "name", type: :string, required: true})
+
+  Required boolean field with description
+
+      FunctionParam.new!(%{name: "active", type: :boolean, required: true})
+
+  A string Enum field. The field's value can only be one of the values specified
+  by the enum.
+
+      FunctionParam.new!(%{name: "color",
+                           type: :string,
+                           enum: ["red", "yellow", "blue"],
+                           description: "The specified primary color})
+
+  Array of strings field example. Defines a set of tags that an LLM may assign.
+
+      FunctionParam.new!(%{name: "tags", type: :array, item_type: "string")
+
+  A field that represents an object with nested fields.
+
+      FunctionParam.new!(%{name: "person",
+                           type: :object,
+                           object_properties: [
+                             FunctionParam.new!(%{name: "name", type: :string, required: true}),
+                             FunctionParam.new!(%{name: "age", type: :integer}),
+                           ]
+                        })
+
   """
   use Ecto.Schema
   import Ecto.Changeset
