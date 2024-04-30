@@ -400,41 +400,31 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
                  content: "",
                  status: :incomplete,
                  index: nil,
-                 function_name: nil,
-                 role: :assistant,
-                 arguments: nil
+                 role: :assistant
                },
                %LangChain.MessageDelta{
                  content: "Color",
                  status: :incomplete,
                  index: nil,
-                 function_name: nil,
-                 role: :assistant,
-                 arguments: nil
+                 role: :assistant
                },
                %LangChain.MessageDelta{
                  content: "ful",
                  status: :incomplete,
                  index: nil,
-                 function_name: nil,
-                 role: :assistant,
-                 arguments: nil
+                 role: :assistant
                },
                %LangChain.MessageDelta{
                  content: " Threads",
                  status: :incomplete,
                  index: nil,
-                 function_name: nil,
-                 role: :assistant,
-                 arguments: nil
+                 role: :assistant
                },
                %LangChain.MessageDelta{
                  content: "",
                  status: :complete,
                  index: nil,
-                 function_name: nil,
-                 role: :assistant,
-                 arguments: nil
+                 role: :assistant
                }
              ]
     end
@@ -1072,10 +1062,6 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       #       index: nil
       #     }
       #   ],
-      #   tool_call_id: nil,
-      #   is_error: false,
-      #   function_name: nil,
-      #   arguments: nil
       # }
     end
 
@@ -1118,10 +1104,6 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       #       index: nil
       #     }
       #   ],
-      #   tool_call_id: nil,
-      #   is_error: false,
-      #   function_name: nil,
-      #   arguments: nil
       # }
     end
   end

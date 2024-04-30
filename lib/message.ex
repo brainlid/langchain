@@ -92,16 +92,6 @@ defmodule LangChain.Message do
     # A `:tool` role contains one or more `tool_results` from the system having
     # used tools.
     field :tool_results, :any, virtual: true
-
-    # # When responding to a tool call, the `tool_call_id` specifies which tool
-    # # call this is giving a response to.
-    # field :tool_call_id, :string
-    # # A tool response state that flags that an error occurred with the tool call
-    # field :is_error, :boolean, default: false
-    # TODO: Remove "function_name"
-    field :function_name, :string
-    # TODO: Remove "arguments"
-    field :arguments, :any, virtual: true
   end
 
   @type t :: %Message{}
@@ -424,7 +414,7 @@ defmodule LangChain.Message do
   end
 
   @doc """
-  Return if a Message is a function_call.
+  Return if a Message is a tool_call.
   """
   def is_tool_call?(%Message{role: :assistant, status: :complete, tool_calls: tool_calls})
       when is_list(tool_calls) and tool_calls != [],

@@ -376,8 +376,6 @@ defmodule LangChain.Chains.LLMChainTest do
                 index: 0
               }
             ],
-            function_name: nil,
-            arguments: nil
           }
         ],
         [
@@ -396,8 +394,6 @@ defmodule LangChain.Chains.LLMChainTest do
                 index: 0
               }
             ],
-            function_name: nil,
-            arguments: nil
           }
         ],
         [
@@ -416,8 +412,6 @@ defmodule LangChain.Chains.LLMChainTest do
                 index: 0
               }
             ],
-            function_name: nil,
-            arguments: nil
           }
         ],
         [
@@ -436,8 +430,6 @@ defmodule LangChain.Chains.LLMChainTest do
                 index: 0
               }
             ],
-            function_name: nil,
-            arguments: nil
           }
         ],
         [
@@ -456,8 +448,6 @@ defmodule LangChain.Chains.LLMChainTest do
                 index: 0
               }
             ],
-            function_name: nil,
-            arguments: nil
           }
         ],
         [
@@ -476,8 +466,6 @@ defmodule LangChain.Chains.LLMChainTest do
                 index: 0
               }
             ],
-            function_name: nil,
-            arguments: nil
           }
         ],
         [
@@ -496,8 +484,6 @@ defmodule LangChain.Chains.LLMChainTest do
                 index: 0
               }
             ],
-            function_name: nil,
-            arguments: nil
           }
         ],
         [
@@ -507,8 +493,6 @@ defmodule LangChain.Chains.LLMChainTest do
             index: 0,
             role: :unknown,
             tool_calls: nil,
-            function_name: nil,
-            arguments: nil
           }
         ]
       ]

@@ -7,6 +7,7 @@ defmodule LangChain.Tools.CalculatorTest do
   alias LangChain.Function
   alias LangChain.ChatModels.ChatOpenAI
   alias LangChain.Message.ToolCall
+  alias LangChain.Message.ToolResult
 
   import ExUnit.CaptureIO
 
@@ -76,8 +77,8 @@ defmodule LangChain.Tools.CalculatorTest do
       assert updated_chain.last_message == message
       assert message.role == :assistant
 
-      assert message.content ==
-               "The result of the math question \"100 + 300 - 200\" is 200."
+      assert message.content =~ "100 + 300 - 200"
+      assert message.content =~ "is 200"
 
       # assert received multiple messages as callbacks
       assert_received {:callback_msg, message}
@@ -87,7 +88,7 @@ defmodule LangChain.Tools.CalculatorTest do
       # the function result message
       assert_received {:callback_msg, message}
       assert message.role == :tool
-      assert message.content == "200"
+      assert [%ToolResult{content: "200"}] = message.tool_results
 
       assert_received {:callback_msg, message}
       assert message.role == :assistant

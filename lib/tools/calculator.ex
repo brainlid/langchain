@@ -35,11 +35,16 @@ defmodule LangChain.Tools.Calculator do
       LLM: %LangChain.ChatModels.ChatOpenAI{
         endpoint: "https://api.openai.com/v1/chat/completions",
         model: "gpt-3.5-turbo",
+        api_key: nil,
         temperature: 0.0,
         frequency_penalty: 0.0,
         receive_timeout: 60000,
+        seed: 0,
         n: 1,
-        stream: false
+        json_response: false,
+        stream: false,
+        max_tokens: nil,
+        user: nil
       }
       MESSAGES: [
         %LangChain.Message{
@@ -47,25 +52,29 @@ defmodule LangChain.Tools.Calculator do
           index: nil,
           status: :complete,
           role: :user,
-          function_name: nil,
-          arguments: nil
+          name: nil,
+          tool_calls: [],
+          tool_results: nil
         }
       ]
-      FUNCTIONS: [
+      TOOLS: [
         %LangChain.Function{
           name: "calculator",
-          description: "Perform basic math calculations",
-          function: #Function<0.108164323/2 in LangChain.Tools.Calculator.execute>,
+          description: "Perform basic math calculations or expressions",
+          display_text: nil,
+          function: #Function<0.75045395/2 in LangChain.Tools.Calculator.execute>,
+          async: true,
           parameters_schema: %{
+            type: "object",
+            required: ["expression"],
             properties: %{
               expression: %{
-                description: "A simple mathematical expression.",
-                type: "string"
+                type: "string",
+                description: "A simple mathematical expression"
               }
-            },
-            required: ["expression"],
-            type: "object"
-          }
+            }
+          },
+          parameters: []
         }
       ]
       SINGLE MESSAGE RESPONSE: %LangChain.Message{
@@ -73,20 +82,48 @@ defmodule LangChain.Tools.Calculator do
         index: 0,
         status: :complete,
         role: :assistant,
-        function_name: "calculator",
-        arguments: %{"expression" => "100 + 300 - 200"}
+        name: nil,
+        tool_calls: [
+          %LangChain.Message.ToolCall{
+            status: :complete,
+            type: :function,
+            call_id: "call_NlHbo4R5NXTA6lHyjLdGQN9p",
+            name: "calculator",
+            arguments: %{"expression" => "100 + 300 - 200"},
+            index: nil
+          }
+        ],
+        tool_results: nil
       }
       EXECUTING FUNCTION: "calculator"
       FUNCTION RESULT: "200"
+      TOOL RESULTS: %LangChain.Message{
+        content: nil,
+        index: nil,
+        status: :complete,
+        role: :tool,
+        name: nil,
+        tool_calls: [],
+        tool_results: [
+          %LangChain.Message.ToolResult{
+            type: :function,
+            tool_call_id: "call_NlHbo4R5NXTA6lHyjLdGQN9p",
+            name: "calculator",
+            content: "200",
+            display_text: nil,
+            is_error: false
+          }
+        ]
+      }
       SINGLE MESSAGE RESPONSE: %LangChain.Message{
-        content: "The answer to the math question \"What is 100 + 300 - 200?\" is 200.",
+        content: "The result of the math question \"100 + 300 - 200\" is 200.",
         index: 0,
         status: :complete,
         role: :assistant,
-        function_name: nil,
-        arguments: nil
+        name: nil,
+        tool_calls: [],
+        tool_results: nil
       }
-
   """
   require Logger
   alias LangChain.Function

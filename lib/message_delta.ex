@@ -19,16 +19,6 @@ defmodule LangChain.MessageDelta do
   across many message deltas and must be fully assembled before it can be
   executed.
 
-  ## Function calling
-
-  * `:function_name` - A message from the LLM expressing the intent to execute a
-    function that was previously declared available to it.
-
-    The `arguments` will eventually be parsed from JSON. However, as deltas are
-    streamed, the arguments come in as text. Once it is _fully received_ it can
-    be parsed as JSON, but it cannot be used before it is complete as it will
-    not be valid JSON.
-
   """
   use Ecto.Schema
   import Ecto.Changeset
@@ -51,15 +41,11 @@ defmodule LangChain.MessageDelta do
     field :role, Ecto.Enum, values: [:unknown, :assistant], default: :unknown
 
     field :tool_calls, :any, virtual: true
-
-    # TODO: REMOVE THESE vvv
-    field :function_name, :string
-    field :arguments, :any, virtual: true
   end
 
   @type t :: %MessageDelta{}
 
-  @create_fields [:role, :content, :function_name, :arguments, :index, :status, :tool_calls]
+  @create_fields [:role, :content, :index, :status, :tool_calls]
   @required_fields []
 
   @doc """

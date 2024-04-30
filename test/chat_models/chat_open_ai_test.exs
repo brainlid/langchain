@@ -19,8 +19,6 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     "Hello world!"
   end
 
-  # TODO: find and remove function_call references
-
   setup do
     {:ok, hello_world} =
       Function.new(%{
@@ -443,9 +441,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
                    content: "",
                    status: :incomplete,
                    index: 0,
-                   function_name: nil,
-                   role: :assistant,
-                   arguments: nil
+                   role: :assistant
                  }
                ],
                [
@@ -453,9 +449,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
                    content: "Color",
                    status: :incomplete,
                    index: 0,
-                   function_name: nil,
-                   role: :unknown,
-                   arguments: nil
+                   role: :unknown
                  }
                ],
                [
@@ -463,9 +457,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
                    content: "ful",
                    status: :incomplete,
                    index: 0,
-                   function_name: nil,
-                   role: :unknown,
-                   arguments: nil
+                   role: :unknown
                  }
                ],
                [
@@ -473,9 +465,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
                    content: " Threads",
                    status: :incomplete,
                    index: 0,
-                   function_name: nil,
-                   role: :unknown,
-                   arguments: nil
+                   role: :unknown
                  }
                ],
                [
@@ -483,9 +473,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
                    content: nil,
                    status: :complete,
                    index: 0,
-                   function_name: nil,
-                   role: :unknown,
-                   arguments: nil
+                   role: :unknown
                  }
                ]
              ]
@@ -538,11 +526,6 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert call3.name == "get_weather"
       assert call3.arguments == %{"city" => "Baltimore", "state" => "MD"}
     end
-
-    # TODO: Fake API response with multiples.
-    # TODO: LLMChain needs to support it as well. Perform multiple function call executions.
-    # TODO: Message structure needs to change for calling functions to support a single message executing multiples.
-    #      - make it easy to support only receiving a single function call.
 
     @tag live_call: true, live_open_ai: true
     test "executes callback function when data is streamed" do
@@ -873,9 +856,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       expected_1 = %MessageDelta{
         content: "",
         index: 0,
-        function_name: nil,
         role: :assistant,
-        arguments: nil,
         status: :incomplete
       }
 
@@ -885,9 +866,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       expected_2 = %MessageDelta{
         content: "Hello",
         index: 0,
-        function_name: nil,
         role: :unknown,
-        arguments: nil,
         status: :incomplete
       }
 
@@ -897,9 +876,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       expected_10 = %MessageDelta{
         content: nil,
         index: 0,
-        function_name: nil,
         role: :unknown,
-        arguments: nil,
         status: :complete
       }
 
@@ -1303,9 +1280,6 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       #   name: nil,
       #   tool_calls: [],
       #   tool_call_id: nil,
-      #   is_error: false,
-      #   function_name: nil,
-      #   arguments: nil
       # },
 
       assert last_message.content =~ "Oslo"
