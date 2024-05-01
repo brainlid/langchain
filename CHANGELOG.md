@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.2.0 (2024-04-30)
+
+For LLMs that support it (verified with ChatGPT and Anthropic), a user message can now contain multiple `ContentPart`s, making it "multi-modal". This means images and text can be combined into a single message allowing for interactions about the images to now be possible.
+
+**Added:**
+
+* `LangChain.Message.ContentPart` - used for User messages and multi-modal support. Google's AI assistant can return multiple parts as well.
+* `LangChain.Message.ToolCall` - an assistant can request multiple tool calls in the same message.
+* `LangChain.Message.ToolResult` - the system's answer to a `ToolCall`. It adds an is_error boolean flag. This an be helpful in the UI, but Anthropic specifically wants it.
+
+**Changed:**
+
+* The roles of `:function` and `:function_call` are removed. The equivalent of a `function_call` is expressed by an `:assistant` role making one or more `ToolCall` requests. The `:function` was the system's answer to a function call. This is now in the `:tool` role.
+* Role `:tool` was added. A tool message contains one or more `ToolResult` messages.
+
 ## v0.1.10 (2024-03-07)
 
 **Changes**
