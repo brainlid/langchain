@@ -4,14 +4,8 @@
 
 ```elixir
 Mix.install([
-  {:langchain, "~> 0.1.0"}
+  {:langchain, "~> 0.2.0"}
 ])
-```
-
-<!-- livebook:{"output":true} -->
-
-```
-:ok
 ```
 
 ## Using an OpenAI API Key in Livebook
@@ -59,7 +53,7 @@ response.content
 <!-- livebook:{"output":true} -->
 
 ```
-"One, two, three! How can I assist you today?"
+"One, two, three. You're coming in loud and clear. How can I assist you today?"
 ```
 
 Nice! We've just saw how easy it is to get access to ChatGPT from our Elixir application!
@@ -90,7 +84,7 @@ response.content
 <!-- livebook:{"output":true} -->
 
 ```
-"Well, aren't we living in the age of the internet? On the internet, you're bound to stumble upon answers to all the questions in the world. So go on, take a little stroll on the information superhighway and find out for yourself!"
+"Oh, isn't it an interesting game when we travel and explore different places with our minds! Nations do have unique elements like capitals, don't they? Could be almost anywhere. Makes you think."
 ```
 
 Here's the answer it gave me when I ran it:
@@ -119,7 +113,8 @@ callback = fn
     # we received the finshed message once fully complete
     IO.puts("")
     IO.puts("")
-    IO.inspect(data.content, label: "COMPLETED MESSAGE")
+    IO.puts("COMPLETED MESSAGE:")
+    IO.puts(data.content)
 end
 
 {:ok, _updated_chain, response} =
@@ -137,17 +132,24 @@ response.content
 <!-- livebook:{"output":true} -->
 
 ```
-Washington D.C. glows,
-Monuments under night's cloak,
-History echoes.
+D.C.'s heart beats strong,
+Monuments touch the sky's song,
+Freedom's tale prolong.
 
-COMPLETED MESSAGE: "Washington D.C. glows,\nMonuments under night's cloak,\nHistory echoes."
+COMPLETED MESSAGE:
+D.C.'s heart beats strong,
+Monuments touch the sky's song,
+Freedom's tale prolong.
 ```
 
 <!-- livebook:{"output":true} -->
 
 ```
-"Washington D.C. glows,\nMonuments under night's cloak,\nHistory echoes."
+"D.C.'s heart beats strong,\nMonuments touch the sky's song,\nFreedom's tale prolong."
 ```
 
-<!-- livebook:{"offset":4476,"stamp":{"token":"QTEyOEdDTQ._auAGrFGW0o-wyFuBZHzYmNKnjh-zn7RDEFzsbwher2yHQkQvyoygKYZ47w.XzE9lMqi6sFn2Sk-.I3hAnZNgEkDQW-d5CAH8J17xvUJ-l6i7yOu502MOJyQDg7eGDcQoyubsyKBe2A.yNtJNRqgzinZNNkMGH7AzA","version":1}} -->
+## Done
+
+That's it! We've covered the basics for making a chat request from an LLM.
+
+<!-- livebook:{"offset":4569,"stamp":{"token":"XCP.hsiTw_GIK7NE9FnYRGEDqnfDGpphOj8-k-T1jjIqWxpyLWtGLPB8zeMFhQXFgUTy77IlH_5ZgZZkNDecG0B--9U_YhE5xKxGyEg_xA18mOHrRPaqafpSJ6o","version":2}} -->

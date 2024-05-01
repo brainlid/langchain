@@ -4,136 +4,13 @@
 
 ```elixir
 Mix.install([
-  {:langchain, "~> 0.1.0"}
+  {:langchain, "~> 0.2.0"}
 ])
-```
-
-<!-- livebook:{"output":true} -->
-
-```
-Resolving Hex dependencies...
-Resolution completed in 0.796s
-New:
-  abacus 2.0.0
-  castore 1.0.3
-  decimal 2.1.1
-  ecto 3.10.3
-  expo 0.4.1
-  finch 0.16.0
-  gettext 0.23.1
-  hpax 0.1.2
-  jason 1.4.1
-  langchain 0.1.0
-  mime 2.0.5
-  mint 1.5.1
-  nimble_options 1.0.2
-  nimble_pool 1.0.0
-  req 0.4.3
-  telemetry 1.2.1
-* Getting langchain (Hex package)
-* Getting abacus (Hex package)
-* Getting ecto (Hex package)
-* Getting gettext (Hex package)
-* Getting req (Hex package)
-* Getting finch (Hex package)
-* Getting jason (Hex package)
-* Getting mime (Hex package)
-* Getting castore (Hex package)
-* Getting mint (Hex package)
-* Getting nimble_options (Hex package)
-* Getting nimble_pool (Hex package)
-* Getting telemetry (Hex package)
-* Getting hpax (Hex package)
-* Getting expo (Hex package)
-* Getting decimal (Hex package)
-==> decimal
-Compiling 4 files (.ex)
-Generated decimal app
-==> mime
-Compiling 1 file (.ex)
-Generated mime app
-==> nimble_options
-Compiling 3 files (.ex)
-Generated nimble_options app
-===> Analyzing applications...
-===> Compiling telemetry
-==> jason
-Compiling 10 files (.ex)
-Generated jason app
-==> expo
-Compiling 2 files (.erl)
-Compiling 21 files (.ex)
-Generated expo app
-==> hpax
-Compiling 4 files (.ex)
-Generated hpax app
-==> gettext
-Compiling 17 files (.ex)
-Generated gettext app
-==> ecto
-Compiling 56 files (.ex)
-warning: Logger.warn/1 is deprecated. Use Logger.warning/2 instead
-  lib/ecto/changeset/relation.ex:474: Ecto.Changeset.Relation.process_current/3
-
-warning: Logger.warn/1 is deprecated. Use Logger.warning/2 instead
-  lib/ecto/repo/preloader.ex:208: Ecto.Repo.Preloader.fetch_ids/4
-
-warning: Logger.warn/1 is deprecated. Use Logger.warning/2 instead
-  lib/ecto/changeset.ex:3156: Ecto.Changeset.optimistic_lock/3
-
-Generated ecto app
-==> abacus
-Compiling 3 files (.erl)
-Compiling 5 files (.ex)
-warning: Abacus.parse/1 is undefined or private
-Invalid call found at 9 locations:
-  lib/format.ex:36: Abacus.Format.format/1
-  lib/format.ex:37: Abacus.Format.format/1
-  lib/format.ex:38: Abacus.Format.format/1
-  lib/format.ex:39: Abacus.Format.format/1
-  lib/format.ex:64: Abacus.Format.format/1
-  lib/format.ex:65: Abacus.Format.format/1
-  lib/format.ex:81: Abacus.Format.format/1
-  lib/format.ex:82: Abacus.Format.format/1
-  lib/format.ex:100: Abacus.Format.format/1
-
-Generated abacus app
-==> nimble_pool
-Compiling 2 files (.ex)
-Generated nimble_pool app
-==> castore
-Compiling 1 file (.ex)
-Generated castore app
-==> mint
-Compiling 1 file (.erl)
-Compiling 19 files (.ex)
-Generated mint app
-==> finch
-Compiling 13 files (.ex)
-warning: Logger.warn/1 is deprecated. Use Logger.warning/2 instead
-  lib/finch/http2/pool.ex:362: Finch.HTTP2.Pool.connected/3
-
-warning: Logger.warn/1 is deprecated. Use Logger.warning/2 instead
-  lib/finch/http2/pool.ex:460: Finch.HTTP2.Pool.connected_read_only/3
-
-Generated finch app
-==> req
-Compiling 6 files (.ex)
-Generated req app
-==> langchain
-Compiling 14 files (.ex)
-Generated langchain app
-```
-
-<!-- livebook:{"output":true} -->
-
-```
-:ok
 ```
 
 ## What we're doing
 
-This notebook shows how to use the Elixir [LangChain](https://github.com/brainlid/langchain) library to expose an Elixir function as something that can be executed by an LLM like ChatGPT. The LangChain library wraps this all up making it easy and portable between different LLMs.
+This notebook shows how to use the Elixir [LangChain](https://github.com/brainlid/langchain) library to expose an Elixir function as a tool that can be executed by an LLM like ChatGPT. The LangChain library wraps this all up making it easy and portable between different LLMs.
 
 ## The Elixir Function in our App
 
@@ -162,7 +39,19 @@ end
 {:module, MyApp, <<70, 79, 82, 49, 0, 0, 7, ...>>, {:get_user_info, 1}}
 ```
 
-## Explosing our Function to an LLM
+It's a simple lookup using a `user_id` to find return a map of a user's data.
+
+```elixir
+
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+nil
+```
+
+## Exposing our Function to an LLM
 
 With an Elixir function defined, we will wrap it in a LangChain `Function` structure so it can be easily shared with an LLM.
 
@@ -176,7 +65,7 @@ function =
     name: "get_user_info",
     description: "Return JSON object of the current users's relevant information.",
     function: fn _args, %{user_id: user_id} = _context ->
-      # Use the provided user_id context to call our Elixir function.
+      # This uses the user_id provided through the context to call our Elixir function.
       # ChatGPT responses must be text. Convert the returned Map into JSON.
       Jason.encode!(MyApp.get_user_info(user_id))
     end
@@ -189,8 +78,11 @@ function =
 %LangChain.Function{
   name: "get_user_info",
   description: "Return JSON object of the current users's relevant information.",
-  function: #Function<41.3316493/2 in :erl_eval.expr/6>,
-  parameters_schema: nil
+  display_text: nil,
+  function: #Function<41.125776118/2 in :erl_eval.expr/6>,
+  async: true,
+  parameters_schema: nil,
+  parameters: []
 }
 ```
 
@@ -200,7 +92,9 @@ The `description` is for the LLM to know what the function can do so it can deci
 
 The `function` argument is passed an annonymous function whose job it is to be the glue that bridges data coming from the LLM with context from our application before calling other functions from our application.
 
-This "bridge" function receives 2 arguments. The first is any arguments passed to the function by the LLM if we defined any as being required. The second is an application context that we'll get to next. The `context` is specific to our application and does not go through the LLM at all. Think of this as the current user logged into our Phoenix web application. We want the exchange with the LLM to be relevant and only based on the what the current user can see and do.
+This "bridge" function receives 2 arguments. The first is any arguments passed to the function by the LLM if we defined any as being required. In this example, the LLM doesn't provide any arguments. The second argument is an application context that we'll get to next.
+
+The `context` is specific to our application and does not go through the LLM at all. Think of this as the current user logged into our Phoenix web application. We want the user's interaction with the LLM to be relevant and only based on the what the current user can see and do.
 
 ## Setting up our LangChain API Key
 
@@ -230,9 +124,9 @@ Application.put_env(:langchain, :openai_key, System.fetch_env!("LB_OPENAI_API_KE
 
 We'll use the `LangChain.Message` struct to define the messages for what we want the LLM to do. Our `system` message instructs the LLM how to behave.
 
-In this example, we want the assistant to generate Haiku poems about the current user's favorite animals. However, we only want it to work for users who are "members" and not "trial" users.
+In this example, we want the assistant to generate Haiku poems about the current user's favorite animal. However, we only want it to work for users who are "members" and not "trial" users.
 
-The instructions we're giving the LLM will require it to execute the function to get additional information. Yes, this is a simple and contrived example, in a real system, we wouldn't even make the API call to the server for a "trial" user and we could pass along the additional information with the first request.
+The instructions we're giving the LLM will require it to execute the function to get additional information. Yes, this is both a simple and contrived example. In a real system, we wouldn't even make the API call to the server for a "trial" user and we could pass along the additional information with the first request.
 
 What we're demonstrating here is that the LLM can interact with our Elixir application, use multiple pieces of returned information to make business logic decisions and fullfil our system requests.
 
@@ -257,16 +151,18 @@ messages = [
     index: nil,
     status: :complete,
     role: :system,
-    function_name: nil,
-    arguments: nil
+    name: nil,
+    tool_calls: [],
+    tool_results: nil
   },
   %LangChain.Message{
     content: "The current user is requesting a Haiku poem about their favorite animal.",
     index: nil,
     status: :complete,
     role: :user,
-    function_name: nil,
-    arguments: nil
+    name: nil,
+    tool_calls: [],
+    tool_results: nil
   }
 ]
 ```
@@ -289,11 +185,16 @@ chat_model = ChatOpenAI.new!(%{model: "gpt-4", temperature: 1, stream: false})
 %LangChain.ChatModels.ChatOpenAI{
   endpoint: "https://api.openai.com/v1/chat/completions",
   model: "gpt-4",
+  api_key: nil,
   temperature: 1.0,
   frequency_penalty: 0.0,
   receive_timeout: 60000,
+  seed: nil,
   n: 1,
-  stream: false
+  json_response: false,
+  stream: false,
+  max_tokens: nil,
+  user: nil
 }
 ```
 
@@ -301,7 +202,7 @@ chat_model = ChatOpenAI.new!(%{model: "gpt-4", temperature: 1, stream: false})
 
 Here we'll define some special context that we want passed through to our `LangChain.Function` when it is executed.
 
-In a real application, this might be session based user or account information. It's whatever is relevant to our application that changes how and what a function should operate.
+In a real application, this might be session based user or account information. It's whatever is relevant to our application that changes how a function should operate or the data it should access.
 
 ```elixir
 context = %{user_id: 2}
@@ -334,7 +235,7 @@ alias LangChain.Chains.LLMChain
   # add the prompt message
   |> LLMChain.add_messages(messages)
   # add the functions that are available to the LLM
-  |> LLMChain.add_functions([function])
+  |> LLMChain.add_tools([function])
   # keep running the LLM chain against the LLM if needed to evaluate
   # function calls and provide a response.
   |> LLMChain.run(while_needs_response: true)
@@ -349,11 +250,16 @@ response.content
 LLM: %LangChain.ChatModels.ChatOpenAI{
   endpoint: "https://api.openai.com/v1/chat/completions",
   model: "gpt-4",
+  api_key: nil,
   temperature: 1.0,
   frequency_penalty: 0.0,
   receive_timeout: 60000,
+  seed: nil,
   n: 1,
-  stream: false
+  json_response: false,
+  stream: false,
+  max_tokens: nil,
+  user: nil
 }
 MESSAGES: [
   %LangChain.Message{
@@ -361,24 +267,29 @@ MESSAGES: [
     index: nil,
     status: :complete,
     role: :system,
-    function_name: nil,
-    arguments: nil
+    name: nil,
+    tool_calls: [],
+    tool_results: nil
   },
   %LangChain.Message{
     content: "The current user is requesting a Haiku poem about their favorite animal.",
     index: nil,
     status: :complete,
     role: :user,
-    function_name: nil,
-    arguments: nil
+    name: nil,
+    tool_calls: [],
+    tool_results: nil
   }
 ]
-FUNCTIONS: [
+TOOLS: [
   %LangChain.Function{
     name: "get_user_info",
     description: "Return JSON object of the current users's relevant information.",
-    function: #Function<41.3316493/2 in :erl_eval.expr/6>,
-    parameters_schema: nil
+    display_text: nil,
+    function: #Function<41.125776118/2 in :erl_eval.expr/6>,
+    async: true,
+    parameters_schema: nil,
+    parameters: []
   }
 ]
 SINGLE MESSAGE RESPONSE: %LangChain.Message{
@@ -386,30 +297,61 @@ SINGLE MESSAGE RESPONSE: %LangChain.Message{
   index: 0,
   status: :complete,
   role: :assistant,
-  function_name: "get_user_info",
-  arguments: %{}
+  name: nil,
+  tool_calls: [
+    %LangChain.Message.ToolCall{
+      status: :complete,
+      type: :function,
+      call_id: "call_BeOCHcVh9TDiEgNnk3V095pG",
+      name: "get_user_info",
+      arguments: %{},
+      index: nil
+    }
+  ],
+  tool_results: nil
 }
 EXECUTING FUNCTION: "get_user_info"
 
-21:19:05.991 [debug] Executing function "get_user_info"
-FUNCTION RESULT: "{\"account_type\":\"member\",\"favorite_animal\":\"Aardvark\",\"name\":\"Joan Jett\",\"user_id\":2}"
+22:00:31.667 [debug] Executing function "get_user_info"
+FUNCTION RESULT: "{\"name\":\"Joan Jett\",\"user_id\":2,\"account_type\":\"member\",\"favorite_animal\":\"Aardvark\"}"
+TOOL RESULTS: %LangChain.Message{
+  content: nil,
+  index: nil,
+  status: :complete,
+  role: :tool,
+  name: nil,
+  tool_calls: [],
+  tool_results: [
+    %LangChain.Message.ToolResult{
+      type: :function,
+      tool_call_id: "call_BeOCHcVh9TDiEgNnk3V095pG",
+      name: "get_user_info",
+      content: "{\"name\":\"Joan Jett\",\"user_id\":2,\"account_type\":\"member\",\"favorite_animal\":\"Aardvark\"}",
+      display_text: nil,
+      is_error: false
+    }
+  ]
+}
 SINGLE MESSAGE RESPONSE: %LangChain.Message{
-  content: "Aardvark in night's cloak,\nDigging deep beneath moon's gaze,\nJoan, this beast we evoke.",
+  content: "Sure, here is a haiku about your favorite animal, the Aardvark:\n\nBurrows in night's heart,\nBony snout unveiled in dirt,\nLife's rhythm in dark.",
   index: 0,
   status: :complete,
   role: :assistant,
-  function_name: nil,
-  arguments: nil
+  name: nil,
+  tool_calls: [],
+  tool_results: nil
 }
-Aardvark in night's cloak,
-Digging deep beneath moon's gaze,
-Joan, this beast we evoke.
+Sure, here is a haiku about your favorite animal, the Aardvark:
+
+Burrows in night's heart,
+Bony snout unveiled in dirt,
+Life's rhythm in dark.
 ```
 
 <!-- livebook:{"output":true} -->
 
 ```
-"Aardvark in night's cloak,\nDigging deep beneath moon's gaze,\nJoan, this beast we evoke."
+"Sure, here is a haiku about your favorite animal, the Aardvark:\n\nBurrows in night's heart,\nBony snout unveiled in dirt,\nLife's rhythm in dark."
 ```
 
 **TIP:** Try changing the `context` to `user_id: 1` now and see what happens when a different user context is provided.
@@ -418,8 +360,8 @@ Joan, this beast we evoke.
 
 After a successful call, we can see in the verbose logs that:
 
-* the LLM requested to execute the function
-* LLMChain executed the function attached to the `Function` struct
+* the LLM requested to execute the tool which is our function
+* LLMChain executed the Elixir function attached to the `Function` struct
 * the response of our Elixir function passed through the anonymous function on `Function` and was re-submitted back to the LLM
 * the LLM reacted to the result of our function call
 
@@ -429,4 +371,4 @@ With this, we could expose functions that allow the LLM to request additional in
 
 At that point, it's up to us!
 
-<!-- livebook:{"offset":14069,"stamp":{"token":"QTEyOEdDTQ.CzGpdcOHpENJFksI6fFg1XX3bjw7QgC0ZMEv6XYB7lauhApZxBMl1xmut9Q.871uTw6vD4vwYGNV.vuGlk7R7-rSCyEB3Z64cXmRhLD1FtTQaY6wSXlG8I3cb4OoF_z_oyj2pOa4SOA.uSZDf0-p9m2FyU5CTJiprA","version":1}} -->
+<!-- livebook:{"offset":12511,"stamp":{"token":"XCP.AWhLZcrvHD00AFMt_oO_5r3zZ4Rl-k2LCf5oa9QCrKwvHgYP3ORWPQnKZO7Ryu-TbHPp3QvBw5TWjF__uAq0_VqeLAK-vVx1z9CBUGuqhC7xx_STHl6_bAo","version":2}} -->
