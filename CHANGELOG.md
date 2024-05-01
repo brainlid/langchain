@@ -9,6 +9,7 @@ For LLMs that support it (verified with ChatGPT and Anthropic), a user message c
 * `LangChain.Message.ContentPart` - used for User messages and multi-modal support. Google's AI assistant can return multiple parts as well.
 * `LangChain.Message.ToolCall` - an assistant can request multiple tool calls in the same message.
 * `LangChain.Message.ToolResult` - the system's answer to a `ToolCall`. It adds an is_error boolean flag. This an be helpful in the UI, but Anthropic specifically wants it.
+* Add llama-3 chat template by @bowyern in https://github.com/brainlid/langchain/pull/102
 
 **Changed:**
 
