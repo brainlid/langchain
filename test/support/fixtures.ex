@@ -514,7 +514,6 @@ defmodule LangChain.Fixtures do
     ]
   end
 
-
   def delta_content_with_function_call() do
     # OpenAI treats a function_call as extra information with an `:assistant`
     # response. We treat a function_call as it's own thing.

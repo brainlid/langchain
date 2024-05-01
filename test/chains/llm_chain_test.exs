@@ -375,7 +375,7 @@ defmodule LangChain.Chains.LLMChainTest do
                 arguments: nil,
                 index: 0
               }
-            ],
+            ]
           }
         ],
         [
@@ -393,7 +393,7 @@ defmodule LangChain.Chains.LLMChainTest do
                 arguments: "{\"",
                 index: 0
               }
-            ],
+            ]
           }
         ],
         [
@@ -411,7 +411,7 @@ defmodule LangChain.Chains.LLMChainTest do
                 arguments: "code",
                 index: 0
               }
-            ],
+            ]
           }
         ],
         [
@@ -429,7 +429,7 @@ defmodule LangChain.Chains.LLMChainTest do
                 arguments: "\":\"",
                 index: 0
               }
-            ],
+            ]
           }
         ],
         [
@@ -447,7 +447,7 @@ defmodule LangChain.Chains.LLMChainTest do
                 arguments: "don",
                 index: 0
               }
-            ],
+            ]
           }
         ],
         [
@@ -465,7 +465,7 @@ defmodule LangChain.Chains.LLMChainTest do
                 arguments: "ate",
                 index: 0
               }
-            ],
+            ]
           }
         ],
         [
@@ -483,7 +483,7 @@ defmodule LangChain.Chains.LLMChainTest do
                 arguments: "\"}",
                 index: 0
               }
-            ],
+            ]
           }
         ],
         [
@@ -492,7 +492,7 @@ defmodule LangChain.Chains.LLMChainTest do
             status: :complete,
             index: 0,
             role: :unknown,
-            tool_calls: nil,
+            tool_calls: nil
           }
         ]
       ]
