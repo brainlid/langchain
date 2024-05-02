@@ -225,6 +225,18 @@ defmodule LangChain.Chains.LLMChain do
 
         {:ok, updated_chain}
 
+      # When calling the latest OpenAI models through Azure it sometimes returns an empty list
+      # as the first element of a list of MessageDeltas. This is a workaround to handle that.
+      # It would likely be better to handle this in ChatOpenAI instead.
+      {:ok, [[] | _] = deltas} ->
+        if chain.verbose_deltas, do: IO.inspect(deltas, label: "DELTA MESSAGE LIST RESPONSE")
+        updated_chain = apply_deltas(chain, deltas)
+
+        if chain.verbose,
+          do: IO.inspect(updated_chain.last_message, label: "COMBINED DELTA MESSAGE RESPONSE")
+
+        {:ok, updated_chain}
+
       {:ok, [[%MessageDelta{} | _] | _] = deltas} ->
         if chain.verbose_deltas, do: IO.inspect(deltas, label: "DELTA MESSAGE LIST RESPONSE")
         updated_chain = apply_deltas(chain, deltas)
