@@ -60,6 +60,8 @@ defmodule LangChain.MixProject do
   end
 
   defp package do
+    # Note: the Livebook notebooks and related files are not included in the
+    # package.
     [
       files: ["lib", "mix.exs", "README*", "LICENSE*"],
       maintainers: ["Mark Ericksen"],
