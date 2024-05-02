@@ -84,6 +84,14 @@ defmodule LangChain.Message.ContentPart do
 
   - `:media` - Provide the "media type" for the image. Examples: "image/jpeg",
     "image/png", etc. ChatGPT does not require this but other LLMs may.
+
+  ChatGPT requires media type information to prefix the base64 content. Setting
+  the `media: "image/jpeg"` type will do that. Otherwise the data must be
+  provided with the required prefix.
+
+  Anthropic requires the media type information to be submitted as separate
+  information with the JSON request. This media option provides an abstraction
+  to normalize the behavior.
   """
   @spec image!(String.t(), Keyword.t()) :: t() | no_return()
   def image!(content, opts \\ []) do
