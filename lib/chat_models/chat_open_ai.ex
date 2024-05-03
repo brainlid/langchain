@@ -247,6 +247,12 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         type when is_binary(type) ->
           "data:#{type};base64,"
 
+        type when type in [:jpeg, :jpg] ->
+          "data:image/jpg;base64,"
+
+        :png ->
+          "data:image/png;base64,"
+
         other ->
           message = "Received unsupported media type for ContentPart: #{inspect(other)}"
           Logger.error(message)

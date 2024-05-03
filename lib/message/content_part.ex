@@ -14,8 +14,25 @@ defmodule LangChain.Message.ContentPart do
 
   - `:content` - Text content.
   - `:options` - Options that may be specific to the LLM for a particular
-    message type. For example, Anthropic requires an image's `media_type` to be
-    provided by the caller. This can be provided using `media: "image/png"`.
+    message type. For example, multi-modal message (ones that include image
+    data) use the `:media` option to specify the mimetype information.
+
+  ## Image mime types
+
+  The `:media` option is used to specify the mime type of the image. Various
+  LLMs handle this differently or perhaps not at all.
+
+  Examples:
+
+  - `media: :jpg` - turns into `"image/jpeg"` or `"image/jpg"`, depending on
+    what the LLM accepts.
+  - `media: :png` - turns into `"image/png"`
+  - `media: "image/webp" - stays as `"image/webp"`. Any specified string value
+    is passed through unchanged. This allows for future formats to be supported
+    quickly.
+  - When omitted, the LLM may error or some will accept it but may require the
+    `base64` encoded content data to be prefixed with the mime type information.
+    Basically, you must handle the content needs yourself.
 
   """
   use Ecto.Schema
