@@ -253,13 +253,26 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         :png ->
           "data:image/png;base64,"
 
+        :gif ->
+          "data:image/gif;base64,"
+
+        :webp ->
+          "data:image/webp;base64,"
+
         other ->
           message = "Received unsupported media type for ContentPart: #{inspect(other)}"
           Logger.error(message)
           raise LangChainError, message
       end
 
-    %{"type" => "image_url", "image_url" => %{"url" => media_prefix <> part.content}}
+    detail_option = Keyword.get(part.options, :detail, nil)
+
+    %{
+      "type" => "image_url",
+      "image_url" =>
+        %{"url" => media_prefix <> part.content}
+        |> Utils.conditionally_add_to_map("detail", detail_option)
+    }
   end
 
   # ToolCall support

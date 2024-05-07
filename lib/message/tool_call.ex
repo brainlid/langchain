@@ -2,6 +2,15 @@ defmodule LangChain.Message.ToolCall do
   @moduledoc """
   Represents an LLM's request to use tool. It specifies the tool to execute and
   may provide arguments for the tool to use.
+
+  ## Example
+
+      ToolCall.new!(%{
+        call_id: "call_123",
+        name: "give_greeting"
+        arguments: %{"name" => "Howard"}
+      })
+
   """
   use Ecto.Schema
   import Ecto.Changeset
