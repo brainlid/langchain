@@ -253,6 +253,12 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         :png ->
           "data:image/png;base64,"
 
+        :gif ->
+          "data:image/gif;base64,"
+
+        :webp ->
+          "data:image/webp;base64,"
+
         other ->
           message = "Received unsupported media type for ContentPart: #{inspect(other)}"
           Logger.error(message)

@@ -186,6 +186,14 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       result = ChatOpenAI.for_api(ContentPart.image!("image_base64_data", media: :jpeg))
       assert %{"image_url" => %{"url" => ^expected}} = result
 
+      expected = "data:image/gif;base64,image_base64_data"
+      result = ChatOpenAI.for_api(ContentPart.image!("image_base64_data", media: :gif))
+      assert %{"image_url" => %{"url" => ^expected}} = result
+
+      expected = "data:image/webp;base64,image_base64_data"
+      result = ChatOpenAI.for_api(ContentPart.image!("image_base64_data", media: :webp))
+      assert %{"image_url" => %{"url" => ^expected}} = result
+
       expected = "data:image/png;base64,image_base64_data"
       result = ChatOpenAI.for_api(ContentPart.image!("image_base64_data", media: :png))
       assert %{"image_url" => %{"url" => ^expected}} = result

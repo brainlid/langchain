@@ -654,11 +654,17 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         :png ->
           "image/png"
 
+        :gif ->
+          "image/gif"
+
         :jpg ->
           "image/jpeg"
 
         :jpeg ->
           "image/jpeg"
+
+        :webp ->
+          "image/webp"
 
         value when is_binary(value) ->
           value
