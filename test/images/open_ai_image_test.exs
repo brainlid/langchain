@@ -62,7 +62,7 @@ defmodule LangChain.Images.OpenAIImageTest do
   end
 
   describe "call/1" do
-    @tag live_call: true
+    @tag live_call: true, live_open_ai: true
     test "generates and saves an image using b64_json" do
       prompt = "A well worn baseball sitting in a well worn glove"
 
