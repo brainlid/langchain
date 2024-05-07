@@ -265,7 +265,14 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           raise LangChainError, message
       end
 
-    %{"type" => "image_url", "image_url" => %{"url" => media_prefix <> part.content}}
+    detail_option = Keyword.get(part.options, :detail, nil)
+
+    %{
+      "type" => "image_url",
+      "image_url" =>
+        %{"url" => media_prefix <> part.content}
+        |> Utils.conditionally_add_to_map("detail", detail_option)
+    }
   end
 
   # ToolCall support

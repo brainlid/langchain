@@ -177,6 +177,12 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert result == expected
     end
 
+    test "turns an image ContentPart into the expected JSON format with detail option" do
+      expected = %{"type" => "image_url", "image_url" => %{"url" => "image_base64_data", "detail" => "low"}}
+      result = ChatOpenAI.for_api(ContentPart.image!("image_base64_data", detail: "low"))
+      assert result == expected
+    end
+
     test "turns ContentPart's media type the expected JSON values" do
       expected = "data:image/jpg;base64,image_base64_data"
       result = ChatOpenAI.for_api(ContentPart.image!("image_base64_data", media: :jpg))
@@ -207,6 +213,12 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     test "turns an image_url ContentPart into the expected JSON format" do
       expected = %{"type" => "image_url", "image_url" => %{"url" => "url-to-image"}}
       result = ChatOpenAI.for_api(ContentPart.image_url!("url-to-image"))
+      assert result == expected
+    end
+
+    test "turns an image_url ContentPart into the expected JSON format with detail option" do
+      expected = %{"type" => "image_url", "image_url" => %{"url" => "url-to-image", "detail" => "low"}}
+      result = ChatOpenAI.for_api(ContentPart.image_url!("url-to-image", detail: "low"))
       assert result == expected
     end
 
