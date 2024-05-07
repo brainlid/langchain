@@ -101,6 +101,11 @@ defmodule LangChain.Message.ContentPart do
 
   - `:media` - Provide the "media type" for the image. Examples: "image/jpeg",
     "image/png", etc. ChatGPT does not require this but other LLMs may.
+  - `:detail` - if the LLM supports it, most images must be resized or cropped
+    before given to the LLM for analysis. A detail option may specify the level
+    detail of the image to present to the LLM. The higher the detail, the more
+    tokens consumed. Currently only supported by OpenAI and the values of "low",
+    "high", and "auto".
 
   ChatGPT requires media type information to prefix the base64 content. Setting
   the `media: "image/jpeg"` type will do that. Otherwise the data must be
@@ -118,9 +123,9 @@ defmodule LangChain.Message.ContentPart do
   @doc """
   Create a new ContentPart that contains a URL to an image. Raises an exception if not valid.
   """
-  @spec image_url!(String.t()) :: t() | no_return()
-  def image_url!(content) do
-    new!(%{type: :image_url, content: content})
+  @spec image_url!(String.t(), Keyword.t()) :: t() | no_return()
+  def image_url!(content, opts \\ []) do
+    new!(%{type: :image_url, content: content, options: opts})
   end
 
   @doc false
