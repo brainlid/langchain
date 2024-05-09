@@ -175,27 +175,12 @@ defmodule LangChain.Images.OpenAIImage do
   end
 
   @doc """
-  Calls the OpenAI API passing the OpenAIImage struct with configuration, plus
-  either a simple message or the list of messages to act as the prompt.
+  Calls the OpenAI API passing the OpenAIImage struct with configuration.
 
-  Optionally pass in a list of tools available to the LLM for requesting
-  execution in response.
-
-  Optionally pass in a callback function that can be executed as data is
-  received from the API.
-
-  **NOTE:** This function *can* be used directly, but the primary interface
-  should be through `LangChain.Chains.LLMChain`. The `OpenAIImage` module is more
-  focused on translating the `LangChain` data structures to and from the OpenAI
-  API.
-
-  Another benefit of using `LangChain.Chains.LLMChain` is that it combines the
-  storage of messages, adding tools, adding custom context that should be
-  passed to tools, and automatically applying `LangChain.MessageDelta`
-  structs as they are are received, then converting those to the full
-  `LangChain.Message` once fully complete.
+  When successful, it returns `{:ok, generated_images}` where that is a list of
+  `LangChain.Images.GeneratedImage` structs.
   """
-  @spec call(t()) :: {:ok, %{String.t() => any()}} | {:error, String.t()}
+  @spec call(t()) :: {:ok, [GeneratedImage.t()]} | {:error, String.t()}
   def call(openai, callback_fn \\ nil)
 
   def call(%OpenAIImage{} = openai, callback_fn) do

@@ -2,6 +2,17 @@ defmodule LangChain.Images.GeneratedImage do
   @moduledoc """
   Represents a generated image where we have either the base64 encoded contents
   or a temporary URL to it.
+
+  ## Example
+
+  Created when an image generation request completes and we have an image.
+
+      GeneratedImage.new!(%{
+        image_type: :png,
+        type: :url,
+        content: "https://example.com/my_image.png",
+        prompt: "The prompt used for image generation"
+      })
   """
   use Ecto.Schema
   import Ecto.Changeset
@@ -57,5 +68,4 @@ defmodule LangChain.Images.GeneratedImage do
     changeset
     |> validate_required([:image_type, :type, :content])
   end
-
 end
