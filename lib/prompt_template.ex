@@ -33,6 +33,7 @@ defmodule LangChain.PromptTemplate do
   alias __MODULE__
   alias LangChain.LangChainError
   alias LangChain.Message
+  alias LangChain.Message.ContentPart
 
   @primary_key false
   embedded_schema do
@@ -284,6 +285,30 @@ defmodule LangChain.PromptTemplate do
   end
 
   @doc """
+  Transform a PromptTemplate to a `LangChain.Message.ContentPart` of type
+  `text`. Provide the inputs at the time of transformation to render the final
+  content.
+  """
+  @spec to_content_part(t(), input :: %{atom() => any()}) ::
+          {:ok, Message.t()} | {:error, Ecto.Changeset.t()}
+  def to_content_part(%PromptTemplate{} = template, %{} = inputs \\ %{}) do
+    content = PromptTemplate.format(template, inputs)
+    ContentPart.new(%{type: :text, content: content})
+  end
+
+  @doc """
+  Transform a PromptTemplate to a `LangChain.Message.ContentPart` of type
+  `text`. Provide the inputs at the time of transformation to render the final
+  content. Raises an exception if invalid.
+  """
+  @spec to_content_part!(t(), input :: %{atom() => any()}) ::
+          {:ok, Message.t()} | {:error, Ecto.Changeset.t()}
+  def to_content_part!(%PromptTemplate{} = template, %{} = inputs \\ %{}) do
+    content = PromptTemplate.format(template, inputs)
+    ContentPart.new!(%{type: :text, content: content})
+  end
+
+  @doc """
   Transform a list of PromptTemplates into a list of `LangChain.Message`s.
   Applies the inputs to the list of prompt templates. If any of the prompt
   entries are invalid or fail, an exception is raised.
@@ -294,6 +319,20 @@ defmodule LangChain.PromptTemplate do
     Enum.map(prompts, fn
       %PromptTemplate{} = template ->
         to_message!(template, inputs)
+
+      # When a message has a list of content, process for PromptTemplates that
+      # should become text content parts.
+      %Message{content: content} = message when is_list(content) ->
+        converted_content =
+          Enum.map(content, fn
+            %PromptTemplate{} = template ->
+              to_content_part!(template, inputs)
+
+            %ContentPart{} = part ->
+              part
+          end)
+
+        %Message{message | content: converted_content}
 
       %Message{} = message ->
         message

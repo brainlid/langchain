@@ -5,6 +5,7 @@ defmodule LangChain.MessageTest do
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult
   alias LangChain.Message.ContentPart
+  alias LangChain.PromptTemplate
   alias LangChain.LangChainError
 
   describe "new/1" do
@@ -162,6 +163,23 @@ defmodule LangChain.MessageTest do
 
       assert msg.content == [
                %ContentPart{type: :text, content: "Describe what is in this image:"},
+               %ContentPart{type: :image, content: "ZmFrZV9pbWFnZV9kYXRh", options: []}
+             ]
+    end
+
+    test "accepts PromptTemplates in content list" do
+      assert {:ok, %Message{} = msg} =
+               Message.new_user([
+                 PromptTemplate.from_template!(
+                   "My name is <%= @name %> and here's a picture of me:"
+                 ),
+                 ContentPart.image!(:base64.encode("fake_image_data"))
+               ])
+
+      assert msg.role == :user
+
+      assert msg.content == [
+               %PromptTemplate{text: "My name is <%= @name %> and here's a picture of me:"},
                %ContentPart{type: :image, content: "ZmFrZV9pbWFnZV9kYXRh", options: []}
              ]
     end

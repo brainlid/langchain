@@ -69,6 +69,7 @@ defmodule LangChain.Message do
   alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult
+  alias LangChain.PromptTemplate
   alias LangChain.LangChainError
   alias LangChain.Utils
 
@@ -169,10 +170,10 @@ defmodule LangChain.Message do
       {:ok, text} when is_binary(text) ->
         changeset
 
-      {:ok, [%ContentPart{} | _] = value} ->
+      {:ok, content} when is_list(content) ->
         if role in [:user, :assistant] do
-          # if a list, verify all elements are a ContentPart
-          if Enum.all?(value, &match?(%ContentPart{}, &1)) do
+          # if a list, verify all elements are a ContentPart or PromptTemplate
+          if Enum.all?(content, &(match?(%ContentPart{}, &1) or match?(%PromptTemplate{}, &1))) do
             changeset
           else
             add_error(changeset, :content, "must be text or a list of ContentParts")
