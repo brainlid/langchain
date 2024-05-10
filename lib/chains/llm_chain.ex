@@ -368,6 +368,11 @@ defmodule LangChain.Chains.LLMChain do
     }
   end
 
+  def add_message(%LLMChain{} = _chain, %PromptTemplate{} = template) do
+    raise LangChain.LangChainError,
+          "PromptTemplates must be converted to messages. You can use LLMChain.apply_prompt_templates/3. Received: #{inspect(template)}"
+  end
+
   @doc """
   Add a set of Message structs to the chain. This enables quickly building a chain
   for submitting to an LLM.

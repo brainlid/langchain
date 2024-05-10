@@ -234,6 +234,10 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     }
   end
 
+  def for_api(%LangChain.PromptTemplate{} = _template) do
+    raise LangChain.LangChainError, "PromptTemplates must be converted to messages."
+  end
+
   def for_api(%ContentPart{type: :text} = part) do
     %{"type" => "text", "text" => part.content}
   end
