@@ -145,6 +145,16 @@ defmodule LangChain.Chains.LLMChainTest do
     end
   end
 
+  describe "set_tool_choice/2" do
+    test "sets the tool choice", %{chat: chat} do
+      assert {:ok, %LLMChain{} = chain} = LLMChain.new(%{prompt: [], llm: chat})
+      assert chain.tool_choice == nil
+
+      updated_chain = LLMChain.set_tool_choice(chain, "information_extraction")
+      assert updated_chain.tool_choice == "information_extraction"
+    end
+  end
+
   describe "message_processors/2" do
     test "assigns processor list to the struct", %{chain: chain} do
       assert chain.message_processors == []

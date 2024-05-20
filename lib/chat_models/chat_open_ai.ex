@@ -209,10 +209,15 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   @doc """
   Return the params formatted for an API request.
   """
-  @spec for_api(t | Message.t() | Function.t(), message :: [map()], ChatModel.tools()) :: %{
+  @spec for_api(
+          t | Message.t() | Function.t(),
+          message :: [map()],
+          ChatModel.tools(),
+          tool_choice :: binary() | nil
+        ) :: %{
           atom() => any()
         }
-  def for_api(%ChatOpenAI{} = openai, messages, tools) do
+  def for_api(%ChatOpenAI{} = openai, messages, tools, tool_choice) do
     %{
       model: openai.model,
       temperature: openai.temperature,
@@ -242,6 +247,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       get_stream_options_for_api(openai.stream_options)
     )
     |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(tools))
+    |> Utils.conditionally_add_to_map(:tool_choice, get_tool_choice_for_api(tool_choice))
   end
 
   defp get_tools_for_api(nil), do: []
@@ -257,6 +263,12 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
   defp get_stream_options_for_api(%{} = data) do
     %{"include_usage" => Map.get(data, :include_usage, Map.get(data, "include_usage"))}
+  end
+
+  defp get_tool_choice_for_api(nil), do: nil
+
+  defp get_tool_choice_for_api(tool_choice) do
+    %{"type" => "function", "function" => %{"name" => tool_choice}}
   end
 
   defp set_response_format(%ChatOpenAI{json_response: true}),
@@ -420,18 +432,19 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   `LangChain.Message` once fully complete.
   """
   @impl ChatModel
-  def call(openai, prompt, tools \\ [])
+  def call(openai, prompt, tools \\ [], tool_choice \\ nil)
 
-  def call(%ChatOpenAI{} = openai, prompt, tools) when is_binary(prompt) do
+  def call(%ChatOpenAI{} = openai, prompt, tools, tool_choice) when is_binary(prompt) do
     messages = [
       Message.new_system!(),
       Message.new_user!(prompt)
     ]
 
-    call(openai, messages, tools)
+    call(openai, messages, tools, tool_choice)
   end
 
-  def call(%ChatOpenAI{} = openai, messages, tools) when is_list(messages) do
+  def call(%ChatOpenAI{} = openai, messages, tools, tool_choice)
+      when is_list(messages) do
     if override_api_return?() do
       Logger.warning("Found override API response. Will not make live API call.")
 
@@ -453,7 +466,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     else
       try do
         # make base api request and perform high-level success/failure checks
-        case do_api_request(openai, messages, tools) do
+        case do_api_request(openai, messages, tools, tool_choice) do
           {:error, reason} ->
             {:error, reason}
 
@@ -486,11 +499,11 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   # structures.
   # Retries the request up to 3 times on transient errors with a 1 second delay
   @doc false
-  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), integer()) ::
+  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), any(), integer()) ::
           list() | struct() | {:error, String.t()}
-  def do_api_request(openai, messages, tools, retry_count \\ 3)
+  def do_api_request(openai, messages, tools, tool_choice, retry_count \\ 3)
 
-  def do_api_request(_openai, _messages, _tools, 0) do
+  def do_api_request(_openai, _messages, _tools, _tool_choice, 0) do
     raise LangChainError, "Retries exceeded. Connection failed."
   end
 
@@ -498,12 +511,13 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         %ChatOpenAI{stream: false} = openai,
         messages,
         tools,
+        tool_choice,
         retry_count
       ) do
     req =
       Req.new(
         url: openai.endpoint,
-        json: for_api(openai, messages, tools),
+        json: for_api(openai, messages, tools, tool_choice),
         # required for OpenAI API
         auth: {:bearer, get_api_key(openai)},
         # required for Azure OpenAI version
@@ -547,7 +561,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       {:error, %Req.TransportError{reason: :closed}} ->
         # Force a retry by making a recursive call decrementing the counter
         Logger.debug(fn -> "Mint connection closed: retry count = #{inspect(retry_count)}" end)
-        do_api_request(openai, messages, tools, retry_count - 1)
+        do_api_request(openai, messages, tools, tool_choice, retry_count - 1)
 
       other ->
         Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
@@ -559,11 +573,12 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         %ChatOpenAI{stream: true} = openai,
         messages,
         tools,
+        tool_choice,
         retry_count
       ) do
     Req.new(
       url: openai.endpoint,
-      json: for_api(openai, messages, tools),
+      json: for_api(openai, messages, tools, tool_choice),
       # required for OpenAI API
       auth: {:bearer, get_api_key(openai)},
       # required for Azure OpenAI version
@@ -594,7 +609,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       {:error, %Req.TransportError{reason: :closed}} ->
         # Force a retry by making a recursive call decrementing the counter
         Logger.debug(fn -> "Mint connection closed: retry count = #{inspect(retry_count)}" end)
-        do_api_request(openai, messages, tools, retry_count - 1)
+        do_api_request(openai, messages, tools, tool_choice, retry_count - 1)
 
       other ->
         Logger.error(
@@ -692,8 +707,10 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   # Full message with tool call
   def do_process_response(
         model,
-        %{"finish_reason" => "tool_calls", "message" => %{"tool_calls" => calls} = message} = data
-      ) do
+        %{"finish_reason" => finish_reason, "message" => %{"tool_calls" => calls} = message} =
+          data
+      )
+      when finish_reason in ["tool_calls", "stop"] do
     case Message.new(%{
            "role" => "assistant",
            "content" => message["content"],
