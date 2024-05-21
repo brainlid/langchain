@@ -132,12 +132,13 @@ defmodule LangChain.ChatModels.ChatVertexAI do
       }
     }
 
-    req = if vertex_ai.json_response do
-      req
-      |> put_in(["generationConfig", "response_mime_type"], "application/json")
-    else
-      req
-    end
+    req =
+      if vertex_ai.json_response do
+        req
+        |> put_in(["generationConfig", "response_mime_type"], "application/json")
+      else
+        req
+      end
 
     if functions && not Enum.empty?(functions) do
       req
@@ -185,6 +186,13 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     ]
   end
 
+  defp for_api(%Message{role: :user, content: content}) when is_list(content) do
+    %{
+      "role" => "user",
+      "parts" => Enum.map(content, &for_api(&1))
+    }
+  end
+
   defp for_api(%Message{} = message) do
     %{
       "role" => map_role(message.role),
@@ -194,6 +202,24 @@ defmodule LangChain.ChatModels.ChatVertexAI do
 
   defp for_api(%ContentPart{type: :text} = part) do
     %{"text" => part.content}
+  end
+
+  defp for_api(%ContentPart{type: :image} = part) do
+    %{
+      "inlineData" => %{
+        "mimeType" => Keyword.fetch!(part.options, :media),
+        "data" => part.content
+      }
+    }
+  end
+
+  defp for_api(%ContentPart{type: :image_url} = part) do
+    %{
+      "fileData" => %{
+        "mimeType" => Keyword.fetch!(part.options, :media),
+        "data" => part.content
+      }
+    }
   end
 
   defp for_api(%ToolCall{} = call) do
@@ -278,7 +304,6 @@ defmodule LangChain.ChatModels.ChatVertexAI do
       )
 
     req
-    |> dbg()
     |> Req.post()
     |> case do
       {:ok, %Req.Response{body: data}} ->
