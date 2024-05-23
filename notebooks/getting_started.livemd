@@ -152,4 +152,4 @@ Freedom's tale prolong.
 
 That's it! We've covered the basics for making a chat request from an LLM.
 
-<!-- livebook:{"offset":4569,"stamp":{"token":"XCP.hsiTw_GIK7NE9FnYRGEDqnfDGpphOj8-k-T1jjIqWxpyLWtGLPB8zeMFhQXFgUTy77IlH_5ZgZZkNDecG0B--9U_YhE5xKxGyEg_xA18mOHrRPaqafpSJ6o","version":2}} -->
+<!-- livebook:{"offset":4569,"stamp":{"token":"XCP.aHGmkK3NUMj7SR6hfc71PtTjYmj1tNyEWCZpt4LukoVFitWP_fMPEEapNKrOnxXGfNwKdnSAWBIz6WCmW5_6N4NUwf_MfFy4LRrjpmV3DrU684RXpwTJztc","version":2}} -->

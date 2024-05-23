@@ -81,6 +81,13 @@ defmodule LangChain.Chains.DataExtractionChain do
 Passage:
 <%= @input %>"
 
+  # TODO: Also, thinking about how it would be structured with Bumblebee and starting the assistant's answer prompt.
+  #  - updated JS/TS version only works with OpenAI or Anthropic for function support.
+  #  - create version that just does JSON extraction from Assistant message?
+  #  - how to for developer's additional schema validations or restrictions?
+
+  # TODO: For best performance, the dev need to provide examples of matching and non-matching data extraction that is relevant to their use.
+
   @doc """
   Run the data extraction chain.
   """

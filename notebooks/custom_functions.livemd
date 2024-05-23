@@ -371,4 +371,4 @@ With this, we could expose functions that allow the LLM to request additional in
 
 At that point, it's up to us!
 
-<!-- livebook:{"offset":12511,"stamp":{"token":"XCP.AWhLZcrvHD00AFMt_oO_5r3zZ4Rl-k2LCf5oa9QCrKwvHgYP3ORWPQnKZO7Ryu-TbHPp3QvBw5TWjF__uAq0_VqeLAK-vVx1z9CBUGuqhC7xx_STHl6_bAo","version":2}} -->
+<!-- livebook:{"offset":12511,"stamp":{"token":"XCP.zRpfqZgAArmepop_ETR19ciE2AI4aG9JCA0gIOPz5gJJAqJsBv4T91DQKETgL1lKLvfFZ-xRneZre4yIB8PFXq7sBmqxWL7-RivCsEGDQNLc44dw9bAe8nE","version":2}} -->

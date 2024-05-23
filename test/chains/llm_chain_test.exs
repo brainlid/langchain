@@ -780,7 +780,121 @@ defmodule LangChain.Chains.LLMChainTest do
 
       assert reason =~ ~r/PromptTemplates must be/
     end
+    # TODO: TESTS go here
 
+    # TODO: `until_success: 5` could specify the retry count. Defaults to 3.
+
+    # test "until_success: true with default fail count" do
+    #   test_pid = self()
+
+    #   message =
+    #     Message.new_user!("""
+    #     Please pull the list of available fly_regions and return them to me. List as:
+
+    #     - (region_abbreviation) Region Name
+    #     """)
+
+    #   regions_function =
+    #     Function.new!(%{
+    #       name: "do_stuff",
+    #       description: "Does stuff",
+    #       function: fn %{"arg" => value}, _context ->
+    #         send(test_pid, {:function_called, value})
+    #         {:error, "You did it wrong..."}
+    #       end
+    #     })
+
+    #   # Made NOT LIVE here
+    #   fake_messages = [
+    #     [
+    #       Message.new_assistant!(%{
+    #         tool_calls: [
+    #           ToolCall.new!(%{
+    #             call_id: "call_123",
+    #             name: "do_stuff",
+    #             arguments: %{"arg" => "incorrect value"}
+    #           })
+    #         ]
+    #       })
+    #     ]
+    #   ]
+
+    #   set_api_override({:ok, fake_messages})
+
+    #   # TODO: FAKE the responses
+    #   # TODO: The LLM may halt earlier
+
+    #   # TODO: NOTE: In order for it to correctly detect an error, the function
+    #   # needs to return an `{:error, reason}` tuple if invalid. PUT THAT IN THE
+    #   # DOCS FOR IT.
+
+    #   {:error, _updated_chain, reason} =
+    #     LLMChain.new!(%{llm: ChatOpenAI.new!(%{stream: false})})
+    #     |> LLMChain.add_tools(regions_function)
+    #     |> LLMChain.add_message(message)
+    #     |> LLMChain.run(until_success: true)
+
+    #   assert updated_chain("has multiple failed attempts added")
+    #   assert reason == "explanation of the abort"
+    # end
+
+    # test "until_success: true with explicit fail count" do
+    #   # Made NOT LIVE here
+    #   fake_messages = [
+    #     [
+    #       Message.new_assistant!(%{
+    #         tool_calls: [
+    #           ToolCall.new!(%{
+    #             call_id: "call_123",
+    #             name: "do_stuff",
+    #             arguments: %{"arg" => "incorrect value"}
+    #           })
+    #         ]
+    #       })
+    #     ]
+    #   ]
+
+    #   set_api_override({:ok, fake_messages})
+
+    #   {:error, _updated_chain, reason} =
+    #     LLMChain.new!(%{llm: ChatOpenAI.new!(%{stream: false})})
+    #     |> LLMChain.add_tools(regions_function)
+    #     |> LLMChain.add_message(message)
+    #     |> LLMChain.run(until_success: true, fail_after: 1)
+    # end
+
+    # test "until_success: true with explicit fail count of 0" do
+    #   # TODO: The function should raise an exception to make it stop.
+
+    #   # Made NOT LIVE here
+    #   fake_messages = [
+    #     [
+    #       Message.new_assistant!(%{
+    #         tool_calls: [
+    #           ToolCall.new!(%{
+    #             call_id: "call_123",
+    #             name: "do_stuff",
+    #             arguments: %{"arg" => "incorrect value"}
+    #           })
+    #         ]
+    #       })
+    #     ]
+    #   ]
+
+    #   set_api_override({:ok, fake_messages})
+
+    #   {:error, _updated_chain, reason} =
+    #     LLMChain.new!(%{llm: ChatOpenAI.new!(%{stream: false})})
+    #     |> LLMChain.add_tools(regions_function)
+    #     |> LLMChain.add_message(message)
+    #     |> LLMChain.run(until_success: true, fail_after: 0)
+
+    #   # TODO: NOTE: This would continue until the LLM quits, the token
+    #   # limit is reached, or you manage to cancel it another way? Maybe
+    #   # require a positive number?
+
+    #   # RAising as exception will quit?
+    # end
   end
 
   describe "update_custom_context/3" do
