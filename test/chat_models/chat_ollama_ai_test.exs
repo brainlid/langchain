@@ -157,7 +157,7 @@ defmodule ChatModels.ChatOllamaAITest do
       assert {:ok, deltas} = result
       assert length(deltas) > 0
 
-      deltas_except_last = Enum.slice(deltas, 0..-2)
+      deltas_except_last = Enum.slice(deltas, 0..-2//-1)
 
       for delta <- deltas_except_last do
         assert delta.__struct__ == LangChain.MessageDelta
