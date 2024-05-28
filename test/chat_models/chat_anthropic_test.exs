@@ -691,7 +691,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
         ChatAnthropic.for_api(
           Message.new_user!([
             ContentPart.text!("Tell me about this image:"),
-            ContentPart.image!("base64-text-data", media: "image/jpeg")
+            ContentPart.image!("base64-text-data", media: :jpeg)
           ])
         )
 
@@ -715,9 +715,23 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       }
 
       result =
-        ChatAnthropic.for_api(ContentPart.image!("image_base64_data", media: "image/png"))
+        ChatAnthropic.for_api(ContentPart.image!("image_base64_data", media: :png))
 
       assert result == expected
+    end
+
+    test "turns image ContentPart's media_type into the expected value" do
+      assert %{"source" => %{"media_type" => "image/png"}} =
+               ChatAnthropic.for_api(ContentPart.image!("image_base64_data", media: :png))
+
+      assert %{"source" => %{"media_type" => "image/jpeg"}} =
+               ChatAnthropic.for_api(ContentPart.image!("image_base64_data", media: :jpg))
+
+      assert %{"source" => %{"media_type" => "image/jpeg"}} =
+               ChatAnthropic.for_api(ContentPart.image!("image_base64_data", media: :jpeg))
+
+      assert %{"source" => %{"media_type" => "image/webp"}} =
+               ChatAnthropic.for_api(ContentPart.image!("image_base64_data", media: "image/webp"))
     end
 
     test "errors on ContentPart type image_url" do
@@ -1011,7 +1025,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       message =
         Message.new_user!([
           ContentPart.text!("Identify what this is a picture of:"),
-          ContentPart.image!(image_data, media: "image/jpeg")
+          ContentPart.image!(image_data, media: :jpg)
         ])
 
       {:ok, response} = ChatAnthropic.call(chat, [message], [])
@@ -1175,6 +1189,41 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 
       assert_received {:streamed_fn, data}
       assert %MessageDelta{role: :assistant} = data
+    end
+
+    @tag live_call: true, live_anthropic: true
+    test "supports starting the assistant's response message and continuing it" do
+      test_pid = self()
+
+      callback_fn = fn data ->
+        # IO.inspect(data, label: "DATA")
+        send(test_pid, {:streamed_fn, data})
+      end
+
+      {:ok, result_chain, last_message} =
+        LLMChain.new!(%{llm: %ChatAnthropic{model: @test_model, stream: true}})
+        |> LLMChain.add_message(Message.new_system!("You are a helpful and concise assistant."))
+        |> LLMChain.add_message(
+          Message.new_user!(
+            "What's the capitol of Norway? Please respond with the answer <answer>{{ANSWER}}</answer>."
+          )
+        )
+        |> LLMChain.add_message(Message.new_assistant!("<answer>"))
+        |> LLMChain.run(callback_fn: callback_fn)
+
+      assert last_message.content =~ "Oslo"
+      assert last_message.status == :complete
+      assert last_message.role == :assistant
+
+      # TODO: MERGE A CONTINUED Assistant message with the one we provided.
+
+      IO.inspect(result_chain, label: "FINAL CHAIN")
+      IO.inspect(last_message)
+
+      assert_received {:streamed_fn, data}
+      assert %MessageDelta{role: :assistant} = data
+
+      assert false
     end
   end
 end

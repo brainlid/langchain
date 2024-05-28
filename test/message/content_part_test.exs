@@ -46,6 +46,13 @@ defmodule LangChain.Message.ContentPartTest do
       assert part.type == :image
       assert part.content == "ZmFrZV9pbWFnZV9kYXRh"
     end
+
+    test "supports 'detail' option" do
+      %ContentPart{} = part = ContentPart.image!(Base.encode64("fake_image_data"), detail: "low")
+      assert part.type == :image
+      assert part.content == "ZmFrZV9pbWFnZV9kYXRh"
+      assert part.options == [detail: "low"]
+    end
   end
 
   describe("image_url!/1") do
@@ -57,5 +64,15 @@ defmodule LangChain.Message.ContentPartTest do
       assert part.type == :image_url
       assert part.content == url
     end
+
+    test "supports 'detail' option with ChatGPT" do
+      url =
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg"
+
+      %ContentPart{} = part = ContentPart.image_url!(url, detail: "low")
+      assert part.type == :image_url
+      assert part.content == url
+      assert part.options == [detail: "low"]
+     end
   end
 end

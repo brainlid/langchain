@@ -177,9 +177,48 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert result == expected
     end
 
+    test "turns an image ContentPart into the expected JSON format with detail option" do
+      expected = %{"type" => "image_url", "image_url" => %{"url" => "image_base64_data", "detail" => "low"}}
+      result = ChatOpenAI.for_api(ContentPart.image!("image_base64_data", detail: "low"))
+      assert result == expected
+    end
+
+    test "turns ContentPart's media type the expected JSON values" do
+      expected = "data:image/jpg;base64,image_base64_data"
+      result = ChatOpenAI.for_api(ContentPart.image!("image_base64_data", media: :jpg))
+      assert %{"image_url" => %{"url" => ^expected}} = result
+
+      expected = "data:image/jpg;base64,image_base64_data"
+      result = ChatOpenAI.for_api(ContentPart.image!("image_base64_data", media: :jpeg))
+      assert %{"image_url" => %{"url" => ^expected}} = result
+
+      expected = "data:image/gif;base64,image_base64_data"
+      result = ChatOpenAI.for_api(ContentPart.image!("image_base64_data", media: :gif))
+      assert %{"image_url" => %{"url" => ^expected}} = result
+
+      expected = "data:image/webp;base64,image_base64_data"
+      result = ChatOpenAI.for_api(ContentPart.image!("image_base64_data", media: :webp))
+      assert %{"image_url" => %{"url" => ^expected}} = result
+
+      expected = "data:image/png;base64,image_base64_data"
+      result = ChatOpenAI.for_api(ContentPart.image!("image_base64_data", media: :png))
+      assert %{"image_url" => %{"url" => ^expected}} = result
+
+      # an string value is passed through
+      expected = "data:file/pdf;base64,image_base64_data"
+      result = ChatOpenAI.for_api(ContentPart.image!("image_base64_data", media: "file/pdf"))
+      assert %{"image_url" => %{"url" => ^expected}} = result
+    end
+
     test "turns an image_url ContentPart into the expected JSON format" do
       expected = %{"type" => "image_url", "image_url" => %{"url" => "url-to-image"}}
       result = ChatOpenAI.for_api(ContentPart.image_url!("url-to-image"))
+      assert result == expected
+    end
+
+    test "turns an image_url ContentPart into the expected JSON format with detail option" do
+      expected = %{"type" => "image_url", "image_url" => %{"url" => "url-to-image", "detail" => "low"}}
+      result = ChatOpenAI.for_api(ContentPart.image_url!("url-to-image", detail: "low"))
       assert result == expected
     end
 

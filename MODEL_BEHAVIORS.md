@@ -9,3 +9,11 @@ This is to document some of the differences between model behaviors. This is spe
 
 - Anthropic's Claude 3 does respond well to pre-filled assistant responses and it is officially encouraged.
   - 2024-04-17
+
+## Image content parts
+
+- Anthropic will not work if the media type is included with the base64 data. ie. `"data:image/jpeg;base64," <> "..."`
+  - Requires providing the media type as a separate option.
+- ChatGPT -
+  - When `base64` data given, requires providing the image data prefixed with the base64 content.
+  - Ex: `"data:image/jpeg;base64," <> "..."`

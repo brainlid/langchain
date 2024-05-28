@@ -9,9 +9,11 @@ defmodule LangChain.Chains.LLMChainTest do
   alias LangChain.PromptTemplate
   alias LangChain.Function
   alias LangChain.Message
+  alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult
   alias LangChain.MessageDelta
+  alias LangChain.LangChainError
 
   setup do
     {:ok, chat} = ChatOpenAI.new(%{temperature: 0})
@@ -738,6 +740,47 @@ defmodule LangChain.Chains.LLMChainTest do
       assert response.role == :assistant
       assert_received {:function_called, "fly_regions"}
     end
+
+    test "errors when messages have PromptTemplates" do
+      messages = [
+        PromptTemplate.new!(%{
+          role: :system,
+          text: "You are my personal assistant named <%= @assistant_name %>."
+        })
+      ]
+
+      # errors when trying to sent a PromptTemplate
+      assert_raise LangChainError, ~r/PromptTemplates must be/, fn ->
+        LLMChain.new!(%{
+          llm: ChatOpenAI.new!(%{seed: 0}),
+          verbose: true
+        })
+        |> LLMChain.add_messages(messages)
+        |> LLMChain.run()
+      end
+    end
+
+    test "ChatOpenAI errors when messages contents have PromptTemplates" do
+      messages = [
+        Message.new_user!([
+          PromptTemplate.from_template!("""
+          My name is <%= @user_name %> and this a picture of me:
+          """),
+          ContentPart.image_url!("https://example.com/profile_pic.jpg")
+        ])
+      ]
+
+      # errors when trying to sent a PromptTemplate
+      # create and run the chain
+      {:error, reason} =
+        %{llm: ChatOpenAI.new!(%{seed: 0})}
+        |> LLMChain.new!()
+        |> LLMChain.add_messages(messages)
+        |> LLMChain.run()
+
+      assert reason =~ ~r/PromptTemplates must be/
+    end
+
   end
 
   describe "update_custom_context/3" do

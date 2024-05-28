@@ -2,6 +2,7 @@ defmodule LangChain.PromptTemplateTest do
   use ExUnit.Case
   doctest LangChain.PromptTemplate
   alias LangChain.PromptTemplate
+  alias LangChain.Message.ContentPart
   alias LangChain.LangChainError
   alias LangChain.Message
 
@@ -334,6 +335,50 @@ What is the answer to 1 + 1?)
       assert result == expected
     end
 
+    test "supports PromptTemplate as a ContentPart" do
+      data_from_other_system = "image of underpass at 507 King St E"
+
+      messages =
+        [
+          Message.new_user!([
+            PromptTemplate.from_template!("""
+            Incorporate relevant information from the following data:
+
+            <%= @extra_data %>
+            """)
+          ])
+        ]
+        |> PromptTemplate.to_messages!(%{extra_data: data_from_other_system})
+
+      [%Message{} = result] = messages
+
+      assert [part] = result.content
+      assert %ContentPart{} = part
+      assert part.type == :text
+
+      assert part.content == """
+             Incorporate relevant information from the following data:
+
+             image of underpass at 507 King St E
+             """
+    end
+
+    test "passes existing ContentParts through" do
+      messages =
+        [
+          Message.new_user!([
+            ContentPart.text!("Say hello!")
+          ])
+        ]
+        |> PromptTemplate.to_messages!(%{extra_data: "extra"})
+
+      [%Message{} = result] = messages
+      assert [part] = result.content
+      assert %ContentPart{} = part
+      assert part.type == :text
+      assert part.content == "Say hello!"
+    end
+
     test "treats a prompt text string as a user message", %{expected: expected} do
       destination = "Peru"
 
@@ -346,6 +391,44 @@ What is the answer to 1 + 1?)
 
       result = PromptTemplate.to_messages!(prompts)
       assert result == expected
+    end
+  end
+
+  describe "to_content_part/2" do
+    test "when valid, converts to a ContentPart and performs the replacement" do
+      template =
+        PromptTemplate.from_template!("""
+        Incorporate relevant information from the following data:
+
+        <%= @extra_data %>
+        """)
+
+      assert {:ok, %ContentPart{} = part} =
+               PromptTemplate.to_content_part(template, %{extra_data: "more!!"})
+
+      assert part.type == :text
+
+      assert part.content ==
+               "Incorporate relevant information from the following data:\n\nmore!!\n"
+    end
+  end
+
+  describe "to_content_part!/2" do
+    test "when valid, converts to a ContentPart and performs the replacement" do
+      template =
+        PromptTemplate.from_template!("""
+        Incorporate relevant information from the following data:
+
+        <%= @extra_data %>
+        """)
+
+      assert %ContentPart{} =
+               part = PromptTemplate.to_content_part!(template, %{extra_data: "more!!"})
+
+      assert part.type == :text
+
+      assert part.content ==
+               "Incorporate relevant information from the following data:\n\nmore!!\n"
     end
   end
 end

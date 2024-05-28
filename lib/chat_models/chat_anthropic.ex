@@ -649,12 +649,38 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   end
 
   def for_api(%ContentPart{type: :image} = part) do
+    media =
+      case Keyword.fetch!(part.options || [], :media) do
+        :png ->
+          "image/png"
+
+        :gif ->
+          "image/gif"
+
+        :jpg ->
+          "image/jpeg"
+
+        :jpeg ->
+          "image/jpeg"
+
+        :webp ->
+          "image/webp"
+
+        value when is_binary(value) ->
+          value
+
+        other ->
+          message = "Received unsupported media type for ContentPart: #{inspect(other)}"
+          Logger.error(message)
+          raise LangChainError, message
+      end
+
     %{
       "type" => "image",
       "source" => %{
         "type" => "base64",
         "data" => part.content,
-        "media_type" => Keyword.fetch!(part.options, :media)
+        "media_type" => media
       }
     }
   end

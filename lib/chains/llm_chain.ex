@@ -141,7 +141,8 @@ defmodule LangChain.Chains.LLMChain do
   ## Options
 
   - `:while_needs_response` - repeatedly evaluates functions and submits to the
-    LLM so long as we still expect to get a response.
+    LLM so long as we still expect to get a response. Best fit for
+    conversational LLMs where a `ToolResult` is used by the LLM to continue.
   - `:callback_fn` - the callback function to execute as messages are received.
 
   The `callback_fn` is a function that receives one argument. It is the
@@ -377,6 +378,11 @@ defmodule LangChain.Chains.LLMChain do
         last_message: new_message,
         needs_response: needs_response
     }
+  end
+
+  def add_message(%LLMChain{} = _chain, %PromptTemplate{} = template) do
+    raise LangChain.LangChainError,
+          "PromptTemplates must be converted to messages. You can use LLMChain.apply_prompt_templates/3. Received: #{inspect(template)}"
   end
 
   @doc """

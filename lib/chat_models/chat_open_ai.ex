@@ -234,12 +234,49 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     }
   end
 
+  def for_api(%LangChain.PromptTemplate{} = _template) do
+    raise LangChain.LangChainError, "PromptTemplates must be converted to messages."
+  end
+
   def for_api(%ContentPart{type: :text} = part) do
     %{"type" => "text", "text" => part.content}
   end
 
   def for_api(%ContentPart{type: image} = part) when image in [:image, :image_url] do
-    %{"type" => "image_url", "image_url" => %{"url" => part.content}}
+    media_prefix =
+      case Keyword.get(part.options || [], :media, nil) do
+        nil ->
+          ""
+
+        type when is_binary(type) ->
+          "data:#{type};base64,"
+
+        type when type in [:jpeg, :jpg] ->
+          "data:image/jpg;base64,"
+
+        :png ->
+          "data:image/png;base64,"
+
+        :gif ->
+          "data:image/gif;base64,"
+
+        :webp ->
+          "data:image/webp;base64,"
+
+        other ->
+          message = "Received unsupported media type for ContentPart: #{inspect(other)}"
+          Logger.error(message)
+          raise LangChainError, message
+      end
+
+    detail_option = Keyword.get(part.options, :detail, nil)
+
+    %{
+      "type" => "image_url",
+      "image_url" =>
+        %{"url" => media_prefix <> part.content}
+        |> Utils.conditionally_add_to_map("detail", detail_option)
+    }
   end
 
   # ToolCall support
