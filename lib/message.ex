@@ -21,13 +21,8 @@ defmodule LangChain.Message do
   A `tool_call` comes from the `:assistant` role. The `tool_id` identifies which
   of the available tool's to execute.
 
-  Create a message of role `:function` to provide the function response.
-
-  - `:is_error` - Boolean value used to track a tool response message as being
-    an error or not. The error state may be returned to an LLM in different
-    ways, whichever is most appropriate for the LLM. When a response is an
-    error, the `content` explains the error to the LLM and depending on the
-    situation, the LLM may choose try again.
+  Create a message of role `:tool` to provide the system responses for one or
+  more tool requests. A `ToolResult` handles the response back to the LLM.
 
   ## User Content Parts
 
@@ -36,11 +31,10 @@ defmodule LangChain.Message do
   "Vision", meaning you can provide text like "Please identify the what this is
   an image of" and provide an image.
 
-  User Content Parts are implemented through
-  `LangChain.Message.ContentPart`. A list of them can be supplied as the
-  "content" for a message. Only a few LLMs support it, and they may require
-  using specific models trained for it. See the documentation for the LLM or
-  service for details on their level of support.
+  User Content Parts are implemented through `LangChain.Message.ContentPart`. A
+  list of them can be supplied as the "content" for a message. Only a few LLMs
+  support it, and they may require using specific models trained for it. See the
+  documentation for the LLM or service for details on their level of support.
 
   ## Examples
 
