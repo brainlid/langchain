@@ -1,6 +1,6 @@
-defmodule LangChain.PreProcessors.JsonProcessor do
+defmodule LangChain.MessageProcessors.JsonProcessor do
   @moduledoc """
-  A built-in Message pre-process that processes a received Message for JSON
+  A built-in Message processor that processes a received Message for JSON
   contents.
 
   When successful, the assistant message is replaced with one containing the

@@ -1,11 +1,11 @@
-defmodule LangChain.PreProcessors.JsonProcessorTest do
+defmodule LangChain.MessageProcessors.JsonProcessorTest do
   use LangChain.BaseCase
   alias LangChain.Chains.LLMChain
   alias LangChain.Message
   alias LangChain.ChatModels.ChatOpenAI
-  alias LangChain.PreProcessors.JsonProcessor
+  alias LangChain.MessageProcessors.JsonProcessor
 
-  doctest LangChain.PreProcessors.JsonProcessor
+  doctest LangChain.MessageProcessors.JsonProcessor
 
   @json_xml_regex ~r/<json>(.*?)<\/json>/s
   @json_backticks_json_regex ~r/```json(.*?)```/s
