@@ -58,7 +58,7 @@ end
 
 Currently, the library is written to use the `Req` library for making API calls.
 
-To make API calls, it is necessary to configure the API keys for the services you connect with. At this time, the library only supports ChatGPT and the OpenAI API key.
+You can configure an _organization ID_, and _API key_ for OpenAI's API, but this library also works with [other compatible APIs](#alternative-openai-compatible-apis) as well as [local models running on Bumblebee](#bumblebee-chat-support).
 
 `config/config.exs`:
 
