@@ -22,7 +22,7 @@ This library is aimed at assisting in the development of those types of applicat
 
 ## Documentation
 
-The online documentation can [found here](https://hexdocs.pm/langchain).
+The online documentation can be [found here](https://hexdocs.pm/langchain).
 
 ## Demo
 
@@ -150,7 +150,7 @@ IO.puts(message.content)
 
 ### Alternative OpenAI compatible APIs
 
-There are several of services or self-hosted applications that provide an OpenAI compatible API for ChatGPT-like behavior. To use a service like that, the `endpoint` of the `ChatOpenAI` struct can be pointed to an API compatible `endpoint` for chats.
+There are several services or self-hosted applications that provide an OpenAI compatible API for ChatGPT-like behavior. To use a service like that, the `endpoint` of the `ChatOpenAI` struct can be pointed to an API compatible `endpoint` for chats.
 
 For example, if a locally running service provided that feature, the following code could connect to the service:
 
