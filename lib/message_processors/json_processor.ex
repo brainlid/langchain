@@ -20,7 +20,7 @@ defmodule LangChain.MessageProcessors.JsonProcessor do
       message = Message.new_assistant!(%{content: "{\"value\": 123}"})
 
       # process the message for JSON content
-      {:continue, updated_chain, updated_message} =
+      {:cont, updated_chain, updated_message} =
         JsonProcessor.run(chain, message)
 
   The updated message will be an assistant message where content is a map:
@@ -68,7 +68,7 @@ defmodule LangChain.MessageProcessors.JsonProcessor do
 
   The "```json" formatted one is processed like this:
 
-      {:continue, updated_chain, updated_message} =
+      {:cont, updated_chain, updated_message} =
         JsonProcessor.run(chain, message, ~r/```json(.*?)```/s)
 
   """
@@ -102,22 +102,22 @@ defmodule LangChain.MessageProcessors.JsonProcessor do
 
   Response values:
 
-  - `{:continue, %Message{}}` - The returned message replaces the one being
+  - `{:cont, %Message{}}` - The returned message replaces the one being
     processed and no additional processors are run.
-  - `{:halt, %LLMChain{}, %Message{}}` - Pre-processors are halted. An updated
-    LLMChain can be returned and the included Message is returned as a response
-    to the LLM. This is for handling errors.
+  - `{:halt, %Message{}}` - Future processors are skipped. The Message is
+    returned as a response to the LLM for reporting errors.
   """
   @spec run(LLMChain.t(), Message.t()) ::
-          {:continue, Message.t()} | {:halt, LLMChain.t(), Message.t()}
+          {:cont, Message.t()} | {:halt, Message.t()}
   def run(%LLMChain{} = chain, %Message{} = message) do
     case Jason.decode(message.content) do
       {:ok, parsed} ->
-        {:continue, %Message{message | content: parsed}}
+        if chain.verbose, do: IO.puts("Parsed JSON text to a map")
+        {:cont, %Message{message | content: parsed}}
 
       {:error, %Jason.DecodeError{} = error} ->
         error_message = Jason.DecodeError.message(error)
-        {:halt, chain, Message.new_user!("ERROR: Invalid JSON data: #{error_message}")}
+        {:halt, Message.new_user!("ERROR: Invalid JSON data: #{error_message}")}
     end
   end
 
@@ -129,7 +129,7 @@ defmodule LangChain.MessageProcessors.JsonProcessor do
         run(chain, %Message{message | content: json})
 
       _ ->
-        {:halt, chain, Message.new_user!("ERROR: No JSON found")}
+        {:halt, Message.new_user!("ERROR: No JSON found")}
     end
   end
 end
