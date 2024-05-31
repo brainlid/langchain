@@ -69,13 +69,21 @@ defmodule LangChain.Message do
 
   @primary_key false
   embedded_schema do
+    # Message content that the LLM sees.
     field :content, :any, virtual: true
+    # For assistant messages when message_processors are applied. This contains
+    # the results of the processing. This allows the `content` to reflect what
+    # was actually returned for when we send it back to the LLM as a historical
+    # message.
+    field :processed_content, :any, virtual: true
     field :index, :integer
     field :status, Ecto.Enum, values: [:complete, :cancelled, :length], default: :complete
 
     field :role, Ecto.Enum,
       values: [:system, :user, :assistant, :tool],
       default: :user
+
+      #TODO: I think this is an OpenAI "user" to instead track abuse. Check/verify/update.
 
     # Optional name of the participant. Helps separate input from different
     # individuals of the same role. Like multiple people are all acting as "user".
@@ -92,7 +100,7 @@ defmodule LangChain.Message do
   @type t :: %Message{}
   @type status :: :complete | :cancelled | :length
 
-  @update_fields [:role, :content, :status, :tool_calls, :tool_results, :index, :name]
+  @update_fields [:role, :content, :processed_content, :status, :tool_calls, :tool_results, :index, :name]
   @create_fields @update_fields
   @required_fields [:role]
 

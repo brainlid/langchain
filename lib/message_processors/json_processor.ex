@@ -3,9 +3,9 @@ defmodule LangChain.MessageProcessors.JsonProcessor do
   A built-in Message processor that processes a received Message for JSON
   contents.
 
-  When successful, the assistant message is replaced with one containing the
-  parsed JSON data as an Elixir map data structure. No additional validation or
-  processing of the data is done in by this processor.
+  When successful, the assistant message's JSON contents are processed into a
+  map and set on `processed_content`. No additional validation or processing of
+  the data is done in by this processor.
 
   When JSON data is expected but not received, or the received JSON is invalid
   or incomplete, a new user `Message` struct is returned with a text error
@@ -110,10 +110,10 @@ defmodule LangChain.MessageProcessors.JsonProcessor do
   @spec run(LLMChain.t(), Message.t()) ::
           {:cont, Message.t()} | {:halt, Message.t()}
   def run(%LLMChain{} = chain, %Message{} = message) do
-    case Jason.decode(message.content) do
+    case Jason.decode(message.processed_content) do
       {:ok, parsed} ->
         if chain.verbose, do: IO.puts("Parsed JSON text to a map")
-        {:cont, %Message{message | content: parsed}}
+        {:cont, %Message{message | processed_content: parsed}}
 
       {:error, %Jason.DecodeError{} = error} ->
         error_message = Jason.DecodeError.message(error)
@@ -122,11 +122,11 @@ defmodule LangChain.MessageProcessors.JsonProcessor do
   end
 
   def run(%LLMChain{} = chain, %Message{} = message, regex_pattern) do
-    case Regex.run(regex_pattern, message.content, capture: :all_but_first) do
+    case Regex.run(regex_pattern, message.processed_content, capture: :all_but_first) do
       [json] ->
         if chain.verbose, do: IO.puts("Extracted JSON text from message")
         # run recursive call on just the extracted JSON
-        run(chain, %Message{message | content: json})
+        run(chain, %Message{message | processed_content: json})
 
       _ ->
         {:halt, Message.new_user!("ERROR: No JSON found")}

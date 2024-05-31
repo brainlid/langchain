@@ -23,11 +23,11 @@ defmodule LangChain.MessageProcessors.JsonProcessorTest do
       data = %{"subject" => "RE: Things that happen", "body" => "Main message body"}
 
       processor = JsonProcessor.new!()
-      message = Message.new_assistant!(%{content: Jason.encode!(data)})
+      message = Message.new_assistant!(%{processed_content: Jason.encode!(data)})
       assert {:cont, updated_message} = processor.(chain, message)
 
       # contents are converted back from JSON to a map
-      assert updated_message.content == data
+      assert updated_message.processed_content == data
     end
   end
 
@@ -45,13 +45,13 @@ defmodule LangChain.MessageProcessors.JsonProcessorTest do
       I hope it meets your needs!
       """
 
-      message = Message.new_assistant!(%{content: message_text})
+      message = Message.new_assistant!(%{processed_content: message_text})
 
       processor = JsonProcessor.new!(@json_backticks_json_regex)
       assert {:cont, updated_message} = processor.(chain, message)
 
       # contents are converted back from JSON to a map
-      assert updated_message.content == data
+      assert updated_message.processed_content == data
     end
   end
 
@@ -59,15 +59,15 @@ defmodule LangChain.MessageProcessors.JsonProcessorTest do
     test "converts JSON text to a map", %{chain: chain} do
       data = %{"subject" => "RE: Things that happen", "body" => "Main message body"}
 
-      message = Message.new_assistant!(%{content: Jason.encode!(data)})
+      message = Message.new_assistant!(%{processed_content: Jason.encode!(data)})
       assert {:cont, updated_message} = JsonProcessor.run(chain, message)
       # contents are converted back from JSON to a map
-      assert updated_message.content == data
+      assert updated_message.processed_content == data
     end
 
     test "halts and returns error when JSON parse fails", %{chain: chain} do
       invalid_data = "{\"body\":\"Main message body\",\"subj"
-      message = Message.new_assistant!(%{content: invalid_data})
+      message = Message.new_assistant!(%{processed_content: invalid_data})
       assert {:halt, returned_message} = JsonProcessor.run(chain, message)
       # contents are converted back from JSON to a map
       assert returned_message.role == :user
@@ -91,11 +91,11 @@ defmodule LangChain.MessageProcessors.JsonProcessorTest do
       I hope it meets your needs!
       """
 
-      message = Message.new_assistant!(%{content: message_text})
+      message = Message.new_assistant!(%{processed_content: message_text})
 
       assert {:cont, updated_message} = JsonProcessor.run(chain, message, @json_xml_regex)
       # json is extracted and converted to a map
-      assert updated_message.content == data
+      assert updated_message.processed_content == data
     end
 
     test "converts JSON content from ```json fences", %{chain: chain} do
@@ -111,13 +111,13 @@ defmodule LangChain.MessageProcessors.JsonProcessorTest do
       I hope it meets your needs!
       """
 
-      message = Message.new_assistant!(%{content: message_text})
+      message = Message.new_assistant!(%{processed_content: message_text})
 
       assert {:cont, updated_message} =
                JsonProcessor.run(chain, message, @json_backticks_json_regex)
 
       # json is extracted and converted to a map
-      assert updated_message.content == data
+      assert updated_message.processed_content == data
     end
 
     test "converts JSON content from ``` fences", %{chain: chain} do
@@ -133,30 +133,30 @@ defmodule LangChain.MessageProcessors.JsonProcessorTest do
       I hope it meets your needs!
       """
 
-      message = Message.new_assistant!(%{content: message_text})
+      message = Message.new_assistant!(%{processed_content: message_text})
 
       assert {:cont, updated_message} =
                JsonProcessor.run(chain, message, @json_backticks_regex)
 
       # json is extracted and converted to a map
-      assert updated_message.content == data
+      assert updated_message.processed_content == data
     end
 
     test "supports when code blocks are at start and end", %{chain: chain} do
       data = %{"subject" => "RE: Things that happen", "body" => "Main message body"}
       message_text = "```json\n#{Jason.encode!(data)}\n```"
-      message = Message.new_assistant!(%{content: message_text})
+      message = Message.new_assistant!(%{processed_content: message_text})
 
       assert {:cont, updated_message} =
                JsonProcessor.run(chain, message, @json_backticks_json_regex)
 
       # json is extracted and converted to a map
-      assert updated_message.content == data
+      assert updated_message.processed_content == data
     end
 
     test "halts when expected JSON content not found", %{chain: chain} do
       message_text = "There is content, but no JSON to be found!"
-      message = Message.new_assistant!(%{content: message_text})
+      message = Message.new_assistant!(%{processed_content: message_text})
 
       assert {:halt, returned_message} =
                JsonProcessor.run(chain, message, @json_backticks_json_regex)
@@ -168,7 +168,7 @@ defmodule LangChain.MessageProcessors.JsonProcessorTest do
 
     test "halts when JSON content does not parse", %{chain: chain} do
       message_text = "```json\n{\"thing\"```"
-      message = Message.new_assistant!(%{content: message_text})
+      message = Message.new_assistant!(%{processed_content: message_text})
 
       assert {:halt, returned_message} =
                JsonProcessor.run(chain, message, @json_backticks_json_regex)
