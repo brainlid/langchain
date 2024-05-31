@@ -105,23 +105,7 @@ Passage:
       |> LLMChain.add_tools(build_extract_function(json_schema))
       |> LLMChain.add_messages(messages)
       |> LLMChain.run()
-      |> case do
-        {:ok, _updated_chain,
-         %Message{
-           role: :assistant,
-           tool_calls: [
-             %ToolCall{
-               name: @function_name,
-               arguments: %{"info" => info}
-             }
-           ]
-         }}
-        when is_list(info) ->
-          {:ok, info}
-
-        other ->
-          {:error, "Unexpected response. #{inspect(other)}"}
-      end
+      |> do_process_response()
     rescue
       exception ->
         Logger.warning(
@@ -158,5 +142,53 @@ Passage:
         required: ["info"]
       }
     })
+  end
+
+  defp do_process_response(
+         {:ok, %LLMChain{}, %Message{status: :complete, role: :assistant, tool_calls: []}}
+       ) do
+    {:ok, []}
+  end
+
+  defp do_process_response(
+         {:ok, %LLMChain{},
+          %Message{
+            status: :complete,
+            role: :assistant,
+            tool_calls: [
+              %ToolCall{
+                name: @function_name,
+                arguments: %{"info" => info}
+              }
+            ]
+          }}
+       )
+       when is_list(info) do
+    {:ok, info}
+  end
+
+  defp do_process_response(
+         {:ok, %LLMChain{}, %Message{status: :complete, role: :assistant, tool_calls: tool_calls}}
+       )
+       when is_list(tool_calls) do
+    {:ok, map_tool_calls(tool_calls)}
+  end
+
+  defp do_process_response(response) do
+    {:error, "Unexpected response. #{inspect(response)}"}
+  end
+
+  def map_tool_calls(tool_calls) do
+    Enum.reduce(tool_calls, [], fn tool_call, acc ->
+      case tool_call do
+        %ToolCall{name: @function_name, status: :complete, arguments: %{"info" => info}}
+        when is_list(info) ->
+          [info | acc]
+
+        _ ->
+          acc
+      end
+    end)
+    |> List.flatten()
   end
 end
