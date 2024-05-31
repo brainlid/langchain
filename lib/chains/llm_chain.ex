@@ -39,6 +39,16 @@ defmodule LangChain.Chains.LLMChain do
     # Could include information like account ID, user data, etc.
     field :custom_context, :any, virtual: true
 
+    # A set of message pre-processors to execute on received messages.
+    field :message_processors, {:array, :any}, default: [], virtual: true
+
+    # The maximum consecutive LLM response failures permitted before failing the
+    # process.
+    field :max_repeat_failures, :integer, default: 3
+    # Internal failure count tracker. Is reset on a successful assistant
+    # response.
+    field :current_failure_count, :integer, default: 0
+
     # Track the current merged `%MessageDelta{}` struct received when streamed.
     # Set to `nil` when there is no current delta being tracked. This happens
     # when the final delta is received that completes the message. At that point,
@@ -59,6 +69,21 @@ defmodule LangChain.Chains.LLMChain do
   end
 
   @type t :: %LLMChain{}
+
+  @typedoc """
+  The expected return types for a Message processor function. When successful,
+  it returns a `:continue` with an Message to use as a replacement. When it
+  fails, a `:halt` is returned along with an updated `LLMChain.t()` and a new
+  user message to be returned to the LLM reporting the error.
+  """
+  @type processor_return :: {:continue, Message.t()} | {:halt, t(), Message.t()}
+
+  @typedoc """
+  A message processor is an arity 2 function that takes an LLMChain and a
+  Message. It is used to "pre-process" the received message from the LLM.
+  Processors can be chained together to preform a sequence of transformations.
+  """
+  @type message_processor :: (t(), Message.t() -> processor_return())
 
   @create_fields [:llm, :tools, :custom_context, :verbose]
   @required_fields [:llm]
@@ -133,6 +158,14 @@ defmodule LangChain.Chains.LLMChain do
   end
 
   @doc """
+  Register a set of processors to on received assistant messages.
+  """
+  @spec message_processors(t(), [message_processor()]) :: t()
+  def message_processors(%LLMChain{} = chain, processors) do
+    %LLMChain{chain | message_processors: processors}
+  end
+
+  @doc """
   Run the chain on the LLM using messages and any registered functions. This
   formats the request for a ChatLLMChain where messages are passed to the API.
 
@@ -198,8 +231,32 @@ defmodule LangChain.Chains.LLMChain do
     end
   end
 
+  #   # Run until a successful result is received or until it reaches the retry
+  #   # count having failed too many times.
+  #   @spec run_until_success(t()) :: {:ok, t(), Message.t()} | {:error, String.t()}
+  #   defp run_until_success(%LLMChain{until_success: count} = chain) do
+  # raise "WORKING!!!"
+
+  # # TODO: If no special result parser included, error? Or just treat a successful assistant response as "done"? Could also work with a "tool_call" that is invalid.
+  # # - data extraction chain process could be an assistant response with a JSON parser, or it could be a tool_call that doesn't parse correctly or violates a changeset's rules (duplicate unique value, invalid value, etc.)
+
+  # # TODO: Needing to ALSO work with "run_while_needs_response", at least the failure count applies, then maybe it's just an option/setting, not a mode?
+  # # - It's a "consecutive failures". Not a fail+works, fail+works. Those don't contribute to the failure count of the next sequence.
+
+  # # TODO: Deltas are applied to a copy of the chain in the process/LiveView. These
+  # # states of current failure counts doesn't need to be sent over. It's all in the
+  # # running chain. Just want to report the final failure reason.
+
+  #   chain
+  #   end
+
   # internal reusable function for running the chain
   @spec do_run(t()) :: {:ok, t()} | {:error, String.t()}
+  defp do_run(%LLMChain{current_failure_count: current_count, max_repeat_failures: max} = _chain)
+       when current_count >= max do
+    {:error, "Exceeded max failure count"}
+  end
+
   defp do_run(%LLMChain{} = chain) do
     # submit to LLM. The "llm" is a struct. Match to get the name of the module
     # then execute the `.call` function on that module.
@@ -209,13 +266,19 @@ defmodule LangChain.Chains.LLMChain do
     case module.call(chain.llm, chain.messages, chain.tools, chain.callback_fn) do
       {:ok, [%Message{} = message]} ->
         if chain.verbose, do: IO.inspect(message, label: "SINGLE MESSAGE RESPONSE")
-        {:ok, add_message(chain, message)}
+        {:ok, process_message(chain, message)}
 
       {:ok, [%Message{} = message, _others] = messages} ->
         if chain.verbose, do: IO.inspect(messages, label: "MULTIPLE MESSAGE RESPONSE")
         # return the list of message responses. Happens when multiple
         # "choices" are returned from LLM by request.
-        {:ok, add_message(chain, message)}
+        {:ok, process_message(chain, message)}
+
+      {:ok, %Message{} = message} ->
+        if chain.verbose,
+          do: IO.inspect(message, label: "SINGLE MESSAGE RESPONSE NO WRAPPED ARRAY")
+
+        {:ok, process_message(chain, message)}
 
       {:ok, [%MessageDelta{} | _] = deltas} ->
         if chain.verbose_deltas, do: IO.inspect(deltas, label: "DELTA MESSAGE LIST RESPONSE")
@@ -234,12 +297,6 @@ defmodule LangChain.Chains.LLMChain do
           do: IO.inspect(updated_chain.last_message, label: "COMBINED DELTA MESSAGE RESPONSE")
 
         {:ok, updated_chain}
-
-      {:ok, %Message{} = message} ->
-        if chain.verbose,
-          do: IO.inspect(message, label: "SINGLE MESSAGE RESPONSE NO WRAPPED ARRAY")
-
-        {:ok, add_message(chain, message)}
 
       {:error, reason} ->
         if chain.verbose, do: IO.inspect(reason, label: "ERROR")
@@ -319,8 +376,7 @@ defmodule LangChain.Chains.LLMChain do
     # it's complete. Attempt to convert delta to a message
     case MessageDelta.to_message(delta) do
       {:ok, %Message{} = message} ->
-        fire_callback(chain, message)
-        add_message(%LLMChain{chain | delta: nil}, message)
+        process_message(%LLMChain{chain | delta: nil}, message)
 
       {:error, reason} ->
         # should not have failed, but it did. Log the error and return
@@ -343,6 +399,77 @@ defmodule LangChain.Chains.LLMChain do
     deltas
     |> List.flatten()
     |> Enum.reduce(chain, fn d, acc -> apply_delta(acc, d) end)
+  end
+
+  # Process an assistant message sequentially through each message processor.
+  @doc false
+  @spec run_message_processors(t(), Message.t()) :: Message.t() | {:halted, Message.t()}
+  def run_message_processors(
+        %LLMChain{message_processors: processors} = chain,
+        %Message{role: :assistant} = message
+      )
+      when is_list(processors) and processors != [] do
+    # start `processed_content` with the message's content
+    message = %Message{message | processed_content: message.content}
+
+    processors
+    |> Enum.reduce_while(message, fn proc, m = _acc ->
+      try do
+        case proc.(chain, m) do
+          {:cont, updated_msg} ->
+            {:cont, updated_msg}
+
+          {:halt, %Message{} = returned_message} ->
+            {:halt, {:halted, returned_message}}
+        end
+      rescue
+        err ->
+          Logger.error("Exception raised in processor #{inspect(proc)}")
+
+          {:halt,
+           {:halted,
+            Message.new_user!("ERROR: An exception was raised! Exception: #{inspect(err)}")}}
+      end
+    end)
+  end
+
+  # the message is not an assistant message. Skip message processing.
+  def run_message_processors(%LLMChain{} = _chain, %Message{} = message) do
+    message
+  end
+
+  @doc """
+  Process a newly message received from the LLM. Messages with a role of
+  `:assistant` may be processed through the `message_processors` before being
+  generally available or being notified through a callback.
+  """
+  @spec process_message(t(), Message.t()) :: t()
+  def process_message(%LLMChain{} = chain, %Message{} = message) do
+    case run_message_processors(chain, message) do
+      {:halted, new_message} ->
+        # add the original assistant message, then add the newly created user
+        # return message and return the updated chain
+        new_chain =
+          chain
+          |> increment_current_failure_count()
+          |> add_message(message)
+          |> add_message(new_message)
+          |> dbg()
+
+        fire_callback(chain, message)
+        fire_callback(chain, new_message)
+
+        new_chain
+
+      %Message{} = updated_message ->
+        new_chain =
+          chain
+          |> add_message(updated_message)
+
+        fire_callback(chain, updated_message)
+
+        new_chain
+    end
   end
 
   @doc """
@@ -484,7 +611,7 @@ defmodule LangChain.Chains.LLMChain do
       if chain.verbose, do: IO.inspect(message, label: "TOOL RESULTS")
       fire_callback(chain, message)
 
-      # add all the message to the chain
+      # add the tool result message to the chain
       LLMChain.add_message(chain, message)
     else
       # Not a complete tool call
@@ -569,5 +696,23 @@ defmodule LangChain.Chains.LLMChain do
         Logger.error("Error attempting to cancel_delta. Reason: #{inspect(reason)}")
         chain
     end
+  end
+
+  @doc """
+  Increments the internal current_failure_count. Returns and incremented and
+  updated struct.
+  """
+  @spec increment_current_failure_count(t()) :: t()
+  def increment_current_failure_count(%LLMChain{} = chain) do
+    %LLMChain{chain | current_failure_count: chain.current_failure_count + 1}
+  end
+
+  @doc """
+  Reset the internal current_failure_count to 0. Useful after receiving a
+  successfully returned and processed message from the LLM.
+  """
+  @spec reset_current_failure_count(t()) :: t()
+  def reset_current_failure_count(%LLMChain{} = chain) do
+    %LLMChain{chain | current_failure_count: 0}
   end
 end

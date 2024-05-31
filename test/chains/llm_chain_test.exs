@@ -2,8 +2,8 @@ defmodule LangChain.Chains.LLMChainTest do
   use LangChain.BaseCase
 
   doctest LangChain.Chains.LLMChain
-  import LangChain.Fixtures
 
+  import LangChain.Fixtures
   alias LangChain.ChatModels.ChatOpenAI
   alias LangChain.Chains.LLMChain
   alias LangChain.PromptTemplate
@@ -14,9 +14,12 @@ defmodule LangChain.Chains.LLMChainTest do
   alias LangChain.Message.ToolResult
   alias LangChain.MessageDelta
   alias LangChain.LangChainError
+  alias LangChain.MessageProcessors.JsonProcessor
 
   setup do
     {:ok, chat} = ChatOpenAI.new(%{temperature: 0})
+
+    chain = LLMChain.new!(%{llm: chat})
 
     hello_world =
       Function.new!(%{
@@ -40,7 +43,19 @@ defmodule LangChain.Chains.LLMChainTest do
         async: false
       })
 
-    %{chat: chat, hello_world: hello_world, greet: greet, sync: sync}
+    %{chat: chat, chain: chain, hello_world: hello_world, greet: greet, sync: sync}
+  end
+
+  def fake_success_processor(%LLMChain{} = _chain, %Message{} = message) do
+    {:cont, %Message{message | content: message.content <> " *"}}
+  end
+
+  def fake_fail_processor(%LLMChain{} = _chain, %Message{} = _message) do
+    {:halt, Message.new_user!("ERROR: I reject your message!")}
+  end
+
+  def fake_raise_processor(%LLMChain{} = _chain, %Message{} = _message) do
+    raise RuntimeError, "BOOM! Processor exploded"
   end
 
   describe "new/1" do
@@ -91,6 +106,16 @@ defmodule LangChain.Chains.LLMChainTest do
       # includes function in the list and map
       assert updated_chain2.tools == [hello_world, howdy_fn]
       assert updated_chain2._tool_map == %{"hello_world" => hello_world, "howdy" => howdy_fn}
+    end
+  end
+
+  describe "message_processors/2" do
+    test "assigns processor list to the struct", %{chain: chain} do
+      assert chain.message_processors == []
+
+      processors = [JsonProcessor.new!()]
+      updated_chain = LLMChain.message_processors(chain, processors)
+      assert updated_chain.message_processors == processors
     end
   end
 
@@ -604,6 +629,138 @@ defmodule LangChain.Chains.LLMChainTest do
     end
   end
 
+  describe "run_message_processors/2" do
+    test "continues when no processors given", %{chain: chain} do
+      assert chain.message_processors == []
+      message = Message.new_assistant!(%{content: "Initial"})
+
+      final_message = LLMChain.run_message_processors(chain, message)
+      assert final_message == message
+    end
+
+    test "applies a single processor to the message", %{chain: chain} do
+      chain =
+        LLMChain.message_processors(chain, [
+          &fake_success_processor/2
+        ])
+
+      message = Message.new_assistant!(%{content: "Initial"})
+
+      final_message = LLMChain.run_message_processors(chain, message)
+      assert final_message.content == "Initial *"
+    end
+
+    test "applies successive processors", %{chain: chain} do
+      chain =
+        LLMChain.message_processors(chain, [
+          &fake_success_processor/2,
+          &fake_success_processor/2,
+          &fake_success_processor/2
+        ])
+
+      message = Message.new_assistant!(%{content: "Initial"})
+
+      final_message = LLMChain.run_message_processors(chain, message)
+      assert final_message.content == "Initial * * *"
+    end
+
+    test "returns :halted and a new message when :halt returned", %{
+      chain: chain
+    } do
+      chain =
+        LLMChain.message_processors(chain, [
+          &fake_success_processor/2,
+          &fake_success_processor/2,
+          &fake_fail_processor/2
+        ])
+
+      message = Message.new_assistant!(%{content: "Initial"})
+
+      {:halted, new_message} = LLMChain.run_message_processors(chain, message)
+      assert new_message.role == :user
+      assert new_message.content == "ERROR: I reject your message!"
+    end
+
+    test "handles an exception raised in processor", %{chain: chain} do
+      chain =
+        LLMChain.message_processors(chain, [
+          &fake_success_processor/2,
+          &fake_raise_processor/2
+        ])
+
+      message = Message.new_assistant!(%{content: "Initial"})
+
+      {:halted, final_message} = LLMChain.run_message_processors(chain, message)
+
+      assert final_message.content ==
+               "ERROR: An exception was raised! Exception: %RuntimeError{message: \"BOOM! Processor exploded\"}"
+    end
+
+    test "does nothing on other message roles", %{chain: chain} do
+      chain =
+        LLMChain.message_processors(chain, [
+          &fake_success_processor/2
+        ])
+
+      message = Message.new_user!("Howdy!")
+
+      assert message == LLMChain.run_message_processors(chain, message)
+    end
+  end
+
+  describe "process_message/2" do
+    test "runs message processors, adds to chain, fires callback on final message", %{
+      chain: chain
+    } do
+      # internal hack to assign a callback. Verifying it get's executed.
+      chain = %LLMChain{chain | callback_fn: fn item -> send(self(), {:callback_fired, item}) end}
+
+      chain =
+        LLMChain.message_processors(chain, [
+          &fake_success_processor/2,
+          &fake_success_processor/2
+        ])
+
+      message = Message.new_assistant!(%{content: "Initial"})
+
+      updated_chain = LLMChain.process_message(chain, message)
+      [msg1] = updated_chain.messages
+      assert msg1.content == "Initial * *"
+
+      # Expect callback with the updated message
+      assert_received {:callback_fired, ^msg1}
+    end
+
+    test "when halted, adds original message plus new message returned from processor and fires 2 callbacks",
+         %{chain: chain} do
+      # internal hack to assign a callback. Verifying it get's executed.
+      chain = %LLMChain{chain | callback_fn: fn item -> send(self(), {:callback_fired, item}) end}
+      assert chain.current_failure_count == 0
+
+      chain =
+        LLMChain.message_processors(chain, [
+          &fake_success_processor/2,
+          &fake_fail_processor/2
+        ])
+
+      message = Message.new_assistant!(%{content: "Initial"})
+
+      updated_chain = LLMChain.process_message(chain, message)
+      # the failure count is incremented
+      assert updated_chain.current_failure_count == 1
+      [msg1, msg2] = updated_chain.messages
+      # includes the original message
+      assert msg1 == message
+      # adds a new message with the processor response message
+      assert msg2.content == "ERROR: I reject your message!"
+
+      # Expect callback with the original assistant message
+      assert_received {:callback_fired, ^msg1}
+      # Expect callback with the new user message
+      assert_received {:callback_fired, ^msg2}
+    end
+  end
+
   describe "run/1" do
     @tag live_call: true, live_open_ai: true
     test "custom_context is passed to a custom function" do
@@ -749,7 +906,7 @@ defmodule LangChain.Chains.LLMChainTest do
         })
       ]
 
-      # errors when trying to sent a PromptTemplate
+      # errors when trying to send a PromptTemplate
       assert_raise LangChainError, ~r/PromptTemplates must be/, fn ->
         LLMChain.new!(%{
           llm: ChatOpenAI.new!(%{seed: 0}),
@@ -770,7 +927,7 @@ defmodule LangChain.Chains.LLMChainTest do
         ])
       ]
 
-      # errors when trying to sent a PromptTemplate
+      # errors when trying to send a PromptTemplate
       # create and run the chain
       {:error, reason} =
         %{llm: ChatOpenAI.new!(%{seed: 0})}
@@ -780,6 +937,63 @@ defmodule LangChain.Chains.LLMChainTest do
 
       assert reason =~ ~r/PromptTemplates must be/
     end
+
+    test "increments current_failure_count on parse failure", %{chain: chain} do
+      # Made NOT LIVE here
+      fake_messages = [
+        Message.new_assistant!(%{content: "Not what you wanted"})
+      ]
+
+      set_api_override({:ok, fake_messages})
+
+      messages = [
+        Message.new_user!("Say what I want you to say.")
+      ]
+
+      callback = fn data ->
+        send(self(), {:callback, data})
+      end
+      chain = %LLMChain{chain | verbose: true}
+
+      assert {:error, "Exceeded max failure count"} ==
+               chain
+               |> LLMChain.message_processors([JsonProcessor.new!()])
+               |> LLMChain.add_messages(messages)
+               # run repeatedly
+               |> LLMChain.run(while_needs_response: true, callback_fn: callback)
+
+      # TODO: Needs a post-processor to auto-review the response, declare it invalid, and have it handled
+
+      assert_received {:callback, item}
+      IO.inspect(item, label: "CALLBACK RCVD")
+
+      assert_received {:callback, item}
+      IO.inspect(item, label: "CALLBACK RCVD")
+
+      assert_received {:callback, item}
+      IO.inspect(item, label: "CALLBACK RCVD")
+
+      assert_received {:callback, item}
+      IO.inspect(item, label: "CALLBACK RCVD")
+
+      assert_received {:callback, item}
+      IO.inspect(item, label: "CALLBACK RCVD")
+
+      assert_received {:callback, item}
+      IO.inspect(item, label: "CALLBACK RCVD")
+
+      assert_received {:callback, item}
+      IO.inspect(item, label: "CALLBACK RCVD")
+
+      assert_received {:callback, item}
+      IO.inspect(item, label: "CALLBACK RCVD")
+
+      assert_received {:callback, item}
+      IO.inspect(item, label: "CALLBACK RCVD")
+
+      assert false
+    end
+
     # TODO: TESTS go here
 
     # TODO: `until_success: 5` could specify the retry count. Defaults to 3.
@@ -895,6 +1109,44 @@ defmodule LangChain.Chains.LLMChainTest do
 
     #   # RAising as exception will quit?
     # end
+  end
+
+  describe "increment_current_failure_count/1" do
+    test "increments the current_failure_count", %{chain: chain} do
+      updated_chain_1 =
+        chain
+        |> LLMChain.increment_current_failure_count()
+
+      assert updated_chain_1.current_failure_count == 1
+
+      updated_chain_2 =
+        updated_chain_1
+        |> LLMChain.increment_current_failure_count()
+
+      assert updated_chain_2.current_failure_count == 2
+    end
+  end
+
+  describe "reset_current_failure_count/1" do
+    test "resets the current_failure_count to 0", %{chain: chain} do
+      updated_chain =
+        chain
+        |> LLMChain.increment_current_failure_count()
+        |> LLMChain.increment_current_failure_count()
+        |> LLMChain.reset_current_failure_count()
+
+      assert updated_chain.current_failure_count == 0
+    end
+  end
+
+  describe "failure count and automatic retry handling" do
+    # TODO: the run function fails when count over max count, returns an {:error, reason} - reason as an atom?
+
+    # TODO: do_run returns a failure on max count
+
+    # TODO: failure count is reset on successful handling
+
+    test "eh?"
   end
 
   describe "update_custom_context/3" do
