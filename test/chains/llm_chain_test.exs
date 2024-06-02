@@ -929,7 +929,7 @@ defmodule LangChain.Chains.LLMChainTest do
 
       # errors when trying to send a PromptTemplate
       # create and run the chain
-      {:error, reason} =
+      {:error, _updated_chain, reason} =
         %{llm: ChatOpenAI.new!(%{seed: 0})}
         |> LLMChain.new!()
         |> LLMChain.add_messages(messages)
@@ -950,47 +950,104 @@ defmodule LangChain.Chains.LLMChainTest do
         Message.new_user!("Say what I want you to say.")
       ]
 
+      {:error, error_chain, reason} =
+        chain
+        |> LLMChain.message_processors([JsonProcessor.new!()])
+        |> LLMChain.add_messages(messages)
+        # run repeatedly
+        |> LLMChain.run(while_needs_response: true)
+
+      assert error_chain.current_failure_count == 3
+      assert reason == "Exceeded max failure count"
+
+      [m1, m2, m3, m4, m5, m6, m7] = error_chain.messages
+
+      assert m1.role == :user
+      assert m1.content == "Say what I want you to say."
+
+      assert m2.role == :assistant
+      assert m2.content == "Not what you wanted"
+      assert m2.processed_content == "Not what you wanted"
+
+      assert m3.role == :user
+      assert m3.content == "ERROR: Invalid JSON data: unexpected byte at position 0: 0x4E (\"N\")"
+
+      assert m4.role == :assistant
+      assert m4.content == "Not what you wanted"
+      assert m4.processed_content == "Not what you wanted"
+
+      assert m5.role == :user
+      assert m5.content == "ERROR: Invalid JSON data: unexpected byte at position 0: 0x4E (\"N\")"
+
+      assert m6.role == :assistant
+      assert m6.content == "Not what you wanted"
+      assert m6.processed_content == "Not what you wanted"
+
+      assert m7.role == :user
+      assert m7.content == "ERROR: Invalid JSON data: unexpected byte at position 0: 0x4E (\"N\")"
+    end
+
+    test "fires callbacks for failed messages correctly", %{chain: chain} do
+      # Made NOT LIVE here
+      fake_messages = [
+        Message.new_assistant!(%{content: "Not what you wanted"})
+      ]
+
+      set_api_override({:ok, fake_messages})
+
+      messages = [
+        Message.new_user!("Say what I want you to say.")
+      ]
+
       callback = fn data ->
         send(self(), {:callback, data})
       end
-      chain = %LLMChain{chain | verbose: true}
 
-      assert {:error, "Exceeded max failure count"} ==
-               chain
-               |> LLMChain.message_processors([JsonProcessor.new!()])
-               |> LLMChain.add_messages(messages)
-               # run repeatedly
-               |> LLMChain.run(while_needs_response: true, callback_fn: callback)
+      chain = %LLMChain{chain | verbose: true, max_repeat_failures: 2}
 
-      # TODO: Needs a post-processor to auto-review the response, declare it invalid, and have it handled
+      {:error, error_chain, reason} =
+        chain
+        |> LLMChain.message_processors([JsonProcessor.new!()])
+        |> LLMChain.add_messages(messages)
+        # run repeatedly
+        |> LLMChain.run(while_needs_response: true, callback_fn: callback)
+
+      assert error_chain.current_failure_count == 2
+      assert reason == "Exceeded max failure count"
+
+      [m1, m2, m3, m4, m5] = error_chain.messages
+
+      assert m1.role == :user
+      assert m1.content == "Say what I want you to say."
+
+      assert m2.role == :assistant
+      assert m2.content == "Not what you wanted"
+      assert m2.processed_content == "Not what you wanted"
+
+      assert m3.role == :user
+      assert m3.content == "ERROR: Invalid JSON data: unexpected byte at position 0: 0x4E (\"N\")"
+
+      assert m4.role == :assistant
+      assert m4.content == "Not what you wanted"
+      assert m4.processed_content == "Not what you wanted"
+
+      assert m5.role == :user
+      assert m5.content == "ERROR: Invalid JSON data: unexpected byte at position 0: 0x4E (\"N\")"
+
+      assert_received {:callback, ^m2}
+      assert_received {:callback, ^m3}
+      assert_received {:callback, ^m4}
+      assert_received {:callback, ^m5}
+      # IO.inspect(item, label: "CALLBACK RCVD")
 
       assert_received {:callback, item}
-      IO.inspect(item, label: "CALLBACK RCVD")
+      IO.inspect(item, label: "UNEXPECTED CALLBACK ITEM!!")
 
       assert_received {:callback, item}
-      IO.inspect(item, label: "CALLBACK RCVD")
+      IO.inspect(item, label: "UNEXPECTED CALLBACK ITEM!!")
 
-      assert_received {:callback, item}
-      IO.inspect(item, label: "CALLBACK RCVD")
-
-      assert_received {:callback, item}
-      IO.inspect(item, label: "CALLBACK RCVD")
-
-      assert_received {:callback, item}
-      IO.inspect(item, label: "CALLBACK RCVD")
-
-      assert_received {:callback, item}
-      IO.inspect(item, label: "CALLBACK RCVD")
-
-      assert_received {:callback, item}
-      IO.inspect(item, label: "CALLBACK RCVD")
-
-      assert_received {:callback, item}
-      IO.inspect(item, label: "CALLBACK RCVD")
-
-      assert_received {:callback, item}
-      IO.inspect(item, label: "CALLBACK RCVD")
-
+      refute_received {:callback, _item}
+      # TODO: The models are firing the extra two callbacks as the messages are received.
       assert false
     end
 

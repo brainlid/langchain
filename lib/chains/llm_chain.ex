@@ -182,7 +182,8 @@ defmodule LangChain.Chains.LLMChain do
   LangChain structure for the received message or event. It may be a
   `MessageDelta` or a `Message`. Use pattern matching to respond as desired.
   """
-  @spec run(t(), Keyword.t()) :: {:ok, t(), Message.t() | [Message.t()]} | {:error, String.t()}
+  @spec run(t(), Keyword.t()) ::
+          {:ok, t(), Message.t() | [Message.t()]} | {:error, t(), String.t()}
   def run(chain, opts \\ [])
 
   def run(%LLMChain{} = chain, opts) do
@@ -204,7 +205,7 @@ defmodule LangChain.Chains.LLMChain do
         {:ok, chain} ->
           {:ok, chain, chain.last_message}
 
-        {:error, _reason} = error ->
+        {:error, _chain, _reason} = error ->
           error
       end
     end
@@ -213,7 +214,7 @@ defmodule LangChain.Chains.LLMChain do
   # Repeatedly run the chain while `needs_response` is true. This will execute
   # tools and re-submit the tool result to the LLM giving the LLM an
   # opportunity to execute more tools or return a response.
-  @spec run_while_needs_response(t()) :: {:ok, t(), Message.t()} | {:error, String.t()}
+  @spec run_while_needs_response(t()) :: {:ok, t(), Message.t()} | {:error, t(), String.t()}
   defp run_while_needs_response(%LLMChain{needs_response: false} = chain) do
     {:ok, chain, chain.last_message}
   end
@@ -226,8 +227,8 @@ defmodule LangChain.Chains.LLMChain do
       {:ok, updated_chain} ->
         run_while_needs_response(updated_chain)
 
-      {:error, reason} ->
-        {:error, reason}
+      {:error, updated_chain, reason} ->
+        {:error, updated_chain, reason}
     end
   end
 
@@ -252,9 +253,9 @@ defmodule LangChain.Chains.LLMChain do
 
   # internal reusable function for running the chain
   @spec do_run(t()) :: {:ok, t()} | {:error, String.t()}
-  defp do_run(%LLMChain{current_failure_count: current_count, max_repeat_failures: max} = _chain)
+  defp do_run(%LLMChain{current_failure_count: current_count, max_repeat_failures: max} = chain)
        when current_count >= max do
-    {:error, "Exceeded max failure count"}
+    {:error, chain, "Exceeded max failure count"}
   end
 
   defp do_run(%LLMChain{} = chain) do
@@ -301,7 +302,7 @@ defmodule LangChain.Chains.LLMChain do
       {:error, reason} ->
         if chain.verbose, do: IO.inspect(reason, label: "ERROR")
         Logger.error("Error during chat call. Reason: #{inspect(reason)}")
-        {:error, reason}
+        {:error, chain, reason}
     end
   end
 
@@ -403,7 +404,8 @@ defmodule LangChain.Chains.LLMChain do
 
   # Process an assistant message sequentially through each message processor.
   @doc false
-  @spec run_message_processors(t(), Message.t()) :: Message.t() | {:halted, Message.t()}
+  @spec run_message_processors(t(), Message.t()) ::
+          Message.t() | {:halted, Message.t(), Message.t()}
   def run_message_processors(
         %LLMChain{message_processors: processors} = chain,
         %Message{role: :assistant} = message
@@ -417,10 +419,14 @@ defmodule LangChain.Chains.LLMChain do
       try do
         case proc.(chain, m) do
           {:cont, updated_msg} ->
+            if chain.verbose, do: IO.inspect(proc, label: "MESSAGE PROCESSOR EXECUTED")
             {:cont, updated_msg}
 
           {:halt, %Message{} = returned_message} ->
-            {:halt, {:halted, returned_message}}
+            if chain.verbose, do: IO.inspect(proc, label: "MESSAGE PROCESSOR HALTED")
+            # for debugging help, return the message so-far that failed in the
+            # processor
+            {:halt, {:halted, m, returned_message}}
         end
       rescue
         err ->
@@ -446,29 +452,25 @@ defmodule LangChain.Chains.LLMChain do
   @spec process_message(t(), Message.t()) :: t()
   def process_message(%LLMChain{} = chain, %Message{} = message) do
     case run_message_processors(chain, message) do
-      {:halted, new_message} ->
-        # add the original assistant message, then add the newly created user
-        # return message and return the updated chain
-        new_chain =
-          chain
-          |> increment_current_failure_count()
-          |> add_message(message)
-          |> add_message(new_message)
-          |> dbg()
+      {:halted, failed_message, new_message} ->
+        if chain.verbose do
+          IO.inspect(failed_message, label: "PROCESSOR FAILED ON MESSAGE")
+          IO.inspect(new_message, label: "PROCESSOR FAILURE RESPONSE MESSAGE")
+        end
 
-        fire_callback(chain, message)
+        fire_callback(chain, failed_message)
         fire_callback(chain, new_message)
-
-        new_chain
+        # add the received assistant message, then add the newly created user
+        # return message and return the updated chain
+        chain
+        |> increment_current_failure_count()
+        |> add_message(failed_message)
+        |> add_message(new_message)
 
       %Message{} = updated_message ->
-        new_chain =
-          chain
-          |> add_message(updated_message)
-
+        if chain.verbose, do: IO.inspect(updated_message, label: "MESSAGE PROCESSED")
         fire_callback(chain, updated_message)
-
-        new_chain
+        add_message(chain, updated_message)
     end
   end
 
