@@ -1,5 +1,5 @@
 defmodule LangChain.Chains.RoutingChainTest do
-  use ExUnit.Case
+  use LangChain.BaseCase
 
   doctest LangChain.Chains.RoutingChain
 
@@ -9,7 +9,6 @@ defmodule LangChain.Chains.RoutingChainTest do
   alias LangChain.Message
   alias LangChain.ChatModels.ChatOpenAI
   alias LangChain.LangChainError
-  alias LangChain.Utils.ApiOverride
 
   setup do
     llm = ChatOpenAI.new!(%{model: "gpt-3.5-turbo", stream: false, seed: 0})
@@ -127,8 +126,8 @@ defmodule LangChain.Chains.RoutingChainTest do
   describe "run/2" do
     test "runs and returns updated chain and last message", %{routing_chain: routing_chain} do
       fake_message = Message.new_assistant!("blog")
-      fake_response = {:ok, [fake_message]}
-      ApiOverride.set_api_override(fake_response)
+      fake_response = {:ok, [fake_message], nil}
+      set_api_override(fake_response)
 
       assert {:ok, updated_chain, last_msg} = RoutingChain.run(routing_chain)
       assert %LLMChain{} = updated_chain
@@ -141,13 +140,13 @@ defmodule LangChain.Chains.RoutingChainTest do
       routing_chain: routing_chain,
       default_route: default_route
     } do
-      ApiOverride.set_api_override({:ok, [Message.new_assistant!("blog")]})
+      set_api_override({:ok, [Message.new_assistant!("blog")], nil})
       assert %PromptRoute{name: "blog"} = RoutingChain.evaluate(routing_chain)
 
-      ApiOverride.set_api_override({:ok, [Message.new_assistant!("memo")]})
+      set_api_override({:ok, [Message.new_assistant!("memo")], nil})
       assert %PromptRoute{name: "memo"} = RoutingChain.evaluate(routing_chain)
 
-      ApiOverride.set_api_override({:ok, [Message.new_assistant!("DEFAULT")]})
+      set_api_override({:ok, [Message.new_assistant!("DEFAULT")], nil})
       assert default_route == RoutingChain.evaluate(routing_chain)
     end
 
@@ -155,7 +154,7 @@ defmodule LangChain.Chains.RoutingChainTest do
       routing_chain: routing_chain,
       default_route: default_route
     } do
-      ApiOverride.set_api_override({:ok, [Message.new_assistant!("invalid")]})
+      set_api_override({:ok, [Message.new_assistant!("invalid")], nil})
       assert default_route == RoutingChain.evaluate(routing_chain)
     end
 
@@ -163,7 +162,7 @@ defmodule LangChain.Chains.RoutingChainTest do
       routing_chain: routing_chain,
       default_route: default_route
     } do
-      ApiOverride.set_api_override({:error, "FAKE API call failure"})
+      set_api_override({:error, "FAKE API call failure"})
       assert default_route == RoutingChain.evaluate(routing_chain)
     end
   end

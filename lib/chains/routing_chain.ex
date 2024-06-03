@@ -156,7 +156,7 @@ defmodule LangChain.Chains.RoutingChain do
           if chain.verbose, do: IO.inspect(name, label: "SELECTED ROUTE NAME")
           name
 
-        {:error, reason} ->
+        {:error, _chain, reason} ->
           Logger.warning("RoutingChain failed. Reason: #{inspect(reason)}")
           if chain.verbose, do: IO.puts("RoutingChain FAILED IN EXECUTION - USING DEFAULT")
           "DEFAULT"
