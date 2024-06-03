@@ -4,6 +4,7 @@ defmodule LangChain.Utils do
   """
   alias LangChain.LangChainError
   alias Ecto.Changeset
+  alias LangChain.Callbacks
   require Logger
 
   @doc """
@@ -92,34 +93,24 @@ defmodule LangChain.Utils do
   @doc """
   Fire a streaming callback if present.
   """
-  @spec fire_callback(
-          %{optional(:stream) => boolean()},
-          data :: callback_data() | [callback_data()],
-          (callback_data() -> any())
-        ) :: :ok
-  def fire_callback(%{stream: true}, _data, nil) do
-    Logger.warning("Streaming call requested but no callback function was given.")
-    :ok
-  end
-
-  def fire_callback(_model, _data, nil), do: :ok
+  @spec fire_streamed_callback(
+          %{optional(:stream) => boolean(), callbacks: [map()]},
+          data :: callback_data() | [callback_data()]
+        ) :: :ok | no_return()
 
   # fire a set of callbacks when receiving a list
-  def fire_callback(_model, data, callback_fn) when is_list(data) and is_function(callback_fn) do
-    # OPTIONAL: Execute callback function
+  def fire_streamed_callback(model, data) when is_list(data) do
+    # Execute callback handler for each received data element
     data
     |> List.flatten()
-    |> Enum.each(fn item -> callback_fn.(item) end)
-
-    :ok
+    |> Enum.each(fn item ->
+      Callbacks.fire(model.callbacks, :on_llm_new_delta, [model, item])
+    end)
   end
 
-  def fire_callback(_model, data, callback_fn)
-      when is_struct(data) and is_function(callback_fn) do
-    # OPTIONAL: Execute callback function
-    callback_fn.(data)
-
-    :ok
+  def fire_streamed_callback(model, data) when is_struct(data) do
+    # Execute callback handler for single received data element
+    Callbacks.fire(model.callbacks, :on_llm_new_delta, [model, data])
   end
 
   @doc """
@@ -145,10 +136,9 @@ defmodule LangChain.Utils do
   @spec handle_stream_fn(
           %{optional(:stream) => boolean()},
           decode_stream_fn :: function(),
-          transform_data_fn :: function(),
-          callback_fn :: function()
+          transform_data_fn :: function()
         ) :: function()
-  def handle_stream_fn(model, decode_stream_fn, transform_data_fn, callback_fn) do
+  def handle_stream_fn(model, decode_stream_fn, transform_data_fn) do
     fn
       {:data, raw_data}, {req, %Req.Response{status: 200} = response} ->
         # Fetch any previously incomplete messages that are buffered in the
@@ -164,7 +154,7 @@ defmodule LangChain.Utils do
         # parsed_data = Enum.map(parsed_data, &transform_data_fn.(&1))
 
         # execute the callback function for each MessageDelta
-        fire_callback(model, parsed_data, callback_fn)
+        fire_streamed_callback(model, parsed_data)
         old_body = if response.body == "", do: [], else: response.body
 
         # Returns %Req.Response{} where the body contains ALL the stream delta
