@@ -8,6 +8,39 @@ defmodule LangChain.Chains.LLMChain do
   because the focus is on communication and formats instead of all the extra
   logic.
 
+  ## Callbacks
+
+  Callbacks are fired as specific events occur in the chain as it is running.
+  The set of events are defined in `LangChain.Chains.ChainCallbacks`.
+
+  To be notified of an event you care about, register a callback handler with
+  the chain. Multiple callback handlers can be assigned. The callback handler
+  assigned to the `LLMChain` is not provided to an LLM chat model. For callbacks
+  on a chat model, set them there.
+
+  ### Registering a callback handler
+
+  A handler is a map with key name for the callback to fire. A function is
+  assigned to the map key. Refer to the documentation for each function as they
+  arguments vary.
+
+  If we want to be notified when an LLM Assistant chat response message has been
+  processed and it is complete, this is how we could receive that event in our
+  running LiveView:
+
+      live_view_pid = self()
+
+      handler = %{
+        on_message_processed: fn _chain, message ->
+          send(live_view_pid, {:new_assistant_response, message})
+        end
+      }
+
+      LLMChain.new!(%{...})
+      |> LLMChain.add_callback(handler)
+      |> LLMChain.run()
+
+  In the LiveView, a `handle_info` function executes with the received message.
   """
   use Ecto.Schema
   import Ecto.Changeset
@@ -62,12 +95,6 @@ defmodule LangChain.Chains.LLMChain do
     # happens after sending a user message or when a tool_call is received, or
     # when we've provided a tool response and the LLM needs to respond.
     field :needs_response, :boolean, default: false
-
-    # A callback function to execute when messages are added. Don't allow caller
-    # to setup in `.new` function. Want to set it from the `.run` function to
-    # avoid multiple chain instances (across processes) from both firing
-    # callbacks.
-    field :callback_fn, :any, virtual: true
 
     # A list of maps for callback handlers
     field :callbacks, {:array, :map}, default: []
@@ -181,11 +208,6 @@ defmodule LangChain.Chains.LLMChain do
   - `:while_needs_response` - repeatedly evaluates functions and submits to the
     LLM so long as we still expect to get a response. Best fit for
     conversational LLMs where a `ToolResult` is used by the LLM to continue.
-  - `:callback_fn` - the callback function to execute as messages are received.
-
-  The `callback_fn` is a function that receives one argument. It is the
-  LangChain structure for the received message or event. It may be a
-  `MessageDelta` or a `Message`. Use pattern matching to respond as desired.
   """
   @spec run(t(), Keyword.t()) ::
           {:ok, t(), Message.t() | [Message.t()]} | {:error, t(), String.t()}
@@ -193,8 +215,6 @@ defmodule LangChain.Chains.LLMChain do
 
   def run(%LLMChain{} = chain, opts) do
     # set the callback function on the chain
-    chain = %LLMChain{chain | callback_fn: Keyword.get(opts, :callback_fn)}
-
     if chain.verbose, do: IO.inspect(chain.llm, label: "LLM")
 
     if chain.verbose, do: IO.inspect(chain.messages, label: "MESSAGES")

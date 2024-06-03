@@ -17,7 +17,11 @@ defmodule LangChain.Utils.ChainResult do
   This supports passing in the final, updated LLMChain, or the result of the
   `LLMChain.run/2` function.
   """
-  @spec to_string(LLMChain.t() | {:ok, LLMChain.t(), Message.t()} | {:error, LLMChain.t(), String.t()}) ::
+  @spec to_string(
+          LLMChain.t()
+          | {:ok, LLMChain.t(), Message.t()}
+          | {:error, LLMChain.t(), String.t()}
+        ) ::
           {:ok, String.t()} | {:error, LLMChain.t(), String.t()}
   def to_string({:error, chain, reason}) when is_binary(reason) do
     # if an error was passed in, forward it through.

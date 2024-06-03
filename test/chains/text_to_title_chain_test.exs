@@ -1,5 +1,5 @@
 defmodule LangChain.Chains.TextToTitleChainTest do
-  use ExUnit.Case
+  use LangChain.BaseCase
 
   doctest LangChain.Chains.TextToTitleChain
 
@@ -8,7 +8,6 @@ defmodule LangChain.Chains.TextToTitleChainTest do
   alias LangChain.Message
   alias LangChain.ChatModels.ChatOpenAI
   alias LangChain.LangChainError
-  alias LangChain.Utils.ApiOverride
 
   setup do
     llm = ChatOpenAI.new!(%{model: "gpt-3.5-turbo", stream: false, seed: 0})
@@ -61,8 +60,8 @@ defmodule LangChain.Chains.TextToTitleChainTest do
   describe "run/2" do
     test "runs and returns updated chain and last message", %{title_chain: title_chain} do
       fake_message = Message.new_assistant!("Summarized Title")
-      fake_response = {:ok, [fake_message]}
-      ApiOverride.set_api_override(fake_response)
+      fake_response = {:ok, [fake_message], nil}
+      set_api_override(fake_response)
 
       assert {:ok, updated_chain, last_msg} = TextToTitleChain.run(title_chain)
       assert %LLMChain{} = updated_chain
@@ -72,7 +71,7 @@ defmodule LangChain.Chains.TextToTitleChainTest do
 
   describe "evaluate/2" do
     test "returns the summarized title", %{title_chain: title_chain} do
-      ApiOverride.set_api_override({:ok, [Message.new_assistant!("Special Title")]})
+      set_api_override({:ok, [Message.new_assistant!("Special Title")], nil})
       assert "Special Title" == TextToTitleChain.evaluate(title_chain)
     end
 
@@ -80,7 +79,7 @@ defmodule LangChain.Chains.TextToTitleChainTest do
       title_chain: title_chain,
       fallback_title: fallback_title
     } do
-      ApiOverride.set_api_override({:error, "FAKE API call failure"})
+      set_api_override({:error, "FAKE API call failure"})
       assert fallback_title == TextToTitleChain.evaluate(title_chain)
     end
   end
