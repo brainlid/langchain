@@ -5,6 +5,10 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   Parses and validates inputs for making requests to [Anthropic's messages API](https://docs.anthropic.com/claude/reference/messages_post).
 
   Converts responses into more specialized `LangChain` data structures.
+
+  ## Callbacks
+
+  See the set of available callback: `LangChain.ChatModels.LLMCallbacks`
   """
   use Ecto.Schema
   require Logger
@@ -22,6 +26,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   alias LangChain.Function
   alias LangChain.FunctionParam
   alias LangChain.Utils
+  alias LangChain.Callbacks
 
   @behaviour ChatModel
 
@@ -75,6 +80,9 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
     # Whether to stream the response
     field :stream, :boolean, default: false
+
+    # A list of maps for callback handlers
+    field :callbacks, {:array, :map}, default: []
   end
 
   @type t :: %ChatAnthropic{}
@@ -89,7 +97,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     :temperature,
     :top_p,
     :top_k,
-    :stream
+    :stream,
+    :callbacks
   ]
   @required_fields [:endpoint, :model]
 
@@ -209,27 +218,28 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   `LangChain.Message` once fully complete.
   """
   @impl ChatModel
-  def call(anthropic, prompt, functions \\ [], callback_fn \\ nil)
+  def call(anthropic, prompt, functions \\ [])
 
-  def call(%ChatAnthropic{} = anthropic, prompt, functions, callback_fn) when is_binary(prompt) do
+  def call(%ChatAnthropic{} = anthropic, prompt, functions) when is_binary(prompt) do
     messages = [
       Message.new_system!(),
       Message.new_user!(prompt)
     ]
 
-    call(anthropic, messages, functions, callback_fn)
+    call(anthropic, messages, functions)
   end
 
-  def call(%ChatAnthropic{} = anthropic, messages, functions, callback_fn)
+  def call(%ChatAnthropic{} = anthropic, messages, functions)
       when is_list(messages) do
     if override_api_return?() do
       Logger.warning("Found override API response. Will not make live API call.")
 
       case get_api_override() do
-        {:ok, {:ok, data} = response} ->
+        {:ok, {:ok, data, callback_name}} ->
           # fire callback for fake responses too
-          Utils.fire_callback(anthropic, data, callback_fn)
-          response
+          Callbacks.fire(anthropic.callbacks, callback_name, [anthropic, data])
+          # return the data portion
+          {:ok, data}
 
         # fake error response
         {:ok, {:error, _reason} = response} ->
@@ -237,12 +247,12 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
         _other ->
           raise LangChainError,
-                "An unexpected fake API response was set. Should be an `{:ok, value}`"
+                "An unexpected fake API response was set. Should be an `{:ok, value, nil_or_callback_name}`"
       end
     else
       try do
         # make base api request and perform high-level success/failure checks
-        case do_api_request(anthropic, messages, functions, callback_fn) do
+        case do_api_request(anthropic, messages, functions) do
           {:error, reason} ->
             {:error, reason}
 
@@ -263,22 +273,15 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   # - `result` - where `result` is a data-structure like a list or map.
   # - `{:error, reason}` - Where reason is a string explanation of what went wrong.
   #
-  # If a callback_fn is provided, it will fire with each
-  #
   # If `stream: false`, the completed message is returned.
   #
-  # If `stream: true`, the `callback_fn` is executed for the returned MessageDelta
-  # responses.
-  #
-  # Executes the callback function passing the response only parsed to the data
-  # structures.
   # Retries the request up to 3 times on transient errors with a 1 second delay
   @doc false
   @spec do_api_request(t(), [Message.t()], ChatModel.tools(), (any() -> any())) ::
           list() | struct() | {:error, String.t()}
-  def do_api_request(anthropic, messages, tools, callback_fn, retry_count \\ 3)
+  def do_api_request(anthropic, messages, tools, retry_count \\ 3)
 
-  def do_api_request(_anthropic, _messages, _functions, _callback_fn, 0) do
+  def do_api_request(_anthropic, _messages, _functions, 0) do
     raise LangChainError, "Retries exceeded. Connection failed."
   end
 
@@ -286,7 +289,6 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         %ChatAnthropic{stream: false} = anthropic,
         messages,
         tools,
-        callback_fn,
         retry_count
       ) do
     req =
@@ -310,7 +312,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
             {:error, reason}
 
           result ->
-            Utils.fire_callback(anthropic, result, callback_fn)
+            Callbacks.fire(anthropic.callbacks, :on_llm_new_message, [anthropic, result])
             result
         end
 
@@ -320,7 +322,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       {:error, %Mint.TransportError{reason: :closed}} ->
         # Force a retry by making a recursive call decrementing the counter
         Logger.debug(fn -> "Mint connection closed: retry count = #{inspect(retry_count)}" end)
-        do_api_request(anthropic, messages, tools, callback_fn, retry_count - 1)
+        do_api_request(anthropic, messages, tools, retry_count - 1)
 
       other ->
         Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
@@ -332,7 +334,6 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         %ChatAnthropic{stream: true} = anthropic,
         messages,
         tools,
-        callback_fn,
         retry_count
       ) do
     Req.new(
@@ -343,7 +344,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     )
     |> Req.post(
       into:
-        Utils.handle_stream_fn(anthropic, &decode_stream/1, &do_process_response/1, callback_fn)
+        Utils.handle_stream_fn(anthropic, &decode_stream/1, &do_process_response/1)
     )
     |> case do
       {:ok, %Req.Response{body: data}} ->
@@ -358,7 +359,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       {:error, %Mint.TransportError{reason: :closed}} ->
         # Force a retry by making a recursive call decrementing the counter
         Logger.debug(fn -> "Mint connection closed: retry count = #{inspect(retry_count)}" end)
-        do_api_request(anthropic, messages, tools, callback_fn, retry_count - 1)
+        do_api_request(anthropic, messages, tools, retry_count - 1)
 
       other ->
         Logger.error(
@@ -475,6 +476,10 @@ defmodule LangChain.ChatModels.ChatAnthropic do
        ) do
     arguments =
       case call["input"] do
+        # when properties is an empty string, treat it as nil
+        %{"properties" => ""} ->
+          nil
+
         # when properties is an empty map, treat it as nil
         %{"properties" => %{} = props} when props == %{} ->
           nil
