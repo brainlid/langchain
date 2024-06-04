@@ -258,7 +258,7 @@ defmodule LangChain.Chains.LLMChain do
   end
 
   # internal reusable function for running the chain
-  @spec do_run(t()) :: {:ok, t()} | {:error, String.t()}
+  @spec do_run(t()) :: {:ok, t()} | {:error, t(), String.t()}
   defp do_run(%LLMChain{current_failure_count: current_count, max_retry_count: max} = chain)
        when current_count >= max do
     Callbacks.fire(chain.callbacks, :on_retries_exceeded, [chain])
