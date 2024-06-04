@@ -93,12 +93,14 @@ defmodule LangChain.Message do
     # A `:tool` role contains one or more `tool_results` from the system having
     # used tools.
     field :tool_results, :any, virtual: true
+
+    field :usage, :any, virtual: true
   end
 
   @type t :: %Message{}
   @type status :: :complete | :cancelled | :length
 
-  @update_fields [:role, :content, :status, :tool_calls, :tool_results, :index, :name]
+  @update_fields [:role, :content, :status, :tool_calls, :tool_results, :index, :name, :usage]
   @create_fields @update_fields
   @required_fields [:role]
 

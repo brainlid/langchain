@@ -41,11 +41,12 @@ defmodule LangChain.MessageDelta do
     field :role, Ecto.Enum, values: [:unknown, :assistant], default: :unknown
 
     field :tool_calls, :any, virtual: true
+    field :usage, :any, virtual: true
   end
 
   @type t :: %MessageDelta{}
 
-  @create_fields [:role, :content, :index, :status, :tool_calls]
+  @create_fields [:role, :content, :index, :status, :tool_calls, :usage]
   @required_fields []
 
   @doc """
@@ -117,6 +118,7 @@ defmodule LangChain.MessageDelta do
     |> merge_tool_calls(delta_part)
     |> update_index(delta_part)
     |> update_status(delta_part)
+    |> update_usage(delta_part)
   end
 
   defp append_content(%MessageDelta{role: :assistant} = primary, %MessageDelta{
@@ -177,6 +179,10 @@ defmodule LangChain.MessageDelta do
   defp update_status(%MessageDelta{} = primary, %MessageDelta{} = _delta_part) do
     # status flag not updated
     primary
+  end
+
+  defp update_usage(%MessageDelta{} = primary, %MessageDelta{} = delta_part) do
+    %MessageDelta{primary | usage: primary.usage || delta_part.usage}
   end
 
   # The contents and arguments get streamed as a string. A delta of " " a single empty space

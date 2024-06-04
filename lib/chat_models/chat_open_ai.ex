@@ -147,6 +147,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       frequency_penalty: openai.frequency_penalty,
       n: openai.n,
       stream: openai.stream,
+      stream_options: %{include_usage: true},
       # a single ToolResult can expand into multiple tool messages for OpenAI
       messages:
         messages
@@ -487,7 +488,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     )
     |> case do
       {:ok, %Req.Response{body: data}} ->
-        data
+        re_order_usage(data)
 
       {:error, %LangChainError{message: reason}} ->
         {:error, reason}
@@ -507,6 +508,14 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
         {:error, "Unexpected response"}
     end
+  end
+
+  defp re_order_usage(deltas) do
+    {other_deltas, usage_deltas} =
+      List.flatten(deltas)
+      |> Enum.split_with(fn %{usage: usage} -> is_nil(usage) end)
+
+    usage_deltas ++ other_deltas
   end
 
   @doc """
@@ -568,6 +577,22 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           | MessageDelta.t()
           | [MessageDelta.t()]
           | {:error, String.t()}
+  # usage data; parse usage data and trigger do_process_response for the rest
+  def do_process_response(%{"usage" => %{} = usage, "choices" => []}) do
+    %{"prompt_tokens" => input_tokens, "completion_tokens" => output_tokens} = usage
+
+    case MessageDelta.new(%{
+           "role" => "assistant",
+           "usage" => %{input_tokens: input_tokens, output_tokens: output_tokens}
+         }) do
+      {:ok, message} ->
+        message
+
+      {:error, changeset} ->
+        {:error, Utils.changeset_error_to_string(changeset)}
+    end
+  end
+
   def do_process_response(%{"choices" => choices} = _data) when is_list(choices) do
     # process each response individually. Return a list of all processed choices
     for choice <- choices do
