@@ -367,7 +367,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         {:ok, {:ok, data, callback_name}} ->
           # fire callback for fake responses too
           Callbacks.fire(openai.callbacks, callback_name, [openai, data])
-          # return the
+          # return the data portion
           {:ok, data}
 
         # fake error response
@@ -456,7 +456,6 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
           result ->
             Callbacks.fire(openai.callbacks, :on_llm_new_message, [openai, result])
-            # Utils.fire_callback(openai, result, callback_fn)
             result
         end
 
