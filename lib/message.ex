@@ -83,8 +83,6 @@ defmodule LangChain.Message do
       values: [:system, :user, :assistant, :tool],
       default: :user
 
-      #TODO: I think this is an OpenAI "user" to instead track abuse. Check/verify/update.
-
     # Optional name of the participant. Helps separate input from different
     # individuals of the same role. Like multiple people are all acting as "user".
     field :name, :string
