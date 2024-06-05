@@ -328,4 +328,118 @@ defmodule LangChain.MessageTest do
       end
     end
   end
+
+  describe "is_tool_call?/1" do
+    test "returns true when a tool call" do
+      msg =
+        Message.new_assistant!(%{
+          tool_calls: [
+            ToolCall.new!(%{
+              call_id: "call_abc123",
+              name: "my_fun",
+              arguments: nil
+            })
+          ]
+        })
+
+      assert Message.is_tool_call?(msg)
+    end
+
+    test "returns false when not" do
+      refute Message.is_tool_call?(Message.new_assistant!(%{content: "Howdy"}))
+    end
+  end
+
+  describe "is_tool_related?/1" do
+    test "returns true when a tool call" do
+      msg =
+        Message.new_assistant!(%{
+          tool_calls: [
+            ToolCall.new!(%{
+              call_id: "call_abc123",
+              name: "my_fun",
+              arguments: nil
+            })
+          ]
+        })
+
+      assert Message.is_tool_related?(msg)
+    end
+
+    test "returns true when a tool result" do
+      msg =
+        Message.new_tool_result!(%{
+          tool_results: [
+            ToolResult.new!(%{
+              tool_call_id: "call_123",
+              name: "hello_world",
+              content: "Hello world!"
+            })
+          ]
+        })
+
+      assert Message.is_tool_related?(msg)
+    end
+
+    test "returns false when regular message" do
+      refute Message.is_tool_related?(Message.new_user!("Hi"))
+      refute Message.is_tool_related?(Message.new_assistant!(%{content: "Hello"}))
+    end
+  end
+
+  describe "tool_had_errors?/1" do
+    test "returns true when any tool result had an error" do
+      msg =
+        Message.new_tool_result!(%{
+          tool_results: [
+            ToolResult.new!(%{
+              tool_call_id: "call_123",
+              name: "hello_world",
+              content: "ERROR!",
+              is_error: true
+            })
+          ]
+        })
+
+      assert Message.tool_had_errors?(msg)
+
+      msg =
+        Message.new_tool_result!(%{
+          tool_results: [
+            ToolResult.new!(%{
+              tool_call_id: "call_123",
+              name: "hello_world",
+              content: "Hello world!"
+            }),
+            ToolResult.new!(%{
+              tool_call_id: "call_123",
+              name: "hello_world",
+              content: "ERROR!",
+              is_error: true
+            })
+          ]
+        })
+
+      assert Message.tool_had_errors?(msg)
+    end
+
+    test "returns false when all tool results succeeded" do
+      msg =
+        Message.new_tool_result!(%{
+          tool_results: [
+            ToolResult.new!(%{
+              tool_call_id: "call_123",
+              name: "hello_world",
+              content: "Hello world!"
+            })
+          ]
+        })
+
+      refute Message.tool_had_errors?(msg)
+    end
+
+    test "returns false when not a tool response" do
+      refute Message.tool_had_errors?(Message.new_assistant!(%{content: "Howdy"}))
+    end
+  end
 end

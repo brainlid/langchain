@@ -100,7 +100,16 @@ defmodule LangChain.Message do
   @type t :: %Message{}
   @type status :: :complete | :cancelled | :length
 
-  @update_fields [:role, :content, :processed_content, :status, :tool_calls, :tool_results, :index, :name]
+  @update_fields [
+    :role,
+    :content,
+    :processed_content,
+    :status,
+    :tool_calls,
+    :tool_results,
+    :index,
+    :name
+  ]
   @create_fields @update_fields
   @required_fields [:role]
 
@@ -424,4 +433,22 @@ defmodule LangChain.Message do
       do: true
 
   def is_tool_call?(%Message{}), do: false
+
+  @doc """
+  Return if a Message is tool related. It may be a tool call or a tool result.
+  """
+  def is_tool_related?(%Message{role: :tool}), do: true
+  def is_tool_related?(%Message{} = message), do: is_tool_call?(message)
+
+  @doc """
+  Return `true` if the message is a `tool` response and any of the `ToolResult`s
+  ended in an error. Returns `false` if not a `tool` response or all
+  `ToolResult`s succeeded.
+  """
+  @spec tool_had_errors?(t()) :: boolean()
+  def tool_had_errors?(%Message{role: :tool} = message) do
+    Enum.any?(message.tool_results, & &1.is_error)
+  end
+
+  def tool_had_errors?(%Message{} = _message), do: false
 end
