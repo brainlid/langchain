@@ -43,7 +43,43 @@ defmodule LangChain.Chains.LLMChainTest do
         async: false
       })
 
-    %{chat: chat, chain: chain, hello_world: hello_world, greet: greet, sync: sync}
+    fail_func =
+      Function.new!(%{
+        name: "fail_func",
+        description: "Return a function failure response.",
+        function: fn _args, _context ->
+          {:error, "Not what I wanted"}
+        end
+      })
+
+    # on setup, delete the Process dictionary key for each test run
+    Process.delete(:test_func_failed_once)
+
+    fail_once =
+      Function.new!(%{
+        name: "fail_once",
+        description: "Return a function that fails once and succeeds on the second request.",
+        function: fn _args, _context ->
+          # uses the process dictionary to store the test state
+          if Process.get(:test_func_failed_once, false) do
+            Process.put(:test_func_failed_once, true)
+            {:error, "Not what I wanted"}
+          else
+            # already failed once, return a success
+            {:ok, "It worked this time"}
+          end
+        end
+      })
+
+    %{
+      chat: chat,
+      chain: chain,
+      hello_world: hello_world,
+      greet: greet,
+      sync: sync,
+      fail_func: fail_func,
+      fail_once: fail_once
+    }
   end
 
   def fake_success_processor(%LLMChain{} = _chain, %Message{} = message) do
@@ -851,7 +887,7 @@ defmodule LangChain.Chains.LLMChainTest do
         })
         |> LLMChain.add_tools(custom_fn)
         |> LLMChain.add_message(Message.new_user!("Where is the hairbrush located?"))
-        |> LLMChain.run(while_needs_response: true)
+        |> LLMChain.run(mode: :while_needs_response)
 
       assert updated_chain.last_message == message
       assert message.role == :assistant
@@ -866,27 +902,29 @@ defmodule LangChain.Chains.LLMChainTest do
     @tag live_call: true, live_open_ai: true
     test "NON-STREAMING handles receiving an error when no messages sent" do
       # create and run the chain
-      {:error, reason} =
+      {:error, _updated_chain, reason} =
         LLMChain.new!(%{
           llm: ChatOpenAI.new!(%{seed: 0, stream: false}),
           verbose: true
         })
         |> LLMChain.run()
 
-      assert reason == "[] is too short - 'messages'"
+      assert reason ==
+               "Invalid 'messages': empty array. Expected an array with minimum length 1, but got an empty array instead."
     end
 
     @tag live_call: true, live_open_ai: true
     test "STREAMING handles receiving an error when no messages sent" do
       # create and run the chain
-      {:error, reason} =
+      {:error, _updated_chain, reason} =
         LLMChain.new!(%{
           llm: ChatOpenAI.new!(%{seed: 0, stream: true}),
           verbose: true
         })
         |> LLMChain.run()
 
-      assert reason == "[] is too short - 'messages'"
+      assert reason ==
+               "Invalid 'messages': empty array. Expected an array with minimum length 1, but got an empty array instead."
     end
 
     # runs until tools are evaluated
@@ -934,7 +972,7 @@ defmodule LangChain.Chains.LLMChainTest do
         })
         |> LLMChain.add_tools(regions_function)
         |> LLMChain.add_message(message)
-        |> LLMChain.run(while_needs_response: true)
+        |> LLMChain.run(mode: :while_needs_response)
 
       # the response should contain data returned from the function
       assert response.content =~ "Germany"
@@ -1000,7 +1038,7 @@ defmodule LangChain.Chains.LLMChainTest do
         |> LLMChain.message_processors([JsonProcessor.new!()])
         |> LLMChain.add_messages(messages)
         # run repeatedly
-        |> LLMChain.run(while_needs_response: true)
+        |> LLMChain.run(mode: :while_needs_response)
 
       assert error_chain.current_failure_count == 3
       assert reason == "Exceeded max failure count"
@@ -1067,7 +1105,7 @@ defmodule LangChain.Chains.LLMChainTest do
           Message.new_user!("Say what I want you to say.")
         ])
         # run repeatedly
-        |> LLMChain.run(while_needs_response: true)
+        |> LLMChain.run(mode: :while_needs_response)
 
       assert error_chain.current_failure_count == 2
       assert reason == "Exceeded max failure count"
@@ -1098,6 +1136,132 @@ defmodule LangChain.Chains.LLMChainTest do
       assert_received {:retries_exceeded_callback, ^error_chain}
       refute_received {:processing_error_callback, _data}
       refute_received {:error_message_created_callback, _data}
+    end
+
+    test "mode: :until_success - message needs processing, succeeds", %{chain: chain} do
+      # Made NOT LIVE here
+      fake_messages = [
+        Message.new_assistant!(%{content: Jason.encode!(%{value: "abc"})})
+      ]
+
+      set_api_override({:ok, fake_messages, nil})
+
+      {:ok, _updated_chain, last_message} =
+        chain
+        |> LLMChain.message_processors([JsonProcessor.new!()])
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("What's the value in JSON?"))
+        |> LLMChain.run(mode: :until_success)
+
+      # stopped after processing a successful assistant response
+      assert last_message.role == :assistant
+      assert last_message.processed_content == %{"value" => "abc"}
+    end
+
+    test "mode: :until_success - message needs processing, fails, then succeeds", %{chat: chat} do
+      handler = %{
+        on_message_processing_error: fn _chain, _data ->
+          # after the first processing error message, set to return a correct one
+          fake_messages = [
+            Message.new_assistant!(%{content: Jason.encode!(%{value: "abc"})})
+          ]
+
+          set_api_override({:ok, fake_messages, nil})
+        end
+      }
+
+      # Made NOT LIVE here
+      set_api_override({:ok, [Message.new_assistant!(%{content: "invalid"})], nil})
+
+      {:ok, _updated_chain, last_message} =
+        %{llm: chat, callbacks: [handler]}
+        |> LLMChain.new!()
+        |> LLMChain.message_processors([JsonProcessor.new!()])
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("What's the value in JSON?"))
+        |> LLMChain.run(mode: :until_success)
+
+      # stopped after processing a successful assistant response
+      assert last_message.role == :assistant
+      assert last_message.processed_content == %{"value" => "abc"}
+    end
+
+    test "mode: :until_success - tool call returns failure once, then succeeds", %{
+      fail_once: fail_once
+    } do
+      # Made NOT LIVE here
+      fake_messages = [
+        new_function_calls!([
+          ToolCall.new!(%{call_id: "call_fake123", name: "fail_once", arguments: nil})
+        ])
+      ]
+
+      set_api_override({:ok, fake_messages, nil})
+
+      {:ok, updated_chain, last_message} =
+        %{llm: ChatOpenAI.new!(%{stream: false}), verbose: false}
+        |> LLMChain.new!()
+        |> LLMChain.add_tools([fail_once])
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Execute the fail_once tool."))
+        |> LLMChain.run(mode: :until_success)
+
+      assert last_message.role == :tool
+      assert [%ToolResult{is_error: false}] = last_message.tool_results
+      assert updated_chain.current_failure_count == 0
+    end
+
+    test "mode: :until_success - multiple tool_calls in one message. One succeeds and the other fails then succeeds",
+         %{
+           hello_world: hello_world,
+           fail_once: fail_once
+         } do
+      # Made NOT LIVE here
+      fake_messages = [
+        new_function_calls!([
+          ToolCall.new!(%{call_id: "call_fakeABC", name: "hello_world", arguments: nil}),
+          ToolCall.new!(%{call_id: "call_fake123", name: "fail_once", arguments: nil})
+        ])
+      ]
+
+      set_api_override({:ok, fake_messages, nil})
+
+      {:ok, updated_chain, last_message} =
+        %{llm: ChatOpenAI.new!(%{stream: false}), verbose: false}
+        |> LLMChain.new!()
+        |> LLMChain.add_tools([hello_world, fail_once])
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Execute the fail_once tool."))
+        |> LLMChain.run(mode: :until_success)
+
+      assert last_message.role == :tool
+
+      assert [%ToolResult{is_error: false}, %ToolResult{is_error: false}] =
+               last_message.tool_results
+
+      assert updated_chain.current_failure_count == 0
+    end
+
+    test "mode: :until_success - fails after max count", %{fail_func: fail_func} do
+      # Made NOT LIVE here
+      fake_messages = [
+        new_function_calls!([
+          ToolCall.new!(%{call_id: "call_fake123", name: "fail_func", arguments: nil})
+        ])
+      ]
+
+      set_api_override({:ok, fake_messages, nil})
+
+      {:error, updated_chain, reason} =
+        %{llm: ChatOpenAI.new!(%{stream: false}), verbose: false}
+        |> LLMChain.new!()
+        |> LLMChain.add_tools([fail_func])
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Execute the fail_func tool."))
+        |> LLMChain.run(mode: :until_success)
+
+      assert reason == "Exceeded max failure count"
+      assert updated_chain.current_failure_count == 3
     end
   end
 

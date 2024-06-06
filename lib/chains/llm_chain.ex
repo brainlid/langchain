@@ -92,13 +92,16 @@ defmodule LangChain.Chains.LLMChain do
     # Track the last `%Message{}` received in the chain.
     field :last_message, :any, virtual: true
     # Track if the state of the chain expects a response from the LLM. This
-    # happens after sending a user message or when a tool_call is received, or
+    # happens after sending a user message, when a tool_call is received, or
     # when we've provided a tool response and the LLM needs to respond.
     field :needs_response, :boolean, default: false
 
     # A list of maps for callback handlers
     field :callbacks, {:array, :map}, default: []
   end
+
+  # default to 2 minutes
+  @task_await_timeout 2 * 60 * 1000
 
   @type t :: %LLMChain{}
 
@@ -205,9 +208,29 @@ defmodule LangChain.Chains.LLMChain do
 
   ## Options
 
-  - `:while_needs_response` - repeatedly evaluates functions and submits to the
-    LLM so long as we still expect to get a response. Best fit for
-    conversational LLMs where a `ToolResult` is used by the LLM to continue.
+  - `:mode` - It defaults to run the chain one time, stopping after receiving a
+    response from the LLM. Supports `:until_success` and
+    `:while_needs_response`.
+
+  - `mode: :until_success` - (for non-interactive processing done by the LLM
+    where it may repeatedly fail and need to re-try) Repeatedly evaluates a
+    received message through any message processors, returning any errors to the
+    LLM until it either succeeds or exceeds the `max_retry_count`. Ths includes
+    evaluating received `ToolCall`s until they succeed. If an LLM makes 3
+    ToolCalls in a single message and 2 succeed while 1 fails, the success
+    responses are returned to the LLM with the failure response of the remaining
+    `ToolCall`, giving the LLM an opportunity to resend the failed `ToolCall`,
+    and only the failed `ToolCall` until it succeeds or exceeds the
+    `max_retry_count`. In essence, once we have a successful response from the
+    LLM, we don't return any more to it and don't want any further responses.
+
+  - `mode: :while_needs_response` - (for interactive chats that make
+    `ToolCalls`) Repeatedly evaluates functions and submits to the LLM so long
+    as we still expect to get a response. Best fit for conversational LLMs where
+    a `ToolResult` is used by the LLM to continue. After all `ToolCall` messages
+    are evaluated, the `ToolResult` messages are returned to the LLM giving it
+    an opportunity to use the `ToolResult` information in an assistant response
+    message. In essence, this mode always gives the LLM the last word.
   """
   @spec run(t(), Keyword.t()) ::
           {:ok, t(), Message.t() | [Message.t()]} | {:error, t(), String.t()}
@@ -222,17 +245,65 @@ defmodule LangChain.Chains.LLMChain do
     tools = chain.tools
     if chain.verbose, do: IO.inspect(tools, label: "TOOLS")
 
-    if Keyword.get(opts, :while_needs_response, false) do
-      run_while_needs_response(chain)
-    else
-      # run the chain and format the return
-      case do_run(chain) do
-        {:ok, chain} ->
-          {:ok, chain, chain.last_message}
+    case Keyword.get(opts, :mode, nil) do
+      nil ->
+        # run the chain and format the return
+        case do_run(chain) do
+          {:ok, chain} ->
+            {:ok, chain, chain.last_message}
 
-        {:error, _chain, _reason} = error ->
-          error
+          {:error, _chain, _reason} = error ->
+            error
+        end
+
+      :while_needs_response ->
+        run_while_needs_response(chain)
+
+      :until_success ->
+        run_until_success(chain)
+    end
+  end
+
+  # Repeatedly run the chain until we get a successful ToolResponse or processed
+  # assistant message. Once we've reached success, it is not submitted back to the LLM,
+  # the process ends there.
+  @spec run_until_success(t()) :: {:ok, t(), Message.t()} | {:error, t(), String.t()}
+  defp run_until_success(%LLMChain{last_message: %Message{} = last_message} = chain) do
+    stop_or_recurse =
+      cond do
+        chain.current_failure_count >= chain.max_retry_count ->
+          {:error, chain, "Exceeded max failure count"}
+
+        last_message.role == :tool && !Message.tool_had_errors?(last_message) ->
+          # a successful tool result is success
+          {:ok, chain, last_message}
+
+        last_message.role == :assistant ->
+          # it was successful if we didn't generate a user message in response to
+          # an error.
+          {:ok, chain, last_message}
+
+        true ->
+          :recurse
       end
+
+    case stop_or_recurse do
+      :recurse ->
+        chain
+        |> do_run()
+        |> case do
+          {:ok, updated_chain} ->
+            updated_chain
+            |> execute_tool_calls()
+            |> run_until_success()
+
+          {:error, updated_chain, reason} ->
+            {:error, updated_chain, reason}
+        end
+
+      other ->
+        # return the error or success result
+        other
     end
   end
 
@@ -467,26 +538,20 @@ defmodule LangChain.Chains.LLMChain do
 
         # add the received assistant message, then add the newly created user
         # return message and return the updated chain
-        updated_chain =
-          chain
-          |> increment_current_failure_count()
-          |> add_message(failed_message)
-          |> add_message(new_message)
+        chain
+        |> increment_current_failure_count()
+        |> add_message(failed_message)
+        |> add_message(new_message)
+        |> fire_callback_and_return(:on_message_processing_error, [failed_message])
+        |> fire_callback_and_return(:on_error_message_created, [new_message])
 
-        Callbacks.fire(chain.callbacks, :on_message_processing_error, [chain, failed_message])
-        Callbacks.fire(chain.callbacks, :on_error_message_created, [chain, new_message])
-        updated_chain
-
-      %Message{} = updated_message ->
+      %Message{role: :assistant} = updated_message ->
         if chain.verbose, do: IO.inspect(updated_message, label: "MESSAGE PROCESSED")
 
-        updated_chain =
-          chain
-          |> add_message(updated_message)
-          |> reset_failure_count()
-
-        Callbacks.fire(chain.callbacks, :on_message_processed, [updated_chain, updated_message])
-        updated_chain
+        chain
+        |> add_message(updated_message)
+        |> reset_current_failure_count_if(fn -> !Message.is_tool_related?(updated_message) end)
+        |> fire_callback_and_return(:on_message_processed, [updated_message])
     end
   end
 
@@ -604,7 +669,7 @@ defmodule LangChain.Chains.LLMChain do
             execute_tool_call(call, func, verbose: verbose, context: use_context)
           end)
         end)
-        |> Task.await_many()
+        |> Task.await_many(@task_await_timeout)
 
       sync_results =
         Enum.map(grouped[:sync], fn {call, func} ->
@@ -628,10 +693,10 @@ defmodule LangChain.Chains.LLMChain do
       # add the tool result message to the chain
       updated_chain = LLMChain.add_message(chain, result_message)
 
-      # if ANY of the tool_response messages have `is_error` true, increment the
-      # failure counter. If NONE errored, clear the failure counter.
+      # if the tool results had an error, increment the failure counter. If not,
+      # clear it.
       updated_chain =
-        if Enum.any?(result_message.tool_results, fn r -> r.is_error end) do
+        if Message.tool_had_errors?(result_message) do
           # something failed, increment our error counter
           LLMChain.increment_current_failure_count(updated_chain)
         else
@@ -641,9 +706,8 @@ defmodule LangChain.Chains.LLMChain do
 
       # fire the callbacks
       if chain.verbose, do: IO.inspect(result_message, label: "TOOL RESULTS")
-      Callbacks.fire(chain.callbacks, :on_tool_response_created, [chain, result_message])
 
-      updated_chain
+      fire_callback_and_return(updated_chain, :on_tool_response_created, [result_message])
     else
       # Not a complete tool call
       chain
@@ -735,6 +799,19 @@ defmodule LangChain.Chains.LLMChain do
   end
 
   @doc """
+  Reset the internal current_failure_count to 0 if the function provided returns
+  `true`. Helps to make the change conditional.
+  """
+  @spec reset_current_failure_count_if(t(), (-> boolean())) :: t()
+  def reset_current_failure_count_if(%LLMChain{} = chain, fun) do
+    if fun.() == true do
+      %LLMChain{chain | current_failure_count: 0}
+    else
+      chain
+    end
+  end
+
+  @doc """
   Add another callback to the list of callbacks.
   """
   @spec add_callback(t(), ChainCallbacks.chain_callback_handler()) :: t()
@@ -742,12 +819,10 @@ defmodule LangChain.Chains.LLMChain do
     %LLMChain{chain | callbacks: callbacks ++ [additional_callback]}
   end
 
-  @doc """
-  Reset the failure count to zero. A message was successfully created or
-  processed.
-  """
-  @spec reset_failure_count(t()) :: t()
-  def reset_failure_count(%LLMChain{} = chain) do
-    %LLMChain{chain | current_failure_count: 0}
+  # a pipe-friendly execution of callbacks that returns the chain
+  defp fire_callback_and_return(%LLMChain{} = chain, callback_name, additional_arguments)
+       when is_list(additional_arguments) do
+    Callbacks.fire(chain.callbacks, callback_name, [chain] ++ additional_arguments)
+    chain
   end
 end
