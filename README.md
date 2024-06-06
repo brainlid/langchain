@@ -22,7 +22,7 @@ This library is aimed at assisting in the development of those types of applicat
 
 ## Documentation
 
-The online documentation can [found here](https://hexdocs.pm/langchain).
+The online documentation can be [found here](https://hexdocs.pm/langchain).
 
 ## Demo
 
@@ -58,7 +58,7 @@ end
 
 Currently, the library is written to use the `Req` library for making API calls.
 
-To make API calls, it is necessary to configure the API keys for the services you connect with. At this time, the library only supports ChatGPT and the OpenAI API key.
+You can configure an _organization ID_, and _API key_ for OpenAI's API, but this library also works with [other compatible APIs](#alternative-openai-compatible-apis) as well as [local models running on Bumblebee](#bumblebee-chat-support).
 
 `config/config.exs`:
 
@@ -150,7 +150,7 @@ IO.puts(message.content)
 
 ### Alternative OpenAI compatible APIs
 
-There are several of services or self-hosted applications that provide an OpenAI compatible API for ChatGPT-like behavior. To use a service like that, the `endpoint` of the `ChatOpenAI` struct can be pointed to an API compatible `endpoint` for chats.
+There are several services or self-hosted applications that provide an OpenAI compatible API for ChatGPT-like behavior. To use a service like that, the `endpoint` of the `ChatOpenAI` struct can be pointed to an API compatible `endpoint` for chats.
 
 For example, if a locally running service provided that feature, the following code could connect to the service:
 
