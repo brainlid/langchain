@@ -49,7 +49,7 @@ in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:langchain, "~> 0.2.0"}
+    {:langchain, "0.3.0-rc.0"}
   ]
 end
 ```
@@ -206,6 +206,3 @@ When doing local development on the `LangChain` library itself, rename the `.env
 
 Use a tool like [Direnv](https://direnv.net/) or [Dotenv](https://github.com/motdotla/dotenv) to load the API values into the ENV when using the library locally.
 
-TODO: Add notebook example of multi-modal image+text classification.
-
-TODO: Add `run` mode of "evaluate the function until success" Don't give a response back to the LLM when successful. Allows our own custom code to generate changeset errors and return an ERROR, giving the LLM a chance to correct it.
