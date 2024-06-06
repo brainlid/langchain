@@ -29,7 +29,7 @@ defmodule LangChain.Tools.CalculatorTest do
 
     test "assigned function can be executed" do
       {:ok, calc} = Calculator.new()
-      assert "3" == calc.function.(%{"expression" => "1 + 2"}, nil)
+      assert {:ok, "3"} == calc.function.(%{"expression" => "1 + 2"}, nil)
     end
   end
 
@@ -41,7 +41,7 @@ defmodule LangChain.Tools.CalculatorTest do
 
   describe "execute/2" do
     test "evaluates the expression returning the result" do
-      assert "14" == Calculator.execute(%{"expression" => "1 + 2 + 3 + (2 * 4)"}, nil)
+      assert {:ok, "14"} == Calculator.execute(%{"expression" => "1 + 2 + 3 + (2 * 4)"}, nil)
     end
 
     test "returns an error when evaluation fails" do
@@ -50,7 +50,16 @@ defmodule LangChain.Tools.CalculatorTest do
           Calculator.execute(%{"expression" => "cow + dog"}, nil)
         end)
 
-      assert "ERROR" == result
+      assert {:error, "ERROR: \"cow + dog\" is not a valid expression"} == result
+    end
+
+    test "handles when a partial expression is given" do
+      assert {:ok, "-200"} = Calculator.execute(%{"expression" => "- 200"}, nil)
+    end
+
+    test "handles when an invalid arithmetic expression is given" do
+      assert {:error, reason} = Calculator.execute(%{"expression" => "5 / 0"}, nil)
+      assert reason == "ERROR: \"5 / 0\" is not a valid expression"
     end
   end
 
@@ -59,20 +68,31 @@ defmodule LangChain.Tools.CalculatorTest do
     test "performs repeated calls until complete with a live LLM" do
       test_pid = self()
 
-      callback = fn %Message{} = msg ->
-        send(test_pid, {:callback_msg, msg})
-      end
+      llm_handler = %{
+        on_llm_new_message: fn _model, %Message{} = message ->
+          send(test_pid, {:callback_msg, message})
+        end
+      }
+
+      chain_handler = %{
+        on_tool_response_created: fn _chain, %Message{} = tool_message ->
+          send(test_pid, {:callback_tool_msg, tool_message})
+        end
+      }
+
+      model = ChatOpenAI.new!(%{seed: 0, temperature: 0, stream: false, callbacks: [llm_handler]})
 
       {:ok, updated_chain, %Message{} = message} =
         LLMChain.new!(%{
-          llm: ChatOpenAI.new!(%{seed: 0, temperature: 0, stream: false}),
-          verbose: true
+          llm: model,
+          verbose: true,
+          callbacks: [chain_handler]
         })
         |> LLMChain.add_message(
           Message.new_user!("Answer the following math question: What is 100 + 300 - 200?")
         )
         |> LLMChain.add_tools(Calculator.new!())
-        |> LLMChain.run(while_needs_response: true, callback_fn: callback)
+        |> LLMChain.run(mode: :while_needs_response)
 
       assert updated_chain.last_message == message
       assert message.role == :assistant
@@ -86,7 +106,7 @@ defmodule LangChain.Tools.CalculatorTest do
       assert [%ToolCall{name: "calculator", arguments: %{"expression" => _}}] = message.tool_calls
 
       # the function result message
-      assert_received {:callback_msg, message}
+      assert_received {:callback_tool_msg, message}
       assert message.role == :tool
       assert [%ToolResult{content: "200"}] = message.tool_results
 
