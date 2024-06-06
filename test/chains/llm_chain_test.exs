@@ -584,7 +584,7 @@ defmodule LangChain.Chains.LLMChainTest do
     setup do
       # https://js.langchain.com/docs/modules/chains/llm_chain#usage-with-chat-models
       {:ok, chat} = ChatOpenAI.new()
-      {:ok, chain} = LLMChain.new(%{prompt: [], llm: chat, verbose: true})
+      {:ok, chain} = LLMChain.new(%{prompt: [], llm: chat, verbose: false})
 
       %{chain: chain}
     end
@@ -883,7 +883,7 @@ defmodule LangChain.Chains.LLMChainTest do
         LLMChain.new!(%{
           llm: ChatOpenAI.new!(%{seed: 0}),
           custom_context: custom_context,
-          verbose: true
+          verbose: false
         })
         |> LLMChain.add_tools(custom_fn)
         |> LLMChain.add_message(Message.new_user!("Where is the hairbrush located?"))
@@ -905,7 +905,7 @@ defmodule LangChain.Chains.LLMChainTest do
       {:error, _updated_chain, reason} =
         LLMChain.new!(%{
           llm: ChatOpenAI.new!(%{seed: 0, stream: false}),
-          verbose: true
+          verbose: false
         })
         |> LLMChain.run()
 
@@ -919,7 +919,7 @@ defmodule LangChain.Chains.LLMChainTest do
       {:error, _updated_chain, reason} =
         LLMChain.new!(%{
           llm: ChatOpenAI.new!(%{seed: 0, stream: true}),
-          verbose: true
+          verbose: false
         })
         |> LLMChain.run()
 
@@ -968,7 +968,7 @@ defmodule LangChain.Chains.LLMChainTest do
         LLMChain.new!(%{
           llm: ChatOpenAI.new!(%{seed: 0, stream: false}),
           custom_context: nil,
-          verbose: true
+          verbose: false
         })
         |> LLMChain.add_tools(regions_function)
         |> LLMChain.add_message(message)
@@ -993,7 +993,7 @@ defmodule LangChain.Chains.LLMChainTest do
       assert_raise LangChainError, ~r/PromptTemplates must be/, fn ->
         LLMChain.new!(%{
           llm: ChatOpenAI.new!(%{seed: 0}),
-          verbose: true
+          verbose: false
         })
         |> LLMChain.add_messages(messages)
         |> LLMChain.run()
@@ -1091,7 +1091,7 @@ defmodule LangChain.Chains.LLMChainTest do
       chain =
         LLMChain.new!(%{
           llm: ChatOpenAI.new!(%{temperature: 0}),
-          # verbose: true,
+          verbose: false,
           max_retry_count: 2,
           callbacks: [handler]
         })

@@ -61,14 +61,14 @@ defmodule LangChain.Chains.DataExtractionChainTest do
       |> FunctionParam.to_parameters_schema()
 
     # Model setup - specify the model and seed
-    {:ok, chat} = ChatOpenAI.new(%{model: "gpt-4", temperature: 0, seed: 0, stream: false})
+    {:ok, chat} = ChatOpenAI.new(%{model: "gpt-4o", temperature: 0, seed: 0, stream: false})
 
     # run the chain, chain.run(prompt to extract data from)
     data_prompt =
       "Alex is 5 feet tall. Claudia is 4 feet taller than Alex and jumps higher than him.
        Claudia is a brunette and Alex is blonde. Alex's dog Frosty is a labrador and likes to play hide and seek."
 
-    {:ok, result} = DataExtractionChain.run(chat, schema_parameters, data_prompt, verbose: true)
+    {:ok, result} = DataExtractionChain.run(chat, schema_parameters, data_prompt, verbose: false)
 
     assert result == [
              %{

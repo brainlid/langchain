@@ -85,7 +85,7 @@ defmodule LangChain.Tools.CalculatorTest do
       {:ok, updated_chain, %Message{} = message} =
         LLMChain.new!(%{
           llm: model,
-          verbose: true,
+          verbose: false,
           callbacks: [chain_handler]
         })
         |> LLMChain.add_message(
