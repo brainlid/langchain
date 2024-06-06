@@ -985,7 +985,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       {:ok, message} =
         Message.new_user("Answer the following math question: What is 100 + 300 - 200?")
 
-      response =
+      _response =
         ChatOpenAI.do_api_request(chat, [message], [LangChain.Tools.Calculator.new!()])
 
       # IO.inspect(response, label: "OPEN AI POST RESPONSE")
