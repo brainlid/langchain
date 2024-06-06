@@ -1,5 +1,16 @@
 # ![Logo with chat chain links](./elixir-langchain-link-logo_32px.png) Elixir LangChain
 
+Elixir LangChain enables Elixir applications to integrate AI services and self-hosted models into an application.
+
+Currently supported AI services:
+- OpenAI ChatGPT
+- Anthropic Claude
+- Google AI - https://generativelanguage.googleapis.com
+- Google Vertex AI - Gemini
+- Ollama
+- Mistral
+- Bumblebee self-hosted models - including Llama, Mistral and Zephyr
+
 **LangChain** is short for Language Chain. An LLM, or Large Language Model, is the "Language" part. This library makes it easier for Elixir applications to "chain" or connect different processes, integrations, libraries, services, or functionality together with an LLM.
 
 **LangChain** is a framework for developing applications powered by language models. It enables applications that are:
@@ -128,7 +139,7 @@ custom_fn =
     },
     function: fn %{"thing" => thing} = _arguments, context ->
       # our context is a pretend item/location location map
-      context[thing]
+      {:ok, context[thing]}
     end
   })
 
@@ -141,7 +152,7 @@ custom_fn =
   })
   |> LLMChain.add_functions(custom_fn)
   |> LLMChain.add_message(Message.new_user!("Where is the hairbrush located?"))
-  |> LLMChain.run(while_needs_response: true)
+  |> LLMChain.run(mode: :while_needs_response)
 
 # print the LLM's answer
 IO.puts(message.content)
