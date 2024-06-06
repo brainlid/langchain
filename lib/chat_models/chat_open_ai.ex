@@ -31,7 +31,6 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   alias LangChain.MessageDelta
   alias LangChain.Callbacks
 
-  #TODO: Update chatmodel to not take a callback function in the
   @behaviour ChatModel
 
   # NOTE: As of gpt-4 and gpt-3.5, only one function_call is issued at a time

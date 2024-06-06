@@ -18,6 +18,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   alias LangChain.Message.ToolResult
   alias LangChain.LangChainError
   alias LangChain.Utils
+  alias LangChain.Callbacks
 
   @behaviour ChatModel
 
@@ -60,6 +61,9 @@ defmodule LangChain.ChatModels.ChatVertexAI do
 
     field :stream, :boolean, default: false
     field :json_response, :boolean, default: false
+
+    # A list of maps for callback handlers
+    field :callbacks, {:array, :map}, default: []
   end
 
   @type t :: %ChatVertexAI{}
@@ -73,7 +77,8 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     :top_k,
     :receive_timeout,
     :stream,
-    :json_response
+    :json_response,
+    :callbacks
   ]
   @required_fields [
     :endpoint,
@@ -241,41 +246,39 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   end
 
   @doc """
-  Calls the Google AI API passing the ChatVertexAI struct with configuration, plus
-  either a simple message or the list of messages to act as the prompt.
+  Calls the Google AI API passing the ChatVertexAI struct with configuration,
+  plus either a simple message or the list of messages to act as the prompt.
 
   Optionally pass in a list of tools available to the LLM for requesting
   execution in response.
 
-  Optionally pass in a callback function that can be executed as data is
-  received from the API.
-
   **NOTE:** This function *can* be used directly, but the primary interface
-  should be through `LangChain.Chains.LLMChain`. The `ChatVertexAI` module is more focused on
-  translating the `LangChain` data structures to and from the OpenAI API.
+  should be through `LangChain.Chains.LLMChain`. The `ChatVertexAI` module is
+  more focused on translating the `LangChain` data structures to and from the
+  OpenAI API.
 
   Another benefit of using `LangChain.Chains.LLMChain` is that it combines the
-  storage of messages, adding tools, adding custom context that should be
-  passed to tools, and automatically applying `LangChain.MessageDelta`
-  structs as they are are received, then converting those to the full
-  `LangChain.Message` once fully complete.
+  storage of messages, adding tools, adding custom context that should be passed
+  to tools, and automatically applying `LangChain.MessageDelta` structs as they
+  are are received, then converting those to the full `LangChain.Message` once
+  fully complete.
   """
   @impl ChatModel
-  def call(openai, prompt, tools \\ [], callback_fn \\ nil)
+  def call(openai, prompt, tools \\ [])
 
-  def call(%ChatVertexAI{} = vertex_ai, prompt, tools, callback_fn) when is_binary(prompt) do
+  def call(%ChatVertexAI{} = vertex_ai, prompt, tools) when is_binary(prompt) do
     messages = [
       Message.new_system!(),
       Message.new_user!(prompt)
     ]
 
-    call(vertex_ai, messages, tools, callback_fn)
+    call(vertex_ai, messages, tools)
   end
 
-  def call(%ChatVertexAI{} = vertex_ai, messages, tools, callback_fn)
+  def call(%ChatVertexAI{} = vertex_ai, messages, tools)
       when is_list(messages) do
     try do
-      case do_api_request(vertex_ai, messages, tools, callback_fn) do
+      case do_api_request(vertex_ai, messages, tools) do
         {:error, reason} ->
           {:error, reason}
 
@@ -289,9 +292,9 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   end
 
   @doc false
-  @spec do_api_request(t(), [Message.t()], [Function.t()], (any() -> any())) ::
+  @spec do_api_request(t(), [Message.t()], [Function.t()]) ::
           list() | struct() | {:error, String.t()}
-  def do_api_request(%ChatVertexAI{stream: false} = vertex_ai, messages, tools, callback_fn) do
+  def do_api_request(%ChatVertexAI{stream: false} = vertex_ai, messages, tools) do
     req =
       Req.new(
         url: build_url(vertex_ai),
@@ -312,7 +315,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
             {:error, reason}
 
           result ->
-            Utils.fire_callback(vertex_ai, result, callback_fn)
+            Callbacks.fire(vertex_ai.callbacks, :on_llm_new_message, [vertex_ai, result])
             result
         end
 
@@ -325,7 +328,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     end
   end
 
-  def do_api_request(%ChatVertexAI{stream: true} = vertex_ai, messages, tools, callback_fn) do
+  def do_api_request(%ChatVertexAI{stream: true} = vertex_ai, messages, tools) do
     Req.new(
       url: build_url(vertex_ai),
       json: for_api(vertex_ai, messages, tools),
@@ -338,8 +341,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
         Utils.handle_stream_fn(
           vertex_ai,
           &ChatOpenAI.decode_stream/1,
-          &do_process_response(&1, MessageDelta),
-          callback_fn
+          &do_process_response(&1, MessageDelta)
         )
     )
     |> case do
