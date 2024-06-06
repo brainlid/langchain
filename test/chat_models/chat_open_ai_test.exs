@@ -975,7 +975,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     test "supports streaming response calling function with args" do
       handler = %{
         on_llm_new_delta: fn _model, %MessageDelta{} = data ->
-          IO.inspect(data, label: "DATA")
+          # IO.inspect(data, label: "DATA")
           send(self(), {:streamed_fn, data})
         end
       }
@@ -988,7 +988,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       response =
         ChatOpenAI.do_api_request(chat, [message], [LangChain.Tools.Calculator.new!()])
 
-      IO.inspect(response, label: "OPEN AI POST RESPONSE")
+      # IO.inspect(response, label: "OPEN AI POST RESPONSE")
 
       assert_receive {:streamed_fn, received_data}, 300
       assert %MessageDelta{} = received_data
