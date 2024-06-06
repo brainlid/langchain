@@ -547,7 +547,20 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
     @tag live_call: true, live_open_ai: true
     test "LIVE: supports receiving multiple tool calls in a single response", %{weather: weather} do
-      {:ok, chat} = ChatOpenAI.new(%{seed: 0, stream: false, model: @gpt4})
+      handler = %{
+        on_llm_new_message: fn _model, msg ->
+          # IO.inspect(msg)
+          :ok
+        end
+      }
+
+      {:ok, chat} =
+        ChatOpenAI.new(%{
+          seed: 0,
+          stream: false,
+          model: @gpt4,
+          callbacks: [handler]
+        })
 
       {:ok, message} =
         Message.new_user(
