@@ -12,8 +12,8 @@ defmodule LangChain.Tools.Calculator do
 
   * make repeated calls to run the chain as the tool is called and the results
   are then made available to the LLM before it returns the final result.
-  * OR run the chain using the `while_needs_response: true` option like this:
-    `LangChain.LLMChain.run(chain, while_needs_response: true)`
+  * OR run the chain using the `mode: :until_success` option like this:
+    `LangChain.LLMChain.run(chain, mode: :until_success)`
 
 
   ## Example
@@ -28,7 +28,7 @@ defmodule LangChain.Tools.Calculator do
           Message.new_user!("Answer the following math question: What is 100 + 300 - 200?")
         )
         |> LLMChain.add_functions(Calculator.new!())
-        |> LLMChain.run(while_needs_response: true)
+        |> LLMChain.run(mode: :until_success)
 
   Verbose log output:
 
@@ -165,18 +165,24 @@ defmodule LangChain.Tools.Calculator do
   Performs the calculation specified in the expression and returns the response
   to be used by the the LLM.
   """
-  @spec execute(args :: %{String.t() => any()}, context :: map()) :: String.t()
+  @spec execute(args :: %{String.t() => any()}, context :: map()) ::
+          {:ok, String.t()} | {:error, String.t()}
   def execute(%{"expression" => expr} = _args, _context) do
-    case Abacus.eval(expr) do
-      {:ok, number} ->
-        to_string(number)
+    try do
+      case Abacus.eval(expr) do
+        {:ok, number} ->
+          {:ok, to_string(number)}
 
-      {:error, reason} ->
-        Logger.warning(
-          "Calculator tool errored in eval of #{inspect(expr)}. Reason: #{inspect(reason)}"
-        )
+        {:error, reason} ->
+          Logger.warning(
+            "Calculator tool errored in eval of #{inspect(expr)}. Reason: #{inspect(reason)}"
+          )
 
-        "ERROR"
+          {:error, "ERROR: #{inspect(expr)} is not a valid expression"}
+      end
+    rescue
+      err ->
+        {:error, "ERROR: An invalid expression raised the exception #{inspect(err)}"}
     end
   end
 end
