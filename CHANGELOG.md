@@ -1,5 +1,111 @@
 # Changelog
 
+## v0.3.0-rc.0 (2024-06-05)
+
+**Added:**
+
+* `LangChain.ChatModels.ChatGoogleAI` which differed too significantly from `LangChain.ChatModels.ChatGoogleAI`.  What's up with that? I'm looking at you Google! 👀
+  * Thanks for the [contribution](https://github.com/brainlid/langchain/pull/124) Raul Chedrese!
+* New callback mechanism was introduced to ChatModels and LLMChain. It was inspired by the approach used in the TS/JS LangChain library.
+* Ability to provide plug-like middleware functions for pre-processing an assistant response message. Most helpful when coupled with a new run mode called `:until_success`. The first built-in one is `LangChain.MessageProcessors.JsonProcessor`.
+* LLMChain has an internally managed `current_failure_count` and a publicly managed `max_retry_count`.
+* New run mode `:until_success` uses failure and retry counts to repeatedly run the chain when the LLMs responses fail a MessageProcessor.
+* `LangChain.MessageProcessors.JsonProcessor` is capable of extracting JSON contents and converting it to an Elixir map using `Jason`. Parsing errors are returned to the LLM for it to try again.
+* The attribute `processed_content` was added to a `LangChain.Message`. When a MessageProcessor is run on a received assistant message, the results of the processing are accumulated there. The original `content` remains unchanged for when it is sent back to the LLM and used when fixing or correcting it's generated content.
+
+**Changed:**
+
+* `LLMChain.run/2` error result now includes the failed chain up to the point of failure. This is helpful for debugging.
+* `ChatOpenAI` and `ChatAnthropic` both support the new callbacks.
+* Many smaller changes and contributions were made. This includes updates to the README for clarity,
+* `LangChain.Utils.fire_callback/3` was refactored into `LangChain.Utils.fire_streamed_callback/2` where it is only used for processing deltas and uses the new callback mechanism.
+* Notebooks were moved to the separate demo project
+
+### Migrations Steps
+
+The `LLMChain.run/2` function changed. Migrating should be easy.
+
+**From:**
+
+```elixir
+chain
+|> LLMChain.run(while_needs_response: true)
+```
+
+**Is changed to:**
+
+```elixir
+chain
+|> LLMChain.run(mode: :while_needs_response)
+```
+
+This change enabled adding the new mode `:until_success`, which is mutually exclusive with `:while_needs_response`.
+
+Additionally, the error return value was changed to include the chain itself.
+
+**From:**
+
+```elixir
+{:error, reason} = LLMChain.run(chain)
+```
+
+**Is changed to:**
+
+```elixir
+{:error, _updated_chain, reason} = LLMChain.run(chain)
+```
+
+You can disregard the updated chain if you don't need it.
+
+Callback events work differently now. Previously, a single `callback_fn` was executed and the developer needed to pattern match on a `%Message{}` or `%MessageDelta{}`. Callbacks work differently now.
+
+When creating an LLM chat model, we can optionally pass in a map of callbacks where the event name is linked to the function to execute.
+
+**From:**
+
+```elixir
+live_view_pid = self()
+
+callback_fn = fn
+  %MessageDelta{} = delta ->
+    send(live_view_pid, {:received_delta, delta})
+
+  %Message{} = message ->
+    send(live_view_pid, {:received_message, message})
+end
+
+{:ok, _result_chain, last_message} =
+  LLMChain.new!(%{llm: %ChatAnthropic{stream: false}})
+  |> LLMChain.add_message(Message.new_user!("Say, 'Hi!'!"))
+  |> LLMChain.run(callback_fn: callback_fn)
+```
+
+The equivalent code would look like this:
+
+**Is changed to:**
+
+```elixir
+live_view_pid = self()
+
+handler = %{
+  on_llm_new_delta: fn _model, delta ->
+    send(live_view_pid, {:received_delta, delta})
+  end,
+  on_llm_new_message: fn _model, message ->
+    send(live_view_pid, {:received_message, message})
+  end
+}
+
+{:ok, _result_chain, last_message} =
+  LLMChain.new!(%{llm: %ChatAnthropic{stream: false, callbacks: [handler]}})
+  |> LLMChain.add_message(Message.new_user!("Say, 'Hi!'!"))
+  |> LLMChain.run()
+```
+
+The `Message` and `MessageDelta` callbacks are now set on the model. The callbacks are more granular and new callbacks are supported on the `LLMChain` as well. This more flexible configuration allows for more callbacks to be added as we move forward.
+
+Also of note, is that the callbacks are set as a list of handler maps. This means we can assign multiple sets of callbacks for different purposes and they all get executed.
+
 ## v0.2.0 (2024-04-30)
 
 For LLMs that support it (verified with ChatGPT and Anthropic), a user message can now contain multiple `ContentPart`s, making it "multi-modal". This means images and text can be combined into a single message allowing for interactions about the images to now be possible.
