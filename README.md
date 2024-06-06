@@ -4,6 +4,7 @@ Elixir LangChain enables Elixir applications to integrate AI services and self-h
 
 Currently supported AI services:
 - OpenAI ChatGPT
+- OpenAI DALL-e 2 - image generation
 - Anthropic Claude
 - Google AI - https://generativelanguage.googleapis.com
 - Google Vertex AI - Gemini
