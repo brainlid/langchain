@@ -205,7 +205,7 @@ defmodule LangChain.ChatModels.ChatBumblebee do
 
         _other ->
           raise LangChainError,
-                "An unexpected fake API response was set. Should be an `{:ok, value}`"
+                "An unexpected fake API response was set. Should be an `{:ok, value, nil_or_callback_name}`"
       end
     else
       try do

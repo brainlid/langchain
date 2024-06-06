@@ -117,7 +117,7 @@ defmodule LangChain.Chains.TextToTitleChain do
         if chain.verbose, do: IO.inspect(title, label: "TITLE GENERATED")
         title
 
-      {:error, reason} ->
+      {:error, _chain, reason} ->
         Logger.error("TextToTitleChain failed. Reason: #{inspect(reason)}. Returning DEFAULT")
         chain.fallback_title
     end

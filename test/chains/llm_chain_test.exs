@@ -2,8 +2,8 @@ defmodule LangChain.Chains.LLMChainTest do
   use LangChain.BaseCase
 
   doctest LangChain.Chains.LLMChain
-  import LangChain.Fixtures
 
+  import LangChain.Fixtures
   alias LangChain.ChatModels.ChatOpenAI
   alias LangChain.Chains.LLMChain
   alias LangChain.PromptTemplate
@@ -14,9 +14,12 @@ defmodule LangChain.Chains.LLMChainTest do
   alias LangChain.Message.ToolResult
   alias LangChain.MessageDelta
   alias LangChain.LangChainError
+  alias LangChain.MessageProcessors.JsonProcessor
 
   setup do
     {:ok, chat} = ChatOpenAI.new(%{temperature: 0})
+
+    chain = LLMChain.new!(%{llm: chat})
 
     hello_world =
       Function.new!(%{
@@ -40,7 +43,55 @@ defmodule LangChain.Chains.LLMChainTest do
         async: false
       })
 
-    %{chat: chat, hello_world: hello_world, greet: greet, sync: sync}
+    fail_func =
+      Function.new!(%{
+        name: "fail_func",
+        description: "Return a function failure response.",
+        function: fn _args, _context ->
+          {:error, "Not what I wanted"}
+        end
+      })
+
+    # on setup, delete the Process dictionary key for each test run
+    Process.delete(:test_func_failed_once)
+
+    fail_once =
+      Function.new!(%{
+        name: "fail_once",
+        description: "Return a function that fails once and succeeds on the second request.",
+        function: fn _args, _context ->
+          # uses the process dictionary to store the test state
+          if Process.get(:test_func_failed_once, false) do
+            Process.put(:test_func_failed_once, true)
+            {:error, "Not what I wanted"}
+          else
+            # already failed once, return a success
+            {:ok, "It worked this time"}
+          end
+        end
+      })
+
+    %{
+      chat: chat,
+      chain: chain,
+      hello_world: hello_world,
+      greet: greet,
+      sync: sync,
+      fail_func: fail_func,
+      fail_once: fail_once
+    }
+  end
+
+  def fake_success_processor(%LLMChain{} = _chain, %Message{} = message) do
+    {:cont, %Message{message | content: message.content <> " *"}}
+  end
+
+  def fake_fail_processor(%LLMChain{} = _chain, %Message{} = _message) do
+    {:halt, Message.new_user!("ERROR: I reject your message!")}
+  end
+
+  def fake_raise_processor(%LLMChain{} = _chain, %Message{} = _message) do
+    raise RuntimeError, "BOOM! Processor exploded"
   end
 
   describe "new/1" do
@@ -94,6 +145,16 @@ defmodule LangChain.Chains.LLMChainTest do
     end
   end
 
+  describe "message_processors/2" do
+    test "assigns processor list to the struct", %{chain: chain} do
+      assert chain.message_processors == []
+
+      processors = [JsonProcessor.new!()]
+      updated_chain = LLMChain.message_processors(chain, processors)
+      assert updated_chain.message_processors == processors
+    end
+  end
+
   describe "cancelled_delta/1" do
     test "does nothing when no delta is present" do
       model = ChatOpenAI.new!(%{temperature: 1, stream: true})
@@ -115,7 +176,7 @@ defmodule LangChain.Chains.LLMChainTest do
         [MessageDelta.new!(%{content: "Sock", status: :incomplete})]
       ]
 
-      set_api_override({:ok, fake_messages})
+      set_api_override({:ok, fake_messages, :on_llm_new_delta})
 
       # We can construct an LLMChain from a PromptTemplate and an LLM.
       {:ok, updated_chain, _response} =
@@ -207,7 +268,7 @@ defmodule LangChain.Chains.LLMChainTest do
 
       # Made NOT LIVE here
       fake_message = Message.new!(%{role: :assistant, content: "Socktastic!", status: :complete})
-      set_api_override({:ok, [fake_message]})
+      set_api_override({:ok, [fake_message], nil})
 
       # We can construct an LLMChain from a PromptTemplate and an LLM.
       {:ok, %LLMChain{} = updated_chain, message} =
@@ -223,6 +284,9 @@ defmodule LangChain.Chains.LLMChainTest do
     end
 
     test "non-live STREAM usage test" do
+      # testing that a set of deltas can be processed, they fire events, and the
+      # full message processed event fires from the chain.
+
       # https://js.langchain.com/docs/modules/chains/llm_chain
 
       prompt =
@@ -230,15 +294,19 @@ defmodule LangChain.Chains.LLMChainTest do
           "Suggest one good name for a company that makes <%= @product %>?"
         )
 
-      callback = fn
-        %MessageDelta{} = delta ->
+      llm_handler = %{
+        on_llm_new_delta: fn _model, %MessageDelta{} = delta ->
           send(self(), {:fake_stream_deltas, delta})
+        end
+      }
 
-        %Message{} = message ->
-          send(self(), {:fake_full_message, message})
-      end
+      chain_handler = %{
+        on_message_processed: fn _model, %Message{} = fake_full_message ->
+          send(self(), {:fake_full_message, fake_full_message})
+        end
+      }
 
-      model = ChatOpenAI.new!(%{temperature: 1, stream: true})
+      model = ChatOpenAI.new!(%{temperature: 1, stream: true, callbacks: [llm_handler]})
 
       # Made NOT LIVE here
       fake_messages = [
@@ -247,14 +315,14 @@ defmodule LangChain.Chains.LLMChainTest do
         [MessageDelta.new!(%{content: nil, status: :complete})]
       ]
 
-      set_api_override({:ok, fake_messages})
+      set_api_override({:ok, fake_messages, :on_llm_new_delta})
 
       # We can construct an LLMChain from a PromptTemplate and an LLM.
       {:ok, updated_chain, response} =
-        %{llm: model, verbose: false}
+        %{llm: model, verbose: false, callbacks: [chain_handler]}
         |> LLMChain.new!()
         |> LLMChain.apply_prompt_templates([prompt], %{product: "colorful socks"})
-        |> LLMChain.run(callback_fn: callback)
+        |> LLMChain.run()
 
       assert %Message{role: :assistant, content: "Socktastic!", status: :complete} = response
       assert updated_chain.last_message == response
@@ -272,7 +340,7 @@ defmodule LangChain.Chains.LLMChainTest do
     setup do
       # https://js.langchain.com/docs/modules/chains/llm_chain#usage-with-chat-models
       {:ok, chat} = ChatOpenAI.new()
-      {:ok, chain} = LLMChain.new(%{prompt: [], llm: chat, verbose: true})
+      {:ok, chain} = LLMChain.new(%{prompt: [], llm: chat, verbose: false})
 
       %{chain: chain}
     end
@@ -604,6 +672,176 @@ defmodule LangChain.Chains.LLMChainTest do
     end
   end
 
+  describe "run_message_processors/2" do
+    test "continues when no processors given", %{chain: chain} do
+      assert chain.message_processors == []
+      message = Message.new_assistant!(%{content: "Initial"})
+
+      final_message = LLMChain.run_message_processors(chain, message)
+      assert final_message == message
+    end
+
+    test "applies a single processor to the message", %{chain: chain} do
+      chain =
+        LLMChain.message_processors(chain, [
+          &fake_success_processor/2
+        ])
+
+      message = Message.new_assistant!(%{content: "Initial"})
+
+      final_message = LLMChain.run_message_processors(chain, message)
+      assert final_message.content == "Initial *"
+    end
+
+    test "applies successive processors", %{chain: chain} do
+      chain =
+        LLMChain.message_processors(chain, [
+          &fake_success_processor/2,
+          &fake_success_processor/2,
+          &fake_success_processor/2
+        ])
+
+      message = Message.new_assistant!(%{content: "Initial"})
+
+      final_message = LLMChain.run_message_processors(chain, message)
+      assert final_message.content == "Initial * * *"
+    end
+
+    test "returns :halted and a new message when :halt returned", %{
+      chain: chain
+    } do
+      chain =
+        LLMChain.message_processors(chain, [
+          &fake_success_processor/2,
+          &fake_success_processor/2,
+          &fake_fail_processor/2
+        ])
+
+      message = Message.new_assistant!(%{content: "Initial"})
+
+      {:halted, failed_message, new_message} = LLMChain.run_message_processors(chain, message)
+      assert failed_message.role == :assistant
+      assert failed_message.content == "Initial * *"
+
+      assert new_message.role == :user
+      assert new_message.content == "ERROR: I reject your message!"
+    end
+
+    test "handles an exception raised in processor", %{chain: chain} do
+      chain =
+        LLMChain.message_processors(chain, [
+          &fake_success_processor/2,
+          &fake_raise_processor/2
+        ])
+
+      message = Message.new_assistant!(%{content: "Initial"})
+
+      {:halted, final_message} = LLMChain.run_message_processors(chain, message)
+
+      assert final_message.content ==
+               "ERROR: An exception was raised! Exception: %RuntimeError{message: \"BOOM! Processor exploded\"}"
+    end
+
+    test "does nothing on other message roles", %{chain: chain} do
+      chain =
+        LLMChain.message_processors(chain, [
+          &fake_success_processor/2
+        ])
+
+      message = Message.new_user!("Howdy!")
+
+      assert message == LLMChain.run_message_processors(chain, message)
+    end
+  end
+
+  describe "process_message/2" do
+    test "runs message processors, adds to chain, fires callback on final message", %{
+      chain: chain
+    } do
+      handler = %{
+        on_message_processed: fn _chain, %Message{} = message ->
+          send(self(), {:processed_message_callback, message})
+        end
+      }
+
+      # internal hack to assign a callback. Verifying it get's executed.
+      chain = %LLMChain{chain | callbacks: [handler]}
+
+      chain =
+        LLMChain.message_processors(chain, [
+          &fake_success_processor/2,
+          &fake_success_processor/2
+        ])
+
+      message = Message.new_assistant!(%{content: "Initial"})
+
+      updated_chain = LLMChain.process_message(chain, message)
+      [msg1] = updated_chain.messages
+      assert msg1.content == "Initial * *"
+
+      # Expect callback with the updated message
+      assert_received {:processed_message_callback, ^msg1}
+    end
+
+    test "when halted, adds original message plus new message returned from processor and fires 2 callbacks",
+         %{chain: chain} do
+      # Verifying it get's executed.
+      handler = %{
+        on_message_processing_error: fn _chain, item ->
+          send(self(), {:processing_error_callback, item})
+        end,
+        on_error_message_created: fn _chain, item ->
+          send(self(), {:error_message_created_callback, item})
+        end
+      }
+
+      assert chain.current_failure_count == 0
+
+      chain =
+        chain
+        |> LLMChain.add_callback(handler)
+        |> LLMChain.message_processors([
+          &fake_success_processor/2,
+          &fake_fail_processor/2
+        ])
+
+      message = Message.new_assistant!(%{content: "Initial"})
+
+      updated_chain = LLMChain.process_message(chain, message)
+      # the failure count is incremented
+      assert updated_chain.current_failure_count == 1
+      [msg1, msg2] = updated_chain.messages
+      # includes the message that errored at the point it was before failure
+      assert msg1.content == "Initial *"
+      # adds a new message with the processor response message
+      assert msg2.content == "ERROR: I reject your message!"
+
+      # Expect callback with the original assistant message
+      assert_received {:processing_error_callback, ^msg1}
+      # Expect callback with the new user message
+      assert_received {:error_message_created_callback, ^msg2}
+    end
+
+    test "on successful processing, clears resets the failure count", %{chain: chain} do
+      chain =
+        chain
+        |> LLMChain.increment_current_failure_count()
+        |> LLMChain.increment_current_failure_count()
+        |> LLMChain.message_processors([&fake_success_processor/2])
+
+      assert chain.current_failure_count == 2
+
+      message = Message.new_assistant!(%{content: "Initial"})
+
+      updated_chain = LLMChain.process_message(chain, message)
+      # the failure count is reset
+      assert updated_chain.current_failure_count == 0
+      [msg1] = updated_chain.messages
+      # includes the message that errored at the point it was before failure
+      assert msg1.content == "Initial *"
+    end
+  end
+
   describe "run/1" do
     @tag live_call: true, live_open_ai: true
     test "custom_context is passed to a custom function" do
@@ -649,7 +887,7 @@ defmodule LangChain.Chains.LLMChainTest do
         })
         |> LLMChain.add_tools(custom_fn)
         |> LLMChain.add_message(Message.new_user!("Where is the hairbrush located?"))
-        |> LLMChain.run(while_needs_response: true)
+        |> LLMChain.run(mode: :while_needs_response)
 
       assert updated_chain.last_message == message
       assert message.role == :assistant
@@ -664,27 +902,29 @@ defmodule LangChain.Chains.LLMChainTest do
     @tag live_call: true, live_open_ai: true
     test "NON-STREAMING handles receiving an error when no messages sent" do
       # create and run the chain
-      {:error, reason} =
+      {:error, _updated_chain, reason} =
         LLMChain.new!(%{
           llm: ChatOpenAI.new!(%{seed: 0, stream: false}),
           verbose: true
         })
         |> LLMChain.run()
 
-      assert reason == "[] is too short - 'messages'"
+      assert reason ==
+               "Invalid 'messages': empty array. Expected an array with minimum length 1, but got an empty array instead."
     end
 
     @tag live_call: true, live_open_ai: true
     test "STREAMING handles receiving an error when no messages sent" do
       # create and run the chain
-      {:error, reason} =
+      {:error, _updated_chain, reason} =
         LLMChain.new!(%{
           llm: ChatOpenAI.new!(%{seed: 0, stream: true}),
           verbose: true
         })
         |> LLMChain.run()
 
-      assert reason == "[] is too short - 'messages'"
+      assert reason ==
+               "Invalid 'messages': empty array. Expected an array with minimum length 1, but got an empty array instead."
     end
 
     # runs until tools are evaluated
@@ -732,7 +972,7 @@ defmodule LangChain.Chains.LLMChainTest do
         })
         |> LLMChain.add_tools(regions_function)
         |> LLMChain.add_message(message)
-        |> LLMChain.run(while_needs_response: true)
+        |> LLMChain.run(mode: :while_needs_response)
 
       # the response should contain data returned from the function
       assert response.content =~ "Germany"
@@ -749,7 +989,7 @@ defmodule LangChain.Chains.LLMChainTest do
         })
       ]
 
-      # errors when trying to sent a PromptTemplate
+      # errors when trying to send a PromptTemplate
       assert_raise LangChainError, ~r/PromptTemplates must be/, fn ->
         LLMChain.new!(%{
           llm: ChatOpenAI.new!(%{seed: 0}),
@@ -770,9 +1010,9 @@ defmodule LangChain.Chains.LLMChainTest do
         ])
       ]
 
-      # errors when trying to sent a PromptTemplate
+      # errors when trying to send a PromptTemplate
       # create and run the chain
-      {:error, reason} =
+      {:error, _updated_chain, reason} =
         %{llm: ChatOpenAI.new!(%{seed: 0})}
         |> LLMChain.new!()
         |> LLMChain.add_messages(messages)
@@ -781,6 +1021,276 @@ defmodule LangChain.Chains.LLMChainTest do
       assert reason =~ ~r/PromptTemplates must be/
     end
 
+    test "increments current_failure_count on parse failure", %{chain: chain} do
+      # Made NOT LIVE here
+      fake_messages = [
+        Message.new_assistant!(%{content: "Not what you wanted"})
+      ]
+
+      set_api_override({:ok, fake_messages, nil})
+
+      messages = [
+        Message.new_user!("Say what I want you to say.")
+      ]
+
+      {:error, error_chain, reason} =
+        chain
+        |> LLMChain.message_processors([JsonProcessor.new!()])
+        |> LLMChain.add_messages(messages)
+        # run repeatedly
+        |> LLMChain.run(mode: :while_needs_response)
+
+      assert error_chain.current_failure_count == 3
+      assert reason == "Exceeded max failure count"
+
+      [m1, m2, m3, m4, m5, m6, m7] = error_chain.messages
+
+      assert m1.role == :user
+      assert m1.content == "Say what I want you to say."
+
+      assert m2.role == :assistant
+      assert m2.content == "Not what you wanted"
+      assert m2.processed_content == "Not what you wanted"
+
+      assert m3.role == :user
+      assert m3.content == "ERROR: Invalid JSON data: unexpected byte at position 0: 0x4E (\"N\")"
+
+      assert m4.role == :assistant
+      assert m4.content == "Not what you wanted"
+      assert m4.processed_content == "Not what you wanted"
+
+      assert m5.role == :user
+      assert m5.content == "ERROR: Invalid JSON data: unexpected byte at position 0: 0x4E (\"N\")"
+
+      assert m6.role == :assistant
+      assert m6.content == "Not what you wanted"
+      assert m6.processed_content == "Not what you wanted"
+
+      assert m7.role == :user
+      assert m7.content == "ERROR: Invalid JSON data: unexpected byte at position 0: 0x4E (\"N\")"
+    end
+
+    test "fires callbacks for failed messages correctly" do
+      handler = %{
+        on_message_processing_error: fn _chain, data ->
+          send(self(), {:processing_error_callback, data})
+        end,
+        on_error_message_created: fn _chain, data ->
+          send(self(), {:error_message_created_callback, data})
+        end,
+        on_retries_exceeded: fn chain ->
+          send(self(), {:retries_exceeded_callback, chain})
+        end
+      }
+
+      # Made NOT LIVE here
+      fake_messages = [
+        Message.new_assistant!(%{content: "Not what you wanted"})
+      ]
+
+      chain =
+        LLMChain.new!(%{
+          llm: ChatOpenAI.new!(%{temperature: 0}),
+          # verbose: true,
+          max_retry_count: 2,
+          callbacks: [handler]
+        })
+
+      set_api_override({:ok, fake_messages, :on_llm_new_message})
+
+      {:error, error_chain, reason} =
+        chain
+        |> LLMChain.message_processors([JsonProcessor.new!()])
+        |> LLMChain.add_messages([
+          Message.new_user!("Say what I want you to say.")
+        ])
+        # run repeatedly
+        |> LLMChain.run(mode: :while_needs_response)
+
+      assert error_chain.current_failure_count == 2
+      assert reason == "Exceeded max failure count"
+
+      [m1, m2, m3, m4, m5] = error_chain.messages
+
+      assert m1.role == :user
+      assert m1.content == "Say what I want you to say."
+
+      assert m2.role == :assistant
+      assert m2.content == "Not what you wanted"
+      assert m2.processed_content == "Not what you wanted"
+
+      assert m3.role == :user
+      assert m3.content == "ERROR: Invalid JSON data: unexpected byte at position 0: 0x4E (\"N\")"
+
+      assert m4.role == :assistant
+      assert m4.content == "Not what you wanted"
+      assert m4.processed_content == "Not what you wanted"
+
+      assert m5.role == :user
+      assert m5.content == "ERROR: Invalid JSON data: unexpected byte at position 0: 0x4E (\"N\")"
+
+      assert_received {:processing_error_callback, ^m2}
+      assert_received {:error_message_created_callback, ^m3}
+      assert_received {:processing_error_callback, ^m4}
+      assert_received {:error_message_created_callback, ^m5}
+      assert_received {:retries_exceeded_callback, ^error_chain}
+      refute_received {:processing_error_callback, _data}
+      refute_received {:error_message_created_callback, _data}
+    end
+
+    test "mode: :until_success - message needs processing, succeeds", %{chain: chain} do
+      # Made NOT LIVE here
+      fake_messages = [
+        Message.new_assistant!(%{content: Jason.encode!(%{value: "abc"})})
+      ]
+
+      set_api_override({:ok, fake_messages, nil})
+
+      {:ok, _updated_chain, last_message} =
+        chain
+        |> LLMChain.message_processors([JsonProcessor.new!()])
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("What's the value in JSON?"))
+        |> LLMChain.run(mode: :until_success)
+
+      # stopped after processing a successful assistant response
+      assert last_message.role == :assistant
+      assert last_message.processed_content == %{"value" => "abc"}
+    end
+
+    test "mode: :until_success - message needs processing, fails, then succeeds", %{chat: chat} do
+      handler = %{
+        on_message_processing_error: fn _chain, _data ->
+          # after the first processing error message, set to return a correct one
+          fake_messages = [
+            Message.new_assistant!(%{content: Jason.encode!(%{value: "abc"})})
+          ]
+
+          set_api_override({:ok, fake_messages, nil})
+        end
+      }
+
+      # Made NOT LIVE here
+      set_api_override({:ok, [Message.new_assistant!(%{content: "invalid"})], nil})
+
+      {:ok, _updated_chain, last_message} =
+        %{llm: chat, callbacks: [handler]}
+        |> LLMChain.new!()
+        |> LLMChain.message_processors([JsonProcessor.new!()])
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("What's the value in JSON?"))
+        |> LLMChain.run(mode: :until_success)
+
+      # stopped after processing a successful assistant response
+      assert last_message.role == :assistant
+      assert last_message.processed_content == %{"value" => "abc"}
+    end
+
+    test "mode: :until_success - tool call returns failure once, then succeeds", %{
+      fail_once: fail_once
+    } do
+      # Made NOT LIVE here
+      fake_messages = [
+        new_function_calls!([
+          ToolCall.new!(%{call_id: "call_fake123", name: "fail_once", arguments: nil})
+        ])
+      ]
+
+      set_api_override({:ok, fake_messages, nil})
+
+      {:ok, updated_chain, last_message} =
+        %{llm: ChatOpenAI.new!(%{stream: false}), verbose: false}
+        |> LLMChain.new!()
+        |> LLMChain.add_tools([fail_once])
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Execute the fail_once tool."))
+        |> LLMChain.run(mode: :until_success)
+
+      assert last_message.role == :tool
+      assert [%ToolResult{is_error: false}] = last_message.tool_results
+      assert updated_chain.current_failure_count == 0
+    end
+
+    test "mode: :until_success - multiple tool_calls in one message. One succeeds and the other fails then succeeds",
+         %{
+           hello_world: hello_world,
+           fail_once: fail_once
+         } do
+      # Made NOT LIVE here
+      fake_messages = [
+        new_function_calls!([
+          ToolCall.new!(%{call_id: "call_fakeABC", name: "hello_world", arguments: nil}),
+          ToolCall.new!(%{call_id: "call_fake123", name: "fail_once", arguments: nil})
+        ])
+      ]
+
+      set_api_override({:ok, fake_messages, nil})
+
+      {:ok, updated_chain, last_message} =
+        %{llm: ChatOpenAI.new!(%{stream: false}), verbose: false}
+        |> LLMChain.new!()
+        |> LLMChain.add_tools([hello_world, fail_once])
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Execute the fail_once tool."))
+        |> LLMChain.run(mode: :until_success)
+
+      assert last_message.role == :tool
+
+      assert [%ToolResult{is_error: false}, %ToolResult{is_error: false}] =
+               last_message.tool_results
+
+      assert updated_chain.current_failure_count == 0
+    end
+
+    test "mode: :until_success - fails after max count", %{fail_func: fail_func} do
+      # Made NOT LIVE here
+      fake_messages = [
+        new_function_calls!([
+          ToolCall.new!(%{call_id: "call_fake123", name: "fail_func", arguments: nil})
+        ])
+      ]
+
+      set_api_override({:ok, fake_messages, nil})
+
+      {:error, updated_chain, reason} =
+        %{llm: ChatOpenAI.new!(%{stream: false}), verbose: false}
+        |> LLMChain.new!()
+        |> LLMChain.add_tools([fail_func])
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Execute the fail_func tool."))
+        |> LLMChain.run(mode: :until_success)
+
+      assert reason == "Exceeded max failure count"
+      assert updated_chain.current_failure_count == 3
+    end
+  end
+
+  describe "increment_current_failure_count/1" do
+    test "increments the current_failure_count", %{chain: chain} do
+      updated_chain_1 =
+        chain
+        |> LLMChain.increment_current_failure_count()
+
+      assert updated_chain_1.current_failure_count == 1
+
+      updated_chain_2 =
+        updated_chain_1
+        |> LLMChain.increment_current_failure_count()
+
+      assert updated_chain_2.current_failure_count == 2
+    end
+  end
+
+  describe "reset_current_failure_count/1" do
+    test "resets the current_failure_count to 0", %{chain: chain} do
+      updated_chain =
+        chain
+        |> LLMChain.increment_current_failure_count()
+        |> LLMChain.increment_current_failure_count()
+        |> LLMChain.reset_current_failure_count()
+
+      assert updated_chain.current_failure_count == 0
+    end
   end
 
   describe "update_custom_context/3" do
@@ -866,17 +1376,11 @@ defmodule LangChain.Chains.LLMChainTest do
          } do
       test_pid = self()
 
-      callback = fn
-        %MessageDelta{} = _delta ->
-          :ok
-
-        %Message{} = message ->
-          send(test_pid, {:message_callback_fired, message})
-          :ok
-
-        _other ->
-          raise RuntimeError, "Received callback with unexpected data"
-      end
+      handler = %{
+        on_tool_response_created: fn _chain, tool_msg ->
+          send(test_pid, {:message_callback_fired, tool_msg})
+        end
+      }
 
       chain =
         LLMChain.new!(%{
@@ -898,10 +1402,12 @@ defmodule LangChain.Chains.LLMChainTest do
           ])
         )
 
-      # hookup callback_fn
-      chain = %LLMChain{chain | callback_fn: callback}
+      # hookup callback and execute the tools
+      updated_chain =
+        chain
+        |> LLMChain.add_callback(handler)
+        |> LLMChain.execute_tool_calls()
 
-      updated_chain = LLMChain.execute_tool_calls(chain)
       %Message{role: :tool} = tool_message = updated_chain.last_message
 
       [tool1, tool2, tool3] = tool_message.tool_results
@@ -985,12 +1491,53 @@ defmodule LangChain.Chains.LLMChainTest do
 
       updated_chain = LLMChain.execute_tool_calls(chain)
       %Message{role: :tool} = result_message = updated_chain.last_message
+
+      # increments current_failure_count
+      assert updated_chain.current_failure_count == 1
+
       # result of execution
       [%ToolResult{} = result] = result_message.tool_results
       assert result.content == "Tool call made to greet but tool not found"
       # tool response is linked to original call
       assert result.tool_call_id == "call_fake123"
       assert result.is_error == true
+    end
+
+    test "on successful execution, clears resets the failure count", %{
+      chain: chain,
+      hello_world: hello_world
+    } do
+      chain =
+        chain
+        |> LLMChain.add_tools(hello_world)
+        |> LLMChain.increment_current_failure_count()
+        |> LLMChain.increment_current_failure_count()
+        |> LLMChain.add_message(new_function_call!("call_fake123", "hello_world", "{}"))
+
+      assert chain.current_failure_count == 2
+
+      updated_chain = LLMChain.execute_tool_calls(chain)
+      %Message{role: :tool} = updated_chain.last_message
+
+      # resets the current_failure_count after processing successfully
+      assert updated_chain.current_failure_count == 0
+    end
+  end
+
+  describe "add_callback/2" do
+    test "appends a callback handler to the list", %{chat: chat} do
+      handler1 = %{on_message_processed: fn _chain, _msg -> IO.puts("PROCESSED 1!") end}
+      handler2 = %{on_message_processed: fn _chain, _msg -> IO.puts("PROCESSED 2!") end}
+
+      chain =
+        %{llm: chat}
+        |> LLMChain.new!()
+        |> LLMChain.add_callback(handler1)
+
+      assert chain.callbacks == [handler1]
+
+      updated_chain = LLMChain.add_callback(chain, handler2)
+      assert updated_chain.callbacks == [handler1, handler2]
     end
   end
 

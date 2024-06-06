@@ -42,17 +42,27 @@ defmodule LangChain.Utils.ApiOverride do
   end
 
   @doc """
-  Set the term to return as a fake API response.
+  Set the data and callback to use as a fake API response. An `:ok` tuple
+  indicates a successful API call. The `fake_response_data` is the data to treat
+  as returned. The `callback_name` is the callback handler name to execute.
+
+      set_api_override({:ok, fake_response_data, callback_name_to_fire})
+
+  ## Examples
+
+      set_api_override({:ok, Message.new_assistant!(%{content: "154 bottles"}, :on_llm_new_message})
+
+      set_api_override({:ok, MessageDelta.new!(%{content: "Hi"}), :on_llm_new_delta})
   """
   @spec set_api_override(term()) :: :ok
-  def set_api_override(api_return_value) do
-    Process.put(@key, api_return_value)
+  def set_api_override(config_tuple) do
+    Process.put(@key, config_tuple)
     :ok
   end
 
   @doc """
-  Get the API override to return. Returned as `{:ok, response}`. If not set, it
-  returns `:not_set`.
+  Get the API override to return. Returned as `{:ok, config_tuple}`. If not set,
+  it returns `:not_set`.
   """
   @spec get_api_override() :: {:ok, term()} | :not_set
   def get_api_override() do

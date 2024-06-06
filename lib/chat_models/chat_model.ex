@@ -14,7 +14,6 @@ defmodule LangChain.ChatModels.ChatModel do
   @callback call(
               t(),
               String.t() | [Message.t()],
-              [LangChain.Function.t()],
-              nil | (Message.t() | MessageDelta.t() -> any())
+              [LangChain.Function.t()]
             ) :: call_response()
 end

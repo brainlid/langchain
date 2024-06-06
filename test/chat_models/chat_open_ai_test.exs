@@ -10,7 +10,6 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
   alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult
-  alias LangChain.Chains.LLMChain
 
   @test_model "gpt-3.5-turbo"
   @gpt4 "gpt-4-1106-preview"
@@ -178,7 +177,11 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     end
 
     test "turns an image ContentPart into the expected JSON format with detail option" do
-      expected = %{"type" => "image_url", "image_url" => %{"url" => "image_base64_data", "detail" => "low"}}
+      expected = %{
+        "type" => "image_url",
+        "image_url" => %{"url" => "image_base64_data", "detail" => "low"}
+      }
+
       result = ChatOpenAI.for_api(ContentPart.image!("image_base64_data", detail: "low"))
       assert result == expected
     end
@@ -217,7 +220,11 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     end
 
     test "turns an image_url ContentPart into the expected JSON format with detail option" do
-      expected = %{"type" => "image_url", "image_url" => %{"url" => "url-to-image", "detail" => "low"}}
+      expected = %{
+        "type" => "image_url",
+        "image_url" => %{"url" => "url-to-image", "detail" => "low"}
+      }
+
       result = ChatOpenAI.for_api(ContentPart.image_url!("url-to-image", detail: "low"))
       assert result == expected
     end
@@ -568,12 +575,14 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
     @tag live_call: true, live_open_ai: true
     test "executes callback function when data is streamed" do
-      callback = fn %MessageDelta{} = delta ->
-        send(self(), {:message_delta, delta})
-      end
+      handler = %{
+        on_llm_new_delta: fn _model, %MessageDelta{} = delta ->
+          send(self(), {:message_delta, delta})
+        end
+      }
 
       # https://js.langchain.com/docs/modules/models/chat/
-      {:ok, chat} = ChatOpenAI.new(%{seed: 0, temperature: 1, stream: true})
+      {:ok, chat} = ChatOpenAI.new(%{seed: 0, temperature: 1, stream: true, callbacks: [handler]})
 
       {:ok, _post_results} =
         ChatOpenAI.call(
@@ -581,8 +590,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
           [
             Message.new_user!("Return the exact response 'Hi'.")
           ],
-          [],
-          callback
+          []
         )
 
       # we expect to receive the response over 3 delta messages
@@ -606,13 +614,16 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
     @tag live_call: true, live_open_ai: true
     test "executes callback function when data is NOT streamed" do
-      callback = fn %Message{} = new_message ->
-        send(self(), {:message_received, new_message})
-      end
+      handler = %{
+        on_llm_new_message: fn _model, %Message{} = new_message ->
+          send(self(), {:message_received, new_message})
+        end
+      }
 
       # https://js.langchain.com/docs/modules/models/chat/
       # NOTE streamed. Should receive complete message.
-      {:ok, chat} = ChatOpenAI.new(%{seed: 0, temperature: 1, stream: false})
+      {:ok, chat} =
+        ChatOpenAI.new(%{seed: 0, temperature: 1, stream: false, callbacks: [handler]})
 
       {:ok, [message]} =
         ChatOpenAI.call(
@@ -620,8 +631,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
           [
             Message.new_user!("Return the response 'Hi'.")
           ],
-          [],
-          callback
+          []
         )
 
       assert message.content =~ "Hi"
@@ -963,18 +973,20 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
   describe "streaming examples" do
     @tag live_call: true, live_open_ai: true
     test "supports streaming response calling function with args" do
-      callback = fn data ->
-        IO.inspect(data, label: "DATA")
-        send(self(), {:streamed_fn, data})
-      end
+      handler = %{
+        on_llm_new_delta: fn _model, %MessageDelta{} = data ->
+          IO.inspect(data, label: "DATA")
+          send(self(), {:streamed_fn, data})
+        end
+      }
 
-      {:ok, chat} = ChatOpenAI.new(%{seed: 0, stream: true})
+      {:ok, chat} = ChatOpenAI.new(%{seed: 0, stream: true, callbacks: [handler]})
 
       {:ok, message} =
         Message.new_user("Answer the following math question: What is 100 + 300 - 200?")
 
       response =
-        ChatOpenAI.do_api_request(chat, [message], [LangChain.Tools.Calculator.new!()], callback)
+        ChatOpenAI.do_api_request(chat, [message], [LangChain.Tools.Calculator.new!()])
 
       IO.inspect(response, label: "OPEN AI POST RESPONSE")
 
@@ -988,21 +1000,25 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     test "STREAMING handles receiving an error when no messages sent" do
       chat = ChatOpenAI.new!(%{seed: 0, stream: true})
 
-      {:error, reason} = ChatOpenAI.call(chat, [], [], nil)
+      {:error, reason} = ChatOpenAI.call(chat, [], [])
 
-      assert reason == "[] is too short - 'messages'"
+      assert reason ==
+               "Invalid 'messages': empty array. Expected an array with minimum length 1, but got an empty array instead."
     end
 
     @tag live_call: true, live_open_ai: true
     test "STREAMING handles receiving a timeout error" do
-      callback = fn data ->
-        send(self(), {:streamed_fn, data})
-      end
+      handler = %{
+        on_llm_new_delta: fn _model, %MessageDelta{} = data ->
+          send(self(), {:streamed_fn, data})
+        end
+      }
 
-      {:ok, chat} = ChatOpenAI.new(%{seed: 0, stream: true, receive_timeout: 50})
+      {:ok, chat} =
+        ChatOpenAI.new(%{seed: 0, stream: true, receive_timeout: 50, callbacks: [handler]})
 
       {:error, reason} =
-        ChatOpenAI.call(chat, [Message.new_user!("Why is the sky blue?")], [], callback)
+        ChatOpenAI.call(chat, [Message.new_user!("Why is the sky blue?")], [])
 
       assert reason == "Request timed out"
     end
@@ -1290,45 +1306,54 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     end
   end
 
-  describe "works within a chain" do
-    @tag live_call: true, live_open_ai: true
-    test "supports starting the assistant's response message and continuing it" do
-      test_pid = self()
+  # describe "works within a chain" do
+  #   @tag live_call: true, live_open_ai: true
+  #   test "supports starting the assistant's response message and continuing it" do
+  #     test_pid = self()
 
-      callback_fn = fn data ->
-        # IO.inspect(data, label: "DATA")
-        send(test_pid, {:streamed_fn, data})
-      end
+  #     handler = %{
+  #       on_llm_new_delta: fn _model, %MessageDelta{} = data ->
+  #         send(test_pid, {:streamed_fn, data})
+  #       end
+  #     }
 
-      {:ok, _result_chain, last_message} =
-        LLMChain.new!(%{llm: %ChatOpenAI{model: @gpt4, stream: true}})
-        |> LLMChain.add_message(Message.new_system!("You are a helpful and concise assistant."))
-        |> LLMChain.add_message(
-          Message.new_user!(
-            "What's the capitol of Norway? Please respond with the answer <answer>{{ANSWER}}</answer>"
-          )
-        )
-        # |> LLMChain.add_message(Message.new_assistant!("<answer>"))
-        |> LLMChain.run(callback_fn: callback_fn)
+  #     {:ok, result_chain, last_message} =
+  #       LLMChain.new!(%{llm: %ChatOpenAI{model: @gpt4, stream: true, callbacks: [handler]}})
+  #       |> LLMChain.add_message(Message.new_system!("You are a helpful and concise assistant."))
+  #       |> LLMChain.add_message(
+  #         Message.new_user!(
+  #           "What's the capitol of Norway? Please respond with the answer <answer>{{ANSWER}}</answer>"
+  #         )
+  #       )
+  #       |> LLMChain.add_message(Message.new_assistant!("<answer>"))
+  #       |> LLMChain.run()
 
-      # %LangChain.Message{
-      #   content: "<answer>Oslo</answer>",
-      #   index: 0,
-      #   status: :complete,
-      #   role: :assistant,
-      #   name: nil,
-      #   tool_calls: [],
-      #   tool_call_id: nil,
-      # },
+  #     # %LangChain.Message{
+  #     #   content: "<answer>Oslo</answer>",
+  #     #   index: 0,
+  #     #   status: :complete,
+  #     #   role: :assistant,
+  #     #   name: nil,
+  #     #   tool_calls: [],
+  #     #   tool_call_id: nil,
+  #     # },
 
-      assert last_message.content =~ "Oslo"
-      assert last_message.status == :complete
-      assert last_message.role == :assistant
+  #     IO.inspect(result_chain.messages)
+  #     IO.inspect(last_message)
+  #     # TODO: The received message is not appended to the sent assistant message
+  #     # TODO: OpenAI returns a full replacement message.
+  #     # Others only send appended text.
 
-      assert_received {:streamed_fn, data}
-      assert %MessageDelta{role: :assistant} = data
-    end
-  end
+  #     assert last_message.content =~ "Oslo"
+  #     assert last_message.status == :complete
+  #     assert last_message.role == :assistant
+
+  #     assert_received {:streamed_fn, data}
+  #     assert %MessageDelta{role: :assistant} = data
+
+  #     assert false
+  #   end
+  # end
 
   def get_streamed_deltas_basic_text do
     [

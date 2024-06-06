@@ -1,5 +1,16 @@
 # ![Logo with chat chain links](./elixir-langchain-link-logo_32px.png) Elixir LangChain
 
+Elixir LangChain enables Elixir applications to integrate AI services and self-hosted models into an application.
+
+Currently supported AI services:
+- OpenAI ChatGPT
+- Anthropic Claude
+- Google AI - https://generativelanguage.googleapis.com
+- Google Vertex AI - Gemini
+- Ollama
+- Mistral
+- Bumblebee self-hosted models - including Llama, Mistral and Zephyr
+
 **LangChain** is short for Language Chain. An LLM, or Large Language Model, is the "Language" part. This library makes it easier for Elixir applications to "chain" or connect different processes, integrations, libraries, services, or functionality together with an LLM.
 
 **LangChain** is a framework for developing applications powered by language models. It enables applications that are:
@@ -49,7 +60,7 @@ in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:langchain, "~> 0.2.0"}
+    {:langchain, "0.3.0-rc.0"}
   ]
 end
 ```
@@ -128,7 +139,7 @@ custom_fn =
     },
     function: fn %{"thing" => thing} = _arguments, context ->
       # our context is a pretend item/location location map
-      context[thing]
+      {:ok, context[thing]}
     end
   })
 
@@ -141,7 +152,7 @@ custom_fn =
   })
   |> LLMChain.add_functions(custom_fn)
   |> LLMChain.add_message(Message.new_user!("Where is the hairbrush located?"))
-  |> LLMChain.run(while_needs_response: true)
+  |> LLMChain.run(mode: :while_needs_response)
 
 # print the LLM's answer
 IO.puts(message.content)
@@ -205,3 +216,4 @@ Executing a specific test, whether it is a `live_call` or not, will execute it c
 When doing local development on the `LangChain` library itself, rename the `.envrc_template` to `.envrc` and populate it with your private API values. This is only used when running live test when explicitly requested.
 
 Use a tool like [Direnv](https://direnv.net/) or [Dotenv](https://github.com/motdotla/dotenv) to load the API values into the ENV when using the library locally.
+

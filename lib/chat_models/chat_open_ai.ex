@@ -8,6 +8,10 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
   - https://github.com/openai/openai-cookbook/blob/main/examples/How_to_call_functions_with_chat_models.ipynb
 
+
+  ## Callbacks
+
+  See the set of available callback: `LangChain.ChatModels.LLMCallbacks`
   """
   use Ecto.Schema
   require Logger
@@ -25,6 +29,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   alias LangChain.LangChainError
   alias LangChain.Utils
   alias LangChain.MessageDelta
+  alias LangChain.Callbacks
 
   @behaviour ChatModel
 
@@ -65,6 +70,9 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     field :stream, :boolean, default: false
     field :max_tokens, :integer, default: nil
 
+    # A list of maps for callback handlers
+    field :callbacks, {:array, :map}, default: []
+
     # Can send a string user_id to help ChatGPT detect abuse by users of the
     # application.
     # https://platform.openai.com/docs/guides/safety-best-practices/end-user-ids
@@ -85,7 +93,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     :receive_timeout,
     :json_response,
     :max_tokens,
-    :user
+    :user,
+    :callbacks
   ]
   @required_fields [:endpoint, :model]
 
@@ -338,26 +347,27 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   `LangChain.Message` once fully complete.
   """
   @impl ChatModel
-  def call(openai, prompt, tools \\ [], callback_fn \\ nil)
+  def call(openai, prompt, tools \\ [])
 
-  def call(%ChatOpenAI{} = openai, prompt, tools, callback_fn) when is_binary(prompt) do
+  def call(%ChatOpenAI{} = openai, prompt, tools) when is_binary(prompt) do
     messages = [
       Message.new_system!(),
       Message.new_user!(prompt)
     ]
 
-    call(openai, messages, tools, callback_fn)
+    call(openai, messages, tools)
   end
 
-  def call(%ChatOpenAI{} = openai, messages, tools, callback_fn) when is_list(messages) do
+  def call(%ChatOpenAI{} = openai, messages, tools) when is_list(messages) do
     if override_api_return?() do
       Logger.warning("Found override API response. Will not make live API call.")
 
       case get_api_override() do
-        {:ok, {:ok, data} = response} ->
+        {:ok, {:ok, data, callback_name}} ->
           # fire callback for fake responses too
-          Utils.fire_callback(openai, data, callback_fn)
-          response
+          Callbacks.fire(openai.callbacks, callback_name, [openai, data])
+          # return the data portion
+          {:ok, data}
 
         # fake error response
         {:ok, {:error, _reason} = response} ->
@@ -365,12 +375,12 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
         _other ->
           raise LangChainError,
-                "An unexpected fake API response was set. Should be an `{:ok, value}`"
+                "An unexpected fake API response was set. Should be an `{:ok, value, nil_or_callback_name}`"
       end
     else
       try do
         # make base api request and perform high-level success/failure checks
-        case do_api_request(openai, messages, tools, callback_fn) do
+        case do_api_request(openai, messages, tools) do
           {:error, reason} ->
             {:error, reason}
 
@@ -403,11 +413,11 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   # structures.
   # Retries the request up to 3 times on transient errors with a 1 second delay
   @doc false
-  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), (any() -> any())) ::
+  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), integer()) ::
           list() | struct() | {:error, String.t()}
-  def do_api_request(openai, messages, tools, callback_fn, retry_count \\ 3)
+  def do_api_request(openai, messages, tools, retry_count \\ 3)
 
-  def do_api_request(_openai, _messages, _tools, _callback_fn, 0) do
+  def do_api_request(_openai, _messages, _tools, 0) do
     raise LangChainError, "Retries exceeded. Connection failed."
   end
 
@@ -415,7 +425,6 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         %ChatOpenAI{stream: false} = openai,
         messages,
         tools,
-        callback_fn,
         retry_count
       ) do
     req =
@@ -445,7 +454,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
             {:error, reason}
 
           result ->
-            Utils.fire_callback(openai, result, callback_fn)
+            Callbacks.fire(openai.callbacks, :on_llm_new_message, [openai, result])
             result
         end
 
@@ -455,7 +464,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       {:error, %Mint.TransportError{reason: :closed}} ->
         # Force a retry by making a recursive call decrementing the counter
         Logger.debug(fn -> "Mint connection closed: retry count = #{inspect(retry_count)}" end)
-        do_api_request(openai, messages, tools, callback_fn, retry_count - 1)
+        do_api_request(openai, messages, tools, retry_count - 1)
 
       other ->
         Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
@@ -467,7 +476,6 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         %ChatOpenAI{stream: true} = openai,
         messages,
         tools,
-        callback_fn,
         retry_count
       ) do
     Req.new(
@@ -483,7 +491,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     )
     |> maybe_add_org_id_header()
     |> Req.post(
-      into: Utils.handle_stream_fn(openai, &decode_stream/1, &do_process_response/1, callback_fn)
+      into: Utils.handle_stream_fn(openai, &decode_stream/1, &do_process_response/1)
     )
     |> case do
       {:ok, %Req.Response{body: data}} ->
@@ -498,7 +506,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       {:error, %Mint.TransportError{reason: :closed}} ->
         # Force a retry by making a recursive call decrementing the counter
         Logger.debug(fn -> "Mint connection closed: retry count = #{inspect(retry_count)}" end)
-        do_api_request(openai, messages, tools, callback_fn, retry_count - 1)
+        do_api_request(openai, messages, tools, retry_count - 1)
 
       other ->
         Logger.error(

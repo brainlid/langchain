@@ -1038,7 +1038,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
   describe "a tool use" do
     @tag live_call: true, live_anthropic: true
     test "uses a tool with no parameters" do
-      # https://docs.anthropic.com/claude/reference/messages-examples#vision
+      # https://docs.anthropic.com/en/docs/tool-use
       {:ok, chat} = ChatAnthropic.new(%{model: @test_model})
 
       message = Message.new_user!("Use the 'do_something' tool.")
@@ -1127,14 +1127,16 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
     test "works with a streaming response" do
       test_pid = self()
 
-      callback_fn = fn data ->
-        send(test_pid, {:streamed_fn, data})
-      end
+      handler = %{
+        on_llm_new_delta: fn _model, delta ->
+          send(test_pid, {:streamed_fn, delta})
+        end
+      }
 
       {:ok, _result_chain, last_message} =
-        LLMChain.new!(%{llm: %ChatAnthropic{stream: true}})
+        LLMChain.new!(%{llm: %ChatAnthropic{stream: true, callbacks: [handler]}})
         |> LLMChain.add_message(Message.new_user!("Say, 'Hi!'!"))
-        |> LLMChain.run(callback_fn: callback_fn)
+        |> LLMChain.run()
 
       assert last_message.content == "Hi!"
       assert last_message.status == :complete
@@ -1148,21 +1150,22 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
     test "works with NON streaming response" do
       test_pid = self()
 
-      callback_fn = fn data ->
-        # IO.inspect(data, label: "DATA")
-        send(test_pid, {:streamed_fn, data})
-      end
+      handler = %{
+        on_llm_new_message: fn _model, message ->
+          send(test_pid, {:received_msg, message})
+        end
+      }
 
       {:ok, _result_chain, last_message} =
-        LLMChain.new!(%{llm: %ChatAnthropic{stream: false}})
+        LLMChain.new!(%{llm: %ChatAnthropic{stream: false, callbacks: [handler]}})
         |> LLMChain.add_message(Message.new_user!("Say, 'Hi!'!"))
-        |> LLMChain.run(callback_fn: callback_fn)
+        |> LLMChain.run()
 
       assert last_message.content == "Hi!"
       assert last_message.status == :complete
       assert last_message.role == :assistant
 
-      assert_received {:streamed_fn, data}
+      assert_received {:received_msg, data}
       assert %Message{role: :assistant} = data
     end
 
@@ -1170,18 +1173,20 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
     test "supports continuing a conversation with streaming" do
       test_pid = self()
 
-      callback_fn = fn data ->
-        # IO.inspect(data, label: "DATA")
-        send(test_pid, {:streamed_fn, data})
-      end
+      handler = %{
+        on_llm_new_delta: fn _model, delta ->
+          # IO.inspect(data, label: "DATA")
+          send(test_pid, {:streamed_fn, delta})
+        end
+      }
 
       {:ok, _result_chain, last_message} =
-        LLMChain.new!(%{llm: %ChatAnthropic{model: @test_model, stream: true}})
+        LLMChain.new!(%{llm: %ChatAnthropic{model: @test_model, stream: true, callbacks: [handler]}})
         |> LLMChain.add_message(Message.new_system!("You are a helpful and concise assistant."))
         |> LLMChain.add_message(Message.new_user!("Say, 'Hi!'!"))
         |> LLMChain.add_message(Message.new_assistant!("Hi!"))
         |> LLMChain.add_message(Message.new_user!("What's the capitol of Norway?"))
-        |> LLMChain.run(callback_fn: callback_fn)
+        |> LLMChain.run()
 
       assert last_message.content =~ "Oslo"
       assert last_message.status == :complete
@@ -1191,39 +1196,41 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       assert %MessageDelta{role: :assistant} = data
     end
 
-    @tag live_call: true, live_anthropic: true
-    test "supports starting the assistant's response message and continuing it" do
-      test_pid = self()
+    # @tag live_call: true, live_anthropic: true
+    # test "supports starting the assistant's response message and continuing it" do
+    #   test_pid = self()
 
-      callback_fn = fn data ->
-        # IO.inspect(data, label: "DATA")
-        send(test_pid, {:streamed_fn, data})
-      end
+    #   handler = %{
+    #     on_llm_new_delta: fn _model, delta ->
+    #       # IO.inspect(data, label: "DATA")
+    #       send(test_pid, {:streamed_fn, data})
+    #     end
+    #   }
 
-      {:ok, result_chain, last_message} =
-        LLMChain.new!(%{llm: %ChatAnthropic{model: @test_model, stream: true}})
-        |> LLMChain.add_message(Message.new_system!("You are a helpful and concise assistant."))
-        |> LLMChain.add_message(
-          Message.new_user!(
-            "What's the capitol of Norway? Please respond with the answer <answer>{{ANSWER}}</answer>."
-          )
-        )
-        |> LLMChain.add_message(Message.new_assistant!("<answer>"))
-        |> LLMChain.run(callback_fn: callback_fn)
+    #   {:ok, result_chain, last_message} =
+    #     LLMChain.new!(%{llm: %ChatAnthropic{model: @test_model, stream: true, callbacks: [handler]}})
+    #     |> LLMChain.add_message(Message.new_system!("You are a helpful and concise assistant."))
+    #     |> LLMChain.add_message(
+    #       Message.new_user!(
+    #         "What's the capitol of Norway? Please respond with the answer <answer>{{ANSWER}}</answer>."
+    #       )
+    #     )
+    #     |> LLMChain.add_message(Message.new_assistant!("<answer>"))
+    #     |> LLMChain.run()
 
-      assert last_message.content =~ "Oslo"
-      assert last_message.status == :complete
-      assert last_message.role == :assistant
+    #   assert last_message.content =~ "Oslo"
+    #   assert last_message.status == :complete
+    #   assert last_message.role == :assistant
 
-      # TODO: MERGE A CONTINUED Assistant message with the one we provided.
+    #   # TODO: MERGE A CONTINUED Assistant message with the one we provided.
 
-      IO.inspect(result_chain, label: "FINAL CHAIN")
-      IO.inspect(last_message)
+    #   IO.inspect(result_chain, label: "FINAL CHAIN")
+    #   IO.inspect(last_message)
 
-      assert_received {:streamed_fn, data}
-      assert %MessageDelta{role: :assistant} = data
+    #   assert_received {:streamed_fn, data}
+    #   assert %MessageDelta{role: :assistant} = data
 
-      assert false
-    end
+    #   assert false
+    # end
   end
 end

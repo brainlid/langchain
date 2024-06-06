@@ -21,13 +21,8 @@ defmodule LangChain.Message do
   A `tool_call` comes from the `:assistant` role. The `tool_id` identifies which
   of the available tool's to execute.
 
-  Create a message of role `:function` to provide the function response.
-
-  - `:is_error` - Boolean value used to track a tool response message as being
-    an error or not. The error state may be returned to an LLM in different
-    ways, whichever is most appropriate for the LLM. When a response is an
-    error, the `content` explains the error to the LLM and depending on the
-    situation, the LLM may choose try again.
+  Create a message of role `:tool` to provide the system responses for one or
+  more tool requests. A `ToolResult` handles the response back to the LLM.
 
   ## User Content Parts
 
@@ -36,11 +31,10 @@ defmodule LangChain.Message do
   "Vision", meaning you can provide text like "Please identify the what this is
   an image of" and provide an image.
 
-  User Content Parts are implemented through
-  `LangChain.Message.ContentPart`. A list of them can be supplied as the
-  "content" for a message. Only a few LLMs support it, and they may require
-  using specific models trained for it. See the documentation for the LLM or
-  service for details on their level of support.
+  User Content Parts are implemented through `LangChain.Message.ContentPart`. A
+  list of them can be supplied as the "content" for a message. Only a few LLMs
+  support it, and they may require using specific models trained for it. See the
+  documentation for the LLM or service for details on their level of support.
 
   ## Examples
 
@@ -75,7 +69,13 @@ defmodule LangChain.Message do
 
   @primary_key false
   embedded_schema do
+    # Message content that the LLM sees.
     field :content, :any, virtual: true
+    # For assistant messages when message_processors are applied. This contains
+    # the results of the processing. This allows the `content` to reflect what
+    # was actually returned for when we send it back to the LLM as a historical
+    # message.
+    field :processed_content, :any, virtual: true
     field :index, :integer
     field :status, Ecto.Enum, values: [:complete, :cancelled, :length], default: :complete
 
@@ -98,7 +98,16 @@ defmodule LangChain.Message do
   @type t :: %Message{}
   @type status :: :complete | :cancelled | :length
 
-  @update_fields [:role, :content, :status, :tool_calls, :tool_results, :index, :name]
+  @update_fields [
+    :role,
+    :content,
+    :processed_content,
+    :status,
+    :tool_calls,
+    :tool_results,
+    :index,
+    :name
+  ]
   @create_fields @update_fields
   @required_fields [:role]
 
@@ -422,4 +431,22 @@ defmodule LangChain.Message do
       do: true
 
   def is_tool_call?(%Message{}), do: false
+
+  @doc """
+  Return if a Message is tool related. It may be a tool call or a tool result.
+  """
+  def is_tool_related?(%Message{role: :tool}), do: true
+  def is_tool_related?(%Message{} = message), do: is_tool_call?(message)
+
+  @doc """
+  Return `true` if the message is a `tool` response and any of the `ToolResult`s
+  ended in an error. Returns `false` if not a `tool` response or all
+  `ToolResult`s succeeded.
+  """
+  @spec tool_had_errors?(t()) :: boolean()
+  def tool_had_errors?(%Message{role: :tool} = message) do
+    Enum.any?(message.tool_results, & &1.is_error)
+  end
+
+  def tool_had_errors?(%Message{} = _message), do: false
 end

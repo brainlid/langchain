@@ -10,7 +10,8 @@ defmodule LangChain.Utils.ChainResultTest do
 
   describe "to_string/1" do
     test "passes an error tuple through" do
-      assert {:error, "original error"} == ChainResult.to_string({:error, "original error"})
+      assert {:error, %LLMChain{}, "original error"} ==
+               ChainResult.to_string({:error, %LLMChain{}, "original error"})
     end
 
     test "returns {:ok, answer} when valid" do
