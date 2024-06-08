@@ -454,11 +454,17 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
   describe "call/2" do
     @tag live_call: true, live_open_ai: true
-    test "basic content example" do
+    test "basic content example and fires ratelimit callback" do
       # set_fake_llm_response({:ok, Message.new_assistant("\n\nRainbow Sox Co.")})
 
+      handlers = %{
+        on_llm_ratelimit_info: fn _model, headers ->
+          send(self(), {:fired_ratelimit_info, headers})
+        end
+      }
+
       # https://js.langchain.com/docs/modules/models/chat/
-      {:ok, chat} = ChatOpenAI.new(%{temperature: 1, seed: 0})
+      {:ok, chat} = ChatOpenAI.new(%{temperature: 1, seed: 0, callbacks: [handlers]})
 
       {:ok, [%Message{role: :assistant, content: response}]} =
         ChatOpenAI.call(chat, [
@@ -466,14 +472,33 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
         ])
 
       assert response =~ "Colorful Threads"
+
+      assert_received {:fired_ratelimit_info, info}
+
+      assert %{
+               "x-ratelimit-limit-requests" => _,
+               "x-ratelimit-limit-tokens" => _,
+               "x-ratelimit-remaining-requests" => _,
+               "x-ratelimit-remaining-tokens" => _,
+               "x-ratelimit-reset-requests" => _,
+               "x-ratelimit-reset-tokens" => _,
+               "x-request-id" => _
+             } = info
     end
 
     @tag live_call: true, live_open_ai: true
-    test "basic streamed content example's final result" do
+    test "basic streamed content example's final result and fires ratelimit callback" do
       # set_fake_llm_response({:ok, Message.new_assistant("\n\nRainbow Sox Co.")})
 
+      handlers = %{
+        on_llm_ratelimit_info: fn _model, headers ->
+          send(self(), {:fired_ratelimit_info, headers})
+        end
+      }
+
       # https://js.langchain.com/docs/modules/models/chat/
-      {:ok, chat} = ChatOpenAI.new(%{temperature: 1, seed: 0, stream: true})
+      {:ok, chat} =
+        ChatOpenAI.new(%{temperature: 1, seed: 0, stream: true, callbacks: [handlers]})
 
       {:ok, result} =
         ChatOpenAI.call(chat, [
@@ -523,6 +548,18 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
                  }
                ]
              ]
+
+      assert_received {:fired_ratelimit_info, info}
+
+      assert %{
+               "x-ratelimit-limit-requests" => _,
+               "x-ratelimit-limit-tokens" => _,
+               "x-ratelimit-remaining-requests" => _,
+               "x-ratelimit-remaining-tokens" => _,
+               "x-ratelimit-reset-requests" => _,
+               "x-ratelimit-reset-tokens" => _,
+               "x-request-id" => _
+             } = info
     end
 
     @tag live_call: true, live_open_ai: true
@@ -547,19 +584,11 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
     @tag live_call: true, live_open_ai: true
     test "LIVE: supports receiving multiple tool calls in a single response", %{weather: weather} do
-      handler = %{
-        on_llm_new_message: fn _model, msg ->
-          # IO.inspect(msg)
-          :ok
-        end
-      }
-
       {:ok, chat} =
         ChatOpenAI.new(%{
           seed: 0,
           stream: false,
-          model: @gpt4,
-          callbacks: [handler]
+          model: @gpt4
         })
 
       {:ok, message} =
