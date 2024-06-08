@@ -58,10 +58,30 @@ defmodule LangChain.ChatModels.LLMCallbacks do
   @type llm_new_message :: (model :: struct(), Message.t() -> any())
 
   @typedoc """
+  Executed when an LLM (typically a service) responds with rate limiting
+  information.
+
+  The specific rate limit information depends on the LLM. It returns a map with
+  all the available information included.
+
+  The return value is discarded.
+
+  ## Example
+
+  A function declaration that matches the signature.
+
+      def handle_llm_ratelimit_info(_chat_model, info) do
+        IO.inspect(info)
+      end
+  """
+  @type llm_ratelimit_info :: (model :: struct(), info :: %{String.t() => any()} -> any())
+
+  @typedoc """
   The supported set of callbacks for an LLM module.
   """
   @type llm_callback_handler :: %{
           on_llm_new_delta: llm_new_delta(),
-          on_llm_new_message: llm_new_message()
+          on_llm_new_message: llm_new_message(),
+          on_llm_ratelimit_info: llm_ratelimit_info()
         }
 end

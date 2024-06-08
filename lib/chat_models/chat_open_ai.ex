@@ -1,6 +1,7 @@
 defmodule LangChain.ChatModels.ChatOpenAI do
   @moduledoc """
-  Represents the [OpenAI ChatModel](https://platform.openai.com/docs/api-reference/chat/create).
+  Represents the [OpenAI
+  ChatModel](https://platform.openai.com/docs/api-reference/chat/create).
 
   Parses and validates inputs for making a requests from the OpenAI Chat API.
 
@@ -12,6 +13,33 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   ## Callbacks
 
   See the set of available callback: `LangChain.ChatModels.LLMCallbacks`
+
+  ### Rate Limit API Response Headers
+
+  OpenAI returns rate limit information in the response headers. Those can be
+  accessed using an LLM callback like this:
+
+      handlers = %{
+        on_llm_ratelimit_info: fn _model, headers ->
+          IO.inspect(headers)
+        end
+      }
+
+      {:ok, chat} = ChatOpenAI.new(%{callbacks: [handlers]})
+
+  When a request is received, something similar to the following will be output
+  to the console.
+
+      %{
+        "x-ratelimit-limit-requests" => ["5000"],
+        "x-ratelimit-limit-tokens" => ["160000"],
+        "x-ratelimit-remaining-requests" => ["4999"],
+        "x-ratelimit-remaining-tokens" => ["159973"],
+        "x-ratelimit-reset-requests" => ["12ms"],
+        "x-ratelimit-reset-tokens" => ["10ms"],
+        "x-request-id" => ["req_1234"]
+      }
+
   """
   use Ecto.Schema
   require Logger
@@ -448,7 +476,12 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     |> Req.post()
     # parse the body and return it as parsed structs
     |> case do
-      {:ok, %Req.Response{body: data}} ->
+      {:ok, %Req.Response{body: data} = response} ->
+        Callbacks.fire(openai.callbacks, :on_llm_ratelimit_info, [
+          openai,
+          get_ratelimit_info(response.headers)
+        ])
+
         case do_process_response(data) do
           {:error, reason} ->
             {:error, reason}
@@ -490,11 +523,14 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       receive_timeout: openai.receive_timeout
     )
     |> maybe_add_org_id_header()
-    |> Req.post(
-      into: Utils.handle_stream_fn(openai, &decode_stream/1, &do_process_response/1)
-    )
+    |> Req.post(into: Utils.handle_stream_fn(openai, &decode_stream/1, &do_process_response/1))
     |> case do
-      {:ok, %Req.Response{body: data}} ->
+      {:ok, %Req.Response{body: data} = response} ->
+        Callbacks.fire(openai.callbacks, :on_llm_ratelimit_info, [
+          openai,
+          get_ratelimit_info(response.headers)
+        ])
+
         data
 
       {:error, %LangChainError{message: reason}} ->
@@ -742,5 +778,23 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     else
       req
     end
+  end
+
+  defp get_ratelimit_info(response_headers) do
+    # extract out all the ratelimit response headers
+    #
+    #  https://platform.openai.com/docs/guides/rate-limits/rate-limits-in-headers
+    {return, _} =
+      Map.split(response_headers, [
+        "x-ratelimit-limit-requests",
+        "x-ratelimit-limit-tokens",
+        "x-ratelimit-remaining-requests",
+        "x-ratelimit-remaining-tokens",
+        "x-ratelimit-reset-requests",
+        "x-ratelimit-reset-tokens",
+        "x-request-id"
+      ])
+
+    return
   end
 end

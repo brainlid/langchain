@@ -386,8 +386,14 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
     end
 
     @tag live_call: true, live_anthropic: true
-    test "basic streamed content example" do
-      {:ok, chat} = ChatAnthropic.new(%{stream: true})
+    test "basic streamed content example and fires ratelimit callback" do
+      handlers = %{
+        on_llm_ratelimit_info: fn _model, headers ->
+          send(self(), {:fired_ratelimit_info, headers})
+        end
+      }
+
+      {:ok, chat} = ChatAnthropic.new(%{stream: true, callbacks: [handlers]})
 
       {:ok, result} =
         ChatAnthropic.call(chat, [
@@ -427,6 +433,20 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
                  role: :assistant
                }
              ]
+
+      assert_received {:fired_ratelimit_info, info}
+
+      assert %{
+               "anthropic-ratelimit-requests-limit" => _,
+               "anthropic-ratelimit-requests-remaining" => _,
+               "anthropic-ratelimit-requests-reset" => _,
+               "anthropic-ratelimit-tokens-limit" => _,
+               "anthropic-ratelimit-tokens-remaining" => _,
+               "anthropic-ratelimit-tokens-reset" => _,
+               #  Not always included
+               #  "retry-after" => _,
+               "request-id" => _
+             } = info
     end
   end
 
@@ -1147,12 +1167,15 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
     end
 
     @tag live_call: true, live_anthropic: true
-    test "works with NON streaming response" do
+    test "works with NON streaming response  and fires ratelimit callback" do
       test_pid = self()
 
       handler = %{
         on_llm_new_message: fn _model, message ->
           send(test_pid, {:received_msg, message})
+        end,
+        on_llm_ratelimit_info: fn _model, headers ->
+          send(test_pid, {:fired_ratelimit_info, headers})
         end
       }
 
@@ -1167,6 +1190,20 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 
       assert_received {:received_msg, data}
       assert %Message{role: :assistant} = data
+
+      assert_received {:fired_ratelimit_info, info}
+
+      assert %{
+               "anthropic-ratelimit-requests-limit" => _,
+               "anthropic-ratelimit-requests-remaining" => _,
+               "anthropic-ratelimit-requests-reset" => _,
+               "anthropic-ratelimit-tokens-limit" => _,
+               "anthropic-ratelimit-tokens-remaining" => _,
+               "anthropic-ratelimit-tokens-reset" => _,
+               #  Not always included
+               #  "retry-after" => _,
+               "request-id" => _
+             } = info
     end
 
     @tag live_call: true, live_anthropic: true
@@ -1181,7 +1218,9 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       }
 
       {:ok, _result_chain, last_message} =
-        LLMChain.new!(%{llm: %ChatAnthropic{model: @test_model, stream: true, callbacks: [handler]}})
+        LLMChain.new!(%{
+          llm: %ChatAnthropic{model: @test_model, stream: true, callbacks: [handler]}
+        })
         |> LLMChain.add_message(Message.new_system!("You are a helpful and concise assistant."))
         |> LLMChain.add_message(Message.new_user!("Say, 'Hi!'!"))
         |> LLMChain.add_message(Message.new_assistant!("Hi!"))

@@ -9,6 +9,33 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   ## Callbacks
 
   See the set of available callback: `LangChain.ChatModels.LLMCallbacks`
+
+  ### Rate Limit API Response Headers
+
+  Anthropic returns rate limit information in the response headers. Those can be
+  accessed using an LLM callback like this:
+
+      handlers = %{
+        on_llm_ratelimit_info: fn _model, headers ->
+          IO.inspect(headers)
+        end
+      }
+
+      {:ok, chat} = ChatAnthropic.new(%{callbacks: [handlers]})
+
+  When a request is received, something similar to the following will be output
+  to the console.
+
+      %{
+        "anthropic-ratelimit-requests-limit" => ["50"],
+        "anthropic-ratelimit-requests-remaining" => ["49"],
+        "anthropic-ratelimit-requests-reset" => ["2024-06-08T04:28:30Z"],
+        "anthropic-ratelimit-tokens-limit" => ["50000"],
+        "anthropic-ratelimit-tokens-remaining" => ["50000"],
+        "anthropic-ratelimit-tokens-reset" => ["2024-06-08T04:28:30Z"],
+        "request-id" => ["req_1234"]
+      }
+
   """
   use Ecto.Schema
   require Logger
@@ -306,7 +333,12 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     |> Req.post()
     # parse the body and return it as parsed structs
     |> case do
-      {:ok, %Req.Response{body: data}} ->
+      {:ok, %Req.Response{body: data} = response} ->
+        Callbacks.fire(anthropic.callbacks, :on_llm_ratelimit_info, [
+          anthropic,
+          get_ratelimit_info(response.headers)
+        ])
+
         case do_process_response(data) do
           {:error, reason} ->
             {:error, reason}
@@ -342,12 +374,14 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       headers: headers(get_api_key(anthropic), anthropic.api_version),
       receive_timeout: anthropic.receive_timeout
     )
-    |> Req.post(
-      into:
-        Utils.handle_stream_fn(anthropic, &decode_stream/1, &do_process_response/1)
-    )
+    |> Req.post(into: Utils.handle_stream_fn(anthropic, &decode_stream/1, &do_process_response/1))
     |> case do
-      {:ok, %Req.Response{body: data}} ->
+      {:ok, %Req.Response{body: data} = response} ->
+        Callbacks.fire(anthropic.callbacks, :on_llm_ratelimit_info, [
+          anthropic,
+          get_ratelimit_info(response.headers)
+        ])
+
         data
 
       {:error, %LangChainError{message: reason}} ->
@@ -781,5 +815,24 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   defp get_merge_friendly_user_content(%{"role" => "user", "content" => content} = item)
        when is_list(content) do
     item
+  end
+
+  defp get_ratelimit_info(response_headers) do
+    # extract out all the ratelimit response headers
+    #
+    #  https://docs.anthropic.com/en/api/rate-limits#response-headers
+    {return, _} =
+      Map.split(response_headers, [
+        "anthropic-ratelimit-requests-limit",
+        "anthropic-ratelimit-requests-remaining",
+        "anthropic-ratelimit-requests-reset",
+        "anthropic-ratelimit-tokens-limit",
+        "anthropic-ratelimit-tokens-remaining",
+        "anthropic-ratelimit-tokens-reset",
+        "retry-after",
+        "request-id"
+      ])
+
+    return
   end
 end
