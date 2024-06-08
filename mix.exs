@@ -38,7 +38,7 @@ defmodule LangChain.MixProject do
       {:ecto, "~> 3.10 or ~> 3.11"},
       {:gettext, "~> 0.20"},
       {:req, ">= 0.4.8"},
-      {:abacus, "~> 2.0.0"},
+      {:abacus, "~> 2.1.0"},
       {:nx, ">= 0.7.0", optional: true},
       {:ex_doc, "~> 0.27", only: :dev, runtime: false}
     ]
