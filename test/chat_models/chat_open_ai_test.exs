@@ -6,6 +6,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
   alias LangChain.ChatModels.ChatOpenAI
   alias LangChain.Function
   alias LangChain.FunctionParam
+  alias LangChain.TokenUsage
   alias LangChain.Message
   alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
@@ -121,6 +122,18 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert data.temperature == 1
       assert data.frequency_penalty == 0.5
       assert data.max_tokens == 1234
+    end
+
+    test "generates a map for an API call with stream_options set correctly" do
+      {:ok, openai} =
+        ChatOpenAI.new(%{
+          model: @test_model,
+          stream_options: %{include_usage: true}
+        })
+
+      data = ChatOpenAI.for_api(openai, [], [])
+      assert data.model == @test_model
+      assert data.stream_options == %{"include_usage" => true}
     end
   end
 
@@ -460,11 +473,15 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       handlers = %{
         on_llm_ratelimit_info: fn _model, headers ->
           send(self(), {:fired_ratelimit_info, headers})
+        end,
+        on_llm_token_usage: fn _model, usage ->
+          send(self(), {:fired_token_usage, usage})
         end
       }
 
       # https://js.langchain.com/docs/modules/models/chat/
-      {:ok, chat} = ChatOpenAI.new(%{temperature: 1, seed: 0, callbacks: [handlers]})
+      {:ok, chat} =
+        ChatOpenAI.new(%{temperature: 1, seed: 0, stream: false, callbacks: [handlers]})
 
       {:ok, [%Message{role: :assistant, content: response}]} =
         ChatOpenAI.call(chat, [
@@ -484,6 +501,9 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
                "x-ratelimit-reset-tokens" => _,
                "x-request-id" => _
              } = info
+
+      assert_received {:fired_token_usage, usage}
+      assert %TokenUsage{} = usage
     end
 
     @tag live_call: true, live_open_ai: true
@@ -560,6 +580,94 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
                "x-ratelimit-reset-tokens" => _,
                "x-request-id" => _
              } = info
+    end
+
+    @tag live_call: true, live_open_ai: true
+    test "basic streamed content fires token usage callback" do
+      # set_fake_llm_response({:ok, Message.new_assistant("\n\nRainbow Sox Co.")})
+
+      handlers = %{
+        on_llm_token_usage: fn _model, usage ->
+          send(self(), {:fired_token_usage, usage})
+        end
+      }
+
+      # https://js.langchain.com/docs/modules/models/chat/
+      {:ok, chat} =
+        ChatOpenAI.new(%{
+          temperature: 1,
+          seed: 0,
+          stream: true,
+          stream_options: %{include_usage: true},
+          callbacks: [handlers]
+        })
+
+      # %{
+      #   "choices" => [],
+      #   "created" => 1717878896,
+      #   "id" => "chatcmpl-9Xx444vHYqsCHl0JpLHBzXDIzcfP0",
+      #   "model" => "gpt-3.5-turbo-0125",
+      #   "object" => "chat.completion.chunk",
+      #   "system_fingerprint" => nil,
+      #   "usage" => %{
+      #     "completion_tokens" => 3,
+      #     "prompt_tokens" => 15,
+      #     "total_tokens" => 18
+      #   }
+      # }
+
+      {:ok, result} =
+        ChatOpenAI.call(chat, [
+          Message.new_user!("Return the response 'Colorful Threads'.")
+        ])
+
+      # returns a list of MessageDeltas. A list of a list because it's "n" choices.
+      assert result == [
+               [
+                 %LangChain.MessageDelta{
+                   content: "",
+                   status: :incomplete,
+                   index: 0,
+                   role: :assistant
+                 }
+               ],
+               [
+                 %LangChain.MessageDelta{
+                   content: "Color",
+                   status: :incomplete,
+                   index: 0,
+                   role: :unknown
+                 }
+               ],
+               [
+                 %LangChain.MessageDelta{
+                   content: "ful",
+                   status: :incomplete,
+                   index: 0,
+                   role: :unknown
+                 }
+               ],
+               [
+                 %LangChain.MessageDelta{
+                   content: " Threads",
+                   status: :incomplete,
+                   index: 0,
+                   role: :unknown
+                 }
+               ],
+               [
+                 %LangChain.MessageDelta{
+                   content: nil,
+                   status: :complete,
+                   index: 0,
+                   role: :unknown
+                 }
+               ],
+               %LangChain.TokenUsage{input: 15, output: 3}
+             ]
+
+      assert_received {:fired_token_usage, usage}
+      assert %TokenUsage{} = usage
     end
 
     @tag live_call: true, live_open_ai: true

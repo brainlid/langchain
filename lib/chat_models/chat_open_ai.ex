@@ -17,7 +17,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   ### Rate Limit API Response Headers
 
   OpenAI returns rate limit information in the response headers. Those can be
-  accessed using an LLM callback like this:
+  accessed using the LLM callback `on_llm_ratelimit_info` like this:
 
       handlers = %{
         on_llm_ratelimit_info: fn _model, headers ->
@@ -40,6 +40,31 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         "x-request-id" => ["req_1234"]
       }
 
+  ### Token Usage
+
+  OpenAI returns token usage information as part of the response body. That data
+  can be accessed using the LLM callback `on_llm_token_usage` like this:
+
+      handlers = %{
+        on_llm_token_usage: fn _model, usage ->
+          IO.inspect(usage)
+        end
+      }
+
+      {:ok, chat} = ChatOpenAI.new(%{
+        callbacks: [handlers],
+        stream: true,
+        stream_options: %{include_usage: true}
+      })
+
+  When a request is received, something similar to the following will be output
+  to the console.
+
+      %LangChain.TokenUsage{input: 15, output: 3}
+
+  The OpenAI documentation instructs to provide the `stream_options` with the
+  `include_usage: true` for the information to be provided.
+
   """
   use Ecto.Schema
   require Logger
@@ -52,6 +77,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult
+  alias LangChain.TokenUsage
   alias LangChain.Function
   alias LangChain.FunctionParam
   alias LangChain.LangChainError
@@ -97,6 +123,12 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     field :json_response, :boolean, default: false
     field :stream, :boolean, default: false
     field :max_tokens, :integer, default: nil
+    # Options for streaming response. Only set this when you set `stream: true`
+    # https://platform.openai.com/docs/api-reference/chat/create#chat-create-stream_options
+    #
+    # Set to `%{include_usage: true}` to have token usage returned when
+    # streaming.
+    field :stream_options, :map, default: nil
 
     # A list of maps for callback handlers
     field :callbacks, {:array, :map}, default: []
@@ -121,6 +153,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     :receive_timeout,
     :json_response,
     :max_tokens,
+    :stream_options,
     :user,
     :callbacks
   ]
@@ -202,6 +235,10 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     }
     |> Utils.conditionally_add_to_map(:max_tokens, openai.max_tokens)
     |> Utils.conditionally_add_to_map(:seed, openai.seed)
+    |> Utils.conditionally_add_to_map(
+      :stream_options,
+      get_stream_options_for_api(openai.stream_options)
+    )
     |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(tools))
   end
 
@@ -212,6 +249,12 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       %Function{} = function ->
         %{"type" => "function", "function" => for_api(function)}
     end)
+  end
+
+  defp get_stream_options_for_api(nil), do: nil
+
+  defp get_stream_options_for_api(%{} = data) do
+    %{"include_usage" => Map.get(data, :include_usage, Map.get(data, "include_usage"))}
   end
 
   defp set_response_format(%ChatOpenAI{json_response: true}),
@@ -482,6 +525,11 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           get_ratelimit_info(response.headers)
         ])
 
+        Callbacks.fire(openai.callbacks, :on_llm_token_usage, [
+          openai,
+          get_token_usage(data)
+        ])
+
         case do_process_response(data) do
           {:error, reason} ->
             {:error, reason}
@@ -611,7 +659,13 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           | [Message.t()]
           | MessageDelta.t()
           | [MessageDelta.t()]
+          | TokenUsage.t()
           | {:error, String.t()}
+  def do_process_response(%{"choices" => [], "usage" => usage} = data) when is_map(usage) do
+    # create the TokenUsage struct
+    get_token_usage(data)
+  end
+
   def do_process_response(%{"choices" => choices} = _data) when is_list(choices) do
     # process each response individually. Return a list of all processed choices
     for choice <- choices do
@@ -797,4 +851,16 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
     return
   end
+
+  defp get_token_usage(%{"usage" => usage} = _response_body) do
+    # extract out the reported response token usage
+    #
+    #  https://platform.openai.com/docs/api-reference/chat/object#chat/object-usage
+    TokenUsage.new!(%{
+      input: Map.get(usage, "prompt_tokens"),
+      output: Map.get(usage, "completion_tokens")
+    })
+  end
+
+  defp get_token_usage(_response_body), do: %{}
 end

@@ -5,6 +5,9 @@ defmodule LangChain.Utils do
   alias LangChain.LangChainError
   alias Ecto.Changeset
   alias LangChain.Callbacks
+  alias LangChain.Message
+  alias LangChain.MessageDelta
+  alias LangChain.TokenUsage
   require Logger
 
   @doc """
@@ -86,9 +89,7 @@ defmodule LangChain.Utils do
     end
   end
 
-  @type callback_data ::
-          {:ok, Message.t() | MessageDelta.t() | [Message.t() | MessageDelta.t()]}
-          | {:error, String.t()}
+  @type callback_data :: Message.t() | MessageDelta.t() | TokenUsage.t() | {:error, String.t()}
 
   @doc """
   Fire a streaming callback if present.
@@ -104,13 +105,17 @@ defmodule LangChain.Utils do
     data
     |> List.flatten()
     |> Enum.each(fn item ->
-      Callbacks.fire(model.callbacks, :on_llm_new_delta, [model, item])
+      fire_streamed_callback(model, item)
     end)
   end
 
-  def fire_streamed_callback(model, data) when is_struct(data) do
-    # Execute callback handler for single received data element
-    Callbacks.fire(model.callbacks, :on_llm_new_delta, [model, data])
+  def fire_streamed_callback(model, %MessageDelta{} = delta) do
+    # Execute callback handler for single received delta element
+    Callbacks.fire(model.callbacks, :on_llm_new_delta, [model, delta])
+  end
+
+  def fire_streamed_callback(model, %TokenUsage{} = usage) do
+    Callbacks.fire(model.callbacks, :on_llm_token_usage, [model, usage])
   end
 
   @doc """
@@ -151,9 +156,9 @@ defmodule LangChain.Utils do
 
         # transform what was fully received into structs
         parsed_data = Enum.map(parsed_data, transform_data_fn)
-        # parsed_data = Enum.map(parsed_data, &transform_data_fn.(&1))
 
-        # execute the callback function for each MessageDelta
+        # execute the callback function for each MessageDelta and an optional
+        # TokenUsage
         fire_streamed_callback(model, parsed_data)
         old_body = if response.body == "", do: [], else: response.body
 
