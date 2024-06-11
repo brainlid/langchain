@@ -319,7 +319,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
             result
         end
 
-      {:error, %Mint.TransportError{reason: :timeout}} ->
+      {:error, %Req.TransportError{reason: :timeout}} ->
         {:error, "Request timed out"}
 
       other ->
@@ -354,7 +354,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
       {:error, %LangChainError{message: reason}} ->
         {:error, reason}
 
-      {:error, %Mint.TransportError{reason: :timeout}} ->
+      {:error, %Req.TransportError{reason: :timeout}} ->
         {:error, "Request timed out"}
 
       other ->

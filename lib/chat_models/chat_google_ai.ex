@@ -288,7 +288,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
             result
         end
 
-      {:error, %Mint.TransportError{reason: :timeout}} ->
+      {:error, %Req.TransportError{reason: :timeout}} ->
         {:error, "Request timed out"}
 
       other ->
@@ -323,7 +323,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
       {:error, %LangChainError{message: reason}} ->
         {:error, reason}
 
-      {:error, %Mint.TransportError{reason: :timeout}} ->
+      {:error, %Req.TransportError{reason: :timeout}} ->
         {:error, "Request timed out"}
 
       other ->

@@ -539,10 +539,10 @@ defmodule LangChain.ChatModels.ChatOpenAI do
             result
         end
 
-      {:error, %Mint.TransportError{reason: :timeout}} ->
+      {:error, %Req.TransportError{reason: :timeout}} ->
         {:error, "Request timed out"}
 
-      {:error, %Mint.TransportError{reason: :closed}} ->
+      {:error, %Req.TransportError{reason: :closed}} ->
         # Force a retry by making a recursive call decrementing the counter
         Logger.debug(fn -> "Mint connection closed: retry count = #{inspect(retry_count)}" end)
         do_api_request(openai, messages, tools, retry_count - 1)
@@ -584,10 +584,10 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       {:error, %LangChainError{message: reason}} ->
         {:error, reason}
 
-      {:error, %Mint.TransportError{reason: :timeout}} ->
+      {:error, %Req.TransportError{reason: :timeout}} ->
         {:error, "Request timed out"}
 
-      {:error, %Mint.TransportError{reason: :closed}} ->
+      {:error, %Req.TransportError{reason: :closed}} ->
         # Force a retry by making a recursive call decrementing the counter
         Logger.debug(fn -> "Mint connection closed: retry count = #{inspect(retry_count)}" end)
         do_api_request(openai, messages, tools, retry_count - 1)
