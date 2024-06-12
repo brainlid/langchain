@@ -82,7 +82,7 @@ defmodule LangChain.ChatModels.ChatBumblebeeTest do
       expected_message = Message.new_assistant!(%{content: "Hello.", status: :complete})
 
       stream =
-        ["He", "ll", "o", ".", {:done, %{input: 38, output: 4, padding: 4058}}]
+        ["He", "ll", "o", ".", {:done, %{token_summary: %{input: 38, output: 4, padding: 4058}}}]
         |> Stream.map(& &1)
 
       [message] = ChatBumblebee.do_process_response(stream, model)
@@ -148,7 +148,7 @@ defmodule LangChain.ChatModels.ChatBumblebeeTest do
       ]
 
       stream =
-        ["He", "ll", "o", ".", {:done, %{input: 38, output: 4, padding: 4058}}]
+        ["He", "ll", "o", ".", {:done, %{token_summary: %{input: 38, output: 4, padding: 4058}}}]
         |> Stream.map(& &1)
 
       # expect the deltas to be in an outer
