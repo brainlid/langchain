@@ -28,7 +28,8 @@ defmodule LangChain.TokenUsage do
   @type t :: %TokenUsage{}
 
   @create_fields [:input, :output]
-  @required_fields [:input, :output]
+  # Anthropic returns only the output token count when streaming deltas
+  @required_fields [:output]
 
   @doc """
   Build a new TokenUsage and return an `:ok`/`:error` tuple with the result.
