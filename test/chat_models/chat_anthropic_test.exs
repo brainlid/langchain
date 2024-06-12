@@ -8,6 +8,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
   alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult
+  alias LangChain.TokenUsage
   alias LangChain.Function
   alias LangChain.FunctionParam
 
@@ -224,7 +225,12 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
   end
 
   describe "do_process_response/1" do
-    test "handles receiving a message" do
+    setup do
+      model = ChatAnthropic.new!(%{stream: false})
+      %{model: model}
+    end
+
+    test "handles receiving a message", %{model: model} do
       response = %{
         "id" => "id-123",
         "type" => "message",
@@ -234,53 +240,53 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
         "stop_reason" => "end_turn"
       }
 
-      assert %Message{} = struct = ChatAnthropic.do_process_response(response)
+      assert %Message{} = struct = ChatAnthropic.do_process_response(model, response)
       assert struct.role == :assistant
       assert struct.content == "Greetings!"
       assert is_nil(struct.index)
     end
 
-    test "handles receiving a content_block_start event" do
+    test "handles receiving a content_block_start event", %{model: model} do
       response = %{
         "type" => "content_block_start",
         "index" => 0,
         "content_block" => %{"type" => "text", "text" => ""}
       }
 
-      assert %MessageDelta{} = struct = ChatAnthropic.do_process_response(response)
+      assert %MessageDelta{} = struct = ChatAnthropic.do_process_response(model, response)
       assert struct.role == :assistant
       assert struct.content == ""
       assert is_nil(struct.index)
     end
 
-    test "handles receiving a content_block_delta event" do
+    test "handles receiving a content_block_delta event", %{model: model} do
       response = %{
         "type" => "content_block_delta",
         "index" => 0,
         "delta" => %{"type" => "text_delta", "text" => "Hello"}
       }
 
-      assert %MessageDelta{} = struct = ChatAnthropic.do_process_response(response)
+      assert %MessageDelta{} = struct = ChatAnthropic.do_process_response(model, response)
       assert struct.role == :assistant
       assert struct.content == "Hello"
       assert is_nil(struct.index)
     end
 
-    test "handles receiving a message_delta event" do
+    test "handles receiving a message_delta event", %{model: model} do
       response = %{
         "type" => "message_delta",
         "delta" => %{"stop_reason" => "end_turn", "stop_sequence" => nil},
         "usage" => %{"output_tokens" => 47}
       }
 
-      assert %MessageDelta{} = struct = ChatAnthropic.do_process_response(response)
+      assert %MessageDelta{} = struct = ChatAnthropic.do_process_response(model, response)
       assert struct.role == :assistant
       assert struct.content == ""
       assert struct.status == :complete
       assert is_nil(struct.index)
     end
 
-    test "handles receiving a tool call with no parameters" do
+    test "handles receiving a tool call with no parameters", %{model: model} do
       response = %{
         "content" => [
           %{"id" => "toolu_0123", "input" => %{}, "name" => "hello_world", "type" => "tool_use"}
@@ -294,7 +300,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
         "usage" => %{"input_tokens" => 324, "output_tokens" => 36}
       }
 
-      assert %Message{} = struct = ChatAnthropic.do_process_response(response)
+      assert %Message{} = struct = ChatAnthropic.do_process_response(model, response)
 
       assert struct.role == :assistant
       [%ToolCall{} = call] = struct.tool_calls
@@ -306,7 +312,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
       assert call.arguments == nil
     end
 
-    test "handles receiving a tool call with nested empty properties supplied" do
+    test "handles receiving a tool call with nested empty properties supplied", %{model: model} do
       response = %{
         "content" => [
           %{
@@ -322,7 +328,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
         "type" => "message"
       }
 
-      assert %Message{} = struct = ChatAnthropic.do_process_response(response)
+      assert %Message{} = struct = ChatAnthropic.do_process_response(model, response)
 
       assert struct.role == :assistant
       [%ToolCall{} = call] = struct.tool_calls
@@ -334,7 +340,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
       assert call.arguments == nil
     end
 
-    test "handles receiving text and a tool_use in same message" do
+    test "handles receiving text and a tool_use in same message", %{model: model} do
       response = %{
         "id" => "msg_01Aq9w938a90dw8q",
         "model" => @test_model,
@@ -355,7 +361,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
         ]
       }
 
-      assert %Message{} = struct = ChatAnthropic.do_process_response(response)
+      assert %Message{} = struct = ChatAnthropic.do_process_response(model, response)
 
       assert struct.role == :assistant
       assert struct.status == :complete
@@ -386,10 +392,13 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
     end
 
     @tag live_call: true, live_anthropic: true
-    test "basic streamed content example and fires ratelimit callback" do
+    test "basic streamed content example and fires ratelimit callback and token usage" do
       handlers = %{
         on_llm_ratelimit_info: fn _model, headers ->
           send(self(), {:fired_ratelimit_info, headers})
+        end,
+        on_llm_token_usage: fn _model, usage ->
+          send(self(), {:fired_token_usage, usage})
         end
       }
 
@@ -447,6 +456,9 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
                #  "retry-after" => _,
                "request-id" => _
              } = info
+
+      assert_received {:fired_token_usage, usage}
+      assert %TokenUsage{output: 8} = usage
     end
   end
 
@@ -1167,7 +1179,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
     end
 
     @tag live_call: true, live_anthropic: true
-    test "works with NON streaming response  and fires ratelimit callback" do
+    test "works with NON streaming response and fires ratelimit callback and token usage" do
       test_pid = self()
 
       handler = %{
@@ -1176,6 +1188,9 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
         end,
         on_llm_ratelimit_info: fn _model, headers ->
           send(test_pid, {:fired_ratelimit_info, headers})
+        end,
+        on_llm_token_usage: fn _model, usage ->
+          send(self(), {:fired_token_usage, usage})
         end
       }
 
@@ -1204,6 +1219,9 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
                #  "retry-after" => _,
                "request-id" => _
              } = info
+
+      assert_received {:fired_token_usage, usage}
+      assert %TokenUsage{input: 14} = usage
     end
 
     @tag live_call: true, live_anthropic: true

@@ -22,6 +22,7 @@ defmodule LangChain.ChatModels.LLMCallbacks do
   """
   alias LangChain.Message
   alias LangChain.MessageDelta
+  alias LangChain.TokenUsage
 
   @typedoc """
   Executed when an LLM is streaming a response and a new MessageDelta (or token)
@@ -70,11 +71,27 @@ defmodule LangChain.ChatModels.LLMCallbacks do
 
   A function declaration that matches the signature.
 
-      def handle_llm_ratelimit_info(_chat_model, info) do
+      def handle_llm_ratelimit_info(_chat_model, %{} = info) do
         IO.inspect(info)
       end
   """
   @type llm_ratelimit_info :: (model :: struct(), info :: %{String.t() => any()} -> any())
+
+  @typedoc """
+  Executed when an LLM response reports the token usage in a
+  `LangChain.TokenUsage` struct. The data returned depends on the LLM.
+
+  The return value is discarded.
+
+  ## Example
+
+  A function declaration that matches the signature.
+
+      def handle_llm_token_usage(_chat_model, %TokenUsage{} = usage) do
+        IO.inspect(usage)
+      end
+  """
+  @type llm_token_usage :: (model :: struct(), TokenUsage.t() -> any())
 
   @typedoc """
   The supported set of callbacks for an LLM module.
@@ -82,6 +99,7 @@ defmodule LangChain.ChatModels.LLMCallbacks do
   @type llm_callback_handler :: %{
           on_llm_new_delta: llm_new_delta(),
           on_llm_new_message: llm_new_message(),
-          on_llm_ratelimit_info: llm_ratelimit_info()
+          on_llm_ratelimit_info: llm_ratelimit_info(),
+          on_llm_token_usage: llm_token_usage()
         }
 end

@@ -128,7 +128,7 @@ defmodule LangChain.Fixtures do
   def deltas_for_tool_call(tool_name) do
     tool_name
     |> raw_deltas_for_tool_call()
-    |> Enum.flat_map(&ChatOpenAI.do_process_response(&1))
+    |> Enum.flat_map(&ChatOpenAI.do_process_response(%ChatOpenAI{}, &1))
   end
 
   @doc """
