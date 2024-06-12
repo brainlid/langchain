@@ -244,10 +244,12 @@ defmodule LangChain.ChatModels.ChatBumblebee do
 
   @doc false
   def do_process_response(
-        %{results: [%{text: content, token_summary: _token_summary}]},
+        %{results: [%{text: content, token_summary: token_summary}]},
         %ChatBumblebee{} = model
       )
       when is_binary(content) do
+    fire_token_usage_callback(model, token_summary)
+
     case Message.new(%{role: :assistant, status: :complete, content: content}) do
       {:ok, message} ->
         # execute the callback with the final message
@@ -267,7 +269,7 @@ defmodule LangChain.ChatModels.ChatBumblebee do
     # though it had not been streamed.
     full_data =
       Enum.reduce(stream, %{text: "", token_summary: nil}, fn
-        {:done, token_data}, %{text: text} ->
+        {:done, %{token_summary: token_data}}, %{text: text} ->
           %{text: text, token_summary: token_data}
 
         data, %{text: text} = acc ->
@@ -279,11 +281,8 @@ defmodule LangChain.ChatModels.ChatBumblebee do
 
   def do_process_response(stream, %ChatBumblebee{} = model) do
     chunk_processor = fn
-      {:done, %{input: token_input, output: token_output}} ->
-        Callbacks.fire(model.callbacks, :on_llm_token_usage, [
-          model,
-          TokenUsage.new!(%{input: token_input, output: token_output})
-        ])
+      {:done, %{token_summary: token_summary}} ->
+        fire_token_usage_callback(model, token_summary)
 
         final_delta = MessageDelta.new!(%{role: :assistant, status: :complete})
         Callbacks.fire(model.callbacks, :on_llm_new_delta, [model, final_delta])
@@ -314,4 +313,13 @@ defmodule LangChain.ChatModels.ChatBumblebee do
     # return a list of a list to mirror the way ChatGPT returns data
     [result]
   end
+
+  defp fire_token_usage_callback(model, %{input: input, output: output} = _token_summary) do
+    Callbacks.fire(model.callbacks, :on_llm_token_usage, [
+      model,
+      TokenUsage.new!(%{input: input, output: output})
+    ])
+  end
+
+  defp fire_token_usage_callback(_model, _token_summary), do: :ok
 end
