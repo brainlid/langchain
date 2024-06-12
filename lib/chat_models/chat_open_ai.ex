@@ -530,7 +530,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           get_token_usage(data)
         ])
 
-        case do_process_response(data) do
+        case do_process_response(openai, data) do
           {:error, reason} ->
             {:error, reason}
 
@@ -571,7 +571,9 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       receive_timeout: openai.receive_timeout
     )
     |> maybe_add_org_id_header()
-    |> Req.post(into: Utils.handle_stream_fn(openai, &decode_stream/1, &do_process_response/1))
+    |> Req.post(
+      into: Utils.handle_stream_fn(openai, &decode_stream/1, &do_process_response(openai, &1))
+    )
     |> case do
       {:ok, %Req.Response{body: data} = response} ->
         Callbacks.fire(openai.callbacks, :on_llm_ratelimit_info, [
@@ -654,27 +656,40 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
   # Parse a new message response
   @doc false
-  @spec do_process_response(data :: %{String.t() => any()} | {:error, any()}) ::
-          Message.t()
+  @spec do_process_response(
+          %{:callbacks => [map()]},
+          data :: %{String.t() => any()} | {:error, any()}
+        ) ::
+          :skip
+          | Message.t()
           | [Message.t()]
           | MessageDelta.t()
           | [MessageDelta.t()]
-          | TokenUsage.t()
           | {:error, String.t()}
-  def do_process_response(%{"choices" => [], "usage" => usage} = data) when is_map(usage) do
-    # create the TokenUsage struct
-    get_token_usage(data)
+  def do_process_response(model, %{"choices" => [], "usage" => %{} = _usage} = data) do
+    case get_token_usage(data) do
+      %TokenUsage{} = token_usage ->
+        Callbacks.fire(model.callbacks, :on_llm_token_usage, [model, token_usage])
+        :ok
+
+      nil ->
+        :ok
+    end
+
+    # this stand-alone TokenUsage message is skipped and not returned
+    :skip
   end
 
-  def do_process_response(%{"choices" => choices} = _data) when is_list(choices) do
+  def do_process_response(model, %{"choices" => choices} = _data) when is_list(choices) do
     # process each response individually. Return a list of all processed choices
     for choice <- choices do
-      do_process_response(choice)
+      do_process_response(model, choice)
     end
   end
 
   # Full message with tool call
   def do_process_response(
+        model,
         %{"finish_reason" => "tool_calls", "message" => %{"tool_calls" => calls} = message} = data
       ) do
     case Message.new(%{
@@ -682,7 +697,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
            "content" => message["content"],
            "complete" => true,
            "index" => data["index"],
-           "tool_calls" => Enum.map(calls, &do_process_response/1)
+           "tool_calls" => Enum.map(calls, &do_process_response(model, &1))
          }) do
       {:ok, message} ->
         message
@@ -694,6 +709,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
   # Delta message tool call
   def do_process_response(
+        model,
         %{"delta" => delta_body, "finish_reason" => finish, "index" => index} = _msg
       ) do
     status = finish_reason_to_status(finish)
@@ -701,7 +717,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     tool_calls =
       case delta_body do
         %{"tool_calls" => tools_data} when is_list(tools_data) ->
-          Enum.map(tools_data, &do_process_response(&1))
+          Enum.map(tools_data, &do_process_response(model, &1))
 
         _other ->
           nil
@@ -733,7 +749,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   end
 
   # Tool call as part of a delta message
-  def do_process_response(%{"function" => func_body, "index" => index} = tool_call) do
+  def do_process_response(_model, %{"function" => func_body, "index" => index} = tool_call) do
     # function parts may or may not be present on any given delta chunk
     case ToolCall.new(%{
            status: :incomplete,
@@ -754,7 +770,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   end
 
   # Tool call from a complete message
-  def do_process_response(%{
+  def do_process_response(_model, %{
         "function" => %{
           "arguments" => args,
           "name" => name
@@ -780,7 +796,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     end
   end
 
-  def do_process_response(%{
+  def do_process_response(_model, %{
         "finish_reason" => finish_reason,
         "message" => message,
         "index" => index
@@ -796,18 +812,18 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     end
   end
 
-  def do_process_response(%{"error" => %{"message" => reason}}) do
+  def do_process_response(_model, %{"error" => %{"message" => reason}}) do
     Logger.error("Received error from API: #{inspect(reason)}")
     {:error, reason}
   end
 
-  def do_process_response({:error, %Jason.DecodeError{} = response}) do
+  def do_process_response(_model, {:error, %Jason.DecodeError{} = response}) do
     error_message = "Received invalid JSON: #{inspect(response)}"
     Logger.error(error_message)
     {:error, error_message}
   end
 
-  def do_process_response(other) do
+  def do_process_response(_model, other) do
     Logger.error("Trying to process an unexpected response. #{inspect(other)}")
     {:error, "Unexpected response"}
   end
@@ -862,5 +878,5 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     })
   end
 
-  defp get_token_usage(_response_body), do: %{}
+  defp get_token_usage(_response_body), do: nil
 end

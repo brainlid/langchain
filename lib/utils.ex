@@ -114,10 +114,6 @@ defmodule LangChain.Utils do
     Callbacks.fire(model.callbacks, :on_llm_new_delta, [model, delta])
   end
 
-  def fire_streamed_callback(model, %TokenUsage{} = usage) do
-    Callbacks.fire(model.callbacks, :on_llm_token_usage, [model, usage])
-  end
-
   @doc """
   Creates and returns an anonymous function to handle the streaming response
   from an API.
@@ -155,7 +151,10 @@ defmodule LangChain.Utils do
           decode_stream_fn.({raw_data, buffered})
 
         # transform what was fully received into structs
-        parsed_data = Enum.map(parsed_data, transform_data_fn)
+        parsed_data =
+          parsed_data
+          |> Enum.map(transform_data_fn)
+          |> Enum.reject(&(&1 == :skip))
 
         # execute the callback function for each MessageDelta and an optional
         # TokenUsage
