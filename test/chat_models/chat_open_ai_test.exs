@@ -6,6 +6,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
   alias LangChain.ChatModels.ChatOpenAI
   alias LangChain.Function
   alias LangChain.FunctionParam
+  alias LangChain.TokenUsage
   alias LangChain.Message
   alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
@@ -121,6 +122,18 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert data.temperature == 1
       assert data.frequency_penalty == 0.5
       assert data.max_tokens == 1234
+    end
+
+    test "generates a map for an API call with stream_options set correctly" do
+      {:ok, openai} =
+        ChatOpenAI.new(%{
+          model: @test_model,
+          stream_options: %{include_usage: true}
+        })
+
+      data = ChatOpenAI.for_api(openai, [], [])
+      assert data.model == @test_model
+      assert data.stream_options == %{"include_usage" => true}
     end
   end
 
@@ -460,11 +473,15 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       handlers = %{
         on_llm_ratelimit_info: fn _model, headers ->
           send(self(), {:fired_ratelimit_info, headers})
+        end,
+        on_llm_token_usage: fn _model, usage ->
+          send(self(), {:fired_token_usage, usage})
         end
       }
 
       # https://js.langchain.com/docs/modules/models/chat/
-      {:ok, chat} = ChatOpenAI.new(%{temperature: 1, seed: 0, callbacks: [handlers]})
+      {:ok, chat} =
+        ChatOpenAI.new(%{temperature: 1, seed: 0, stream: false, callbacks: [handlers]})
 
       {:ok, [%Message{role: :assistant, content: response}]} =
         ChatOpenAI.call(chat, [
@@ -484,6 +501,9 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
                "x-ratelimit-reset-tokens" => _,
                "x-request-id" => _
              } = info
+
+      assert_received {:fired_token_usage, usage}
+      assert %TokenUsage{} = usage
     end
 
     @tag live_call: true, live_open_ai: true
@@ -560,6 +580,93 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
                "x-ratelimit-reset-tokens" => _,
                "x-request-id" => _
              } = info
+    end
+
+    @tag live_call: true, live_open_ai: true
+    test "basic streamed content fires token usage callback" do
+      # set_fake_llm_response({:ok, Message.new_assistant("\n\nRainbow Sox Co.")})
+
+      handlers = %{
+        on_llm_token_usage: fn _model, usage ->
+          send(self(), {:fired_token_usage, usage})
+        end
+      }
+
+      # https://js.langchain.com/docs/modules/models/chat/
+      {:ok, chat} =
+        ChatOpenAI.new(%{
+          temperature: 1,
+          seed: 0,
+          stream: true,
+          stream_options: %{include_usage: true},
+          callbacks: [handlers]
+        })
+
+      # %{
+      #   "choices" => [],
+      #   "created" => 1717878896,
+      #   "id" => "chatcmpl-9Xx444vHYqsCHl0JpLHBzXDIzcfP0",
+      #   "model" => "gpt-3.5-turbo-0125",
+      #   "object" => "chat.completion.chunk",
+      #   "system_fingerprint" => nil,
+      #   "usage" => %{
+      #     "completion_tokens" => 3,
+      #     "prompt_tokens" => 15,
+      #     "total_tokens" => 18
+      #   }
+      # }
+
+      {:ok, result} =
+        ChatOpenAI.call(chat, [
+          Message.new_user!("Return the response 'Colorful Threads'.")
+        ])
+
+      # returns a list of MessageDeltas. A list of a list because it's "n" choices.
+      assert result == [
+               [
+                 %LangChain.MessageDelta{
+                   content: "",
+                   status: :incomplete,
+                   index: 0,
+                   role: :assistant
+                 }
+               ],
+               [
+                 %LangChain.MessageDelta{
+                   content: "Color",
+                   status: :incomplete,
+                   index: 0,
+                   role: :unknown
+                 }
+               ],
+               [
+                 %LangChain.MessageDelta{
+                   content: "ful",
+                   status: :incomplete,
+                   index: 0,
+                   role: :unknown
+                 }
+               ],
+               [
+                 %LangChain.MessageDelta{
+                   content: " Threads",
+                   status: :incomplete,
+                   index: 0,
+                   role: :unknown
+                 }
+               ],
+               [
+                 %LangChain.MessageDelta{
+                   content: nil,
+                   status: :complete,
+                   index: 0,
+                   role: :unknown
+                 }
+               ]
+             ]
+
+      assert_received {:fired_token_usage, usage}
+      assert %TokenUsage{input: 15, output: 3} = usage
     end
 
     @tag live_call: true, live_open_ai: true
@@ -695,21 +802,26 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     end
   end
 
-  describe "do_process_response/1" do
-    test "handles receiving a message" do
+  describe "do_process_response/2" do
+    setup do
+      model = ChatOpenAI.new(%{"model" => @test_model})
+      %{model: model}
+    end
+
+    test "handles receiving a message", %{model: model} do
       response = %{
         "message" => %{"role" => "assistant", "content" => "Greetings!"},
         "finish_reason" => "stop",
         "index" => 1
       }
 
-      assert %Message{} = struct = ChatOpenAI.do_process_response(response)
+      assert %Message{} = struct = ChatOpenAI.do_process_response(model, response)
       assert struct.role == :assistant
       assert struct.content == "Greetings!"
       assert struct.index == 1
     end
 
-    test "handles receiving a single tool_calls message" do
+    test "handles receiving a single tool_calls message", %{model: model} do
       response = %{
         "finish_reason" => "tool_calls",
         "index" => 0,
@@ -730,7 +842,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
         }
       }
 
-      assert %Message{} = struct = ChatOpenAI.do_process_response(response)
+      assert %Message{} = struct = ChatOpenAI.do_process_response(model, response)
 
       assert struct.role == :assistant
 
@@ -742,7 +854,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert struct.index == 0
     end
 
-    test "handles receiving multiple tool_calls messages" do
+    test "handles receiving multiple tool_calls messages", %{model: model} do
       response = %{
         "finish_reason" => "tool_calls",
         "index" => 0,
@@ -779,7 +891,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
         }
       }
 
-      assert %Message{} = struct = ChatOpenAI.do_process_response(response)
+      assert %Message{} = struct = ChatOpenAI.do_process_response(model, response)
 
       assert struct.role == :assistant
 
@@ -808,7 +920,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
              ]
     end
 
-    test "handles receiving multiple tool_calls and one has invalid JSON" do
+    test "handles receiving multiple tool_calls and one has invalid JSON", %{model: model} do
       response = %{
         "finish_reason" => "tool_calls",
         "index" => 0,
@@ -837,11 +949,11 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
         }
       }
 
-      assert {:error, reason} = ChatOpenAI.do_process_response(response)
+      assert {:error, reason} = ChatOpenAI.do_process_response(model, response)
       assert reason == "tool_calls: arguments: invalid json"
     end
 
-    test "handles a single tool_call from list" do
+    test "handles a single tool_call from list", %{model: model} do
       call = %{
         "function" => %{
           "arguments" => "{\"city\": \"Moab\", \"state\": \"UT\"}",
@@ -851,7 +963,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
         "type" => "function"
       }
 
-      assert %ToolCall{} = call = ChatOpenAI.do_process_response(call)
+      assert %ToolCall{} = call = ChatOpenAI.do_process_response(model, call)
       assert call.type == :function
       assert call.status == :complete
       assert call.call_id == "call_4L8NfePhSW8PdoHUWkvhzguu"
@@ -859,7 +971,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert call.arguments == %{"city" => "Moab", "state" => "UT"}
     end
 
-    test "handles receiving a tool_call with invalid JSON" do
+    test "handles receiving a tool_call with invalid JSON", %{model: model} do
       call = %{
         "function" => %{
           "arguments" => "{\"invalid\"}",
@@ -869,14 +981,17 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
         "type" => "function"
       }
 
-      assert {:error, message} = ChatOpenAI.do_process_response(call)
+      assert {:error, message} = ChatOpenAI.do_process_response(model, call)
 
       assert message == "arguments: invalid json"
     end
 
-    test "handles streamed deltas for multiple tool calls" do
+    test "handles streamed deltas for multiple tool calls", %{model: model} do
       deltas =
-        Enum.map(get_streamed_deltas_multiple_tool_calls(), &ChatOpenAI.do_process_response(&1))
+        Enum.map(
+          get_streamed_deltas_multiple_tool_calls(),
+          &ChatOpenAI.do_process_response(model, &1)
+        )
 
       combined =
         deltas
@@ -919,7 +1034,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert combined == expected
     end
 
-    test "handles error from server that the max length has been reached" do
+    test "handles error from server that the max length has been reached", %{model: model} do
       response = %{
         "finish_reason" => "length",
         "index" => 0,
@@ -929,7 +1044,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
         }
       }
 
-      assert %Message{} = struct = ChatOpenAI.do_process_response(response)
+      assert %Message{} = struct = ChatOpenAI.do_process_response(model, response)
 
       assert struct.role == :assistant
       assert struct.content == "Some of the response that was abruptly"
@@ -937,7 +1052,9 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert struct.status == :length
     end
 
-    test "handles receiving a delta message for a content message at different parts" do
+    test "handles receiving a delta message for a content message at different parts", %{
+      model: model
+    } do
       delta_content = LangChain.Fixtures.raw_deltas_for_content()
 
       msg_1 = Enum.at(delta_content, 0)
@@ -951,7 +1068,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
         status: :incomplete
       }
 
-      [%MessageDelta{} = delta_1] = ChatOpenAI.do_process_response(msg_1)
+      [%MessageDelta{} = delta_1] = ChatOpenAI.do_process_response(model, msg_1)
       assert delta_1 == expected_1
 
       expected_2 = %MessageDelta{
@@ -961,7 +1078,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
         status: :incomplete
       }
 
-      [%MessageDelta{} = delta_2] = ChatOpenAI.do_process_response(msg_2)
+      [%MessageDelta{} = delta_2] = ChatOpenAI.do_process_response(model, msg_2)
       assert delta_2 == expected_2
 
       expected_10 = %MessageDelta{
@@ -971,23 +1088,21 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
         status: :complete
       }
 
-      [%MessageDelta{} = delta_10] = ChatOpenAI.do_process_response(msg_10)
+      [%MessageDelta{} = delta_10] = ChatOpenAI.do_process_response(model, msg_10)
       assert delta_10 == expected_10
     end
 
-    test "handles json parse error from server" do
+    test "handles json parse error from server", %{model: model} do
       {:error, "Received invalid JSON: " <> _} =
-        Jason.decode("invalid json")
-        |> ChatOpenAI.do_process_response()
+        ChatOpenAI.do_process_response(model, Jason.decode("invalid json"))
     end
 
-    test "handles unexpected response" do
+    test "handles unexpected response", %{model: model} do
       {:error, "Unexpected response"} =
-        "unexpected"
-        |> ChatOpenAI.do_process_response()
+        ChatOpenAI.do_process_response(model, "unexpected")
     end
 
-    test "return multiple responses when given multiple choices" do
+    test "return multiple responses when given multiple choices", %{model: model} do
       # received multiple responses because multiples were requested.
       response = %{
         "choices" => [
@@ -1004,7 +1119,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
         ]
       }
 
-      [msg1, msg2] = ChatOpenAI.do_process_response(response)
+      [msg1, msg2] = ChatOpenAI.do_process_response(model, response)
       assert %Message{role: :assistant, index: 0} = msg1
       assert %Message{role: :assistant, index: 1} = msg2
       assert msg1.content == "Greetings!"
@@ -1193,10 +1308,15 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
   end
 
   describe "do_process_response - MessageDeltas" do
-    test "parses basic text delta" do
+    setup do
+      model = ChatOpenAI.new(%{"model" => @test_model})
+      %{model: model}
+    end
+
+    test "parses basic text delta", %{model: model} do
       [d1, d2, d3, d4] = get_streamed_deltas_basic_text()
 
-      [delta1] = ChatOpenAI.do_process_response(d1)
+      [delta1] = ChatOpenAI.do_process_response(model, d1)
 
       assert %MessageDelta{
                role: :assistant,
@@ -1205,7 +1325,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
                index: 0
              } = delta1
 
-      [delta2] = ChatOpenAI.do_process_response(d2)
+      [delta2] = ChatOpenAI.do_process_response(model, d2)
 
       assert %MessageDelta{
                role: :unknown,
@@ -1214,7 +1334,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
                index: 0
              } = delta2
 
-      [delta3] = ChatOpenAI.do_process_response(d3)
+      [delta3] = ChatOpenAI.do_process_response(model, d3)
 
       assert %MessageDelta{
                role: :unknown,
@@ -1223,7 +1343,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
                index: 0
              } = delta3
 
-      [delta4] = ChatOpenAI.do_process_response(d4)
+      [delta4] = ChatOpenAI.do_process_response(model, d4)
 
       assert %MessageDelta{
                role: :unknown,
@@ -1233,7 +1353,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
              } = delta4
     end
 
-    test "parses initial tool call delta message correctly" do
+    test "parses initial tool call delta message correctly", %{model: model} do
       raw_delta = %{
         "delta" => %{
           "content" => nil,
@@ -1251,7 +1371,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
         "index" => 0
       }
 
-      %MessageDelta{} = delta = ChatOpenAI.do_process_response(raw_delta)
+      %MessageDelta{} = delta = ChatOpenAI.do_process_response(model, raw_delta)
       assert delta.content == nil
       assert delta.role == :assistant
       assert [%ToolCall{} = call] = delta.tool_calls
@@ -1261,7 +1381,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert call.arguments == nil
     end
 
-    test "parses individual tool_calls in a delta message" do
+    test "parses individual tool_calls in a delta message", %{model: model} do
       # chunk 1
       tool_call_response = %{
         "function" => %{"arguments" => "", "name" => "get_weather"},
@@ -1270,7 +1390,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
         "type" => "function"
       }
 
-      assert %ToolCall{} = call = ChatOpenAI.do_process_response(tool_call_response)
+      assert %ToolCall{} = call = ChatOpenAI.do_process_response(model, tool_call_response)
       assert call.status == :incomplete
       assert call.type == :function
       assert call.name == "get_weather"
@@ -1283,7 +1403,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
         "index" => 0
       }
 
-      assert %ToolCall{} = call = ChatOpenAI.do_process_response(tool_call_response)
+      assert %ToolCall{} = call = ChatOpenAI.do_process_response(model, tool_call_response)
       assert call.status == :incomplete
       assert call.type == :function
       assert call.name == nil
@@ -1291,19 +1411,19 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert call.index == 0
     end
 
-    test "parses a MessageDelta with tool_calls" do
+    test "parses a MessageDelta with tool_calls", %{model: model} do
       response = get_streamed_deltas_multiple_tool_calls()
       [d1, d2, d3 | _rest] = response
       last = List.last(response)
 
-      assert [%MessageDelta{} = delta1] = ChatOpenAI.do_process_response(d1)
+      assert [%MessageDelta{} = delta1] = ChatOpenAI.do_process_response(model, d1)
       assert delta1.role == :assistant
       assert delta1.status == :incomplete
       assert delta1.content == nil
       assert delta1.index == 0
       assert delta1.tool_calls == nil
 
-      assert [%MessageDelta{} = delta2] = ChatOpenAI.do_process_response(d2)
+      assert [%MessageDelta{} = delta2] = ChatOpenAI.do_process_response(model, d2)
       assert delta2.role == :unknown
       assert delta2.status == :incomplete
       assert delta2.content == nil
@@ -1321,7 +1441,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
       assert [expected_call] == delta2.tool_calls
 
-      assert [%MessageDelta{} = delta3] = ChatOpenAI.do_process_response(d3)
+      assert [%MessageDelta{} = delta3] = ChatOpenAI.do_process_response(model, d3)
       assert delta3.role == :unknown
       assert delta3.status == :incomplete
       assert delta3.content == nil
@@ -1339,7 +1459,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
       assert [expected_call] == delta3.tool_calls
 
-      assert [%MessageDelta{} = delta4] = ChatOpenAI.do_process_response(last)
+      assert [%MessageDelta{} = delta4] = ChatOpenAI.do_process_response(model, last)
       assert delta4.role == :unknown
       assert delta4.status == :complete
       assert delta4.content == nil

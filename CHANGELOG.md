@@ -13,6 +13,7 @@
 * `LangChain.MessageProcessors.JsonProcessor` is capable of extracting JSON contents and converting it to an Elixir map using `Jason`. Parsing errors are returned to the LLM for it to try again.
 * The attribute `processed_content` was added to a `LangChain.Message`. When a MessageProcessor is run on a received assistant message, the results of the processing are accumulated there. The original `content` remains unchanged for when it is sent back to the LLM and used when fixing or correcting it's generated content.
 * Callback support for LLM ratelimit information returned in API response headers. These are currently implemented for Anthropic and OpenAI.
+* Callback support for LLM token usage information returned when available.
 
 **Changed:**
 

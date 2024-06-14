@@ -102,10 +102,13 @@ defmodule LangChain.ChatModels.ChatBumblebee do
   alias __MODULE__
   alias LangChain.ChatModels.ChatModel
   alias LangChain.Message
+  alias LangChain.Function
+  alias LangChain.TokenUsage
   alias LangChain.LangChainError
   alias LangChain.Utils
   alias LangChain.MessageDelta
   alias LangChain.Utils.ChatTemplates
+  alias LangChain.Callbacks
 
   @behaviour ChatModel
 
@@ -131,6 +134,9 @@ defmodule LangChain.ChatModels.ChatBumblebee do
     # Seed for randomizing behavior or giving more deterministic output. Helpful
     # for testing.
     field :seed, :integer, default: nil
+
+    # A list of maps for callback handlers
+    field :callbacks, {:array, :map}, default: []
   end
 
   @type t :: %ChatBumblebee{}
@@ -146,7 +152,8 @@ defmodule LangChain.ChatModels.ChatBumblebee do
     # :temperature,
     :seed,
     :template_format,
-    :stream
+    :stream,
+    :callbacks
   ]
   @required_fields [:serving]
 
@@ -181,27 +188,27 @@ defmodule LangChain.ChatModels.ChatBumblebee do
   end
 
   @impl ChatModel
-  def call(model, prompt, functions \\ [], callback_fn \\ nil)
+  def call(model, prompt, functions \\ [])
 
-  def call(%ChatBumblebee{} = model, prompt, functions, callback_fn) when is_binary(prompt) do
+  def call(%ChatBumblebee{} = model, prompt, functions) when is_binary(prompt) do
     messages = [
       Message.new_system!(),
       Message.new_user!(prompt)
     ]
 
-    call(model, messages, functions, callback_fn)
+    call(model, messages, functions)
   end
 
-  def call(%ChatBumblebee{} = model, messages, functions, callback_fn)
+  def call(%ChatBumblebee{} = model, messages, functions)
       when is_list(messages) do
     if override_api_return?() do
       Logger.warning("Found override API response. Will not make live API call.")
 
+      # fire callback for fake responses too
       case get_api_override() do
-        {:ok, {:ok, data} = response} ->
-          # fire callback for fake responses too
-          Utils.fire_callback(model, data, callback_fn)
-          response
+        {:ok, {:ok, data, callback_name}} ->
+          Callbacks.fire(model.callbacks, callback_name, [model, data])
+          {:ok, data}
 
         _other ->
           raise LangChainError,
@@ -210,7 +217,7 @@ defmodule LangChain.ChatModels.ChatBumblebee do
     else
       try do
         # make base api request and perform high-level success/failure checks
-        case do_serving_request(model, messages, functions, callback_fn) do
+        case do_serving_request(model, messages, functions) do
           {:error, reason} ->
             {:error, reason}
 
@@ -225,27 +232,28 @@ defmodule LangChain.ChatModels.ChatBumblebee do
   end
 
   @doc false
-  @spec do_serving_request(t(), [Message.t()], [Function.t()], callback_fn()) ::
+  @spec do_serving_request(t(), [Message.t()], [Function.t()]) ::
           list() | struct() | {:error, String.t()}
-  def do_serving_request(%ChatBumblebee{} = model, messages, _functions, callback_fn) do
+  def do_serving_request(%ChatBumblebee{} = model, messages, _functions) do
     prompt = ChatTemplates.apply_chat_template!(messages, model.template_format)
 
     model.serving
     |> Nx.Serving.batched_run(%{text: prompt, seed: model.seed})
-    |> do_process_response(model, callback_fn)
+    |> do_process_response(model)
   end
 
   @doc false
   def do_process_response(
-        %{results: [%{text: content, token_summary: _token_summary}]},
-        %ChatBumblebee{} = model,
-        callback_fn
+        %{results: [%{text: content, token_summary: token_summary}]},
+        %ChatBumblebee{} = model
       )
       when is_binary(content) do
+    fire_token_usage_callback(model, token_summary)
+
     case Message.new(%{role: :assistant, status: :complete, content: content}) do
       {:ok, message} ->
         # execute the callback with the final message
-        Utils.fire_callback(model, [message], callback_fn)
+        Callbacks.fire(model.callbacks, :on_llm_new_message, [model, message])
         # return a list of the complete message. As a list for compatibility.
         [message]
 
@@ -256,32 +264,34 @@ defmodule LangChain.ChatModels.ChatBumblebee do
     end
   end
 
-  def do_process_response(stream, %ChatBumblebee{stream: false} = model, callback_fn) do
+  def do_process_response(stream, %ChatBumblebee{stream: false} = model) do
     # Request is to NOT stream. Consume the full stream and format the data as
     # though it had not been streamed.
     full_data =
       Enum.reduce(stream, %{text: "", token_summary: nil}, fn
-        {:done, token_data}, %{text: text} ->
+        {:done, %{token_summary: token_data}}, %{text: text} ->
           %{text: text, token_summary: token_data}
 
         data, %{text: text} = acc ->
           Map.put(acc, :text, text <> data)
       end)
 
-    do_process_response(%{results: [full_data]}, model, callback_fn)
+    do_process_response(%{results: [full_data]}, model)
   end
 
-  def do_process_response(stream, %ChatBumblebee{} = model, callback_fn) do
+  def do_process_response(stream, %ChatBumblebee{} = model) do
     chunk_processor = fn
-      {:done, _token_data} ->
+      {:done, %{token_summary: token_summary}} ->
+        fire_token_usage_callback(model, token_summary)
+
         final_delta = MessageDelta.new!(%{role: :assistant, status: :complete})
-        Utils.fire_callback(model, [final_delta], callback_fn)
+        Callbacks.fire(model.callbacks, :on_llm_new_delta, [model, final_delta])
         final_delta
 
       content when is_binary(content) ->
         case MessageDelta.new(%{content: content, role: :assistant, status: :incomplete}) do
           {:ok, delta} ->
-            Utils.fire_callback(model, [delta], callback_fn)
+            Callbacks.fire(model.callbacks, :on_llm_new_delta, [model, delta])
             delta
 
           {:error, changeset} ->
@@ -303,4 +313,13 @@ defmodule LangChain.ChatModels.ChatBumblebee do
     # return a list of a list to mirror the way ChatGPT returns data
     [result]
   end
+
+  defp fire_token_usage_callback(model, %{input: input, output: output} = _token_summary) do
+    Callbacks.fire(model.callbacks, :on_llm_token_usage, [
+      model,
+      TokenUsage.new!(%{input: input, output: output})
+    ])
+  end
+
+  defp fire_token_usage_callback(_model, _token_summary), do: :ok
 end
