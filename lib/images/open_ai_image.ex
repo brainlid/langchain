@@ -181,16 +181,14 @@ defmodule LangChain.Images.OpenAIImage do
   `LangChain.Images.GeneratedImage` structs.
   """
   @spec call(t()) :: {:ok, [GeneratedImage.t()]} | {:error, String.t()}
-  def call(openai, callback_fn \\ nil)
+  def call(openai)
 
-  def call(%OpenAIImage{} = openai, callback_fn) do
+  def call(%OpenAIImage{} = openai) do
     if override_api_return?() do
       Logger.warning("Found override API response. Will not make live API call.")
 
       case get_api_override() do
         {:ok, {:ok, data} = response} ->
-          # fire callback for fake responses too
-          Utils.fire_callback(openai, data, callback_fn)
           response
 
         # fake error response
@@ -204,7 +202,7 @@ defmodule LangChain.Images.OpenAIImage do
     else
       try do
         # make base api request and perform high-level success/failure checks
-        case do_api_request(openai, callback_fn) do
+        case do_api_request(openai) do
           {:error, reason} ->
             {:error, reason}
 
@@ -226,11 +224,8 @@ defmodule LangChain.Images.OpenAIImage do
   # - `{:error, reason}` - Where reason is a string explanation of what went
   #   wrong.
   #
-  # If a callback_fn is provided, it will fire with each
 
-  # Executes the callback function passing the response parsed to the data
-  # structures. Retries the request up to 3 times on transient errors with a
-  # brief delay
+  # Retries the request up to 3 times on transient errors with a brief delay
   @doc false
   @spec do_api_request(t(), retry_count :: integer()) :: {:ok, list()} | {:error, String.t()}
   def do_api_request(openai, retry_count \\ 3)
