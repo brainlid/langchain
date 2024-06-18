@@ -252,7 +252,9 @@ defmodule ChatModels.ChatGoogleAITest do
         ]
       }
 
-      assert [%MessageDelta{} = struct] = ChatGoogleAI.do_process_response(model, response, MessageDelta)
+      assert [%MessageDelta{} = struct] =
+               ChatGoogleAI.do_process_response(model, response, MessageDelta)
+
       assert struct.role == :assistant
       assert struct.content == "This is the first part of a mes"
       assert struct.index == 0

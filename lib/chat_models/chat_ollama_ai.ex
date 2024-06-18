@@ -340,7 +340,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
         Utils.handle_stream_fn(
           ollama_ai,
           &ChatOpenAI.decode_stream/1,
-          &(do_process_response(ollama_ai, &1))
+          &do_process_response(ollama_ai, &1)
         )
     )
     |> case do

@@ -1,8 +1,8 @@
 defmodule LangChain.CallbacksTest do
   use LangChain.BaseCase
 
-	doctest LangChain.Callbacks
-	alias LangChain.Callbacks
+  doctest LangChain.Callbacks
+  alias LangChain.Callbacks
   alias LangChain.LangChainError
 
   describe "fire/3" do
@@ -50,5 +50,4 @@ defmodule LangChain.CallbacksTest do
                    end
     end
   end
-
 end
