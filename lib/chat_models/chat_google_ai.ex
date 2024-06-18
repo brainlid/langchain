@@ -18,8 +18,11 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   alias LangChain.Message.ToolResult
   alias LangChain.LangChainError
   alias LangChain.Utils
+  alias LangChain.Callbacks
 
   @behaviour ChatModel
+
+  @current_config_version 1
 
   @default_base_url "https://generativelanguage.googleapis.com"
   @default_api_version "v1beta"
@@ -33,7 +36,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     field :endpoint, :string, default: @default_endpoint
 
     # The version of the API to use.
-    field :version, :string, default: @default_api_version
+    field :api_version, :string, default: @default_api_version
     field :model, :string, default: "gemini-pro"
     field :api_key, :string
 
@@ -65,24 +68,28 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     field :receive_timeout, :integer, default: @receive_timeout
 
     field :stream, :boolean, default: false
+
+    # A list of maps for callback handlers
+    field :callbacks, {:array, :map}, default: []
   end
 
   @type t :: %ChatGoogleAI{}
 
   @create_fields [
     :endpoint,
-    :version,
+    :api_version,
     :model,
     :api_key,
     :temperature,
     :top_p,
     :top_k,
     :receive_timeout,
-    :stream
+    :stream,
+    :callbacks
   ]
   @required_fields [
     :endpoint,
-    :version,
+    :api_version,
     :model
   ]
 
@@ -234,21 +241,21 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   `LangChain.Message` once fully complete.
   """
   @impl ChatModel
-  def call(openai, prompt, tools \\ [], callback_fn \\ nil)
+  def call(openai, prompt, tools \\ [])
 
-  def call(%ChatGoogleAI{} = google_ai, prompt, tools, callback_fn) when is_binary(prompt) do
+  def call(%ChatGoogleAI{} = google_ai, prompt, tools) when is_binary(prompt) do
     messages = [
       Message.new_system!(),
       Message.new_user!(prompt)
     ]
 
-    call(google_ai, messages, tools, callback_fn)
+    call(google_ai, messages, tools)
   end
 
-  def call(%ChatGoogleAI{} = google_ai, messages, tools, callback_fn)
+  def call(%ChatGoogleAI{} = google_ai, messages, tools)
       when is_list(messages) do
     try do
-      case do_api_request(google_ai, messages, tools, callback_fn) do
+      case do_api_request(google_ai, messages, tools) do
         {:error, reason} ->
           {:error, reason}
 
@@ -262,9 +269,9 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   end
 
   @doc false
-  @spec do_api_request(t(), [Message.t()], [Function.t()], (any() -> any())) ::
+  @spec do_api_request(t(), [Message.t()], [Function.t()]) ::
           list() | struct() | {:error, String.t()}
-  def do_api_request(%ChatGoogleAI{stream: false} = google_ai, messages, tools, callback_fn) do
+  def do_api_request(%ChatGoogleAI{stream: false} = google_ai, messages, tools) do
     req =
       Req.new(
         url: build_url(google_ai),
@@ -279,12 +286,12 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     |> Req.post()
     |> case do
       {:ok, %Req.Response{body: data}} ->
-        case do_process_response(data) do
+        case do_process_response(google_ai, data) do
           {:error, reason} ->
             {:error, reason}
 
           result ->
-            Utils.fire_callback(google_ai, result, callback_fn)
+            Callbacks.fire(google_ai.callbacks, :on_llm_new_message, [google_ai, result])
             result
         end
 
@@ -297,7 +304,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     end
   end
 
-  def do_api_request(%ChatGoogleAI{stream: true} = google_ai, messages, tools, callback_fn) do
+  def do_api_request(%ChatGoogleAI{stream: true} = google_ai, messages, tools) do
     Req.new(
       url: build_url(google_ai),
       json: for_api(google_ai, messages, tools),
@@ -309,8 +316,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
         Utils.handle_stream_fn(
           google_ai,
           &ChatOpenAI.decode_stream/1,
-          &do_process_response(&1, MessageDelta),
-          callback_fn
+          &do_process_response(google_ai, &1, MessageDelta)
         )
     )
     |> case do
@@ -336,8 +342,10 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   end
 
   @spec build_url(t()) :: String.t()
-  defp build_url(%ChatGoogleAI{endpoint: endpoint, version: version, model: model} = google_ai) do
-    "#{endpoint}/#{version}/models/#{model}:#{get_action(google_ai)}?key=#{get_api_key(google_ai)}"
+  defp build_url(
+         %ChatGoogleAI{endpoint: endpoint, api_version: api_version, model: model} = google_ai
+       ) do
+    "#{endpoint}/#{api_version}/models/#{model}:#{get_action(google_ai)}?key=#{get_api_key(google_ai)}"
     |> use_sse(google_ai)
   end
 
@@ -353,14 +361,19 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     update_in(data, [Access.at(-1), Access.at(-1)], &%{&1 | status: :complete})
   end
 
-  def do_process_response(response, message_type \\ Message)
+  def do_process_response(model, response, message_type \\ Message)
 
-  def do_process_response(%{"candidates" => candidates}, message_type) when is_list(candidates) do
+  def do_process_response(model, %{"candidates" => candidates}, message_type)
+      when is_list(candidates) do
     candidates
-    |> Enum.map(&do_process_response(&1, message_type))
+    |> Enum.map(&do_process_response(model, &1, message_type))
   end
 
-  def do_process_response(%{"content" => %{"parts" => parts} = content_data} = data, Message) do
+  def do_process_response(
+        model,
+        %{"content" => %{"parts" => parts} = content_data} = data,
+        Message
+      ) do
     text_part =
       parts
       |> filter_parts_for_types(["text"])
@@ -372,14 +385,14 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
       parts
       |> filter_parts_for_types(["functionCall"])
       |> Enum.map(fn part ->
-        do_process_response(part, nil)
+        do_process_response(model, part, nil)
       end)
 
     tool_result_from_parts =
       parts
       |> filter_parts_for_types(["functionResponse"])
       |> Enum.map(fn part ->
-        do_process_response(part, nil)
+        do_process_response(model, part, nil)
       end)
 
     %{
@@ -400,7 +413,11 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     end
   end
 
-  def do_process_response(%{"content" => %{"parts" => parts} = content_data} = data, MessageDelta) do
+  def do_process_response(
+        model,
+        %{"content" => %{"parts" => parts} = content_data} = data,
+        MessageDelta
+      ) do
     text_content =
       case parts do
         [%{"text" => text}] ->
@@ -420,7 +437,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
       parts
       |> filter_parts_for_types(["functionCall"])
       |> Enum.map(fn part ->
-        do_process_response(part, nil)
+        do_process_response(model, part, nil)
       end)
 
     %{
@@ -440,7 +457,11 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     end
   end
 
-  def do_process_response(%{"functionCall" => %{"args" => raw_args, "name" => name}} = data, _) do
+  def do_process_response(
+        _model,
+        %{"functionCall" => %{"args" => raw_args, "name" => name}} = data,
+        _
+      ) do
     %{
       call_id: "call-#{name}",
       name: name,
@@ -459,6 +480,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   end
 
   def do_process_response(
+        _model,
         %{
           "finishReason" => finish,
           "content" => %{"parts" => parts, "role" => role},
@@ -502,18 +524,18 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     end
   end
 
-  def do_process_response(%{"error" => %{"message" => reason}}, _) do
+  def do_process_response(_model, %{"error" => %{"message" => reason}}, _) do
     Logger.error("Received error from API: #{inspect(reason)}")
     {:error, reason}
   end
 
-  def do_process_response({:error, %Jason.DecodeError{} = response}, _) do
+  def do_process_response(_model, {:error, %Jason.DecodeError{} = response}, _) do
     error_message = "Received invalid JSON: #{inspect(response)}"
     Logger.error(error_message)
     {:error, error_message}
   end
 
-  def do_process_response(other, _) do
+  def do_process_response(_model, other, _) do
     Logger.error("Trying to process an unexpected response. #{inspect(other)}")
     {:error, "Unexpected response"}
   end
@@ -554,4 +576,34 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   defp unmap_role("model"), do: "assistant"
   defp unmap_role("function"), do: "tool"
   defp unmap_role(role), do: role
+
+  @doc """
+  Generate a config map that can later restore the model's configuration.
+  """
+  @impl ChatModel
+  @spec serialize_config(t()) :: %{String.t() => any()}
+  def serialize_config(%ChatGoogleAI{} = model) do
+    Utils.to_serializable_map(
+      model,
+      [
+        :endpoint,
+        :model,
+        :api_version,
+        :temperature,
+        :top_p,
+        :top_k,
+        :receive_timeout,
+        :stream
+      ],
+      @current_config_version
+    )
+  end
+
+  @doc """
+  Restores the model from the config.
+  """
+  @impl ChatModel
+  def restore_from_map(%{"version" => 1} = data) do
+    ChatGoogleAI.new(data)
+  end
 end

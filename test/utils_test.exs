@@ -2,6 +2,7 @@ defmodule LangChain.UtilsTest do
   use ExUnit.Case
 
   doctest LangChain.Utils
+  alias LangChain.ChatModels.ChatOpenAI
   alias LangChain.Utils
 
   defmodule FakeSchema do
@@ -114,6 +115,57 @@ defmodule LangChain.UtilsTest do
         |> Utils.put_in_list(2, "c")
 
       assert result == ["a", "b", "c"]
+    end
+  end
+
+  describe "to_serializable_map/3" do
+    test "converts a chat model to a string keyed map with a version included" do
+      model =
+        ChatOpenAI.new!(%{
+          model: "gpt-4o",
+          temperature: 0,
+          frequency_penalty: 0.5,
+          seed: 123,
+          max_tokens: 1234,
+          stream_options: %{include_usage: true}
+        })
+
+      result =
+        Utils.to_serializable_map(model, [
+          :model,
+          :temperature,
+          :frequency_penalty,
+          :seed,
+          :max_tokens,
+          :stream_options
+        ])
+
+      assert result == %{
+               "model" => "gpt-4o",
+               "temperature" => 0.0,
+               "frequency_penalty" => 0.5,
+               "seed" => 123,
+               "max_tokens" => 1234,
+               "stream_options" => %{"include_usage" => true},
+               "version" => 1,
+               "module" => "Elixir.LangChain.ChatModels.ChatOpenAI"
+             }
+    end
+  end
+
+  describe "module_from_name/1" do
+    test "returns :ok tuple with module when valid" do
+      assert {:ok, DateTime} = Utils.module_from_name("Elixir.DateTime")
+    end
+
+    test "returns error when not a module" do
+      assert {:error, reason} = Utils.module_from_name("not a module")
+      assert reason == "Not an Elixir module: \"not a module\""
+    end
+
+    test "returns error when not an existing atom" do
+      assert {:error, reason} = Utils.module_from_name("Elixir.Missing.Module")
+      assert reason == "ChatModel module \"Elixir.Missing.Module\" not found"
     end
   end
 end

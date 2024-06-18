@@ -1290,4 +1290,39 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
     #   assert false
     # end
   end
+
+  describe "serialize_config/2" do
+    test "does not include the API key or callbacks" do
+      model = ChatAnthropic.new!(%{model: "claude-3-haiku-20240307"})
+      result = ChatAnthropic.serialize_config(model)
+      assert result["version"] == 1
+      refute Map.has_key?(result, "api_key")
+      refute Map.has_key?(result, "callbacks")
+    end
+
+    test "creates expected map" do
+      model =
+        ChatAnthropic.new!(%{
+          model: "claude-3-haiku-20240307",
+          temperature: 0,
+          max_tokens: 1234
+        })
+
+      result = ChatAnthropic.serialize_config(model)
+
+      assert result == %{
+               "endpoint" => "https://api.anthropic.com/v1/messages",
+               "model" => "claude-3-haiku-20240307",
+               "max_tokens" => 1234,
+               "receive_timeout" => 60000,
+               "stream" => false,
+               "temperature" => 0.0,
+               "api_version" => "2023-06-01",
+               "top_k" => nil,
+               "top_p" => nil,
+               "module" => "Elixir.LangChain.ChatModels.ChatAnthropic",
+               "version" => 1
+             }
+    end
+  end
 end
