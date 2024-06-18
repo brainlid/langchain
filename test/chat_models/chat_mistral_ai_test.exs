@@ -5,6 +5,11 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
   alias LangChain.Message
   alias LangChain.MessageDelta
 
+  setup do
+    model = ChatMistralAI.new!(%{"model" => "mistral-tiny"})
+    %{model: model}
+  end
+
   describe "new/1" do
     test "works with minimal attr" do
       assert {:ok, %ChatMistralAI{} = mistral_ai} =
@@ -85,7 +90,7 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
   end
 
   describe "do_process_response/2" do
-    test "handles receiving a message" do
+    test "handles receiving a message", %{model: model} do
       response = %{
         "choices" => [
           %{
@@ -99,14 +104,14 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
         ]
       }
 
-      assert [%Message{} = struct] = ChatMistralAI.do_process_response(response)
+      assert [%Message{} = struct] = ChatMistralAI.do_process_response(model, response)
       assert struct.role == :assistant
       assert struct.content == "Hello User!"
       assert struct.index == 0
       assert struct.status == :complete
     end
 
-    test "errors with invalid role" do
+    test "errors with invalid role", %{model: model} do
       response = %{
         "choices" => [
           %{
@@ -120,10 +125,10 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
         ]
       }
 
-      assert [{:error, "role: is invalid"}] = ChatMistralAI.do_process_response(response)
+      assert [{:error, "role: is invalid"}] = ChatMistralAI.do_process_response(model, response)
     end
 
-    test "handles receiving MessageDeltas as well" do
+    test "handles receiving MessageDeltas as well", %{model: model} do
       response = %{
         "choices" => [
           %{
@@ -137,7 +142,7 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
         ]
       }
 
-      assert [%MessageDelta{} = struct] = ChatMistralAI.do_process_response(response)
+      assert [%MessageDelta{} = struct] = ChatMistralAI.do_process_response(model, response)
 
       assert struct.role == :assistant
       assert struct.content == "This is the first part of a mes"
@@ -145,7 +150,7 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
       assert struct.status == :incomplete
     end
 
-    test "handles API error messages" do
+    test "handles API error messages", %{model: model} do
       response = %{
         "error" => %{
           "code" => 400,
@@ -154,20 +159,58 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
         }
       }
 
-      assert {:error, error_string} = ChatMistralAI.do_process_response(response)
+      assert {:error, error_string} = ChatMistralAI.do_process_response(model, response)
       assert error_string == "Invalid request"
     end
 
-    test "handles Jason.DecodeError" do
+    test "handles Jason.DecodeError", %{model: model} do
       response = {:error, %Jason.DecodeError{}}
 
-      assert {:error, error_string} = ChatMistralAI.do_process_response(response)
+      assert {:error, error_string} = ChatMistralAI.do_process_response(model, response)
       assert "Received invalid JSON:" <> _ = error_string
     end
 
-    test "handles unexpected response with error" do
+    test "handles unexpected response with error", %{model: model} do
       response = %{}
-      assert {:error, "Unexpected response"} = ChatMistralAI.do_process_response(response)
+      assert {:error, "Unexpected response"} = ChatMistralAI.do_process_response(model, response)
+    end
+  end
+
+  describe "serialize_config/2" do
+    test "does not include the API key or callbacks" do
+      model = ChatMistralAI.new!(%{model: "mistral-tiny"})
+      result = ChatMistralAI.serialize_config(model)
+      assert result["version"] == 1
+      refute Map.has_key?(result, "api_key")
+      refute Map.has_key?(result, "callbacks")
+    end
+
+    test "creates expected map" do
+      model =
+        ChatMistralAI.new!(%{
+          model: "mistral-tiny",
+          temperature: 1.0,
+          top_p: 1.0,
+          max_tokens: 100,
+          safe_prompt: true,
+          random_seed: 42
+        })
+
+      result = ChatMistralAI.serialize_config(model)
+
+      assert result == %{
+               "endpoint" => "https://api.mistral.ai/v1/chat/completions",
+               "model" => "mistral-tiny",
+               "max_tokens" => 100,
+               "module" => "Elixir.Langchain.ChatModels.ChatMistralAI",
+               "receive_timeout" => 60000,
+               "stream" => false,
+               "temperature" => 1.0,
+               "random_seed" => 42,
+               "safe_prompt" => true,
+               "top_p" => 1.0,
+               "version" => 1
+             }
     end
   end
 end

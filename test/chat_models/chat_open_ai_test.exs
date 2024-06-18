@@ -1813,4 +1813,44 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       }
     ]
   end
+
+  describe "serialize_config/2" do
+    test "does not include the API key or callbacks" do
+      model = ChatOpenAI.new!(%{model: "gpt-4o"})
+      result = ChatOpenAI.serialize_config(model)
+      assert result["version"] == 1
+      refute Map.has_key?(result, "api_key")
+      refute Map.has_key?(result, "callbacks")
+    end
+
+    test "creates expected map" do
+      model =
+        ChatOpenAI.new!(%{
+          model: "gpt-4o",
+          temperature: 0,
+          frequency_penalty: 0.5,
+          seed: 123,
+          max_tokens: 1234,
+          stream_options: %{include_usage: true}
+        })
+
+      result = ChatOpenAI.serialize_config(model)
+
+      assert result == %{
+               "endpoint" => "https://api.openai.com/v1/chat/completions",
+               "frequency_penalty" => 0.5,
+               "json_response" => false,
+               "max_tokens" => 1234,
+               "model" => "gpt-4o",
+               "n" => 1,
+               "receive_timeout" => 60000,
+               "seed" => 123,
+               "stream" => false,
+               "stream_options" => %{"include_usage" => true},
+               "temperature" => 0.0,
+               "version" => 1,
+               "module" => "Elixir.LangChain.ChatModels.ChatOpenAI"
+             }
+    end
+  end
 end

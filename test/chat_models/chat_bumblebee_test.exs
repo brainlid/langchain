@@ -49,7 +49,7 @@ defmodule LangChain.ChatModels.ChatBumblebeeTest do
         end,
         on_llm_token_usage: fn _model, usage ->
           send(self(), {:callback_usage, usage})
-        end,
+        end
       }
 
       %{handler: handler}
@@ -172,6 +172,51 @@ defmodule LangChain.ChatModels.ChatBumblebeeTest do
 
       assert_received {:callback_usage, usage}
       assert %TokenUsage{input: 38, output: 4} = usage
+    end
+  end
+
+  describe "serialize_config/2" do
+    test "does not include the API key or callbacks" do
+      model = ChatBumblebee.new!(%{serving: Fake})
+      result = ChatBumblebee.serialize_config(model)
+      assert result["version"] == 1
+      refute Map.has_key?(result, "callbacks")
+    end
+
+    test "creates expected map" do
+      model =
+        ChatBumblebee.new!(%{
+          serving: Fake,
+          seed: 123,
+          template_format: :llama_3
+        })
+
+      result = ChatBumblebee.serialize_config(model)
+
+      assert result == %{
+               "module" => "Elixir.LangChain.ChatModels.ChatBumblebee",
+               "seed" => 123,
+               "stream" => true,
+               "version" => 1,
+               "serving" => "Elixir.Fake",
+               "template_format" => "llama_3"
+             }
+    end
+  end
+
+  describe "restore_from_map/1" do
+    test "restores from a serialized map" do
+      model =
+        ChatBumblebee.new!(%{
+          serving: Fake,
+          seed: 123,
+          template_format: :llama_3
+        })
+
+      serialized = ChatBumblebee.serialize_config(model)
+
+      {:ok, restored} = ChatBumblebee.restore_from_map(serialized)
+      assert restored == model
     end
   end
 end

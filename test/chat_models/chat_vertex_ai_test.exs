@@ -321,4 +321,37 @@ defmodule ChatModels.ChatVertexAITest do
              ]
     end
   end
+
+  describe "serialize_config/2" do
+    test "does not include the API key or callbacks" do
+      model = ChatVertexAI.new!(%{model: "gemini-pro", endpoint: "http://localhost:1234/"})
+      result = ChatVertexAI.serialize_config(model)
+      assert result["version"] == 1
+      refute Map.has_key?(result, "api_key")
+      refute Map.has_key?(result, "callbacks")
+    end
+
+    test "creates expected map" do
+      model =
+        ChatVertexAI.new!(%{
+          model: "gemini-pro",
+          endpoint: "http://localhost:1234/"
+        })
+
+      result = ChatVertexAI.serialize_config(model)
+
+      assert result == %{
+               "endpoint" => "http://localhost:1234/",
+               "model" => "gemini-pro",
+               "module" => "Elixir.LangChain.ChatModels.ChatVertexAI",
+               "receive_timeout" => 60000,
+               "stream" => false,
+               "temperature" => 0.9,
+               "top_k" => 1.0,
+               "top_p" => 1.0,
+               "version" => 1,
+               "json_response" => false
+             }
+    end
+  end
 end

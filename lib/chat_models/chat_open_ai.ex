@@ -87,6 +87,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
   @behaviour ChatModel
 
+  @current_config_version 1
+
   # NOTE: As of gpt-4 and gpt-3.5, only one function_call is issued at a time
   # even when multiple requests could be issued based on the prompt.
 
@@ -879,4 +881,37 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   end
 
   defp get_token_usage(_response_body), do: nil
+
+  @doc """
+  Generate a config map that can later restore the model's configuration.
+  """
+  @impl ChatModel
+  @spec serialize_config(t()) :: %{String.t() => any()}
+  def serialize_config(%ChatOpenAI{} = model) do
+    Utils.to_serializable_map(
+      model,
+      [
+        :endpoint,
+        :model,
+        :temperature,
+        :frequency_penalty,
+        :receive_timeout,
+        :seed,
+        :n,
+        :json_response,
+        :stream,
+        :max_tokens,
+        :stream_options
+      ],
+      @current_config_version
+    )
+  end
+
+  @doc """
+  Restores the model from the config.
+  """
+  @impl ChatModel
+  def restore_from_map(%{"version" => 1} = data) do
+    ChatOpenAI.new(data)
+  end
 end

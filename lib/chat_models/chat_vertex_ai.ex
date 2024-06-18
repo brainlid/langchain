@@ -22,6 +22,8 @@ defmodule LangChain.ChatModels.ChatVertexAI do
 
   @behaviour ChatModel
 
+  @current_config_version 1
+
   # allow up to 2 minutes for response.
   @receive_timeout 60_000
 
@@ -585,4 +587,34 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   defp unmap_role("model"), do: "assistant"
   defp unmap_role("function"), do: "tool"
   defp unmap_role(role), do: role
+
+  @doc """
+  Generate a config map that can later restore the model's configuration.
+  """
+  @impl ChatModel
+  @spec serialize_config(t()) :: %{String.t() => any()}
+  def serialize_config(%ChatVertexAI{} = model) do
+    Utils.to_serializable_map(
+      model,
+      [
+        :endpoint,
+        :model,
+        :temperature,
+        :top_p,
+        :top_k,
+        :receive_timeout,
+        :json_response,
+        :stream
+      ],
+      @current_config_version
+    )
+  end
+
+  @doc """
+  Restores the model from the config.
+  """
+  @impl ChatModel
+  def restore_from_map(%{"version" => 1} = data) do
+    ChatVertexAI.new(data)
+  end
 end
