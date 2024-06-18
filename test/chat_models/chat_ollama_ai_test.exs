@@ -4,6 +4,12 @@ defmodule ChatModels.ChatOllamaAITest do
   doctest LangChain.ChatModels.ChatOllamaAI
   alias LangChain.ChatModels.ChatOllamaAI
 
+  setup do
+    model = ChatOllamaAI.new!(%{"model" => "llama2:latest"})
+
+    %{model: model}
+  end
+
   describe "new/1" do
     test "works with minimal attributes" do
       assert {:ok, %ChatOllamaAI{} = ollama_ai} = ChatOllamaAI.new(%{"model" => "llama2:latest"})
@@ -187,7 +193,7 @@ defmodule ChatModels.ChatOllamaAITest do
   end
 
   describe "do_process_response/1" do
-    test "handles receiving a non streamed message result" do
+    test "handles receiving a non streamed message result", %{model: model} do
       response = %{
         "model" => "llama2",
         "created_at" => "2024-01-15T23:02:24.087444Z",
@@ -204,13 +210,13 @@ defmodule ChatModels.ChatOllamaAITest do
         "eval_duration" => 5_336_241_000
       }
 
-      assert %Message{} = struct = ChatOllamaAI.do_process_response(response)
+      assert %Message{} = struct = ChatOllamaAI.do_process_response(model, response)
       assert struct.role == :assistant
       assert struct.content == "Greetings!"
       assert struct.index == nil
     end
 
-    test "handles receiving a streamed message result" do
+    test "handles receiving a streamed message result", %{model: model} do
       response = %{
         "model" => "llama2",
         "created_at" => "2024-01-15T23:02:24.087444Z",
@@ -221,10 +227,58 @@ defmodule ChatModels.ChatOllamaAITest do
         "done" => false
       }
 
-      assert %MessageDelta{} = struct = ChatOllamaAI.do_process_response(response)
+      assert %MessageDelta{} = struct = ChatOllamaAI.do_process_response(model, response)
       assert struct.role == :assistant
       assert struct.content == "Gre"
       assert struct.status == :incomplete
+    end
+  end
+
+  describe "serialize_config/2" do
+    test "does not include the API key or callbacks" do
+      model = ChatOllamaAI.new!(%{model: "llama2"})
+      result = ChatOllamaAI.serialize_config(model)
+      assert result["version"] == 1
+      refute Map.has_key?(result, "callbacks")
+    end
+
+    test "creates expected map" do
+      model =
+        ChatOllamaAI.new!(%{
+          model: "llama2",
+          temperature: 0,
+          frequency_penalty: 0.5,
+          seed: 123,
+          num_gpu: 2,
+          stream: true
+        })
+
+      result = ChatOllamaAI.serialize_config(model)
+
+      assert result == %{
+               "endpoint" => "http://localhost:11434/api/chat",
+               "mirostat" => 0,
+               "mirostat_eta" => 0.1,
+               "mirostat_tau" => 5.0,
+               "model" => "llama2",
+               "module" => "Elixir.LangChain.ChatModels.ChatOllamaAI",
+               "num_ctx" => 2048,
+               "num_gpu" => 2,
+               "num_gqa" => nil,
+               "num_predict" => 128,
+               "num_thread" => nil,
+               "receive_timeout" => 300_000,
+               "repeat_last_n" => 64,
+               "repeat_penalty" => 1.1,
+               "seed" => 123,
+               "stop" => nil,
+               "stream" => true,
+               "temperature" => 0.0,
+               "tfs_z" => 1.0,
+               "top_k" => 40,
+               "top_p" => 0.9,
+               "version" => 1
+             }
     end
   end
 end

@@ -43,6 +43,8 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
 
   @behaviour ChatModel
 
+  @current_config_version 1
+
   @type t :: %ChatOllamaAI{}
 
   @create_fields [
@@ -146,6 +148,9 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
     # Works together with top-k. A higher value (e.g., 0.95) will lead to more diverse text,
     # while a lower value (e.g., 0.5) will generate more focused and conservative text. (Default: 0.9)
     field :top_p, :float, default: 0.9
+
+    # A list of maps for callback handlers
+    field :callbacks, {:array, :map}, default: []
   end
 
   @doc """
@@ -227,21 +232,21 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   """
 
   @impl ChatModel
-  def call(ollama_ai, prompt, functions \\ [], callback_fn \\ nil)
+  def call(ollama_ai, prompt, functions \\ [])
 
-  def call(%ChatOllamaAI{} = ollama_ai, prompt, functions, callback_fn) when is_binary(prompt) do
+  def call(%ChatOllamaAI{} = ollama_ai, prompt, functions) when is_binary(prompt) do
     messages = [
       Message.new_system!(),
       Message.new_user!(prompt)
     ]
 
-    call(ollama_ai, messages, functions, callback_fn)
+    call(ollama_ai, messages, functions)
   end
 
-  def call(%ChatOllamaAI{} = ollama_ai, messages, functions, callback_fn)
+  def call(%ChatOllamaAI{} = ollama_ai, messages, functions)
       when is_list(messages) do
     try do
-      case do_api_request(ollama_ai, messages, functions, callback_fn) do
+      case do_api_request(ollama_ai, messages, functions) do
         {:error, reason} ->
           {:error, reason}
 
@@ -269,11 +274,11 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   #
   # Retries the request up to 3 times on transient errors with a 1 second delay
   @doc false
-  @spec do_api_request(t(), [Message.t()], [Function.t()], (any() -> any())) ::
+  @spec do_api_request(t(), [Message.t()], [Function.t()]) ::
           list() | struct() | {:error, String.t()}
-  def do_api_request(ollama_ai, messages, functions, callback_fn, retry_count \\ 3)
+  def do_api_request(ollama_ai, messages, functions, retry_count \\ 3)
 
-  def do_api_request(_ollama_ai, _messages, _functions, _callback_fn, 0) do
+  def do_api_request(_ollama_ai, _messages, _functions, 0) do
     raise LangChainError, "Retries exceeded. Connection failed."
   end
 
@@ -281,7 +286,6 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
         %ChatOllamaAI{stream: false} = ollama_ai,
         messages,
         functions,
-        callback_fn,
         retry_count
       ) do
     req =
@@ -298,7 +302,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
     |> Req.post()
     |> case do
       {:ok, %Req.Response{body: data}} ->
-        case do_process_response(data) do
+        case do_process_response(ollama_ai, data) do
           {:error, reason} ->
             {:error, reason}
 
@@ -312,7 +316,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
       {:error, %Req.TransportError{reason: :closed}} ->
         # Force a retry by making a recursive call decrementing the counter
         Logger.debug(fn -> "Mint connection closed: retry count = #{inspect(retry_count)}" end)
-        do_api_request(ollama_ai, messages, functions, callback_fn, retry_count - 1)
+        do_api_request(ollama_ai, messages, functions, retry_count - 1)
 
       other ->
         Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
@@ -324,7 +328,6 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
         %ChatOllamaAI{stream: true} = ollama_ai,
         messages,
         functions,
-        callback_fn,
         retry_count
       ) do
     Req.new(
@@ -337,8 +340,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
         Utils.handle_stream_fn(
           ollama_ai,
           &ChatOpenAI.decode_stream/1,
-          &do_process_response/1,
-          callback_fn
+          &(do_process_response(ollama_ai, &1))
         )
     )
     |> case do
@@ -354,7 +356,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
       {:error, %Req.TransportError{reason: :closed}} ->
         # Force a retry by making a recursive call decrementing the counter
         Logger.debug(fn -> "Mint connection closed: retry count = #{inspect(retry_count)}" end)
-        do_api_request(ollama_ai, messages, functions, callback_fn, retry_count - 1)
+        do_api_request(ollama_ai, messages, functions, retry_count - 1)
 
       other ->
         Logger.error(
@@ -365,15 +367,15 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
     end
   end
 
-  def do_process_response(%{"message" => message, "done" => true}) do
+  def do_process_response(_model, %{"message" => message, "done" => true}) do
     create_message(message, :complete, Message)
   end
 
-  def do_process_response(%{"message" => message, "done" => _other}) do
+  def do_process_response(_model, %{"message" => message, "done" => _other}) do
     create_message(message, :incomplete, MessageDelta)
   end
 
-  def do_process_response(%{"error" => reason}) do
+  def do_process_response(_model, %{"error" => reason}) do
     Logger.error("Received error from API: #{inspect(reason)}")
     {:error, reason}
   end
@@ -386,5 +388,47 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
       {:error, changeset} ->
         {:error, Utils.changeset_error_to_string(changeset)}
     end
+  end
+
+  @doc """
+  Generate a config map that can later restore the model's configuration.
+  """
+  @impl ChatModel
+  @spec serialize_config(t()) :: %{String.t() => any()}
+  def serialize_config(%ChatOllamaAI{} = model) do
+    Utils.to_serializable_map(
+      model,
+      [
+        :endpoint,
+        :model,
+        :mirostat,
+        :mirostat_eta,
+        :mirostat_tau,
+        :num_ctx,
+        :num_gqa,
+        :num_gpu,
+        :num_predict,
+        :num_thread,
+        :receive_timeout,
+        :repeat_last_n,
+        :repeat_penalty,
+        :seed,
+        :stop,
+        :stream,
+        :temperature,
+        :tfs_z,
+        :top_k,
+        :top_p
+      ],
+      @current_config_version
+    )
+  end
+
+  @doc """
+  Restores the model from the config.
+  """
+  @impl ChatModel
+  def restore_from_map(%{"version" => 1} = data) do
+    ChatOllamaAI.new(data)
   end
 end
