@@ -12,8 +12,11 @@ defmodule Langchain.ChatModels.ChatMistralAI do
   alias LangChain.MessageDelta
   alias LangChain.LangChainError
   alias LangChain.Utils
+  alias LangChain.Callbacks
 
   @behaviour ChatModel
+
+  @current_config_version 1
   @receive_timeout 60_000
 
   @default_endpoint "https://api.mistral.ai/v1/chat/completions"
@@ -51,6 +54,9 @@ defmodule Langchain.ChatModels.ChatMistralAI do
     field :random_seed, :integer
 
     field :stream, :boolean, default: false
+
+    # A list of maps for callback handlers
+    field :callbacks, {:array, :map}, default: []
   end
 
   @type t :: %ChatMistralAI{}
@@ -65,7 +71,8 @@ defmodule Langchain.ChatModels.ChatMistralAI do
     :max_tokens,
     :safe_prompt,
     :random_seed,
-    :stream
+    :stream,
+    :callbacks
   ]
   @required_fields [
     :model
@@ -127,25 +134,25 @@ defmodule Langchain.ChatModels.ChatMistralAI do
   end
 
   @impl ChatModel
-  def call(mistral, prompt, functions \\ [], callback_fn \\ nil)
+  def call(mistral, prompt, functions \\ [])
 
-  def call(%ChatMistralAI{} = mistral, prompt, functions, callback_fn) when is_binary(prompt) do
+  def call(%ChatMistralAI{} = mistral, prompt, functions) when is_binary(prompt) do
     messages = [
       Message.new_system!(),
       Message.new_user!(prompt)
     ]
 
-    call(mistral, messages, functions, callback_fn)
+    call(mistral, messages, functions)
   end
 
-  def call(%ChatMistralAI{} = mistral, messages, functions, callback_fn) when is_list(messages) do
+  def call(%ChatMistralAI{} = mistral, messages, functions) when is_list(messages) do
     if override_api_return?() do
       Logger.warning("Found override API response. Will not make live API call.")
 
       case get_api_override() do
-        {:ok, {:ok, data} = response} ->
+        {:ok, {:ok, data, callback_name} = response} ->
           # fire callback for fake responses too
-          Utils.fire_callback(mistral, data, callback_fn)
+          Callbacks.fire(mistral.callbacks, callback_name, [mistral, data])
           response
 
         # fake error response
@@ -159,7 +166,7 @@ defmodule Langchain.ChatModels.ChatMistralAI do
     else
       try do
         # make base api request and perform high-level success/failure checks
-        case do_api_request(mistral, messages, functions, callback_fn) do
+        case do_api_request(mistral, messages, functions) do
           {:error, reason} ->
             {:error, reason}
 
@@ -173,11 +180,11 @@ defmodule Langchain.ChatModels.ChatMistralAI do
     end
   end
 
-  @spec do_api_request(t(), [Message.t()], [Function.t()], (any() -> any())) ::
+  @spec do_api_request(t(), [Message.t()], [Function.t()], integer()) ::
           list() | struct() | {:error, String.t()}
-  def do_api_request(mistral, messages, functions, callback_fn, retry_count \\ 3)
+  def do_api_request(mistral, messages, functions, retry_count \\ 3)
 
-  def do_api_request(_mistral, _messages, _functions, _callback_fn, 0) do
+  def do_api_request(_mistral, _messages, _functions, 0) do
     raise LangChainError, "Retries exceeded. Connection failed."
   end
 
@@ -185,7 +192,6 @@ defmodule Langchain.ChatModels.ChatMistralAI do
         %ChatMistralAI{stream: false} = mistral,
         messages,
         functions,
-        callback_fn,
         retry_count
       ) do
     req =
@@ -204,12 +210,12 @@ defmodule Langchain.ChatModels.ChatMistralAI do
     # parse the body and return it as parsed structs
     |> case do
       {:ok, %Req.Response{body: data}} ->
-        case do_process_response(data) do
+        case do_process_response(mistral, data) do
           {:error, reason} ->
             {:error, reason}
 
           result ->
-            Utils.fire_callback(mistral, result, callback_fn)
+            Callbacks.fire(mistral.callbacks, :on_llm_new_message, [mistral, result])
             result
         end
 
@@ -219,7 +225,7 @@ defmodule Langchain.ChatModels.ChatMistralAI do
       {:error, %Req.TransportError{reason: :closed}} ->
         # Force a retry by making a recursive call decrementing the counter
         Logger.debug(fn -> "Mint connection closed: retry count = #{inspect(retry_count)}" end)
-        do_api_request(mistral, messages, functions, callback_fn, retry_count - 1)
+        do_api_request(mistral, messages, functions, retry_count - 1)
 
       other ->
         Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
@@ -231,7 +237,6 @@ defmodule Langchain.ChatModels.ChatMistralAI do
         %ChatMistralAI{stream: true} = mistral,
         messages,
         functions,
-        callback_fn,
         retry_count
       ) do
     Req.new(
@@ -245,8 +250,7 @@ defmodule Langchain.ChatModels.ChatMistralAI do
         Utils.handle_stream_fn(
           mistral,
           &ChatOpenAI.decode_stream/1,
-          &do_process_response/1,
-          callback_fn
+          &do_process_response(mistral, &1)
         )
     )
     |> case do
@@ -262,7 +266,7 @@ defmodule Langchain.ChatModels.ChatMistralAI do
       {:error, %Req.TransportError{reason: :closed}} ->
         # Force a retry by making a recursive call decrementing the counter
         Logger.debug(fn -> "Mint connection closed: retry count = #{inspect(retry_count)}" end)
-        do_api_request(mistral, messages, functions, callback_fn, retry_count - 1)
+        do_api_request(mistral, messages, functions, retry_count - 1)
 
       other ->
         Logger.error(
@@ -275,20 +279,21 @@ defmodule Langchain.ChatModels.ChatMistralAI do
 
   # Parse a new message response
   @doc false
-  @spec do_process_response(data :: %{String.t() => any()} | {:error, any()}) ::
+  @spec do_process_response(t(), data :: %{String.t() => any()} | {:error, any()}) ::
           Message.t()
           | [Message.t()]
           | MessageDelta.t()
           | [MessageDelta.t()]
           | {:error, String.t()}
-  def do_process_response(%{"choices" => choices}) when is_list(choices) do
+  def do_process_response(model, %{"choices" => choices}) when is_list(choices) do
     # process each response individually. Return a list of all processed choices
     for choice <- choices do
-      do_process_response(choice)
+      do_process_response(model, choice)
     end
   end
 
   def do_process_response(
+        _model,
         %{"delta" => delta_body, "finish_reason" => finish, "index" => index} = _msg
       ) do
     status =
@@ -334,7 +339,7 @@ defmodule Langchain.ChatModels.ChatMistralAI do
     end
   end
 
-  def do_process_response(%{
+  def do_process_response(_model, %{
         "finish_reason" => finish_reason,
         "message" => message,
         "index" => index
@@ -364,19 +369,50 @@ defmodule Langchain.ChatModels.ChatMistralAI do
     end
   end
 
-  def do_process_response(%{"error" => %{"message" => reason}}) do
+  def do_process_response(_model, %{"error" => %{"message" => reason}}) do
     Logger.error("Received error from API: #{inspect(reason)}")
     {:error, reason}
   end
 
-  def do_process_response({:error, %Jason.DecodeError{} = response}) do
+  def do_process_response(_model, {:error, %Jason.DecodeError{} = response}) do
     error_message = "Received invalid JSON: #{inspect(response)}"
     Logger.error(error_message)
     {:error, error_message}
   end
 
-  def do_process_response(other) do
+  def do_process_response(_model, other) do
     Logger.error("Trying to process an unexpected response. #{inspect(other)}")
     {:error, "Unexpected response"}
+  end
+
+  @doc """
+  Generate a config map that can later restore the model's configuration.
+  """
+  @impl ChatModel
+  @spec serialize_config(t()) :: %{String.t() => any()}
+  def serialize_config(%ChatMistralAI{} = model) do
+    Utils.to_serializable_map(
+      model,
+      [
+        :endpoint,
+        :model,
+        :temperature,
+        :top_p,
+        :receive_timeout,
+        :max_tokens,
+        :safe_prompt,
+        :random_seed,
+        :stream
+      ],
+      @current_config_version
+    )
+  end
+
+  @doc """
+  Restores the model from the config.
+  """
+  @impl ChatModel
+  def restore_from_map(%{"version" => 1} = data) do
+    ChatMistralAI.new(data)
   end
 end
