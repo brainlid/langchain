@@ -188,7 +188,7 @@ defmodule LangChain.Images.OpenAIImage do
       Logger.warning("Found override API response. Will not make live API call.")
 
       case get_api_override() do
-        {:ok, {:ok, _data} = response} ->
+        {:ok, {:ok, _data, _callback_name} = response} ->
           response
 
         # fake error response
