@@ -135,6 +135,30 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert data.model == @test_model
       assert data.stream_options == %{"include_usage" => true}
     end
+
+    test "generated a map for an API call with tool_choice set correctly to auto" do
+      {:ok, openai} =
+        ChatOpenAI.new(%{
+          model: @test_model,
+          tool_choice: %{"type" => "auto"}
+        })
+
+      data = ChatOpenAI.for_api(openai, [], [])
+      assert data.model == @test_model
+      assert data.tool_choice == "auto"
+    end
+
+    test "generated a map for an API call with tool_choice set correctly to a specific function" do
+      {:ok, openai} =
+        ChatOpenAI.new(%{
+          model: @test_model,
+          tool_choice: %{"type" => "function", "function" => %{"name" => "set_weather"}}
+        })
+
+      data = ChatOpenAI.for_api(openai, [], [])
+      assert data.model == @test_model
+      assert data.tool_choice == %{"type" => "function", "function" => %{"name" => "set_weather"}}
+    end
   end
 
   describe "for_api/1" do

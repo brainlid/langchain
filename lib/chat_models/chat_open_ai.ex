@@ -71,6 +71,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   import Ecto.Changeset
   import LangChain.Utils.ApiOverride
   alias __MODULE__
+  alias __MODULE__.ToolChoice
+  alias __MODULE__.ToolChoice.Function
   alias LangChain.Config
   alias LangChain.ChatModels.ChatModel
   alias LangChain.Message
@@ -132,6 +134,9 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     # streaming.
     field :stream_options, :map, default: nil
 
+    # Tool choice option
+    embeds_one :tool_choice, ToolChoice
+
     # A list of maps for callback handlers
     field :callbacks, {:array, :map}, default: []
 
@@ -139,6 +144,53 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     # application.
     # https://platform.openai.com/docs/guides/safety-best-practices/end-user-ids
     field :user, :string
+  end
+
+  defmodule ToolChoice do
+    use Ecto.Schema
+
+    defmodule Function do
+      use Ecto.Schema
+      @primary_key false
+      embedded_schema do
+        field :name, :string
+      end
+
+      @doc """
+      Setup a ChatOpenAI Function with name
+      """
+      @spec changeset(%Function{}, map()) :: Ecto.Changeset.t()
+      def changeset(%Function{}=function, %{}=attrs) do
+        function
+        |> cast(attrs, [:name])
+        |> validate_required([:name])
+      end
+
+    end
+
+    @primary_key false
+    embedded_schema do
+      field :type, Ecto.Enum, values: [:function, :required, :none, :auto]
+      embeds_one :function, Function
+    end
+
+    @doc """
+    Setup a ChatOpenAI ToolChoice configuration
+    """
+    @spec changeset(%ToolChoice{}, map()) :: Ecto.Changeset.t()
+    def changeset(%ToolChoice{}=tool_choice, %{}=attrs) do
+      tool_choice
+      |> cast(attrs, [:type])
+      |> validate_required([:type])
+      |> validate_type()
+    end
+
+    defp validate_type(changeset) do
+      case get_change(changeset, :type) do
+        :function -> cast_embed(changeset, :function, required: true, with: &Function.changeset/2)
+        _ -> changeset
+      end
+    end
   end
 
   @type t :: %ChatOpenAI{}
@@ -180,6 +232,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     %ChatOpenAI{}
     |> cast(attrs, @create_fields)
     |> common_validation()
+    |> cast_embed(:tool_choice, required: false, with: &ToolChoice.changeset/2)
     |> apply_action(:insert)
   end
 
@@ -242,6 +295,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       get_stream_options_for_api(openai.stream_options)
     )
     |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(tools))
+    |> Utils.conditionally_add_to_map(:tool_choice, set_tool_choice(openai))
   end
 
   defp get_tools_for_api(nil), do: []
@@ -264,6 +318,14 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
   defp set_response_format(%ChatOpenAI{json_response: false}),
     do: %{"type" => "text"}
+
+  defp set_tool_choice(%ChatOpenAI{tool_choice: %{type: type, function: nil}=_tool_choice}) when type != nil and is_atom(type),
+    do: Atom.to_string(type)
+
+  defp set_tool_choice(%ChatOpenAI{tool_choice: %{type: :function, function: %{name: name}}=_tool_choice}) when is_binary(name) and byte_size(name) > 0,
+    do: %{"type" => "function", "function" => %{"name" => name}}
+
+  defp set_tool_choice(%ChatOpenAI{}), do: nil
 
   @doc """
   Convert a LangChain structure to the expected map of data for the OpenAI API.
