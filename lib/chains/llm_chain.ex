@@ -194,6 +194,10 @@ defmodule LangChain.Chains.LLMChain do
     |> apply_action!(:update)
   end
 
+  @doc """
+  Set the tool_choice for the LLMChain.
+  """
+  @spec set_tool_choice(t(), ChatModel.tool_choice()) :: t() | no_return()
   def set_tool_choice(%LLMChain{} = chain, tool_choice) do
     chain
     |> change()

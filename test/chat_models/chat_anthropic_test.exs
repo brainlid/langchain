@@ -55,7 +55,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
     end
   end
 
-  describe "for_api/3" do
+  describe "for_api/4" do
     test "generates a map for an API call" do
       {:ok, anthropic} =
         ChatAnthropic.new(%{
@@ -65,7 +65,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
           "api_key" => "api_key"
         })
 
-      data = ChatAnthropic.for_api(anthropic, [], [])
+      data = ChatAnthropic.for_api(anthropic, [], [], nil)
       assert data.model == @test_model
       assert data.temperature == 1
       assert data.top_p == 0.5
@@ -80,7 +80,8 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
           [
             Message.new_system!("You are my helpful hero.")
           ],
-          []
+          [],
+          nil
         )
 
       assert "You are my helpful hero." == data[:system]
@@ -95,7 +96,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
           "max_tokens" => 1234
         })
 
-      data = ChatAnthropic.for_api(anthropic, [], [])
+      data = ChatAnthropic.for_api(anthropic, [], [], nil)
       assert data.model == @test_model
       assert data.temperature == 1
       assert data.top_p == 0.5
@@ -120,7 +121,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
           function: fn _args, _context -> :ok end
         })
 
-      output = ChatAnthropic.for_api(ChatAnthropic.new!(), [], [tool])
+      output = ChatAnthropic.for_api(ChatAnthropic.new!(), [], [tool], "greet")
 
       assert output[:tools] ==
                [
@@ -140,6 +141,8 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
                    }
                  }
                ]
+
+      assert output[:tool_choice] == %{"type" => "tool", "name" => "greet"}
     end
 
     test "includes multiple tool responses into a single user message" do
@@ -165,7 +168,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
           Message.new_assistant!(%{content: "No, \"sudo hi\""})
         ]
 
-      output = ChatAnthropic.for_api(ChatAnthropic.new!(), messages, [])
+      output = ChatAnthropic.for_api(ChatAnthropic.new!(), messages, [], nil)
 
       assert output[:messages] ==
                [

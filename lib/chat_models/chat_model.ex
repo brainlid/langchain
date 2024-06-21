@@ -11,6 +11,8 @@ defmodule LangChain.ChatModels.ChatModel do
   @type tool :: Function.t()
   @type tools :: [tool()]
 
+  @type tool_choice :: binary() | nil
+
   @type t :: Ecto.Schema.t()
 
   @callback call(

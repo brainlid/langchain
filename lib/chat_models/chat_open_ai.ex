@@ -213,7 +213,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           t | Message.t() | Function.t(),
           message :: [map()],
           ChatModel.tools(),
-          tool_choice :: binary() | nil
+          ChatModel.tool_choice()
         ) :: %{
           atom() => any()
         }

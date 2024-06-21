@@ -173,8 +173,10 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   @doc """
   Return the params formatted for an API request.
   """
-  @spec for_api(t, message :: [map()], ChatModel.tools()) :: %{atom() => any()}
-  def for_api(%ChatAnthropic{} = anthropic, messages, tools) do
+  @spec for_api(t, message :: [map()], ChatModel.tools(), ChatModel.tool_choice()) :: %{
+          atom() => any()
+        }
+  def for_api(%ChatAnthropic{} = anthropic, messages, tools, tool_choice) do
     # separate the system message from the rest. Handled separately.
     {system, messages} = split_system_message(messages)
 
@@ -201,6 +203,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     # Anthropic sets the `system` message on the request body, not as part of the messages list.
     |> Utils.conditionally_add_to_map(:system, system_text)
     |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(tools))
+    |> Utils.conditionally_add_to_map(:tool_choice, get_tool_choice_for_api(tool_choice))
     |> Utils.conditionally_add_to_map(:max_tokens, anthropic.max_tokens)
     |> Utils.conditionally_add_to_map(:top_p, anthropic.top_p)
     |> Utils.conditionally_add_to_map(:top_k, anthropic.top_k)
@@ -213,6 +216,12 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       %Function{} = function ->
         for_api(function)
     end)
+  end
+
+  defp get_tool_choice_for_api(nil), do: nil
+
+  defp get_tool_choice_for_api(tool_choice) do
+    %{"type" => "tool", "name" => tool_choice}
   end
 
   # Unlike OpenAI, Anthropic only supports one system message.
@@ -248,18 +257,18 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   `LangChain.Message` once fully complete.
   """
   @impl ChatModel
-  def call(anthropic, prompt, functions \\ [])
+  def call(anthropic, prompt, functions \\ [], tool_choice \\ nil)
 
-  def call(%ChatAnthropic{} = anthropic, prompt, functions) when is_binary(prompt) do
+  def call(%ChatAnthropic{} = anthropic, prompt, functions, tool_choice) when is_binary(prompt) do
     messages = [
       Message.new_system!(),
       Message.new_user!(prompt)
     ]
 
-    call(anthropic, messages, functions)
+    call(anthropic, messages, functions, tool_choice)
   end
 
-  def call(%ChatAnthropic{} = anthropic, messages, functions)
+  def call(%ChatAnthropic{} = anthropic, messages, functions, tool_choice)
       when is_list(messages) do
     if override_api_return?() do
       Logger.warning("Found override API response. Will not make live API call.")
@@ -282,7 +291,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     else
       try do
         # make base api request and perform high-level success/failure checks
-        case do_api_request(anthropic, messages, functions) do
+        case do_api_request(anthropic, messages, functions, tool_choice) do
           {:error, reason} ->
             {:error, reason}
 
@@ -309,9 +318,9 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   @doc false
   @spec do_api_request(t(), [Message.t()], ChatModel.tools(), (any() -> any())) ::
           list() | struct() | {:error, String.t()}
-  def do_api_request(anthropic, messages, tools, retry_count \\ 3)
+  def do_api_request(anthropic, messages, tools, tool_choice, retry_count \\ 3)
 
-  def do_api_request(_anthropic, _messages, _functions, 0) do
+  def do_api_request(_anthropic, _messages, _functions, _tool_choice, 0) do
     raise LangChainError, "Retries exceeded. Connection failed."
   end
 
@@ -319,12 +328,13 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         %ChatAnthropic{stream: false} = anthropic,
         messages,
         tools,
+        tool_choice,
         retry_count
       ) do
     req =
       Req.new(
         url: anthropic.endpoint,
-        json: for_api(anthropic, messages, tools),
+        json: for_api(anthropic, messages, tools, tool_choice),
         headers: headers(get_api_key(anthropic), anthropic.api_version),
         receive_timeout: anthropic.receive_timeout,
         retry: :transient,
@@ -362,7 +372,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       {:error, %Req.TransportError{reason: :closed}} ->
         # Force a retry by making a recursive call decrementing the counter
         Logger.debug(fn -> "Mint connection closed: retry count = #{inspect(retry_count)}" end)
-        do_api_request(anthropic, messages, tools, retry_count - 1)
+        do_api_request(anthropic, messages, tools, tool_choice, retry_count - 1)
 
       other ->
         Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
@@ -374,11 +384,12 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         %ChatAnthropic{stream: true} = anthropic,
         messages,
         tools,
+        tool_choice,
         retry_count
       ) do
     Req.new(
       url: anthropic.endpoint,
-      json: for_api(anthropic, messages, tools),
+      json: for_api(anthropic, messages, tools, tool_choice),
       headers: headers(get_api_key(anthropic), anthropic.api_version),
       receive_timeout: anthropic.receive_timeout
     )
@@ -404,7 +415,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       {:error, %Req.TransportError{reason: :closed}} ->
         # Force a retry by making a recursive call decrementing the counter
         Logger.debug(fn -> "Mint connection closed: retry count = #{inspect(retry_count)}" end)
-        do_api_request(anthropic, messages, tools, retry_count - 1)
+        do_api_request(anthropic, messages, tools, tool_choice, retry_count - 1)
 
       other ->
         Logger.error(
