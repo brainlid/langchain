@@ -316,8 +316,14 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   #
   # Retries the request up to 3 times on transient errors with a 1 second delay
   @doc false
-  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), (any() -> any())) ::
-          list() | struct() | {:error, String.t()}
+  @spec do_api_request(
+          t(),
+          [Message.t()],
+          ChatModel.tools(),
+          ChatModel.tool_choice(),
+          (any() -> any())
+        ) ::
+          list() | struct() | {:xerror, String.t()}
   def do_api_request(anthropic, messages, tools, tool_choice, retry_count \\ 3)
 
   def do_api_request(_anthropic, _messages, _functions, _tool_choice, 0) do
