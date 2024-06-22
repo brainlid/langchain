@@ -78,26 +78,27 @@ In this example, we'll output the responses as they are streamed back. That happ
 ```elixir
 alias LangChain.MessageDelta
 
-callback = fn
-  %MessageDelta{} = data ->
+handler = %{
+  on_llm_new_delta: fn _model, %MessageDelta{} = data ->
     # we received a piece of data
     IO.write(data.content)
-
-  %Message{} = data ->
+  end,
+  on_llm_new_message: fn _model, %Message{} = data ->
     # we received the finshed message once fully complete
     IO.puts("")
     IO.puts("")
     IO.inspect(data.content, label: "COMPLETED MESSAGE")
-end
+  end
+}
 
 {:ok, _updated_chain, response} =
-  %{llm: ChatOpenAI.new!(%{model: "gpt-4", stream: true})}
+  %{llm: ChatOpenAI.new!(%{model: "gpt-4o", stream: true, callbacks: [handler]})}
   |> LLMChain.new!()
   |> LLMChain.add_messages([
     Message.new_system!("You are a helpful assistant."),
     Message.new_user!("Write a haiku about the capital of the United States")
   ])
-  |> LLMChain.run(callback_fn: callback)
+  |> LLMChain.run()
 
 response.content
 # streamed

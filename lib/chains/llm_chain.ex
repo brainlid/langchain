@@ -45,6 +45,7 @@ defmodule LangChain.Chains.LLMChain do
   use Ecto.Schema
   import Ecto.Changeset
   require Logger
+  alias LangChain.ChatModels.ChatModel
   alias LangChain.Callbacks
   alias LangChain.Chains.ChainCallbacks
   alias LangChain.PromptTemplate
@@ -817,6 +818,15 @@ defmodule LangChain.Chains.LLMChain do
   @spec add_callback(t(), ChainCallbacks.chain_callback_handler()) :: t()
   def add_callback(%LLMChain{callbacks: callbacks} = chain, additional_callback) do
     %LLMChain{chain | callbacks: callbacks ++ [additional_callback]}
+  end
+
+  @doc """
+  Add a `LangChain.ChatModels.LLMCallbacks` callback map to the chain's `:llm` model if
+  it supports the `:callback` key.
+  """
+  @spec add_llm_callback(t(), map()) :: t()
+  def add_llm_callback(%LLMChain{llm: model} = chain, callback_map) do
+    %LLMChain{chain | llm: ChatModel.add_callback(model, callback_map)}
   end
 
   # a pipe-friendly execution of callbacks that returns the chain

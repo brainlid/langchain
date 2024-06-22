@@ -66,6 +66,16 @@ def deps do
 end
 ```
 
+The Release Candidate includes many additional features and some breaking changes.
+
+```elixir
+def deps do
+  [
+    {:langchain, "0.3.0-rc.0"}
+  ]
+end
+```
+
 ## Configuration
 
 Currently, the library is written to use the `Req` library for making API calls.

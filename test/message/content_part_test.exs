@@ -73,6 +73,6 @@ defmodule LangChain.Message.ContentPartTest do
       assert part.type == :image_url
       assert part.content == url
       assert part.options == [detail: "low"]
-     end
+    end
   end
 end

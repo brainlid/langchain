@@ -112,6 +112,8 @@ defmodule LangChain.ChatModels.ChatBumblebee do
 
   @behaviour ChatModel
 
+  @current_config_version 1
+
   @primary_key false
   embedded_schema do
     # Name of the Nx.Serving to use when working with the LLM.
@@ -164,6 +166,7 @@ defmodule LangChain.ChatModels.ChatBumblebee do
   def new(%{} = attrs \\ %{}) do
     %ChatBumblebee{}
     |> cast(attrs, @create_fields)
+    |> restore_serving_if_string()
     |> common_validation()
     |> apply_action(:insert)
   end
@@ -179,6 +182,22 @@ defmodule LangChain.ChatModels.ChatBumblebee do
 
       {:error, changeset} ->
         raise LangChainError, changeset
+    end
+  end
+
+  defp restore_serving_if_string(changeset) do
+    case get_field(changeset, :serving) do
+      value when is_binary(value) ->
+        case Utils.module_from_name(value) do
+          {:ok, module} ->
+            put_change(changeset, :serving, module)
+
+          {:error, reason} ->
+            add_error(changeset, :serving, reason)
+        end
+
+      _other ->
+        changeset
     end
   end
 
@@ -322,4 +341,30 @@ defmodule LangChain.ChatModels.ChatBumblebee do
   end
 
   defp fire_token_usage_callback(_model, _token_summary), do: :ok
+
+  @doc """
+  Generate a config map that can later restore the model's configuration.
+  """
+  @impl ChatModel
+  @spec serialize_config(t()) :: %{String.t() => any()}
+  def serialize_config(%ChatBumblebee{} = model) do
+    Utils.to_serializable_map(
+      model,
+      [
+        :serving,
+        :template_format,
+        :stream,
+        :seed
+      ],
+      @current_config_version
+    )
+  end
+
+  @doc """
+  Restores the model from the config.
+  """
+  @impl ChatModel
+  def restore_from_map(%{"version" => 1} = data) do
+    ChatBumblebee.new(data)
+  end
 end

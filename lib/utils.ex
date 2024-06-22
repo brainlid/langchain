@@ -222,4 +222,67 @@ defmodule LangChain.Utils do
       List.replace_at(list, index, value)
     end
   end
+
+  @doc """
+  Given a struct, create a map with the selected keys converted to strings.
+  Additionally includes a `version` number for the data.
+  """
+  @spec to_serializable_map(struct(), keys :: [atom()], version :: integer()) :: %{
+          String.t() => any()
+        }
+  def to_serializable_map(%module{} = struct, keys, version \\ 1) do
+    struct
+    |> Map.from_struct()
+    |> Map.take(keys)
+    |> stringify_keys()
+    |> Map.put("module", Atom.to_string(module))
+    |> Map.put("version", version)
+  end
+
+  @doc """
+  Convert map atom keys to strings
+
+  Original source: https://gist.github.com/kipcole9/0bd4c6fb6109bfec9955f785087f53fb
+  """
+  def stringify_keys(nil), do: nil
+
+  def stringify_keys(map = %{}) do
+    map
+    |> Enum.map(fn {k, v} -> {to_string(k), stringify_keys(v)} end)
+    |> Enum.into(%{})
+  end
+
+  # Walk the list and stringify the keys of
+  # of any map members
+  def stringify_keys([head | rest]) do
+    [stringify_keys(head) | stringify_keys(rest)]
+  end
+
+  def stringify_keys(not_a_map) when is_atom(not_a_map) and not is_boolean(not_a_map) do
+    Atom.to_string(not_a_map)
+  end
+
+  def stringify_keys(not_a_map) do
+    not_a_map
+  end
+
+  @doc """
+  Return an `{:ok, module}` when the string successfully converts to an existing
+  module.
+  """
+  def module_from_name("Elixir." <> _rest = module_name) do
+    try do
+      {:ok, String.to_existing_atom(module_name)}
+    rescue
+      _err ->
+        Logger.error("Failed to restore using module_name #{inspect(module_name)}. Not found.")
+        {:error, "ChatModel module #{inspect(module_name)} not found"}
+    end
+  end
+
+  def module_from_name(module_name) do
+    msg = "Not an Elixir module: #{inspect(module_name)}"
+    Logger.error(msg)
+    {:error, msg}
+  end
 end

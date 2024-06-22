@@ -19,7 +19,9 @@ defmodule ChatModels.ChatGoogleAITest do
         function: fn _args, _context -> {:ok, "Hello world!"} end
       })
 
-    %{hello_world: hello_world}
+    model = ChatGoogleAI.new!(%{})
+
+    %{model: model, hello_world: hello_world}
   end
 
   describe "new/1" do
@@ -46,14 +48,14 @@ defmodule ChatModels.ChatGoogleAITest do
     end
 
     test "supports overriding the API version" do
-      version = "v1"
+      api_version = "v1"
 
       model =
         ChatGoogleAI.new!(%{
-          version: version
+          api_version: api_version
         })
 
-      assert model.version == version
+      assert model.api_version == api_version
     end
   end
 
@@ -179,7 +181,7 @@ defmodule ChatModels.ChatGoogleAITest do
   end
 
   describe "do_process_response/2" do
-    test "handles receiving a message" do
+    test "handles receiving a message", %{model: model} do
       response = %{
         "candidates" => [
           %{
@@ -190,14 +192,14 @@ defmodule ChatModels.ChatGoogleAITest do
         ]
       }
 
-      assert [%Message{} = struct] = ChatGoogleAI.do_process_response(response)
+      assert [%Message{} = struct] = ChatGoogleAI.do_process_response(model, response)
       assert struct.role == :assistant
       [%ContentPart{type: :text, content: "Hello User!"}] = struct.content
       assert struct.index == 0
       assert struct.status == :complete
     end
 
-    test "error if receiving non-text content" do
+    test "error if receiving non-text content", %{model: model} do
       response = %{
         "candidates" => [
           %{
@@ -208,11 +210,11 @@ defmodule ChatModels.ChatGoogleAITest do
         ]
       }
 
-      assert [{:error, error_string}] = ChatGoogleAI.do_process_response(response)
+      assert [{:error, error_string}] = ChatGoogleAI.do_process_response(model, response)
       assert error_string == "role: is invalid"
     end
 
-    test "handles receiving function calls" do
+    test "handles receiving function calls", %{model: model} do
       args = %{"args" => "data"}
 
       response = %{
@@ -228,7 +230,7 @@ defmodule ChatModels.ChatGoogleAITest do
         ]
       }
 
-      assert [%Message{} = struct] = ChatGoogleAI.do_process_response(response)
+      assert [%Message{} = struct] = ChatGoogleAI.do_process_response(model, response)
       assert struct.role == :assistant
       assert struct.index == 0
       [call] = struct.tool_calls
@@ -236,7 +238,7 @@ defmodule ChatModels.ChatGoogleAITest do
       assert call.arguments == args
     end
 
-    test "handles receiving MessageDeltas as well" do
+    test "handles receiving MessageDeltas as well", %{model: model} do
       response = %{
         "candidates" => [
           %{
@@ -250,14 +252,16 @@ defmodule ChatModels.ChatGoogleAITest do
         ]
       }
 
-      assert [%MessageDelta{} = struct] = ChatGoogleAI.do_process_response(response, MessageDelta)
+      assert [%MessageDelta{} = struct] =
+               ChatGoogleAI.do_process_response(model, response, MessageDelta)
+
       assert struct.role == :assistant
       assert struct.content == "This is the first part of a mes"
       assert struct.index == 0
       assert struct.status == :incomplete
     end
 
-    test "handles API error messages" do
+    test "handles API error messages", %{model: model} do
       response = %{
         "error" => %{
           "code" => 400,
@@ -266,20 +270,20 @@ defmodule ChatModels.ChatGoogleAITest do
         }
       }
 
-      assert {:error, error_string} = ChatGoogleAI.do_process_response(response)
+      assert {:error, error_string} = ChatGoogleAI.do_process_response(model, response)
       assert error_string == "Invalid request"
     end
 
-    test "handles Jason.DecodeError" do
+    test "handles Jason.DecodeError", %{model: model} do
       response = {:error, %Jason.DecodeError{}}
 
-      assert {:error, error_string} = ChatGoogleAI.do_process_response(response)
+      assert {:error, error_string} = ChatGoogleAI.do_process_response(model, response)
       assert "Received invalid JSON:" <> _ = error_string
     end
 
-    test "handles unexpected response with error" do
+    test "handles unexpected response with error", %{model: model} do
       response = %{}
-      assert {:error, "Unexpected response"} = ChatGoogleAI.do_process_response(response)
+      assert {:error, "Unexpected response"} = ChatGoogleAI.do_process_response(model, response)
     end
   end
 
@@ -338,6 +342,43 @@ defmodule ChatModels.ChatGoogleAITest do
                %{"text" => "Hello!"},
                %{"text" => "What's up?"}
              ]
+    end
+  end
+
+  describe "serialize_config/2" do
+    test "does not include the API key or callbacks" do
+      model = ChatGoogleAI.new!(%{model: "gpt-4o"})
+      result = ChatGoogleAI.serialize_config(model)
+      assert result["version"] == 1
+      refute Map.has_key?(result, "api_key")
+      refute Map.has_key?(result, "callbacks")
+    end
+
+    test "creates expected map" do
+      model =
+        ChatGoogleAI.new!(%{
+          model: "gpt-4o",
+          temperature: 0,
+          frequency_penalty: 0.5,
+          seed: 123,
+          max_tokens: 1234,
+          stream_options: %{include_usage: true}
+        })
+
+      result = ChatGoogleAI.serialize_config(model)
+
+      assert result == %{
+               "endpoint" => "https://generativelanguage.googleapis.com/v1beta",
+               "model" => "gpt-4o",
+               "module" => "Elixir.LangChain.ChatModels.ChatGoogleAI",
+               "receive_timeout" => 60000,
+               "stream" => false,
+               "temperature" => 0.0,
+               "version" => 1,
+               "api_version" => "v1beta",
+               "top_k" => 1.0,
+               "top_p" => 1.0
+             }
     end
   end
 end

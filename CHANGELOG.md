@@ -14,6 +14,14 @@
 * The attribute `processed_content` was added to a `LangChain.Message`. When a MessageProcessor is run on a received assistant message, the results of the processing are accumulated there. The original `content` remains unchanged for when it is sent back to the LLM and used when fixing or correcting it's generated content.
 * Callback support for LLM ratelimit information returned in API response headers. These are currently implemented for Anthropic and OpenAI.
 * Callback support for LLM token usage information returned when available.
+* `LangChain.ChatModels.ChatModel` additions
+  * Added `add_callback/2` makes it easier to add a callback to an chat model.
+  * Added `serialize_config/1` to serialize an LLM chat model configuration to a map that can be restored later.
+  * Added `restore_from_map/1` to restore a configured LLM chat model from a database (for example).
+* `LangChain.Chain.LLMChain` additions
+  * New function `add_callback/2` makes it easier to add a callback to an existing `LLMChain`.
+  * New function `add_llm_callback/2` makes it easier to add a callback to a chain's LLM. This is particularly useful when an LLM model is restored from a database when loading a past conversation and wanting to preserve the original configuration.
+
 
 **Changed:**
 
@@ -22,6 +30,7 @@
 * Many smaller changes and contributions were made. This includes updates to the README for clarity,
 * `LangChain.Utils.fire_callback/3` was refactored into `LangChain.Utils.fire_streamed_callback/2` where it is only used for processing deltas and uses the new callback mechanism.
 * Notebooks were moved to the separate demo project
+* `LangChain.ChatModels.ChatGoogleAI`'s key `:version` was changed to `:api_version` to be more consistent with other models and allow for model serializers to use the `:version` key.
 
 ### Migrations Steps
 

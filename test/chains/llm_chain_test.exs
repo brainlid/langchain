@@ -1541,6 +1541,24 @@ defmodule LangChain.Chains.LLMChainTest do
     end
   end
 
+  describe "add_llm_callback/2" do
+    test "appends a callback handler to the chain's LLM", %{chat: chat} do
+      handler1 = %{on_llm_new_message: fn _chain, _msg -> IO.puts("MESSAGE 1!") end}
+      handler2 = %{on_llm_new_message: fn _chain, _msg -> IO.puts("MESSAGE 2!") end}
+
+      # none to start with
+      assert chat.callbacks == []
+
+      chain =
+        %{llm: chat}
+        |> LLMChain.new!()
+        |> LLMChain.add_llm_callback(handler1)
+        |> LLMChain.add_llm_callback(handler2)
+
+      assert chain.llm.callbacks == [handler1, handler2]
+    end
+  end
+
   # TODO: Sequential chains
   # https://js.langchain.com/docs/modules/chains/sequential_chain
 

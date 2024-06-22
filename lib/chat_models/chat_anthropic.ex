@@ -58,6 +58,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
   @behaviour ChatModel
 
+  @current_config_version 1
+
   # allow up to 1 minute for response.
   @receive_timeout 60_000
 
@@ -866,4 +868,35 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   end
 
   defp get_token_usage(_response_body), do: %{}
+
+  @doc """
+  Generate a config map that can later restore the model's configuration.
+  """
+  @impl ChatModel
+  @spec serialize_config(t()) :: %{String.t() => any()}
+  def serialize_config(%ChatAnthropic{} = model) do
+    Utils.to_serializable_map(
+      model,
+      [
+        :endpoint,
+        :model,
+        :api_version,
+        :temperature,
+        :max_tokens,
+        :receive_timeout,
+        :top_p,
+        :top_k,
+        :stream
+      ],
+      @current_config_version
+    )
+  end
+
+  @doc """
+  Restores the model from the config.
+  """
+  @impl ChatModel
+  def restore_from_map(%{"version" => 1} = data) do
+    ChatAnthropic.new(data)
+  end
 end
