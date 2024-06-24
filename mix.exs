@@ -49,14 +49,18 @@ defmodule LangChain.MixProject do
       main: "getting_started",
       source_ref: "v#{@version}",
       source_url: "https://github.com/brainlid/langchain",
-      extra_section: "GUIDES",
+      assets: %{"notebooks/files" => "files"},
+      logo: "elixir-langchain-link-logo_32px.png",
+      extra_section: "Guides",
       extras: extras(),
       skip_undefined_reference_warnings_on: ["CHANGELOG.md"]
     ]
   end
 
   defp extras do
-    ["CHANGELOG.md"] ++ Path.wildcard("guides/*.md")
+    ["CHANGELOG.md"] ++
+      Path.wildcard("guides/*.md") ++
+      Path.wildcard("notebooks/*.livemd")
   end
 
   defp package do
