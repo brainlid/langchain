@@ -1,6 +1,7 @@
 defmodule LangChain.MixProject do
   use Mix.Project
 
+  @source_url "https://github.com/brainlid/langchain"
   @version "0.3.0-rc.0"
 
   def project do
@@ -15,7 +16,7 @@ defmodule LangChain.MixProject do
       package: package(),
       docs: &docs/0,
       name: "LangChain",
-      homepage_url: "https://github.com/brainlid/langchain",
+      homepage_url: @source_url,
       description: """
       Elixir implementation of a LangChain style framework.
       """
@@ -40,7 +41,7 @@ defmodule LangChain.MixProject do
       {:req, ">= 0.5.0"},
       {:abacus, "~> 2.1.0"},
       {:nx, ">= 0.7.0", optional: true},
-      {:ex_doc, "~> 0.27", only: :dev, runtime: false}
+      {:ex_doc, "~> 0.34", only: :dev, runtime: false}
     ]
   end
 
@@ -48,15 +49,76 @@ defmodule LangChain.MixProject do
     [
       main: "getting_started",
       source_ref: "v#{@version}",
-      source_url: "https://github.com/brainlid/langchain",
-      extra_section: "GUIDES",
+      source_url: @source_url,
+      assets: %{"notebooks/files" => "files"},
+      logo: "elixir-langchain-link-logo_32px.png",
+      extra_section: "Guides",
       extras: extras(),
-      skip_undefined_reference_warnings_on: ["CHANGELOG.md"]
+      skip_undefined_reference_warnings_on: ["CHANGELOG.md"],
+      groups_for_modules: [
+        "Chat Models": [
+          LangChain.ChatModels.ChatOpenAI,
+          LangChain.ChatModels.ChatAnthropic,
+          LangChain.ChatModels.ChatBumblebee,
+          LangChain.ChatModels.ChatGoogleAI,
+          LangChain.ChatModels.ChatVertexAI,
+          LangChain.ChatModels.ChatMistralAI,
+          LangChain.ChatModels.ChatOllamaAI,
+          LangChain.ChatModels.ChatModel
+        ],
+        Chains: [
+          LangChain.Chains.LLMChain,
+          LangChain.Chains.TextToTitleChain,
+          LangChain.Chains.DataExtractionChain
+        ],
+        Messages: [
+          LangChain.Message,
+          LangChain.MessageDelta,
+          LangChain.Message.ContentPart,
+          LangChain.Message.ToolCall,
+          LangChain.Message.ToolResult,
+          LangChain.PromptTemplate,
+          LangChain.MessageProcessors,
+          LangChain.MessageProcessors.JsonProcessor,
+          LangChain.TokenUsage
+        ],
+        Functions: [
+          LangChain.Function,
+          LangChain.FunctionParam
+        ],
+        Callbacks: [
+          LangChain.Callbacks,
+          LangChain.ChatModels.LLMCallbacks,
+          LangChain.Chains.ChainCallbacks
+        ],
+        Routing: [
+          LangChain.Chains.RoutingChain,
+          LangChain.Routing.PromptRoute
+        ],
+        Images: [
+          LangChain.Images,
+          LangChain.Images.OpenAIImage,
+          LangChain.Images.GeneratedImage
+        ],
+        Tools: [
+          LangChain.Tools.Calculator
+        ],
+        Utils: [
+          LangChain.Utils,
+          LangChain.Utils.ChatTemplates,
+          LangChain.Utils.ChainResult,
+          LangChain.Utils.ApiOverride,
+          LangChain.Config,
+          LangChain.Gettext
+        ]
+      ]
     ]
   end
 
   defp extras do
-    ["CHANGELOG.md"] ++ Path.wildcard("guides/*.md")
+    ["CHANGELOG.md"] ++
+      Path.wildcard("guides/*.md") ++
+      Path.wildcard("notebooks/*.livemd")
   end
 
   defp package do
@@ -66,7 +128,7 @@ defmodule LangChain.MixProject do
       files: ["lib", "mix.exs", "README*", "LICENSE*"],
       maintainers: ["Mark Ericksen"],
       licenses: ["Apache-2.0"],
-      links: %{"GitHub" => "https://github.com/brainlid/langchain"}
+      links: %{"GitHub" => @source_url}
     ]
   end
 end

@@ -27,7 +27,7 @@ defmodule LangChain.Message.ContentPart do
   - `media: :jpg` - turns into `"image/jpeg"` or `"image/jpg"`, depending on
     what the LLM accepts.
   - `media: :png` - turns into `"image/png"`
-  - `media: "image/webp" - stays as `"image/webp"`. Any specified string value
+  - `media: "image/webp"` - stays as `"image/webp"`. Any specified string value
     is passed through unchanged. This allows for future formats to be supported
     quickly.
   - When omitted, the LLM may error or some will accept it but may require the

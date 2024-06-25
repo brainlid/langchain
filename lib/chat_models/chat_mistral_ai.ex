@@ -1,4 +1,4 @@
-defmodule Langchain.ChatModels.ChatMistralAI do
+defmodule LangChain.ChatModels.ChatMistralAI do
   use Ecto.Schema
   require Logger
   import Ecto.Changeset
@@ -8,6 +8,7 @@ defmodule Langchain.ChatModels.ChatMistralAI do
   alias LangChain.ChatModels.ChatOpenAI
   alias LangChain.ChatModels.ChatModel
   alias LangChain.ChatModels.ChatOpenAI
+  alias LangChain.Function
   alias LangChain.Message
   alias LangChain.MessageDelta
   alias LangChain.LangChainError
