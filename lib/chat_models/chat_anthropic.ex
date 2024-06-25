@@ -42,7 +42,6 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   import Ecto.Changeset
   import LangChain.Utils.ApiOverride
   alias __MODULE__
-  alias __MODULE__.ToolChoice
   alias LangChain.Config
   alias LangChain.ChatModels.ChatModel
   alias LangChain.LangChainError
@@ -116,37 +115,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     field :callbacks, {:array, :map}, default: []
 
     # Tool choice option
-    embeds_one :tool_choice, ToolChoice
+    field :tool_choice, :map
   end
-
-  defmodule ToolChoice do
-    use Ecto.Schema
-
-    @primary_key false
-    embedded_schema do
-      field :type, Ecto.Enum, values: [:tool, :auto, :any]
-      field :name, :string
-    end
-
-    @doc """
-    Setup a ChatAnthropic ToolChoice configuration
-    """
-    @spec changeset(%ToolChoice{}, map()) :: Ecto.Changeset.t()
-    def changeset(%ToolChoice{}=tool_choice, %{}=attrs) do
-      tool_choice
-      |> cast(attrs, [:type, :name])
-      |> validate_required([:type])
-      |> validate_type()
-    end
-
-    defp validate_type(changeset) do
-      case get_change(changeset, :type) do
-        :tool -> validate_required(changeset, [:name])
-        _ -> changeset
-      end
-    end
-  end
-
 
   @type t :: %ChatAnthropic{}
 
@@ -161,7 +131,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     :top_p,
     :top_k,
     :stream,
-    :callbacks
+    :callbacks,
+    :tool_choice
   ]
   @required_fields [:endpoint, :model]
 
@@ -179,7 +150,6 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     %ChatAnthropic{}
     |> cast(attrs, @create_fields)
     |> common_validation()
-    |> cast_embed(:tool_choice, required: false, with: &ToolChoice.changeset/2)
     |> apply_action(:insert)
   end
 
@@ -241,11 +211,11 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     |> Utils.conditionally_add_to_map(:top_k, anthropic.top_k)
   end
 
-  defp set_tool_choice(%ChatAnthropic{tool_choice: %ToolChoice{type: type, name: nil}=_tool_choice}) when type != nil and is_atom(type),
-    do: %{"type" => Atom.to_string(type)}
-
-  defp set_tool_choice(%ChatAnthropic{tool_choice: %ToolChoice{type: :tool, name: name}=_tool_choice}) when is_binary(name) and byte_size(name) > 0,
+  defp set_tool_choice(%ChatAnthropic{tool_choice: %{"type" => "tool", "name" => name}=_tool_choice}) when is_binary(name) and byte_size(name) > 0,
     do: %{"type" => "tool", "name" => name}
+
+  defp set_tool_choice(%ChatAnthropic{tool_choice: %{"type" => type}=_tool_choice}) when type != nil and is_binary(type),
+    do: %{"type" => type}
 
   defp set_tool_choice(%ChatAnthropic{}), do: nil
 
