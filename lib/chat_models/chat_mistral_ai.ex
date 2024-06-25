@@ -1,4 +1,4 @@
-defmodule Langchain.ChatModels.ChatMistralAI do
+defmodule LangChain.ChatModels.ChatMistralAI do
   use Ecto.Schema
   require Logger
   import Ecto.Changeset
