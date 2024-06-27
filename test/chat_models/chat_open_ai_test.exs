@@ -75,7 +75,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     end
   end
 
-  describe "for_api/3" do
+  describe "for_api/4" do
     test "generates a map for an API call" do
       {:ok, openai} =
         ChatOpenAI.new(%{
@@ -85,7 +85,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
           "api_key" => "api_key"
         })
 
-      data = ChatOpenAI.for_api(openai, [], [])
+      data = ChatOpenAI.for_api(openai, [], [], nil)
       assert data.model == @test_model
       assert data.temperature == 1
       assert data.frequency_penalty == 0.5
@@ -101,7 +101,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
           "json_response" => true
         })
 
-      data = ChatOpenAI.for_api(openai, [], [])
+      data = ChatOpenAI.for_api(openai, [], [], nil)
       assert data.model == @test_model
       assert data.temperature == 1
       assert data.frequency_penalty == 0.5
@@ -117,7 +117,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
           "max_tokens" => 1234
         })
 
-      data = ChatOpenAI.for_api(openai, [], [])
+      data = ChatOpenAI.for_api(openai, [], [], nil)
       assert data.model == @test_model
       assert data.temperature == 1
       assert data.frequency_penalty == 0.5
@@ -131,9 +131,26 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
           stream_options: %{include_usage: true}
         })
 
-      data = ChatOpenAI.for_api(openai, [], [])
+      data = ChatOpenAI.for_api(openai, [], [], nil)
       assert data.model == @test_model
       assert data.stream_options == %{"include_usage" => true}
+    end
+
+    test "doesn't set tool_choice when nil" do
+      assert {:ok, %ChatOpenAI{} = chat} = ChatOpenAI.new(%{})
+      data = ChatOpenAI.for_api(chat, [], [], nil)
+
+      assert !Map.has_key?(data, :tool_choice)
+    end
+
+    test "sets the tool_choice" do
+      assert {:ok, %ChatOpenAI{} = chat} = ChatOpenAI.new(%{})
+      data = ChatOpenAI.for_api(chat, [], [], "information_extraction")
+
+      assert data.tool_choice == %{
+               "type" => "function",
+               "function" => %{"name" => "information_extraction"}
+             }
     end
   end
 
@@ -1143,7 +1160,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
         Message.new_user("Answer the following math question: What is 100 + 300 - 200?")
 
       _response =
-        ChatOpenAI.do_api_request(chat, [message], [LangChain.Tools.Calculator.new!()])
+        ChatOpenAI.do_api_request(chat, [message], [LangChain.Tools.Calculator.new!()], nil)
 
       # IO.inspect(response, label: "OPEN AI POST RESPONSE")
 

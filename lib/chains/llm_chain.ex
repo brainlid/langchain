@@ -65,6 +65,7 @@ defmodule LangChain.Chains.LLMChain do
     # verbosely log each delta message.
     field :verbose_deltas, :boolean, default: false
     field :tools, {:array, :any}, default: [], virtual: true
+    field :tool_choice, :string, default: nil, virtual: true
     # set and managed privately through tools
     field :_tool_map, :map, default: %{}, virtual: true
 
@@ -190,6 +191,17 @@ defmodule LangChain.Chains.LLMChain do
     |> change()
     |> cast(%{tools: updated}, [:tools])
     |> build_tools_map_from_tools()
+    |> apply_action!(:update)
+  end
+
+  @doc """
+  Set the tool_choice for the LLMChain.
+  """
+  @spec set_tool_choice(t(), ChatModel.tool_choice()) :: t() | no_return()
+  def set_tool_choice(%LLMChain{} = chain, tool_choice) do
+    chain
+    |> change()
+    |> cast(%{tool_choice: tool_choice}, [:tool_choice])
     |> apply_action!(:update)
   end
 
@@ -343,7 +355,7 @@ defmodule LangChain.Chains.LLMChain do
     %module{} = chain.llm
 
     # handle and output response
-    case module.call(chain.llm, chain.messages, chain.tools) do
+    case module.call(chain.llm, chain.messages, chain.tools, chain.tool_choice) do
       {:ok, [%Message{} = message]} ->
         if chain.verbose, do: IO.inspect(message, label: "SINGLE MESSAGE RESPONSE")
         {:ok, process_message(chain, message)}
