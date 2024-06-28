@@ -66,7 +66,7 @@ defmodule LangChain.MessageProcessors.JsonProcessor do
       ~r/```json(.*?)```/s
       ~r/```(.*?)```/s
 
-  The "```json" formatted one is processed like this:
+  The `"```json"` formatted one is processed like this:
 
       {:cont, updated_chain, updated_message} =
         JsonProcessor.run(chain, message, ~r/```json(.*?)```/s)
@@ -76,7 +76,7 @@ defmodule LangChain.MessageProcessors.JsonProcessor do
   alias LangChain.Message
 
   @doc """
-  Returns a function for use in a `LangChain.Chains.LLMChain.add_processors/2`.
+  Returns a function for use in a `LangChain.Chains.LLMChain.message_processors/2`.
   """
   def new!() do
     # Doesn't need any currying.
@@ -85,7 +85,7 @@ defmodule LangChain.MessageProcessors.JsonProcessor do
 
   @doc """
   Returns a wrapped (curried) function for use in a
-  `LangChain.Chains.LLMChain.add_processors/2` that includes the configured
+  `LangChain.Chains.LLMChain.message_processors/2` that includes the configured
   Regex to use for extracting JSON content.
 
   The Regex pattern is used with the `:all_but_first` capture option to extract
