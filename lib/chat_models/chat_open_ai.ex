@@ -593,7 +593,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
       {:error, %Req.TransportError{reason: :closed}} ->
         # Force a retry by making a recursive call decrementing the counter
-        Logger.debug(fn -> "Mint connection closed: retry count = #{inspect(retry_count)}" end)
+        Logger.debug(fn -> "Connection closed: retry count = #{inspect(retry_count)}" end)
         do_api_request(openai, messages, tools, retry_count - 1)
 
       other ->
