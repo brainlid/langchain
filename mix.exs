@@ -47,14 +47,17 @@ defmodule LangChain.MixProject do
 
   defp docs do
     [
-      main: "getting_started",
+      main: "readme",
       source_ref: "v#{@version}",
       source_url: @source_url,
       assets: %{"notebooks/files" => "files"},
-      logo: "elixir-langchain-link-logo_32px.png",
+      skip_undefined_reference_warnings_on: ["CHANGELOG.md"],
+      logo: "images/elixir-langchain-link-logo_32px.png",
       extra_section: "Guides",
       extras: extras(),
-      skip_undefined_reference_warnings_on: ["CHANGELOG.md"],
+      groups_for_extras: [
+        Notebooks: Path.wildcard("notebooks/*.livemd")
+      ],
       groups_for_modules: [
         "Chat Models": [
           LangChain.ChatModels.ChatOpenAI,
@@ -116,9 +119,13 @@ defmodule LangChain.MixProject do
   end
 
   defp extras do
-    ["CHANGELOG.md"] ++
-      Path.wildcard("guides/*.md") ++
-      Path.wildcard("notebooks/*.livemd")
+    [
+      "README.md",
+      "CHANGELOG.md",
+      "notebooks/getting_started.livemd",
+      "notebooks/custom_functions.livemd",
+      "notebooks/context-specific-image-descriptions.livemd"
+    ]
   end
 
   defp package do
