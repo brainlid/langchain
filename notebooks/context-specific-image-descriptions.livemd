@@ -263,4 +263,4 @@ Here's what I got from it:
 
 We would want to run multiple tests on a small sampling of images and tweak our prompt until we are happy with the result. Then, we can process full batch and save our work as a template for future projects as well.
 
-<!-- livebook:{"offset":12880,"stamp":{"token":"XCP.b8QdCyKuNcYy1loUoxGhpQTwKvgfSdpFdmq0WMf5wN4se27IM51g9oi9xarkRUPwBkidTrOgV64vszgKQIBDvKsqvnQG0maah384lRN453W8ST-qV0iaxXo2jtB1VHd07OqVP66bPDsBLQrR7kQI","version":2}} -->
+<!-- livebook:{"offset":12761,"stamp":{"token":"XCP.4JSZt1aejIfvfzj87QXhVrvY1vsw3VVBZjCvVqbQGquxw5aWXeumFJw3Oh814godgVuTVX4VdbVmyOD4KavNo356G4Eo7Dcv-2SRL8VzkQUPcOWaIK2ZIDtvdRRGP_qbsowCYuDtknPrXcT_7gom","version":2}} -->
