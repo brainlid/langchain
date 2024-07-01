@@ -102,6 +102,30 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
       assert data.max_tokens == 1234
     end
 
+    test "generated a map for an API call with tool_choice set correctly to auto" do
+      {:ok, anthropic} =
+        ChatAnthropic.new(%{
+          model: @test_model,
+          tool_choice: %{"type" => "auto"}
+        })
+
+      data = ChatAnthropic.for_api(anthropic, [], [])
+      assert data.model == @test_model
+      assert data.tool_choice == %{"type" => "auto"}
+    end
+
+    test "generated a map for an API call with tool_choice set correctly to a specific function" do
+      {:ok, anthropic} =
+        ChatAnthropic.new(%{
+          model: @test_model,
+          tool_choice: %{"type" => "tool", "name" => "get_weather"}
+        })
+
+      data = ChatAnthropic.for_api(anthropic, [], [])
+      assert data.model == @test_model
+      assert data.tool_choice == %{"type" => "tool", "name" => "get_weather"}
+    end
+
     test "adds tool definitions to map" do
       tool =
         Function.new!(%{
