@@ -34,7 +34,7 @@ defmodule LangChain.Utils.ChainResult do
   end
 
   # when received a single ContentPart
-  def to_string(%LLMChain{last_message: %Message{role: :assistant, status: :complete, content: [%ContentPart{type: :text} = part]}} = chain) do
+  def to_string(%LLMChain{last_message: %Message{role: :assistant, status: :complete, content: [%ContentPart{type: :text} = part]}} = _chain) do
     {:ok, part.content}
   end
 
