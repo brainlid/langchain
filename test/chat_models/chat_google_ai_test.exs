@@ -145,7 +145,10 @@ defmodule ChatModels.ChatGoogleAITest do
       assert %{
                "functionResponse" => %{
                  "name" => "userland_action",
-                 "response" => ^function_result
+                 "response" => %{
+                   "name" => "userland_action",
+                   "content" => ^function_result
+                 }
                }
              } = tool_result
     end
@@ -153,7 +156,7 @@ defmodule ChatModels.ChatGoogleAITest do
     test "translates a Message with function results to the expected structure" do
       expected =
         %{
-          "role" => "function",
+          "role" => :function,
           "parts" => [
             %{
               "functionResponse" => %{
@@ -562,7 +565,8 @@ defmodule ChatModels.ChatGoogleAITest do
     end
   end
 
-  describe "calculator" do
+  describe "calculator with GoogleAI model" do
+    @tag live_call: true, live_google_ai: true
     test "should work" do
       alias LangChain.Chains.LLMChain
       alias LangChain.Tools.Calculator
@@ -586,7 +590,7 @@ defmodule ChatModels.ChatGoogleAITest do
       {:ok, updated_chain, %Message{} = message} =
         LLMChain.new!(%{
           llm: model,
-          verbose: true,
+          verbose: false,
           callbacks: [chain_handler]
         })
         |> LLMChain.add_message(
