@@ -3,6 +3,12 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   Parses and validates inputs for making a request for the Google AI  Chat API.
 
   Converts response into more specialized `LangChain` data structures.
+
+  **NOTE:** The GoogleAI service is unique in how it reports TokenUsage
+  information. So far, it's the only API that returns TokenUsage for each
+  returned delta, where the generated token count is incremented with one. Other
+  services return the total TokenUsage data at the end. This Chat model fires
+  the callback each time it is received.
   """
   use Ecto.Schema
   require Logger
@@ -16,6 +22,8 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult
+  alias LangChain.Function
+  alias LangChain.TokenUsage
   alias LangChain.LangChainError
   alias LangChain.Utils
   alias LangChain.Callbacks
@@ -26,7 +34,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
 
   @default_base_url "https://generativelanguage.googleapis.com"
   @default_api_version "v1beta"
-  @default_endpoint "#{@default_base_url}/#{@default_api_version}"
+  @default_endpoint @default_base_url
 
   # allow up to 2 minutes for response.
   @receive_timeout 60_000
@@ -159,7 +167,8 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     end
   end
 
-  defp for_api(%Message{role: :assistant} = message) do
+  @doc false
+  def for_api(%Message{role: :assistant} = message) do
     content_parts = get_message_contents(message) || []
     tool_calls = Enum.map(message.tool_calls || [], &for_api/1)
 
@@ -169,14 +178,17 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     }
   end
 
-  defp for_api(%Message{role: :tool} = message) do
+  def for_api(%Message{role: :tool} = message) do
+    # Function response is whacky. They don't explain why it has this extra nested structure.
+    #
+    # https://ai.google.dev/gemini-api/docs/function-calling#expandable-7
     %{
       "role" => map_role(:tool),
       "parts" => Enum.map(message.tool_results, &for_api/1)
     }
   end
 
-  defp for_api(%Message{role: :system} = message) do
+  def for_api(%Message{role: :system} = message) do
     # No system messages support means we need to fake a prompt and response
     # to pretend like it worked.
     [
@@ -191,18 +203,18 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     ]
   end
 
-  defp for_api(%Message{} = message) do
+  def for_api(%Message{} = message) do
     %{
       "role" => map_role(message.role),
       "parts" => [%{"text" => message.content}]
     }
   end
 
-  defp for_api(%ContentPart{type: :text} = part) do
+  def for_api(%ContentPart{type: :text} = part) do
     %{"text" => part.content}
   end
 
-  defp for_api(%ToolCall{} = call) do
+  def for_api(%ToolCall{} = call) do
     %{
       "functionCall" => %{
         "args" => call.arguments,
@@ -211,11 +223,28 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     }
   end
 
-  defp for_api(%ToolResult{} = result) do
+  def for_api(%ToolResult{} = result) do
+    content =
+      case Jason.decode(result.content) do
+        {:ok, data} ->
+          # content was converted through JSON
+          data
+
+        {:error, %Jason.DecodeError{}} ->
+          # assume the result is intended to be a string and return it as-is
+          result.content
+      end
+
+    # There is no explanation for why they want it nested like this. Odd.
+    #
+    # https://ai.google.dev/gemini-api/docs/function-calling#expandable-7
     %{
       "functionResponse" => %{
         "name" => result.name,
-        "response" => Jason.decode!(result.content)
+        "response" => %{
+          "name" => result.name,
+          "content" => content
+        }
       }
     }
   end
@@ -232,7 +261,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
 
   **NOTE:** This function *can* be used directly, but the primary interface
   should be through `LangChain.Chains.LLMChain`. The `ChatGoogleAI` module is more focused on
-  translating the `LangChain` data structures to and from the OpenAI API.
+  translating the `LangChain` data structures to and from the Google AI API.
 
   Another benefit of using `LangChain.Chains.LLMChain` is that it combines the
   storage of messages, adding tools, adding custom context that should be
@@ -241,7 +270,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   `LangChain.Message` once fully complete.
   """
   @impl ChatModel
-  def call(openai, prompt, tools \\ [])
+  def call(google_ai, prompt, tools \\ [])
 
   def call(%ChatGoogleAI{} = google_ai, prompt, tools) when is_binary(prompt) do
     messages = [
@@ -285,7 +314,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     req
     |> Req.post()
     |> case do
-      {:ok, %Req.Response{body: data}} ->
+      {:ok, %Req.Response{status: 200, body: data}} ->
         case do_process_response(google_ai, data) do
           {:error, reason} ->
             {:error, reason}
@@ -294,6 +323,9 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
             Callbacks.fire(google_ai.callbacks, :on_llm_new_message, [google_ai, result])
             result
         end
+
+      {:ok, %Req.Response{status: status}} ->
+        {:error, "Failed with status: #{inspect(status)}"}
 
       {:error, %Req.TransportError{reason: :timeout}} ->
         {:error, "Request timed out"}
@@ -320,11 +352,14 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
         )
     )
     |> case do
-      {:ok, %Req.Response{body: data}} ->
+      {:ok, %Req.Response{status: 200, body: data}} ->
         # Google AI uses `finishReason: "STOP` for all messages in the stream.
         # This field can't be used to terminate the list of deltas, so simulate
         # this behavior by forcing the final delta to have `status: :complete`.
         complete_final_delta(data)
+
+      {:ok, %Req.Response{status: status}} ->
+        {:error, "Failed with status: #{inspect(status)}"}
 
       {:error, %LangChainError{message: reason}} ->
         {:error, reason}
@@ -341,10 +376,11 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     end
   end
 
+  @doc false
   @spec build_url(t()) :: String.t()
-  defp build_url(
-         %ChatGoogleAI{endpoint: endpoint, api_version: api_version, model: model} = google_ai
-       ) do
+  def build_url(
+        %ChatGoogleAI{endpoint: endpoint, api_version: api_version, model: model} = google_ai
+      ) do
     "#{endpoint}/#{api_version}/models/#{model}:#{get_action(google_ai)}?key=#{get_api_key(google_ai)}"
     |> use_sse(google_ai)
   end
@@ -363,12 +399,25 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
 
   def do_process_response(model, response, message_type \\ Message)
 
-  def do_process_response(model, %{"candidates" => candidates}, message_type)
+  def do_process_response(model, %{"candidates" => candidates} = data, message_type)
       when is_list(candidates) do
+    # Google is odd in that it returns token usage for each MessageDelta as it
+    # goes, incrementing the number of generated tokens. I haven't seen anyone
+    # else do this. For now, we fire each and every TokenUsage we receive.
+    case get_token_usage(data) do
+      %TokenUsage{} = token_usage ->
+        Callbacks.fire(model.callbacks, :on_llm_token_usage, [model, token_usage])
+        :ok
+
+      nil ->
+        :ok
+    end
+
     candidates
     |> Enum.map(&do_process_response(model, &1, message_type))
   end
 
+  # Function Call in a Message
   def do_process_response(
         model,
         %{"content" => %{"parts" => parts} = content_data} = data,
@@ -398,7 +447,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     %{
       role: unmap_role(content_data["role"]),
       content: text_part,
-      complete: false,
+      complete: true,
       index: data["index"]
     }
     |> Utils.conditionally_add_to_map(:tool_calls, tool_calls_from_parts)
@@ -413,6 +462,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     end
   end
 
+  # Function Call in a MessageDelta
   def do_process_response(
         model,
         %{"content" => %{"parts" => parts} = content_data} = data,
@@ -606,4 +656,14 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   def restore_from_map(%{"version" => 1} = data) do
     ChatGoogleAI.new(data)
   end
+
+  defp get_token_usage(%{"usageMetadata" => usage} = _response_body) do
+    # extract out the reported response token usage
+    TokenUsage.new!(%{
+      input: Map.get(usage, "promptTokenCount"),
+      output: Map.get(usage, "candidatesTokenCount")
+    })
+  end
+
+  defp get_token_usage(_response_body), do: nil
 end
