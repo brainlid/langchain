@@ -115,6 +115,24 @@ defmodule LangChain.Chains.LLMChainTest do
       # tools get mapped to a dictionary by name
       assert chain._tool_map == %{"hello_world" => hello_world}
     end
+
+    test "requires `llm`" do
+      assert {:error, changeset} = LLMChain.new(%{llm: nil})
+      assert {"can't be blank", _} = changeset.errors[:llm]
+    end
+  end
+
+  describe "new!/1" do
+    test "works with minimal setup", %{chat: chat} do
+      assert %LLMChain{} = chain = LLMChain.new!(%{llm: chat})
+      assert chain.llm == chat
+    end
+
+    test "requires `llm`" do
+      assert_raise LangChainError, "llm: can't be blank", fn ->
+        LLMChain.new!(%{llm: nil})
+      end
+    end
   end
 
   describe "add_tools/2" do
