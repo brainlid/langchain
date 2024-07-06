@@ -706,17 +706,6 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     "content_block_start",
     "message_delta"
   ]
-
-  @doc false
-  def decode_stream(%ChatAnthropic{bedrock: bedrock}, {chunk, buffer}, chunks \\ [])
-      when not is_nil(bedrock) do
-    {chunks, remaining} = BedrockStreamDecoder.decode_stream({chunk, buffer}, chunks)
-
-    chunks = Enum.filter(chunks, &(Map.get(&1, "type") in @relevant_events))
-
-    {chunks, remaining}
-  end
-
   defp relevant_event?("event: content_block_delta\n" <> _rest), do: true
   defp relevant_event?("event: content_block_start\n" <> _rest), do: true
   defp relevant_event?("event: message_delta\n" <> _rest), do: true
@@ -739,6 +728,16 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
   # assumed the response is JSON. Return as-is
   defp extract_data(json), do: json
+
+  @doc false
+  def decode_stream(%ChatAnthropic{bedrock: bedrock}, {chunk, buffer}, chunks \\ [])
+      when not is_nil(bedrock) do
+    {chunks, remaining} = BedrockStreamDecoder.decode_stream({chunk, buffer}, chunks)
+
+    chunks = Enum.filter(chunks, &(Map.get(&1, "type") in @relevant_events))
+
+    {chunks, remaining}
+  end
 
   @doc """
   Convert a LangChain structure to the expected map of data for the OpenAI API.
