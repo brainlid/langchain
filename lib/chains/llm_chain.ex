@@ -689,7 +689,7 @@ defmodule LangChain.Chains.LLMChain do
       combined_results = async_results ++ sync_results ++ invalid_calls
       # create a single tool message that contains all the tool results
       result_message =
-        Message.new_tool_result!(%{content: message.content, tool_results: combined_results})
+        Message.new_tool_result!(%{content: nil, tool_results: combined_results})
 
       # add the tool result message to the chain
       updated_chain = LLMChain.add_message(chain, result_message)
