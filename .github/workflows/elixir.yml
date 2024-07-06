@@ -14,6 +14,7 @@ on:
 env:
   OPENAI_API_KEY: invalid
   ANTHROPIC_API_KEY: invalid
+  GOOGLE_API_KEY: invalid
 
 permissions:
   contents: read
