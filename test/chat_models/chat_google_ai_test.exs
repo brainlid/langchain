@@ -591,6 +591,7 @@ defmodule ChatModels.ChatGoogleAITest do
         LLMChain.new!(%{
           llm: model,
           verbose: false,
+          stream: false,
           callbacks: [chain_handler]
         })
         |> LLMChain.add_message(
