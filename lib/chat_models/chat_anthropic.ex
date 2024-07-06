@@ -701,11 +701,6 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     {processed, incomplete}
   end
 
-  @relevant_events [
-    "content_block_delta",
-    "content_block_start",
-    "message_delta"
-  ]
   defp relevant_event?("event: content_block_delta\n" <> _rest), do: true
   defp relevant_event?("event: content_block_start\n" <> _rest), do: true
   defp relevant_event?("event: message_delta\n" <> _rest), do: true
@@ -734,7 +729,10 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       when not is_nil(bedrock) do
     {chunks, remaining} = BedrockStreamDecoder.decode_stream({chunk, buffer}, chunks)
 
-    chunks = Enum.filter(chunks, &(Map.get(&1, "type") in @relevant_events))
+    chunks =
+      Enum.filter(chunks, fn chunk ->
+        relevant_event?("event: #{chunk["type"]}\n")
+      end)
 
     {chunks, remaining}
   end
