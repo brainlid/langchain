@@ -65,6 +65,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   # allow up to 1 minute for response.
   @receive_timeout 60_000
 
+  @aws_anthropic_version "bedrock-2023-05-31"
+
   @primary_key false
   embedded_schema do
     # API endpoint to use. Defaults to Anthropic's API
@@ -210,7 +212,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
   defp transform_for_bedrock(body, %BedrockConfig{} = _bedrock) do
     body
-    |> Map.put(:anthropic_version, "bedrock-2023-05-31")
+    |> Map.put(:anthropic_version, @aws_anthropic_version)
     |> Map.drop([:model, :stream])
   end
 
