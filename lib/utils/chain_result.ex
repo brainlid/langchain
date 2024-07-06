@@ -5,6 +5,7 @@ defmodule LangChain.Utils.ChainResult do
   alias LangChain.LangChainError
   alias LangChain.Chains.LLMChain
   alias LangChain.Message
+  alias LangChain.Message.ContentPart
   alias __MODULE__
 
   @doc """
@@ -32,20 +33,25 @@ defmodule LangChain.Utils.ChainResult do
     ChainResult.to_string(chain)
   end
 
+  # when received a single ContentPart
+  def to_string(%LLMChain{last_message: %Message{role: :assistant, status: :complete, content: [%ContentPart{type: :text} = part]}} = chain) do
+    {:ok, part.content}
+  end
+
   def to_string(%LLMChain{last_message: %Message{role: :assistant, status: :complete}} = chain) do
     {:ok, chain.last_message.content}
   end
 
-  def to_string(%LLMChain{last_message: %Message{role: :assistant, status: _incomplete}} = _chain) do
-    {:error, "Message is incomplete"}
+  def to_string(%LLMChain{last_message: %Message{role: :assistant, status: _incomplete}} = chain) do
+    {:error, chain, "Message is incomplete"}
   end
 
-  def to_string(%LLMChain{last_message: %Message{}} = _chain) do
-    {:error, "Message is not from assistant"}
+  def to_string(%LLMChain{last_message: %Message{}} = chain) do
+    {:error, chain, "Message is not from assistant"}
   end
 
-  def to_string(%LLMChain{last_message: nil} = _chain) do
-    {:error, "No last message"}
+  def to_string(%LLMChain{last_message: nil} = chain) do
+    {:error, chain, "No last message"}
   end
 
   @doc """
@@ -58,7 +64,7 @@ defmodule LangChain.Utils.ChainResult do
   def to_string!(%LLMChain{} = chain) do
     case ChainResult.to_string(chain) do
       {:ok, result} -> result
-      {:error, reason} -> raise LangChainError, reason
+      {:error, _chain, reason} -> raise LangChainError, reason
     end
   end
 
@@ -71,7 +77,7 @@ defmodule LangChain.Utils.ChainResult do
       {:ok, value} ->
         {:ok, Map.put(map, key, value)}
 
-      {:error, _reason} = error ->
+      {:error, _chain, _reason} = error ->
         error
     end
   end
@@ -86,7 +92,7 @@ defmodule LangChain.Utils.ChainResult do
       {:ok, updated} ->
         updated
 
-      {:error, reason} ->
+      {:error, _chain, reason} ->
         raise LangChainError, reason
     end
   end
