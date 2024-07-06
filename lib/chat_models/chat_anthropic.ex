@@ -55,7 +55,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   alias LangChain.FunctionParam
   alias LangChain.Utils
   alias LangChain.Callbacks
-  alias LangChain.Utils.AwsEventstreamDecoder
+  alias LangChain.Utils.BedrockStreamDecoder
 
   defmodule BedrockConfig do
     @moduledoc """
@@ -708,33 +708,13 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   ]
 
   @doc false
-  def decode_stream(%ChatAnthropic{bedrock: bedrock} = anthropic, {chunk, buffer}, chunks \\ [])
+  def decode_stream(%ChatAnthropic{bedrock: bedrock}, {chunk, buffer}, chunks \\ [])
       when not is_nil(bedrock) do
-    combined_data = buffer <> chunk
+    {chunks, remaining} = BedrockStreamDecoder.decode_stream({chunk, buffer}, chunks)
 
-    case decode_chunk(combined_data) do
-      {:ok, chunk, remaining} ->
-        {chunks, remaining} =
-          if Map.get(chunk, "type") in @relevant_events do
-            chunks = [chunk | chunks]
-            {chunks, remaining}
-          else
-            {chunks, remaining}
-          end
+    chunks = Enum.filter(chunks, &(Map.get(&1, "type") in @relevant_events))
 
-        if byte_size(remaining) > 0 do
-          decode_stream(anthropic, {"", remaining}, chunks)
-        else
-          {Enum.reverse(chunks), ""}
-        end
-
-      {:incomplete_message, _} ->
-        {chunks, combined_data}
-
-      {:error, error} ->
-        Logger.error("Failed to decode Bedrock chunk: #{inspect(error)}")
-        {chunks, combined_data}
-    end
+    {chunks, remaining}
   end
 
   defp relevant_event?("event: content_block_delta\n" <> _rest), do: true
@@ -1011,34 +991,5 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   @impl ChatModel
   def restore_from_map(%{"version" => 1} = data) do
     ChatAnthropic.new(data)
-  end
-
-  defp decode_chunk(chunk) do
-    with {:ok, decoded_message, remaining} <- AwsEventstreamDecoder.decode(chunk),
-         {:ok, %{"bytes" => bytes}} <- decode_json(decoded_message),
-         {:ok, json} <- decode_base64(bytes),
-         {:ok, payload} <- decode_json(json) do
-      {:ok, payload, remaining}
-    end
-  end
-
-  defp decode_json(data) do
-    case Jason.decode(data) do
-      {:ok, json} ->
-        {:ok, json}
-
-      {:error, error} ->
-        {:error, "Unable to decode JSON: #{inspect(error)}"}
-    end
-  end
-
-  defp decode_base64(bytes) do
-    case Base.decode64(bytes) do
-      {:ok, bytes} ->
-        {:ok, bytes}
-
-      :error ->
-        {:error, "Unable to decode base64 \"bytes\" from Bedrock response"}
-    end
   end
 end
