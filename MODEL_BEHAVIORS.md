@@ -17,3 +17,10 @@ This is to document some of the differences between model behaviors. This is spe
 - ChatGPT -
   - When `base64` data given, requires providing the image data prefixed with the base64 content.
   - Ex: `"data:image/jpeg;base64," <> "..."`
+
+## Token Usage
+
+GoogleAI returns token usage for each MessageDelta. They generated value increments with each message. This is an oddity with GoogleAI.
+
+OpenAI ChatGPT, Anthropic Claude, and Bumblebee all return token usage information at the end.
+

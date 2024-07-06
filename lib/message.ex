@@ -189,6 +189,7 @@ defmodule LangChain.Message do
           end
         else
           # only a user message can have ContentParts
+          Logger.error("Invalid message content #{inspect get_field(changeset, :content)} for role #{role}")
           add_error(changeset, :content, "is invalid for role #{role}")
         end
 
