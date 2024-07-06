@@ -55,6 +55,28 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   alias LangChain.FunctionParam
   alias LangChain.Utils
   alias LangChain.Callbacks
+  alias LangChain.Utils.AwsEventstreamDecoder
+
+  defmodule BedrockConfig do
+    @moduledoc """
+    Configuration for AWS Bedrock.
+    """
+    use Ecto.Schema
+    import Ecto.Changeset
+
+    @primary_key false
+    embedded_schema do
+      # A function that returns a tuple of access_key_id & secret_access_key.
+      field :credentials, :any, virtual: true
+      field :region, :string
+    end
+
+    def changeset(bedrock, attrs) do
+      bedrock
+      |> cast(attrs, [:credentials, :region])
+      |> validate_required([:credentials, :region])
+    end
+  end
 
   @behaviour ChatModel
 
@@ -67,6 +89,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   embedded_schema do
     # API endpoint to use. Defaults to Anthropic's API
     field :endpoint, :string, default: "https://api.anthropic.com/v1/messages"
+
+    embeds_one :bedrock, BedrockConfig
 
     # API key for Anthropic. If not set, will use global api key. Allows for usage
     # of a different API key per-call if desired. For instance, allowing a
@@ -132,12 +156,6 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   ]
   @required_fields [:endpoint, :model]
 
-  @spec get_api_key(t()) :: String.t()
-  defp get_api_key(%ChatAnthropic{api_key: api_key}) do
-    # if no API key is set default to `""` which will raise an error
-    api_key || Config.resolve(:anthropic_key, "")
-  end
-
   @doc """
   Setup a ChatAnthropic client configuration.
   """
@@ -145,6 +163,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   def new(%{} = attrs \\ %{}) do
     %ChatAnthropic{}
     |> cast(attrs, @create_fields)
+    |> cast_embed(:bedrock)
     |> common_validation()
     |> apply_action(:insert)
   end
@@ -204,6 +223,15 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     |> Utils.conditionally_add_to_map(:max_tokens, anthropic.max_tokens)
     |> Utils.conditionally_add_to_map(:top_p, anthropic.top_p)
     |> Utils.conditionally_add_to_map(:top_k, anthropic.top_k)
+    |> transform_for_bedrock(anthropic.bedrock)
+  end
+
+  defp transform_for_bedrock(body, nil), do: body
+
+  defp transform_for_bedrock(body, %BedrockConfig{} = _bedrock) do
+    body
+    |> Map.put(:anthropic_version, "bedrock-2023-05-31")
+    |> Map.drop([:model, :stream])
   end
 
   defp get_tools_for_api(nil), do: []
@@ -323,13 +351,14 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       ) do
     req =
       Req.new(
-        url: anthropic.endpoint,
+        url: url(anthropic),
         json: for_api(anthropic, messages, tools),
-        headers: headers(get_api_key(anthropic), anthropic.api_version),
+        headers: headers(anthropic),
         receive_timeout: anthropic.receive_timeout,
         retry: :transient,
         max_retries: 3,
-        retry_delay: fn attempt -> 300 * attempt end
+        retry_delay: fn attempt -> 300 * attempt end,
+        aws_sigv4: aws_sigv4_opts(anthropic.bedrock)
       )
 
     req
@@ -377,14 +406,19 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         retry_count
       ) do
     Req.new(
-      url: anthropic.endpoint,
+      url: url(anthropic),
       json: for_api(anthropic, messages, tools),
-      headers: headers(get_api_key(anthropic), anthropic.api_version),
-      receive_timeout: anthropic.receive_timeout
+      headers: headers(anthropic),
+      receive_timeout: anthropic.receive_timeout,
+      aws_sigv4: aws_sigv4_opts(anthropic.bedrock)
     )
     |> Req.post(
       into:
-        Utils.handle_stream_fn(anthropic, &decode_stream/1, &do_process_response(anthropic, &1))
+        Utils.handle_stream_fn(
+          anthropic,
+          &decode_stream(anthropic, &1),
+          &do_process_response(anthropic, &1)
+        )
     )
     |> case do
       {:ok, %Req.Response{body: data} = response} ->
@@ -415,14 +449,57 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     end
   end
 
-  defp headers(api_key, api_version) do
+  defp aws_sigv4_opts(nil), do: nil
+
+  defp aws_sigv4_opts(bedrock) do
+    {access_key_id, secret_access_key} = bedrock.credentials.()
+
+    [
+      access_key_id: access_key_id,
+      secret_access_key: secret_access_key,
+      region: bedrock.region,
+      service: :bedrock
+    ]
+  end
+
+  @spec get_api_key(binary() | nil) :: String.t()
+  defp get_api_key(api_key) do
+    # if no API key is set default to `""` which will raise an error
+    api_key || Config.resolve(:anthropic_key, "")
+  end
+
+  defp headers(%ChatAnthropic{bedrock: nil, api_key: api_key, api_version: api_version}) do
     %{
-      "x-api-key" => api_key,
+      "x-api-key" => get_api_key(api_key),
       "content-type" => "application/json",
       "anthropic-version" => api_version,
       # https://docs.anthropic.com/claude/docs/tool-use - requires this header during beta
       "anthropic-beta" => "tools-2024-04-04"
     }
+  end
+
+  defp headers(%ChatAnthropic{bedrock: bedrock}) when not is_nil(bedrock) do
+    %{
+      "content-type" => "application/json",
+      "accept" => "application/json"
+    }
+  end
+
+  defp url(%ChatAnthropic{bedrock: nil} = anthropic) do
+    anthropic.endpoint
+  end
+
+  defp url(%ChatAnthropic{bedrock: bedrock, stream: true} = anthropic) when not is_nil(bedrock) do
+    "#{base_bedrock_url(anthropic)}/invoke-with-response-stream"
+  end
+
+  defp url(%ChatAnthropic{bedrock: bedrock, stream: false} = anthropic)
+       when not is_nil(bedrock) do
+    "#{base_bedrock_url(anthropic)}/invoke"
+  end
+
+  defp base_bedrock_url(%ChatAnthropic{bedrock: bedrock, model: model} = _anthropic) do
+    "https://bedrock-runtime.#{bedrock.region}.amazonaws.com/model/#{model}"
   end
 
   # Parse a new message response
@@ -579,7 +656,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   end
 
   @doc false
-  def decode_stream({chunk, buffer}) do
+  def decode_stream(%ChatAnthropic{bedrock: nil}, {chunk, buffer}) do
     # Combine the incoming data with the buffered incomplete data
     combined_data = buffer <> chunk
     # Split data by double newline to find complete messages
@@ -622,6 +699,42 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       end)
 
     {processed, incomplete}
+  end
+
+  @relevant_events [
+    "content_block_delta",
+    "content_block_start",
+    "message_delta"
+  ]
+
+  @doc false
+  def decode_stream(%ChatAnthropic{bedrock: bedrock} = anthropic, {chunk, buffer}, chunks \\ [])
+      when not is_nil(bedrock) do
+    combined_data = buffer <> chunk
+
+    case decode_chunk(combined_data) do
+      {:ok, chunk, remaining} ->
+        {chunks, remaining} =
+          if Map.get(chunk, "type") in @relevant_events do
+            chunks = [chunk | chunks]
+            {chunks, remaining}
+          else
+            {chunks, remaining}
+          end
+
+        if byte_size(remaining) > 0 do
+          decode_stream(anthropic, {"", remaining}, chunks)
+        else
+          {Enum.reverse(chunks), ""}
+        end
+
+      {:incomplete_message, _} ->
+        {chunks, combined_data}
+
+      {:error, error} ->
+        Logger.error("Failed to decode Bedrock chunk: #{inspect(error)}")
+        {chunks, combined_data}
+    end
   end
 
   defp relevant_event?("event: content_block_delta\n" <> _rest), do: true
@@ -898,5 +1011,34 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   @impl ChatModel
   def restore_from_map(%{"version" => 1} = data) do
     ChatAnthropic.new(data)
+  end
+
+  defp decode_chunk(chunk) do
+    with {:ok, decoded_message, remaining} <- AwsEventstreamDecoder.decode(chunk),
+         {:ok, %{"bytes" => bytes}} <- decode_json(decoded_message),
+         {:ok, json} <- decode_base64(bytes),
+         {:ok, payload} <- decode_json(json) do
+      {:ok, payload, remaining}
+    end
+  end
+
+  defp decode_json(data) do
+    case Jason.decode(data) do
+      {:ok, json} ->
+        {:ok, json}
+
+      {:error, error} ->
+        {:error, "Unable to decode JSON: #{inspect(error)}"}
+    end
+  end
+
+  defp decode_base64(bytes) do
+    case Base.decode64(bytes) do
+      {:ok, bytes} ->
+        {:ok, bytes}
+
+      :error ->
+        {:error, "Unable to decode base64 \"bytes\" from Bedrock response"}
+    end
   end
 end

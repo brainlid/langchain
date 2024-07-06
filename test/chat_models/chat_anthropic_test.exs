@@ -13,6 +13,17 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
   alias LangChain.FunctionParam
 
   @test_model "claude-3-opus-20240229"
+  @bedrock_test_model "anthropic.claude-3-5-sonnet-20240620-v1:0"
+
+  defp bedrock_config() do
+    %{
+      credentials: fn ->
+        {Application.get_env(:langchain, :aws_access_key_id),
+         Application.get_env(:langchain, :aws_secret_access_key)}
+      end,
+      region: "us-east-1"
+    }
+  end
 
   defp hello_world(_args, _context) do
     "Hello world!"
@@ -460,6 +471,73 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
       assert_received {:fired_token_usage, usage}
       assert %TokenUsage{output: 8} = usage
     end
+
+    @tag live_call: true, live_anthropic_bedrock: true
+    test "bedrock: basic streamed content example and fires ratelimit callback and token usage" do
+      handlers = %{
+        on_llm_ratelimit_info: fn _model, headers ->
+          send(self(), {:fired_ratelimit_info, headers})
+        end,
+        on_llm_token_usage: fn _model, usage ->
+          send(self(), {:fired_token_usage, usage})
+        end
+      }
+
+      {:ok, chat} =
+        ChatAnthropic.new(%{
+          model: @bedrock_test_model,
+          stream: true,
+          callbacks: [handlers],
+          bedrock: bedrock_config()
+        })
+
+      {:ok, result} =
+        ChatAnthropic.call(chat, [
+          Message.new_user!("Return the response 'Keep up the good work!'.")
+        ])
+
+      # returns a list of MessageDeltas.
+      assert result == [
+               %LangChain.MessageDelta{
+                 content: "",
+                 status: :incomplete,
+                 index: nil,
+                 role: :assistant
+               },
+               %LangChain.MessageDelta{
+                 content: "Keep",
+                 status: :incomplete,
+                 index: nil,
+                 role: :assistant
+               },
+               %LangChain.MessageDelta{
+                 content: " up the good work",
+                 status: :incomplete,
+                 index: nil,
+                 role: :assistant
+               },
+               %LangChain.MessageDelta{
+                 content: "!",
+                 status: :incomplete,
+                 index: nil,
+                 role: :assistant
+               },
+               %LangChain.MessageDelta{
+                 content: "",
+                 status: :complete,
+                 index: nil,
+                 role: :assistant
+               }
+             ]
+
+      assert_received {:fired_ratelimit_info, info}
+
+      # Bedrock doesn't include rate limit info in the response headers
+      assert %{} = info
+
+      assert_received {:fired_token_usage, usage}
+      assert %TokenUsage{output: 9} = usage
+    end
   end
 
   describe "decode_stream/1" do
@@ -470,7 +548,7 @@ event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta
 event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" back"}           }\n\n
 event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" what"}             }\n\nevent: content_block_delta\ndata: {"type":"content_block_delta","index":0|
 
-      {processed1, incomplete} = ChatAnthropic.decode_stream({data1, ""})
+      {processed1, incomplete} = ChatAnthropic.decode_stream(%ChatAnthropic{}, {data1, ""})
 
       assert incomplete ==
                ~s|event: content_block_delta\ndata: {"type":"content_block_delta","index":0|
@@ -503,7 +581,8 @@ event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta
 event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" friend"}               }\n\n
 event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" said"}   }\n\n|
 
-      {processed2, incomplete} = ChatAnthropic.decode_stream({data2, incomplete})
+      {processed2, incomplete} =
+        ChatAnthropic.decode_stream(%ChatAnthropic{}, {data2, incomplete})
 
       assert incomplete == ""
 
@@ -542,7 +621,7 @@ event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta
 
       """
 
-      {parsed, buffer} = ChatAnthropic.decode_stream({chunk, ""})
+      {parsed, buffer} = ChatAnthropic.decode_stream(%ChatAnthropic{}, {chunk, ""})
 
       assert [
                %{
@@ -565,7 +644,7 @@ event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta
 
       """
 
-      {parsed, buffer} = ChatAnthropic.decode_stream({chunk, ""})
+      {parsed, buffer} = ChatAnthropic.decode_stream(%ChatAnthropic{}, {chunk, ""})
 
       assert [
                %{
@@ -589,7 +668,7 @@ event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta
 
       """
 
-      {parsed, buffer} = ChatAnthropic.decode_stream({chunk, ""})
+      {parsed, buffer} = ChatAnthropic.decode_stream(%ChatAnthropic{}, {chunk, ""})
 
       assert [
                %{
@@ -612,7 +691,7 @@ event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta
 
       """
 
-      {parsed, buffer} = ChatAnthropic.decode_stream({chunk, ""})
+      {parsed, buffer} = ChatAnthropic.decode_stream(%ChatAnthropic{}, {chunk, ""})
 
       assert [
                %{
@@ -634,7 +713,7 @@ event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta
       chunk_1 =
         "event: content_blo"
 
-      {parsed, buffer} = ChatAnthropic.decode_stream({chunk_1, ""})
+      {parsed, buffer} = ChatAnthropic.decode_stream(%ChatAnthropic{}, {chunk_1, ""})
 
       assert [] = parsed
       assert buffer == chunk_1
@@ -642,7 +721,7 @@ event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta
       chunk_2 =
         "ck_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"de"
 
-      {parsed, buffer} = ChatAnthropic.decode_stream({chunk_2, buffer})
+      {parsed, buffer} = ChatAnthropic.decode_stream(%ChatAnthropic{}, {chunk_2, buffer})
 
       assert [] = parsed
       assert buffer == chunk_1 <> chunk_2
@@ -654,7 +733,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 
 |
 
-      {parsed, buffer} = ChatAnthropic.decode_stream({chunk_3, buffer})
+      {parsed, buffer} = ChatAnthropic.decode_stream(%ChatAnthropic{}, {chunk_3, buffer})
 
       assert [
                %{
@@ -1151,6 +1230,33 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       #     }
       #   ],
       # }
+    end
+
+    @tag live_call: true, live_anthropic_bedrock: true
+    test "bedrock: uses a tool with parameters" do
+      {:ok, chat} =
+        ChatAnthropic.new(%{
+          model: @bedrock_test_model,
+          bedrock: bedrock_config()
+        })
+
+      message = Message.new_user!("Use the 'do_something' tool with the value 'cat'.")
+
+      tool =
+        Function.new!(%{
+          name: "do_something",
+          parameters: [FunctionParam.new!(%{type: :string, name: "value", required: true})],
+          function: fn _args, _context -> :ok end
+        })
+
+      {:ok, response} = ChatAnthropic.call(chat, [message], [tool])
+
+      assert %Message{role: :assistant} = response
+      assert [%ToolCall{} = call] = response.tool_calls
+      assert call.status == :complete
+      assert call.type == :function
+      assert call.name == "do_something"
+      assert call.arguments == %{"value" => "cat"}
     end
   end
 
