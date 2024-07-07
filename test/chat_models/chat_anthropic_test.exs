@@ -25,9 +25,11 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
     %{bedrock: BedrockHelpers.bedrock_config(), model: @bedrock_test_model}
   end
 
-  defp api_config_for(:anthropic), do: %{}
+  defp api_config_for(_), do: %{}
 
-  setup do
+  setup context do
+    api_config = api_config_for(context[:live_api])
+
     {:ok, hello_world} =
       Function.new(%{
         name: "hello_world",
@@ -35,7 +37,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
         function: fn _args, _context -> "Hello world!" end
       })
 
-    %{hello_world: hello_world}
+    %{hello_world: hello_world, api_config: api_config}
   end
 
   describe "new/1" do
@@ -400,7 +402,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
       assert reason == "Authentication failure with request"
     end
 
-    @tag live_call: true, live_anthropic: true
+    @tag live_call: true, live_anthropic_bedrock: true
     test "Bedrock: handles when invalid credentials given" do
       {:ok, chat} =
         ChatAnthropic.new(%{
@@ -421,7 +423,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
       Module.put_attribute(__MODULE__, :tag, {:"live_#{api}", true})
       @tag live_call: true, live_api: api
       test "#{BedrockHelpers.prefix_for(api)}basic streamed content example and fires ratelimit callback and token usage",
-           %{live_api: api} do
+           %{live_api: api, api_config: api_config} do
         handlers = %{
           on_llm_ratelimit_info: fn _model, headers ->
             send(self(), {:fired_ratelimit_info, headers})
@@ -432,10 +434,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
         }
 
         {:ok, chat} =
-          ChatAnthropic.new(
-            %{stream: true, callbacks: [handlers]}
-            |> Map.merge(api_config_for(api))
-          )
+          ChatAnthropic.new(%{stream: true, callbacks: [handlers]} |> Map.merge(api_config))
 
         {:ok, result} =
           ChatAnthropic.call(chat, [
@@ -1088,11 +1087,11 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       Module.put_attribute(__MODULE__, :tag, {:"live_#{api}", true})
       @tag live_call: true, live_api: api
       test "#{BedrockHelpers.prefix_for(api)} supports multi-modal user message with image prompt",
-           %{live_api: api} do
+           %{api_config: api_config} do
         image_data = load_image_base64("barn_owl.jpg")
 
         # https://docs.anthropic.com/claude/reference/messages-examples#vision
-        {:ok, chat} = ChatAnthropic.new(%{model: @test_model} |> Map.merge(api_config_for(api)))
+        {:ok, chat} = ChatAnthropic.new(%{model: @test_model} |> Map.merge(api_config))
 
         message =
           Message.new_user!([
@@ -1112,9 +1111,11 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
     for api <- @apis do
       Module.put_attribute(__MODULE__, :tag, {:"live_#{api}", true})
       @tag live_call: true, live_api: api
-      test "#{BedrockHelpers.prefix_for(api)} uses a tool with no parameters", %{live_api: api} do
+      test "#{BedrockHelpers.prefix_for(api)} uses a tool with no parameters", %{
+        api_config: api_config
+      } do
         # https://docs.anthropic.com/en/docs/tool-use
-        {:ok, chat} = ChatAnthropic.new(%{model: @test_model} |> Map.merge(api_config_for(api)))
+        {:ok, chat} = ChatAnthropic.new(%{model: @test_model} |> Map.merge(api_config))
 
         message = Message.new_user!("Use the 'do_something' tool.")
 
@@ -1159,9 +1160,11 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
   for api <- @apis do
     Module.put_attribute(__MODULE__, :tag, {:"live_#{api}", true})
     @tag live_call: true, live_api: api
-    test "#{BedrockHelpers.prefix_for(api)} uses a tool with parameters", %{live_api: api} do
+    test "#{BedrockHelpers.prefix_for(api)} uses a tool with parameters", %{
+      api_config: api_config
+    } do
       # https://docs.anthropic.com/claude/reference/messages-examples#vision
-      {:ok, chat} = ChatAnthropic.new(%{model: @test_model} |> Map.merge(api_config_for(api)))
+      {:ok, chat} = ChatAnthropic.new(%{model: @test_model} |> Map.merge(api_config))
 
       message = Message.new_user!("Use the 'do_something' tool with the value 'cat'.")
 
@@ -1203,7 +1206,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
     describe "#{BedrockHelpers.prefix_for(api)} works within a chain" do
       Module.put_attribute(__MODULE__, :tag, {:"live_#{api}", true})
       @tag live_call: true, live_api: api
-      test "works with a streaming response", %{live_api: api} do
+      test "works with a streaming response", %{api_config: api_config} do
         test_pid = self()
 
         handler = %{
@@ -1215,7 +1218,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
         {:ok, chat} =
           ChatAnthropic.new(
             %{stream: true, callbacks: [handler]}
-            |> Map.merge(api_config_for(api))
+            |> Map.merge(api_config)
           )
 
         {:ok, _result_chain, last_message} =
@@ -1233,7 +1236,10 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 
       Module.put_attribute(__MODULE__, :tag, {:"live_#{api}", true})
       @tag live_call: true, live_api: api
-      test "works with NON streaming response and fires ratelimit callback and token usage" do
+      test "works with NON streaming response and fires ratelimit callback and token usage", %{
+        api_config: api_config,
+        live_api: api
+      } do
         test_pid = self()
 
         handler = %{
@@ -1249,7 +1255,10 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
         }
 
         {:ok, _result_chain, last_message} =
-          LLMChain.new!(%{llm: %ChatAnthropic{stream: false, callbacks: [handler]}})
+          LLMChain.new!(%{
+            llm:
+              ChatAnthropic.new!(%{stream: false, callbacks: [handler]} |> Map.merge(api_config))
+          })
           |> LLMChain.add_message(Message.new_user!("Say, 'Hi!'!"))
           |> LLMChain.run()
 
@@ -1262,17 +1271,19 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 
         assert_received {:fired_ratelimit_info, info}
 
-        assert %{
-                 "anthropic-ratelimit-requests-limit" => _,
-                 "anthropic-ratelimit-requests-remaining" => _,
-                 "anthropic-ratelimit-requests-reset" => _,
-                 "anthropic-ratelimit-tokens-limit" => _,
-                 "anthropic-ratelimit-tokens-remaining" => _,
-                 "anthropic-ratelimit-tokens-reset" => _,
-                 #  Not always included
-                 #  "retry-after" => _,
-                 "request-id" => _
-               } = info
+        if api != :bedrock do
+          assert %{
+                   "anthropic-ratelimit-requests-limit" => _,
+                   "anthropic-ratelimit-requests-remaining" => _,
+                   "anthropic-ratelimit-requests-reset" => _,
+                   "anthropic-ratelimit-tokens-limit" => _,
+                   "anthropic-ratelimit-tokens-remaining" => _,
+                   "anthropic-ratelimit-tokens-reset" => _,
+                   #  Not always included
+                   #  "retry-after" => _,
+                   "request-id" => _
+                 } = info
+        end
 
         assert_received {:fired_token_usage, usage}
         assert %TokenUsage{input: 14} = usage
@@ -1280,7 +1291,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 
       Module.put_attribute(__MODULE__, :tag, {:"live_#{api}", true})
       @tag live_call: true, live_api: api
-      test "supports continuing a conversation with streaming" do
+      test "supports continuing a conversation with streaming", %{api_config: api_config} do
         test_pid = self()
 
         handler = %{
@@ -1292,7 +1303,11 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 
         {:ok, _result_chain, last_message} =
           LLMChain.new!(%{
-            llm: %ChatAnthropic{model: @test_model, stream: true, callbacks: [handler]}
+            llm:
+              ChatAnthropic.new!(
+                %{model: @test_model, stream: true, callbacks: [handler]}
+                |> Map.merge(api_config)
+              )
           })
           |> LLMChain.add_message(Message.new_system!("You are a helpful and concise assistant."))
           |> LLMChain.add_message(Message.new_user!("Say, 'Hi!'!"))
@@ -1310,7 +1325,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 
       # Module.put_attribute(__MODULE__, :tag, {:"live_#{api}", true})
       # @tag live_call: true, live_api: api
-      # test "supports starting the assistant's response message and continuing it" do
+      # test "supports starting the assistant's response message and continuing it", %{api_config: api_config} do
       #   test_pid = self()
 
       #   handler = %{
@@ -1321,7 +1336,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       #   }
 
       #   {:ok, result_chain, last_message} =
-      #     LLMChain.new!(%{llm: %ChatAnthropic{model: @test_model, stream: true, callbacks: [handler]}})
+      #     LLMChain.new!(%{llm: ChatAnthropic.new!(%{model: @test_model, stream: true, callbacks: [handler]}) |> Map.merge(api_config)})
       #     |> LLMChain.add_message(Message.new_system!("You are a helpful and concise assistant."))
       #     |> LLMChain.add_message(
       #       Message.new_user!(
