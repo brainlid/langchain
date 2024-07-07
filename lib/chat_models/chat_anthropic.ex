@@ -431,7 +431,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   end
 
   defp aws_sigv4_opts(nil), do: nil
-  defp aws_sigv4_opts(bedrock), do: BedrockConfig.aws_sigv4_opts(bedrock)
+  defp aws_sigv4_opts(%BedrockConfig{} = bedrock), do: BedrockConfig.aws_sigv4_opts(bedrock)
 
   @spec get_api_key(binary() | nil) :: String.t()
   defp get_api_key(api_key) do
@@ -449,7 +449,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     }
   end
 
-  defp headers(%ChatAnthropic{bedrock: bedrock}) when not is_nil(bedrock) do
+  defp headers(%ChatAnthropic{bedrock: %BedrockConfig{}}) do
     %{
       "content-type" => "application/json",
       "accept" => "application/json"
@@ -460,8 +460,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     anthropic.endpoint
   end
 
-  defp url(%ChatAnthropic{bedrock: bedrock, stream: stream} = anthropic)
-       when not is_nil(bedrock) do
+  defp url(%ChatAnthropic{bedrock: %BedrockConfig{} = bedrock, stream: stream} = anthropic) do
     BedrockConfig.url(bedrock, model: anthropic.model, stream: stream)
   end
 
@@ -688,8 +687,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   defp extract_data(json), do: json
 
   @doc false
-  def decode_stream(%ChatAnthropic{bedrock: bedrock}, {chunk, buffer}, chunks \\ [])
-      when not is_nil(bedrock) do
+  def decode_stream(%ChatAnthropic{bedrock: %BedrockConfig{}}, {chunk, buffer}, chunks \\ []) do
     {chunks, remaining} = BedrockStreamDecoder.decode_stream({chunk, buffer}, chunks)
 
     chunks =
