@@ -548,6 +548,10 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     {:error, error_message}
   end
 
+  def do_process_response(%ChatAnthropic{bedrock: %BedrockConfig{}}, %{"message" => message}) do
+    {:error, "Received error from API: #{message}"}
+  end
+
   def do_process_response(_model, other) do
     Logger.error("Trying to process an unexpected response. #{inspect(other)}")
     {:error, "Unexpected response"}

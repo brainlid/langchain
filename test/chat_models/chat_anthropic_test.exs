@@ -415,8 +415,8 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
           Message.new_user!("Return the response 'Colorful Threads'.")
         ])
 
-      # TODO: handle this better
-      assert reason == "Unexpected response"
+      assert reason ==
+               "Received error from API: The security token included in the request is invalid."
     end
 
     for api <- @apis do
