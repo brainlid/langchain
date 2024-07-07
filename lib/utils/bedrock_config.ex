@@ -11,11 +11,12 @@ defmodule LangChain.Utils.BedrockConfig do
     # TODO: Add session token (STS) support at elem(3) when next req version is released
     field :credentials, :any, virtual: true
     field :region, :string
+    field :anthropic_version, :string, default: "bedrock-2023-05-31"
   end
 
   def changeset(bedrock, attrs) do
     bedrock
-    |> cast(attrs, [:credentials, :region])
-    |> validate_required([:credentials, :region])
+    |> cast(attrs, [:credentials, :region, :anthropic_version])
+    |> validate_required([:credentials, :region, :anthropic_version])
   end
 end

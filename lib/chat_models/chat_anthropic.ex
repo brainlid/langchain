@@ -65,13 +65,12 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   # allow up to 1 minute for response.
   @receive_timeout 60_000
 
-  @aws_anthropic_version "bedrock-2023-05-31"
-
   @primary_key false
   embedded_schema do
     # API endpoint to use. Defaults to Anthropic's API
     field :endpoint, :string, default: "https://api.anthropic.com/v1/messages"
 
+    # Configuration for AWS Bedrock. Configure this instead of endpoint & api_key if you want to use Bedrock.
     embeds_one :bedrock, BedrockConfig
 
     # API key for Anthropic. If not set, will use global api key. Allows for usage
@@ -210,9 +209,9 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
   defp transform_for_bedrock(body, nil), do: body
 
-  defp transform_for_bedrock(body, %BedrockConfig{} = _bedrock) do
+  defp transform_for_bedrock(body, %BedrockConfig{} = bedrock) do
     body
-    |> Map.put(:anthropic_version, @aws_anthropic_version)
+    |> Map.put(:anthropic_version, bedrock.anthropic_version)
     |> Map.drop([:model, :stream])
   end
 
