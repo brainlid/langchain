@@ -470,17 +470,9 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     anthropic.endpoint
   end
 
-  defp url(%ChatAnthropic{bedrock: bedrock, stream: true} = anthropic) when not is_nil(bedrock) do
-    "#{base_bedrock_url(anthropic)}/invoke-with-response-stream"
-  end
-
-  defp url(%ChatAnthropic{bedrock: bedrock, stream: false} = anthropic)
+  defp url(%ChatAnthropic{bedrock: bedrock, stream: stream} = anthropic)
        when not is_nil(bedrock) do
-    "#{base_bedrock_url(anthropic)}/invoke"
-  end
-
-  defp base_bedrock_url(%ChatAnthropic{bedrock: bedrock, model: model} = _anthropic) do
-    "https://bedrock-runtime.#{bedrock.region}.amazonaws.com/model/#{model}"
+    BedrockConfig.url(bedrock, model: anthropic.model, stream: stream)
   end
 
   # Parse a new message response

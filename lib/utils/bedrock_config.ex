@@ -19,4 +19,11 @@ defmodule LangChain.Utils.BedrockConfig do
     |> cast(attrs, [:credentials, :region, :anthropic_version])
     |> validate_required([:credentials, :region, :anthropic_version])
   end
+
+  def url(%__MODULE__{region: region}, model: model, stream: stream) do
+    "https://bedrock-runtime.#{region}.amazonaws.com/model/#{model}/#{action(stream: stream)}"
+  end
+
+  defp action(stream: true), do: "invoke-with-response-stream"
+  defp action(stream: false), do: "invoke"
 end
