@@ -1,5 +1,7 @@
 defmodule LangChain.Utils.BedrockStreamDecoderTest do
   use ExUnit.Case
+  use Mimic
+  alias LangChain.Utils.AwsEventstreamDecoder
   alias LangChain.Utils.BedrockStreamDecoder
 
   @message <<0, 0, 1, 17, 0, 0, 0, 75, 18, 240, 42, 230, 11, 58, 101, 118, 101, 110, 116, 45, 116,
@@ -24,26 +26,53 @@ defmodule LangChain.Utils.BedrockStreamDecoderTest do
   }
   @message_twice @message <> @message
 
-  test "decodes a single message" do
-    assert decode_stream({@message, ""}) == {[@message_decoded], ""}
+  describe "integration" do
+    test "decodes a single message" do
+      assert decode_stream({@message, ""}) == {[@message_decoded], ""}
+    end
+
+    test "decodes multiple messages" do
+      assert decode_stream({@message_twice, ""}) == {[@message_decoded, @message_decoded], ""}
+    end
+
+    test "returns buffer of incomplete messages" do
+      <<incomplete::bitstring-size(bit_size(@message_twice) - 32), rest::bitstring>> =
+        @message_twice
+
+      <<expected_buffer::bitstring-size(bit_size(@message) - 32), _rest::bitstring>> = @message
+
+      {chunks, buffer} = decode_stream({incomplete, ""})
+      assert chunks == [@message_decoded]
+      assert buffer == expected_buffer
+      {chunks, buffer} = decode_stream({rest, buffer})
+      assert chunks == [@message_decoded]
+      assert buffer == ""
+    end
   end
 
-  test "decodes multiple messages" do
-    assert decode_stream({@message_twice, ""}) == {[@message_decoded, @message_decoded], ""}
-  end
+  describe "unit" do
+    @success_message_base64 %{
+                              "type" => "content_block_start"
+                            }
+                            |> Jason.encode!()
+                            |> Base.encode64()
+    @success_message %{"bytes" => @success_message_base64} |> Jason.encode!()
 
-  test "returns buffer of incomplete messages" do
-    <<incomplete::bitstring-size(bit_size(@message_twice) - 32), rest::bitstring>> =
-      @message_twice
+    @exception_message %{
+                         "internalServerError" => %{}
+                       }
+                       |> Jason.encode!()
 
-    <<expected_buffer::bitstring-size(bit_size(@message) - 32), _rest::bitstring>> = @message
+    test "it passes through successfully decoded messages" do
+      stub(AwsEventstreamDecoder, :decode, fn _ -> {:ok, @success_message, ""} end)
+      assert decode_stream({"", ""}) == {[%{"type" => "content_block_start"}], ""}
+    end
 
-    {chunks, buffer} = decode_stream({incomplete, ""})
-    assert chunks == [@message_decoded]
-    assert buffer == expected_buffer
-    {chunks, buffer} = decode_stream({rest, buffer})
-    assert chunks == [@message_decoded]
-    assert buffer == ""
+    test "it passes through an exception_message when bytes aren't present" do
+      stub(AwsEventstreamDecoder, :decode, fn _ -> {:ok, @exception_message, ""} end)
+      message = %{"internalServerError" => %{}, bedrock_exception: "internalServerError"}
+      assert decode_stream({"", ""}) == {[message], ""}
+    end
   end
 
   defdelegate decode_stream(data), to: BedrockStreamDecoder

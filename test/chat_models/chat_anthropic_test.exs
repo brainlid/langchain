@@ -1,5 +1,7 @@
 defmodule LangChain.ChatModels.ChatAnthropicTest do
+  alias LangChain.Utils.BedrockStreamDecoder
   use LangChain.BaseCase
+  use Mimic
 
   doctest LangChain.ChatModels.ChatAnthropic
   alias LangChain.ChatModels.ChatAnthropic
@@ -235,7 +237,46 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
     end
   end
 
-  describe "do_process_response/1" do
+  describe "do_process_response/2 with Bedrock" do
+    setup do
+      model =
+        ChatAnthropic.new!(%{stream: false} |> Map.merge(api_config_for(:anthropic_bedrock)))
+
+      %{model: model}
+    end
+
+    test "handles messages the same as anthropics API", %{model: model} do
+      response = %{
+        "id" => "id-123",
+        "type" => "message",
+        "role" => "assistant",
+        "content" => [%{"type" => "text", "text" => "Greetings!"}],
+        "model" => "claude-3-haiku-20240307",
+        "stop_reason" => "end_turn"
+      }
+
+      assert %Message{} = struct = ChatAnthropic.do_process_response(model, response)
+      assert struct.role == :assistant
+      assert struct.content == "Greetings!"
+      assert is_nil(struct.index)
+    end
+
+    test "handles error messages", %{model: model} do
+      error = "Invalid API key"
+
+      assert {:error, "Received error from API: #{error}"} ==
+               ChatAnthropic.do_process_response(model, %{"message" => error})
+    end
+
+    test "handles stream error messages", %{model: model} do
+      error = "Internal error"
+
+      assert {:error, "Stream exception received: #{inspect(error)}"} ==
+               ChatAnthropic.do_process_response(model, %{bedrock_exception: error})
+    end
+  end
+
+  describe "do_process_response/2" do
     setup do
       model = ChatAnthropic.new!(%{stream: false})
       %{model: model}
@@ -497,7 +538,49 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
     end
   end
 
-  describe "decode_stream/1" do
+  describe "decode_stream/2 with Bedrock" do
+    setup do
+      {:ok, model} =
+        ChatAnthropic.new(
+          %{}
+          |> Map.merge(api_config_for(:anthropic_bedrock))
+        )
+
+      %{model: model}
+    end
+
+    test "filters irrelevant events", %{model: model} do
+      relevant_events = [
+        %{"type" => "content_block_start"},
+        %{"type" => "content_block_delta"},
+        %{"type" => "message_delta"}
+      ]
+
+      BedrockStreamDecoder
+      |> stub(:decode_stream, fn _, _ ->
+        {[
+           %{"type" => "message_start"},
+           %{"type" => "message_stop"}
+         ] ++ relevant_events, ""}
+      end)
+
+      {chunks, remaining} = ChatAnthropic.decode_stream(model, {"", ""})
+
+      assert chunks == relevant_events
+      assert remaining == ""
+    end
+
+    test "it passes through exception_message", %{model: model} do
+      BedrockStreamDecoder
+      |> stub(:decode_stream, fn _, _ -> {[%{bedrock_exception: "internalServerError"}], ""} end)
+
+      {chunks, remaining} = ChatAnthropic.decode_stream(model, {"", ""})
+      assert chunks == [%{bedrock_exception: "internalServerError"}]
+      assert remaining == ""
+    end
+  end
+
+  describe "decode_stream/2" do
     test "when data is broken" do
       data1 =
         ~s|event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hr"}       }\n\n

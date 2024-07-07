@@ -41,7 +41,8 @@ defmodule LangChain.MixProject do
       {:req, ">= 0.5.0"},
       {:abacus, "~> 2.1.0"},
       {:nx, ">= 0.7.0", optional: true},
-      {:ex_doc, "~> 0.34", only: :dev, runtime: false}
+      {:ex_doc, "~> 0.34", only: :dev, runtime: false},
+      {:mimic, "~> 1.8", only: :test}
     ]
   end
 

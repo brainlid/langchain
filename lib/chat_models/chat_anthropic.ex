@@ -552,6 +552,12 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     {:error, "Received error from API: #{message}"}
   end
 
+  def do_process_response(%ChatAnthropic{bedrock: %BedrockConfig{}}, %{
+        bedrock_exception: exceptions
+      }) do
+    {:error, "Stream exception received: #{inspect(exceptions)}"}
+  end
+
   def do_process_response(_model, other) do
     Logger.error("Trying to process an unexpected response. #{inspect(other)}")
     {:error, "Unexpected response"}
@@ -696,7 +702,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
     chunks =
       Enum.filter(chunks, fn chunk ->
-        relevant_event?("event: #{chunk["type"]}\n")
+        Map.has_key?(chunk, :bedrock_exception) || relevant_event?("event: #{chunk["type"]}\n")
       end)
 
     {chunks, remaining}

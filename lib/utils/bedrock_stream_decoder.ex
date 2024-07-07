@@ -68,6 +68,10 @@ defmodule LangChain.Utils.BedrockStreamDecoder do
   # bytes is likely missing from the response in exception cases
   # https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_InvokeModelWithResponseStream.html
   defp get_bytes(response, remaining) do
+    Logger.debug("Bedrock response is an exception: #{inspect(response)}")
+    exception_message = Map.keys(response) |> Enum.join(", ")
+    # Make it easier to match on this pattern in process_data fns
+    response = Map.put(response, :bedrock_exception, exception_message)
     {:exception_response, response, remaining}
   end
 end
