@@ -11,23 +11,21 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
   alias LangChain.TokenUsage
   alias LangChain.Function
   alias LangChain.FunctionParam
+  alias LangChain.BedrockHelpers
 
   @test_model "claude-3-opus-20240229"
   @bedrock_test_model "anthropic.claude-3-5-sonnet-20240620-v1:0"
-
-  defp bedrock_config() do
-    %{
-      credentials: fn ->
-        {Application.get_env(:langchain, :aws_access_key_id),
-         Application.get_env(:langchain, :aws_secret_access_key)}
-      end,
-      region: "us-east-1"
-    }
-  end
+  @apis [:anthropic, :bedrock]
 
   defp hello_world(_args, _context) do
     "Hello world!"
   end
+
+  defp api_config_for(:bedrock) do
+    %{bedrock: BedrockHelpers.bedrock_config(), model: @bedrock_test_model}
+  end
+
+  defp api_config_for(:anthropic), do: %{}
 
   setup do
     {:ok, hello_world} =
@@ -403,140 +401,100 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
     end
 
     @tag live_call: true, live_anthropic: true
-    test "basic streamed content example and fires ratelimit callback and token usage" do
-      handlers = %{
-        on_llm_ratelimit_info: fn _model, headers ->
-          send(self(), {:fired_ratelimit_info, headers})
-        end,
-        on_llm_token_usage: fn _model, usage ->
-          send(self(), {:fired_token_usage, usage})
-        end
-      }
+    test "Bedrock: handles when invalid credentials given" do
+      {:ok, chat} =
+        ChatAnthropic.new(%{
+          stream: false,
+          bedrock: %{credentials: fn -> {"", ""} end, region: "us-east-1"}
+        })
 
-      {:ok, chat} = ChatAnthropic.new(%{stream: true, callbacks: [handlers]})
-
-      {:ok, result} =
+      {:error, reason} =
         ChatAnthropic.call(chat, [
           Message.new_user!("Return the response 'Colorful Threads'.")
         ])
 
-      # returns a list of MessageDeltas.
-      assert result == [
-               %LangChain.MessageDelta{
-                 content: "",
-                 status: :incomplete,
-                 index: nil,
-                 role: :assistant
-               },
-               %LangChain.MessageDelta{
-                 content: "Color",
-                 status: :incomplete,
-                 index: nil,
-                 role: :assistant
-               },
-               %LangChain.MessageDelta{
-                 content: "ful",
-                 status: :incomplete,
-                 index: nil,
-                 role: :assistant
-               },
-               %LangChain.MessageDelta{
-                 content: " Threads",
-                 status: :incomplete,
-                 index: nil,
-                 role: :assistant
-               },
-               %LangChain.MessageDelta{
-                 content: "",
-                 status: :complete,
-                 index: nil,
-                 role: :assistant
-               }
-             ]
-
-      assert_received {:fired_ratelimit_info, info}
-
-      assert %{
-               "anthropic-ratelimit-requests-limit" => _,
-               "anthropic-ratelimit-requests-remaining" => _,
-               "anthropic-ratelimit-requests-reset" => _,
-               "anthropic-ratelimit-tokens-limit" => _,
-               "anthropic-ratelimit-tokens-remaining" => _,
-               "anthropic-ratelimit-tokens-reset" => _,
-               #  Not always included
-               #  "retry-after" => _,
-               "request-id" => _
-             } = info
-
-      assert_received {:fired_token_usage, usage}
-      assert %TokenUsage{output: 8} = usage
+      # TODO: handle this better
+      assert reason == "Unexpected response"
     end
 
-    @tag live_call: true, live_anthropic_bedrock: true
-    test "bedrock: basic streamed content example and fires ratelimit callback and token usage" do
-      handlers = %{
-        on_llm_ratelimit_info: fn _model, headers ->
-          send(self(), {:fired_ratelimit_info, headers})
-        end,
-        on_llm_token_usage: fn _model, usage ->
-          send(self(), {:fired_token_usage, usage})
+    for api <- @apis do
+      Module.put_attribute(__MODULE__, :tag, {:"live_#{api}", true})
+      @tag live_call: true, live_api: api
+      test "#{BedrockHelpers.prefix_for(api)}basic streamed content example and fires ratelimit callback and token usage",
+           %{live_api: api} do
+        handlers = %{
+          on_llm_ratelimit_info: fn _model, headers ->
+            send(self(), {:fired_ratelimit_info, headers})
+          end,
+          on_llm_token_usage: fn _model, usage ->
+            send(self(), {:fired_token_usage, usage})
+          end
+        }
+
+        {:ok, chat} =
+          ChatAnthropic.new(
+            %{stream: true, callbacks: [handlers]}
+            |> Map.merge(api_config_for(api))
+          )
+
+        {:ok, result} =
+          ChatAnthropic.call(chat, [
+            Message.new_user!("Return the response 'Keep up the good work!'.")
+          ])
+
+        # returns a list of MessageDeltas.
+        assert result == [
+                 %LangChain.MessageDelta{
+                   content: "",
+                   status: :incomplete,
+                   index: nil,
+                   role: :assistant
+                 },
+                 %LangChain.MessageDelta{
+                   content: "Keep",
+                   status: :incomplete,
+                   index: nil,
+                   role: :assistant
+                 },
+                 %LangChain.MessageDelta{
+                   content: " up the good work",
+                   status: :incomplete,
+                   index: nil,
+                   role: :assistant
+                 },
+                 %LangChain.MessageDelta{
+                   content: "!",
+                   status: :incomplete,
+                   index: nil,
+                   role: :assistant
+                 },
+                 %LangChain.MessageDelta{
+                   content: "",
+                   status: :complete,
+                   index: nil,
+                   role: :assistant
+                 }
+               ]
+
+        assert_received {:fired_ratelimit_info, info}
+
+        if api != :bedrock do
+          assert %{
+                   "anthropic-ratelimit-requests-limit" => _,
+                   "anthropic-ratelimit-requests-remaining" => _,
+                   "anthropic-ratelimit-requests-reset" => _,
+                   "anthropic-ratelimit-tokens-limit" => _,
+                   "anthropic-ratelimit-tokens-remaining" => _,
+                   "anthropic-ratelimit-tokens-reset" => _,
+                   #  Not always included
+                   #  "retry-after" => _,
+                   "request-id" => _
+                 } = info
         end
-      }
 
-      {:ok, chat} =
-        ChatAnthropic.new(%{
-          model: @bedrock_test_model,
-          stream: true,
-          callbacks: [handlers],
-          bedrock: bedrock_config()
-        })
-
-      {:ok, result} =
-        ChatAnthropic.call(chat, [
-          Message.new_user!("Return the response 'Keep up the good work!'.")
-        ])
-
-      # returns a list of MessageDeltas.
-      assert result == [
-               %LangChain.MessageDelta{
-                 content: "",
-                 status: :incomplete,
-                 index: nil,
-                 role: :assistant
-               },
-               %LangChain.MessageDelta{
-                 content: "Keep",
-                 status: :incomplete,
-                 index: nil,
-                 role: :assistant
-               },
-               %LangChain.MessageDelta{
-                 content: " up the good work",
-                 status: :incomplete,
-                 index: nil,
-                 role: :assistant
-               },
-               %LangChain.MessageDelta{
-                 content: "!",
-                 status: :incomplete,
-                 index: nil,
-                 role: :assistant
-               },
-               %LangChain.MessageDelta{
-                 content: "",
-                 status: :complete,
-                 index: nil,
-                 role: :assistant
-               }
-             ]
-
-      assert_received {:fired_ratelimit_info, info}
-
-      # Bedrock doesn't include rate limit info in the response headers
-      assert %{} = info
-
-      assert_received {:fired_token_usage, usage}
-      assert %TokenUsage{output: 9} = usage
+        assert_received {:fired_token_usage, usage}
+        assert %TokenUsage{output: 9} = usage
+      end
     end
   end
 
@@ -1126,74 +1084,84 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
   end
 
   describe "image vision using message parts" do
-    @tag live_call: true, live_anthropic: true
-    test "supports multi-modal user message with image prompt" do
-      image_data = load_image_base64("barn_owl.jpg")
+    for api <- @apis do
+      Module.put_attribute(__MODULE__, :tag, {:"live_#{api}", true})
+      @tag live_call: true, live_api: api
+      test "#{BedrockHelpers.prefix_for(api)} supports multi-modal user message with image prompt",
+           %{live_api: api} do
+        image_data = load_image_base64("barn_owl.jpg")
 
-      # https://docs.anthropic.com/claude/reference/messages-examples#vision
-      {:ok, chat} = ChatAnthropic.new(%{model: @test_model})
+        # https://docs.anthropic.com/claude/reference/messages-examples#vision
+        {:ok, chat} = ChatAnthropic.new(%{model: @test_model} |> Map.merge(api_config_for(api)))
 
-      message =
-        Message.new_user!([
-          ContentPart.text!("Identify what this is a picture of:"),
-          ContentPart.image!(image_data, media: :jpg)
-        ])
+        message =
+          Message.new_user!([
+            ContentPart.text!("Identify what this is a picture of:"),
+            ContentPart.image!(image_data, media: :jpg)
+          ])
 
-      {:ok, response} = ChatAnthropic.call(chat, [message], [])
+        {:ok, response} = ChatAnthropic.call(chat, [message], [])
 
-      assert %Message{role: :assistant} = response
-      assert String.contains?(response.content, "barn owl")
+        assert %Message{role: :assistant} = response
+        assert String.contains?(response.content |> String.downcase(), "barn owl")
+      end
     end
   end
 
   describe "a tool use" do
-    @tag live_call: true, live_anthropic: true
-    test "uses a tool with no parameters" do
-      # https://docs.anthropic.com/en/docs/tool-use
-      {:ok, chat} = ChatAnthropic.new(%{model: @test_model})
+    for api <- @apis do
+      Module.put_attribute(__MODULE__, :tag, {:"live_#{api}", true})
+      @tag live_call: true, live_api: api
+      test "#{BedrockHelpers.prefix_for(api)} uses a tool with no parameters", %{live_api: api} do
+        # https://docs.anthropic.com/en/docs/tool-use
+        {:ok, chat} = ChatAnthropic.new(%{model: @test_model} |> Map.merge(api_config_for(api)))
 
-      message = Message.new_user!("Use the 'do_something' tool.")
+        message = Message.new_user!("Use the 'do_something' tool.")
 
-      tool =
-        Function.new!(%{
-          name: "do_something",
-          parameters: [],
-          function: fn _args, _context -> :ok end
-        })
+        tool =
+          Function.new!(%{
+            name: "do_something",
+            parameters: [],
+            function: fn _args, _context -> :ok end
+          })
 
-      {:ok, response} = ChatAnthropic.call(chat, [message], [tool])
+        {:ok, response} = ChatAnthropic.call(chat, [message], [tool])
 
-      assert %Message{role: :assistant} = response
-      assert [%ToolCall{} = call] = response.tool_calls
-      assert call.status == :complete
-      assert call.type == :function
-      assert call.name == "do_something"
-      # detects empty and returns nil
-      assert call.arguments == nil
+        assert %Message{role: :assistant} = response
+        assert [%ToolCall{} = call] = response.tool_calls
+        assert call.status == :complete
+        assert call.type == :function
+        assert call.name == "do_something"
+        # detects empty and returns nil
+        assert call.arguments == nil
 
-      # %LangChain.Message{
-      #   content: "<thinking>\nThe user has requested to use the 'do_something' tool. Let's look at the parameters for this tool:\n<function>{\"name\": \"do_something\", \"parameters\": {\"properties\": {}, \"type\": \"object\"}}</function>\n\nThis tool does not require any parameters. Since there are no required parameters missing, we can proceed with invoking the 'do_something' tool.\n</thinking>",
-      #   index: nil,
-      #   status: :complete,
-      #   role: :assistant,
-      #   name: nil,
-      #   tool_calls: [
-      #     %LangChain.Message.ToolCall{
-      #       status: :complete,
-      #       type: :function,
-      #       call_id: "toolu_01Pch8mywrRttVZNK3zvntuF",
-      #       name: "do_something",
-      #       arguments: %{},
-      #       index: nil
-      #     }
-      #   ],
-      # }
+        # %LangChain.Message{
+        #   content: "<thinking>\nThe user has requested to use the 'do_something' tool. Let's look at the parameters for this tool:\n<function>{\"name\": \"do_something\", \"parameters\": {\"properties\": {}, \"type\": \"object\"}}</function>\n\nThis tool does not require any parameters. Since there are no required parameters missing, we can proceed with invoking the 'do_something' tool.\n</thinking>",
+        #   index: nil,
+        #   status: :complete,
+        #   role: :assistant,
+        #   name: nil,
+        #   tool_calls: [
+        #     %LangChain.Message.ToolCall{
+        #       status: :complete,
+        #       type: :function,
+        #       call_id: "toolu_01Pch8mywrRttVZNK3zvntuF",
+        #       name: "do_something",
+        #       arguments: %{},
+        #       index: nil
+        #     }
+        #   ],
+        # }
+      end
     end
+  end
 
-    @tag live_call: true, live_anthropic: true
-    test "uses a tool with parameters" do
+  for api <- @apis do
+    Module.put_attribute(__MODULE__, :tag, {:"live_#{api}", true})
+    @tag live_call: true, live_api: api
+    test "#{BedrockHelpers.prefix_for(api)} uses a tool with parameters", %{live_api: api} do
       # https://docs.anthropic.com/claude/reference/messages-examples#vision
-      {:ok, chat} = ChatAnthropic.new(%{model: @test_model})
+      {:ok, chat} = ChatAnthropic.new(%{model: @test_model} |> Map.merge(api_config_for(api)))
 
       message = Message.new_user!("Use the 'do_something' tool with the value 'cat'.")
 
@@ -1232,169 +1200,152 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       # }
     end
 
-    @tag live_call: true, live_anthropic_bedrock: true
-    test "bedrock: uses a tool with parameters" do
-      {:ok, chat} =
-        ChatAnthropic.new(%{
-          model: @bedrock_test_model,
-          bedrock: bedrock_config()
-        })
+    describe "#{BedrockHelpers.prefix_for(api)} works within a chain" do
+      Module.put_attribute(__MODULE__, :tag, {:"live_#{api}", true})
+      @tag live_call: true, live_api: api
+      test "works with a streaming response", %{live_api: api} do
+        test_pid = self()
 
-      message = Message.new_user!("Use the 'do_something' tool with the value 'cat'.")
+        handler = %{
+          on_llm_new_delta: fn _model, delta ->
+            send(test_pid, {:streamed_fn, delta})
+          end
+        }
 
-      tool =
-        Function.new!(%{
-          name: "do_something",
-          parameters: [FunctionParam.new!(%{type: :string, name: "value", required: true})],
-          function: fn _args, _context -> :ok end
-        })
+        {:ok, chat} =
+          ChatAnthropic.new(
+            %{stream: true, callbacks: [handler]}
+            |> Map.merge(api_config_for(api))
+          )
 
-      {:ok, response} = ChatAnthropic.call(chat, [message], [tool])
+        {:ok, _result_chain, last_message} =
+          LLMChain.new!(%{llm: chat})
+          |> LLMChain.add_message(Message.new_user!("Say, 'Hi!'!"))
+          |> LLMChain.run()
 
-      assert %Message{role: :assistant} = response
-      assert [%ToolCall{} = call] = response.tool_calls
-      assert call.status == :complete
-      assert call.type == :function
-      assert call.name == "do_something"
-      assert call.arguments == %{"value" => "cat"}
+        assert last_message.content == "Hi!"
+        assert last_message.status == :complete
+        assert last_message.role == :assistant
+
+        assert_received {:streamed_fn, data}
+        assert %MessageDelta{role: :assistant} = data
+      end
+
+      Module.put_attribute(__MODULE__, :tag, {:"live_#{api}", true})
+      @tag live_call: true, live_api: api
+      test "works with NON streaming response and fires ratelimit callback and token usage" do
+        test_pid = self()
+
+        handler = %{
+          on_llm_new_message: fn _model, message ->
+            send(test_pid, {:received_msg, message})
+          end,
+          on_llm_ratelimit_info: fn _model, headers ->
+            send(test_pid, {:fired_ratelimit_info, headers})
+          end,
+          on_llm_token_usage: fn _model, usage ->
+            send(self(), {:fired_token_usage, usage})
+          end
+        }
+
+        {:ok, _result_chain, last_message} =
+          LLMChain.new!(%{llm: %ChatAnthropic{stream: false, callbacks: [handler]}})
+          |> LLMChain.add_message(Message.new_user!("Say, 'Hi!'!"))
+          |> LLMChain.run()
+
+        assert last_message.content == "Hi!"
+        assert last_message.status == :complete
+        assert last_message.role == :assistant
+
+        assert_received {:received_msg, data}
+        assert %Message{role: :assistant} = data
+
+        assert_received {:fired_ratelimit_info, info}
+
+        assert %{
+                 "anthropic-ratelimit-requests-limit" => _,
+                 "anthropic-ratelimit-requests-remaining" => _,
+                 "anthropic-ratelimit-requests-reset" => _,
+                 "anthropic-ratelimit-tokens-limit" => _,
+                 "anthropic-ratelimit-tokens-remaining" => _,
+                 "anthropic-ratelimit-tokens-reset" => _,
+                 #  Not always included
+                 #  "retry-after" => _,
+                 "request-id" => _
+               } = info
+
+        assert_received {:fired_token_usage, usage}
+        assert %TokenUsage{input: 14} = usage
+      end
+
+      Module.put_attribute(__MODULE__, :tag, {:"live_#{api}", true})
+      @tag live_call: true, live_api: api
+      test "supports continuing a conversation with streaming" do
+        test_pid = self()
+
+        handler = %{
+          on_llm_new_delta: fn _model, delta ->
+            # IO.inspect(data, label: "DATA")
+            send(test_pid, {:streamed_fn, delta})
+          end
+        }
+
+        {:ok, _result_chain, last_message} =
+          LLMChain.new!(%{
+            llm: %ChatAnthropic{model: @test_model, stream: true, callbacks: [handler]}
+          })
+          |> LLMChain.add_message(Message.new_system!("You are a helpful and concise assistant."))
+          |> LLMChain.add_message(Message.new_user!("Say, 'Hi!'!"))
+          |> LLMChain.add_message(Message.new_assistant!("Hi!"))
+          |> LLMChain.add_message(Message.new_user!("What's the capitol of Norway?"))
+          |> LLMChain.run()
+
+        assert last_message.content =~ "Oslo"
+        assert last_message.status == :complete
+        assert last_message.role == :assistant
+
+        assert_received {:streamed_fn, data}
+        assert %MessageDelta{role: :assistant} = data
+      end
+
+      # Module.put_attribute(__MODULE__, :tag, {:"live_#{api}", true})
+      # @tag live_call: true, live_api: api
+      # test "supports starting the assistant's response message and continuing it" do
+      #   test_pid = self()
+
+      #   handler = %{
+      #     on_llm_new_delta: fn _model, delta ->
+      #       # IO.inspect(data, label: "DATA")
+      #       send(test_pid, {:streamed_fn, data})
+      #     end
+      #   }
+
+      #   {:ok, result_chain, last_message} =
+      #     LLMChain.new!(%{llm: %ChatAnthropic{model: @test_model, stream: true, callbacks: [handler]}})
+      #     |> LLMChain.add_message(Message.new_system!("You are a helpful and concise assistant."))
+      #     |> LLMChain.add_message(
+      #       Message.new_user!(
+      #         "What's the capitol of Norway? Please respond with the answer <answer>{{ANSWER}}</answer>."
+      #       )
+      #     )
+      #     |> LLMChain.add_message(Message.new_assistant!("<answer>"))
+      #     |> LLMChain.run()
+
+      #   assert last_message.content =~ "Oslo"
+      #   assert last_message.status == :complete
+      #   assert last_message.role == :assistant
+
+      #   # TODO: MERGE A CONTINUED Assistant message with the one we provided.
+
+      #   IO.inspect(result_chain, label: "FINAL CHAIN")
+      #   IO.inspect(last_message)
+
+      #   assert_received {:streamed_fn, data}
+      #   assert %MessageDelta{role: :assistant} = data
+
+      #   assert false
+      # end
     end
-  end
-
-  describe "works within a chain" do
-    @tag live_call: true, live_anthropic: true
-    test "works with a streaming response" do
-      test_pid = self()
-
-      handler = %{
-        on_llm_new_delta: fn _model, delta ->
-          send(test_pid, {:streamed_fn, delta})
-        end
-      }
-
-      {:ok, _result_chain, last_message} =
-        LLMChain.new!(%{llm: %ChatAnthropic{stream: true, callbacks: [handler]}})
-        |> LLMChain.add_message(Message.new_user!("Say, 'Hi!'!"))
-        |> LLMChain.run()
-
-      assert last_message.content == "Hi!"
-      assert last_message.status == :complete
-      assert last_message.role == :assistant
-
-      assert_received {:streamed_fn, data}
-      assert %MessageDelta{role: :assistant} = data
-    end
-
-    @tag live_call: true, live_anthropic: true
-    test "works with NON streaming response and fires ratelimit callback and token usage" do
-      test_pid = self()
-
-      handler = %{
-        on_llm_new_message: fn _model, message ->
-          send(test_pid, {:received_msg, message})
-        end,
-        on_llm_ratelimit_info: fn _model, headers ->
-          send(test_pid, {:fired_ratelimit_info, headers})
-        end,
-        on_llm_token_usage: fn _model, usage ->
-          send(self(), {:fired_token_usage, usage})
-        end
-      }
-
-      {:ok, _result_chain, last_message} =
-        LLMChain.new!(%{llm: %ChatAnthropic{stream: false, callbacks: [handler]}})
-        |> LLMChain.add_message(Message.new_user!("Say, 'Hi!'!"))
-        |> LLMChain.run()
-
-      assert last_message.content == "Hi!"
-      assert last_message.status == :complete
-      assert last_message.role == :assistant
-
-      assert_received {:received_msg, data}
-      assert %Message{role: :assistant} = data
-
-      assert_received {:fired_ratelimit_info, info}
-
-      assert %{
-               "anthropic-ratelimit-requests-limit" => _,
-               "anthropic-ratelimit-requests-remaining" => _,
-               "anthropic-ratelimit-requests-reset" => _,
-               "anthropic-ratelimit-tokens-limit" => _,
-               "anthropic-ratelimit-tokens-remaining" => _,
-               "anthropic-ratelimit-tokens-reset" => _,
-               #  Not always included
-               #  "retry-after" => _,
-               "request-id" => _
-             } = info
-
-      assert_received {:fired_token_usage, usage}
-      assert %TokenUsage{input: 14} = usage
-    end
-
-    @tag live_call: true, live_anthropic: true
-    test "supports continuing a conversation with streaming" do
-      test_pid = self()
-
-      handler = %{
-        on_llm_new_delta: fn _model, delta ->
-          # IO.inspect(data, label: "DATA")
-          send(test_pid, {:streamed_fn, delta})
-        end
-      }
-
-      {:ok, _result_chain, last_message} =
-        LLMChain.new!(%{
-          llm: %ChatAnthropic{model: @test_model, stream: true, callbacks: [handler]}
-        })
-        |> LLMChain.add_message(Message.new_system!("You are a helpful and concise assistant."))
-        |> LLMChain.add_message(Message.new_user!("Say, 'Hi!'!"))
-        |> LLMChain.add_message(Message.new_assistant!("Hi!"))
-        |> LLMChain.add_message(Message.new_user!("What's the capitol of Norway?"))
-        |> LLMChain.run()
-
-      assert last_message.content =~ "Oslo"
-      assert last_message.status == :complete
-      assert last_message.role == :assistant
-
-      assert_received {:streamed_fn, data}
-      assert %MessageDelta{role: :assistant} = data
-    end
-
-    # @tag live_call: true, live_anthropic: true
-    # test "supports starting the assistant's response message and continuing it" do
-    #   test_pid = self()
-
-    #   handler = %{
-    #     on_llm_new_delta: fn _model, delta ->
-    #       # IO.inspect(data, label: "DATA")
-    #       send(test_pid, {:streamed_fn, data})
-    #     end
-    #   }
-
-    #   {:ok, result_chain, last_message} =
-    #     LLMChain.new!(%{llm: %ChatAnthropic{model: @test_model, stream: true, callbacks: [handler]}})
-    #     |> LLMChain.add_message(Message.new_system!("You are a helpful and concise assistant."))
-    #     |> LLMChain.add_message(
-    #       Message.new_user!(
-    #         "What's the capitol of Norway? Please respond with the answer <answer>{{ANSWER}}</answer>."
-    #       )
-    #     )
-    #     |> LLMChain.add_message(Message.new_assistant!("<answer>"))
-    #     |> LLMChain.run()
-
-    #   assert last_message.content =~ "Oslo"
-    #   assert last_message.status == :complete
-    #   assert last_message.role == :assistant
-
-    #   # TODO: MERGE A CONTINUED Assistant message with the one we provided.
-
-    #   IO.inspect(result_chain, label: "FINAL CHAIN")
-    #   IO.inspect(last_message)
-
-    #   assert_received {:streamed_fn, data}
-    #   assert %MessageDelta{role: :assistant} = data
-
-    #   assert false
-    # end
   end
 
   describe "serialize_config/2" do
