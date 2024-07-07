@@ -431,17 +431,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   end
 
   defp aws_sigv4_opts(nil), do: nil
-
-  defp aws_sigv4_opts(bedrock) do
-    {access_key_id, secret_access_key} = bedrock.credentials.()
-
-    [
-      access_key_id: access_key_id,
-      secret_access_key: secret_access_key,
-      region: bedrock.region,
-      service: :bedrock
-    ]
-  end
+  defp aws_sigv4_opts(bedrock), do: BedrockConfig.aws_sigv4_opts(bedrock)
 
   @spec get_api_key(binary() | nil) :: String.t()
   defp get_api_key(api_key) do
