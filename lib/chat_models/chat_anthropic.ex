@@ -204,12 +204,12 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     |> Utils.conditionally_add_to_map(:max_tokens, anthropic.max_tokens)
     |> Utils.conditionally_add_to_map(:top_p, anthropic.top_p)
     |> Utils.conditionally_add_to_map(:top_k, anthropic.top_k)
-    |> transform_for_bedrock(anthropic.bedrock)
+    |> maybe_transform_for_bedrock(anthropic.bedrock)
   end
 
-  defp transform_for_bedrock(body, nil), do: body
+  defp maybe_transform_for_bedrock(body, nil), do: body
 
-  defp transform_for_bedrock(body, %BedrockConfig{} = bedrock) do
+  defp maybe_transform_for_bedrock(body, %BedrockConfig{} = bedrock) do
     body
     |> Map.put(:anthropic_version, bedrock.anthropic_version)
     |> Map.drop([:model, :stream])
