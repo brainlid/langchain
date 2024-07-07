@@ -324,7 +324,7 @@ defmodule LangChain.Message do
   Create a new user message which represents a human message or a message from
   the application.
   """
-  @spec new_user(content :: String.t() | [ContentPart.t()]) ::
+  @spec new_user(content :: String.t() | [ContentPart.t() | PromptTemplate.t()]) ::
           {:ok, t()} | {:error, Ecto.Changeset.t()}
   def new_user(content) do
     new(%{role: :user, content: content, status: :complete})
@@ -334,7 +334,7 @@ defmodule LangChain.Message do
   Create a new user message which represents a human message or a message from
   the application.
   """
-  @spec new_user!(content :: String.t() | [ContentPart.t()]) :: t() | no_return()
+  @spec new_user!(content :: String.t() | [ContentPart.t() | PromptTemplate.t()]) :: t() | no_return()
   def new_user!(content) do
     case new_user(content) do
       {:ok, msg} ->
