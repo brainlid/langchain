@@ -15,13 +15,13 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
 
   @test_model "claude-3-opus-20240229"
   @bedrock_test_model "anthropic.claude-3-5-sonnet-20240620-v1:0"
-  @apis [:anthropic, :bedrock]
+  @apis [:anthropic, :anthropic_bedrock]
 
   defp hello_world(_args, _context) do
     "Hello world!"
   end
 
-  defp api_config_for(:bedrock) do
+  defp api_config_for(:anthropic_bedrock) do
     %{bedrock: BedrockHelpers.bedrock_config(), model: @bedrock_test_model}
   end
 
@@ -406,7 +406,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
     test "Bedrock: handles when invalid credentials given" do
       {:ok, chat} =
         ChatAnthropic.new(%{
-          stream: false,
+          stream: true,
           bedrock: %{credentials: fn -> {"", ""} end, region: "us-east-1"}
         })
 
@@ -477,7 +477,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
 
         assert_received {:fired_ratelimit_info, info}
 
-        if api != :bedrock do
+        if api != :anthropic_bedrock do
           assert %{
                    "anthropic-ratelimit-requests-limit" => _,
                    "anthropic-ratelimit-requests-remaining" => _,
@@ -1271,7 +1271,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 
         assert_received {:fired_ratelimit_info, info}
 
-        if api != :bedrock do
+        if api != :anthropic_bedrock do
           assert %{
                    "anthropic-ratelimit-requests-limit" => _,
                    "anthropic-ratelimit-requests-remaining" => _,
