@@ -8,15 +8,14 @@ defmodule LangChain.Utils.BedrockStreamDecoder do
     case decode_chunk(combined_data) do
       {:ok, chunk, remaining} ->
         chunks = [chunk | chunks]
-
-        if byte_size(remaining) > 0 do
-          decode_stream({"", remaining}, chunks)
-        else
-          {Enum.reverse(chunks), ""}
-        end
+        finish_or_decode_remaining(chunks, remaining)
 
       {:incomplete_message, _} ->
         {chunks, combined_data}
+
+      {:exception_response, response, remaining} ->
+        chunks = [response | chunks]
+        finish_or_decode_remaining(chunks, remaining)
 
       {:error, error} ->
         Logger.error("Failed to decode Bedrock chunk: #{inspect(error)}")
@@ -24,9 +23,18 @@ defmodule LangChain.Utils.BedrockStreamDecoder do
     end
   end
 
+  defp finish_or_decode_remaining(chunks, remaining) when byte_size(remaining) > 0 do
+    decode_stream({"", remaining}, chunks)
+  end
+
+  defp finish_or_decode_remaining(chunks, remaining) do
+    {chunks, remaining}
+  end
+
   defp decode_chunk(chunk) do
     with {:ok, decoded_message, remaining} <- AwsEventstreamDecoder.decode(chunk),
-         {:ok, %{"bytes" => bytes}} <- decode_json(decoded_message),
+         {:ok, response_json} <- decode_json(decoded_message),
+         {:ok, bytes} <- get_bytes(response_json, remaining),
          {:ok, json} <- decode_base64(bytes),
          {:ok, payload} <- decode_json(json) do
       {:ok, payload, remaining}
@@ -51,5 +59,15 @@ defmodule LangChain.Utils.BedrockStreamDecoder do
       :error ->
         {:error, "Unable to decode base64 \"bytes\" from Bedrock response"}
     end
+  end
+
+  defp get_bytes(%{"bytes" => bytes}, _remaining) do
+    {:ok, bytes}
+  end
+
+  # bytes is likely missing from the response in exception cases
+  # https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_InvokeModelWithResponseStream.html
+  defp get_bytes(response, remaining) do
+    {:exception_response, response, remaining}
   end
 end
