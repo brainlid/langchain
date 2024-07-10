@@ -714,6 +714,22 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     end
 
     @tag live_call: true, live_open_ai: true
+    test "executing a call with tool_choice set as none", %{weather: weather, hello_world: hello_world} do
+      {:ok, chat} = ChatOpenAI.new(%{seed: 0, stream: false, model: @gpt4, tool_choice: %{"type" => "none"}})
+
+      {:ok, message} =
+        Message.new_user("What is the weather like in Moab Utah?")
+
+      {:ok, [message]} = ChatOpenAI.call(chat, [message], [weather, hello_world])
+
+      assert %Message{role: :assistant} = message
+      assert message.status == :complete
+      assert message.role == :assistant
+      assert message.content != nil
+      assert message.tool_calls == []
+    end
+
+    @tag live_call: true, live_open_ai: true
     test "LIVE: supports receiving multiple tool calls in a single response", %{weather: weather} do
       {:ok, chat} =
         ChatOpenAI.new(%{
