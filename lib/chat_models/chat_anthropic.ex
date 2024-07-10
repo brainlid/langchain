@@ -205,19 +205,19 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     # Anthropic sets the `system` message on the request body, not as part of the messages list.
     |> Utils.conditionally_add_to_map(:system, system_text)
     |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(tools))
-    |> Utils.conditionally_add_to_map(:tool_choice, set_tool_choice(anthropic))
+    |> Utils.conditionally_add_to_map(:tool_choice, get_tool_choice(anthropic))
     |> Utils.conditionally_add_to_map(:max_tokens, anthropic.max_tokens)
     |> Utils.conditionally_add_to_map(:top_p, anthropic.top_p)
     |> Utils.conditionally_add_to_map(:top_k, anthropic.top_k)
   end
 
-  defp set_tool_choice(%ChatAnthropic{tool_choice: %{"type" => "tool", "name" => name}=_tool_choice}) when is_binary(name) and byte_size(name) > 0,
+  defp get_tool_choice(%ChatAnthropic{tool_choice: %{"type" => "tool", "name" => name}=_tool_choice}) when is_binary(name) and byte_size(name) > 0,
     do: %{"type" => "tool", "name" => name}
 
-  defp set_tool_choice(%ChatAnthropic{tool_choice: %{"type" => type}=_tool_choice}) when type != nil and is_binary(type),
+  defp get_tool_choice(%ChatAnthropic{tool_choice: %{"type" => type}=_tool_choice}) when is_binary(type) and byte_size(type) > 0,
     do: %{"type" => type}
 
-  defp set_tool_choice(%ChatAnthropic{}), do: nil
+  defp get_tool_choice(%ChatAnthropic{}), do: nil
 
 
   defp get_tools_for_api(nil), do: []

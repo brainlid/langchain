@@ -246,7 +246,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       get_stream_options_for_api(openai.stream_options)
     )
     |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(tools))
-    |> Utils.conditionally_add_to_map(:tool_choice, set_tool_choice(openai))
+    |> Utils.conditionally_add_to_map(:tool_choice, get_tool_choice(openai))
   end
 
   defp get_tools_for_api(nil), do: []
@@ -270,13 +270,13 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   defp set_response_format(%ChatOpenAI{json_response: false}),
     do: %{"type" => "text"}
 
-  defp set_tool_choice(%ChatOpenAI{tool_choice: %{"type" => "function", "function" => %{"name" => name}}=_tool_choice}) when is_binary(name) and byte_size(name) > 0,
+  defp get_tool_choice(%ChatOpenAI{tool_choice: %{"type" => "function", "function" => %{"name" => name}}=_tool_choice}) when is_binary(name) and byte_size(name) > 0,
     do: %{"type" => "function", "function" => %{"name" => name}}
 
-  defp set_tool_choice(%ChatOpenAI{tool_choice: %{"type" => type}=_tool_choice}) when type != nil and is_binary(type),
+  defp get_tool_choice(%ChatOpenAI{tool_choice: %{"type" => type}=_tool_choice}) when is_binary(type) and byte_size(type) > 0,
     do: type
 
-  defp set_tool_choice(%ChatOpenAI{}), do: nil
+  defp get_tool_choice(%ChatOpenAI{}), do: nil
 
   @doc """
   Convert a LangChain structure to the expected map of data for the OpenAI API.
