@@ -69,7 +69,6 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   use Ecto.Schema
   require Logger
   import Ecto.Changeset
-  import LangChain.Utils.ApiOverride
   alias __MODULE__
   alias LangChain.Config
   alias LangChain.ChatModels.ChatModel

@@ -13,7 +13,6 @@ defmodule LangChain.Images.OpenAIImage do
   use Ecto.Schema
   require Logger
   import Ecto.Changeset
-  import LangChain.Utils.ApiOverride
   alias __MODULE__
   alias LangChain.Images.GeneratedImage
   alias LangChain.Config
@@ -184,35 +183,18 @@ defmodule LangChain.Images.OpenAIImage do
   def call(openai)
 
   def call(%OpenAIImage{} = openai) do
-    if override_api_return?() do
-      Logger.warning("Found override API response. Will not make live API call.")
+    try do
+      # make base api request and perform high-level success/failure checks
+      case do_api_request(openai) do
+        {:error, reason} ->
+          {:error, reason}
 
-      case get_api_override() do
-        {:ok, {:ok, data, _callback_name} = _response} ->
-          {:ok, data}
-
-        # fake error response
-        {:ok, {:error, _reason} = response} ->
-          response
-
-        _other ->
-          raise LangChainError,
-                "An unexpected fake API response was set. Should be an `{:ok, value, nil_or_callback_name}`"
+        {:ok, parsed_data} ->
+          {:ok, parsed_data}
       end
-    else
-      try do
-        # make base api request and perform high-level success/failure checks
-        case do_api_request(openai) do
-          {:error, reason} ->
-            {:error, reason}
-
-          {:ok, parsed_data} ->
-            {:ok, parsed_data}
-        end
-      rescue
-        err in LangChainError ->
-          {:error, err.message}
-      end
+    rescue
+      err in LangChainError ->
+        {:error, err.message}
     end
   end
 

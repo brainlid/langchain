@@ -40,7 +40,6 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   use Ecto.Schema
   require Logger
   import Ecto.Changeset
-  import LangChain.Utils.ApiOverride
   alias __MODULE__
   alias LangChain.Config
   alias LangChain.ChatModels.ChatModel
@@ -259,40 +258,19 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     call(anthropic, messages, functions)
   end
 
-  def call(%ChatAnthropic{} = anthropic, messages, functions)
-      when is_list(messages) do
-    if override_api_return?() do
-      Logger.warning("Found override API response. Will not make live API call.")
+  def call(%ChatAnthropic{} = anthropic, messages, functions) when is_list(messages) do
+    try do
+      # make base api request and perform high-level success/failure checks
+      case do_api_request(anthropic, messages, functions) do
+        {:error, reason} ->
+          {:error, reason}
 
-      case get_api_override() do
-        {:ok, {:ok, data, callback_name}} ->
-          # fire callback for fake responses too
-          Callbacks.fire(anthropic.callbacks, callback_name, [anthropic, data])
-          # return the data portion
-          {:ok, data}
-
-        # fake error response
-        {:ok, {:error, _reason} = response} ->
-          response
-
-        _other ->
-          raise LangChainError,
-                "An unexpected fake API response was set. Should be an `{:ok, value, nil_or_callback_name}`"
+        parsed_data ->
+          {:ok, parsed_data}
       end
-    else
-      try do
-        # make base api request and perform high-level success/failure checks
-        case do_api_request(anthropic, messages, functions) do
-          {:error, reason} ->
-            {:error, reason}
-
-          parsed_data ->
-            {:ok, parsed_data}
-        end
-      rescue
-        err in LangChainError ->
-          {:error, err.message}
-      end
+    rescue
+      err in LangChainError ->
+        {:error, err.message}
     end
   end
 
