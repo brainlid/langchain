@@ -432,38 +432,18 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   end
 
   def call(%ChatOpenAI{} = openai, messages, tools) when is_list(messages) do
-    if override_api_return?() do
-      Logger.warning("Found override API response. Will not make live API call.")
+    try do
+      # make base api request and perform high-level success/failure checks
+      case do_api_request(openai, messages, tools) do
+        {:error, reason} ->
+          {:error, reason}
 
-      case get_api_override() do
-        {:ok, {:ok, data, callback_name}} ->
-          # fire callback for fake responses too
-          Callbacks.fire(openai.callbacks, callback_name, [openai, data])
-          # return the data portion
-          {:ok, data}
-
-        # fake error response
-        {:ok, {:error, _reason} = response} ->
-          response
-
-        _other ->
-          raise LangChainError,
-                "An unexpected fake API response was set. Should be an `{:ok, value, nil_or_callback_name}`"
+        parsed_data ->
+          {:ok, parsed_data}
       end
-    else
-      try do
-        # make base api request and perform high-level success/failure checks
-        case do_api_request(openai, messages, tools) do
-          {:error, reason} ->
-            {:error, reason}
-
-          parsed_data ->
-            {:ok, parsed_data}
-        end
-      rescue
-        err in LangChainError ->
-          {:error, err.message}
-      end
+    rescue
+      err in LangChainError ->
+        {:error, err.message}
     end
   end
 
