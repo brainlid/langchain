@@ -468,8 +468,6 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
   describe "call/2" do
     @tag live_call: true, live_open_ai: true
     test "basic content example and fires ratelimit callback" do
-      # set_fake_llm_response({:ok, Message.new_assistant("\n\nRainbow Sox Co.")})
-
       handlers = %{
         on_llm_ratelimit_info: fn _model, headers ->
           send(self(), {:fired_ratelimit_info, headers})
@@ -508,8 +506,6 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
     @tag live_call: true, live_open_ai: true
     test "basic streamed content example's final result and fires ratelimit callback" do
-      # set_fake_llm_response({:ok, Message.new_assistant("\n\nRainbow Sox Co.")})
-
       handlers = %{
         on_llm_ratelimit_info: fn _model, headers ->
           send(self(), {:fired_ratelimit_info, headers})
@@ -584,8 +580,6 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
     @tag live_call: true, live_open_ai: true
     test "basic streamed content fires token usage callback" do
-      # set_fake_llm_response({:ok, Message.new_assistant("\n\nRainbow Sox Co.")})
-
       handlers = %{
         on_llm_token_usage: fn _model, usage ->
           send(self(), {:fired_token_usage, usage})

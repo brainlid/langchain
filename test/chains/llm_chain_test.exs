@@ -1,5 +1,6 @@
 defmodule LangChain.Chains.LLMChainTest do
   use LangChain.BaseCase
+  use Mimic
 
   doctest LangChain.Chains.LLMChain
 
@@ -194,7 +195,9 @@ defmodule LangChain.Chains.LLMChainTest do
         [MessageDelta.new!(%{content: "Sock", status: :incomplete})]
       ]
 
-      set_api_override({:ok, fake_messages, :on_llm_new_delta})
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:ok, fake_messages}
+      end)
 
       # We can construct an LLMChain from a PromptTemplate and an LLM.
       {:ok, updated_chain, _response} =
@@ -286,7 +289,10 @@ defmodule LangChain.Chains.LLMChainTest do
 
       # Made NOT LIVE here
       fake_message = Message.new!(%{role: :assistant, content: "Socktastic!", status: :complete})
-      set_api_override({:ok, [fake_message], nil})
+
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:ok, [fake_message]}
+      end)
 
       # We can construct an LLMChain from a PromptTemplate and an LLM.
       {:ok, %LLMChain{} = updated_chain, message} =
@@ -333,7 +339,9 @@ defmodule LangChain.Chains.LLMChainTest do
         [MessageDelta.new!(%{content: nil, status: :complete})]
       ]
 
-      set_api_override({:ok, fake_messages, :on_llm_new_delta})
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:ok, fake_messages}
+      end)
 
       # We can construct an LLMChain from a PromptTemplate and an LLM.
       {:ok, updated_chain, response} =
@@ -345,10 +353,7 @@ defmodule LangChain.Chains.LLMChainTest do
       assert %Message{role: :assistant, content: "Socktastic!", status: :complete} = response
       assert updated_chain.last_message == response
 
-      # we should have received at least one callback message delta
-      assert_received {:fake_stream_deltas, delta_1}
-      assert %MessageDelta{role: :assistant, status: :incomplete} = delta_1
-
+      # we should have received a message for the completed, combined message
       assert_received {:fake_full_message, message}
       assert %Message{role: :assistant, content: "Socktastic!"} = message
     end
@@ -1045,7 +1050,10 @@ defmodule LangChain.Chains.LLMChainTest do
         Message.new_assistant!(%{content: "Not what you wanted"})
       ]
 
-      set_api_override({:ok, fake_messages, nil})
+      # expect it to be called 3 times
+      expect(ChatOpenAI, :call, 3, fn _model, _messages, _tools ->
+        {:ok, fake_messages}
+      end)
 
       messages = [
         Message.new_user!("Say what I want you to say.")
@@ -1106,6 +1114,11 @@ defmodule LangChain.Chains.LLMChainTest do
         Message.new_assistant!(%{content: "Not what you wanted"})
       ]
 
+      # expects to be called 2 times
+      expect(ChatOpenAI, :call, 2, fn _model, _messages, _tools ->
+        {:ok, fake_messages}
+      end)
+
       chain =
         LLMChain.new!(%{
           llm: ChatOpenAI.new!(%{temperature: 0}),
@@ -1113,8 +1126,6 @@ defmodule LangChain.Chains.LLMChainTest do
           max_retry_count: 2,
           callbacks: [handler]
         })
-
-      set_api_override({:ok, fake_messages, :on_llm_new_message})
 
       {:error, error_chain, reason} =
         chain
@@ -1162,7 +1173,9 @@ defmodule LangChain.Chains.LLMChainTest do
         Message.new_assistant!(%{content: Jason.encode!(%{value: "abc"})})
       ]
 
-      set_api_override({:ok, fake_messages, nil})
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:ok, fake_messages}
+      end)
 
       {:ok, _updated_chain, last_message} =
         chain
@@ -1177,22 +1190,20 @@ defmodule LangChain.Chains.LLMChainTest do
     end
 
     test "mode: :until_success - message needs processing, fails, then succeeds", %{chat: chat} do
-      handler = %{
-        on_message_processing_error: fn _chain, _data ->
-          # after the first processing error message, set to return a correct one
-          fake_messages = [
-            Message.new_assistant!(%{content: Jason.encode!(%{value: "abc"})})
-          ]
+      # Made NOT LIVE here - handles two consecutive calls
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:ok, [Message.new_assistant!(%{content: "invalid"})]}
+      end)
 
-          set_api_override({:ok, fake_messages, nil})
-        end
-      }
-
-      # Made NOT LIVE here
-      set_api_override({:ok, [Message.new_assistant!(%{content: "invalid"})], nil})
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:ok,
+         [
+           Message.new_assistant!(%{content: Jason.encode!(%{value: "abc"})})
+         ]}
+      end)
 
       {:ok, _updated_chain, last_message} =
-        %{llm: chat, callbacks: [handler]}
+        %{llm: chat}
         |> LLMChain.new!()
         |> LLMChain.message_processors([JsonProcessor.new!()])
         |> LLMChain.add_message(Message.new_system!())
@@ -1214,7 +1225,9 @@ defmodule LangChain.Chains.LLMChainTest do
         ])
       ]
 
-      set_api_override({:ok, fake_messages, nil})
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:ok, fake_messages}
+      end)
 
       {:ok, updated_chain, last_message} =
         %{llm: ChatOpenAI.new!(%{stream: false}), verbose: false}
@@ -1242,7 +1255,9 @@ defmodule LangChain.Chains.LLMChainTest do
         ])
       ]
 
-      set_api_override({:ok, fake_messages, nil})
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:ok, fake_messages}
+      end)
 
       {:ok, updated_chain, last_message} =
         %{llm: ChatOpenAI.new!(%{stream: false}), verbose: false}
@@ -1268,7 +1283,10 @@ defmodule LangChain.Chains.LLMChainTest do
         ])
       ]
 
-      set_api_override({:ok, fake_messages, nil})
+      # expect 3 calls
+      expect(ChatOpenAI, :call, 3, fn _model, _messages, _tools ->
+        {:ok, fake_messages}
+      end)
 
       {:error, updated_chain, reason} =
         %{llm: ChatOpenAI.new!(%{stream: false}), verbose: false}
