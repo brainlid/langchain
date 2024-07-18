@@ -1,6 +1,6 @@
 defmodule LangChain.ChatModels.ChatBumblebeeTest do
   use LangChain.BaseCase
-  import LangChain.Utils.ApiOverride
+  use Mimic
 
   doctest LangChain.ChatModels.ChatBumblebee
   alias LangChain.ChatModels.ChatBumblebee
@@ -19,22 +19,6 @@ defmodule LangChain.ChatModels.ChatBumblebeeTest do
       assert {:error, changeset} = ChatBumblebee.new(%{"serving" => nil})
       refute changeset.valid?
       assert {"can't be blank", _} = changeset.errors[:serving]
-    end
-  end
-
-  describe "call/4" do
-    test "supports API override" do
-      set_api_override({:ok, [Message.new_assistant!("Colorful Threads")], :on_llm_new_message})
-
-      # https://js.langchain.com/docs/modules/models/chat/
-      {:ok, chat} = ChatBumblebee.new(%{serving: Fake})
-
-      {:ok, [%Message{role: :assistant, content: response}]} =
-        ChatBumblebee.call(chat, [
-          Message.new_user!("Return the response 'Colorful Threads'.")
-        ])
-
-      assert response =~ "Colorful Threads"
     end
   end
 

@@ -98,7 +98,6 @@ defmodule LangChain.ChatModels.ChatBumblebee do
   use Ecto.Schema
   require Logger
   import Ecto.Changeset
-  import LangChain.Utils.ApiOverride
   alias __MODULE__
   alias LangChain.ChatModels.ChatModel
   alias LangChain.Message
@@ -218,35 +217,19 @@ defmodule LangChain.ChatModels.ChatBumblebee do
     call(model, messages, functions)
   end
 
-  def call(%ChatBumblebee{} = model, messages, functions)
-      when is_list(messages) do
-    if override_api_return?() do
-      Logger.warning("Found override API response. Will not make live API call.")
+  def call(%ChatBumblebee{} = model, messages, functions) when is_list(messages) do
+    try do
+      # make base api request and perform high-level success/failure checks
+      case do_serving_request(model, messages, functions) do
+        {:error, reason} ->
+          {:error, reason}
 
-      # fire callback for fake responses too
-      case get_api_override() do
-        {:ok, {:ok, data, callback_name}} ->
-          Callbacks.fire(model.callbacks, callback_name, [model, data])
-          {:ok, data}
-
-        _other ->
-          raise LangChainError,
-                "An unexpected fake API response was set. Should be an `{:ok, value, nil_or_callback_name}`"
+        parsed_data ->
+          {:ok, parsed_data}
       end
-    else
-      try do
-        # make base api request and perform high-level success/failure checks
-        case do_serving_request(model, messages, functions) do
-          {:error, reason} ->
-            {:error, reason}
-
-          parsed_data ->
-            {:ok, parsed_data}
-        end
-      rescue
-        err in LangChainError ->
-          {:error, err.message}
-      end
+    rescue
+      err in LangChainError ->
+        {:error, err.message}
     end
   end
 
