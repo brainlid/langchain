@@ -1256,6 +1256,25 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert parsed == [json_1]
     end
 
+    test "correctly parses when messages are split in the middle of \"data:\"" do
+      # message that ends in the middle of "data: "
+      buffered =
+        "{\"id\":\"chatcmpl-9mB4I7Cec88xzrOc7wEoxtKWyYczS\",\"object\":\"chat.completion.chunk\",\"created\":1721269318,\"model\":\"gpt-4o-2024-05-13\",\"system_fingerprint\":\"fp_c4e5b6fa31\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" jointly\"},\"logprobs\":null,\"finish_reason\":null}]}\n\nd"
+
+      # incomplete message chunk starting with the remaining chars of "data: "
+      data =
+        "ata: {\"id\":\"chatcmpl-9mB4I7Cec88xzrOc7wEoxtKWyYczS\",\"object\":\"chat.completion.chunk\",\"created\":1721269318,\"model\":\"gpt-4o-2024-05-13\",\"system_fingerprint\":\"fp_c4e5b6fa31\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" with\"},\"logprobs\":null,\"finish_reason\":null}]}"
+
+      {parsed, incomplete} = ChatOpenAI.decode_stream({data, buffered})
+
+      [message_1, message_2] =
+        (buffered <> data) |> String.split("data: ") |> Enum.map(&Jason.decode!/1)
+
+      # nothing incomplete. Parsed 2 objects.
+      assert incomplete == ""
+      assert parsed == [message_1, message_2]
+    end
+
     test "correctly parses when data previously buffered and responses split and has leftovers",
          %{json_1: json_1, json_2: json_2} do
       buffered = "{\"id\":\"chatcmpl-7e8yp1xBhriNXiqqZ0xJkgNrmMuGS\",\"object\":\"chat.comple"
