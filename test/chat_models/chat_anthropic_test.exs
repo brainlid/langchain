@@ -448,7 +448,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
       {:ok, chat} =
         ChatAnthropic.new(%{
           stream: true,
-          bedrock: %{credentials: fn -> {"", ""} end, region: "us-east-1"}
+          bedrock: %{credentials: fn -> [] end, region: "us-east-1"}
         })
 
       {:error, reason} =

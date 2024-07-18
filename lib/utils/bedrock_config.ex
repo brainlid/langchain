@@ -7,8 +7,8 @@ defmodule LangChain.Utils.BedrockConfig do
 
   @primary_key false
   embedded_schema do
-    # A function that returns a tuple of access_key_id & secret_access_key,
-    # or a tuple of access_key_id, secret_access_key & session_token.
+    # A function that returns a keyword list including access_key_id, secret_access_key, and optionally token.
+    # Used to configure Req's aws_sigv4 option.
     field :credentials, :any, virtual: true
     field :region, :string
     field :anthropic_version, :string, default: "bedrock-2023-05-31"
@@ -21,7 +21,7 @@ defmodule LangChain.Utils.BedrockConfig do
   end
 
   def aws_sigv4_opts(%__MODULE__{} = bedrock) do
-    Keyword.merge(req_credential_opts(bedrock.credentials.()),
+    Keyword.merge(bedrock.credentials.(),
       region: bedrock.region,
       service: :bedrock
     )
@@ -33,19 +33,4 @@ defmodule LangChain.Utils.BedrockConfig do
 
   defp action(stream: true), do: "invoke-with-response-stream"
   defp action(stream: false), do: "invoke"
-
-  defp req_credential_opts({access_key_id, secret_access_key}) do
-    [
-      access_key_id: access_key_id,
-      secret_access_key: secret_access_key
-    ]
-  end
-
-  defp req_credential_opts({access_key_id, secret_access_key, session_token}) do
-    [
-      access_key_id: access_key_id,
-      secret_access_key: secret_access_key,
-      token: session_token
-    ]
-  end
 end
