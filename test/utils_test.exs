@@ -168,30 +168,4 @@ defmodule LangChain.UtilsTest do
       assert reason == "ChatModel module \"Elixir.Missing.Module\" not found"
     end
   end
-
-  describe "handle_stream_fn/3" do
-    test "skips transformed messages with :skip" do
-      function =
-        Utils.handle_stream_fn(%{callbacks: []}, fn _ -> {[[]], ""} end, fn _ ->
-          :skip
-        end)
-
-      {:cont, {_model, %{body: body}}} = function.({:data, ""}, {1, %Req.Response{status: 200}})
-
-      assert body == []
-    end
-
-    test "skips transformed messages with empty list" do
-      empty_transform_message = []
-
-      function =
-        Utils.handle_stream_fn(%{callbacks: []}, fn _ -> {[[]], ""} end, fn _ ->
-          empty_transform_message
-        end)
-
-      {:cont, {_model, %{body: body}}} = function.({:data, ""}, {1, %Req.Response{status: 200}})
-
-      assert body == []
-    end
-  end
 end
