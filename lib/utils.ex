@@ -154,7 +154,7 @@ defmodule LangChain.Utils do
         parsed_data =
           parsed_data
           |> Enum.map(transform_data_fn)
-          |> Enum.reject(&(&1 == :skip || &1 == []))
+          |> Enum.reject(&(&1 == :skip))
 
         # execute the callback function for each MessageDelta and an optional
         # TokenUsage

@@ -672,6 +672,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     :skip
   end
 
+  def do_process_response(_model, %{"choices" => []}), do: :skip
+
   def do_process_response(model, %{"choices" => choices} = _data) when is_list(choices) do
     # process each response individually. Return a list of all processed choices
     for choice <- choices do

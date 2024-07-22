@@ -802,6 +802,10 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       %{model: model}
     end
 
+    test "returns skip when given an empty choices list", %{model: model} do
+      assert :skip == ChatOpenAI.do_process_response(model, %{"choices" => []})
+    end
+
     test "handles receiving a message", %{model: model} do
       response = %{
         "message" => %{"role" => "assistant", "content" => "Greetings!"},
