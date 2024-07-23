@@ -67,7 +67,8 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
     :temperature,
     :tfs_z,
     :top_k,
-    :top_p
+    :top_p,
+    :callbacks
   ]
 
   @required_fields [:endpoint, :model]
@@ -365,6 +366,10 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
 
         {:error, "Unexpected response"}
     end
+  end
+
+  def do_process_response(%{stream: true} = _model, %{"message" => message, "done" => true}) do
+    create_message(message, :complete, MessageDelta)
   end
 
   def do_process_response(_model, %{"message" => message, "done" => true}) do
