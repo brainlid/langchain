@@ -24,6 +24,7 @@ Mimic.copy(LangChain.ChatModels.ChatOpenAI)
 Mimic.copy(LangChain.ChatModels.ChatAnthropic)
 Mimic.copy(LangChain.ChatModels.ChatMistralAI)
 Mimic.copy(LangChain.ChatModels.ChatBumblebee)
+Mimic.copy(LangChain.ChatModels.ChatOllamaAI)
 Mimic.copy(LangChain.Images.OpenAIImage)
 
 ExUnit.configure(capture_log: true, exclude: [live_call: true])
