@@ -270,11 +270,15 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   defp set_response_format(%ChatOpenAI{json_response: false}),
     do: %{"type" => "text"}
 
-  defp get_tool_choice(%ChatOpenAI{tool_choice: %{"type" => "function", "function" => %{"name" => name}}=_tool_choice}) when is_binary(name) and byte_size(name) > 0,
-    do: %{"type" => "function", "function" => %{"name" => name}}
+  defp get_tool_choice(%ChatOpenAI{
+         tool_choice: %{"type" => "function", "function" => %{"name" => name}} = _tool_choice
+       })
+       when is_binary(name) and byte_size(name) > 0,
+       do: %{"type" => "function", "function" => %{"name" => name}}
 
-  defp get_tool_choice(%ChatOpenAI{tool_choice: %{"type" => type}=_tool_choice}) when is_binary(type) and byte_size(type) > 0,
-    do: type
+  defp get_tool_choice(%ChatOpenAI{tool_choice: %{"type" => type} = _tool_choice})
+       when is_binary(type) and byte_size(type) > 0,
+       do: type
 
   defp get_tool_choice(%ChatOpenAI{}), do: nil
 
@@ -705,8 +709,10 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   # Full message with tool call
   def do_process_response(
         model,
-        %{"finish_reason" => "tool_calls", "message" => %{"tool_calls" => calls} = message} = data
-      ) do
+        %{"finish_reason" => finish_reason, "message" => %{"tool_calls" => calls} = message} =
+          data
+      )
+      when finish_reason in ["tool_calls", "stop"] do
     case Message.new(%{
            "role" => "assistant",
            "content" => message["content"],
