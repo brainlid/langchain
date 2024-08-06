@@ -100,6 +100,11 @@ defmodule LangChain.Images.OpenAIImage do
     Config.resolve(:openai_org_id)
   end
 
+  @spec get_proj_id() :: String.t() | nil
+  defp get_proj_id() do
+    Config.resolve(:openai_proj_id)
+  end
+
   @doc """
   Setup a OpenAIImage client configuration.
   """
@@ -235,6 +240,7 @@ defmodule LangChain.Images.OpenAIImage do
 
     req
     |> maybe_add_org_id_header()
+    |> maybe_add_proj_id_header()
     |> Req.post()
     # parse the body and return it as parsed structs
     |> case do
@@ -320,6 +326,16 @@ defmodule LangChain.Images.OpenAIImage do
 
     if org_id do
       Req.Request.put_header(req, "OpenAI-Organization", org_id)
+    else
+      req
+    end
+  end
+
+  defp maybe_add_proj_id_header(%Req.Request{} = req) do
+    proj_id = get_proj_id()
+
+    if proj_id do
+      Req.Request.put_header(req, "OpenAI-Project", proj_id)
     else
       req
     end
