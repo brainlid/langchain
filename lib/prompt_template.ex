@@ -10,7 +10,7 @@ defmodule LangChain.PromptTemplate do
 
       # Create a template and convert it to a message
       prompt = PromptTemplate.new!(%{text: "My template", role: :user})
-      %LangChain.Message{} = message = PromptTemplate.to_message(prompt)
+      %LangChain.Message{} = message = PromptTemplate.to_message!(prompt)
 
   PromptTemplates are powerful because they support Elixir's EEx templates
   allowing for parameter substitution. This is helpful when we want to prepare a
