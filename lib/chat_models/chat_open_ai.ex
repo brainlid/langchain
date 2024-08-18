@@ -171,6 +171,11 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     Config.resolve(:openai_org_id)
   end
 
+  @spec get_proj_id() :: String.t() | nil
+  defp get_proj_id() do
+    Config.resolve(:openai_proj_id)
+  end
+
   @doc """
   Setup a ChatOpenAI client configuration.
   """
@@ -497,6 +502,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
     req
     |> maybe_add_org_id_header()
+    |> maybe_add_proj_id_header()
     |> Req.post()
     # parse the body and return it as parsed structs
     |> case do
@@ -552,6 +558,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       receive_timeout: openai.receive_timeout
     )
     |> maybe_add_org_id_header()
+    |> maybe_add_proj_id_header()
     |> Req.post(
       into: Utils.handle_stream_fn(openai, &decode_stream/1, &do_process_response(openai, &1))
     )
@@ -839,6 +846,16 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
     if org_id do
       Req.Request.put_header(req, "OpenAI-Organization", org_id)
+    else
+      req
+    end
+  end
+
+  defp maybe_add_proj_id_header(%Req.Request{} = req) do
+    proj_id = get_proj_id()
+
+    if proj_id do
+      Req.Request.put_header(req, "OpenAI-Project", proj_id)
     else
       req
     end
