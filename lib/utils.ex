@@ -114,6 +114,9 @@ defmodule LangChain.Utils do
     Callbacks.fire(model.callbacks, :on_llm_new_delta, [model, delta])
   end
 
+  # received unexpected data in the callback, do nothing.
+  def fire_streamed_callback(_model, _other), do: :ok
+
   @doc """
   Creates and returns an anonymous function to handle the streaming response
   from an API.
