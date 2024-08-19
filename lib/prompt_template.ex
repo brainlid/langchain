@@ -58,6 +58,18 @@ defmodule LangChain.PromptTemplate do
   @doc """
   Create a new PromptTemplate struct using the attributes. If invalid, an
   exception is raised with the reason.
+
+  ## Example
+
+  A template is created using a simple map with `text` and `role` keys. The
+  created template can be be converted to a `LangChain.Message`.
+
+      PromptTemplate.new!(%{text: "My template", role: :user})
+
+  Typically a `PromptTemplate` is used with parameter substitution as that's
+  it's primary purpose. EEx is used to render the final text.
+
+      PromptTemplate.new!(%{text: "My name is <%= @user_name %>. Warmly welcome me.", role: :user})
   """
   @spec new!(attrs :: map()) :: t() | no_return()
   def new!(attrs) do
@@ -264,7 +276,7 @@ defmodule LangChain.PromptTemplate do
   end
 
   @doc """
-  Transform a PromptTemplate to a `LangChain.Message`. Provide the inputs at the time of
+  Transform a `PromptTemplate` to a `LangChain.Message`. Provide the inputs at the time of
   transformation to render the final content.
   """
   @spec to_message(t(), input :: %{atom() => any()}) ::
@@ -277,6 +289,15 @@ defmodule LangChain.PromptTemplate do
   @doc """
   Transform a PromptTemplate to a `LangChain.Message`. Provide the inputs at the time of
   transformation to render the final content. Raises an exception if invalid.
+
+  ## Example
+
+  It renders a `PromptTemplate`'s `text` by applying the inputs.
+
+      template = PromptTemplate.new!(%{text: "My name is <%= @user_name %>.", role: :user})
+      messages = PromptTemplate.to_messages!([template], %{user_name: "Tim"})
+
+  Where the final message has the contents `"My name is Tim."`
   """
   @spec to_message!(t(), input :: %{atom() => any()}) :: Message.t() | no_return()
   def to_message!(%PromptTemplate{} = template, %{} = inputs \\ %{}) do
