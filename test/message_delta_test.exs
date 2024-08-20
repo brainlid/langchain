@@ -174,6 +174,179 @@ defmodule LangChain.MessageDeltaTest do
 
       assert merged == expected
     end
+
+    test "correctly merges message with tool_call split over multiple deltas and index is not by position" do
+      first_delta =
+        %LangChain.MessageDelta{
+          content: "",
+          status: :incomplete,
+          index: nil,
+          role: :assistant,
+          tool_calls: nil
+        }
+
+      deltas =
+        [
+          %LangChain.MessageDelta{
+            content: "stu",
+            status: :incomplete,
+            index: nil,
+            role: :assistant,
+            tool_calls: nil
+          },
+          %LangChain.MessageDelta{
+            content: "ff",
+            status: :incomplete,
+            index: nil,
+            role: :assistant,
+            tool_calls: nil
+          },
+          %LangChain.MessageDelta{
+            content: nil,
+            status: :incomplete,
+            index: nil,
+            role: :assistant,
+            tool_calls: [
+              %LangChain.Message.ToolCall{
+                status: :incomplete,
+                type: :function,
+                call_id: "toolu_123",
+                name: "do_something",
+                arguments: nil,
+                index: 1
+              }
+            ]
+          },
+          %LangChain.MessageDelta{
+            content: nil,
+            status: :incomplete,
+            index: nil,
+            role: :assistant,
+            tool_calls: [
+              %LangChain.Message.ToolCall{
+                status: :incomplete,
+                type: :function,
+                call_id: nil,
+                name: nil,
+                arguments: nil,
+                index: 1
+              }
+            ]
+          },
+          %LangChain.MessageDelta{
+            content: nil,
+            status: :incomplete,
+            index: nil,
+            role: :assistant,
+            tool_calls: [
+              %LangChain.Message.ToolCall{
+                status: :incomplete,
+                type: :function,
+                call_id: nil,
+                name: nil,
+                arguments: "{\"",
+                index: 1
+              }
+            ]
+          },
+          %LangChain.MessageDelta{
+            content: nil,
+            status: :incomplete,
+            index: nil,
+            role: :assistant,
+            tool_calls: [
+              %LangChain.Message.ToolCall{
+                status: :incomplete,
+                type: :function,
+                call_id: nil,
+                name: nil,
+                arguments: "value\":",
+                index: 1
+              }
+            ]
+          },
+          %LangChain.MessageDelta{
+            content: nil,
+            status: :incomplete,
+            index: nil,
+            role: :assistant,
+            tool_calls: [
+              %LangChain.Message.ToolCall{
+                status: :incomplete,
+                type: :function,
+                call_id: nil,
+                name: nil,
+                arguments: " \"People",
+                index: 1
+              }
+            ]
+          },
+          %LangChain.MessageDelta{
+            content: nil,
+            status: :incomplete,
+            index: nil,
+            role: :assistant,
+            tool_calls: [
+              %LangChain.Message.ToolCall{
+                status: :incomplete,
+                type: :function,
+                call_id: nil,
+                name: nil,
+                arguments: " are people.\"}",
+                index: 1
+              }
+            ]
+          },
+          %LangChain.MessageDelta{
+            content: "",
+            status: :complete,
+            index: nil,
+            role: :assistant,
+            tool_calls: nil
+          }
+        ]
+
+      combined =
+        Enum.reduce(deltas, first_delta, fn d, acc ->
+          MessageDelta.merge_delta(acc, d)
+        end)
+
+      assert combined == %LangChain.MessageDelta{
+               content: "stuff",
+               status: :complete,
+               index: nil,
+               role: :assistant,
+               tool_calls: [
+                 %LangChain.Message.ToolCall{
+                   status: :incomplete,
+                   type: :function,
+                   call_id: "toolu_123",
+                   name: "do_something",
+                   arguments: "{\"value\": \"People are people.\"}",
+                   index: 1
+                 }
+               ]
+             }
+
+      # should correctly convert to a message
+      {:ok, message} = MessageDelta.to_message(combined)
+
+      assert message == %Message{
+               content: "stuff",
+               status: :complete,
+               role: :assistant,
+               tool_calls: [
+                 %LangChain.Message.ToolCall{
+                   status: :complete,
+                   type: :function,
+                   call_id: "toolu_123",
+                   name: "do_something",
+                   arguments: %{"value" => "People are people."},
+                   index: 1
+                 }
+               ]
+             }
+    end
   end
 
   describe "to_message/1" do

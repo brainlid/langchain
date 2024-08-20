@@ -456,6 +456,46 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     |> to_response()
   end
 
+  def do_process_response(_model, %{
+        "type" => "content_block_start",
+        "index" => tool_index,
+        "content_block" => %{"type" => "tool_use", "id" => call_id, "name" => tool_name}
+      }) do
+    %{
+      role: :assistant,
+      status: :incomplete,
+      tool_calls: [
+        ToolCall.new!(%{
+          type: :function,
+          name: tool_name,
+          call_id: call_id,
+          index: tool_index
+        })
+      ]
+    }
+    |> MessageDelta.new()
+    |> to_response()
+  end
+
+  def do_process_response(_model, %{
+        "type" => "content_block_delta",
+        "index" => tool_index,
+        "delta" => %{"type" => "input_json_delta", "partial_json" => partial_json}
+      }) do
+    %{
+      role: :assistant,
+      status: :incomplete,
+      tool_calls: [
+        ToolCall.new!(%{
+          arguments: partial_json,
+          index: tool_index
+        })
+      ]
+    }
+    |> MessageDelta.new()
+    |> to_response()
+  end
+
   def do_process_response(
         model,
         %{
