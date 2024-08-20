@@ -35,7 +35,7 @@ defmodule LangChain.MessageDelta do
     # Marks if the delta completes the message.
     field :status, Ecto.Enum, values: [:incomplete, :complete, :length], default: :incomplete
     # When requesting multiple choices for a response, the `index` represents
-    # which choice it is. It is a 0 based list.()
+    # which choice it is. It is a 0 based list.
     field :index, :integer
 
     field :role, Ecto.Enum, values: [:unknown, :assistant], default: :unknown
@@ -137,12 +137,20 @@ defmodule LangChain.MessageDelta do
        ) do
     # point from the primary delta.
     primary_calls = primary.tool_calls || []
-    # get the index of the call being merged
-    initial = Enum.at(primary_calls, delta_call.index)
+
+    # only the `index` can be counted on in the minimal delta_call for matching
+    # against. Anthropic's index is used to differentiate calls but the count is
+    # not related to the actual index in the list. For this reason, we match on
+    # the index value and not the index as an offset.
+    initial = Enum.find(primary_calls, &(&1.index == delta_call.index))
+
     # merge them and put it back in the correct spot of the list
     merged_call = ToolCall.merge(initial, delta_call)
     # if the index exists, update it, otherwise insert it
-    updated_calls = Utils.put_in_list(primary_calls, delta_call.index, merged_call)
+
+    # insert or update the merged item into the list based on the index value
+    updated_calls = insert_or_update_tool_call(primary_calls, merged_call)
+    # updated_calls = Utils.put_in_list(primary_calls, pos, merged_call)
     # return updated MessageDelta
     %MessageDelta{primary | tool_calls: updated_calls}
   end
@@ -157,7 +165,7 @@ defmodule LangChain.MessageDelta do
     %MessageDelta{primary | index: new_index}
   end
 
-  defp update_index(%MessageDelta{} = primary, %MessageDelta{} = _delta_par) do
+  defp update_index(%MessageDelta{} = primary, %MessageDelta{} = _delta_part) do
     # no index update
     primary
   end
@@ -192,6 +200,22 @@ defmodule LangChain.MessageDelta do
       put_change(changeset, field, val)
     else
       changeset
+    end
+  end
+
+  # given the list of tool calls, insert or update the item into the list based
+  # on the tool_call's index value.
+  defp insert_or_update_tool_call(tool_calls, call) when is_list(tool_calls) do
+    # find the position index of the item
+    idx = Enum.find_index(tool_calls, fn item -> item.index == call.index end)
+
+    case idx do
+      nil ->
+        # not in the list, append the call to the list
+        tool_calls ++ [call]
+
+      position ->
+        List.replace_at(tool_calls, position, call)
     end
   end
 
