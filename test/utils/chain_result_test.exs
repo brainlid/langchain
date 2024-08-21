@@ -52,7 +52,7 @@ defmodule LangChain.Utils.ChainResultTest do
     test "handles an LLMChain.run/2 success result" do
       message = Message.new_assistant!("the answer")
       chain = %LLMChain{last_message: message}
-      assert {:ok, "the answer"} == ChainResult.to_string({:ok, chain, message})
+      assert {:ok, "the answer"} == ChainResult.to_string({:ok, chain})
     end
   end
 

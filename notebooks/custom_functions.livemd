@@ -236,7 +236,7 @@ Additionally, the `stream: false` option says we want the result only when it's 
 ```elixir
 alias LangChain.Chains.LLMChain
 
-{:ok, updated_chain, response} =
+{:ok, updated_chain} =
   %{llm: chat_model, custom_context: context, verbose: true}
   |> LLMChain.new!()
   |> LLMChain.add_messages(messages)
@@ -245,6 +245,7 @@ alias LangChain.Chains.LLMChain
   # function calls and provide a response.
   |> LLMChain.run(mode: :while_needs_response)
 
+response = updated_chain.last_message
 IO.write(response.content)
 response.content
 ```
@@ -382,8 +383,8 @@ MESSAGE PROCESSED: %LangChain.Message{
   tool_calls: [],
   tool_results: nil
 }
-Joan's favorite,    
-Aardvark graces night with charm,   
+Joan's favorite,
+Aardvark graces night with charm,
 Silent earth's delight.
 ```
 

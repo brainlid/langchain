@@ -587,7 +587,7 @@ defmodule ChatModels.ChatGoogleAITest do
 
       model = ChatGoogleAI.new!(%{temperature: 0, stream: false, callbacks: [llm_handler]})
 
-      {:ok, updated_chain, %Message{} = message} =
+      {:ok, updated_chain} =
         LLMChain.new!(%{
           llm: model,
           verbose: false,
@@ -600,8 +600,8 @@ defmodule ChatModels.ChatGoogleAITest do
         |> LLMChain.add_tools(Calculator.new!())
         |> LLMChain.run(mode: :while_needs_response)
 
-      assert updated_chain.last_message == message
-      assert message.role == :assistant
+      assert %Message{} = updated_chain.last_message
+      assert updated_chain.last_message.role == :assistant
 
       answer = LangChain.Utils.ChainResult.to_string!(updated_chain)
       assert answer =~ "is 200"
@@ -609,7 +609,9 @@ defmodule ChatModels.ChatGoogleAITest do
       # assert received multiple messages as callbacks
       assert_received {:callback_msg, message}
       assert message.role == :assistant
-      assert [%ToolCall{name: "calculator", arguments: %{"expression" => _}}] = message.tool_calls
+
+      assert [%ToolCall{name: "calculator", arguments: %{"expression" => _}}] =
+               message.tool_calls
 
       # the function result message
       assert_received {:callback_tool_msg, message}
