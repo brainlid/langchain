@@ -28,13 +28,13 @@ alias LangChain.Chains.LLMChain
 alias LangChain.ChatModels.ChatOpenAI
 alias LangChain.Message
 
-{:ok, _updated_chain, response} =
+{:ok, updated_chain} =
   %{llm: ChatOpenAI.new!(%{model: "gpt-4o"})}
   |> LLMChain.new!()
   |> LLMChain.add_message(Message.new_user!("Testing, testing!"))
   |> LLMChain.run()
 
-response.content
+updated_chain.last_message.content
 ```
 
 Nice! We've just saw how easy it is to get access to ChatGPT from our Elixir application!
@@ -48,7 +48,7 @@ When working with ChatGPT and other LLMs, the conversation works as a series of 
 Let's create a system message followed by a user message.
 
 ```elixir
-{:ok, _updated_chain, response} =
+{:ok, updated_chain} =
   %{llm: ChatOpenAI.new!(%{model: "gpt-4"})}
   |> LLMChain.new!()
   |> LLMChain.add_messages([
@@ -59,7 +59,7 @@ Let's create a system message followed by a user message.
   ])
   |> LLMChain.run()
 
-response.content
+updated_chain.last_message.content
 ```
 
 Here's the answer it gave me when I ran it:
@@ -94,7 +94,7 @@ handler = %{
   end
 }
 
-{:ok, _updated_chain, response} =
+{:ok, updated_chain} =
   %{
     # llm config for streaming and the deltas callback
     llm: ChatOpenAI.new!(%{model: "gpt-4o", stream: true, callbacks: [handler]}),
@@ -108,7 +108,7 @@ handler = %{
   ])
   |> LLMChain.run()
 
-response.content
+updated_chain.last_message.content
 # streamed
 # ==> Washington D.C. stands,
 # ... Monuments reflect history,

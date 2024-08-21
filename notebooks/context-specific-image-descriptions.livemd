@@ -177,14 +177,14 @@ alias LangChain.MessageProcessors.JsonProcessor
 # When we `apply_prompt_templates` below, the data is rendered into the template.
 image_data_from_other_system = "image of urban art mural on underpass at 507 King St E"
 
-{:ok, _updated_chain, response} =
+{:ok, updated_chain} =
   %{llm: openai_chat_model, verbose: true}
   |> LLMChain.new!()
   |> LLMChain.apply_prompt_templates(messages, %{extra_image_info: image_data_from_other_system})
   |> LLMChain.message_processors([JsonProcessor.new!()])
   |> LLMChain.run(mode: :until_success)
 
-response.processed_content
+updated_chain.last_message.processed_content
 ```
 
 Notice that when running the chain, we use the option `mode: :until_success`. Some LLMs are better are generating valid JSON than other LLMs. When we included the `JsonProcesser`, it parses the assistant's content, converting it into an Elixir map. The converted data is stored on the `message.processed_content`.
@@ -238,14 +238,14 @@ alias LangChain.MessageProcessors.JsonProcessor
 # When we `apply_prompt_templates` below, the data is rendered into the template.
 image_data_from_other_system = "image of urban art mural on underpass at 507 King St E"
 
-{:ok, _updated_chain, response} =
+{:ok, updated_chain} =
   %{llm: anthropic_chat_model, verbose: true}
   |> LLMChain.new!()
   |> LLMChain.apply_prompt_templates(messages, %{extra_image_info: image_data_from_other_system})
   |> LLMChain.message_processors([JsonProcessor.new!()])
   |> LLMChain.run(mode: :until_success)
 
-response.processed_content
+updated_chain.last_message.processed_content
 ```
 
 Nice! The Elixir LangChain library abstracted away the differences between the two services. With no code changes, we can make a similar request about the image from Anthropic's Claude LLM as well!
