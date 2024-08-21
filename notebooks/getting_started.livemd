@@ -123,6 +123,6 @@ Finally, once the full message is received, the chain's `on_message_processed` c
 
 ## Next Steps
 
-With the basics covered, you're ready to start integrating an LLM into your Elixia application! Check out other notebooks for more specific examples and other ways to use it.
+With the basics covered, you're ready to start integrating an LLM into your Elixir application! Check out other notebooks for more specific examples and other ways to use it.
 
 <!-- livebook:{"offset":4645,"stamp":{"token":"XCP.asU02sHrPSt9UBUyNKE-Qa7G_WNBlxckoWay59yU1E9XLuliANsNDenOGjrq1uZmDm9a0vajWcrseaOSYqLHOegBXQ7fLmYNTULDwEYEmtLVmnTEKbYN8BnqGuuayL2HKO7GZ2dWye7NzpYSoSh5","version":2}} -->
