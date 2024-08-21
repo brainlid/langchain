@@ -20,7 +20,7 @@ defmodule LangChain.Utils.ChainResult do
   """
   @spec to_string(
           LLMChain.t()
-          | {:ok, LLMChain.t(), Message.t()}
+          | {:ok, LLMChain.t()}
           | {:error, LLMChain.t(), String.t()}
         ) ::
           {:ok, String.t()} | {:error, LLMChain.t(), String.t()}
@@ -29,7 +29,7 @@ defmodule LangChain.Utils.ChainResult do
     {:error, chain, reason}
   end
 
-  def to_string({:ok, %LLMChain{} = chain, _message}) do
+  def to_string({:ok, %LLMChain{} = chain}) do
     ChainResult.to_string(chain)
   end
 

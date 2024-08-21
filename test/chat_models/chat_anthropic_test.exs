@@ -1223,14 +1223,14 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
         })
 
       # verbose: true
-      {:ok, _result_chain, last_message} =
+      {:ok, updated_chain} =
         LLMChain.new!(%{llm: chat, verbose: false})
         |> LLMChain.add_message(user_message)
         |> LLMChain.add_tools(tool)
         |> LLMChain.run(mode: :until_success)
 
       # has the result from the function execution
-      [tool_result] = last_message.tool_results
+      [tool_result] = updated_chain.last_message.tool_results
       assert tool_result.content == "SUCCESS"
     end
   end
@@ -1246,14 +1246,14 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
         end
       }
 
-      {:ok, _result_chain, last_message} =
+      {:ok, updated_chain} =
         LLMChain.new!(%{llm: %ChatAnthropic{stream: true, callbacks: [handler]}})
         |> LLMChain.add_message(Message.new_user!("Say, 'Hi!'!"))
         |> LLMChain.run()
 
-      assert last_message.content == "Hi!"
-      assert last_message.status == :complete
-      assert last_message.role == :assistant
+      assert updated_chain.last_message.content == "Hi!"
+      assert updated_chain.last_message.status == :complete
+      assert updated_chain.last_message.role == :assistant
 
       assert_received {:streamed_fn, data}
       assert %MessageDelta{role: :assistant} = data
@@ -1275,14 +1275,14 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
         end
       }
 
-      {:ok, _result_chain, last_message} =
+      {:ok, updated_chain} =
         LLMChain.new!(%{llm: %ChatAnthropic{stream: false, callbacks: [handler]}})
         |> LLMChain.add_message(Message.new_user!("Say, 'Hi!'!"))
         |> LLMChain.run()
 
-      assert last_message.content == "Hi!"
-      assert last_message.status == :complete
-      assert last_message.role == :assistant
+      assert updated_chain.last_message.content == "Hi!"
+      assert updated_chain.last_message.status == :complete
+      assert updated_chain.last_message.role == :assistant
 
       assert_received {:received_msg, data}
       assert %Message{role: :assistant} = data
@@ -1316,7 +1316,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
         end
       }
 
-      {:ok, _result_chain, last_message} =
+      {:ok, updated_chain} =
         LLMChain.new!(%{
           llm: %ChatAnthropic{model: @test_model, stream: true, callbacks: [handler]}
         })
@@ -1326,9 +1326,9 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
         |> LLMChain.add_message(Message.new_user!("What's the capitol of Norway?"))
         |> LLMChain.run()
 
-      assert last_message.content =~ "Oslo"
-      assert last_message.status == :complete
-      assert last_message.role == :assistant
+      assert updated_chain.last_message.content =~ "Oslo"
+      assert updated_chain.last_message.status == :complete
+      assert updated_chain.last_message.role == :assistant
 
       assert_received {:streamed_fn, data}
       assert %MessageDelta{role: :assistant} = data

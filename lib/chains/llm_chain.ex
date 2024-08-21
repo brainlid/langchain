@@ -236,8 +236,7 @@ defmodule LangChain.Chains.LLMChain do
     an opportunity to use the `ToolResult` information in an assistant response
     message. In essence, this mode always gives the LLM the last word.
   """
-  @spec run(t(), Keyword.t()) ::
-          {:ok, t(), Message.t() | [Message.t()]} | {:error, t(), String.t()}
+  @spec run(t(), Keyword.t()) :: {:ok, t()} | {:error, t(), String.t()}
   def run(chain, opts \\ [])
 
   def run(%LLMChain{} = chain, opts) do
@@ -259,7 +258,7 @@ defmodule LangChain.Chains.LLMChain do
         # run the chain and format the return
         case do_run(chain) do
           {:ok, chain} ->
-            {:ok, chain, chain.exchanged_messages}
+            {:ok, chain}
 
           {:error, _chain, _reason} = error ->
             error
@@ -276,7 +275,7 @@ defmodule LangChain.Chains.LLMChain do
   # Repeatedly run the chain until we get a successful ToolResponse or processed
   # assistant message. Once we've reached success, it is not submitted back to the LLM,
   # the process ends there.
-  @spec run_until_success(t()) :: {:ok, t(), Message.t()} | {:error, t(), String.t()}
+  @spec run_until_success(t()) :: {:ok, t()} | {:error, t(), String.t()}
   defp run_until_success(%LLMChain{last_message: %Message{} = last_message} = chain) do
     stop_or_recurse =
       cond do
@@ -284,13 +283,13 @@ defmodule LangChain.Chains.LLMChain do
           {:error, chain, "Exceeded max failure count"}
 
         last_message.role == :tool && !Message.tool_had_errors?(last_message) ->
-          # a successful tool result is success
-          {:ok, chain, chain.exchanged_messages}
+          # a successful tool result has no errors
+          {:ok, chain}
 
         last_message.role == :assistant ->
           # it was successful if we didn't generate a user message in response to
           # an error.
-          {:ok, chain, chain.exchanged_messages}
+          {:ok, chain}
 
         true ->
           :recurse
@@ -319,9 +318,9 @@ defmodule LangChain.Chains.LLMChain do
   # Repeatedly run the chain while `needs_response` is true. This will execute
   # tools and re-submit the tool result to the LLM giving the LLM an
   # opportunity to execute more tools or return a response.
-  @spec run_while_needs_response(t()) :: {:ok, t(), Message.t()} | {:error, t(), String.t()}
+  @spec run_while_needs_response(t()) :: {:ok, t()} | {:error, t(), String.t()}
   defp run_while_needs_response(%LLMChain{needs_response: false} = chain) do
-    {:ok, chain, chain.exchanged_messages}
+    {:ok, chain}
   end
 
   defp run_while_needs_response(%LLMChain{needs_response: true} = chain) do

@@ -74,6 +74,7 @@ defmodule LangChain.Chains.DataExtractionChain do
   alias LangChain.Message
   alias LangChain.Message.ToolCall
   alias LangChain.Chains.LLMChain
+  alias LangChain.ChatModels.ChatOpenAI
 
   @function_name "information_extraction"
   @extraction_template ~s"Extract and save the relevant entities mentioned in the following passage together with their properties. Use the value `null` when missing in the passage.
@@ -93,7 +94,7 @@ Passage:
       messages =
         [
           Message.new_system!(
-            "You are a helpful assistant that extracts structured data from text passages. Only use the functions you have been provided with."
+            "You are a helpful assistant that extracts structured data from text passages. Only use the functions you have been provided with. Extract the data in a single tool use."
           ),
           PromptTemplate.new!(%{role: :user, text: @extraction_template})
         ]
@@ -106,15 +107,17 @@ Passage:
       |> LLMChain.add_messages(messages)
       |> LLMChain.run()
       |> case do
-        {:ok, _updated_chain,
-         %Message{
-           role: :assistant,
-           tool_calls: [
-             %ToolCall{
-               name: @function_name,
-               arguments: %{"info" => info}
-             }
-           ]
+        {:ok,
+         %LLMChain{
+           last_message: %Message{
+             role: :assistant,
+             tool_calls: [
+               %ToolCall{
+                 name: @function_name,
+                 arguments: %{"info" => info}
+               }
+             ]
+           }
          }}
         when is_list(info) ->
           {:ok, info}

@@ -206,7 +206,7 @@ defmodule LangChain.Chains.LLMChainTest do
       end)
 
       # We can construct an LLMChain from a PromptTemplate and an LLM.
-      {:ok, updated_chain, _response} =
+      {:ok, updated_chain} =
         %{llm: model, verbose: false}
         |> LLMChain.new!()
         |> LLMChain.add_message(
@@ -234,14 +234,13 @@ defmodule LangChain.Chains.LLMChainTest do
         )
 
       # We can construct an LLMChain from a PromptTemplate and an LLM.
-      {:ok, updated_chain, [response]} =
+      {:ok, updated_chain} =
         %{llm: ChatOpenAI.new!(%{temperature: 1, seed: 0, stream: false}), verbose: true}
         |> LLMChain.new!()
         |> LLMChain.apply_prompt_templates([prompt], %{product: "colorful socks"})
         |> LLMChain.run()
 
-      assert %Message{role: :assistant} = response
-      assert updated_chain.last_message == response
+      assert %Message{role: :assistant} = updated_chain.last_message
     end
 
     @tag live_call: true, live_open_ai: true
@@ -265,16 +264,15 @@ defmodule LangChain.Chains.LLMChainTest do
       model = ChatOpenAI.new!(%{temperature: 1, seed: 0, stream: true, callbacks: [handler]})
 
       # We can construct an LLMChain from a PromptTemplate and an LLM.
-      {:ok, updated_chain, [response]} =
+      {:ok, updated_chain} =
         %{llm: model, verbose: true}
         |> LLMChain.new!()
         |> LLMChain.add_callback(handler)
         |> LLMChain.apply_prompt_templates([prompt], %{product: "colorful socks"})
         |> LLMChain.run()
 
-      assert %Message{role: :assistant} = response
-      assert updated_chain.last_message == response
-      IO.inspect(response, label: "RECEIVED MESSAGE")
+      assert %Message{role: :assistant} = updated_chain.last_message
+      IO.inspect(updated_chain.last_message, label: "RECEIVED MESSAGE")
 
       # we should have received at least one callback message delta
       assert_received {:test_stream_deltas, delta_1}
@@ -284,7 +282,7 @@ defmodule LangChain.Chains.LLMChainTest do
       assert_received {:test_stream_message, message}
       assert %Message{role: :assistant} = message
       # the final returned message should match the callback message
-      assert message.content == response.content
+      assert message.content == updated_chain.last_message.content
     end
 
     test "non-live not-streamed usage test" do
@@ -303,7 +301,7 @@ defmodule LangChain.Chains.LLMChainTest do
       end)
 
       # We can construct an LLMChain from a PromptTemplate and an LLM.
-      {:ok, %LLMChain{} = updated_chain, [exchanged_message]} =
+      {:ok, %LLMChain{} = updated_chain} =
         %{llm: ChatOpenAI.new!(%{stream: false})}
         |> LLMChain.new!()
         |> LLMChain.apply_prompt_templates([prompt], %{product: "colorful socks"})
@@ -311,7 +309,6 @@ defmodule LangChain.Chains.LLMChainTest do
         |> LLMChain.run()
 
       assert updated_chain.needs_response == false
-      assert updated_chain.last_message == exchanged_message
       assert updated_chain.last_message == fake_message
     end
 
@@ -352,14 +349,14 @@ defmodule LangChain.Chains.LLMChainTest do
       end)
 
       # We can construct an LLMChain from a PromptTemplate and an LLM.
-      {:ok, updated_chain, [response]} =
+      {:ok, updated_chain} =
         %{llm: model, verbose: false, callbacks: [chain_handler]}
         |> LLMChain.new!()
         |> LLMChain.apply_prompt_templates([prompt], %{product: "colorful socks"})
         |> LLMChain.run()
 
-      assert %Message{role: :assistant, content: "Socktastic!", status: :complete} = response
-      assert updated_chain.last_message == response
+      assert %Message{role: :assistant, content: "Socktastic!", status: :complete} =
+               updated_chain.last_message
 
       # we should have received a message for the completed, combined message
       assert_received {:fake_full_message, message}
@@ -910,7 +907,7 @@ defmodule LangChain.Chains.LLMChainTest do
         })
 
       # create and run the chain
-      {:ok, updated_chain, exchanged_messages} =
+      {:ok, updated_chain} =
         LLMChain.new!(%{
           llm: ChatOpenAI.new!(%{seed: 0}),
           custom_context: custom_context,
@@ -920,7 +917,7 @@ defmodule LangChain.Chains.LLMChainTest do
         |> LLMChain.add_message(Message.new_user!("Where is the hairbrush located?"))
         |> LLMChain.run(mode: :while_needs_response)
 
-      [_tool_call, _tool_result, %Message{} = final_message] = exchanged_messages
+      [_tool_call, _tool_result, %Message{} = final_message] = updated_chain.exchanged_messages
 
       assert updated_chain.last_message == final_message
       assert final_message.role == :assistant
@@ -997,7 +994,7 @@ defmodule LangChain.Chains.LLMChainTest do
           end
         })
 
-      {:ok, _updated_chain, exchanged_messages} =
+      {:ok, updated_chain} =
         LLMChain.new!(%{
           llm: ChatOpenAI.new!(%{seed: 0, stream: false}),
           custom_context: nil,
@@ -1007,9 +1004,10 @@ defmodule LangChain.Chains.LLMChainTest do
         |> LLMChain.add_message(message)
         |> LLMChain.run(mode: :while_needs_response)
 
-      [_tool_call, _tool_result, %Message{} = final_response] = exchanged_messages
+      [_tool_call, _tool_result, %Message{} = final_response] = updated_chain.exchanged_messages
 
       # the final_response should contain data returned from the function
+      assert final_response == updated_chain.last_message
       assert final_response.content =~ "Germany"
       assert final_response.content =~ "fra"
       assert final_response.role == :assistant
@@ -1191,7 +1189,7 @@ defmodule LangChain.Chains.LLMChainTest do
         {:ok, fake_messages}
       end)
 
-      {:ok, _updated_chain, [last_message]} =
+      {:ok, updated_chain} =
         chain
         |> LLMChain.message_processors([JsonProcessor.new!()])
         |> LLMChain.add_message(Message.new_system!())
@@ -1199,8 +1197,8 @@ defmodule LangChain.Chains.LLMChainTest do
         |> LLMChain.run(mode: :until_success)
 
       # stopped after processing a successful assistant response
-      assert last_message.role == :assistant
-      assert last_message.processed_content == %{"value" => "abc"}
+      assert updated_chain.last_message.role == :assistant
+      assert updated_chain.last_message.processed_content == %{"value" => "abc"}
     end
 
     test "mode: :until_success - message needs processing, fails, then succeeds", %{chat: chat} do
@@ -1216,7 +1214,7 @@ defmodule LangChain.Chains.LLMChainTest do
          ]}
       end)
 
-      {:ok, _updated_chain, exchanged_messages} =
+      {:ok, updated_chain} =
         %{llm: chat}
         |> LLMChain.new!()
         |> LLMChain.message_processors([JsonProcessor.new!()])
@@ -1224,11 +1222,9 @@ defmodule LangChain.Chains.LLMChainTest do
         |> LLMChain.add_message(Message.new_user!("What's the value in JSON?"))
         |> LLMChain.run(mode: :until_success)
 
-      [_invalid_msg, _error_response, last_message] = exchanged_messages
-
       # stopped after processing a successful assistant response
-      assert last_message.role == :assistant
-      assert last_message.processed_content == %{"value" => "abc"}
+      assert updated_chain.last_message.role == :assistant
+      assert updated_chain.last_message.processed_content == %{"value" => "abc"}
     end
 
     test "mode: :until_success - tool call returns failure once, then succeeds", %{
@@ -1245,7 +1241,7 @@ defmodule LangChain.Chains.LLMChainTest do
         {:ok, fake_messages}
       end)
 
-      {:ok, updated_chain, exchanged_messages} =
+      {:ok, updated_chain} =
         %{llm: ChatOpenAI.new!(%{stream: false}), verbose: false}
         |> LLMChain.new!()
         |> LLMChain.add_tools([fail_once])
@@ -1253,7 +1249,7 @@ defmodule LangChain.Chains.LLMChainTest do
         |> LLMChain.add_message(Message.new_user!("Execute the fail_once tool."))
         |> LLMChain.run(mode: :until_success)
 
-      [tool_call_1, tool_result_1, tool_call_2, tool_result_2] = exchanged_messages
+      [tool_call_1, tool_result_1, tool_call_2, tool_result_2] = updated_chain.exchanged_messages
 
       assert %Message{
                tool_calls: [
@@ -1327,7 +1323,7 @@ defmodule LangChain.Chains.LLMChainTest do
         {:ok, fake_messages}
       end)
 
-      {:ok, updated_chain, exchanged_messages} =
+      {:ok, updated_chain} =
         %{llm: ChatOpenAI.new!(%{stream: false}), verbose: false}
         |> LLMChain.new!()
         |> LLMChain.add_tools([hello_world, fail_once])
@@ -1335,12 +1331,10 @@ defmodule LangChain.Chains.LLMChainTest do
         |> LLMChain.add_message(Message.new_user!("Execute the fail_once tool."))
         |> LLMChain.run(mode: :until_success)
 
-      [_tool_call_1, _failed_result_1, _tool_call_2, last_message] = exchanged_messages
-
-      assert last_message.role == :tool
+      assert updated_chain.last_message.role == :tool
 
       assert [%ToolResult{is_error: false}, %ToolResult{is_error: false}] =
-               last_message.tool_results
+               updated_chain.last_message.tool_results
 
       assert updated_chain.current_failure_count == 0
     end
