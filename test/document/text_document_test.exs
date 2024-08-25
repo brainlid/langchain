@@ -2,6 +2,7 @@ defmodule LangChain.Document.TextDocuemntTest do
   use ExUnit.Case
   doctest LangChain.Document
   alias LangChain.Document
+  alias LangChain.LangChainError
 
   describe "new/1" do
     test "works with basic attrs" do

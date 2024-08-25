@@ -3,6 +3,7 @@ defmodule LangChain.Document do
   import Ecto.Changeset
   require Logger
   alias __MODULE__
+  alias LangChain.LangChainError
 
   @type t :: %__MODULE__{}
 
