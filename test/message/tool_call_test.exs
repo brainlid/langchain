@@ -121,6 +121,20 @@ defmodule LangChain.Message.ToolCallTest do
       assert result == received
     end
 
+    test "does not duplicate incomplete call" do
+      received = %ToolCall{
+        status: :incomplete,
+        type: :function,
+        call_id: nil,
+        name: "get_weather",
+        arguments: nil,
+        index: 0
+      }
+
+      result = ToolCall.merge(received, received)
+      assert result == received
+    end
+
     test "updates tool name" do
       call_1 = %ToolCall{
         status: :incomplete,

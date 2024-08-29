@@ -139,6 +139,8 @@ defmodule LangChain.Message.ToolCall do
     raise LangChainError, "Can only merge tool calls with the same index"
   end
 
+  def merge(%ToolCall{} = t1, %ToolCall{} = t2) when t1 == t2, do: t1
+
   def merge(%ToolCall{} = primary, %ToolCall{} = call_part) do
     # merge the "part" into the primary.
     primary
