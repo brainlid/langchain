@@ -152,6 +152,11 @@ defmodule LangChain.Message.ToolCall do
     |> update_status(call_part)
   end
 
+  defp append_tool_name(%ToolCall{name: primary_name} = primary, %ToolCall{name: new_name})
+       when primary_name == new_name do
+    primary
+  end
+
   defp append_tool_name(%ToolCall{} = primary, %ToolCall{name: new_name})
        when is_binary(new_name) do
     %ToolCall{primary | name: (primary.name || "") <> new_name}
