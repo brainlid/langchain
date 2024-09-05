@@ -1233,7 +1233,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert parsed == [json_1, json_2]
     end
 
-    test "correctly parses when data content contains spaces such as python code with intedentation" do
+    test "correctly parses when data content contains spaces such as python code with indentation" do
       data =
         "data: {\"id\":\"chatcmpl-7e8yp1xBhriNXiqqZ0xJkgNrmMuGS\",\"object\":\"chat.completion.chunk\",\"created\":1689801995,\"model\":\"gpt-4-0613\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"def my_function(x):\\n    return x + 1\"},\"finish_reason\":null}]}\n\n"
 
