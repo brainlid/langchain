@@ -175,6 +175,136 @@ defmodule LangChain.MessageDeltaTest do
       assert merged == expected
     end
 
+    test "correctly merge message with tool_call containing empty spaces" do
+      first_delta =
+        %LangChain.MessageDelta{
+          content: "",
+          status: :incomplete,
+          index: nil,
+          role: :assistant,
+          tool_calls: nil
+        }
+
+      deltas = [
+        %LangChain.MessageDelta{
+          content: "stu",
+          status: :incomplete,
+          index: nil,
+          role: :assistant,
+          tool_calls: nil
+        },
+        %LangChain.MessageDelta{
+          content: "ff",
+          status: :incomplete,
+          index: nil,
+          role: :assistant,
+          tool_calls: nil
+        },
+        %LangChain.MessageDelta{
+          content: nil,
+          status: :incomplete,
+          index: nil,
+          role: :assistant,
+          tool_calls: [
+            %LangChain.Message.ToolCall{
+              status: :incomplete,
+              type: :function,
+              call_id: "toolu_123",
+              name: "get_code",
+              arguments: nil,
+              index: 1
+            }
+          ]
+        },
+        %LangChain.MessageDelta{
+          content: nil,
+          status: :incomplete,
+          index: nil,
+          role: :assistant,
+          tool_calls: [
+            %LangChain.Message.ToolCall{
+              status: :incomplete,
+              type: :function,
+              call_id: "toolu_123",
+              name: "get_code",
+              arguments: "{\"code\": \"def my_function(x):\n ",
+              index: 1
+            }
+          ]
+        },
+        %LangChain.MessageDelta{
+          content: nil,
+          status: :incomplete,
+          index: nil,
+          role: :assistant,
+          tool_calls: [
+            %LangChain.Message.ToolCall{
+              status: :incomplete,
+              type: :function,
+              call_id: "toolu_123",
+              name: "get_code",
+              arguments: " ",
+              index: 1
+            }
+          ]
+        },
+        %LangChain.MessageDelta{
+          content: nil,
+          status: :incomplete,
+          index: nil,
+          role: :assistant,
+          tool_calls: [
+            %LangChain.Message.ToolCall{
+              status: :incomplete,
+              type: :function,
+              call_id: "toolu_123",
+              name: "get_code",
+              arguments: "  ",
+              index: 1
+            }
+          ]
+        },
+        %LangChain.MessageDelta{
+          content: nil,
+          status: :incomplete,
+          index: nil,
+          role: :assistant,
+          tool_calls: [
+            %LangChain.Message.ToolCall{
+              status: :incomplete,
+              type: :function,
+              call_id: "toolu_123",
+              name: "get_code",
+              arguments: "return x + 1\"}",
+              index: 1
+            }
+          ]
+        }
+      ]
+
+      merged =
+        Enum.reduce(deltas, first_delta, fn new_delta, acc ->
+          MessageDelta.merge_delta(acc, new_delta)
+        end)
+
+      assert merged == %LangChain.MessageDelta{
+               content: "stuff",
+               status: :incomplete,
+               index: nil,
+               role: :assistant,
+               tool_calls: [
+                 %LangChain.Message.ToolCall{
+                   status: :incomplete,
+                   type: :function,
+                   call_id: "toolu_123",
+                   name: "get_codeget_codeget_codeget_codeget_code",
+                   arguments: "{\"code\": \"def my_function(x):\n    return x + 1\"}",
+                   index: 1
+                 }
+               ]
+             }
+    end
+
     test "correctly merges message with tool_call split over multiple deltas and index is not by position" do
       first_delta =
         %LangChain.MessageDelta{

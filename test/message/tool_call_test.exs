@@ -52,6 +52,49 @@ defmodule LangChain.Message.ToolCallTest do
       assert msg.call_id == "call_asdf"
       assert msg.index == 0
     end
+
+    test "can preserve spaces in arguments" do
+      assert {:ok, %ToolCall{} = msg} =
+               ToolCall.new(%{
+                 "status" => :incomplete,
+                 "type" => "function",
+                 "index" => 0,
+                 "call_id" => "call_asdf",
+                 "name" => "hello_world",
+                 "arguments" => "{\"code\": \"def my_function(x):\n    return x + 1\"}"
+               })
+
+      assert msg.arguments == "{\"code\": \"def my_function(x):\n    return x + 1\"}"
+    end
+
+    test "casts spaces in arguments as spaces" do
+      one_space = " "
+      assert {:ok, %ToolCall{} = msg} =
+               ToolCall.new(%{
+                 "status" => :incomplete,
+                 "type" => "function",
+                 "index" => 0,
+                 "call_id" => "call_asdf",
+                 "name" => "hello_world",
+                 "arguments" => one_space
+               })
+
+      assert msg.arguments == one_space
+
+      # Multiple spaces
+      four_spaces = "    "
+      assert {:ok, %ToolCall{} = msg} =
+               ToolCall.new(%{
+                 "status" => :incomplete,
+                 "type" => "function",
+                 "index" => 0,
+                 "call_id" => "call_asdf",
+                 "name" => "hello_world",
+                 "arguments" => four_spaces
+               })
+
+      assert msg.arguments == four_spaces
+    end
   end
 
   describe "complete/1" do
@@ -251,6 +294,42 @@ defmodule LangChain.Message.ToolCallTest do
       assert_raise LangChainError, "Can only merge tool calls with the same index", fn ->
         ToolCall.merge(call_1, call_2)
       end
+    end
+
+    test "preserves empty spaces when merging arguments" do
+      call_1 = %ToolCall{
+        status: :incomplete,
+        type: :function,
+        name: "get_code",
+        # 2 spaces
+        arguments: "{\"code\": \"def my_function(x):\n  ",
+        index: 0
+      }
+
+      call_2 = %ToolCall{
+        status: :incomplete,
+        type: :function,
+        name: "get_code",
+        # one space
+        arguments: " ",
+        index: 0
+      }
+
+      call_3 = %ToolCall{
+        status: :incomplete,
+        type: :function,
+        name: "get_code",
+        # one space
+        arguments: " return x + 1\"}",
+        index: 0
+      }
+
+      result =
+        call_1
+        |> ToolCall.merge(call_2)
+        |> ToolCall.merge(call_3)
+
+      assert result.arguments == "{\"code\": \"def my_function(x):\n    return x + 1\"}"
     end
   end
 end
