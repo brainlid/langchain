@@ -73,6 +73,25 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
       assert model.endpoint == override_url
     end
+
+    test "supports setting json_response and json_schema" do
+      json_schema = %{
+        "type" => "object",
+        "properties" => %{
+          "name" => %{"type" => "string"},
+          "age" => %{"type" => "integer"}
+        }
+      }
+
+      {:ok, openai} = ChatOpenAI.new(%{
+        "model" => @test_model,
+        "json_response" => true,
+        "json_schema" => json_schema
+      })
+
+      assert openai.json_response == true
+      assert openai.json_schema == json_schema
+    end
   end
 
   describe "for_api/3" do
@@ -106,6 +125,34 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert data.temperature == 1
       assert data.frequency_penalty == 0.5
       assert data.response_format == %{"type" => "json_object"}
+    end
+
+    test "generates a map for an API call with JSON response and schema" do
+      json_schema = %{
+        "type" => "object",
+        "properties" => %{
+          "name" => %{"type" => "string"},
+          "age" => %{"type" => "integer"}
+        }
+      }
+
+      {:ok, openai} =
+        ChatOpenAI.new(%{
+          "model" => @test_model,
+          "temperature" => 1,
+          "frequency_penalty" => 0.5,
+          "json_response" => true,
+          "json_schema" => json_schema
+        })
+
+      data = ChatOpenAI.for_api(openai, [], [])
+      assert data.model == @test_model
+      assert data.temperature == 1
+      assert data.frequency_penalty == 0.5
+      assert data.response_format == %{
+        "type" => "json_schema",
+        "schema" => json_schema
+      }
     end
 
     test "generates a map for an API call with max_tokens set" do
@@ -419,7 +466,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
             "description" => nil,
             "enum" => ["yellow", "red", "green"],
             "type" => "string"
-          }
+        }
         },
         "required" => ["p1"]
       }
@@ -1893,6 +1940,39 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
                "version" => 1,
                "module" => "Elixir.LangChain.ChatModels.ChatOpenAI"
              }
+    end
+  end
+
+  describe "set_response_format/1" do
+    test "returns text format when json_response is false" do
+      openai = ChatOpenAI.new!(%{"model" => @test_model, "json_response" => false})
+      assert ChatOpenAI.set_response_format(openai) == %{"type" => "text"}
+    end
+
+    test "returns json_object format when json_response is true and no schema" do
+      openai = ChatOpenAI.new!(%{"model" => @test_model, "json_response" => true})
+      assert ChatOpenAI.set_response_format(openai) == %{"type" => "json_object"}
+    end
+
+    test "returns json_schema format when json_response is true and schema is provided" do
+      json_schema = %{
+        "type" => "object",
+        "properties" => %{
+          "name" => %{"type" => "string"},
+          "age" => %{"type" => "integer"}
+        }
+      }
+
+      openai = ChatOpenAI.new!(%{
+        "model" => @test_model,
+        "json_response" => true,
+        "json_schema" => json_schema
+      })
+
+      assert ChatOpenAI.set_response_format(openai) == %{
+        "type" => "json_schema",
+        "schema" => json_schema
+      }
     end
   end
 end
