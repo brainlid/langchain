@@ -409,7 +409,7 @@ defmodule LangChain.Fixtures do
   end
 
   def too_large_user_request() do
-    Message.new_user!("Analyze the following text: \n\n" <> text_chunks(8))
+    Message.new_user!("Analyze the following text: \n\n" <> text_chunks(16))
   end
 
   def results_in_too_long_response() do

@@ -12,7 +12,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult
 
-  @test_model "gpt-3.5-turbo"
+  @test_model "gpt-4o-mini-2024-07-18"
   @gpt4 "gpt-4-1106-preview"
 
   defp hello_world(_args, _context) do
@@ -73,6 +73,25 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
       assert model.endpoint == override_url
     end
+
+    test "supports setting json_response and json_schema" do
+      json_schema = %{
+        "type" => "object",
+        "properties" => %{
+          "name" => %{"type" => "string"},
+          "age" => %{"type" => "integer"}
+        }
+      }
+
+      {:ok, openai} = ChatOpenAI.new(%{
+        "model" => @test_model,
+        "json_response" => true,
+        "json_schema" => json_schema
+      })
+
+      assert openai.json_response == true
+      assert openai.json_schema == json_schema
+    end
   end
 
   describe "for_api/3" do
@@ -106,6 +125,34 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert data.temperature == 1
       assert data.frequency_penalty == 0.5
       assert data.response_format == %{"type" => "json_object"}
+    end
+
+    test "generates a map for an API call with JSON response and schema" do
+      json_schema = %{
+        "type" => "object",
+        "properties" => %{
+          "name" => %{"type" => "string"},
+          "age" => %{"type" => "integer"}
+        }
+      }
+
+      {:ok, openai} =
+        ChatOpenAI.new(%{
+          "model" => @test_model,
+          "temperature" => 1,
+          "frequency_penalty" => 0.5,
+          "json_response" => true,
+          "json_schema" => json_schema
+        })
+
+      data = ChatOpenAI.for_api(openai, [], [])
+      assert data.model == @test_model
+      assert data.temperature == 1
+      assert data.frequency_penalty == 0.5
+      assert data.response_format == %{
+        "type" => "json_schema",
+        "json_schema" => json_schema
+      }
     end
 
     test "generates a map for an API call with max_tokens set" do
@@ -419,7 +466,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
             "description" => nil,
             "enum" => ["yellow", "red", "green"],
             "type" => "string"
-          }
+        }
         },
         "required" => ["p1"]
       }
@@ -789,7 +836,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     @tag live_call: true, live_open_ai: true
     test "handles when request is too large" do
       {:ok, chat} =
-        ChatOpenAI.new(%{model: "gpt-3.5-turbo-0301", seed: 0, stream: false, temperature: 1})
+        ChatOpenAI.new(%{model: "gpt-4-0613", seed: 0, stream: false, temperature: 1})
 
       {:error, reason} = ChatOpenAI.call(chat, [too_large_user_request()])
       assert reason =~ "maximum context length"
@@ -1330,7 +1377,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     @tag live_call: true, live_open_ai: true
     test "supports multi-modal user message with image prompt" do
       # https://platform.openai.com/docs/guides/vision
-      {:ok, chat} = ChatOpenAI.new(%{model: "gpt-4-vision-preview", seed: 0})
+      {:ok, chat} = ChatOpenAI.new(%{model: "gpt-4o-2024-08-06", seed: 0})
 
       url =
         "https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg"
@@ -1891,8 +1938,53 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
                "stream_options" => %{"include_usage" => true},
                "temperature" => 0.0,
                "version" => 1,
+               "json_schema" => nil,
                "module" => "Elixir.LangChain.ChatModels.ChatOpenAI"
              }
+    end
+  end
+
+  describe "set_response_format/1" do
+    test "generates a map for an API call with text format when json_response is false" do
+      {:ok, openai} = ChatOpenAI.new(%{
+        model: @test_model,
+        json_response: false
+      })
+      data = ChatOpenAI.for_api(openai, [], [])
+
+      assert data.response_format == %{"type" => "text"}
+    end
+
+    test "generates a map for an API call with json_object format when json_response is true and no schema" do
+      {:ok, openai} = ChatOpenAI.new(%{
+        model: @test_model,
+        json_response: true
+      })
+      data = ChatOpenAI.for_api(openai, [], [])
+
+      assert data.response_format == %{"type" => "json_object"}
+    end
+
+    test "generates a map for an API call with json_schema format when json_response is true and schema is provided" do
+      json_schema = %{
+        "type" => "object",
+        "properties" => %{
+          "name" => %{"type" => "string"},
+          "age" => %{"type" => "integer"}
+        }
+      }
+
+      {:ok, openai} = ChatOpenAI.new(%{
+        model: @test_model,
+        json_response: true,
+        json_schema: json_schema
+      })
+      data = ChatOpenAI.for_api(openai, [], [])
+
+      assert data.response_format == %{
+        "type" => "json_schema",
+        "json_schema" => json_schema
+      }
     end
   end
 end

@@ -297,7 +297,7 @@ defmodule LangChain.MessageDeltaTest do
                    status: :incomplete,
                    type: :function,
                    call_id: "toolu_123",
-                   name: "get_codeget_codeget_codeget_codeget_code",
+                   name: "get_code",
                    arguments: "{\"code\": \"def my_function(x):\n    return x + 1\"}",
                    index: 1
                  }

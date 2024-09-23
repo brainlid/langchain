@@ -122,6 +122,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     # How many chat completion choices to generate for each input message.
     field :n, :integer, default: 1
     field :json_response, :boolean, default: false
+    field :json_schema, :map, default: nil
     field :stream, :boolean, default: false
     field :max_tokens, :integer, default: nil
     # Options for streaming response. Only set this when you set `stream: true`
@@ -153,6 +154,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     :stream,
     :receive_timeout,
     :json_response,
+    :json_schema,
     :max_tokens,
     :stream_options,
     :user,
@@ -263,11 +265,20 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     %{"include_usage" => Map.get(data, :include_usage, Map.get(data, "include_usage"))}
   end
 
-  defp set_response_format(%ChatOpenAI{json_response: true}),
-    do: %{"type" => "json_object"}
+  defp set_response_format(%ChatOpenAI{json_response: true, json_schema: json_schema}) when not is_nil(json_schema) do
+    %{
+      "type" => "json_schema",
+      "json_schema" => json_schema
+    }
+  end
 
-  defp set_response_format(%ChatOpenAI{json_response: false}),
-    do: %{"type" => "text"}
+  defp set_response_format(%ChatOpenAI{json_response: true}) do
+    %{"type" => "json_object"}
+  end
+
+  defp set_response_format(%ChatOpenAI{json_response: false}) do
+    %{"type" => "text"}
+  end
 
   @doc """
   Convert a LangChain structure to the expected map of data for the OpenAI API.
@@ -908,6 +919,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         :seed,
         :n,
         :json_response,
+        :json_schema,
         :stream,
         :max_tokens,
         :stream_options
