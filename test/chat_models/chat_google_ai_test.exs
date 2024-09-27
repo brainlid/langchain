@@ -311,6 +311,22 @@ defmodule ChatModels.ChatGoogleAITest do
                }
              } == ChatGoogleAI.for_api(weather)
     end
+
+    test "handles functions without parameters" do
+      {:ok, function} =
+        Function.new(%{
+          name: "hello_world",
+          description: "Give a hello world greeting.",
+          parameters: [],
+          function: fn _args, _context -> {:ok, "Hello User!"} end
+        })
+
+      assert %{
+               "description" => "Give a hello world greeting.",
+               "name" => "hello_world",
+               "parameters" => %{"properties" => %{}, "type" => "object"}
+             } == ChatGoogleAI.for_api(function)
+    end
   end
 
   describe "do_process_response/2" do
