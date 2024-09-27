@@ -153,6 +153,17 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   end
 
   def for_api(%ChatGoogleAI{} = google_ai, messages, functions) do
+    {system, messages} = split_system_message(messages)
+
+    _system_instruction =
+      case system do
+        nil ->
+          nil
+
+        %Message{role: :system, content: content} ->
+          %{"parts" => [%{"text" => content}]}
+      end
+
     messages_for_api =
       messages
       |> Enum.map(&for_api/1)
