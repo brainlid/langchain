@@ -137,23 +137,9 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     |> validate_required(@required_fields)
   end
 
-  # Unlike OpenAI, Google AI only supports one system message.
-  @doc false
-  @spec split_system_message([Message.t()]) :: {nil | Message.t(), [Message.t()]} | no_return()
-  def split_system_message(messages) do
-    # split the messages into "system" and "other". Error if more than 1 system
-    # message. Return the other messages as a separate list.
-    {system, other} = Enum.split_with(messages, &(&1.role == :system))
-
-    if length(system) > 1 do
-      raise LangChainError, "Google AI only supports a single System message"
-    end
-
-    {List.first(system), other}
-  end
-
   def for_api(%ChatGoogleAI{} = google_ai, messages, functions) do
-    {system, messages} = split_system_message(messages)
+    {system, messages} =
+      Utils.split_system_message(messages, "Google AI only supports a single System message")
 
     system_instruction =
       case system do
