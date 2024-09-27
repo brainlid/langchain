@@ -289,6 +289,21 @@ defmodule ChatModels.ChatGoogleAITest do
       assert struct.status == :complete
     end
 
+    test "handles receiving a message with an empty text part", %{model: model} do
+      response = %{
+        "candidates" => [
+          %{
+            "content" => %{"role" => "model", "parts" => [%{"text" => ""}]},
+            "finishReason" => "STOP",
+            "index" => 0
+          }
+        ]
+      }
+
+      assert [%Message{} = struct] = ChatGoogleAI.do_process_response(model, response)
+      assert struct.content == []
+    end
+
     test "error if receiving non-text content", %{model: model} do
       response = %{
         "candidates" => [
@@ -349,6 +364,26 @@ defmodule ChatModels.ChatGoogleAITest do
       assert struct.content == "This is the first part of a mes"
       assert struct.index == 0
       assert struct.status == :incomplete
+    end
+
+    test "handles receiving a MessageDelta with an empty text part", %{model: model} do
+      response = %{
+        "candidates" => [
+          %{
+            "content" => %{
+              "role" => "model",
+              "parts" => [%{"text" => ""}]
+            },
+            "finishReason" => "STOP",
+            "index" => 0
+          }
+        ]
+      }
+
+      assert [%MessageDelta{} = struct] =
+               ChatGoogleAI.do_process_response(model, response, MessageDelta)
+
+      assert struct.content == ""
     end
 
     test "handles API error messages", %{model: model} do
