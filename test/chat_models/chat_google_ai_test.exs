@@ -323,8 +323,7 @@ defmodule ChatModels.ChatGoogleAITest do
 
       assert %{
                "description" => "Give a hello world greeting.",
-               "name" => "hello_world",
-               "parameters" => %{"properties" => %{}, "type" => "object"}
+               "name" => "hello_world"
              } == ChatGoogleAI.for_api(function)
     end
   end
