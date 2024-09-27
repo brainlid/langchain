@@ -426,6 +426,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     text_part =
       parts
       |> filter_parts_for_types(["text"])
+      |> filter_text_parts()
       |> Enum.map(fn part ->
         ContentPart.new!(%{type: :text, content: part["text"]})
       end)
@@ -479,6 +480,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
 
     parts
     |> filter_parts_for_types(["text"])
+    |> filter_text_parts()
     |> Enum.map(fn part ->
       ContentPart.new!(%{type: :text, content: part["text"]})
     end)
