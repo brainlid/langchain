@@ -597,6 +597,16 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     end)
   end
 
+  @doc false
+  def filter_text_parts(parts) when is_list(parts) do
+    Enum.filter(parts, fn p ->
+      case p do
+        %{"text" => text} -> text && text != ""
+        _ -> false
+      end
+    end)
+  end
+
   @doc """
   Return the content parts for the message.
   """
