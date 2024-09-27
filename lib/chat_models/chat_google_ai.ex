@@ -249,6 +249,10 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     }
   end
 
+  def for_api(%Function{} = function) do
+    ChatOpenAI.for_api(function)
+  end
+
   @doc """
   Calls the Google AI API passing the ChatGoogleAI struct with configuration, plus
   either a simple message or the list of messages to act as the prompt.
