@@ -1,4 +1,5 @@
 defmodule ChatModels.ChatGoogleAITest do
+  alias LangChain.FunctionParam
   alias LangChain.ChatModels.ChatGoogleAI
   use LangChain.BaseCase
 
@@ -267,6 +268,48 @@ defmodule ChatModels.ChatGoogleAITest do
                  }
                ]
              } = tool_call
+    end
+
+    test "handles converting functions with parameters" do
+      {:ok, weather} =
+        Function.new(%{
+          name: "get_weather",
+          description: "Get the current weather in a given US location",
+          parameters: [
+            FunctionParam.new!(%{
+              name: "city",
+              type: "string",
+              description: "The city name, e.g. San Francisco",
+              required: true
+            }),
+            FunctionParam.new!(%{
+              name: "state",
+              type: "string",
+              description: "The 2 letter US state abbreviation, e.g. CA, NY, UT",
+              required: true
+            })
+          ],
+          function: fn _args, _context -> {:ok, "75 degrees"} end
+        })
+
+      assert %{
+               "description" => "Get the current weather in a given US location",
+               "name" => "get_weather",
+               "parameters" => %{
+                 "properties" => %{
+                   "city" => %{
+                     "description" => "The city name, e.g. San Francisco",
+                     "type" => "string"
+                   },
+                   "state" => %{
+                     "description" => "The 2 letter US state abbreviation, e.g. CA, NY, UT",
+                     "type" => "string"
+                   }
+                 },
+                 "required" => ["city", "state"],
+                 "type" => "object"
+               }
+             } == ChatGoogleAI.for_api(weather)
     end
   end
 
