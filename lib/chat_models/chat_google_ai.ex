@@ -159,7 +159,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
         %{
           # Google AI functions use an OpenAI compatible format.
           # See: https://ai.google.dev/docs/function_calling#how_it_works
-          "functionDeclarations" => Enum.map(functions, &ChatOpenAI.for_api/1)
+          "functionDeclarations" => Enum.map(functions, &for_api/1)
         }
       ])
     else
