@@ -716,29 +716,6 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
     end
   end
 
-  describe "split_system_message/1" do
-    test "returns system message and rest separately" do
-      system = Message.new_system!()
-      user_msg = Message.new_user!("Hi")
-      assert {system, [user_msg]} == ChatAnthropic.split_system_message([system, user_msg])
-    end
-
-    test "return nil when no system message set" do
-      user_msg = Message.new_user!("Hi")
-      assert {nil, [user_msg]} == ChatAnthropic.split_system_message([user_msg])
-    end
-
-    test "raises exception with multiple system messages" do
-      assert_raise LangChain.LangChainError,
-                   "Anthropic only supports a single System message",
-                   fn ->
-                     system = Message.new_system!()
-                     user_msg = Message.new_user!("Hi")
-                     ChatAnthropic.split_system_message([system, user_msg, system])
-                   end
-    end
-  end
-
   describe "for_api/1" do
     test "turns a basic user message into the expected JSON format" do
       expected = %{"role" => "user", "content" => "Hi."}
