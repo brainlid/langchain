@@ -155,7 +155,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   def for_api(%ChatGoogleAI{} = google_ai, messages, functions) do
     {system, messages} = split_system_message(messages)
 
-    _system_instruction =
+    system_instruction =
       case system do
         nil ->
           nil
@@ -170,14 +170,16 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
       |> List.flatten()
       |> List.wrap()
 
-    req = %{
-      "contents" => messages_for_api,
-      "generationConfig" => %{
-        "temperature" => google_ai.temperature,
-        "topP" => google_ai.top_p,
-        "topK" => google_ai.top_k
+    req =
+      %{
+        "contents" => messages_for_api,
+        "generationConfig" => %{
+          "temperature" => google_ai.temperature,
+          "topP" => google_ai.top_p,
+          "topK" => google_ai.top_k
+        }
       }
-    }
+      |> LangChain.Utils.conditionally_add_to_map("system_instruction", system_instruction)
 
     if functions && not Enum.empty?(functions) do
       req
