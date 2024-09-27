@@ -263,8 +263,7 @@ defmodule ChatModels.ChatGoogleAITest do
                "functionDeclarations" => [
                  %{
                    "name" => "hello_world",
-                   "description" => "Give a hello world greeting.",
-                   "parameters" => %{"properties" => %{}, "type" => "object"}
+                   "description" => "Give a hello world greeting."
                  }
                ]
              } = tool_call
