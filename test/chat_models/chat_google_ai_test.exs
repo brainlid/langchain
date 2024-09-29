@@ -1,6 +1,4 @@
 defmodule ChatModels.ChatGoogleAITest do
-  alias LangChain.FunctionParam
-  alias LangChain.ChatModels.ChatGoogleAI
   use LangChain.BaseCase
 
   doctest LangChain.ChatModels.ChatGoogleAI
@@ -12,6 +10,9 @@ defmodule ChatModels.ChatGoogleAITest do
   alias LangChain.TokenUsage
   alias LangChain.MessageDelta
   alias LangChain.Function
+  alias LangChain.FunctionParam
+  alias LangChain.LangChainError
+  alias LangChain.ChatModels.ChatGoogleAI
 
   setup do
     {:ok, hello_world} =
@@ -240,14 +241,26 @@ defmodule ChatModels.ChatGoogleAITest do
       assert expected == ChatGoogleAI.for_api(tool_result)
     end
 
-    test "expands system messages into two", %{google_ai: google_ai} do
-      message = "These are some instructions."
-
+    test "adds system instruction to the request if present", %{google_ai: google_ai} do
+      message = "You are a helpful assistant."
       data = ChatGoogleAI.for_api(google_ai, [Message.new_system!(message)], [])
 
-      assert %{"contents" => [msg1, msg2]} = data
-      assert %{"role" => :user, "parts" => [%{"text" => ^message}]} = msg1
-      assert %{"role" => :model, "parts" => [%{"text" => ""}]} = msg2
+      assert %{"system_instruction" => %{"parts" => [%{"text" => ^message}]}} = data
+    end
+
+    test "does not add system instruction if not present", %{google_ai: google_ai} do
+      data = ChatGoogleAI.for_api(google_ai, [Message.new_user!("Hello!")], [])
+      refute Map.has_key?(data, "system_instruction")
+    end
+
+    test "raises an error if more than one system message is present", %{google_ai: google_ai} do
+      assert_raise LangChainError, "Google AI only supports a single System message", fn ->
+        ChatGoogleAI.for_api(
+          google_ai,
+          [Message.new_system!("First instruction."), Message.new_system!("Second instruction.")],
+          []
+        )
+      end
     end
 
     test "generates a map containing function declarations", %{
@@ -346,6 +359,21 @@ defmodule ChatModels.ChatGoogleAITest do
       assert struct.status == :complete
     end
 
+    test "handles receiving a message with an empty text part", %{model: model} do
+      response = %{
+        "candidates" => [
+          %{
+            "content" => %{"role" => "model", "parts" => [%{"text" => ""}]},
+            "finishReason" => "STOP",
+            "index" => 0
+          }
+        ]
+      }
+
+      assert [%Message{} = struct] = ChatGoogleAI.do_process_response(model, response)
+      assert struct.content == []
+    end
+
     test "error if receiving non-text content", %{model: model} do
       response = %{
         "candidates" => [
@@ -408,6 +436,26 @@ defmodule ChatModels.ChatGoogleAITest do
       assert struct.status == :incomplete
     end
 
+    test "handles receiving a MessageDelta with an empty text part", %{model: model} do
+      response = %{
+        "candidates" => [
+          %{
+            "content" => %{
+              "role" => "model",
+              "parts" => [%{"text" => ""}]
+            },
+            "finishReason" => "STOP",
+            "index" => 0
+          }
+        ]
+      }
+
+      assert [%MessageDelta{} = struct] =
+               ChatGoogleAI.do_process_response(model, response, MessageDelta)
+
+      assert struct.content == ""
+    end
+
     test "handles API error messages", %{model: model} do
       response = %{
         "error" => %{
@@ -464,6 +512,22 @@ defmodule ChatModels.ChatGoogleAITest do
       ]
 
       assert parts == ChatGoogleAI.filter_parts_for_types(parts, ["text", "functionCall"])
+    end
+  end
+
+  describe "filter_text_parts/1" do
+    test "returns only text parts that are not nil or empty" do
+      parts = [
+        %{"text" => "I have text"},
+        %{"text" => nil},
+        %{"text" => ""},
+        %{"text" => "I have more text"}
+      ]
+
+      assert ChatGoogleAI.filter_text_parts(parts) == [
+               %{"text" => "I have text"},
+               %{"text" => "I have more text"}
+             ]
     end
   end
 
