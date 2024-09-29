@@ -671,8 +671,8 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   defp get_token_usage(%{"usageMetadata" => usage} = _response_body) do
     # extract out the reported response token usage
     TokenUsage.new!(%{
-      input: Map.get(usage, "promptTokenCount"),
-      output: Map.get(usage, "candidatesTokenCount")
+      input: Map.get(usage, "promptTokenCount", 0),
+      output: Map.get(usage, "candidatesTokenCount", 0)
     })
   end
 
