@@ -173,7 +173,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
         %{
           # Google AI functions use an OpenAI compatible format.
           # See: https://ai.google.dev/docs/function_calling#how_it_works
-          "functionDeclarations" => Enum.map(functions, &ChatOpenAI.for_api/1)
+          "functionDeclarations" => Enum.map(functions, &for_api/1)
         }
       ])
     else
@@ -246,6 +246,18 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
         }
       }
     }
+  end
+
+  def for_api(%Function{} = function) do
+    encoded = ChatOpenAI.for_api(function)
+
+    # For functions with no parameters, Google AI needs the parameters field removing, otherwise it will error
+    # with "* GenerateContentRequest.tools[0].function_declarations[0].parameters.properties: should be non-empty for OBJECT type\n"
+    if encoded["parameters"] == %{"properties" => %{}, "type" => "object"} do
+      Map.delete(encoded, "parameters")
+    else
+      encoded
+    end
   end
 
   @doc """

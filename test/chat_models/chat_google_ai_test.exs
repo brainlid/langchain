@@ -1,6 +1,4 @@
 defmodule ChatModels.ChatGoogleAITest do
-  alias LangChain.LangChainError
-  alias LangChain.ChatModels.ChatGoogleAI
   use LangChain.BaseCase
 
   doctest LangChain.ChatModels.ChatGoogleAI
@@ -12,6 +10,9 @@ defmodule ChatModels.ChatGoogleAITest do
   alias LangChain.TokenUsage
   alias LangChain.MessageDelta
   alias LangChain.Function
+  alias LangChain.FunctionParam
+  alias LangChain.LangChainError
+  alias LangChain.ChatModels.ChatGoogleAI
 
   setup do
     {:ok, hello_world} =
@@ -275,11 +276,67 @@ defmodule ChatModels.ChatGoogleAITest do
                "functionDeclarations" => [
                  %{
                    "name" => "hello_world",
-                   "description" => "Give a hello world greeting.",
-                   "parameters" => %{"properties" => %{}, "type" => "object"}
+                   "description" => "Give a hello world greeting."
                  }
                ]
              } = tool_call
+    end
+
+    test "handles converting functions with parameters" do
+      {:ok, weather} =
+        Function.new(%{
+          name: "get_weather",
+          description: "Get the current weather in a given US location",
+          parameters: [
+            FunctionParam.new!(%{
+              name: "city",
+              type: "string",
+              description: "The city name, e.g. San Francisco",
+              required: true
+            }),
+            FunctionParam.new!(%{
+              name: "state",
+              type: "string",
+              description: "The 2 letter US state abbreviation, e.g. CA, NY, UT",
+              required: true
+            })
+          ],
+          function: fn _args, _context -> {:ok, "75 degrees"} end
+        })
+
+      assert %{
+               "description" => "Get the current weather in a given US location",
+               "name" => "get_weather",
+               "parameters" => %{
+                 "properties" => %{
+                   "city" => %{
+                     "description" => "The city name, e.g. San Francisco",
+                     "type" => "string"
+                   },
+                   "state" => %{
+                     "description" => "The 2 letter US state abbreviation, e.g. CA, NY, UT",
+                     "type" => "string"
+                   }
+                 },
+                 "required" => ["city", "state"],
+                 "type" => "object"
+               }
+             } == ChatGoogleAI.for_api(weather)
+    end
+
+    test "handles functions without parameters" do
+      {:ok, function} =
+        Function.new(%{
+          name: "hello_world",
+          description: "Give a hello world greeting.",
+          parameters: [],
+          function: fn _args, _context -> {:ok, "Hello User!"} end
+        })
+
+      assert %{
+               "description" => "Give a hello world greeting.",
+               "name" => "hello_world"
+             } == ChatGoogleAI.for_api(function)
     end
   end
 
