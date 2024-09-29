@@ -425,6 +425,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     text_part =
       parts
       |> filter_parts_for_types(["text"])
+      |> filter_text_parts()
       |> Enum.map(fn part ->
         ContentPart.new!(%{type: :text, content: part["text"]})
       end)
@@ -478,6 +479,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
 
     parts
     |> filter_parts_for_types(["text"])
+    |> filter_text_parts()
     |> Enum.map(fn part ->
       ContentPart.new!(%{type: :text, content: part["text"]})
     end)
@@ -593,6 +595,16 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   def filter_parts_for_types(parts, types) when is_list(parts) and is_list(types) do
     Enum.filter(parts, fn p ->
       Enum.any?(types, &Map.has_key?(p, &1))
+    end)
+  end
+
+  @doc false
+  def filter_text_parts(parts) when is_list(parts) do
+    Enum.filter(parts, fn p ->
+      case p do
+        %{"text" => text} -> text && text != ""
+        _ -> false
+      end
     end)
   end
 

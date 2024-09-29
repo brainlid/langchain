@@ -302,6 +302,21 @@ defmodule ChatModels.ChatGoogleAITest do
       assert struct.status == :complete
     end
 
+    test "handles receiving a message with an empty text part", %{model: model} do
+      response = %{
+        "candidates" => [
+          %{
+            "content" => %{"role" => "model", "parts" => [%{"text" => ""}]},
+            "finishReason" => "STOP",
+            "index" => 0
+          }
+        ]
+      }
+
+      assert [%Message{} = struct] = ChatGoogleAI.do_process_response(model, response)
+      assert struct.content == []
+    end
+
     test "error if receiving non-text content", %{model: model} do
       response = %{
         "candidates" => [
@@ -364,6 +379,26 @@ defmodule ChatModels.ChatGoogleAITest do
       assert struct.status == :incomplete
     end
 
+    test "handles receiving a MessageDelta with an empty text part", %{model: model} do
+      response = %{
+        "candidates" => [
+          %{
+            "content" => %{
+              "role" => "model",
+              "parts" => [%{"text" => ""}]
+            },
+            "finishReason" => "STOP",
+            "index" => 0
+          }
+        ]
+      }
+
+      assert [%MessageDelta{} = struct] =
+               ChatGoogleAI.do_process_response(model, response, MessageDelta)
+
+      assert struct.content == ""
+    end
+
     test "handles API error messages", %{model: model} do
       response = %{
         "error" => %{
@@ -420,6 +455,22 @@ defmodule ChatModels.ChatGoogleAITest do
       ]
 
       assert parts == ChatGoogleAI.filter_parts_for_types(parts, ["text", "functionCall"])
+    end
+  end
+
+  describe "filter_text_parts/1" do
+    test "returns only text parts that are not nil or empty" do
+      parts = [
+        %{"text" => "I have text"},
+        %{"text" => nil},
+        %{"text" => ""},
+        %{"text" => "I have more text"}
+      ]
+
+      assert ChatGoogleAI.filter_text_parts(parts) == [
+               %{"text" => "I have text"},
+               %{"text" => "I have more text"}
+             ]
     end
   end
 
