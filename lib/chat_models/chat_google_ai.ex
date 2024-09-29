@@ -138,20 +138,34 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   end
 
   def for_api(%ChatGoogleAI{} = google_ai, messages, functions) do
+    {system, messages} =
+      Utils.split_system_message(messages, "Google AI only supports a single System message")
+
+    system_instruction =
+      case system do
+        nil ->
+          nil
+
+        %Message{role: :system, content: content} ->
+          %{"parts" => [%{"text" => content}]}
+      end
+
     messages_for_api =
       messages
       |> Enum.map(&for_api/1)
       |> List.flatten()
       |> List.wrap()
 
-    req = %{
-      "contents" => messages_for_api,
-      "generationConfig" => %{
-        "temperature" => google_ai.temperature,
-        "topP" => google_ai.top_p,
-        "topK" => google_ai.top_k
+    req =
+      %{
+        "contents" => messages_for_api,
+        "generationConfig" => %{
+          "temperature" => google_ai.temperature,
+          "topP" => google_ai.top_p,
+          "topK" => google_ai.top_k
+        }
       }
-    }
+      |> LangChain.Utils.conditionally_add_to_map("system_instruction", system_instruction)
 
     if functions && not Enum.empty?(functions) do
       req
@@ -186,21 +200,6 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
       "role" => map_role(:tool),
       "parts" => Enum.map(message.tool_results, &for_api/1)
     }
-  end
-
-  def for_api(%Message{role: :system} = message) do
-    # No system messages support means we need to fake a prompt and response
-    # to pretend like it worked.
-    [
-      %{
-        "role" => :user,
-        "parts" => [%{"text" => message.content}]
-      },
-      %{
-        "role" => :model,
-        "parts" => [%{"text" => ""}]
-      }
-    ]
   end
 
   def for_api(%Message{} = message) do

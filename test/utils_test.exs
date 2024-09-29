@@ -2,6 +2,7 @@ defmodule LangChain.UtilsTest do
   use ExUnit.Case
 
   doctest LangChain.Utils
+  alias LangChain.Message
   alias LangChain.ChatModels.ChatOpenAI
   alias LangChain.Utils
 
@@ -166,6 +167,41 @@ defmodule LangChain.UtilsTest do
     test "returns error when not an existing atom" do
       assert {:error, reason} = Utils.module_from_name("Elixir.Missing.Module")
       assert reason == "ChatModel module \"Elixir.Missing.Module\" not found"
+    end
+  end
+
+  describe "split_system_message/2" do
+    test "returns system message and rest separately" do
+      system = Message.new_system!()
+      user_msg = Message.new_user!("Hi")
+      assert {system, [user_msg]} == Utils.split_system_message([system, user_msg])
+    end
+
+    test "return nil when no system message set" do
+      user_msg = Message.new_user!("Hi")
+      assert {nil, [user_msg]} == Utils.split_system_message([user_msg])
+    end
+
+    test "raises exception with multiple system messages" do
+      error_message = "Anthropic only supports a single System message"
+
+      assert_raise LangChain.LangChainError,
+                   error_message,
+                   fn ->
+                     system = Message.new_system!()
+                     user_msg = Message.new_user!("Hi")
+                     Utils.split_system_message([system, user_msg, system], error_message)
+                   end
+    end
+
+    test "has a default error message when no error message provided" do
+      assert_raise LangChain.LangChainError,
+                   "Only one system message is allowed",
+                   fn ->
+                     system = Message.new_system!()
+                     user_msg = Message.new_user!("Hi")
+                     Utils.split_system_message([system, user_msg, system])
+                   end
     end
   end
 end

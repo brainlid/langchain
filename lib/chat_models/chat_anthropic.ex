@@ -175,7 +175,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   @spec for_api(t, message :: [map()], ChatModel.tools()) :: %{atom() => any()}
   def for_api(%ChatAnthropic{} = anthropic, messages, tools) do
     # separate the system message from the rest. Handled separately.
-    {system, messages} = split_system_message(messages)
+    {system, messages} =
+      Utils.split_system_message(messages, "Anthropic only supports a single System message")
 
     system_text =
       case system do
@@ -212,21 +213,6 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       %Function{} = function ->
         for_api(function)
     end)
-  end
-
-  # Unlike OpenAI, Anthropic only supports one system message.
-  @doc false
-  @spec split_system_message([Message.t()]) :: {nil | Message.t(), [Message.t()]} | no_return()
-  def split_system_message(messages) do
-    # split the messages into "system" and "other". Error if more than 1 system
-    # message. Return the other messages as a separate list.
-    {system, other} = Enum.split_with(messages, &(&1.role == :system))
-
-    if length(system) > 1 do
-      raise LangChainError, "Anthropic only supports a single System message"
-    end
-
-    {List.first(system), other}
   end
 
   @doc """

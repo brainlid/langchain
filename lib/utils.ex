@@ -288,4 +288,21 @@ defmodule LangChain.Utils do
     Logger.error(msg)
     {:error, msg}
   end
+
+  @doc """
+  Split the messages into "system" and "other".
+  Raises an error with the specified error message if more than 1 system message present.
+  Returns a tuple with the single system message and the list of other messages.
+  """
+  @spec split_system_message([Message.t()], error_message :: String.t()) ::
+          {nil | Message.t(), [Message.t()]} | no_return()
+  def split_system_message(messages, error_message \\ "Only one system message is allowed") do
+    {system, other} = Enum.split_with(messages, &(&1.role == :system))
+
+    if length(system) > 1 do
+      raise LangChainError, error_message
+    end
+
+    {List.first(system), other}
+  end
 end
