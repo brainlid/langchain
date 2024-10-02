@@ -173,6 +173,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
         }
       }
       |> LangChain.Utils.conditionally_add_to_map("system_instruction", system_instruction)
+      |> LangChain.Utils.conditionally_add_to_map("safetySettings", google_ai.safety_settings)
 
     if functions && not Enum.empty?(functions) do
       req
