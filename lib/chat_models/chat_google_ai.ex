@@ -100,7 +100,8 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     :top_k,
     :receive_timeout,
     :stream,
-    :callbacks
+    :callbacks,
+    :safety_settings
   ]
   @required_fields [
     :endpoint,
