@@ -605,7 +605,8 @@ defmodule ChatModels.ChatGoogleAITest do
                "version" => 1,
                "api_version" => "v1beta",
                "top_k" => 1.0,
-               "top_p" => 1.0
+               "top_p" => 1.0,
+               "safety_settings" => []
              }
     end
   end

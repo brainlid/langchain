@@ -675,7 +675,8 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
         :top_p,
         :top_k,
         :receive_timeout,
-        :stream
+        :stream,
+        :safety_settings
       ],
       @current_config_version
     )
