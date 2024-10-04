@@ -558,17 +558,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
           :incomplete
 
         Message ->
-          case finish do
-            "STOP" ->
-              :complete
-
-            "SAFETY" ->
-              :complete
-
-            other ->
-              Logger.warning("Unsupported finishReason in response. Reason: #{inspect(other)}")
-              nil
-          end
+          finish_reason_to_status(finish)
       end
 
     content = Enum.map_join(parts, & &1["text"])
@@ -689,4 +679,12 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   end
 
   defp get_token_usage(_response_body), do: nil
+
+  defp finish_reason_to_status("STOP"), do: :complete
+  defp finish_reason_to_status("SAFETY"), do: :complete
+
+  defp finish_reason_to_status(other) do
+    Logger.warning("Unsupported finishReason in response. Reason: #{inspect(other)}")
+    nil
+  end
 end
