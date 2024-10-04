@@ -489,13 +489,6 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
           nil
       end
 
-    parts
-    |> filter_parts_for_types(["text"])
-    |> filter_text_parts()
-    |> Enum.map(fn part ->
-      ContentPart.new!(%{type: :text, content: part["text"]})
-    end)
-
     tool_calls_from_parts =
       parts
       |> filter_parts_for_types(["functionCall"])
