@@ -21,8 +21,8 @@ defmodule LangChain.Chains.RoutingChain do
 
       selected_route =
         RoutingChain.new(%{
-          llm: ChatOpenAI.new(%{model: "gpt-3.5-turbo", stream: false}),
-          input_text: "Let's create a marketing blog post about our new product 'Fuzzy Furries'",
+          llm: ChatOpenAI.new(%{model: "gpt-40-mini", stream: false}),
+          input_text: "Let's create a marketing blog post about our new product 'Fuzzy Furies'",
           routes: routes,
           default_route: PromptRoute.new!(%{name: "DEFAULT", chain: fallback_chain})
         })
