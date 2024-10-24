@@ -1467,44 +1467,44 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
         assert %MessageDelta{role: :assistant} = data
       end
     end
+
+    # @tag live_call: true, live_anthropic: true
+    # test "supports starting the assistant's response message and continuing it" do
+    #   test_pid = self()
+
+    #   handler = %{
+    #     on_llm_new_delta: fn _model, delta ->
+    #       # IO.inspect(data, label: "DATA")
+    #       send(test_pid, {:streamed_fn, data})
+    #     end
+    #   }
+
+    #   {:ok, result_chain, last_message} =
+    #     LLMChain.new!(%{llm: %ChatAnthropic{model: @test_model, stream: true, callbacks: [handler]}})
+    #     |> LLMChain.add_message(Message.new_system!("You are a helpful and concise assistant."))
+    #     |> LLMChain.add_message(
+    #       Message.new_user!(
+    #         "What's the capitol of Norway? Please respond with the answer <answer>{{ANSWER}}</answer>."
+    #       )
+    #     )
+    #     |> LLMChain.add_message(Message.new_assistant!("<answer>"))
+    #     |> LLMChain.run()
+
+    #   assert last_message.content =~ "Oslo"
+    #   assert last_message.status == :complete
+    #   assert last_message.role == :assistant
+
+    #   # TODO: MERGE A CONTINUED Assistant message with the one we provided.
+
+    #   IO.inspect(result_chain, label: "FINAL CHAIN")
+    #   IO.inspect(last_message)
+
+    #   assert_received {:streamed_fn, data}
+    #   assert %MessageDelta{role: :assistant} = data
+
+    #   assert false
+    # end
   end
-
-  # @tag live_call: true, live_anthropic: true
-  # test "supports starting the assistant's response message and continuing it" do
-  #   test_pid = self()
-
-  #   handler = %{
-  #     on_llm_new_delta: fn _model, delta ->
-  #       # IO.inspect(data, label: "DATA")
-  #       send(test_pid, {:streamed_fn, data})
-  #     end
-  #   }
-
-  #   {:ok, result_chain, last_message} =
-  #     LLMChain.new!(%{llm: %ChatAnthropic{model: @test_model, stream: true, callbacks: [handler]}})
-  #     |> LLMChain.add_message(Message.new_system!("You are a helpful and concise assistant."))
-  #     |> LLMChain.add_message(
-  #       Message.new_user!(
-  #         "What's the capitol of Norway? Please respond with the answer <answer>{{ANSWER}}</answer>."
-  #       )
-  #     )
-  #     |> LLMChain.add_message(Message.new_assistant!("<answer>"))
-  #     |> LLMChain.run()
-
-  #   assert last_message.content =~ "Oslo"
-  #   assert last_message.status == :complete
-  #   assert last_message.role == :assistant
-
-  #   # TODO: MERGE A CONTINUED Assistant message with the one we provided.
-
-  #   IO.inspect(result_chain, label: "FINAL CHAIN")
-  #   IO.inspect(last_message)
-
-  #   assert_received {:streamed_fn, data}
-  #   assert %MessageDelta{role: :assistant} = data
-
-  #   assert false
-  # end
 
   describe "serialize_config/2" do
     test "does not include the API key or callbacks" do
