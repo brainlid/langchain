@@ -111,7 +111,6 @@ defmodule LangChain.MixProject do
           LangChain.Utils,
           LangChain.Utils.ChatTemplates,
           LangChain.Utils.ChainResult,
-          LangChain.Utils.ApiOverride,
           LangChain.Config,
           LangChain.Gettext
         ]

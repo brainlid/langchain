@@ -2,11 +2,11 @@ defmodule LangChain.Chains.LLMChain do
   @doc """
   Define an LLMChain. This is the heart of the LangChain library.
 
-  The chain deals with tools, a tool map, delta tracking, last_message tracking,
-  conversation messages, and verbose logging. This helps by separating these
-  responsibilities from the LLM making it easier to support additional LLMs
-  because the focus is on communication and formats instead of all the extra
-  logic.
+  The chain deals with tools, a tool map, delta tracking, tracking the messages
+  exchanged during a run, the last_message tracking, conversation messages, and
+  verbose logging. This helps by separating these responsibilities from the LLM
+  making it easier to support additional LLMs because the focus is on
+  communication and formats instead of all the extra logic.
 
   ## Callbacks
 
@@ -92,6 +92,9 @@ defmodule LangChain.Chains.LLMChain do
     field :delta, :any, virtual: true
     # Track the last `%Message{}` received in the chain.
     field :last_message, :any, virtual: true
+    # Internally managed. The list of exchanged messages during a `run` function
+    # execution.
+    field :exchanged_messages, {:array, :any}, default: [], virtual: true
     # Track if the state of the chain expects a response from the LLM. This
     # happens after sending a user message, when a tool_call is received, or
     # when we've provided a tool response and the LLM needs to respond.
@@ -233,11 +236,12 @@ defmodule LangChain.Chains.LLMChain do
     an opportunity to use the `ToolResult` information in an assistant response
     message. In essence, this mode always gives the LLM the last word.
   """
-  @spec run(t(), Keyword.t()) ::
-          {:ok, t(), Message.t() | [Message.t()]} | {:error, t(), String.t()}
+  @spec run(t(), Keyword.t()) :: {:ok, t()} | {:error, t(), String.t()}
   def run(chain, opts \\ [])
 
   def run(%LLMChain{} = chain, opts) do
+    raise_on_obsolete_run_opts(opts)
+
     # set the callback function on the chain
     if chain.verbose, do: IO.inspect(chain.llm, label: "LLM")
 
@@ -246,12 +250,15 @@ defmodule LangChain.Chains.LLMChain do
     tools = chain.tools
     if chain.verbose, do: IO.inspect(tools, label: "TOOLS")
 
+    # clear the set of exchanged messages.
+    chain = clear_exchanged_messages(chain)
+
     case Keyword.get(opts, :mode, nil) do
       nil ->
         # run the chain and format the return
         case do_run(chain) do
           {:ok, chain} ->
-            {:ok, chain, chain.last_message}
+            {:ok, chain}
 
           {:error, _chain, _reason} = error ->
             error
@@ -268,7 +275,7 @@ defmodule LangChain.Chains.LLMChain do
   # Repeatedly run the chain until we get a successful ToolResponse or processed
   # assistant message. Once we've reached success, it is not submitted back to the LLM,
   # the process ends there.
-  @spec run_until_success(t()) :: {:ok, t(), Message.t()} | {:error, t(), String.t()}
+  @spec run_until_success(t()) :: {:ok, t()} | {:error, t(), String.t()}
   defp run_until_success(%LLMChain{last_message: %Message{} = last_message} = chain) do
     stop_or_recurse =
       cond do
@@ -276,13 +283,13 @@ defmodule LangChain.Chains.LLMChain do
           {:error, chain, "Exceeded max failure count"}
 
         last_message.role == :tool && !Message.tool_had_errors?(last_message) ->
-          # a successful tool result is success
-          {:ok, chain, last_message}
+          # a successful tool result has no errors
+          {:ok, chain}
 
         last_message.role == :assistant ->
           # it was successful if we didn't generate a user message in response to
           # an error.
-          {:ok, chain, last_message}
+          {:ok, chain}
 
         true ->
           :recurse
@@ -311,9 +318,9 @@ defmodule LangChain.Chains.LLMChain do
   # Repeatedly run the chain while `needs_response` is true. This will execute
   # tools and re-submit the tool result to the LLM giving the LLM an
   # opportunity to execute more tools or return a response.
-  @spec run_while_needs_response(t()) :: {:ok, t(), Message.t()} | {:error, t(), String.t()}
+  @spec run_while_needs_response(t()) :: {:ok, t()} | {:error, t(), String.t()}
   defp run_while_needs_response(%LLMChain{needs_response: false} = chain) do
-    {:ok, chain, chain.last_message}
+    {:ok, chain}
   end
 
   defp run_while_needs_response(%LLMChain{needs_response: true} = chain) do
@@ -575,6 +582,7 @@ defmodule LangChain.Chains.LLMChain do
       chain
       | messages: chain.messages ++ [new_message],
         last_message: new_message,
+        exchanged_messages: chain.exchanged_messages ++ [new_message],
         needs_response: needs_response
     }
   end
@@ -834,5 +842,16 @@ defmodule LangChain.Chains.LLMChain do
        when is_list(additional_arguments) do
     Callbacks.fire(chain.callbacks, callback_name, [chain] ++ additional_arguments)
     chain
+  end
+
+  defp clear_exchanged_messages(%LLMChain{} = chain) do
+    %LLMChain{chain | exchanged_messages: []}
+  end
+
+  defp raise_on_obsolete_run_opts(opts) do
+    if Keyword.has_key?(opts, :callback_fn) do
+      raise LangChainError,
+            "The LLMChain.run option `:callback_fn` was removed; see `add_callback/2` instead."
+    end
   end
 end

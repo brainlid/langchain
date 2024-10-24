@@ -28,13 +28,13 @@ alias LangChain.Chains.LLMChain
 alias LangChain.ChatModels.ChatOpenAI
 alias LangChain.Message
 
-{:ok, _updated_chain, response} =
+{:ok, updated_chain} =
   %{llm: ChatOpenAI.new!(%{model: "gpt-4o"})}
   |> LLMChain.new!()
   |> LLMChain.add_message(Message.new_user!("Testing, testing!"))
   |> LLMChain.run()
 
-response.content
+updated_chain.last_message.content
 ```
 
 Nice! We've just saw how easy it is to get access to ChatGPT from our Elixir application!
@@ -48,7 +48,7 @@ When working with ChatGPT and other LLMs, the conversation works as a series of 
 Let's create a system message followed by a user message.
 
 ```elixir
-{:ok, _updated_chain, response} =
+{:ok, updated_chain} =
   %{llm: ChatOpenAI.new!(%{model: "gpt-4"})}
   |> LLMChain.new!()
   |> LLMChain.add_messages([
@@ -59,7 +59,7 @@ Let's create a system message followed by a user message.
   ])
   |> LLMChain.run()
 
-response.content
+updated_chain.last_message.content
 ```
 
 Here's the answer it gave me when I ran it:
@@ -94,7 +94,7 @@ handler = %{
   end
 }
 
-{:ok, _updated_chain, response} =
+{:ok, updated_chain} =
   %{
     # llm config for streaming and the deltas callback
     llm: ChatOpenAI.new!(%{model: "gpt-4o", stream: true, callbacks: [handler]}),
@@ -108,7 +108,7 @@ handler = %{
   ])
   |> LLMChain.run()
 
-response.content
+updated_chain.last_message.content
 # streamed
 # ==> Washington D.C. stands,
 # ... Monuments reflect history,
@@ -123,6 +123,6 @@ Finally, once the full message is received, the chain's `on_message_processed` c
 
 ## Next Steps
 
-With the basics covered, you're ready to start integrating an LLM into your Elixia application! Check out other notebooks for more specific examples and other ways to use it.
+With the basics covered, you're ready to start integrating an LLM into your Elixir application! Check out other notebooks for more specific examples and other ways to use it.
 
 <!-- livebook:{"offset":4645,"stamp":{"token":"XCP.asU02sHrPSt9UBUyNKE-Qa7G_WNBlxckoWay59yU1E9XLuliANsNDenOGjrq1uZmDm9a0vajWcrseaOSYqLHOegBXQ7fLmYNTULDwEYEmtLVmnTEKbYN8BnqGuuayL2HKO7GZ2dWye7NzpYSoSh5","version":2}} -->

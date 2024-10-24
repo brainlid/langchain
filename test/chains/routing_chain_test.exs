@@ -133,9 +133,9 @@ defmodule LangChain.Chains.RoutingChainTest do
         {:ok, [fake_message]}
       end)
 
-      assert {:ok, updated_chain, last_msg} = RoutingChain.run(routing_chain)
+      assert {:ok, updated_chain} = RoutingChain.run(routing_chain)
       assert %LLMChain{} = updated_chain
-      assert last_msg == fake_message
+      assert updated_chain.last_message == fake_message
     end
   end
 

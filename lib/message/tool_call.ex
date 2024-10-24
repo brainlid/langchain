@@ -48,6 +48,7 @@ defmodule LangChain.Message.ToolCall do
   def new(attrs \\ %{}) do
     %ToolCall{}
     |> cast(attrs, @create_fields)
+    |> assign_string_value(:arguments, attrs)
     |> common_validations()
     |> apply_action(:insert)
   end
@@ -139,6 +140,8 @@ defmodule LangChain.Message.ToolCall do
     raise LangChainError, "Can only merge tool calls with the same index"
   end
 
+  def merge(%ToolCall{} = t1, %ToolCall{} = t2) when t1 == t2, do: t1
+
   def merge(%ToolCall{} = primary, %ToolCall{} = call_part) do
     # merge the "part" into the primary.
     primary
@@ -148,6 +151,11 @@ defmodule LangChain.Message.ToolCall do
     |> update_call_id(call_part)
     |> update_type(call_part)
     |> update_status(call_part)
+  end
+
+  defp append_tool_name(%ToolCall{name: primary_name} = primary, %ToolCall{name: new_name})
+       when primary_name == new_name do
+    primary
   end
 
   defp append_tool_name(%ToolCall{} = primary, %ToolCall{name: new_name})
@@ -211,5 +219,22 @@ defmodule LangChain.Message.ToolCall do
   defp append_arguments(%ToolCall{} = primary, %ToolCall{} = _delta_part) do
     # no arguments to merge
     primary
+  end
+
+  # The contents and arguments get streamed as a string. A tool call may be part of a delta and it
+  # might be expected to have strings made up of spaces. The "cast" process of the changeset turns
+  # this into `nil` causing us to lose data.
+  #
+  # We want to take whatever we are given here.
+  defp assign_string_value(changeset, field, attrs) do
+    # get both possible versions of the arguments.
+     case Map.get(attrs, field) || Map.get(attrs, to_string(field)) do
+      "" ->
+        changeset
+      val when is_binary(val) ->
+        put_change(changeset, field, val)
+      _ ->
+        changeset
+    end
   end
 end

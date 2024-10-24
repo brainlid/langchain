@@ -122,6 +122,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     # How many chat completion choices to generate for each input message.
     field :n, :integer, default: 1
     field :json_response, :boolean, default: false
+    field :json_schema, :map, default: nil
     field :stream, :boolean, default: false
     field :max_tokens, :integer, default: nil
     # Options for streaming response. Only set this when you set `stream: true`
@@ -153,6 +154,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     :stream,
     :receive_timeout,
     :json_response,
+    :json_schema,
     :max_tokens,
     :stream_options,
     :user,
@@ -169,6 +171,11 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   @spec get_org_id() :: String.t() | nil
   defp get_org_id() do
     Config.resolve(:openai_org_id)
+  end
+
+  @spec get_proj_id() :: String.t() | nil
+  defp get_proj_id() do
+    Config.resolve(:openai_proj_id)
   end
 
   @doc """
@@ -258,11 +265,20 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     %{"include_usage" => Map.get(data, :include_usage, Map.get(data, "include_usage"))}
   end
 
-  defp set_response_format(%ChatOpenAI{json_response: true}),
-    do: %{"type" => "json_object"}
+  defp set_response_format(%ChatOpenAI{json_response: true, json_schema: json_schema}) when not is_nil(json_schema) do
+    %{
+      "type" => "json_schema",
+      "json_schema" => json_schema
+    }
+  end
 
-  defp set_response_format(%ChatOpenAI{json_response: false}),
-    do: %{"type" => "text"}
+  defp set_response_format(%ChatOpenAI{json_response: true}) do
+    %{"type" => "json_object"}
+  end
+
+  defp set_response_format(%ChatOpenAI{json_response: false}) do
+    %{"type" => "text"}
+  end
 
   @doc """
   Convert a LangChain structure to the expected map of data for the OpenAI API.
@@ -497,6 +513,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
     req
     |> maybe_add_org_id_header()
+    |> maybe_add_proj_id_header()
     |> Req.post()
     # parse the body and return it as parsed structs
     |> case do
@@ -552,6 +569,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       receive_timeout: openai.receive_timeout
     )
     |> maybe_add_org_id_header()
+    |> maybe_add_proj_id_header()
     |> Req.post(
       into: Utils.handle_stream_fn(openai, &decode_stream/1, &do_process_response(openai, &1))
     )
@@ -594,7 +612,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   buffer data from a previous call, and assembling it to parse.
   """
   @spec decode_stream({String.t(), String.t()}) :: {%{String.t() => any()}}
-  def decode_stream({raw_data, buffer}) do
+  def decode_stream({raw_data, buffer}, done \\ []) do
     # Data comes back like this:
     #
     # "data: {\"id\":\"chatcmpl-7e8yp1xBhriNXiqqZ0xJkgNrmMuGS\",\"object\":\"chat.completion.chunk\",\"created\":1689801995,\"model\":\"gpt-4-0613\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":null,\"function_call\":{\"name\":\"calculator\",\"arguments\":\"\"}},\"finish_reason\":null}]}\n\n
@@ -607,7 +625,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     # any left-over buffer from a previous processing.
     raw_data
     |> String.split("data: ")
-    |> Enum.reduce({[], buffer}, fn str, {done, incomplete} = acc ->
+    |> Enum.reduce({done, buffer}, fn str, {done, incomplete} = acc ->
       # auto filter out "" and "[DONE]" by not including the accumulator
       str
       |> String.trim()
@@ -619,20 +637,31 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           acc
 
         json ->
-          # combine with any previous incomplete data
-          starting_json = incomplete <> json
-
-          starting_json
-          |> Jason.decode()
-          |> case do
-            {:ok, parsed} ->
-              {done ++ [parsed], ""}
-
-            {:error, _reason} ->
-              {done, starting_json}
-          end
+          parse_combined_data(incomplete, json, done)
       end
     end)
+  end
+
+  defp parse_combined_data("", json, done) do
+    json
+    |> Jason.decode()
+    |> case do
+      {:ok, parsed} ->
+        {done ++ [parsed], ""}
+
+      {:error, _reason} ->
+        {done, json}
+    end
+  end
+
+  defp parse_combined_data(incomplete, json, done) do
+    # combine with any previous incomplete data
+    starting_json = incomplete <> json
+
+    # recursively call decode_stream so that the combined message data is split on "data: " again.
+    # the combined data may need re-splitting if the last message ended in the middle of the "data: " key.
+    # i.e. incomplete ends with "dat" and the new message starts with "a: {".
+    decode_stream({starting_json, ""}, done)
   end
 
   # Parse a new message response
@@ -660,6 +689,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     # this stand-alone TokenUsage message is skipped and not returned
     :skip
   end
+
+  def do_process_response(_model, %{"choices" => []}), do: :skip
 
   def do_process_response(model, %{"choices" => choices} = _data) when is_list(choices) do
     # process each response individually. Return a list of all processed choices
@@ -831,6 +862,16 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     end
   end
 
+  defp maybe_add_proj_id_header(%Req.Request{} = req) do
+    proj_id = get_proj_id()
+
+    if proj_id do
+      Req.Request.put_header(req, "OpenAI-Project", proj_id)
+    else
+      req
+    end
+  end
+
   defp get_ratelimit_info(response_headers) do
     # extract out all the ratelimit response headers
     #
@@ -878,6 +919,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         :seed,
         :n,
         :json_response,
+        :json_schema,
         :stream,
         :max_tokens,
         :stream_options
