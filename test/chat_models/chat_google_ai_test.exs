@@ -241,6 +241,23 @@ defmodule ChatModels.ChatGoogleAITest do
       assert expected == ChatGoogleAI.for_api(tool_result)
     end
 
+    test "adds safety settings to the request if present" do
+      settings = [
+        %{"category" => "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold" => "BLOCK_ONLY_HIGH"}
+      ]
+
+      google_ai = ChatGoogleAI.new!(%{safety_settings: settings})
+      data = ChatGoogleAI.for_api(google_ai, [], [])
+
+      assert %{"safetySettings" => ^settings} = data
+    end
+
+    test "does not add safety settings to the request if list of settings is empty" do
+      google_ai = ChatGoogleAI.new!(%{safety_settings: []})
+      data = ChatGoogleAI.for_api(google_ai, [], [])
+      refute Map.has_key?(data, "safetySettings")
+    end
+
     test "adds system instruction to the request if present", %{google_ai: google_ai} do
       message = "You are a helpful assistant."
       data = ChatGoogleAI.for_api(google_ai, [Message.new_system!(message)], [])
@@ -588,7 +605,8 @@ defmodule ChatModels.ChatGoogleAITest do
                "version" => 1,
                "api_version" => "v1beta",
                "top_k" => 1.0,
-               "top_p" => 1.0
+               "top_p" => 1.0,
+               "safety_settings" => []
              }
     end
   end

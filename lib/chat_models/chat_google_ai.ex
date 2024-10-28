@@ -75,6 +75,13 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     # goes on too long by itself, it tends to hallucinate more.
     field :receive_timeout, :integer, default: @receive_timeout
 
+    # The safety settings for the model, specified as a list of maps. Each map
+    # should contain a `category` and a `threshold` for that category.
+    # e.g. [%{"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_ONLY_HIGH"}]
+    # see https://ai.google.dev/api/generate-content#v1beta.SafetySetting
+    # for the list of categories and thresholds
+    field :safety_settings, {:array, :map}, default: []
+
     field :stream, :boolean, default: false
 
     # A list of maps for callback handlers
@@ -93,7 +100,8 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     :top_k,
     :receive_timeout,
     :stream,
-    :callbacks
+    :callbacks,
+    :safety_settings
   ]
   @required_fields [
     :endpoint,
@@ -166,6 +174,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
         }
       }
       |> LangChain.Utils.conditionally_add_to_map("system_instruction", system_instruction)
+      |> LangChain.Utils.conditionally_add_to_map("safetySettings", google_ai.safety_settings)
 
     if functions && not Enum.empty?(functions) do
       req
@@ -649,7 +658,8 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
         :top_p,
         :top_k,
         :receive_timeout,
-        :stream
+        :stream,
+        :safety_settings
       ],
       @current_config_version
     )
