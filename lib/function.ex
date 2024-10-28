@@ -222,7 +222,7 @@ defmodule LangChain.Function do
     rescue
       err ->
         Logger.error("Function #{function.name} failed in execution. Exception: #{inspect(err)}")
-        {:error, inspect(err)}
+        {:error, "ERROR: #{inspect(err)}"}
     end
   end
 
