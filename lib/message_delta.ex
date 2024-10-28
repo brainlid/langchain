@@ -56,7 +56,6 @@ defmodule LangChain.MessageDelta do
     %MessageDelta{}
     |> cast(attrs, @create_fields)
     |> assign_string_value(:content, attrs)
-    |> assign_string_value(:arguments, attrs)
     |> validate_required(@required_fields)
     |> apply_action(:insert)
   end

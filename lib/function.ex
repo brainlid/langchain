@@ -124,6 +124,9 @@ defmodule LangChain.Function do
     field :description, :string
     # Optional text the UI can display for when the function is executed.
     field :display_text, :string
+    # Optional flag to indicate if the function should be executed in strict mode.
+    # Defaults to `false`.
+    field :strict, :boolean, default: false
     # flag if the function should be auto-evaluated. Defaults to `false`
     # requiring an explicit step to perform the evaluation.
     # field :auto_evaluate, :boolean, default: false
@@ -146,6 +149,7 @@ defmodule LangChain.Function do
     :name,
     :description,
     :display_text,
+    :strict,
     :parameters_schema,
     :parameters,
     :function,

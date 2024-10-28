@@ -138,20 +138,34 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   end
 
   def for_api(%ChatGoogleAI{} = google_ai, messages, functions) do
+    {system, messages} =
+      Utils.split_system_message(messages, "Google AI only supports a single System message")
+
+    system_instruction =
+      case system do
+        nil ->
+          nil
+
+        %Message{role: :system, content: content} ->
+          %{"parts" => [%{"text" => content}]}
+      end
+
     messages_for_api =
       messages
       |> Enum.map(&for_api/1)
       |> List.flatten()
       |> List.wrap()
 
-    req = %{
-      "contents" => messages_for_api,
-      "generationConfig" => %{
-        "temperature" => google_ai.temperature,
-        "topP" => google_ai.top_p,
-        "topK" => google_ai.top_k
+    req =
+      %{
+        "contents" => messages_for_api,
+        "generationConfig" => %{
+          "temperature" => google_ai.temperature,
+          "topP" => google_ai.top_p,
+          "topK" => google_ai.top_k
+        }
       }
-    }
+      |> LangChain.Utils.conditionally_add_to_map("system_instruction", system_instruction)
 
     if functions && not Enum.empty?(functions) do
       req
@@ -159,7 +173,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
         %{
           # Google AI functions use an OpenAI compatible format.
           # See: https://ai.google.dev/docs/function_calling#how_it_works
-          "functionDeclarations" => Enum.map(functions, &ChatOpenAI.for_api/1)
+          "functionDeclarations" => Enum.map(functions, &for_api/1)
         }
       ])
     else
@@ -186,21 +200,6 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
       "role" => map_role(:tool),
       "parts" => Enum.map(message.tool_results, &for_api/1)
     }
-  end
-
-  def for_api(%Message{role: :system} = message) do
-    # No system messages support means we need to fake a prompt and response
-    # to pretend like it worked.
-    [
-      %{
-        "role" => :user,
-        "parts" => [%{"text" => message.content}]
-      },
-      %{
-        "role" => :model,
-        "parts" => [%{"text" => ""}]
-      }
-    ]
   end
 
   def for_api(%Message{} = message) do
@@ -247,6 +246,18 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
         }
       }
     }
+  end
+
+  def for_api(%Function{} = function) do
+    encoded = ChatOpenAI.for_api(function)
+
+    # For functions with no parameters, Google AI needs the parameters field removing, otherwise it will error
+    # with "* GenerateContentRequest.tools[0].function_declarations[0].parameters.properties: should be non-empty for OBJECT type\n"
+    if encoded["parameters"] == %{"properties" => %{}, "type" => "object"} do
+      Map.delete(encoded, "parameters")
+    else
+      encoded
+    end
   end
 
   @doc """
@@ -426,6 +437,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     text_part =
       parts
       |> filter_parts_for_types(["text"])
+      |> filter_text_parts()
       |> Enum.map(fn part ->
         ContentPart.new!(%{type: :text, content: part["text"]})
       end)
@@ -479,6 +491,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
 
     parts
     |> filter_parts_for_types(["text"])
+    |> filter_text_parts()
     |> Enum.map(fn part ->
       ContentPart.new!(%{type: :text, content: part["text"]})
     end)
@@ -597,6 +610,16 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     end)
   end
 
+  @doc false
+  def filter_text_parts(parts) when is_list(parts) do
+    Enum.filter(parts, fn p ->
+      case p do
+        %{"text" => text} -> text && text != ""
+        _ -> false
+      end
+    end)
+  end
+
   @doc """
   Return the content parts for the message.
   """
@@ -660,8 +683,8 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   defp get_token_usage(%{"usageMetadata" => usage} = _response_body) do
     # extract out the reported response token usage
     TokenUsage.new!(%{
-      input: Map.get(usage, "promptTokenCount"),
-      output: Map.get(usage, "candidatesTokenCount")
+      input: Map.get(usage, "promptTokenCount", 0),
+      output: Map.get(usage, "candidatesTokenCount", 0)
     })
   end
 
