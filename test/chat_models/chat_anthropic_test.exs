@@ -115,6 +115,30 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
       assert data.max_tokens == 1234
     end
 
+    test "generated a map for an API call with tool_choice set correctly to auto" do
+      {:ok, anthropic} =
+        ChatAnthropic.new(%{
+          model: @test_model,
+          tool_choice: %{"type" => "auto"}
+        })
+
+      data = ChatAnthropic.for_api(anthropic, [], [])
+      assert data.model == @test_model
+      assert data.tool_choice == %{"type" => "auto"}
+    end
+
+    test "generated a map for an API call with tool_choice set correctly to a specific function" do
+      {:ok, anthropic} =
+        ChatAnthropic.new(%{
+          model: @test_model,
+          tool_choice: %{"type" => "tool", "name" => "get_weather"}
+        })
+
+      data = ChatAnthropic.for_api(anthropic, [], [])
+      assert data.model == @test_model
+      assert data.tool_choice == %{"type" => "tool", "name" => "get_weather"}
+    end
+
     test "adds tool definitions to map" do
       tool =
         Function.new!(%{
@@ -1307,6 +1331,37 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       #     }
       #   ],
       # }
+    end
+
+    @tag live_call: true, live_anthropic: true
+    test "executes a call with tool_choice set as a specific name" do
+      # https://docs.anthropic.com/claude/reference/messages-examples#vision
+      {:ok, chat} = ChatAnthropic.new(%{model: @test_model, tool_choice: %{"type" => "tool", "name" => "do_another_thing"}})
+
+      message = Message.new_user!("Use the 'do_something' tool with the value 'cat', or use 'do_another_thing' tool with the name 'foo'")
+
+      tool_1 =
+        Function.new!(%{
+          name: "do_something",
+          parameters: [FunctionParam.new!(%{type: :string, name: "value", required: true})],
+          function: fn _args, _context -> :ok end
+        })
+
+      tool_2 =
+        Function.new!(%{
+          name: "do_another_thing",
+          parameters: [FunctionParam.new!(%{type: :string, name: "name", required: true})],
+          function: fn _args, _context -> :ok end
+        })
+
+      {:ok, response} = ChatAnthropic.call(chat, [message], [tool_1, tool_2])
+
+      assert %Message{role: :assistant} = response
+      assert [%ToolCall{} = call] = response.tool_calls
+      assert call.status == :complete
+      assert call.type == :function
+      assert call.name == "do_another_thing"
+      assert call.arguments == %{"name" => "foo"}
     end
 
     @tag live_call: true, live_anthropic: true

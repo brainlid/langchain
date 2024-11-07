@@ -132,6 +132,9 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     # streaming.
     field :stream_options, :map, default: nil
 
+    # Tool choice option
+    field :tool_choice, :map
+
     # A list of maps for callback handlers
     field :callbacks, {:array, :map}, default: []
 
@@ -158,7 +161,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     :max_tokens,
     :stream_options,
     :user,
-    :callbacks
+    :callbacks,
+    :tool_choice
   ]
   @required_fields [:endpoint, :model]
 
@@ -248,6 +252,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       get_stream_options_for_api(openai.stream_options)
     )
     |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(tools))
+    |> Utils.conditionally_add_to_map(:tool_choice, get_tool_choice(openai))
   end
 
   defp get_tools_for_api(nil), do: []
@@ -279,6 +284,18 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   defp set_response_format(%ChatOpenAI{json_response: false}) do
     %{"type" => "text"}
   end
+
+  defp get_tool_choice(%ChatOpenAI{
+         tool_choice: %{"type" => "function", "function" => %{"name" => name}} = _tool_choice
+       })
+       when is_binary(name) and byte_size(name) > 0,
+       do: %{"type" => "function", "function" => %{"name" => name}}
+
+  defp get_tool_choice(%ChatOpenAI{tool_choice: %{"type" => type} = _tool_choice})
+       when is_binary(type) and byte_size(type) > 0,
+       do: type
+
+  defp get_tool_choice(%ChatOpenAI{}), do: nil
 
   @doc """
   Convert a LangChain structure to the expected map of data for the OpenAI API.
@@ -702,8 +719,10 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   # Full message with tool call
   def do_process_response(
         model,
-        %{"finish_reason" => "tool_calls", "message" => %{"tool_calls" => calls} = message} = data
-      ) do
+        %{"finish_reason" => finish_reason, "message" => %{"tool_calls" => calls} = message} =
+          data
+      )
+      when finish_reason in ["tool_calls", "stop"] do
     case Message.new(%{
            "role" => "assistant",
            "content" => message["content"],
