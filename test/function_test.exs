@@ -136,7 +136,7 @@ defmodule LangChain.FunctionTest do
 
       # rescues an exception and returns as string text
       result = Function.execute(function, %{}, %{result: :exception})
-      assert result == {:error, "%RuntimeError{message: \"fake exception\"}"}
+      assert result == {:error, "ERROR: %RuntimeError{message: \"fake exception\"}"}
 
       # returns an error when anything else is returned
       result = Function.execute(function, %{}, %{result: 123})

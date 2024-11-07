@@ -1574,7 +1574,7 @@ defmodule LangChain.Chains.LLMChainTest do
 
       assert updated_chain.last_message.role == :tool
       [%ToolResult{} = result] = updated_chain.last_message.tool_results
-      assert result.content == "%RuntimeError{message: \"Stuff went boom!\"}"
+      assert result.content == "ERROR: %RuntimeError{message: \"Stuff went boom!\"}"
       assert result.is_error == true
     end
 
