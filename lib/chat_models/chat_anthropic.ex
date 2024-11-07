@@ -36,6 +36,23 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         "request-id" => ["req_1234"]
       }
 
+  ## Tool Choice
+
+  Anthropic supports forcing a tool to be used.
+  - https://docs.anthropic.com/en/docs/build-with-claude/tool-use#forcing-tool-use
+
+  This is supported through the `tool_choice` options. It takes a plain Elixir map to provide the configuration.
+
+  By default, the LLM will choose a tool call if a tool is available and it determines it is needed. That's the "auto" mode.
+
+  ### Example
+  For the LLM's response to make a tool call of the "get_weather" function.
+
+      ChatAnthropic.new(%{
+        model: "...",
+        tool_choice: %{"type" => "tool", "name" => "get_weather"}
+      })
+
   """
   use Ecto.Schema
   require Logger

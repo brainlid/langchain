@@ -65,6 +65,23 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   The OpenAI documentation instructs to provide the `stream_options` with the
   `include_usage: true` for the information to be provided.
 
+  ## Tool Choice
+
+  OpenAI's ChatGPT API supports forcing a tool to be used.
+  - https://platform.openai.com/docs/api-reference/chat/create#chat-create-tool_choice
+
+  This is supported through the `tool_choice` options. It takes a plain Elixir map to provide the configuration.
+
+  By default, the LLM will choose a tool call if a tool is available and it determines it is needed. That's the "auto" mode.
+
+  ### Example
+  For the LLM's response to make a tool call of the "get_weather" function.
+
+      ChatOpenAI.new(%{
+        model: "...",
+        tool_choice: %{"type" => "function", "function" => %{"name" => "get_weather"}}
+      })
+
   """
   use Ecto.Schema
   require Logger
@@ -270,7 +287,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     %{"include_usage" => Map.get(data, :include_usage, Map.get(data, "include_usage"))}
   end
 
-  defp set_response_format(%ChatOpenAI{json_response: true, json_schema: json_schema}) when not is_nil(json_schema) do
+  defp set_response_format(%ChatOpenAI{json_response: true, json_schema: json_schema})
+       when not is_nil(json_schema) do
     %{
       "type" => "json_schema",
       "json_schema" => json_schema
