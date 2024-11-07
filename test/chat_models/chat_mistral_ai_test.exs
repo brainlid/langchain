@@ -1,7 +1,7 @@
 defmodule LangChain.ChatModels.ChatMistralAITest do
-  alias Langchain.ChatModels.ChatMistralAI
   use LangChain.BaseCase
 
+  alias LangChain.ChatModels.ChatMistralAI
   alias LangChain.Message
   alias LangChain.MessageDelta
 
@@ -202,7 +202,7 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
                "endpoint" => "https://api.mistral.ai/v1/chat/completions",
                "model" => "mistral-tiny",
                "max_tokens" => 100,
-               "module" => "Elixir.Langchain.ChatModels.ChatMistralAI",
+               "module" => "Elixir.LangChain.ChatModels.ChatMistralAI",
                "receive_timeout" => 60000,
                "stream" => false,
                "temperature" => 1.0,

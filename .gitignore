@@ -31,4 +31,5 @@ langchain-*.tar
 .envrc
 
 DEV_NOTES.md
+PERSONAL.md
 /logo/

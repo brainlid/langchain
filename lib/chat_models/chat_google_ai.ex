@@ -3,6 +3,12 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   Parses and validates inputs for making a request for the Google AI  Chat API.
 
   Converts response into more specialized `LangChain` data structures.
+
+  **NOTE:** The GoogleAI service is unique in how it reports TokenUsage
+  information. So far, it's the only API that returns TokenUsage for each
+  returned delta, where the generated token count is incremented with one. Other
+  services return the total TokenUsage data at the end. This Chat model fires
+  the callback each time it is received.
   """
   use Ecto.Schema
   require Logger
@@ -16,6 +22,8 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult
+  alias LangChain.Function
+  alias LangChain.TokenUsage
   alias LangChain.LangChainError
   alias LangChain.Utils
   alias LangChain.Callbacks
@@ -26,7 +34,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
 
   @default_base_url "https://generativelanguage.googleapis.com"
   @default_api_version "v1beta"
-  @default_endpoint "#{@default_base_url}/#{@default_api_version}"
+  @default_endpoint @default_base_url
 
   # allow up to 2 minutes for response.
   @receive_timeout 60_000
@@ -67,6 +75,13 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     # goes on too long by itself, it tends to hallucinate more.
     field :receive_timeout, :integer, default: @receive_timeout
 
+    # The safety settings for the model, specified as a list of maps. Each map
+    # should contain a `category` and a `threshold` for that category.
+    # e.g. [%{"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_ONLY_HIGH"}]
+    # see https://ai.google.dev/api/generate-content#v1beta.SafetySetting
+    # for the list of categories and thresholds
+    field :safety_settings, {:array, :map}, default: []
+
     field :stream, :boolean, default: false
 
     # A list of maps for callback handlers
@@ -85,7 +100,8 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     :top_k,
     :receive_timeout,
     :stream,
-    :callbacks
+    :callbacks,
+    :safety_settings
   ]
   @required_fields [
     :endpoint,
@@ -130,20 +146,35 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   end
 
   def for_api(%ChatGoogleAI{} = google_ai, messages, functions) do
+    {system, messages} =
+      Utils.split_system_message(messages, "Google AI only supports a single System message")
+
+    system_instruction =
+      case system do
+        nil ->
+          nil
+
+        %Message{role: :system, content: content} ->
+          %{"parts" => [%{"text" => content}]}
+      end
+
     messages_for_api =
       messages
       |> Enum.map(&for_api/1)
       |> List.flatten()
       |> List.wrap()
 
-    req = %{
-      "contents" => messages_for_api,
-      "generationConfig" => %{
-        "temperature" => google_ai.temperature,
-        "topP" => google_ai.top_p,
-        "topK" => google_ai.top_k
+    req =
+      %{
+        "contents" => messages_for_api,
+        "generationConfig" => %{
+          "temperature" => google_ai.temperature,
+          "topP" => google_ai.top_p,
+          "topK" => google_ai.top_k
+        }
       }
-    }
+      |> LangChain.Utils.conditionally_add_to_map("system_instruction", system_instruction)
+      |> LangChain.Utils.conditionally_add_to_map("safetySettings", google_ai.safety_settings)
 
     if functions && not Enum.empty?(functions) do
       req
@@ -151,7 +182,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
         %{
           # Google AI functions use an OpenAI compatible format.
           # See: https://ai.google.dev/docs/function_calling#how_it_works
-          "functionDeclarations" => Enum.map(functions, &ChatOpenAI.for_api/1)
+          "functionDeclarations" => Enum.map(functions, &for_api/1)
         }
       ])
     else
@@ -159,7 +190,8 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     end
   end
 
-  defp for_api(%Message{role: :assistant} = message) do
+  @doc false
+  def for_api(%Message{role: :assistant} = message) do
     content_parts = get_message_contents(message) || []
     tool_calls = Enum.map(message.tool_calls || [], &for_api/1)
 
@@ -169,40 +201,28 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     }
   end
 
-  defp for_api(%Message{role: :tool} = message) do
+  def for_api(%Message{role: :tool} = message) do
+    # Function response is whacky. They don't explain why it has this extra nested structure.
+    #
+    # https://ai.google.dev/gemini-api/docs/function-calling#expandable-7
     %{
       "role" => map_role(:tool),
       "parts" => Enum.map(message.tool_results, &for_api/1)
     }
   end
 
-  defp for_api(%Message{role: :system} = message) do
-    # No system messages support means we need to fake a prompt and response
-    # to pretend like it worked.
-    [
-      %{
-        "role" => :user,
-        "parts" => [%{"text" => message.content}]
-      },
-      %{
-        "role" => :model,
-        "parts" => [%{"text" => ""}]
-      }
-    ]
-  end
-
-  defp for_api(%Message{} = message) do
+  def for_api(%Message{} = message) do
     %{
       "role" => map_role(message.role),
       "parts" => [%{"text" => message.content}]
     }
   end
 
-  defp for_api(%ContentPart{type: :text} = part) do
+  def for_api(%ContentPart{type: :text} = part) do
     %{"text" => part.content}
   end
 
-  defp for_api(%ToolCall{} = call) do
+  def for_api(%ToolCall{} = call) do
     %{
       "functionCall" => %{
         "args" => call.arguments,
@@ -211,13 +231,42 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     }
   end
 
-  defp for_api(%ToolResult{} = result) do
+  def for_api(%ToolResult{} = result) do
+    content =
+      case Jason.decode(result.content) do
+        {:ok, data} ->
+          # content was converted through JSON
+          data
+
+        {:error, %Jason.DecodeError{}} ->
+          # assume the result is intended to be a string and return it as-is
+          result.content
+      end
+
+    # There is no explanation for why they want it nested like this. Odd.
+    #
+    # https://ai.google.dev/gemini-api/docs/function-calling#expandable-7
     %{
       "functionResponse" => %{
         "name" => result.name,
-        "response" => Jason.decode!(result.content)
+        "response" => %{
+          "name" => result.name,
+          "content" => content
+        }
       }
     }
+  end
+
+  def for_api(%Function{} = function) do
+    encoded = ChatOpenAI.for_api(function)
+
+    # For functions with no parameters, Google AI needs the parameters field removing, otherwise it will error
+    # with "* GenerateContentRequest.tools[0].function_declarations[0].parameters.properties: should be non-empty for OBJECT type\n"
+    if encoded["parameters"] == %{"properties" => %{}, "type" => "object"} do
+      Map.delete(encoded, "parameters")
+    else
+      encoded
+    end
   end
 
   @doc """
@@ -232,7 +281,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
 
   **NOTE:** This function *can* be used directly, but the primary interface
   should be through `LangChain.Chains.LLMChain`. The `ChatGoogleAI` module is more focused on
-  translating the `LangChain` data structures to and from the OpenAI API.
+  translating the `LangChain` data structures to and from the Google AI API.
 
   Another benefit of using `LangChain.Chains.LLMChain` is that it combines the
   storage of messages, adding tools, adding custom context that should be
@@ -241,7 +290,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   `LangChain.Message` once fully complete.
   """
   @impl ChatModel
-  def call(openai, prompt, tools \\ [])
+  def call(google_ai, prompt, tools \\ [])
 
   def call(%ChatGoogleAI{} = google_ai, prompt, tools) when is_binary(prompt) do
     messages = [
@@ -285,7 +334,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     req
     |> Req.post()
     |> case do
-      {:ok, %Req.Response{body: data}} ->
+      {:ok, %Req.Response{status: 200, body: data}} ->
         case do_process_response(google_ai, data) do
           {:error, reason} ->
             {:error, reason}
@@ -294,6 +343,9 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
             Callbacks.fire(google_ai.callbacks, :on_llm_new_message, [google_ai, result])
             result
         end
+
+      {:ok, %Req.Response{status: status}} ->
+        {:error, "Failed with status: #{inspect(status)}"}
 
       {:error, %Req.TransportError{reason: :timeout}} ->
         {:error, "Request timed out"}
@@ -320,11 +372,14 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
         )
     )
     |> case do
-      {:ok, %Req.Response{body: data}} ->
+      {:ok, %Req.Response{status: 200, body: data}} ->
         # Google AI uses `finishReason: "STOP` for all messages in the stream.
         # This field can't be used to terminate the list of deltas, so simulate
         # this behavior by forcing the final delta to have `status: :complete`.
         complete_final_delta(data)
+
+      {:ok, %Req.Response{status: status}} ->
+        {:error, "Failed with status: #{inspect(status)}"}
 
       {:error, %LangChainError{message: reason}} ->
         {:error, reason}
@@ -341,10 +396,11 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     end
   end
 
+  @doc false
   @spec build_url(t()) :: String.t()
-  defp build_url(
-         %ChatGoogleAI{endpoint: endpoint, api_version: api_version, model: model} = google_ai
-       ) do
+  def build_url(
+        %ChatGoogleAI{endpoint: endpoint, api_version: api_version, model: model} = google_ai
+      ) do
     "#{endpoint}/#{api_version}/models/#{model}:#{get_action(google_ai)}?key=#{get_api_key(google_ai)}"
     |> use_sse(google_ai)
   end
@@ -363,12 +419,25 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
 
   def do_process_response(model, response, message_type \\ Message)
 
-  def do_process_response(model, %{"candidates" => candidates}, message_type)
+  def do_process_response(model, %{"candidates" => candidates} = data, message_type)
       when is_list(candidates) do
+    # Google is odd in that it returns token usage for each MessageDelta as it
+    # goes, incrementing the number of generated tokens. I haven't seen anyone
+    # else do this. For now, we fire each and every TokenUsage we receive.
+    case get_token_usage(data) do
+      %TokenUsage{} = token_usage ->
+        Callbacks.fire(model.callbacks, :on_llm_token_usage, [model, token_usage])
+        :ok
+
+      nil ->
+        :ok
+    end
+
     candidates
     |> Enum.map(&do_process_response(model, &1, message_type))
   end
 
+  # Function Call in a Message
   def do_process_response(
         model,
         %{"content" => %{"parts" => parts} = content_data} = data,
@@ -377,6 +446,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     text_part =
       parts
       |> filter_parts_for_types(["text"])
+      |> filter_text_parts()
       |> Enum.map(fn part ->
         ContentPart.new!(%{type: :text, content: part["text"]})
       end)
@@ -398,7 +468,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     %{
       role: unmap_role(content_data["role"]),
       content: text_part,
-      complete: false,
+      complete: true,
       index: data["index"]
     }
     |> Utils.conditionally_add_to_map(:tool_calls, tool_calls_from_parts)
@@ -413,6 +483,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     end
   end
 
+  # Function Call in a MessageDelta
   def do_process_response(
         model,
         %{"content" => %{"parts" => parts} = content_data} = data,
@@ -426,12 +497,6 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
         _other ->
           nil
       end
-
-    parts
-    |> filter_parts_for_types(["text"])
-    |> Enum.map(fn part ->
-      ContentPart.new!(%{type: :text, content: part["text"]})
-    end)
 
     tool_calls_from_parts =
       parts
@@ -495,17 +560,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
           :incomplete
 
         Message ->
-          case finish do
-            "STOP" ->
-              :complete
-
-            "SAFETY" ->
-              :complete
-
-            other ->
-              Logger.warning("Unsupported finishReason in response. Reason: #{inspect(other)}")
-              nil
-          end
+          finish_reason_to_status(finish)
       end
 
     content = Enum.map_join(parts, & &1["text"])
@@ -544,6 +599,16 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   def filter_parts_for_types(parts, types) when is_list(parts) and is_list(types) do
     Enum.filter(parts, fn p ->
       Enum.any?(types, &Map.has_key?(p, &1))
+    end)
+  end
+
+  @doc false
+  def filter_text_parts(parts) when is_list(parts) do
+    Enum.filter(parts, fn p ->
+      case p do
+        %{"text" => text} -> text && text != ""
+        _ -> false
+      end
     end)
   end
 
@@ -593,7 +658,8 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
         :top_p,
         :top_k,
         :receive_timeout,
-        :stream
+        :stream,
+        :safety_settings
       ],
       @current_config_version
     )
@@ -605,5 +671,33 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   @impl ChatModel
   def restore_from_map(%{"version" => 1} = data) do
     ChatGoogleAI.new(data)
+  end
+
+  defp get_token_usage(%{"usageMetadata" => usage} = _response_body) do
+    # extract out the reported response token usage
+    TokenUsage.new!(%{
+      input: Map.get(usage, "promptTokenCount", 0),
+      output: Map.get(usage, "candidatesTokenCount", 0)
+    })
+  end
+
+  defp get_token_usage(_response_body), do: nil
+
+  # A full list of finish reasons and their meanings can be found here:
+  # https://ai.google.dev/api/generate-content#FinishReason
+  defp finish_reason_to_status("STOP"), do: :complete
+  defp finish_reason_to_status("SAFETY"), do: :complete
+  defp finish_reason_to_status("MAX_TOKENS"), do: :length
+  defp finish_reason_to_status("RECITATION"), do: :complete
+  defp finish_reason_to_status("LANGUAGE"), do: :complete
+  defp finish_reason_to_status("OTHER"), do: :complete
+  defp finish_reason_to_status("BLOCKLIST"), do: :complete
+  defp finish_reason_to_status("PROHIBITED_CONTENT"), do: :complete
+  defp finish_reason_to_status("SPII"), do: :complete
+  defp finish_reason_to_status("MALFORMED_FUNCTION_CALL"), do: :complete
+
+  defp finish_reason_to_status(other) do
+    Logger.warning("Unsupported finishReason in response. Reason: #{inspect(other)}")
+    nil
   end
 end

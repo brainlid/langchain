@@ -40,7 +40,6 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   use Ecto.Schema
   require Logger
   import Ecto.Changeset
-  import LangChain.Utils.ApiOverride
   alias __MODULE__
   alias LangChain.Config
   alias LangChain.ChatModels.ChatModel
@@ -55,6 +54,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   alias LangChain.FunctionParam
   alias LangChain.Utils
   alias LangChain.Callbacks
+  alias LangChain.Utils.BedrockStreamDecoder
+  alias LangChain.Utils.BedrockConfig
 
   @behaviour ChatModel
 
@@ -67,6 +68,9 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   embedded_schema do
     # API endpoint to use. Defaults to Anthropic's API
     field :endpoint, :string, default: "https://api.anthropic.com/v1/messages"
+
+    # Configuration for AWS Bedrock. Configure this instead of endpoint & api_key if you want to use Bedrock.
+    embeds_one :bedrock, BedrockConfig
 
     # API key for Anthropic. If not set, will use global api key. Allows for usage
     # of a different API key per-call if desired. For instance, allowing a
@@ -136,12 +140,6 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   ]
   @required_fields [:endpoint, :model]
 
-  @spec get_api_key(t()) :: String.t()
-  defp get_api_key(%ChatAnthropic{api_key: api_key}) do
-    # if no API key is set default to `""` which will raise an error
-    api_key || Config.resolve(:anthropic_key, "")
-  end
-
   @doc """
   Setup a ChatAnthropic client configuration.
   """
@@ -149,6 +147,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   def new(%{} = attrs \\ %{}) do
     %ChatAnthropic{}
     |> cast(attrs, @create_fields)
+    |> cast_embed(:bedrock)
     |> common_validation()
     |> apply_action(:insert)
   end
@@ -180,7 +179,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   @spec for_api(t, message :: [map()], ChatModel.tools()) :: %{atom() => any()}
   def for_api(%ChatAnthropic{} = anthropic, messages, tools) do
     # separate the system message from the rest. Handled separately.
-    {system, messages} = split_system_message(messages)
+    {system, messages} =
+      Utils.split_system_message(messages, "Anthropic only supports a single System message")
 
     system_text =
       case system do
@@ -209,6 +209,15 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     |> Utils.conditionally_add_to_map(:max_tokens, anthropic.max_tokens)
     |> Utils.conditionally_add_to_map(:top_p, anthropic.top_p)
     |> Utils.conditionally_add_to_map(:top_k, anthropic.top_k)
+    |> maybe_transform_for_bedrock(anthropic.bedrock)
+  end
+
+  defp maybe_transform_for_bedrock(body, nil), do: body
+
+  defp maybe_transform_for_bedrock(body, %BedrockConfig{} = bedrock) do
+    body
+    |> Map.put(:anthropic_version, bedrock.anthropic_version)
+    |> Map.drop([:model, :stream])
   end
 
   defp get_tool_choice(%ChatAnthropic{tool_choice: %{"type" => "tool", "name" => name}=_tool_choice}) when is_binary(name) and byte_size(name) > 0,
@@ -227,21 +236,6 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       %Function{} = function ->
         for_api(function)
     end)
-  end
-
-  # Unlike OpenAI, Anthropic only supports one system message.
-  @doc false
-  @spec split_system_message([Message.t()]) :: {nil | Message.t(), [Message.t()]} | no_return()
-  def split_system_message(messages) do
-    # split the messages into "system" and "other". Error if more than 1 system
-    # message. Return the other messages as a separate list.
-    {system, other} = Enum.split_with(messages, &(&1.role == :system))
-
-    if length(system) > 1 do
-      raise LangChainError, "Anthropic only supports a single System message"
-    end
-
-    {List.first(system), other}
   end
 
   @doc """
@@ -273,40 +267,19 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     call(anthropic, messages, functions)
   end
 
-  def call(%ChatAnthropic{} = anthropic, messages, functions)
-      when is_list(messages) do
-    if override_api_return?() do
-      Logger.warning("Found override API response. Will not make live API call.")
+  def call(%ChatAnthropic{} = anthropic, messages, functions) when is_list(messages) do
+    try do
+      # make base api request and perform high-level success/failure checks
+      case do_api_request(anthropic, messages, functions) do
+        {:error, reason} ->
+          {:error, reason}
 
-      case get_api_override() do
-        {:ok, {:ok, data, callback_name}} ->
-          # fire callback for fake responses too
-          Callbacks.fire(anthropic.callbacks, callback_name, [anthropic, data])
-          # return the data portion
-          {:ok, data}
-
-        # fake error response
-        {:ok, {:error, _reason} = response} ->
-          response
-
-        _other ->
-          raise LangChainError,
-                "An unexpected fake API response was set. Should be an `{:ok, value, nil_or_callback_name}`"
+        parsed_data ->
+          {:ok, parsed_data}
       end
-    else
-      try do
-        # make base api request and perform high-level success/failure checks
-        case do_api_request(anthropic, messages, functions) do
-          {:error, reason} ->
-            {:error, reason}
-
-          parsed_data ->
-            {:ok, parsed_data}
-        end
-      rescue
-        err in LangChainError ->
-          {:error, err.message}
-      end
+    rescue
+      err in LangChainError ->
+        {:error, err.message}
     end
   end
 
@@ -337,13 +310,14 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       ) do
     req =
       Req.new(
-        url: anthropic.endpoint,
+        url: url(anthropic),
         json: for_api(anthropic, messages, tools),
-        headers: headers(get_api_key(anthropic), anthropic.api_version),
+        headers: headers(anthropic),
         receive_timeout: anthropic.receive_timeout,
         retry: :transient,
         max_retries: 3,
-        retry_delay: fn attempt -> 300 * attempt end
+        retry_delay: fn attempt -> 300 * attempt end,
+        aws_sigv4: aws_sigv4_opts(anthropic.bedrock)
       )
 
     req
@@ -391,14 +365,19 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         retry_count
       ) do
     Req.new(
-      url: anthropic.endpoint,
+      url: url(anthropic),
       json: for_api(anthropic, messages, tools),
-      headers: headers(get_api_key(anthropic), anthropic.api_version),
-      receive_timeout: anthropic.receive_timeout
+      headers: headers(anthropic),
+      receive_timeout: anthropic.receive_timeout,
+      aws_sigv4: aws_sigv4_opts(anthropic.bedrock)
     )
     |> Req.post(
       into:
-        Utils.handle_stream_fn(anthropic, &decode_stream/1, &do_process_response(anthropic, &1))
+        Utils.handle_stream_fn(
+          anthropic,
+          &decode_stream(anthropic, &1),
+          &do_process_response(anthropic, &1)
+        )
     )
     |> case do
       {:ok, %Req.Response{body: data} = response} ->
@@ -429,14 +408,38 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     end
   end
 
-  defp headers(api_key, api_version) do
+  defp aws_sigv4_opts(nil), do: nil
+  defp aws_sigv4_opts(%BedrockConfig{} = bedrock), do: BedrockConfig.aws_sigv4_opts(bedrock)
+
+  @spec get_api_key(binary() | nil) :: String.t()
+  defp get_api_key(api_key) do
+    # if no API key is set default to `""` which will raise an error
+    api_key || Config.resolve(:anthropic_key, "")
+  end
+
+  defp headers(%ChatAnthropic{bedrock: nil, api_key: api_key, api_version: api_version}) do
     %{
-      "x-api-key" => api_key,
+      "x-api-key" => get_api_key(api_key),
       "content-type" => "application/json",
       "anthropic-version" => api_version,
       # https://docs.anthropic.com/claude/docs/tool-use - requires this header during beta
       "anthropic-beta" => "tools-2024-04-04"
     }
+  end
+
+  defp headers(%ChatAnthropic{bedrock: %BedrockConfig{}}) do
+    %{
+      "content-type" => "application/json",
+      "accept" => "application/json"
+    }
+  end
+
+  defp url(%ChatAnthropic{bedrock: nil} = anthropic) do
+    anthropic.endpoint
+  end
+
+  defp url(%ChatAnthropic{bedrock: %BedrockConfig{} = bedrock, stream: stream} = anthropic) do
+    BedrockConfig.url(bedrock, model: anthropic.model, stream: stream)
   end
 
   # Parse a new message response
@@ -492,6 +495,46 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     |> to_response()
   end
 
+  def do_process_response(_model, %{
+        "type" => "content_block_start",
+        "index" => tool_index,
+        "content_block" => %{"type" => "tool_use", "id" => call_id, "name" => tool_name}
+      }) do
+    %{
+      role: :assistant,
+      status: :incomplete,
+      tool_calls: [
+        ToolCall.new!(%{
+          type: :function,
+          name: tool_name,
+          call_id: call_id,
+          index: tool_index
+        })
+      ]
+    }
+    |> MessageDelta.new()
+    |> to_response()
+  end
+
+  def do_process_response(_model, %{
+        "type" => "content_block_delta",
+        "index" => tool_index,
+        "delta" => %{"type" => "input_json_delta", "partial_json" => partial_json}
+      }) do
+    %{
+      role: :assistant,
+      status: :incomplete,
+      tool_calls: [
+        ToolCall.new!(%{
+          arguments: partial_json,
+          index: tool_index
+        })
+      ]
+    }
+    |> MessageDelta.new()
+    |> to_response()
+  end
+
   def do_process_response(
         model,
         %{
@@ -521,6 +564,16 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     error_message = "Received invalid JSON: #{inspect(response)}"
     Logger.error(error_message)
     {:error, error_message}
+  end
+
+  def do_process_response(%ChatAnthropic{bedrock: %BedrockConfig{}}, %{"message" => message}) do
+    {:error, "Received error from API: #{message}"}
+  end
+
+  def do_process_response(%ChatAnthropic{bedrock: %BedrockConfig{}}, %{
+        bedrock_exception: exceptions
+      }) do
+    {:error, "Stream exception received: #{inspect(exceptions)}"}
   end
 
   def do_process_response(_model, other) do
@@ -593,7 +646,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   end
 
   @doc false
-  def decode_stream({chunk, buffer}) do
+  def decode_stream(%ChatAnthropic{bedrock: nil}, {chunk, buffer}) do
     # Combine the incoming data with the buffered incomplete data
     combined_data = buffer <> chunk
     # Split data by double newline to find complete messages
@@ -660,6 +713,18 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
   # assumed the response is JSON. Return as-is
   defp extract_data(json), do: json
+
+  @doc false
+  def decode_stream(%ChatAnthropic{bedrock: %BedrockConfig{}}, {chunk, buffer}, chunks \\ []) do
+    {chunks, remaining} = BedrockStreamDecoder.decode_stream({chunk, buffer}, chunks)
+
+    chunks =
+      Enum.filter(chunks, fn chunk ->
+        Map.has_key?(chunk, :bedrock_exception) || relevant_event?("event: #{chunk["type"]}\n")
+      end)
+
+    {chunks, remaining}
+  end
 
   @doc """
   Convert a LangChain structure to the expected map of data for the OpenAI API.

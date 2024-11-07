@@ -1,0 +1,266 @@
+<!-- livebook:{"file_entries":[{"name":"image1.jpg","type":"attachment"},{"name":"image2.jpg","type":"attachment"}]} -->
+
+# Images: Generating context-specific descriptions
+
+```elixir
+Mix.install([
+  {:langchain, "~> 0.3.0-rc.0"},
+  {:kino, "~> 0.12.0"}
+])
+```
+
+## Overview
+
+For the AI, we will leverage both [OpenAI's ChatGPT](https://openai.com/api/) and [Anthropic's Claude](https://www.anthropic.com/api) LLMs (Large Language Models) through the [Elixir LangChain library](https://github.com/brainlid/langchain) to perform AI analysis on images. In particular, we want context-aware caption text and shorter context-aware image ALT text. "Context-aware" means that the description should relate to how the image is being used and not simply a description of the image. With these two versions of an image description, we can improve SEO (Search Engine Optimization) and improve the accessibility of our content as well.
+
+## It starts with an image
+
+Before we can interact with an LLM, we need an image to work with. There's an image input to make it easy to upload an image.
+
+You can take a photo or upload an image to use. This notebook example was based on this image: [unsplash.com/photos/two-woman-walking-under-bridge-DcNlJK7kLkk](https://unsplash.com/photos/two-woman-walking-under-bridge-DcNlJK7kLkk)
+
+### Scenario
+
+In this example, Sarah is working on a feature article for an online magazine focused on "The Hidden Gems of Urban Street Art." Her article aims to showcase the vibrant and often overlooked artworks that adorn the nooks and crannies around Toronto Canada.
+
+The article should also be accessible to readers who use assistive technology like screenreaders. There are a number of images for the article and we want to generate high quality ALT text or caption text for the images and we want it written with awareness of the article and the context for witch the text will be used.
+
+We're developing a solution for this problem in our notebook, but our solution is able to be scaled up to operated on hundreds of images if needed.
+
+Let's get started by getting the image into the notebook.
+
+```elixir
+input = Kino.Input.image("image", format: :jpeg)
+```
+
+```elixir
+image = Kino.Input.read(input)
+```
+
+The LLMs we're working with expect the image to be supplied as `base64` encoded text. Let's get that ready here:
+
+```elixir
+image_data =
+  image.file_ref
+  |> Kino.Input.file_path()
+  |> File.read!()
+  |> Base.encode64()
+
+:ok
+```
+
+## Elixir LangChain
+
+To make the requests for AI help, we'll use the [Elixir LangChain library](https://github.com/brainlid/langchain). It makes it much easier to integrate AI into our Elixir applications.
+
+With our image ready, we'll setup a request to ChatGPT and ask it to write a context aware description of the image.
+
+**NOTE:** You must provide your own OPENAI_API_KEY in the Livebook secrets to do this.
+
+```elixir
+Application.put_env(:langchain, :openai_key, System.fetch_env!("LB_OPENAI_API_KEY"))
+```
+
+First, let's setup the model for talking to ChatGPT. For simplicity, we've set it not stream the response back. We'll get the final analysis once it's complete.
+
+**NOTE:** For ChatGPT, image support requires using the `"gpt-4o"` model at the time this was created.
+
+```elixir
+alias LangChain.ChatModels.ChatOpenAI
+
+openai_chat_model = ChatOpenAI.new!(%{model: "gpt-4o"})
+```
+
+Here we setup our messages. The user message contains multiple `ContentPart`s. One is text for our prompt and the secone is the `base64` encoded image data. We submit all of this data together in our request.
+
+This is where we add **context** to our image description request. We'll assume that we have programmatic access to the images and that we also have access to some data about the image from an external system.
+
+**TIP:** To get consitency across all the images in our set, we'll have better success by providing an example of the type of output we want.
+
+**NOTE:** Make sure the `:media` option matches both the image and what is supported by the LLM you are connecting with.
+
+```elixir
+alias LangChain.Message
+alias LangChain.Message.ContentPart
+alias LangChain.PromptTemplate
+
+messages = [
+  Message.new_system!("""
+  You are an expert at providing an image description for assistive technology and SEO benefits.
+
+  The image is included in an online article titled "The Hidden Gems of Urban Street Art."
+
+  The article aims to showcase the vibrant and often overlooked artworks that adorn
+  the nooks and crannies around the city of Toronto Canada.
+
+  You generate text for two purposes:
+  - an HTML img alt text
+  - an HTML figure, figcaption text
+
+  ## Alt text format
+  Briefly describe the contents of the image where the context is focusing on the urban street art.
+  Be concise and limit the description to 125 characters or less.
+
+  Example alt text:
+  > A vibrant phoenix graffiti with blazing orange, red, and gold colors on the side of a brick building in an urban setting.
+
+  ## figcaption format
+  Image caption descriptions should focus on the urban artwork, providing a description of the appearance,
+  style, street address if available, and how it relates to the surroundings. Be concise.
+
+  Example caption text:
+  > A vibrant phoenix graffiti on a brick building at Queen St W and Spadina Ave. With wings outstretched, the mural's blazing oranges, reds, and golds contrast sharply against the red brick backdrop. Passersby pause to observe, integrating the artwork into the urban landscape.
+  """),
+  Message.new_user!([
+    PromptTemplate.from_template!("""
+    Provide the descriptions for the image. Incorporate relevant information from the following additional details if applicable:
+
+    <%= @extra_image_info %>
+
+    Output in the following JSON format:
+
+    {
+      "alt": "generated alt text",
+      "caption": "generation caption text"
+    }
+    """),
+    ContentPart.image!(image_data, media: :jpg, detail: "low")
+  ])
+]
+```
+
+Before we continue, notice that the System message provides the general context for what we are doing and what we want from the LLM.
+
+The User message is made up of two parts:
+
+* `PromptTemplate`: supports variable replacement tags using EEx templates. This allows us to easily customize the prompt for each image as we process through a whole batch. This turns into a `ContentPart`.
+* `ContentPart`: Makes it easy for us to provide our image directly to the LLM.
+
+We are providing the LLM with the context for the task, specific instructions about an image, and an image to analyze with a "vision" enabled model so it can finally perform the task for us.
+
+<!-- livebook:{"break_markdown":true} -->
+
+Note the use of a `PromptTemplate` and `<%= @image_data %>` in our user Message. As we are processing a whole set of images, data from the system where we get the image is rendered into our prompt, helping to further customize the generated text from the LLM, making it far more specific and relevant.
+
+## JSON Output
+
+For each image we want two pieces of generated content. To make this easy on ourselves, we instruct the LLM to output the two pieces of information in a JSON object.
+
+Specifically, we instruct it to output in the following format:
+
+```json
+{
+  "alt": "generated alt text",
+  "caption": "generation caption text"
+}
+```
+
+To make working with that output easier, we'll use a `JsonProcessor` for processing messages from the LLM. It has the added ability to return a JSON formatting error to the LLM in the case when it get's it wrong.
+
+We'll see this next when we put it all together.
+
+## Making the Request
+
+Everything is ready to make the request!
+
+* We have the image
+* We setup which LLM we are connecting with
+* We provide context in our prompt and instructions for the type of description we want
+
+Now, we'll submit the request to the server and review the response. For this example, the "image_data_from_other_system" is a substitute for a database call or other lookup for the information we have on the image.
+
+```elixir
+alias LangChain.Chains.LLMChain
+alias LangChain.MessageProcessors.JsonProcessor
+
+# This data comes from an external data source per image.
+# When we `apply_prompt_templates` below, the data is rendered into the template.
+image_data_from_other_system = "image of urban art mural on underpass at 507 King St E"
+
+{:ok, updated_chain} =
+  %{llm: openai_chat_model, verbose: true}
+  |> LLMChain.new!()
+  |> LLMChain.apply_prompt_templates(messages, %{extra_image_info: image_data_from_other_system})
+  |> LLMChain.message_processors([JsonProcessor.new!()])
+  |> LLMChain.run(mode: :until_success)
+
+updated_chain.last_message.processed_content
+```
+
+Notice that when running the chain, we use the option `mode: :until_success`. Some LLMs are better are generating valid JSON than other LLMs. When we included the `JsonProcesser`, it parses the assistant's content, converting it into an Elixir map. The converted data is stored on the `message.processed_content`.
+
+If the LLM fails to give us valid JSON, the `JsonProcessor` generates a `:user` message reporting the issue for the LLM. The `:until_success` mode will repeatedly make the round-trip requests to the LLM, giving it an opportunity to fix it. But don't worry, it won't run forever! The LLMChain's `max_retry_count` gives up after X failures, the default being 3.
+
+Here's a sample of what was generated when I ran it:
+
+<!-- livebook:{"force_markdown":true} -->
+
+```elixir
+%{
+  "alt" => "Colorful mural of a face under a bridge at 507 King St E",
+  "caption" => "A captivating face mural under the 507 King St E underpass, featuring vivid hues and expressive eyes. The art adds a pop of color to the urban landscape, drawing the attention of pedestrians as they pass by."
+}
+```
+
+This demonstrates how adding context to an image description request can really become immediately useful. The same system prompt and message template can be used for the whole set of images and generate high quality descriptive text for images.
+
+Will it be as good as a human? No, honestly it may not be. However, it can be done much faster, automated and performed on more images than a human could do. In many instances, that means we get good, context aware ALT text where we may otherwise have none because we don't have the people nor the time to manually create it.
+
+The result is our visual content is more accessible to people using assistive technology like a screen reader.
+
+## Anthropic (BONUS)
+
+While we're all setup for it, if you have an Anthropic API key, then we'll submit the same request to Anthropic and see how that compares.
+
+**NOTE:** You must provide your own ANTHROPIC_API_KEY in the Livebook secrets to do this.
+
+```elixir
+Application.put_env(:langchain, :anthropic_key, System.fetch_env!("LB_ANTHROPIC_API_KEY"))
+```
+
+Let's setup our Anthropic chat model.
+
+**NOTE:** Keep in mind that different versions of Claude will give different results. You can play with that to find a good cost/accuracy for your specific need.
+
+```elixir
+alias LangChain.ChatModels.ChatAnthropic
+
+anthropic_chat_model = ChatAnthropic.new!(%{model: "claude-3-opus-20240229"})
+```
+
+Now we run the same messages through an identical LLMChain but passing in the Anthropic chat model.
+
+```elixir
+alias LangChain.Chains.LLMChain
+alias LangChain.MessageProcessors.JsonProcessor
+
+# This data comes from an external data source per image.
+# When we `apply_prompt_templates` below, the data is rendered into the template.
+image_data_from_other_system = "image of urban art mural on underpass at 507 King St E"
+
+{:ok, updated_chain} =
+  %{llm: anthropic_chat_model, verbose: true}
+  |> LLMChain.new!()
+  |> LLMChain.apply_prompt_templates(messages, %{extra_image_info: image_data_from_other_system})
+  |> LLMChain.message_processors([JsonProcessor.new!()])
+  |> LLMChain.run(mode: :until_success)
+
+updated_chain.last_message.processed_content
+```
+
+Nice! The Elixir LangChain library abstracted away the differences between the two services. With no code changes, we can make a similar request about the image from Anthropic's Claude LLM as well!
+
+Here's what I got from it:
+
+<!-- livebook:{"force_markdown":true} -->
+
+```elixir
+%{
+  "alt" => "Colorful street art mural with a face in vibrant colors on an underpass pillar in an urban setting.",
+  "caption" => "A striking urban art mural adorns an underpass pillar at 507 King St E. The artwork features a mesmerizing face composed of vivid, rainbow-like hues and intricate patterns. Framed by the industrial yellow beams above, the mural transforms the concrete structure into a captivating focal point for passersby."
+}
+```
+
+We would want to run multiple tests on a small sampling of images and tweak our prompt until we are happy with the result. Then, we can process full batch and save our work as a template for future projects as well.
+
+<!-- livebook:{"offset":12761,"stamp":{"token":"XCP.W16VHoMa17Ik5HZEODX4xG_3efAZOoT53nwCTV0ILJBlJPOfjaoVorequscNTIpjctd5Dd_rFjn2mYnQ3HBs-HEgL3Ndv-JDxG2NMRBdcbJi_vREiaEJT2lrNKafOvhP9ZvW698i28G9jhon35Zc","version":2}} -->

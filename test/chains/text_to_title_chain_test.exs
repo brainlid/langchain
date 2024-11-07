@@ -1,5 +1,6 @@
 defmodule LangChain.Chains.TextToTitleChainTest do
   use LangChain.BaseCase
+  use Mimic
 
   doctest LangChain.Chains.TextToTitleChain
 
@@ -60,18 +61,25 @@ defmodule LangChain.Chains.TextToTitleChainTest do
   describe "run/2" do
     test "runs and returns updated chain and last message", %{title_chain: title_chain} do
       fake_message = Message.new_assistant!("Summarized Title")
-      fake_response = {:ok, [fake_message], nil}
-      set_api_override(fake_response)
 
-      assert {:ok, updated_chain, last_msg} = TextToTitleChain.run(title_chain)
+      # Made NOT LIVE here
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:ok, [fake_message]}
+      end)
+
+      assert {:ok, updated_chain} = TextToTitleChain.run(title_chain)
       assert %LLMChain{} = updated_chain
-      assert last_msg == fake_message
+      assert updated_chain.last_message == fake_message
     end
   end
 
   describe "evaluate/2" do
     test "returns the summarized title", %{title_chain: title_chain} do
-      set_api_override({:ok, [Message.new_assistant!("Special Title")], nil})
+      # Made NOT LIVE here
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:ok, [Message.new_assistant!("Special Title")]}
+      end)
+
       assert "Special Title" == TextToTitleChain.evaluate(title_chain)
     end
 
@@ -79,7 +87,11 @@ defmodule LangChain.Chains.TextToTitleChainTest do
       title_chain: title_chain,
       fallback_title: fallback_title
     } do
-      set_api_override({:error, "FAKE API call failure"})
+      # Made NOT LIVE here
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:error, "FAKE API call failure"}
+      end)
+
       assert fallback_title == TextToTitleChain.evaluate(title_chain)
     end
   end

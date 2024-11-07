@@ -37,7 +37,7 @@ defmodule LangChain.ChatModels.LLMCallbacks do
 
   A function declaration that matches the signature.
 
-      def handle_llm_new_delta(_chat_model, _index, delta) do
+      def handle_llm_new_delta(_chat_model, delta) do
         IO.write(delta)
       end
   """

@@ -13,7 +13,6 @@ defmodule LangChain.BaseCase do
 
       # Import conveniences for testing with AI models
       import LangChain.BaseCase
-      import LangChain.Utils.ApiOverride
 
       @doc """
       Helper function for loading an image as base64 encoded text.
