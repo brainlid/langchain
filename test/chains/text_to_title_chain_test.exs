@@ -94,5 +94,27 @@ defmodule LangChain.Chains.TextToTitleChainTest do
 
       assert fallback_title == TextToTitleChain.evaluate(title_chain)
     end
+
+    @tag live_call: true, live_open_ai: true
+    test "supports using examples", %{llm: llm, input_text: input_text} do
+      data = %{
+        llm: llm,
+        input_text: input_text,
+        fallback_title: "Default new title",
+        examples: [
+          "Blog Post: Making Delicious and Healthy Smoothies",
+          "System Email: Notifying Users of Planned Downtime"
+        ],
+        verbose: true
+      }
+
+      result_title =
+        data
+        |> TextToTitleChain.new!()
+        |> TextToTitleChain.evaluate()
+
+      assert String.starts_with?(result_title, "Blog Post:")
+      assert String.contains?(result_title, "Pineapple")
+    end
   end
 end
