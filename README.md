@@ -80,16 +80,18 @@ end
 
 Currently, the library is written to use the `Req` library for making API calls.
 
-You can configure an _organization ID_, and _API key_ for OpenAI's API, but this library also works with [other compatible APIs](#alternative-openai-compatible-apis) as well as [local models running on Bumblebee](#bumblebee-chat-support).
+You can configure an _organization ID_, and _API key_ for OpenAI's API, but this library also works with [other compatible APIs](#alternative-openai-compatible-apis) as well as other services and even [local models running on Bumblebee](#bumblebee-chat-support).
 
-`config/config.exs`:
+`config/runtime.exs`:
 
 ```elixir
-config :langchain, openai_key: System.get_env("OPENAI_API_KEY")
-config :langchain, openai_org_id: System.get_env("OPENAI_ORG_ID")
+config :langchain, openai_key: System.fetch_env!("OPENAI_API_KEY")
+config :langchain, openai_org_id: System.fetch_env!("OPENAI_ORG_ID")
 # OR
 config :langchain, openai_key: "YOUR SECRET KEY"
 config :langchain, openai_org_id: "YOUR_OPENAI_ORG_ID"
+
+config :langchain, :anthropic_key, System.fetch_env!("ANTHROPIC_API_KEY")
 ```
 
 It's possible to use a function or a tuple to resolve the secret:
@@ -98,8 +100,17 @@ It's possible to use a function or a tuple to resolve the secret:
 config :langchain, openai_key: {MyApp.Secrets, :openai_api_key, []}
 config :langchain, openai_org_id: {MyApp.Secrets, :openai_org_id, []}
 # OR
-config :langchain, openai_key: fn -> System.get_env("OPENAI_API_KEY") end
-config :langchain, openai_org_id: fn -> System.get_env("OPENAI_ORG_ID") end
+config :langchain, openai_key: fn -> System.fetch_env!("OPENAI_API_KEY") end
+config :langchain, openai_org_id: fn -> System.fetch_env!("OPENAI_ORG_ID") end
+```
+
+The API keys should be treated as secrets and not checked into your repository.
+
+For [fly.io](https://fly.io), adding the secrets looks like this:
+
+```
+fly secrets set OPENAI_API_KEY=MyOpenAIApiKey
+fly secrets set ANTHROPIC_API_KEY=MyAnthropicApiKey
 ```
 
 ## Usage
