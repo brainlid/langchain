@@ -113,6 +113,11 @@ fly secrets set OPENAI_API_KEY=MyOpenAIApiKey
 fly secrets set ANTHROPIC_API_KEY=MyAnthropicApiKey
 ```
 
+A list of models to use:
+- [Anthropic Claude models](https://docs.anthropic.com/en/docs/about-claude/models)
+- [OpenAI models](https://platform.openai.com/docs/models)
+- [Gemini AI models](https://ai.google.dev/gemini-api/docs/models/gemini)
+
 ## Usage
 
 The central module in this library is `LangChain.Chains.LLMChain`. Most other pieces are either inputs to this, or structures used by it. For understanding how to use the library, start there.
