@@ -735,6 +735,17 @@ defmodule LangChain.Chains.LLMChain do
       if verbose, do: IO.inspect(function.name, label: "EXECUTING FUNCTION")
 
       case Function.execute(function, call.arguments, context) do
+        {:ok, llm_result, processed_result} ->
+          if verbose, do: IO.inspect(llm_result, label: "FUNCTION RESULT")
+          # successful execution and storage of processed_content.
+          ToolResult.new!(%{
+            tool_call_id: call.call_id,
+            content: llm_result,
+            processed_content: processed_result,
+            name: function.name,
+            display_text: function.display_text
+          })
+
         {:ok, result} ->
           if verbose, do: IO.inspect(result, label: "FUNCTION RESULT")
           # successful execution.

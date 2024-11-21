@@ -53,6 +53,21 @@ defmodule LangChain.Chains.LLMChainTest do
         end
       })
 
+    get_date =
+      Function.new!(%{
+        name: "get_date",
+        description: "Returns the date as YYYY-MM-DD",
+        function: fn _args, _context ->
+          # return as a formatted string and the date struct
+          date = Date.new!(2024, 11, 1)
+
+          # Format the date as YYYY-MM-DD
+          formatted_date = Calendar.strftime(date, "%Y-%m-%d")
+
+          {:ok, formatted_date, date}
+        end
+      })
+
     # on setup, delete the Process dictionary key for each test run
     Process.delete(:test_func_failed_once)
 
@@ -85,7 +100,8 @@ defmodule LangChain.Chains.LLMChainTest do
       greet: greet,
       sync: sync,
       fail_func: fail_func,
-      fail_once: fail_once
+      fail_once: fail_once,
+      get_date: get_date
     }
   end
 
@@ -1621,6 +1637,20 @@ defmodule LangChain.Chains.LLMChainTest do
 
       # resets the current_failure_count after processing successfully
       assert updated_chain.current_failure_count == 0
+    end
+
+    test "supports returning processed_content to ToolResult", %{chain: chain, get_date: get_date} do
+      chain =
+        chain
+        |> LLMChain.add_tools(get_date)
+        |> LLMChain.add_message(new_function_call!("call_fake123", "get_date", "{}"))
+
+      updated_chain = LLMChain.execute_tool_calls(chain)
+      # get the 1 expected tool result
+      %Message{role: :tool, tool_results: [%ToolResult{} = result]} = updated_chain.last_message
+      assert result.name == "get_date"
+      assert result.content == "2024-11-01"
+      assert result.processed_content == ~D[2024-11-01]
     end
   end
 
