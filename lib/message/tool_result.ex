@@ -3,6 +3,18 @@ defmodule LangChain.Message.ToolResult do
   Represents a the result of running a requested tool. The LLM's requests a tool
   use through a `ToolCall`. A `ToolResult` returns the answer or result from the
   application back to the AI.
+
+  ## Content
+  The `content` is a string that gets returned to the LLM as the result.
+
+  ## Processed Content
+  The `processed_content` field is optional. When you want to keep the results
+  of the Elixir function call as a native Elixir data structure,
+  `processed_content` can hold it.
+
+  To do this, the Elixir function's result should be a `{:ok, "String response
+  for LLM", native_elixir_data}`. See `LangChain.Function` for details and
+  examples.
   """
   use Ecto.Schema
   import Ecto.Changeset
@@ -20,6 +32,8 @@ defmodule LangChain.Message.ToolResult do
     field :name, :string
     # the content returned to the LLM/AI.
     field :content, :string
+    # optional stored results of tool result
+    field :processed_content, :any, virtual: true
     # Text to display in a UI for the result. Optional.
     field :display_text, :string
     # flag if the result is an error
@@ -28,7 +42,15 @@ defmodule LangChain.Message.ToolResult do
 
   @type t :: %ToolResult{}
 
-  @update_fields [:type, :tool_call_id, :name, :content, :display_text, :is_error]
+  @update_fields [
+    :type,
+    :tool_call_id,
+    :name,
+    :content,
+    :processed_content,
+    :display_text,
+    :is_error
+  ]
   @create_fields @update_fields
   @required_fields [:type, :tool_call_id, :content]
 

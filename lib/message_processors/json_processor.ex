@@ -5,7 +5,7 @@ defmodule LangChain.MessageProcessors.JsonProcessor do
 
   When successful, the assistant message's JSON contents are processed into a
   map and set on `processed_content`. No additional validation or processing of
-  the data is done in by this processor.
+  the data is done by this processor.
 
   When JSON data is expected but not received, or the received JSON is invalid
   or incomplete, a new user `Message` struct is returned with a text error
