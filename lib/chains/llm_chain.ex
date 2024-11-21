@@ -236,7 +236,7 @@ defmodule LangChain.Chains.LLMChain do
     an opportunity to use the `ToolResult` information in an assistant response
     message. In essence, this mode always gives the LLM the last word.
   """
-  @spec run(t(), Keyword.t()) :: {:ok, t()} | {:error, t(), String.t()}
+  @spec run(t(), Keyword.t()) :: {:ok, t()} | {:error, t(), LangChainError.t()}
   def run(chain, opts \\ [])
 
   def run(%LLMChain{} = chain, opts) do
@@ -275,12 +275,16 @@ defmodule LangChain.Chains.LLMChain do
   # Repeatedly run the chain until we get a successful ToolResponse or processed
   # assistant message. Once we've reached success, it is not submitted back to the LLM,
   # the process ends there.
-  @spec run_until_success(t()) :: {:ok, t()} | {:error, t(), String.t()}
+  @spec run_until_success(t()) :: {:ok, t()} | {:error, t(), LangChainError.t()}
   defp run_until_success(%LLMChain{last_message: %Message{} = last_message} = chain) do
     stop_or_recurse =
       cond do
         chain.current_failure_count >= chain.max_retry_count ->
-          {:error, chain, "Exceeded max failure count"}
+          {:error, chain,
+           LangChainError.exception(
+             type: "exceeded_failure_count",
+             message: "Exceeded max failure count"
+           )}
 
         last_message.role == :tool && !Message.tool_had_errors?(last_message) ->
           # a successful tool result has no errors
@@ -318,7 +322,7 @@ defmodule LangChain.Chains.LLMChain do
   # Repeatedly run the chain while `needs_response` is true. This will execute
   # tools and re-submit the tool result to the LLM giving the LLM an
   # opportunity to execute more tools or return a response.
-  @spec run_while_needs_response(t()) :: {:ok, t()} | {:error, t(), String.t()}
+  @spec run_while_needs_response(t()) :: {:ok, t()} | {:error, t(), LangChainError.t()}
   defp run_while_needs_response(%LLMChain{needs_response: false} = chain) do
     {:ok, chain}
   end
@@ -337,11 +341,16 @@ defmodule LangChain.Chains.LLMChain do
   end
 
   # internal reusable function for running the chain
-  @spec do_run(t()) :: {:ok, t()} | {:error, t(), String.t()}
+  @spec do_run(t()) :: {:ok, t()} | {:error, t(), LangChainError.t()}
   defp do_run(%LLMChain{current_failure_count: current_count, max_retry_count: max} = chain)
        when current_count >= max do
     Callbacks.fire(chain.callbacks, :on_retries_exceeded, [chain])
-    {:error, chain, "Exceeded max failure count"}
+
+    {:error, chain,
+     LangChainError.exception(
+       type: "exceeded_failure_count",
+       message: "Exceeded max failure count"
+     )}
   end
 
   defp do_run(%LLMChain{} = chain) do
@@ -385,10 +394,15 @@ defmodule LangChain.Chains.LLMChain do
 
         {:ok, updated_chain}
 
-      {:error, reason} ->
+      {:error, %LangChainError{} = reason} ->
         if chain.verbose, do: IO.inspect(reason, label: "ERROR")
         Logger.error("Error during chat call. Reason: #{inspect(reason)}")
         {:error, chain, reason}
+
+      {:error, string_reason} when is_binary(string_reason) ->
+        if chain.verbose, do: IO.inspect(string_reason, label: "ERROR")
+        Logger.error("Error during chat call. Reason: #{inspect(string_reason)}")
+        {:error, chain, LangChainError.exception(message: string_reason)}
     end
   end
 
@@ -736,7 +750,7 @@ defmodule LangChain.Chains.LLMChain do
 
       case Function.execute(function, call.arguments, context) do
         {:ok, llm_result, processed_result} ->
-          if verbose, do: IO.inspect(llm_result, label: "FUNCTION RESULT")
+          if verbose, do: IO.inspect(processed_result, label: "FUNCTION PROCESSED RESULT")
           # successful execution and storage of processed_content.
           ToolResult.new!(%{
             tool_call_id: call.call_id,

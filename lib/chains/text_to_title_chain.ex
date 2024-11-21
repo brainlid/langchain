@@ -124,7 +124,7 @@ defmodule LangChain.Chains.TextToTitleChain do
       |> TextToTitleChain.run()
 
   """
-  @spec run(t(), Keyword.t()) :: {:ok, LLMChain.t()} | {:error, LLMChain.t(), String.t()}
+  @spec run(t(), Keyword.t()) :: {:ok, LLMChain.t()} | {:error, LLMChain.t(), LangChainError.t()}
   def run(%TextToTitleChain{} = chain, opts \\ []) do
     messages =
       [

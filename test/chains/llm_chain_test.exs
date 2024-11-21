@@ -948,28 +948,30 @@ defmodule LangChain.Chains.LLMChainTest do
     @tag live_call: true, live_open_ai: true
     test "NON-STREAMING handles receiving an error when no messages sent" do
       # create and run the chain
-      {:error, _updated_chain, reason} =
+      {:error, _updated_chain, %LangChainError{} = reason} =
         LLMChain.new!(%{
           llm: ChatOpenAI.new!(%{seed: 0, stream: false}),
           verbose: false
         })
         |> LLMChain.run()
 
-      assert reason ==
+      assert reason.type == nil
+      assert reason.message ==
                "Invalid 'messages': empty array. Expected an array with minimum length 1, but got an empty array instead."
     end
 
     @tag live_call: true, live_open_ai: true
     test "STREAMING handles receiving an error when no messages sent" do
       # create and run the chain
-      {:error, _updated_chain, reason} =
+      {:error, _updated_chain, %LangChainError{} = reason} =
         LLMChain.new!(%{
           llm: ChatOpenAI.new!(%{seed: 0, stream: true}),
           verbose: false
         })
         |> LLMChain.run()
 
-      assert reason ==
+      assert reason.type == nil
+      assert reason.message ==
                "Invalid 'messages': empty array. Expected an array with minimum length 1, but got an empty array instead."
     end
 
@@ -1061,13 +1063,14 @@ defmodule LangChain.Chains.LLMChainTest do
 
       # errors when trying to send a PromptTemplate
       # create and run the chain
-      {:error, _updated_chain, reason} =
+      {:error, _updated_chain, %LangChainError{} = reason} =
         %{llm: ChatOpenAI.new!(%{seed: 0})}
         |> LLMChain.new!()
         |> LLMChain.add_messages(messages)
         |> LLMChain.run()
 
-      assert reason =~ ~r/PromptTemplates must be/
+      assert reason.type == nil
+      assert reason.message =~ ~r/PromptTemplates must be/
     end
 
     test "mode: :while_needs_response - increments current_failure_count on parse failure", %{
@@ -1087,7 +1090,7 @@ defmodule LangChain.Chains.LLMChainTest do
         Message.new_user!("Say what I want you to say.")
       ]
 
-      {:error, error_chain, reason} =
+      {:error, error_chain, %LangChainError{} = reason} =
         chain
         |> LLMChain.message_processors([JsonProcessor.new!()])
         |> LLMChain.add_messages(messages)
@@ -1095,7 +1098,8 @@ defmodule LangChain.Chains.LLMChainTest do
         |> LLMChain.run(mode: :while_needs_response)
 
       assert error_chain.current_failure_count == 3
-      assert reason == "Exceeded max failure count"
+      assert reason.type == "exceeded_failure_count"
+      assert reason.message == "Exceeded max failure count"
 
       [m1, m2, m3, m4, m5, m6, m7] = error_chain.messages
 
@@ -1155,7 +1159,7 @@ defmodule LangChain.Chains.LLMChainTest do
           callbacks: [handler]
         })
 
-      {:error, error_chain, reason} =
+      {:error, error_chain, %LangChainError{} = reason} =
         chain
         |> LLMChain.message_processors([JsonProcessor.new!()])
         |> LLMChain.add_messages([
@@ -1165,7 +1169,8 @@ defmodule LangChain.Chains.LLMChainTest do
         |> LLMChain.run(mode: :while_needs_response)
 
       assert error_chain.current_failure_count == 2
-      assert reason == "Exceeded max failure count"
+      assert reason.type == "exceeded_failure_count"
+      assert reason.message == "Exceeded max failure count"
 
       [m1, m2, m3, m4, m5] = error_chain.messages
 
@@ -1368,7 +1373,7 @@ defmodule LangChain.Chains.LLMChainTest do
         {:ok, fake_messages}
       end)
 
-      {:error, updated_chain, reason} =
+      {:error, updated_chain, %LangChainError{} = reason} =
         %{llm: ChatOpenAI.new!(%{stream: false}), verbose: false}
         |> LLMChain.new!()
         |> LLMChain.add_tools([fail_func])
@@ -1376,7 +1381,8 @@ defmodule LangChain.Chains.LLMChainTest do
         |> LLMChain.add_message(Message.new_user!("Execute the fail_func tool."))
         |> LLMChain.run(mode: :until_success)
 
-      assert reason == "Exceeded max failure count"
+      assert reason.type == "exceeded_failure_count"
+      assert reason.message == "Exceeded max failure count"
       assert updated_chain.current_failure_count == 3
     end
   end

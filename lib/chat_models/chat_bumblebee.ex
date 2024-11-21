@@ -179,8 +179,8 @@ defmodule LangChain.ChatModels.ChatBumblebee do
       {:ok, chain} ->
         chain
 
-      {:error, changeset} ->
-        raise LangChainError, changeset
+      {:error, %Ecto.Changeset{} = changeset} ->
+        raise LangChainError.exception(changeset)
     end
   end
 
@@ -229,7 +229,7 @@ defmodule LangChain.ChatModels.ChatBumblebee do
       end
     rescue
       err in LangChainError ->
-        {:error, err.message}
+        {:error, err}
     end
   end
 
@@ -259,10 +259,10 @@ defmodule LangChain.ChatModels.ChatBumblebee do
         # return a list of the complete message. As a list for compatibility.
         [message]
 
-      {:error, changeset} ->
+      {:error, %Ecto.Changeset{} = changeset} ->
         reason = Utils.changeset_error_to_string(changeset)
         Logger.error("Failed to create non-streamed full message: #{inspect(reason)}")
-        {:error, reason}
+        {:error, LangChainError.exception(changeset)}
     end
   end
 
@@ -296,14 +296,14 @@ defmodule LangChain.ChatModels.ChatBumblebee do
             Callbacks.fire(model.callbacks, :on_llm_new_delta, [model, delta])
             delta
 
-          {:error, changeset} ->
+          {:error, %Ecto.Changeset{} = changeset} ->
             reason = Utils.changeset_error_to_string(changeset)
 
             Logger.error(
               "Failed to process received model's MessageDelta data: #{inspect(reason)}"
             )
 
-            raise LangChainError, reason
+            raise LangChainError.exception(changeset)
         end
     end
 

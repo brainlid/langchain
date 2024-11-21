@@ -10,6 +10,7 @@ defmodule ChatModels.ChatVertexAITest do
   alias LangChain.Message.ToolResult
   alias LangChain.MessageDelta
   alias LangChain.Function
+  alias LangChain.LangChainError
 
   setup do
     {:ok, hello_world} =
@@ -189,8 +190,9 @@ defmodule ChatModels.ChatVertexAITest do
         ]
       }
 
-      assert [{:error, error_string}] = ChatVertexAI.do_process_response(response)
-      assert error_string == "role: is invalid"
+      assert [{:error, %LangChainError{} = error}] = ChatVertexAI.do_process_response(response)
+      assert error.type == "changeset"
+      assert error.message == "role: is invalid"
     end
 
     test "handles receiving function calls" do
@@ -254,13 +256,17 @@ defmodule ChatModels.ChatVertexAITest do
     test "handles Jason.DecodeError" do
       response = {:error, %Jason.DecodeError{}}
 
-      assert {:error, error_string} = ChatVertexAI.do_process_response(response)
-      assert "Received invalid JSON:" <> _ = error_string
+      assert {:error, %LangChainError{} = error} = ChatVertexAI.do_process_response(response)
+
+      assert error.type == "invalid_json"
+      assert "Received invalid JSON:" <> _ = error.message
     end
 
     test "handles unexpected response with error" do
       response = %{}
-      assert {:error, "Unexpected response"} = ChatVertexAI.do_process_response(response)
+      assert {:error, %LangChainError{} = error} = ChatVertexAI.do_process_response(response)
+      assert error.type == "unexpected_response"
+      assert error.message == "Unexpected response"
     end
   end
 

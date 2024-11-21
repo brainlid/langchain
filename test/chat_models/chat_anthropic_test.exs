@@ -14,6 +14,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
   alias LangChain.Function
   alias LangChain.FunctionParam
   alias LangChain.BedrockHelpers
+  alias LangChain.LangChainError
 
   @test_model "claude-3-opus-20240229"
   @bedrock_test_model "anthropic.claude-3-5-sonnet-20240620-v1:0"
@@ -287,16 +288,24 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
 
     test "handles error messages", %{model: model} do
       error = "Invalid API key"
+      message = "Received error from API: #{error}"
 
-      assert {:error, "Received error from API: #{error}"} ==
+      assert {:error, exception} =
                ChatAnthropic.do_process_response(model, %{"message" => error})
+
+      assert exception.type == nil
+      assert exception.message == message
     end
 
     test "handles stream error messages", %{model: model} do
       error = "Internal error"
+      message = "Stream exception received: #{inspect(error)}"
 
-      assert {:error, "Stream exception received: #{inspect(error)}"} ==
+      assert {:error, exception} =
                ChatAnthropic.do_process_response(model, %{bedrock_exception: error})
+
+      assert exception.type == nil
+      assert exception.message == message
     end
   end
 
@@ -495,6 +504,22 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
       assert call.name == "get_weather"
       assert call.arguments == %{"location" => "San Francisco, CA", "unit" => "celsius"}
     end
+
+    test "handles receiving overloaded error", %{model: model} do
+      response = %{
+        "type" => "error",
+        "error" => %{
+          "details" => nil,
+          "type" => "overloaded_error",
+          "message" => "Overloaded"
+        }
+      }
+
+      assert {:error, exception} = ChatAnthropic.do_process_response(model, response)
+
+      assert exception.type == "overloaded_error"
+      assert exception.message == "Overloaded"
+    end
   end
 
   describe "call/2" do
@@ -502,12 +527,12 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
     test "handles when invalid API key given" do
       {:ok, chat} = ChatAnthropic.new(%{stream: true, api_key: "invalid"})
 
-      {:error, reason} =
+      {:error, %LangChainError{} = exception} =
         ChatAnthropic.call(chat, [
           Message.new_user!("Return the response 'Colorful Threads'.")
         ])
 
-      assert reason == "Authentication failure with request"
+      assert exception.message == "Authentication failure with request"
     end
 
     @tag live_call: true, live_anthropic_bedrock: true
@@ -521,12 +546,12 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
           }
         })
 
-      {:error, reason} =
+      {:error, %LangChainError{} = exception} =
         ChatAnthropic.call(chat, [
           Message.new_user!("Return the response 'Colorful Threads'.")
         ])
 
-      assert reason ==
+      assert exception.message ==
                "Received error from API: The security token included in the request is invalid."
     end
 
@@ -567,13 +592,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
                    role: :assistant
                  },
                  %LangChain.MessageDelta{
-                   content: " up the good work",
-                   status: :incomplete,
-                   index: nil,
-                   role: :assistant
-                 },
-                 %LangChain.MessageDelta{
-                   content: "!",
+                   content: " up the good work!",
                    status: :incomplete,
                    index: nil,
                    role: :assistant
@@ -855,6 +874,28 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
                  "type" => "content_block_delta",
                  "delta" => %{"text" => " Anthrop", "type" => "text_delta"},
                  "index" => 0
+               }
+             ] = parsed
+
+      assert buffer == ""
+    end
+
+    test "handles error overloaded message" do
+      chunk = """
+      event: error\ndata: {\"type\":\"error\",\"error\":{\"details\":null,\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}
+
+      """
+
+      {parsed, buffer} = ChatAnthropic.decode_stream(%ChatAnthropic{}, {chunk, ""})
+
+      assert [
+               %{
+                 "type" => "error",
+                 "error" => %{
+                   "details" => nil,
+                   "type" => "overloaded_error",
+                   "message" => "Overloaded"
+                 }
                }
              ] = parsed
 
