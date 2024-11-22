@@ -3,10 +3,11 @@ defmodule LangChain.ChatModels.ChatModel do
   alias LangChain.Message
   alias LangChain.MessageDelta
   alias LangChain.Function
+  alias LangChain.LangChainError
   alias LangChain.Utils
 
   @type call_response ::
-          {:ok, Message.t() | [Message.t()] | [MessageDelta.t()]} | {:error, String.t()}
+          {:ok, Message.t() | [Message.t()] | [MessageDelta.t()]} | {:error, LangChainError.t()}
 
   @type tool :: Function.t()
   @type tools :: [tool()]

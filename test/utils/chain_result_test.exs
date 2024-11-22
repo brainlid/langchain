@@ -11,8 +11,10 @@ defmodule LangChain.Utils.ChainResultTest do
 
   describe "to_string/1" do
     test "passes an error tuple through" do
-      assert {:error, %LLMChain{}, "original error"} ==
-               ChainResult.to_string({:error, %LLMChain{}, "original error"})
+      an_error = LangChainError.exception("original error")
+
+      assert {:error, %LLMChain{}, an_error} ==
+               ChainResult.to_string({:error, %LLMChain{}, an_error})
     end
 
     test "returns {:ok, answer} when valid" do
@@ -30,7 +32,10 @@ defmodule LangChain.Utils.ChainResultTest do
 
     test "returns error when no last message" do
       chain = %LLMChain{last_message: nil}
-      assert {:error, chain, "No last message"} == ChainResult.to_string(chain)
+      assert {:error, _chain, %LangChainError{} = error} = ChainResult.to_string(chain)
+
+      assert error.type == "to_string"
+      assert error.message == "No last message"
     end
 
     test "returns error when incomplete last message" do
@@ -38,7 +43,10 @@ defmodule LangChain.Utils.ChainResultTest do
         last_message: Message.new!(%{role: :assistant, content: "Incomplete", status: :length})
       }
 
-      assert {:error, chain, "Message is incomplete"} == ChainResult.to_string(chain)
+      assert {:error, _chain, %LangChainError{} = error} = ChainResult.to_string(chain)
+
+      assert error.type == "to_string"
+      assert error.message == "Message is incomplete"
     end
 
     test "returns error when last message is not from assistant" do
@@ -46,7 +54,10 @@ defmodule LangChain.Utils.ChainResultTest do
         last_message: Message.new_user!("The question")
       }
 
-      assert {:error, chain, "Message is not from assistant"} == ChainResult.to_string(chain)
+      assert {:error, _chain, %LangChainError{} = error} = ChainResult.to_string(chain)
+
+      assert error.type == "to_string"
+      assert error.message == "Message is not from assistant"
     end
 
     test "handles an LLMChain.run/2 success result" do
@@ -82,7 +93,12 @@ defmodule LangChain.Utils.ChainResultTest do
     test "returns error tuple with reason when invalid" do
       data = %{thing: "one"}
       chain = %LLMChain{last_message: nil}
-      assert {:error, _chain, "No last message"} = ChainResult.to_map(chain, data, :answer)
+
+      assert {:error, _chain, %LangChainError{} = error} =
+               ChainResult.to_map(chain, data, :answer)
+
+      assert error.type == "to_string"
+      assert error.message == "No last message"
     end
   end
 

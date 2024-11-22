@@ -73,6 +73,7 @@ defmodule LangChain.Chains.DataExtractionChain do
   alias LangChain.PromptTemplate
   alias LangChain.Message
   alias LangChain.Message.ToolCall
+  alias LangChain.LangChainError
   alias LangChain.Chains.LLMChain
   alias LangChain.ChatModels.ChatOpenAI
 
@@ -86,7 +87,7 @@ Passage:
   Run the data extraction chain.
   """
   @spec run(ChatOpenAI.t(), json_schema :: map(), prompt :: [any()], opts :: Keyword.t()) ::
-          {:ok, result :: [any()]} | {:error, String.t()}
+          {:ok, result :: [any()]} | {:error, LangChainError.t()}
   def run(llm, json_schema, prompt, opts \\ []) do
     verbose = Keyword.get(opts, :verbose, false)
 
@@ -123,7 +124,7 @@ Passage:
           {:ok, info}
 
         other ->
-          {:error, "Unexpected response. #{inspect(other)}"}
+          {:error, LangChainError.exception("Unexpected response. #{inspect(other)}")}
       end
     rescue
       exception ->
@@ -131,7 +132,7 @@ Passage:
           "Caught unexpected exception in DataExtractionChain. Error: #{inspect(exception)}"
         )
 
-        {:error, "Unexpected error in DataExtractionChain. Check logs for details."}
+        {:error, LangChainError.exception("Unexpected error in DataExtractionChain. Check logs for details.")}
     end
   end
 

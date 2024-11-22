@@ -241,7 +241,10 @@ defmodule LangChain.Message do
                 # convert the error to text and return error tuple
                 {:error, Utils.changeset_error_to_string(changeset)}
 
-              {:error, reason} ->
+              {:error, %LangChainError{message: message}} ->
+                {:error, message}
+
+              {:error, reason} when is_binary(reason) ->
                 {:error, reason}
             end
           end)

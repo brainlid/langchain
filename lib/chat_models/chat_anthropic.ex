@@ -237,14 +237,17 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     |> Map.drop([:model, :stream])
   end
 
-  defp get_tool_choice(%ChatAnthropic{tool_choice: %{"type" => "tool", "name" => name}=_tool_choice}) when is_binary(name) and byte_size(name) > 0,
-    do: %{"type" => "tool", "name" => name}
+  defp get_tool_choice(%ChatAnthropic{
+         tool_choice: %{"type" => "tool", "name" => name} = _tool_choice
+       })
+       when is_binary(name) and byte_size(name) > 0,
+       do: %{"type" => "tool", "name" => name}
 
-  defp get_tool_choice(%ChatAnthropic{tool_choice: %{"type" => type}=_tool_choice}) when is_binary(type) and byte_size(type) > 0,
-    do: %{"type" => type}
+  defp get_tool_choice(%ChatAnthropic{tool_choice: %{"type" => type} = _tool_choice})
+       when is_binary(type) and byte_size(type) > 0,
+       do: %{"type" => type}
 
   defp get_tool_choice(%ChatAnthropic{}), do: nil
-
 
   defp get_tools_for_api(nil), do: []
 
@@ -288,15 +291,15 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     try do
       # make base api request and perform high-level success/failure checks
       case do_api_request(anthropic, messages, functions) do
-        {:error, reason} ->
-          {:error, reason}
+        {:error, %LangChainError{} = error} ->
+          {:error, error}
 
         parsed_data ->
           {:ok, parsed_data}
       end
     rescue
       err in LangChainError ->
-        {:error, err.message}
+        {:error, err}
     end
   end
 
@@ -305,18 +308,20 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   # The result of the function is:
   #
   # - `result` - where `result` is a data-structure like a list or map.
-  # - `{:error, reason}` - Where reason is a string explanation of what went wrong.
+  # - `{:error, %LangChainError{} = reason}` - An `LangChain.LangChainError` exception with an explanation of what went wrong.
   #
   # If `stream: false`, the completed message is returned.
   #
   # Retries the request up to 3 times on transient errors with a 1 second delay
   @doc false
   @spec do_api_request(t(), [Message.t()], ChatModel.tools(), (any() -> any())) ::
-          list() | struct() | {:error, String.t()}
+          list() | struct() | {:error, LangChainError.t()}
   def do_api_request(anthropic, messages, tools, retry_count \\ 3)
 
   def do_api_request(_anthropic, _messages, _functions, 0) do
-    raise LangChainError, "Retries exceeded. Connection failed."
+    raise LangChainError,
+      type: "retries_exceeded",
+      message: "Retries exceeded. Connection failed."
   end
 
   def do_api_request(
@@ -341,7 +346,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     |> Req.post()
     # parse the body and return it as parsed structs
     |> case do
-      {:ok, %Req.Response{body: data} = response} ->
+      {:ok, %Req.Response{status: 200, body: data} = response} ->
         Callbacks.fire(anthropic.callbacks, :on_llm_ratelimit_info, [
           anthropic,
           get_ratelimit_info(response.headers)
@@ -361,8 +366,12 @@ defmodule LangChain.ChatModels.ChatAnthropic do
             result
         end
 
-      {:error, %Req.TransportError{reason: :timeout}} ->
-        {:error, "Request timed out"}
+      {:ok, %Req.Response{status: 529}} ->
+        {:error, LangChainError.exception(type: "overloaded", message: "Overloaded")}
+
+      {:error, %Req.TransportError{reason: :timeout} = err} ->
+        {:error,
+         LangChainError.exception(type: "timeout", message: "Request timed out", original: err)}
 
       {:error, %Req.TransportError{reason: :closed}} ->
         # Force a retry by making a recursive call decrementing the counter
@@ -370,8 +379,9 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         do_api_request(anthropic, messages, tools, retry_count - 1)
 
       other ->
-        Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
-        other
+        message = "Unexpected and unhandled API response! #{inspect(other)}"
+        Logger.error(message)
+        {:error, LangChainError.exception(type: "unexpected_response", message: message)}
     end
   end
 
@@ -405,11 +415,11 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
         data
 
-      {:error, %LangChainError{message: reason}} ->
-        {:error, reason}
+      {:error, %LangChainError{} = error} ->
+        {:error, error}
 
-      {:error, %Req.TransportError{reason: :timeout}} ->
-        {:error, "Request timed out"}
+      {:error, %Req.TransportError{reason: :timeout} = err} ->
+        {:error, LangChainError.exception(type: "timeout", message: "Request timed out", original: err)}
 
       {:error, %Req.TransportError{reason: :closed}} ->
         # Force a retry by making a recursive call decrementing the counter
@@ -417,11 +427,9 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         do_api_request(anthropic, messages, tools, retry_count - 1)
 
       other ->
-        Logger.error(
-          "Unhandled and unexpected response from streamed post call. #{inspect(other)}"
-        )
-
-        {:error, "Unexpected response"}
+        message = "Unhandled and unexpected response from streamed post call. #{inspect(other)}"
+        Logger.error(message)
+        {:error, LangChainError.exception(type: "unexpected_response", message: message)}
     end
   end
 
@@ -466,7 +474,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
           | [Message.t()]
           | MessageDelta.t()
           | [MessageDelta.t()]
-          | {:error, String.t()}
+          | {:error, LangChainError.t()}
   def do_process_response(_model, %{
         "role" => "assistant",
         "content" => contents,
@@ -572,30 +580,43 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     |> to_response()
   end
 
-  def do_process_response(_model, %{"error" => %{"message" => reason}}) do
+  def do_process_response(_model, %{
+        "type" => "error",
+        "error" => %{"type" => type, "message" => reason}
+      }) do
     Logger.error("Received error from API: #{inspect(reason)}")
-    {:error, reason}
+    {:error, LangChainError.exception(type: type, message: reason)}
+  end
+
+  def do_process_response(_model, %{"error" => %{"message" => reason} = error}) do
+    Logger.error("Received error from API: #{inspect(reason)}")
+    {:error, LangChainError.exception(type: error["type"], message: reason)}
   end
 
   def do_process_response(_model, {:error, %Jason.DecodeError{} = response}) do
     error_message = "Received invalid JSON: #{inspect(response)}"
     Logger.error(error_message)
-    {:error, error_message}
+
+    {:error,
+     LangChainError.exception(type: "invalid_json", message: error_message, original: response)}
   end
 
   def do_process_response(%ChatAnthropic{bedrock: %BedrockConfig{}}, %{"message" => message}) do
-    {:error, "Received error from API: #{message}"}
+    {:error, LangChainError.exception(message: "Received error from API: #{message}")}
   end
 
   def do_process_response(%ChatAnthropic{bedrock: %BedrockConfig{}}, %{
         bedrock_exception: exceptions
       }) do
-    {:error, "Stream exception received: #{inspect(exceptions)}"}
+    {:error,
+     LangChainError.exception(message: "Stream exception received: #{inspect(exceptions)}")}
   end
 
   def do_process_response(_model, other) do
     Logger.error("Trying to process an unexpected response. #{inspect(other)}")
-    {:error, "Unexpected response"}
+
+    {:error,
+     LangChainError.exception(type: "unexpected_response", message: "Unexpected response")}
   end
 
   # for parsing a list of received content JSON objects
@@ -650,7 +671,9 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   end
 
   defp to_response({:ok, message}), do: message
-  defp to_response({:error, changeset}), do: {:error, Utils.changeset_error_to_string(changeset)}
+
+  defp to_response({:error, %Ecto.Changeset{} = changeset}),
+    do: {:error, LangChainError.exception(changeset)}
 
   defp stop_reason_to_status("end_turn"), do: :complete
   defp stop_reason_to_status("tool_use"), do: :complete
@@ -711,6 +734,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   defp relevant_event?("event: content_block_delta\n" <> _rest), do: true
   defp relevant_event?("event: content_block_start\n" <> _rest), do: true
   defp relevant_event?("event: message_delta\n" <> _rest), do: true
+  defp relevant_event?("event: error\n" <> _rest), do: true
   # ignoring
   defp relevant_event?("event: message_start\n" <> _rest), do: false
   defp relevant_event?("event: ping\n" <> _rest), do: false

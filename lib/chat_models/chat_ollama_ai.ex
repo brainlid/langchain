@@ -265,10 +265,10 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   # The result of the function is:
   #
   # - `result` - where `result` is a data-structure like a list or map.
-  # - `{:error, reason}` - Where reason is a string explanation of what went wrong.
+  # - `{:error, reason}` - Where reason is a `LangChain.LangChainError`
+  #   explanation of what went wrong.
   #
-  # **NOTE:** callback function are IGNORED for ollama ai
-  # When `stream: true` is
+  # **NOTE:** callback function are IGNORED for ollama ai When `stream: true` is
   # If `stream: false`, the completed message is returned.
   #
   # If `stream: true`, the completed message is returned after MessageDelta's.
@@ -276,11 +276,11 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   # Retries the request up to 3 times on transient errors with a 1 second delay
   @doc false
   @spec do_api_request(t(), [Message.t()], [Function.t()]) ::
-          list() | struct() | {:error, String.t()}
+          list() | struct() | {:error, LangChainError.t()}
   def do_api_request(ollama_ai, messages, functions, retry_count \\ 3)
 
   def do_api_request(_ollama_ai, _messages, _functions, 0) do
-    raise LangChainError, "Retries exceeded. Connection failed."
+    raise LangChainError.exception(type: "retries_exceeded", message: "Retries exceeded. Connection failed.")
   end
 
   def do_api_request(
@@ -348,11 +348,11 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
       {:ok, %Req.Response{body: data}} ->
         data
 
-      {:error, %LangChainError{message: reason}} ->
-        {:error, reason}
+      {:error, %LangChainError{} = error} ->
+        {:error, error}
 
-      {:error, %Req.TransportError{reason: :timeout}} ->
-        {:error, "Request timed out"}
+      {:error, %Req.TransportError{reason: :timeout} = err} ->
+        {:error, LangChainError.exception(type: "timeout", message: "Request timed out", original: err)}
 
       {:error, %Req.TransportError{reason: :closed}} ->
         # Force a retry by making a recursive call decrementing the counter
@@ -364,7 +364,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
           "Unhandled and unexpected response from streamed post call. #{inspect(other)}"
         )
 
-        {:error, "Unexpected response"}
+        {:error, LangChainError.exception(type: "unexpected_response", message: "Unexpected response")}
     end
   end
 
@@ -382,7 +382,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
 
   def do_process_response(_model, %{"error" => reason}) do
     Logger.error("Received error from API: #{inspect(reason)}")
-    {:error, reason}
+    {:error, LangChainError.exception(message: reason)}
   end
 
   defp create_message(message, status, message_type) do
@@ -390,8 +390,8 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
       {:ok, new_message} ->
         new_message
 
-      {:error, changeset} ->
-        {:error, Utils.changeset_error_to_string(changeset)}
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:error, LangChainError.exception(changeset)}
     end
   end
 
