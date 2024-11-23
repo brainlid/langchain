@@ -555,6 +555,22 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
                "Received error from API: The security token included in the request is invalid."
     end
 
+    test "returns error tuple when receiving overloaded_error" do
+      # Made NOT LIVE here
+      expect(Req, :post, fn _req_struct, _opts ->
+        # IO.puts "REQ OVERLOAD USED!!!!"
+        {:ok,
+         {:error,
+          LangChainError.exception(type: "overloaded_error", message: "Overloaded (from test)")}}
+      end)
+
+      model = ChatAnthropic.new!(%{stream: true, model: @test_model})
+      assert {:error, reason} = ChatAnthropic.call(model, "prompt", [])
+
+      assert reason.type == "overloaded_error"
+      assert reason.message == "Overloaded (from test)"
+    end
+
     for api <- @apis do
       Module.put_attribute(__MODULE__, :tag, {:"live_#{api}", true})
       @tag live_call: true, live_api: api

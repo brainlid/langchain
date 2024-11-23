@@ -13,6 +13,7 @@ Application.put_env(
 Mimic.copy(LangChain.Utils.BedrockStreamDecoder)
 Mimic.copy(LangChain.Utils.AwsEventstreamDecoder)
 
+Mimic.copy(Req)
 Mimic.copy(LangChain.ChatModels.ChatOpenAI)
 Mimic.copy(LangChain.ChatModels.ChatAnthropic)
 Mimic.copy(LangChain.ChatModels.ChatMistralAI)

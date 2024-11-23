@@ -6,6 +6,7 @@ defmodule LangChain.Chains.LLMChainTest do
 
   import LangChain.Fixtures
   alias LangChain.ChatModels.ChatOpenAI
+  alias LangChain.ChatModels.ChatAnthropic
   alias LangChain.Chains.LLMChain
   alias LangChain.PromptTemplate
   alias LangChain.Function
@@ -16,6 +17,8 @@ defmodule LangChain.Chains.LLMChainTest do
   alias LangChain.MessageDelta
   alias LangChain.LangChainError
   alias LangChain.MessageProcessors.JsonProcessor
+
+  @anthropic_test_model "claude-3-opus-20240229"
 
   setup do
     {:ok, chat} = ChatOpenAI.new(%{temperature: 0})
@@ -956,6 +959,7 @@ defmodule LangChain.Chains.LLMChainTest do
         |> LLMChain.run()
 
       assert reason.type == nil
+
       assert reason.message ==
                "Invalid 'messages': empty array. Expected an array with minimum length 1, but got an empty array instead."
     end
@@ -971,6 +975,7 @@ defmodule LangChain.Chains.LLMChainTest do
         |> LLMChain.run()
 
       assert reason.type == nil
+
       assert reason.message ==
                "Invalid 'messages': empty array. Expected an array with minimum length 1, but got an empty array instead."
     end
@@ -1030,6 +1035,24 @@ defmodule LangChain.Chains.LLMChainTest do
       assert final_response.content =~ "fra"
       assert final_response.role == :assistant
       assert_received {:function_called, "fly_regions"}
+    end
+
+    test "returns error when receives overloaded_error from Anthropic" do
+      # Made NOT LIVE here
+      expect(ChatAnthropic, :call, fn _model, _prompt, _tools ->
+        # IO.puts "ChatAnthropic.call OVERLOAD USED!!!!"
+        {:error,
+         LangChainError.exception(type: "overloaded_error", message: "Overloaded (from test)")}
+      end)
+
+      model = ChatAnthropic.new!(%{stream: true, model: @anthropic_test_model})
+
+      assert {:error, _updated_chain, reason} =
+               LLMChain.new!(%{llm: model})
+               |> LLMChain.run()
+
+      assert reason.type == "overloaded_error"
+      assert reason.message == "Overloaded (from test)"
     end
 
     test "errors when messages have PromptTemplates" do
