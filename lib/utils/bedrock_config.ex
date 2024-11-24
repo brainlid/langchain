@@ -58,11 +58,6 @@ defmodule LangChain.Utils.BedrockConfig do
   def changeset(bedrock, attrs) do
     bedrock
     |> cast(attrs, @create_fields)
-    |> common_validations()
-  end
-
-  defp common_validations(changeset) do
-    changeset
     |> validate_required(@required_fields)
   end
 
