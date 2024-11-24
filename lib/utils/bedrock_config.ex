@@ -55,31 +55,6 @@ defmodule LangChain.Utils.BedrockConfig do
   @create_fields [:credentials, :region, :anthropic_version]
   @required_fields @create_fields
 
-  @doc """
-  Build a new BedrockConfig and return an `:ok`/`:error` tuple with the result.
-  """
-  @spec new(attrs :: map()) :: {:ok, t()} | {:error, Ecto.Changeset.t()}
-  def new(attrs \\ %{}) do
-    %BedrockConfig{}
-    |> cast(attrs, @create_fields)
-    |> common_validations()
-    |> apply_action(:insert)
-  end
-
-  @doc """
-  Build a new BedrockConfig and return it or raise an error if invalid.
-  """
-  @spec new!(attrs :: map()) :: t() | no_return()
-  def new!(attrs \\ %{}) do
-    case new(attrs) do
-      {:ok, message} ->
-        message
-
-      {:error, changeset} ->
-        raise LangChainError, changeset
-    end
-  end
-
   def changeset(bedrock, attrs) do
     bedrock
     |> cast(attrs, @create_fields)
