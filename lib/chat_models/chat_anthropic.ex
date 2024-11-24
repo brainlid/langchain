@@ -53,6 +53,26 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         tool_choice: %{"type" => "tool", "name" => "get_weather"}
       })
 
+  ## AWS Bedrock Support
+
+  Anthropic Claude is supported in [AWS Bedrock](https://docs.aws.amazon.com/bedrock/latest/userguide/what-is-bedrock.html).
+
+  To configure `ChatAnthropic` for use on AWS Bedrock:
+
+  1. Request [Model Access](https://console.aws.amazon.com/bedrock/home?#/modelaccess) to get access to the Anthropic models you intend to use.
+  2. Using your AWS Console, create an Access Key for your application.
+  3. Set the key values in your `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` ENVs.
+  4. Get the Model ID for the model you intend to use. [Base Models](https://console.aws.amazon.com/bedrock/home?#/models)
+  5. Refer to `LangChain.Utils.BedrockConfig` for setting up the Bedrock authentication credentials for your environment.
+  6. Setup your ChatAnthropic similar to the following:
+
+      alias LangChain.ChatModels.ChatAnthropic
+
+      ChatAnthropic.new!(%{
+        model: "anthropic.claude-3-5-sonnet-20241022-v2:0",
+        bedrock: BedrockConfig.from_application_env!()
+      })
+
   """
   use Ecto.Schema
   require Logger
