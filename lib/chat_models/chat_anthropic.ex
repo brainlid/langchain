@@ -63,10 +63,15 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   2. Using your AWS Console, create an Access Key for your application.
   3. Set the key values in your `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` ENVs.
   4. Get the Model ID for the model you intend to use. [Base Models](https://console.aws.amazon.com/bedrock/home?#/models)
-  5. Setup your ChatAnthropic similar to the following:
+  5. Refer to `LangChain.Utils.BedrockConfig` for setting up the Bedrock authentication credentials for your environment.
+  6. Setup your ChatAnthropic similar to the following:
 
       alias LangChain.ChatModels.ChatAnthropic
-      ChatAnthropic.new!(%{bedrock: })
+
+      ChatAnthropic.new!(%{
+        model: "anthropic.claude-3-5-sonnet-20241022-v2:0",
+        bedrock: BedrockConfig.from_application_env!()
+      })
 
   """
   use Ecto.Schema
