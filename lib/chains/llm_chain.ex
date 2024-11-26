@@ -454,7 +454,7 @@ defmodule LangChain.Chains.LLMChain do
   completes the message, the LLMChain is updated to clear the `delta` and the
   `last_message` and list of messages are updated.
   """
-  @spec apply_delta(t(), MessageDelta.t()) :: t()
+  @spec apply_delta(t(), MessageDelta.t() | {:error, LangChainError.t()}) :: t()
   def apply_delta(%LLMChain{delta: nil} = chain, %MessageDelta{} = new_delta) do
     %LLMChain{chain | delta: new_delta}
   end
@@ -462,6 +462,11 @@ defmodule LangChain.Chains.LLMChain do
   def apply_delta(%LLMChain{delta: %MessageDelta{} = delta} = chain, %MessageDelta{} = new_delta) do
     merged = MessageDelta.merge_delta(delta, new_delta)
     delta_to_message_when_complete(%LLMChain{chain | delta: merged})
+  end
+
+  # Handle when the server is overloaded and cancelled the stream on the server side.
+  def apply_delta(%LLMChain{} = chain, {:error, %LangChainError{type: "overloaded"}}) do
+    cancel_delta(chain, :cancelled)
   end
 
   @doc """

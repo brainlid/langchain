@@ -472,6 +472,27 @@ defmodule LangChain.Chains.LLMChainTest do
       assert tool_call.arguments == %{"expression" => "100 + 300 - 200"}
       assert updated_chain.messages == [last]
     end
+
+    test "cancels the current delta when applying an overloaded error", %{chain: chain} do
+      assert chain.messages == []
+
+      updated_chain =
+        chain
+        |> LLMChain.apply_delta(
+          MessageDelta.new!(%{role: :assistant, content: "Greetings from "})
+        )
+        |> LLMChain.apply_delta(MessageDelta.new!(%{content: "your "}))
+        |> LLMChain.apply_delta(MessageDelta.new!(%{content: "favorite "}))
+        |> LLMChain.apply_delta({:error, LangChainError.exception(type: "overloaded", message: "Overloaded")})
+
+      # the delta is complete and removed from the chain
+      assert updated_chain.delta == nil
+      # the delta is converted to a message and applied to the messages
+      assert [%Message{} = new_message] = updated_chain.messages
+      assert new_message.role == :assistant
+      assert new_message.content == "Greetings from your favorite "
+      assert new_message.status == :cancelled
+    end
   end
 
   describe "apply_deltas/2" do
