@@ -623,6 +623,11 @@ defmodule LangChain.ChatModels.ChatAnthropic do
      LangChainError.exception(type: "invalid_json", message: error_message, original: response)}
   end
 
+  def do_process_response(%ChatAnthropic{bedrock: %BedrockConfig{}}, %{"message" => "Too many requests" <> _rest = message}) do
+    # the error isn't wrapped in an error JSON object. tsk, tsk
+    {:error, LangChainError.exception(type: "too_many_requests", message: message)}
+  end
+
   def do_process_response(%ChatAnthropic{bedrock: %BedrockConfig{}}, %{"message" => message}) do
     {:error, LangChainError.exception(message: "Received error from API: #{message}")}
   end
