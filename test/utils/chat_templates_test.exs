@@ -468,4 +468,199 @@ defmodule LangChain.Utils.ChatTemplatesTest do
       assert result == expected
     end
   end
+
+
+  defp hello_world(_args, _context) do
+    "Hello world!"
+  end
+
+  describe "apply_chat_template!/3 - :llama_3_1_json_tool_calling format" do
+    test "includes provided system message" do
+      messages = [
+        Message.new_system!("system_message"),
+        Message.new_user!("user_prompt")
+      ]
+
+      schema_def = %{
+        type: "object",
+        properties: %{
+          info: %{
+            type: "object",
+            properties: %{
+              name: %{type: "string"}
+            },
+            required: ["name"]
+          }
+        },
+        required: ["info"]
+      }
+
+      {:ok, fun} =
+        LangChain.Function.new(%{
+          "name" => "say_hi",
+          "description" => "Provide a friendly greeting.",
+          "parameters_schema" => schema_def,
+          "function" => &hello_world/2
+        })
+      tools = [fun]
+
+      date = Calendar.strftime(DateTime.utc_now(), "%d %B %Y")
+
+      expected =
+      "<|begin_of_text|>\n<|start_header_id|>system<|end_header_id|>\n\nsystem_message\n\nCutting Knowledge Date: December 2023\nToday Date: #{date}\n\nWhen you receive a tool call response, use the output to format an answer to the orginal user question.\n\nYou are a helpful assistant with tool calling capabilities.<|eot_id|>\n<|start_header_id|>user<|end_header_id|>\n\nGiven the following functions, please respond with a JSON for a function call with its proper arguments that best answers the given prompt.\n\nRespond in the format {\"name\": function name, \"parameters\": dictionary of argument name and its value}. Do not use variables.\n[\n  {\n    \"function\": {\n      \"name\": \"say_hi\",\n      \"description\": \"Provide a friendly greeting.\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"required\": [\n          \"info\"\n        ],\n        \"properties\": {\n          \"info\": {\n            \"type\": \"object\",\n            \"required\": [\n              \"name\"\n            ],\n            \"properties\": {\n              \"name\": {\n                \"type\": \"string\"\n              }\n            }\n          }\n        }\n      }\n    },\n    \"type\": \"function\"\n  }\n]\n\nuser_prompt<|eot_id|>\n<|start_header_id|>assistant<|end_header_id|>\n\n"
+      result = ChatTemplates.apply_chat_template_with_tools!(messages, :llama_3_1_json_tool_calling, tools)
+      assert result == expected
+    end
+
+    test "does not add generation prompt when set to false" do
+      messages = [
+        Message.new_system!("system_message"),
+        Message.new_user!("user_prompt")
+      ]
+
+      schema_def = %{
+        type: "object",
+        properties: %{
+          info: %{
+            type: "object",
+            properties: %{
+              name: %{type: "string"}
+            },
+            required: ["name"]
+          }
+        },
+        required: ["info"]
+      }
+
+      {:ok, fun} =
+        LangChain.Function.new(%{
+          "name" => "say_hi",
+          "description" => "Provide a friendly greeting.",
+          "parameters_schema" => schema_def,
+          "function" => &hello_world/2
+        })
+      tools = [fun]
+
+      date = Calendar.strftime(DateTime.utc_now(), "%d %B %Y")
+
+      expected =
+      "<|begin_of_text|>\n<|start_header_id|>system<|end_header_id|>\n\nsystem_message\n\nCutting Knowledge Date: December 2023\nToday Date: #{date}\n\nWhen you receive a tool call response, use the output to format an answer to the orginal user question.\n\nYou are a helpful assistant with tool calling capabilities.<|eot_id|>\n<|start_header_id|>user<|end_header_id|>\n\nGiven the following functions, please respond with a JSON for a function call with its proper arguments that best answers the given prompt.\n\nRespond in the format {\"name\": function name, \"parameters\": dictionary of argument name and its value}. Do not use variables.\n[\n  {\n    \"function\": {\n      \"name\": \"say_hi\",\n      \"description\": \"Provide a friendly greeting.\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"required\": [\n          \"info\"\n        ],\n        \"properties\": {\n          \"info\": {\n            \"type\": \"object\",\n            \"required\": [\n              \"name\"\n            ],\n            \"properties\": {\n              \"name\": {\n                \"type\": \"string\"\n              }\n            }\n          }\n        }\n      }\n    },\n    \"type\": \"function\"\n  }\n]\n\nuser_prompt<|eot_id|>\n"
+
+      result =
+        ChatTemplates.apply_chat_template_with_tools!(messages, :llama_3_1_json_tool_calling, tools, add_generation_prompt: false)
+
+      assert result == expected
+    end
+
+    test "no system message when not provided" do
+      messages = [Message.new_user!("user_prompt")]
+
+      schema_def = %{
+        type: "object",
+        properties: %{
+          info: %{
+            type: "object",
+            properties: %{
+              name: %{type: "string"}
+            },
+            required: ["name"]
+          }
+        },
+        required: ["info"]
+      }
+
+      {:ok, fun} =
+        LangChain.Function.new(%{
+          "name" => "say_hi",
+          "description" => "Provide a friendly greeting.",
+          "parameters_schema" => schema_def,
+          "function" => &hello_world/2
+        })
+      tools = [fun]
+
+      date = Calendar.strftime(DateTime.utc_now(), "%d %B %Y")
+
+      expected =
+      "<|begin_of_text|>\n<|start_header_id|>system<|end_header_id|>\n\n\n\nCutting Knowledge Date: December 2023\nToday Date: #{date}\n\nWhen you receive a tool call response, use the output to format an answer to the orginal user question.\n\nYou are a helpful assistant with tool calling capabilities.<|eot_id|>\n<|start_header_id|>user<|end_header_id|>\n\nGiven the following functions, please respond with a JSON for a function call with its proper arguments that best answers the given prompt.\n\nRespond in the format {\"name\": function name, \"parameters\": dictionary of argument name and its value}. Do not use variables.\n[\n  {\n    \"function\": {\n      \"name\": \"say_hi\",\n      \"description\": \"Provide a friendly greeting.\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"required\": [\n          \"info\"\n        ],\n        \"properties\": {\n          \"info\": {\n            \"type\": \"object\",\n            \"required\": [\n              \"name\"\n            ],\n            \"properties\": {\n              \"name\": {\n                \"type\": \"string\"\n              }\n            }\n          }\n        }\n      }\n    },\n    \"type\": \"function\"\n  }\n]\n\nuser_prompt<|eot_id|>\n<|start_header_id|>assistant<|end_header_id|>\n\n"
+      result = ChatTemplates.apply_chat_template_with_tools!(messages, :llama_3_1_json_tool_calling, tools)
+      assert result == expected
+    end
+
+    test "formats answered question correctly" do
+      messages = [
+        Message.new_system!("system_message"),
+        Message.new_user!("user_prompt"),
+        Message.new_assistant!("assistant_response")
+      ]
+
+      schema_def = %{
+        type: "object",
+        properties: %{
+          info: %{
+            type: "object",
+            properties: %{
+              name: %{type: "string"}
+            },
+            required: ["name"]
+          }
+        },
+        required: ["info"]
+      }
+
+      {:ok, fun} =
+        LangChain.Function.new(%{
+          "name" => "say_hi",
+          "description" => "Provide a friendly greeting.",
+          "parameters_schema" => schema_def,
+          "function" => &hello_world/2
+        })
+      tools = [fun]
+
+      date = Calendar.strftime(DateTime.utc_now(), "%d %B %Y")
+
+      expected =
+      "<|begin_of_text|>\n<|start_header_id|>system<|end_header_id|>\n\nsystem_message\n\nCutting Knowledge Date: December 2023\nToday Date: #{date}\n\nWhen you receive a tool call response, use the output to format an answer to the orginal user question.\n\nYou are a helpful assistant with tool calling capabilities.<|eot_id|>\n<|start_header_id|>user<|end_header_id|>\n\nGiven the following functions, please respond with a JSON for a function call with its proper arguments that best answers the given prompt.\n\nRespond in the format {\"name\": function name, \"parameters\": dictionary of argument name and its value}. Do not use variables.\n[\n  {\n    \"function\": {\n      \"name\": \"say_hi\",\n      \"description\": \"Provide a friendly greeting.\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"required\": [\n          \"info\"\n        ],\n        \"properties\": {\n          \"info\": {\n            \"type\": \"object\",\n            \"required\": [\n              \"name\"\n            ],\n            \"properties\": {\n              \"name\": {\n                \"type\": \"string\"\n              }\n            }\n          }\n        }\n      }\n    },\n    \"type\": \"function\"\n  }\n]\n\nuser_prompt<|eot_id|>\n<|start_header_id|>assistant<|end_header_id|>\n\nassistant_response<|eot_id|>\n"
+      result = ChatTemplates.apply_chat_template_with_tools!(messages, :llama_3_1_json_tool_calling, tools)
+      assert result == expected
+    end
+
+    test "formats 2nd question correctly" do
+      messages = [
+        Message.new_system!("system_message"),
+        Message.new_user!("user_prompt"),
+        Message.new_assistant!("assistant_response"),
+        Message.new_user!("user_2nd")
+      ]
+
+
+      schema_def = %{
+        type: "object",
+        properties: %{
+          info: %{
+            type: "object",
+            properties: %{
+              name: %{type: "string"}
+            },
+            required: ["name"]
+          }
+        },
+        required: ["info"]
+      }
+
+      {:ok, fun} =
+        LangChain.Function.new(%{
+          "name" => "say_hi",
+          "description" => "Provide a friendly greeting.",
+          "parameters_schema" => schema_def,
+          "function" => &hello_world/2
+        })
+      tools = [fun]
+      date = Calendar.strftime(DateTime.utc_now(), "%d %B %Y")
+
+      expected =
+      "<|begin_of_text|>\n<|start_header_id|>system<|end_header_id|>\n\nsystem_message\n\nCutting Knowledge Date: December 2023\nToday Date: #{date}\n\nWhen you receive a tool call response, use the output to format an answer to the orginal user question.\n\nYou are a helpful assistant with tool calling capabilities.<|eot_id|>\n<|start_header_id|>user<|end_header_id|>\n\nGiven the following functions, please respond with a JSON for a function call with its proper arguments that best answers the given prompt.\n\nRespond in the format {\"name\": function name, \"parameters\": dictionary of argument name and its value}. Do not use variables.\n[\n  {\n    \"function\": {\n      \"name\": \"say_hi\",\n      \"description\": \"Provide a friendly greeting.\",\n      \"parameters\": {\n        \"type\": \"object\",\n        \"required\": [\n          \"info\"\n        ],\n        \"properties\": {\n          \"info\": {\n            \"type\": \"object\",\n            \"required\": [\n              \"name\"\n            ],\n            \"properties\": {\n              \"name\": {\n                \"type\": \"string\"\n              }\n            }\n          }\n        }\n      }\n    },\n    \"type\": \"function\"\n  }\n]\n\nuser_prompt<|eot_id|>\n<|start_header_id|>assistant<|end_header_id|>\n\nassistant_response<|eot_id|>\n<|start_header_id|>user<|end_header_id|>\n\nuser_2nd<|eot_id|>\n<|start_header_id|>assistant<|end_header_id|>\n\n"
+      result = ChatTemplates.apply_chat_template_with_tools!(messages, :llama_3_1_json_tool_calling, tools)
+      assert result == expected
+    end
+  end
 end

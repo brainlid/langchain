@@ -142,6 +142,8 @@ defmodule LangChain.Utils.ChatTemplates do
     |> Enum.each(fn
       {%Message{role: :user}, index} when is_even(index) ->
         :ok
+      {%Message{role: :tool}, index} when is_even(index) ->
+        :ok
 
       {%Message{role: :assistant}, index} when is_odd(index) ->
         :ok
@@ -314,11 +316,118 @@ defmodule LangChain.Utils.ChatTemplates do
     )
   end
 
+  @doc """
+  Transform a list of messages into a text prompt in the desired format for the
+  LLM.
+  And adds tool configuration.
+
+  ## Options
+
+  - `:add_generation_prompt` - Boolean. Defaults to `true` when the last message
+    is a user prompt. Depending on the format, when a user message is the last
+    message, then the text prompt should begin the portion for the assistant to
+    trigger the assistant's text generation.
+
+  """
+  @spec apply_chat_template_with_tools!([Message.t()], chat_format, [Function.t()], opts :: Keyword.t()) ::
+          String.t() | no_return()
+  def apply_chat_template_with_tools!(messages, chat_format, tools \\ [], opts \\ [])
+  # Does LLaMa 3.1 json tool calling formatted text
+  def apply_chat_template_with_tools!(messages, :llama_3_1_json_tool_calling, tools, opts) do
+    # <|begin_of_text|>
+    # <|start_header_id|>system<|end_header_id|>
+    #
+    # You are a helpful assistant.<|eot_id|>
+    # <|start_header_id|>user<|end_header_id|>
+    #
+    # What do you know about elixir?<|eot_id|>
+    # <|start_header_id|>assistant<|end_header_id|>
+
+    add_generation_prompt =
+      Keyword.get(opts, :add_generation_prompt, default_add_generation_prompt_value(messages))
+
+    {system, first_user, rest} = prep_and_validate_messages(messages)
+    rest = rest
+      |> Enum.map(fn message ->
+        case message.role do
+          :tool ->
+            tool_result = Enum.at(message.tool_results, 0)
+            content = Jason.encode!(%{output: tool_result.content})
+             %{message | content: content, role: "ipython"}
+          _ -> message
+        end
+       end)
+
+    tools_json_schema_string =
+    tools
+    |> Enum.map(fn %LangChain.Function{
+      name: name,
+      description: description,
+      parameters_schema: schema
+    } ->
+      %{
+        type: "function",
+        function: %{
+          name: name,
+          description: description,
+          parameters: schema,
+        }
+      }
+      end)
+    |> Jason.encode!
+    |> Jason.Formatter.pretty_print
+
+    # intentionally indentaion and newlines!!! for explicit control of newlines and spaces.
+    text = """
+<|begin_of_text|>
+<|start_header_id|>system<|end_header_id|>
+
+<%= @system_content %>
+
+Cutting Knowledge Date: December 2023
+Today Date: <%= @date %>
+
+When you receive a tool call response, use the output to format an answer to the orginal user question.
+
+You are a helpful assistant with tool calling capabilities.<|eot_id|>
+<|start_header_id|>user<|end_header_id|>
+
+Given the following functions, please respond with a JSON for a function call with its proper arguments that best answers the given prompt.
+
+Respond in the format {"name": function name, "parameters": dictionary of argument name and its value}. Do not use variables.
+<%= @tools_json_schema_string %>
+
+<%= @first_user.content %><|eot_id|>
+<%= for message <- @rest do %><|start_header_id|><%= message.role %><|end_header_id|>
+
+<%= message.content %><|eot_id|>
+<% end %><%= if @add_generation_prompt do %><|start_header_id|>assistant<|end_header_id|>
+
+<% end %>
+"""
+|> String.slice(0..-2//1)
+
+    EEx.eval_string(text,
+      assigns: [
+        tools_json_schema_string: tools_json_schema_string,
+        date: Calendar.strftime(DateTime.utc_now(), "%d %B %Y"),
+        system_content: case system do
+          nil -> ""
+          system -> system.content
+        end,
+        first_user: first_user,
+        rest: rest |> Enum.drop_while(&(&1 == nil)),
+        add_generation_prompt: add_generation_prompt
+      ]
+    )
+  end
+
   # return the desired true/false value. Only set to true when the last message
   # is a user prompt.
   defp default_add_generation_prompt_value(messages) do
     case List.last(messages) do
       %Message{role: :user} -> true
+      %Message{role: :tool} -> true
       _other -> false
     end
   end
