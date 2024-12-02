@@ -268,7 +268,7 @@ defmodule LangChain.ChatModels.ChatBumblebee do
       {:ok, %{
         "name" => name,
         "parameters" => parameters
-      } = json} ->
+      }} ->
         case Message.new(%{role: :assistant, status: :complete, content: content, tool_calls: [ToolCall.new!%{call_id: "test",name: name, arguments: parameters}]}) do
         {:ok, message} ->
             # execute the callback with the final message

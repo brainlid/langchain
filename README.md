@@ -201,6 +201,7 @@ For example, if a locally running service provided that feature, the following c
 Bumblebee hosted chat models are supported. There is built-in support for Llama 2, Mistral, and Zephyr models.
 
 Currently, function calling is NOT supported with these models.
+Only Llama3.1 with json tool call is supported see example notebook.
 
     ChatBumblebee.new!(%{
       serving: @serving_name,
@@ -238,4 +239,3 @@ Executing a specific test, whether it is a `live_call` or not, will execute it c
 When doing local development on the `LangChain` library itself, rename the `.envrc_template` to `.envrc` and populate it with your private API values. This is only used when running live test when explicitly requested.
 
 Use a tool like [Direnv](https://direnv.net/) or [Dotenv](https://github.com/motdotla/dotenv) to load the API values into the ENV when using the library locally.
-
