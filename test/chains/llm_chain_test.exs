@@ -17,6 +17,7 @@ defmodule LangChain.Chains.LLMChainTest do
   alias LangChain.MessageDelta
   alias LangChain.LangChainError
   alias LangChain.MessageProcessors.JsonProcessor
+  alias LangChain.Utils
 
   @anthropic_test_model "claude-3-opus-20240229"
 
@@ -483,7 +484,9 @@ defmodule LangChain.Chains.LLMChainTest do
         )
         |> LLMChain.apply_delta(MessageDelta.new!(%{content: "your "}))
         |> LLMChain.apply_delta(MessageDelta.new!(%{content: "favorite "}))
-        |> LLMChain.apply_delta({:error, LangChainError.exception(type: "overloaded", message: "Overloaded")})
+        |> LLMChain.apply_delta(
+          {:error, LangChainError.exception(type: "overloaded", message: "Overloaded")}
+        )
 
       # the delta is complete and removed from the chain
       assert updated_chain.delta == nil
@@ -1428,6 +1431,108 @@ defmodule LangChain.Chains.LLMChainTest do
       assert reason.type == "exceeded_failure_count"
       assert reason.message == "Exceeded max failure count"
       assert updated_chain.current_failure_count == 3
+    end
+
+    test "with_fallbacks: re-runs with next LLM after first fails" do
+      # Made NOT LIVE here - handles two calls
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        # IO.puts "FAKE OpenAI ERROR RESULT RETURNED"
+        {:error,
+         LangChainError.exception(type: "too_many_requests", message: "Too many requests!")}
+      end)
+
+      expect(ChatAnthropic, :call, fn _model, _messages, _tools ->
+        {:ok,
+         [
+           Message.new_assistant!(%{content: "fallback worked!"})
+         ]}
+      end)
+
+      {:ok, updated_chain} =
+        %{llm: ChatOpenAI.new!(%{stream: false})}
+        |> LLMChain.new!()
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Why is the sky blue?"))
+        |> LLMChain.run(with_fallbacks: [ChatAnthropic.new!(%{stream: false})])
+
+      # stopped after processing a successful assistant response
+      assert updated_chain.last_message.role == :assistant
+      assert updated_chain.last_message.content == "fallback worked!"
+    end
+
+    test "with_fallbacks: runs each LLM option and returns when all failed" do
+      # Made NOT LIVE here - handles two calls
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        # IO.puts "FAKE OpenAI ERROR RESULT RETURNED"
+        {:error,
+         LangChainError.exception(type: "too_many_requests", message: "Too many requests!")}
+      end)
+
+      expect(ChatAnthropic, :call, fn _model, _messages, _tools ->
+        {:error, LangChainError.exception(type: "overloaded", message: "Overloaded")}
+      end)
+
+      {:error, _updated_chain, reason} =
+        %{llm: ChatOpenAI.new!(%{stream: false})}
+        |> LLMChain.new!()
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Why is the sky blue?"))
+        |> LLMChain.run(with_fallbacks: [ChatAnthropic.new!(%{stream: false})])
+
+      assert %LangChainError{
+               type: "all_fallbacks_failed",
+               message: "Failed all attempts to generate response"
+             } == reason
+    end
+
+    test "with_fallbacks: runs before_fallback function and uses the resulting chain" do
+      # Made NOT LIVE here - handles two calls
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        # IO.puts "FAKE OpenAI ERROR RESULT RETURNED"
+        {:error,
+         LangChainError.exception(type: "too_many_requests", message: "Too many requests!")}
+      end)
+
+      expect(ChatAnthropic, :call, fn _model, _messages, _tools ->
+        {:ok, Message.new_assistant!(%{content: "Claude says it's because it's not red."})}
+      end)
+
+      {:ok, updated_chain} =
+        %{llm: ChatOpenAI.new!(%{stream: false})}
+        |> LLMChain.new!()
+        |> LLMChain.add_message(Message.new_system!("OpenAI system prompt"))
+        |> LLMChain.add_message(Message.new_user!("Why is the sky blue?"))
+        |> LLMChain.run(
+          with_fallbacks: [
+            ChatAnthropic.new!(%{stream: false})
+          ],
+          before_fallback: fn chain ->
+            send(self(), :before_fallback_fired)
+
+            case chain.llm do
+              %ChatAnthropic{} ->
+                # replace the system message
+                %LLMChain{
+                  chain
+                  | messages:
+                      Utils.replace_system_message!(
+                        chain.messages,
+                        Message.new_system!("Anthropic system prompt")
+                      )
+                }
+
+              _open_ai ->
+                chain
+            end
+          end
+        )
+
+      assert [system_msg | _rest] = updated_chain.messages
+      assert system_msg.role == :system
+      assert system_msg.content == "Anthropic system prompt"
+      assert updated_chain.last_message.role == :assistant
+      assert updated_chain.last_message.content == "Claude says it's because it's not red."
+      assert_received :before_fallback_fired
     end
   end
 
