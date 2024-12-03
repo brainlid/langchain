@@ -204,4 +204,37 @@ defmodule LangChain.UtilsTest do
                    end
     end
   end
+
+  describe "replace_system_message!/2" do
+    test "returns list with new system message" do
+      non_system = [
+        Message.new_user!("User 1"),
+        Message.new_assistant!("Assistant 1")
+      ]
+
+      [new_system | rest] =
+        Utils.replace_system_message!(
+          [Message.new_system!("System A") | non_system],
+          Message.new_system!("System B")
+        )
+
+      assert rest == non_system
+      assert new_system.role == :system
+      assert new_system.content == "System B"
+    end
+
+    test "handles when no existing system message" do
+      non_system = [
+        Message.new_user!("User 1"),
+        Message.new_assistant!("Assistant 1")
+      ]
+
+      [new_system | rest] =
+        Utils.replace_system_message!(non_system, Message.new_system!("System B"))
+
+      assert rest == non_system
+      assert new_system.role == :system
+      assert new_system.content == "System B"
+    end
+  end
 end

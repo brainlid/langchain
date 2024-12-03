@@ -305,4 +305,15 @@ defmodule LangChain.Utils do
 
     {List.first(system), other}
   end
+
+  @doc """
+  Replace the system message with a new system message. This retains all other
+  messages as-is. An error is raised if there are more than 1 system messages.
+  """
+  @spec replace_system_message!([Message.t()], Message.t()) :: [Message.t()] | no_return()
+  def replace_system_message!(messages, new_system_message) do
+    {_old_system, rest} = split_system_message(messages)
+    # return the new system message along with the rest
+    [new_system_message | rest]
+  end
 end
