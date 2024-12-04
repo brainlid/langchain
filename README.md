@@ -200,8 +200,8 @@ For example, if a locally running service provided that feature, the following c
 
 Bumblebee hosted chat models are supported. There is built-in support for Llama 2, Mistral, and Zephyr models.
 
-Currently, function calling is NOT supported with these models.
-Only Llama3.1 with json tool call is supported see example notebook.
+Currently, function calling is only supported for llama 3.1 Json Tool calling for Llama 2, Mistral, and Zephyr is NOT supported.
+There is an example notebook in the notebook folder.
 
     ChatBumblebee.new!(%{
       serving: @serving_name,

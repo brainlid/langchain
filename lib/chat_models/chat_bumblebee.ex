@@ -240,7 +240,6 @@ defmodule LangChain.ChatModels.ChatBumblebee do
 
   def do_serving_request(%ChatBumblebee{template_format: :llama_3_1_json_tool_calling} = model, messages, functions) do
     prompt = ChatTemplates.apply_chat_template_with_tools!(messages, model.template_format,functions)
-    |> IO.inspect
 
     model.serving
     |> Nx.Serving.batched_run(%{text: prompt, seed: model.seed})
