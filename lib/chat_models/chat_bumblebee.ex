@@ -124,7 +124,8 @@ defmodule LangChain.ChatModels.ChatBumblebee do
     # # more focused and deterministic.
     # field :temperature, :float, default: 1.0
 
-    field :template_format, Ecto.Enum, values: [:inst, :im_start, :zephyr, :llama_2, :llama_3, :llama_3_1_json_tool_calling]
+    field :template_format, Ecto.Enum,
+      values: [:inst, :im_start, :zephyr, :llama_2, :llama_3, :llama_3_1_json_tool_calling]
 
     # The bumblebee model may compile differently based on the stream true/false
     # option on the serving. Therefore, streaming should be enabled on the
@@ -238,8 +239,13 @@ defmodule LangChain.ChatModels.ChatBumblebee do
   @spec do_serving_request(t(), [Message.t()], [Function.t()]) ::
           list() | struct() | {:error, String.t()}
 
-  def do_serving_request(%ChatBumblebee{template_format: :llama_3_1_json_tool_calling} = model, messages, functions) do
-    prompt = ChatTemplates.apply_chat_template_with_tools!(messages, model.template_format,functions)
+  def do_serving_request(
+        %ChatBumblebee{template_format: :llama_3_1_json_tool_calling} = model,
+        messages,
+        functions
+      ) do
+    prompt =
+      ChatTemplates.apply_chat_template_with_tools!(messages, model.template_format, functions)
 
     model.serving
     |> Nx.Serving.batched_run(%{text: prompt, seed: model.seed})
@@ -256,45 +262,50 @@ defmodule LangChain.ChatModels.ChatBumblebee do
 
   @doc false
   def do_process_response(
-    %{results: [%{text: "{" <> _ = content, token_summary: token_summary}]},
+        %{results: [%{text: "{" <> _ = content, token_summary: token_summary}]},
         %ChatBumblebee{template_format: :llama_3_1_json_tool_calling} = model
       )
       when is_binary(content) do
-
     fire_token_usage_callback(model, token_summary)
 
     case Jason.decode(content) do
-      {:ok, %{
-        "name" => name,
-        "parameters" => parameters
-      }} ->
-        case Message.new(%{role: :assistant, status: :complete, content: content, tool_calls: [ToolCall.new!%{call_id: "test",name: name, arguments: parameters}]}) do
-        {:ok, message} ->
+      {:ok,
+       %{
+         "name" => name,
+         "parameters" => parameters
+       }} ->
+        case Message.new(%{
+               role: :assistant,
+               status: :complete,
+               content: content,
+               tool_calls: [ToolCall.new!(%{call_id: "test", name: name, arguments: parameters})]
+             }) do
+          {:ok, message} ->
             # execute the callback with the final message
             Callbacks.fire(model.callbacks, :on_llm_new_message, [model, message])
             # return a list of the complete message. As a list for compatibility.
             [message]
 
-        {:error, changeset} ->
+          {:error, changeset} ->
             reason = Utils.changeset_error_to_string(changeset)
             Logger.error("Failed to create non-streamed full message: #{inspect(reason)}")
             {:error, reason}
         end
+
       {:error, _} ->
         case Message.new(%{role: :assistant, status: :complete, content: content}) do
-        {:ok, message} ->
+          {:ok, message} ->
             # execute the callback with the final message
             Callbacks.fire(model.callbacks, :on_llm_new_message, [model, message])
             # return a list of the complete message. As a list for compatibility.
             [message]
 
-        {:error, changeset} ->
+          {:error, changeset} ->
             reason = Utils.changeset_error_to_string(changeset)
             Logger.error("Failed to create non-streamed full message: #{inspect(reason)}")
             {:error, reason}
         end
     end
-
   end
 
   def do_process_response(

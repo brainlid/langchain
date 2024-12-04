@@ -189,7 +189,10 @@ defmodule LangChain.Message do
           end
         else
           # only a user message can have ContentParts
-          Logger.error("Invalid message content #{inspect get_field(changeset, :content)} for role #{role}")
+          Logger.error(
+            "Invalid message content #{inspect(get_field(changeset, :content))} for role #{role}"
+          )
+
           add_error(changeset, :content, "is invalid for role #{role}")
         end
 
@@ -334,7 +337,8 @@ defmodule LangChain.Message do
   Create a new user message which represents a human message or a message from
   the application.
   """
-  @spec new_user!(content :: String.t() | [ContentPart.t() | PromptTemplate.t()]) :: t() | no_return()
+  @spec new_user!(content :: String.t() | [ContentPart.t() | PromptTemplate.t()]) ::
+          t() | no_return()
   def new_user!(content) do
     case new_user(content) do
       {:ok, msg} ->

@@ -237,14 +237,17 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     |> Map.drop([:model, :stream])
   end
 
-  defp get_tool_choice(%ChatAnthropic{tool_choice: %{"type" => "tool", "name" => name}=_tool_choice}) when is_binary(name) and byte_size(name) > 0,
-    do: %{"type" => "tool", "name" => name}
+  defp get_tool_choice(%ChatAnthropic{
+         tool_choice: %{"type" => "tool", "name" => name} = _tool_choice
+       })
+       when is_binary(name) and byte_size(name) > 0,
+       do: %{"type" => "tool", "name" => name}
 
-  defp get_tool_choice(%ChatAnthropic{tool_choice: %{"type" => type}=_tool_choice}) when is_binary(type) and byte_size(type) > 0,
-    do: %{"type" => type}
+  defp get_tool_choice(%ChatAnthropic{tool_choice: %{"type" => type} = _tool_choice})
+       when is_binary(type) and byte_size(type) > 0,
+       do: %{"type" => type}
 
   defp get_tool_choice(%ChatAnthropic{}), do: nil
-
 
   defp get_tools_for_api(nil), do: []
 

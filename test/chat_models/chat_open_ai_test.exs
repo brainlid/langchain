@@ -83,11 +83,12 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
         }
       }
 
-      {:ok, openai} = ChatOpenAI.new(%{
-        "model" => @test_model,
-        "json_response" => true,
-        "json_schema" => json_schema
-      })
+      {:ok, openai} =
+        ChatOpenAI.new(%{
+          "model" => @test_model,
+          "json_response" => true,
+          "json_schema" => json_schema
+        })
 
       assert openai.json_response == true
       assert openai.json_schema == json_schema
@@ -149,10 +150,11 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert data.model == @test_model
       assert data.temperature == 1
       assert data.frequency_penalty == 0.5
+
       assert data.response_format == %{
-        "type" => "json_schema",
-        "json_schema" => json_schema
-      }
+               "type" => "json_schema",
+               "json_schema" => json_schema
+             }
     end
 
     test "generates a map for an API call with max_tokens set" do
@@ -490,7 +492,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
             "description" => nil,
             "enum" => ["yellow", "red", "green"],
             "type" => "string"
-        }
+          }
         },
         "required" => ["p1"]
       }
@@ -2018,20 +2020,24 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
   describe "set_response_format/1" do
     test "generates a map for an API call with text format when json_response is false" do
-      {:ok, openai} = ChatOpenAI.new(%{
-        model: @test_model,
-        json_response: false
-      })
+      {:ok, openai} =
+        ChatOpenAI.new(%{
+          model: @test_model,
+          json_response: false
+        })
+
       data = ChatOpenAI.for_api(openai, [], [])
 
       assert data.response_format == %{"type" => "text"}
     end
 
     test "generates a map for an API call with json_object format when json_response is true and no schema" do
-      {:ok, openai} = ChatOpenAI.new(%{
-        model: @test_model,
-        json_response: true
-      })
+      {:ok, openai} =
+        ChatOpenAI.new(%{
+          model: @test_model,
+          json_response: true
+        })
+
       data = ChatOpenAI.for_api(openai, [], [])
 
       assert data.response_format == %{"type" => "json_object"}
@@ -2046,17 +2052,19 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
         }
       }
 
-      {:ok, openai} = ChatOpenAI.new(%{
-        model: @test_model,
-        json_response: true,
-        json_schema: json_schema
-      })
+      {:ok, openai} =
+        ChatOpenAI.new(%{
+          model: @test_model,
+          json_response: true,
+          json_schema: json_schema
+        })
+
       data = ChatOpenAI.for_api(openai, [], [])
 
       assert data.response_format == %{
-        "type" => "json_schema",
-        "json_schema" => json_schema
-      }
+               "type" => "json_schema",
+               "json_schema" => json_schema
+             }
     end
   end
 end
