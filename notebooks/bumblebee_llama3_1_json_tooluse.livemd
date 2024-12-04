@@ -1,0 +1,98 @@
+# LLama3.1 Json Tool use example
+
+```elixir
+Mix.install(
+  [
+    {:kino_bumblebee, ">= 0.5.0"},
+    {:bumblebee, ">= 0.5.3"},
+    {:exla, ">= 0.0.0"},
+    {:axon, ">= 0.5.1"},
+    {:nx, ">= 0.5.1"},
+    {:langchain, github: "marcnnn/langchain", branch: "llama3_1_json_tool"}
+  ],
+  config: [nx: [default_backend: EXLA.Backend]]
+)
+```
+
+## Section
+
+```elixir
+hf_token = System.fetch_env!("LB_HF_TOKEN")
+repo = {:hf, "meta-llama/Llama-3.1-8B-Instruct", auth_token: hf_token}
+
+{:ok, model_info} =
+  Bumblebee.load_model(repo, backend: {EXLA.Backend, client: :cuda}, type: :bf16)
+{:ok, tokenizer} = Bumblebee.load_tokenizer(repo)
+{:ok, generation_config} = Bumblebee.load_generation_config(repo)
+
+generation_config =
+  Bumblebee.configure(generation_config,
+    max_new_tokens: 2000,
+    strategy: %{type: :multinomial_sampling, top_p: 0.6}
+  )
+
+serving =
+  Bumblebee.Text.generation(model_info, tokenizer, generation_config,
+    compile: [batch_size: 1, sequence_length: 1028],
+    stream: true,
+    defn_options: [compiler: EXLA]
+  )
+
+Kino.start_child({Nx.Serving, name: Llama, serving: serving})
+```
+
+```elixir
+alias LangChain.Function
+alias LangChain.Message
+alias LangChain.Chains.LLMChain
+alias LangChain.ChatModels.ChatBumblebee
+```
+
+```elixir
+custom_context = %{
+  "user_id" => 123,
+  "hairbrush" => "drawer",
+  "dog" => "backyard",
+  "sandwich" => "kitchen"
+}
+
+# a custom Elixir function made available to the LLM
+custom_fn =
+  Function.new!(%{
+    name: "get_location",
+    description: "Returns the location of the requested element or item.",
+    parameters_schema: %{
+      type: "object",
+      properties: %{
+        thing: %{
+          type: "string",
+          description: "The thing whose location is being requested."
+        }
+      },
+      required: ["thing"]
+    },
+    function: fn %{"thing" => thing} = _arguments, context ->
+      # our context is a pretend item/location location map
+      {:ok, context[thing]}
+    end
+  })
+
+# create and run the chain
+chain =
+  LLMChain.new!(%{
+    llm: LangChain.ChatModels.ChatBumblebee.new!(%{
+      serving: Llama,
+      template_format: :llama_3_1_json_tool_calling,
+      stream: false
+    }),
+    custom_context: custom_context,
+    verbose: true
+  })
+  |> LLMChain.add_tools(custom_fn)
+  |> LLMChain.add_messages([
+    Message.new_system!(
+      "Do not mention that you used function calling to the user."
+    )])
+  |> LLMChain.add_message(Message.new_user!("Where is the hairbrush located?"))
+  |> LLMChain.run(mode: :while_needs_response)
+```

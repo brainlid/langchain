@@ -228,11 +228,13 @@ defmodule LangChain.Message.ToolCall do
   # We want to take whatever we are given here.
   defp assign_string_value(changeset, field, attrs) do
     # get both possible versions of the arguments.
-     case Map.get(attrs, field) || Map.get(attrs, to_string(field)) do
+    case Map.get(attrs, field) || Map.get(attrs, to_string(field)) do
       "" ->
         changeset
+
       val when is_binary(val) ->
         put_change(changeset, field, val)
+
       _ ->
         changeset
     end

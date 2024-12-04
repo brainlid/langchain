@@ -69,6 +69,7 @@ defmodule LangChain.Message.ToolCallTest do
 
     test "casts spaces in arguments as spaces" do
       one_space = " "
+
       assert {:ok, %ToolCall{} = msg} =
                ToolCall.new(%{
                  "status" => :incomplete,
@@ -83,6 +84,7 @@ defmodule LangChain.Message.ToolCallTest do
 
       # Multiple spaces
       four_spaces = "    "
+
       assert {:ok, %ToolCall{} = msg} =
                ToolCall.new(%{
                  "status" => :incomplete,
