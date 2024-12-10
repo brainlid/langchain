@@ -914,6 +914,14 @@ defmodule LangChain.Chains.LLMChainTest do
   end
 
   describe "run/1" do
+    test "returns an error when running without messages", %{chain: chain} do
+      assert chain.messages == []
+
+      {:error, error_chain, error} = LLMChain.run(chain)
+      assert error_chain == chain
+      assert error.message == "LLMChain cannot be run without messages"
+    end
+
     @tag live_call: true, live_open_ai: true
     test "custom_context is passed to a custom function" do
       # map of data we want to be passed as `context` to the function when

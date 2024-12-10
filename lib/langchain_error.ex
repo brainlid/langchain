@@ -30,7 +30,7 @@ defmodule LangChain.LangChainError do
   Create the exception using either a message or a changeset who's errors are
   converted to a message.
   """
-  @spec exception(message :: String.t() | Ecto.Changeset.t()) :: t() | no_return()
+  @spec exception(message :: Keyword.t() | String.t() | Ecto.Changeset.t()) :: t() | no_return()
   def exception(message) when is_binary(message) do
     %LangChainError{message: message}
   end
