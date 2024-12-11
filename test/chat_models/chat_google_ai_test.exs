@@ -816,4 +816,32 @@ defmodule ChatModels.ChatGoogleAITest do
       assert message.role == :assistant
     end
   end
+
+  @tag live_call: true, live_google_ai: true
+  test "image classification with Google AI model" do
+    alias LangChain.Chains.LLMChain
+    alias LangChain.Message
+    alias LangChain.Message.ContentPart
+    alias LangChain.Utils.ChainResult
+
+    model = ChatGoogleAI.new!(%{temperature: 0, stream: false, model: "gemini-1.5-flash"})
+
+    image_data =
+      File.read!("test/support/images/barn_owl.jpg")
+      |> Base.encode64()
+
+    {:ok, updated_chain} =
+      %{llm: model, verbose: false, stream: false}
+      |> LLMChain.new!()
+      |> LLMChain.add_message(
+        Message.new_user!([
+          ContentPart.text!("Please describe the image."),
+          ContentPart.image!(image_data, media: :jpg)
+        ])
+      )
+      |> LLMChain.run()
+
+    {:ok, string} = ChainResult.to_string(updated_chain)
+    assert string =~ "owl"
+  end
 end
