@@ -122,7 +122,9 @@ defmodule LangChain.MessageProcessors.JsonProcessor do
   end
 
   def run(%LLMChain{} = chain, %Message{} = message, regex_pattern) do
-    case Regex.run(regex_pattern, message.processed_content, capture: :all_but_first) do
+    case Regex.run(regex_pattern, content_to_string(message.processed_content),
+           capture: :all_but_first
+         ) do
       [json] ->
         if chain.verbose, do: IO.puts("Extracted JSON text from message")
         # run recursive call on just the extracted JSON
