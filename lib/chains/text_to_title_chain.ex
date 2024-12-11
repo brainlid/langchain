@@ -3,7 +3,7 @@ defmodule LangChain.Chains.TextToTitleChain do
   A convenience chain for turning a user's prompt text into a summarized title
   for the anticipated conversation.
 
-  ## Examples
+  ## Basic Examples
   A basic example that generates a title
 
       llm = ChatOpenAI.new!(%{model: "gpt-3.5-turbo", stream: false, seed: 0})
@@ -18,6 +18,7 @@ defmodule LangChain.Chains.TextToTitleChain do
 
       #=> "Magical Properties of Pineapple Cookies Blog Post"
 
+  ## Examples using Title Examples
   Want to get more consistent titles?
 
   LLMs are pretty bad at following instructions for text length. However, we can
@@ -44,6 +45,28 @@ defmodule LangChain.Chains.TextToTitleChain do
 
       #=> "Blog Post: Exploring the Magic of Pineapple Cookies"
 
+  ## Overriding the System Prompt
+  For more explicit control of how titles are generated, an `override_system_prompt` can be provided.
+
+      %{
+        llm: llm,
+        input_text: user_text,
+        override_system_prompt: ~s|
+          You expertly summarize the User Text into a short 3 or 4 word title to represent a conversation in a positive way.|
+      }
+      |> TextToTitleChain.new!()
+      |> TextToTitleChain.evaluate()
+
+  ## Using a Fallback
+  If the primary LLM fails to respond successfully, one or more fallback LLMs can be specified.
+
+      %{
+        llm: primary_llm,
+        input_text: user_text
+      }
+      |> TextToTitleChain.new!()
+      |> TextToTitleChain.evaluate(with_fallbacks: [fallback_llm])
+
   """
   use Ecto.Schema
   import Ecto.Changeset
@@ -61,13 +84,28 @@ defmodule LangChain.Chains.TextToTitleChain do
     field :input_text, :string
     field :fallback_title, :string, default: "New topic"
     field :examples, {:array, :string}, default: []
+    field :override_system_prompt, :string
     field :verbose, :boolean, default: false
   end
 
   @type t :: %TextToTitleChain{}
 
-  @create_fields [:llm, :input_text, :fallback_title, :examples, :verbose]
+  @create_fields [
+    :llm,
+    :input_text,
+    :fallback_title,
+    :examples,
+    :override_system_prompt,
+    :verbose
+  ]
   @required_fields [:llm, :input_text]
+
+  @default_system_prompt ~s|
+You expertly summarize the User Text into a short title or phrase to represent a conversation.
+
+<%= if @examples != [] do %>Follow the style, approximate length, and format of the following examples:
+<%= for example <- @examples do %>- <%= example %>
+<% end %><% end %>|
 
   @doc """
   Start a new LLMChain configuration.
@@ -130,13 +168,7 @@ defmodule LangChain.Chains.TextToTitleChain do
       [
         PromptTemplate.new!(%{
           role: :system,
-          text: """
-          You expertly summarize the User Text into a short title or phrase to represent a conversation.
-
-          <%= if @examples != [] do %>Follow the style, approximate length, and format of the following examples:
-          <%= for example <- @examples do %>- <%= example %>
-          <% end %><% end %>
-          """
+          text: chain.override_system_prompt || @default_system_prompt
         }),
         PromptTemplate.new!(%{
           role: :user,
@@ -153,7 +185,11 @@ defmodule LangChain.Chains.TextToTitleChain do
 
   @doc """
   Runs the TextToTitleChain and evaluates the result to return the final answer.
-  If it was unable to generate a title, the `fallback_title` is returned.
+
+  If unable to generate a title, the `fallback_title` is returned.
+
+  ## Option
+  - `:with_fallbacks` - Supports the `with_fallbacks: [fallback_llm]` where one or more additional LLMs can be specified as a backup when the preferred LLM fails.
   """
   @spec evaluate(t(), Keyword.t()) :: String.t()
   def evaluate(%TextToTitleChain{} = chain, opts \\ []) do
