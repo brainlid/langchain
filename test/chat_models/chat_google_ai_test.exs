@@ -155,6 +155,49 @@ defmodule ChatModels.ChatGoogleAITest do
              } = tool_result
     end
 
+    test "generate a map containing a text and an image part (bug #209)", %{google_ai: google_ai} do
+      messages = [
+        %LangChain.Message{
+          content:
+            "You are an expert at providing an image description for assistive technology and SEO benefits.",
+          role: :system
+        },
+        %LangChain.Message{
+          content: [
+            %LangChain.Message.ContentPart{
+              type: :text,
+              content: "This is the text."
+            },
+            %LangChain.Message.ContentPart{
+              type: :image,
+              content: "/9j/4AAQSkz",
+              options: [media: :jpg, detail: "low"]
+            }
+          ],
+          role: :user
+        }
+      ]
+
+      data = ChatGoogleAI.for_api(google_ai, messages, [])
+      assert %{"contents" => [msg1]} = data
+
+      assert %{
+               "parts" => [
+                 %{
+                   "text" => "This is the text."
+                 },
+                 %{
+                   "inline_data" => %{
+                     "mime_type" => "image/jpeg",
+                     "data" => "/9j/4AAQSkz"
+                   }
+                 }
+               ]
+             } = msg1
+
+      IO.inspect(msg1)
+    end
+
     test "translates a Message with function results to the expected structure" do
       expected =
         %{
@@ -402,7 +445,9 @@ defmodule ChatModels.ChatGoogleAITest do
         ]
       }
 
-      assert [{:error, %LangChainError{} = error}] = ChatGoogleAI.do_process_response(model, response)
+      assert [{:error, %LangChainError{} = error}] =
+               ChatGoogleAI.do_process_response(model, response)
+
       assert error.type == "changeset"
       assert error.message == "role: is invalid"
     end
@@ -483,7 +528,9 @@ defmodule ChatModels.ChatGoogleAITest do
         }
       }
 
-      assert {:error, %LangChainError{} = error} = ChatGoogleAI.do_process_response(model, response)
+      assert {:error, %LangChainError{} = error} =
+               ChatGoogleAI.do_process_response(model, response)
+
       assert error.type == nil
       assert error.message == "Invalid request"
     end
@@ -491,14 +538,19 @@ defmodule ChatModels.ChatGoogleAITest do
     test "handles Jason.DecodeError", %{model: model} do
       response = {:error, %Jason.DecodeError{}}
 
-      assert {:error, %LangChainError{} = error} = ChatGoogleAI.do_process_response(model, response)
+      assert {:error, %LangChainError{} = error} =
+               ChatGoogleAI.do_process_response(model, response)
+
       assert error.type == "invalid_json"
       assert "Received invalid JSON:" <> _ = error.message
     end
 
     test "handles unexpected response with error", %{model: model} do
       response = %{}
-      assert {:error, %LangChainError{} = error} = ChatGoogleAI.do_process_response(model, response)
+
+      assert {:error, %LangChainError{} = error} =
+               ChatGoogleAI.do_process_response(model, response)
+
       assert error.type == "unexpected_response"
       assert error.message == "Unexpected response"
     end
