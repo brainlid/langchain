@@ -196,7 +196,7 @@ There are several services or self-hosted applications that provide an OpenAI co
 For example, if a locally running service provided that feature, the following code could connect to the service:
 
 ```elixir
-{:ok, updated_chain} = message} =
+{:ok, updated_chain} =
   LLMChain.new!(%{
     llm: ChatOpenAI.new!(%{endpoint: "http://localhost:1234/v1/chat/completions"}),
   })
