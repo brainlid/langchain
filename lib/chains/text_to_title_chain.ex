@@ -71,8 +71,8 @@ defmodule LangChain.Chains.TextToTitleChain do
   use Ecto.Schema
   import Ecto.Changeset
   require Logger
-  alias LangChain.PromptTemplate
   alias __MODULE__
+  alias LangChain.PromptTemplate
   alias LangChain.Chains.LLMChain
   alias LangChain.LangChainError
   alias LangChain.Utils
