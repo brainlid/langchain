@@ -194,8 +194,6 @@ defmodule ChatModels.ChatGoogleAITest do
                  }
                ]
              } = msg1
-
-      IO.inspect(msg1)
     end
 
     test "translates a Message with function results to the expected structure" do
