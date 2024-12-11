@@ -181,7 +181,7 @@ image_data_from_other_system = "image of urban art mural on underpass at 507 Kin
   %{llm: openai_chat_model, verbose: true}
   |> LLMChain.new!()
   |> LLMChain.apply_prompt_templates(messages, %{extra_image_info: image_data_from_other_system})
-  |> LLMChain.message_processors([JsonProcessor.new!()])
+  |> LLMChain.message_processors([JsonProcessor.new!(~r/```json(.*?)```/s)])
   |> LLMChain.run(mode: :until_success)
 
 updated_chain.last_message.processed_content
@@ -242,7 +242,7 @@ image_data_from_other_system = "image of urban art mural on underpass at 507 Kin
   %{llm: anthropic_chat_model, verbose: true}
   |> LLMChain.new!()
   |> LLMChain.apply_prompt_templates(messages, %{extra_image_info: image_data_from_other_system})
-  |> LLMChain.message_processors([JsonProcessor.new!(~r/```json(.*?)```/s))])
+  |> LLMChain.message_processors([JsonProcessor.new!(~r/```json(.*?)```/s)])
   |> LLMChain.run(mode: :until_success)
 
 updated_chain.last_message.processed_content
