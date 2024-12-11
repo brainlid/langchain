@@ -186,10 +186,7 @@ custom_fn =
 
 # print the LLM's answer
 IO.puts(update |> ChainResult.to_string())
-```
-
 # => "The hairbrush is located in the drawer."
-
 ```
 
 ### Alternative OpenAI compatible APIs
