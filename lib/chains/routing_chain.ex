@@ -106,7 +106,7 @@ defmodule LangChain.Chains.RoutingChain do
   route.
   """
   @spec run(t(), Keyword.t()) ::
-          {:ok, LLMChain.t(), Message.t() | [Message.t()]} | {:error, LangChainError.t()}
+          {:ok, LLMChain.t()} | {:error, LLMChain.t(), LangChainError.t()}
   def run(%RoutingChain{} = chain, opts \\ []) do
     default_name = chain.default_route.name
 

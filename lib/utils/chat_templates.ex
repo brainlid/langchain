@@ -108,7 +108,7 @@ defmodule LangChain.Utils.ChatTemplates do
   - Alternates message roles between: user, assistant, user, assistant, etc.
   """
   @spec prep_and_validate_messages([Message.t()]) ::
-          {Message.t(), Message.t(), [Message.t()]} | no_return()
+          {Message.t() | nil, Message.t(), [Message.t()]} | no_return()
   def prep_and_validate_messages(messages) do
     {system, first_user, rest} =
       case messages do

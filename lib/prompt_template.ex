@@ -323,7 +323,7 @@ defmodule LangChain.PromptTemplate do
   content. Raises an exception if invalid.
   """
   @spec to_content_part!(t(), input :: %{atom() => any()}) ::
-          {:ok, Message.t()} | {:error, Ecto.Changeset.t()}
+          ContentPart.t() | no_return()
   def to_content_part!(%PromptTemplate{} = template, %{} = inputs \\ %{}) do
     content = PromptTemplate.format(template, inputs)
     ContentPart.new!(%{type: :text, content: content})

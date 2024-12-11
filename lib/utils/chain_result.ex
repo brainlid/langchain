@@ -80,7 +80,8 @@ defmodule LangChain.Utils.ChainResult do
   @doc """
   Write the result to the given map as the value of the given key.
   """
-  @spec to_map(LLMChain.t(), map(), any()) :: {:ok, map()} | {:error, String.t()}
+  @spec to_map(LLMChain.t(), map(), any()) ::
+          {:ok, map()} | {:error, LLMChain.t(), LangChainError.t()}
   def to_map(%LLMChain{} = chain, map, key) do
     case ChainResult.to_string(chain) do
       {:ok, value} ->

@@ -334,8 +334,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   #
   # Retries the request up to 3 times on transient errors with a 1 second delay
   @doc false
-  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), (any() -> any())) ::
-          list() | struct() | {:error, LangChainError.t()}
+  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), non_neg_integer()) ::
+          list() | struct() | {:error, LangChainError.t()} | no_return()
   def do_api_request(anthropic, messages, tools, retry_count \\ 3)
 
   def do_api_request(_anthropic, _messages, _functions, 0) do
@@ -435,13 +435,14 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
         data
 
-        # The error tuple was successfully received from the API. Unwrap it and
-        # return it as an error.
+      # The error tuple was successfully received from the API. Unwrap it and
+      # return it as an error.
       {:ok, {:error, %LangChainError{} = error}} ->
         {:error, error}
 
       {:error, %Req.TransportError{reason: :timeout} = err} ->
-        {:error, LangChainError.exception(type: "timeout", message: "Request timed out", original: err)}
+        {:error,
+         LangChainError.exception(type: "timeout", message: "Request timed out", original: err)}
 
       {:error, %Req.TransportError{reason: :closed}} ->
         # Force a retry by making a recursive call decrementing the counter
@@ -623,7 +624,9 @@ defmodule LangChain.ChatModels.ChatAnthropic do
      LangChainError.exception(type: "invalid_json", message: error_message, original: response)}
   end
 
-  def do_process_response(%ChatAnthropic{bedrock: %BedrockConfig{}}, %{"message" => "Too many requests" <> _rest = message}) do
+  def do_process_response(%ChatAnthropic{bedrock: %BedrockConfig{}}, %{
+        "message" => "Too many requests" <> _rest = message
+      }) do
     # the error isn't wrapped in an error JSON object. tsk, tsk
     {:error, LangChainError.exception(type: "too_many_requests", message: message)}
   end

@@ -289,7 +289,7 @@ defmodule LangChain.Chains.LLMChain do
   Run the chain on the LLM using messages and any registered functions. This
   formats the request for a ChatLLMChain where messages are passed to the API.
 
-  When successful, it returns `{:ok, updated_chain, message_or_messages}`
+  When successful, it returns `{:ok, updated_chain}`
 
   ## Options
 
