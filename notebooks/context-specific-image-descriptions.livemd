@@ -4,7 +4,7 @@
 
 ```elixir
 Mix.install([
-  {:langchain, "~> 0.3.0-rc.0"},
+  {:langchain, github: "brainlid/langchain"},
   {:kino, "~> 0.12.0"}
 ])
 ```
@@ -242,7 +242,7 @@ image_data_from_other_system = "image of urban art mural on underpass at 507 Kin
   %{llm: anthropic_chat_model, verbose: true}
   |> LLMChain.new!()
   |> LLMChain.apply_prompt_templates(messages, %{extra_image_info: image_data_from_other_system})
-  |> LLMChain.message_processors([JsonProcessor.new!()])
+  |> LLMChain.message_processors([JsonProcessor.new!(~r/```json(.*?)```/s))])
   |> LLMChain.run(mode: :until_success)
 
 updated_chain.last_message.processed_content
@@ -262,5 +262,3 @@ Here's what I got from it:
 ```
 
 We would want to run multiple tests on a small sampling of images and tweak our prompt until we are happy with the result. Then, we can process full batch and save our work as a template for future projects as well.
-
-<!-- livebook:{"offset":12761,"stamp":{"token":"XCP.W16VHoMa17Ik5HZEODX4xG_3efAZOoT53nwCTV0ILJBlJPOfjaoVorequscNTIpjctd5Dd_rFjn2mYnQ3HBs-HEgL3Ndv-JDxG2NMRBdcbJi_vREiaEJT2lrNKafOvhP9ZvW698i28G9jhon35Zc","version":2}} -->
