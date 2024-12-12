@@ -7,8 +7,8 @@ Currently supported AI services:
 - OpenAI ChatGPT
 - OpenAI DALL-e 2 - image generation
 - Anthropic Claude
-- Google AI - <https://generativelanguage.googleapis.com>
-- Google Vertex AI - Gemini
+- Google Gemini
+- Google Vertex AI (Google's enterprise offering)
 - Ollama
 - Mistral
 - Bumblebee self-hosted models - including Llama, Mistral and Zephyr
