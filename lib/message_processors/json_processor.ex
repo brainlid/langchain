@@ -110,7 +110,7 @@ defmodule LangChain.MessageProcessors.JsonProcessor do
   @spec run(LLMChain.t(), Message.t()) ::
           {:cont, Message.t()} | {:halt, Message.t()}
   def run(%LLMChain{} = chain, %Message{} = message) do
-    case Jason.decode(message.processed_content) do
+    case Jason.decode(content_to_string(message.processed_content)) do
       {:ok, parsed} ->
         if chain.verbose, do: IO.puts("Parsed JSON text to a map")
         {:cont, %Message{message | processed_content: parsed}}
@@ -122,7 +122,9 @@ defmodule LangChain.MessageProcessors.JsonProcessor do
   end
 
   def run(%LLMChain{} = chain, %Message{} = message, regex_pattern) do
-    case Regex.run(regex_pattern, message.processed_content, capture: :all_but_first) do
+    case Regex.run(regex_pattern, content_to_string(message.processed_content),
+           capture: :all_but_first
+         ) do
       [json] ->
         if chain.verbose, do: IO.puts("Extracted JSON text from message")
         # run recursive call on just the extracted JSON
@@ -132,4 +134,11 @@ defmodule LangChain.MessageProcessors.JsonProcessor do
         {:halt, Message.new_user!("ERROR: No JSON found")}
     end
   end
+
+  defp content_to_string([
+         %LangChain.Message.ContentPart{type: :text, content: content}
+       ]),
+       do: content
+
+  defp content_to_string(content), do: content
 end

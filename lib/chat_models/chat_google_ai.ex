@@ -211,15 +211,58 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     }
   end
 
-  def for_api(%Message{} = message) do
+  def for_api(%Message{content: content} = message) when is_binary(content) do
     %{
       "role" => map_role(message.role),
       "parts" => [%{"text" => message.content}]
     }
   end
 
+  def for_api(%Message{content: content} = message) when is_list(content) do
+    %{
+      "role" => message.role,
+      "parts" => Enum.map(content, &for_api/1)
+    }
+  end
+
   def for_api(%ContentPart{type: :text} = part) do
     %{"text" => part.content}
+  end
+
+  # Supported image types: png, jpeg, webp, heic, heif: https://ai.google.dev/gemini-api/docs/vision?lang=rest#technical-details-image
+  def for_api(%ContentPart{type: :image} = part) do
+    mime_type =
+      case Keyword.get(part.options || [], :media, nil) do
+        :png ->
+          "image/png"
+
+        type when type in [:jpeg, :jpg] ->
+          "image/jpeg"
+
+        :webp ->
+          "image/webp"
+
+        :heic ->
+          "image/heic"
+
+        :heif ->
+          "image/heif"
+
+        type when is_binary(type) ->
+          "image/type"
+
+        other ->
+          message = "Received unsupported media type for ContentPart: #{inspect(other)}"
+          Logger.error(message)
+          raise LangChainError, message
+      end
+
+    %{
+      "inline_data" => %{
+        "mime_type" => mime_type,
+        "data" => part.content
+      }
+    }
   end
 
   def for_api(%ToolCall{} = call) do
@@ -598,12 +641,16 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   def do_process_response(_model, {:error, %Jason.DecodeError{} = response}, _) do
     error_message = "Received invalid JSON: #{inspect(response)}"
     Logger.error(error_message)
-    {:error, LangChainError.exception(type: "invalid_json", message: error_message, original: response)}
+
+    {:error,
+     LangChainError.exception(type: "invalid_json", message: error_message, original: response)}
   end
 
   def do_process_response(_model, other, _) do
     Logger.error("Trying to process an unexpected response. #{inspect(other)}")
-    {:error, LangChainError.exception(type: "unexpected_response", message: "Unexpected response")}
+
+    {:error,
+     LangChainError.exception(type: "unexpected_response", message: "Unexpected response")}
   end
 
   @doc false
