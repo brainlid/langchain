@@ -3,11 +3,12 @@
 Elixir LangChain enables Elixir applications to integrate AI services and self-hosted models into an application.
 
 Currently supported AI services:
+
 - OpenAI ChatGPT
 - OpenAI DALL-e 2 - image generation
 - Anthropic Claude
-- Google AI - https://generativelanguage.googleapis.com
-- Google Vertex AI - Gemini
+- Google Gemini
+- Google Vertex AI (Google's enterprise offering)
 - Ollama
 - Mistral
 - Bumblebee self-hosted models - including Llama, Mistral and Zephyr
@@ -114,6 +115,7 @@ fly secrets set ANTHROPIC_API_KEY=MyAnthropicApiKey
 ```
 
 A list of models to use:
+
 - [Anthropic Claude models](https://docs.anthropic.com/en/docs/about-claude/models)
 - [OpenAI models](https://platform.openai.com/docs/models)
 - [Gemini AI models](https://ai.google.dev/gemini-api/docs/models/gemini)
@@ -139,6 +141,7 @@ alias LangChain.Function
 alias LangChain.Message
 alias LangChain.Chains.LLMChain
 alias LangChain.ChatModels.ChatOpenAI
+alias LangChain.Utils.ChainResult
 
 # map of data we want to be passed as `context` to the function when
 # executed.
@@ -171,7 +174,7 @@ custom_fn =
   })
 
 # create and run the chain
-{:ok, updated_chain, %Message{} = message} =
+{:ok, updated_chain}} =
   LLMChain.new!(%{
     llm: ChatOpenAI.new!(),
     custom_context: custom_context,
@@ -182,8 +185,8 @@ custom_fn =
   |> LLMChain.run(mode: :while_needs_response)
 
 # print the LLM's answer
-IO.puts(message.content)
-#=> "The hairbrush is located in the drawer."
+IO.puts(update |> ChainResult.to_string())
+# => "The hairbrush is located in the drawer."
 ```
 
 ### Alternative OpenAI compatible APIs
@@ -193,7 +196,7 @@ There are several services or self-hosted applications that provide an OpenAI co
 For example, if a locally running service provided that feature, the following code could connect to the service:
 
 ```elixir
-{:ok, updated_chain, %Message{} = message} =
+{:ok, updated_chain} =
   LLMChain.new!(%{
     llm: ChatOpenAI.new!(%{endpoint: "http://localhost:1234/v1/chat/completions"}),
   })
@@ -243,4 +246,3 @@ Executing a specific test, whether it is a `live_call` or not, will execute it c
 When doing local development on the `LangChain` library itself, rename the `.envrc_template` to `.envrc` and populate it with your private API values. This is only used when running live test when explicitly requested.
 
 Use a tool like [Direnv](https://direnv.net/) or [Dotenv](https://github.com/motdotla/dotenv) to load the API values into the ENV when using the library locally.
-
