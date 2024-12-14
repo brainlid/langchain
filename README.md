@@ -117,7 +117,9 @@ fly secrets set ANTHROPIC_API_KEY=MyAnthropicApiKey
 A list of models to use:
 
 - [Anthropic Claude models](https://docs.anthropic.com/en/docs/about-claude/models)
+- [Anthropic models on AWS Bedrock](https://docs.anthropic.com/en/api/claude-on-amazon-bedrock#accessing-bedrock)
 - [OpenAI models](https://platform.openai.com/docs/models)
+- [OpenAI models on Azure](https://learn.microsoft.com/en-us/azure/ai-services/openai/concepts/models)
 - [Gemini AI models](https://ai.google.dev/gemini-api/docs/models/gemini)
 
 ## Usage
