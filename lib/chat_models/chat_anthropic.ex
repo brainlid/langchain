@@ -387,7 +387,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         end
 
       {:ok, %Req.Response{status: 529}} ->
-        {:error, LangChainError.exception(type: "overloaded_error", message: "Overloaded")}
+        {:error, LangChainError.exception(type: "overloaded", message: "Overloaded")}
 
       {:error, %Req.TransportError{reason: :timeout} = err} ->
         {:error,

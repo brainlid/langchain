@@ -1069,21 +1069,21 @@ defmodule LangChain.Chains.LLMChainTest do
       assert_received {:function_called, "fly_regions"}
     end
 
-    test "returns error when receives overloaded_error from Anthropic" do
+    test "returns error when receives overloaded from Anthropic" do
       # Made NOT LIVE here
       expect(ChatAnthropic, :call, fn _model, _prompt, _tools ->
-        # IO.puts "ChatAnthropic.call OVERLOAD USED!!!!"
         {:error,
-         LangChainError.exception(type: "overloaded_error", message: "Overloaded (from test)")}
+         LangChainError.exception(type: "overloaded", message: "Overloaded (from test)")}
       end)
 
       model = ChatAnthropic.new!(%{stream: true, model: @anthropic_test_model})
 
       assert {:error, _updated_chain, reason} =
                LLMChain.new!(%{llm: model})
+               |> LLMChain.add_messages([Message.new_user!("Hi")])
                |> LLMChain.run()
 
-      assert reason.type == "overloaded_error"
+      assert reason.type == "overloaded"
       assert reason.message == "Overloaded (from test)"
     end
 

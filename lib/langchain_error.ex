@@ -9,11 +9,11 @@ defmodule LangChain.LangChainError do
 
       raise LangChainError, "Message text"
 
-      raise LangChainError, type: "overloaded_error", message: "Message text"
+      raise LangChainError, type: "overloaded", message: "Message text"
 
   The error struct contains the following keys:
 
-  - `:type` - A string code to make detecting and responding to specific errors easier. This may have values like "length" or "overloaded_error". The specific meaning of the type is dependent on the service or model.
+  - `:type` - A string code to make detecting and responding to specific errors easier. This may have values like "length" or "overloaded". The specific meaning of the type is dependent on the service or model.
 
   - `:message` - A string representation or explanation of the error.
 
