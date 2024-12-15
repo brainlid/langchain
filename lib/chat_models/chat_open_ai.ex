@@ -890,6 +890,23 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     end
   end
 
+  # MS Azure returns numeric error codes. Interpret them when possible to give a computer-friendly reason
+  #
+  # https://learn.microsoft.com/en-us/troubleshoot/azure/azure-kubernetes/create-upgrade-delete/429-too-many-requests-errors
+  def do_process_response(_model, %{"error" => %{"code" => code, "message" => reason}}) do
+    type =
+      case code do
+        "429" ->
+          "rate_limit_exceeded"
+
+        _other ->
+          nil
+      end
+
+    Logger.error("Received error from API: #{inspect(reason)}")
+    {:error, LangChainError.exception(type: type, message: reason)}
+  end
+
   def do_process_response(_model, %{"error" => %{"message" => reason}}) do
     Logger.error("Received error from API: #{inspect(reason)}")
     {:error, LangChainError.exception(message: reason)}
@@ -898,7 +915,9 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   def do_process_response(_model, {:error, %Jason.DecodeError{} = response}) do
     error_message = "Received invalid JSON: #{inspect(response)}"
     Logger.error(error_message)
-    {:error, LangChainError.exception(type: "invalid_json", message: error_message, original: response)}
+
+    {:error,
+     LangChainError.exception(type: "invalid_json", message: error_message, original: response)}
   end
 
   def do_process_response(_model, other) do
