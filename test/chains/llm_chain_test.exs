@@ -914,6 +914,14 @@ defmodule LangChain.Chains.LLMChainTest do
   end
 
   describe "run/1" do
+    test "returns an error when running without messages", %{chain: chain} do
+      assert chain.messages == []
+
+      {:error, error_chain, error} = LLMChain.run(chain)
+      assert error_chain == chain
+      assert error.message == "LLMChain cannot be run without messages"
+    end
+
     @tag live_call: true, live_open_ai: true
     test "custom_context is passed to a custom function" do
       # map of data we want to be passed as `context` to the function when
@@ -1061,21 +1069,21 @@ defmodule LangChain.Chains.LLMChainTest do
       assert_received {:function_called, "fly_regions"}
     end
 
-    test "returns error when receives overloaded_error from Anthropic" do
+    test "returns error when receives overloaded from Anthropic" do
       # Made NOT LIVE here
       expect(ChatAnthropic, :call, fn _model, _prompt, _tools ->
-        # IO.puts "ChatAnthropic.call OVERLOAD USED!!!!"
         {:error,
-         LangChainError.exception(type: "overloaded_error", message: "Overloaded (from test)")}
+         LangChainError.exception(type: "overloaded", message: "Overloaded (from test)")}
       end)
 
       model = ChatAnthropic.new!(%{stream: true, model: @anthropic_test_model})
 
       assert {:error, _updated_chain, reason} =
                LLMChain.new!(%{llm: model})
+               |> LLMChain.add_messages([Message.new_user!("Hi")])
                |> LLMChain.run()
 
-      assert reason.type == "overloaded_error"
+      assert reason.type == "overloaded"
       assert reason.message == "Overloaded (from test)"
     end
 

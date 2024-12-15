@@ -336,42 +336,48 @@ defmodule LangChain.Chains.LLMChain do
   def run(chain, opts \\ [])
 
   def run(%LLMChain{} = chain, opts) do
-    raise_on_obsolete_run_opts(opts)
+    try do
+      raise_on_obsolete_run_opts(opts)
+      raise_when_no_messages(chain)
 
-    # set the callback function on the chain
-    if chain.verbose, do: IO.inspect(chain.llm, label: "LLM")
+      # set the callback function on the chain
+      if chain.verbose, do: IO.inspect(chain.llm, label: "LLM")
 
-    if chain.verbose, do: IO.inspect(chain.messages, label: "MESSAGES")
+      if chain.verbose, do: IO.inspect(chain.messages, label: "MESSAGES")
 
-    tools = chain.tools
-    if chain.verbose, do: IO.inspect(tools, label: "TOOLS")
+      tools = chain.tools
+      if chain.verbose, do: IO.inspect(tools, label: "TOOLS")
 
-    # clear the set of exchanged messages.
-    chain = clear_exchanged_messages(chain)
+      # clear the set of exchanged messages.
+      chain = clear_exchanged_messages(chain)
 
-    # determine which function to run based on the mode.
-    function_to_run =
-      case Keyword.get(opts, :mode, nil) do
-        nil ->
-          &do_run/1
+      # determine which function to run based on the mode.
+      function_to_run =
+        case Keyword.get(opts, :mode, nil) do
+          nil ->
+            &do_run/1
 
-        :while_needs_response ->
-          &run_while_needs_response/1
+          :while_needs_response ->
+            &run_while_needs_response/1
 
-        :until_success ->
-          &run_until_success/1
+          :until_success ->
+            &run_until_success/1
+        end
+
+      # Run the chain and return the success or error results. NOTE: We do not add
+      # the current LLM to the list and process everything through a single
+      # codepath because failing after attempted fallbacks returns a different
+      # error.
+      if Keyword.has_key?(opts, :with_fallbacks) do
+        # run function and using fallbacks as needed.
+        with_fallbacks(chain, opts, function_to_run)
+      else
+        # run it directly right now and return the success or error
+        function_to_run.(chain)
       end
-
-    # Run the chain and return the success or error results. NOTE: We do not add
-    # the current LLM to the list and process everything through a single
-    # codepath because failing after attempted fallbacks returns a different
-    # error.
-    if Keyword.has_key?(opts, :with_fallbacks) do
-      # run function and using fallbacks as needed.
-      with_fallbacks(chain, opts, function_to_run)
-    else
-      # run it directly right now and return the success or error
-      function_to_run.(chain)
+    rescue
+      err in LangChainError ->
+        {:error, chain, err}
     end
   end
 
@@ -1043,4 +1049,11 @@ defmodule LangChain.Chains.LLMChain do
             "The LLMChain.run option `:callback_fn` was removed; see `add_callback/2` instead."
     end
   end
+
+  # Raise an exception when there are no messages in the LLMChain (checked when running)
+  defp raise_when_no_messages(%LLMChain{messages: []} = _chain) do
+    raise LangChainError, "LLMChain cannot be run without messages"
+  end
+
+  defp raise_when_no_messages(%LLMChain{} = chain), do: chain
 end
