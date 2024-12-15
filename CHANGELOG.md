@@ -1,5 +1,61 @@
 # Changelog
 
+## v0.3.0-rc.1 (2024-12-15)
+
+### New Features
+- Add AWS Bedrock support to ChatAnthropic (#154)
+- Add support for passing safety settings to Google AI (#186)
+- Support system instructions for Google AI (#182)
+- Add OpenAI's new structured output API (#180)
+- Support strict mode for tools (#173)
+- Add tool_choice for OpenAI and Anthropic (#142)
+- Implement initial support for fallbacks (#207)
+- Add "processed_content" to ToolResult struct from function results (#192)
+- Add support for examples to title chain (#191)
+- Add OpenAI project authentication (#166)
+- Ability to Summarize an LLM Conversation (#216)
+
+### Bug Fixes
+- Fix content-part encoding and decoding for Google API (#212)
+- Fix specs and examples (#211)
+- Cast tool_calls arguments correctly inside message_deltas (#175)
+- Fix PromptTemplate example (#167)
+- Handle functions with no parameters for Google AI (#183)
+- Handle missing token usage fields for Google AI (#184)
+- Handle empty text parts from GoogleAI responses (#181)
+- Do not duplicate tool call parameters if they are identical (#174)
+- Cancel a message delta when received "overloaded" error (#196)
+- Attempt at Anthropic fix - related to issue #193
+
+### Documentation
+- Add documentation for ChatOpenAI use on Azure
+- Update config documentation for API keys
+- Update the README example for `add_tools`
+- Add links to models in the config section of the README
+- Update documentation using new! functions
+- Update doc example for newer ChatGPT model
+- Add docs to PromptTemplate functions
+- Document AWS Bedrock support with Anthropic Claude (#195)
+- Update LLM Model documentation for tool_choice
+  - OpenAI module doc updated for example on forcing a `tool_choice`
+  - Anthropic module doc updated for example on forcing a `tool_choice`
+
+### Improvements
+- Added error type support for Azure token rate limit exceeded
+- Improved error handling (#194)
+- Improved function execution failure response
+- Detect and process "Too many requests" from AWS Bedrock API
+- Anthropic support for streamed tool calls with parameters (#169)
+
+### Breaking Changes
+- Change return of LLMChain.run/2 (#170)
+
+### Other Changes
+- Azure test for ChatOpenAI usage
+- Remove unused assignment from ChatGoogleAI (#187)
+- Minor spelling fix in livebook notebook
+- Don't error when firing a callback
+
 ## v0.3.0-rc.0 (2024-06-05)
 
 **Added:**
