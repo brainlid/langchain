@@ -108,9 +108,9 @@ You expertly summarize the User Text into a short title or phrase to represent a
 <% end %><% end %>|
 
   @doc """
-  Start a new LLMChain configuration.
+  Start a new TextToTitleChain configuration.
 
-      {:ok, chain} = LLMChain.new(%{
+      {:ok, chain} = TextToTitleChain.new(%{
         llm: %ChatOpenAI{model: "gpt-3.5-turbo", stream: false},
         input_text: "Let's create a marketing blog post about our new product 'Fuzzy Furries'"
       })
