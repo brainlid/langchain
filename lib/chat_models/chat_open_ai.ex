@@ -82,6 +82,32 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         tool_choice: %{"type" => "function", "function" => %{"name" => "get_weather"}}
       })
 
+  ## Azure OpenAI Support
+
+  To use `ChatOpenAI` with Microsoft's Azure hosted OpenAI models, the `endpoint` must be overridden and the API key needs to be provided in some way. The [MS Quickstart guide for REST access](https://learn.microsoft.com/en-us/azure/ai-services/openai/chatgpt-quickstart?tabs=command-line%2Cjavascript-keyless%2Ctypescript-keyless%2Cpython-new&pivots=rest-api) may be helpful.
+
+  In order to use it, you must have an Azure account and from the console, a model must be deployed for your account. Use the Azure AI Foundry and Azure OpenAI Service to deploy the model you want to use. The entire URL is used as the `endpoint` and the provided `key` is used as the `api_key`.
+
+  The following is an example of setting up `ChatOpenAI` for use with an Azure hosted model.
+
+      endpoint = System.fetch_env!("AZURE_OPENAI_ENDPOINT")
+      api_key = System.fetch_env!("AZURE_OPENAI_KEY")
+
+      llm =
+        ChatOpenAI.new!(%{
+          endpoint: endpoint,
+          api_key: api_key,
+          seed: 0,
+          temperature: 1,
+          stream: false
+        })
+
+  The URL itself specifies the model to use and the `model` attribute is disregarded.
+
+  A fake example URL for the endpoint value:
+
+  `https://some-subdomain.cognitiveservices.azure.com/openai/deployments/gpt-4o-mini/chat/completions?api-version=2024-08-01-preview"`
+
   """
   use Ecto.Schema
   require Logger
