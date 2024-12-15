@@ -917,6 +917,36 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert reason.type == nil
       assert reason.message =~ "maximum context length"
     end
+
+    @tag live_call: true, live_azure: true
+    test "supports Azure hosted OpenAI models" do
+      # https://learn.microsoft.com/en-us/azure/ai-services/openai/chatgpt-quickstart?tabs=command-line%2Cjavascript-keyless%2Ctypescript-keyless%2Cpython-new&pivots=rest-api
+
+      endpoint = System.fetch_env!("AZURE_OPENAI_ENDPOINT")
+      api_key = System.fetch_env!("AZURE_OPENAI_KEY")
+
+      {:ok, chat} =
+        ChatOpenAI.new(%{
+          endpoint: endpoint,
+          api_key: api_key,
+          seed: 0,
+          temperature: 1,
+          stream: false
+        })
+
+      {:ok, [message]} =
+        ChatOpenAI.call(
+          chat,
+          [
+            Message.new_user!("Return the response 'Hi'.")
+          ],
+          []
+        )
+
+      assert message.content =~ "Hi"
+      assert message.role == :assistant
+      assert message.index == 0
+    end
   end
 
   describe "do_process_response/2" do
@@ -1291,6 +1321,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       {:error, %LangChainError{} = reason} = ChatOpenAI.call(chat, [], [])
 
       assert reason.type == nil
+
       assert reason.message ==
                "Invalid 'messages': empty array. Expected an array with minimum length 1, but got an empty array instead."
     end
