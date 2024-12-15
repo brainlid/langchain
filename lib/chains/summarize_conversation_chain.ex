@@ -322,7 +322,13 @@ defmodule LangChain.Chains.SummarizeConversationChain do
           [system | summary_messages]
       end
 
-    %LLMChain{to_summarize | messages: starting_messages ++ keeping_items}
+    new_messages = starting_messages ++ keeping_items
+
+    %LLMChain{
+      to_summarize
+      | messages: new_messages,
+        last_message: List.last(new_messages)
+    }
   end
 
   # Convert each `%Message{}` into a text message like `<user>The user message

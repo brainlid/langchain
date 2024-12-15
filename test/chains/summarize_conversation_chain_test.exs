@@ -296,7 +296,24 @@ defmodule LangChain.Chains.SummarizeConversationChainTest do
       assert keep_2.role == :assistant
     end
 
-    @tag live_call: true, live_anthropic: true
+    test "set last_message correctly when keep_count is 0", %{llm_anthropic: llm, chain: chain} do
+      # Made NOT LIVE here
+      expect(ChatAnthropic, :call, fn _model, _messages, _tools ->
+        {:ok, Message.new_assistant!("- Fake OpenAI summary")}
+      end)
+
+      summarizer = SummarizeConversationChain.new!(%{llm: llm, threshold_count: 6, keep_count: 0})
+      chain = LLMChain.add_messages(chain, get_full_conversation())
+
+      summarized_chain = SummarizeConversationChain.summarize(summarizer, chain)
+
+      [_system, _summary_1, summary_2] = summarized_chain.messages
+      assert summary_2.role == :assistant
+      assert summary_2.content == "- Fake OpenAI summary"
+
+      assert summarized_chain.last_message == summary_2
+    end
+
     test "returns unmodified chain when LLM operation fails", %{
       llm_anthropic: llm,
       chain: chain
@@ -366,12 +383,11 @@ defmodule LangChain.Chains.SummarizeConversationChainTest do
 
       summarized_chain = SummarizeConversationChain.summarize(summarizer, original_chain)
 
-      IO.inspect(summarized_chain.messages)
+      # IO.inspect(summarized_chain.messages)
+      # IO.inspect(summarized_chain.last_message)
 
-
-      # TODO:
-
-      assert false
+      assert summarized_chain.last_message.role == :assistant
+      assert String.starts_with?(summarized_chain.last_message.content, "- ")
     end
   end
 
@@ -541,7 +557,7 @@ Florence: Hotel Davanzati - near the Ponte Vecchio
 Amalfi: Hotel Marina Riviera - beautiful sea views
 
 Would you like me to check current availability and rates for your September dates?|),
-Message.new_user!(
+      Message.new_user!(
         "That would be helpful! My dates are September 10-24. Could you also suggest some must-see attractions in each city?"
       ),
       Message.new_assistant!(
