@@ -163,7 +163,8 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
         }
       }
 
-      assert {:error, %LangChainError{} = error} = ChatMistralAI.do_process_response(model, response)
+      assert {:error, %LangChainError{} = error} =
+               ChatMistralAI.do_process_response(model, response)
 
       assert error.type == nil
       assert error.message == "Invalid request"
@@ -172,7 +173,8 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
     test "handles Jason.DecodeError", %{model: model} do
       response = {:error, %Jason.DecodeError{}}
 
-      assert {:error, %LangChainError{} = error} = ChatMistralAI.do_process_response(model, response)
+      assert {:error, %LangChainError{} = error} =
+               ChatMistralAI.do_process_response(model, response)
 
       assert error.type == "invalid_json"
       assert "Received invalid JSON:" <> _ = error.message

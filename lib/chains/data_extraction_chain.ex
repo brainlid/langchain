@@ -132,7 +132,10 @@ Passage:
           "Caught unexpected exception in DataExtractionChain. Error: #{inspect(exception)}"
         )
 
-        {:error, LangChainError.exception("Unexpected error in DataExtractionChain. Check logs for details.")}
+        {:error,
+         LangChainError.exception(
+           "Unexpected error in DataExtractionChain. Check logs for details."
+         )}
     end
   end
 

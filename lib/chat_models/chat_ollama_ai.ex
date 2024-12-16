@@ -280,7 +280,10 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   def do_api_request(ollama_ai, messages, functions, retry_count \\ 3)
 
   def do_api_request(_ollama_ai, _messages, _functions, 0) do
-    raise LangChainError.exception(type: "retries_exceeded", message: "Retries exceeded. Connection failed.")
+    raise LangChainError.exception(
+            type: "retries_exceeded",
+            message: "Retries exceeded. Connection failed."
+          )
   end
 
   def do_api_request(
@@ -352,7 +355,8 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
         {:error, error}
 
       {:error, %Req.TransportError{reason: :timeout} = err} ->
-        {:error, LangChainError.exception(type: "timeout", message: "Request timed out", original: err)}
+        {:error,
+         LangChainError.exception(type: "timeout", message: "Request timed out", original: err)}
 
       {:error, %Req.TransportError{reason: :closed}} ->
         # Force a retry by making a recursive call decrementing the counter
@@ -364,7 +368,8 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
           "Unhandled and unexpected response from streamed post call. #{inspect(other)}"
         )
 
-        {:error, LangChainError.exception(type: "unexpected_response", message: "Unexpected response")}
+        {:error,
+         LangChainError.exception(type: "unexpected_response", message: "Unexpected response")}
     end
   end
 
