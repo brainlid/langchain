@@ -2,7 +2,7 @@ defmodule LangChain.MixProject do
   use Mix.Project
 
   @source_url "https://github.com/brainlid/langchain"
-  @version "0.3.0-rc.0"
+  @version "0.3.0-rc.1"
 
   def project do
     [
@@ -73,6 +73,7 @@ defmodule LangChain.MixProject do
         Chains: [
           LangChain.Chains.LLMChain,
           LangChain.Chains.TextToTitleChain,
+          LangChain.Chains.SummarizeConversationChain,
           LangChain.Chains.DataExtractionChain
         ],
         Messages: [
@@ -109,6 +110,7 @@ defmodule LangChain.MixProject do
         ],
         Utils: [
           LangChain.Utils,
+          LangChain.Utils.BedrockConfig,
           LangChain.Utils.ChatTemplates,
           LangChain.Utils.ChainResult,
           LangChain.Config,
