@@ -1,5 +1,125 @@
 # Changelog
 
+## v0.3.0-rc.1 (2024-12-15)
+
+### Breaking Changes
+- Change return of LLMChain.run/2 ([#170](https://github.com/brainlid/langchain/pull/170))
+- Revamped error handling and handles Anthropic's "overload_error" - ([#194](https://github.com/brainlid/langchain/pull/194))
+
+#### Change return of LLMChain.run/2 ([#170](https://github.com/brainlid/langchain/pull/170))
+
+##### Why the change
+
+Before this change, an `LLMChain`'s `run` function returned `{:ok, updated_chain, last_message}`.
+
+When an assistant (ie LLM) issues a ToolCall and when `run` is in the mode `:until_success` or `:while_need_response`, the `LLMChain` will automatically execute the function and return the result as a new Message back to the LLM. This works great!
+
+The problem comes when an application needs to keep track of all the messages being exchanged during a run operation. That can be done by using callbacks and sending and receiving messages, but that's far from ideal. It makes more sense to have access to that information directly after the `run` operation completes.
+
+##### What this change does
+
+This PR changes the returned type to `{:ok, updated_chain}`.
+
+The `last_message` is available in `updated_chain.last_message`. This cleans up the return API.
+
+This change also adds `%LLMChain{exchanged_messages: exchanged_messages}`,or `updated_chain.exchanged_messages` which is a list of all the messages exchanged between the application and the LLM during the execution of the `run` function.
+
+This breaks the return contract for the `run` function.
+
+##### How to adapt to this change
+
+To adapt to this, if the application isn't using the `last_message` in `{:ok, updated_chain, _last_message}`, then delete the third position in the tuple. Ex: `{:ok, updated_chain}`.
+
+Access to the `last_message` is available on the `updated_chain`.
+
+```elixir
+{:ok, updated_chain} =
+  %{llm: model}
+  |> LLMChain.new!()
+  |> LLMChain.run()
+
+last_message = updated_chain.last_message
+```
+
+NOTE: that the `updated_chain` now includes `updated_chain.exchanged_messages` which can also be used.
+
+#### Revamped error handling and handles Anthropic's "overload_error" - ([#194](https://github.com/brainlid/langchain/pull/194))
+
+**What you need to do:**
+Check your application code for how it is responding to and handling error responses.
+
+If you want to keep the same previous behavior, the following code change will do that:
+
+```elixir
+case LLMChain.run(chain) do
+  {:ok, _updated_chain} ->
+    :ok
+
+  # return the error for display
+  {:error, _updated_chain, %LangChainError{message: reason}} ->
+    {:error, reason}
+end
+```
+
+The change from:
+
+```
+{:error, _updated_chain, reason}
+```
+
+To:
+
+```
+{:error, _updated_chain, %LangChainError{message: reason}}
+```
+
+When possible, a `type` value may be set on the `LangChainError`, making it easier to handle some error types programmatically.
+
+### Features
+- Added ability to summarize LLM conversations (#216)
+- Implemented initial support for fallbacks (#207)
+- Added AWS Bedrock support for ChatAnthropic (#154)
+- Added OpenAI's new structured output API (#180)
+- Added support for examples to title chain (#191)
+- Added tool_choice support for OpenAI and Anthropic (#142)
+- Added support for passing safety settings to Google AI (#186)
+- Added OpenAI project authentication (#166)
+
+### Fixes
+- Fixed specs and examples (#211)
+- Fixed content-part encoding and decoding for Google API (#212)
+- Fixed ChatOllamaAI streaming response (#162)
+- Fixed streaming issue with Azure OpenAI Service (#158, #161)
+- Fixed OpenAI stream decode issue (#156)
+- Fixed typespec error on Message.new_user/1 (#151)
+- Fixed duplicate tool call parameters (#174)
+
+### Improvements
+- Added error type support for Azure token rate limit exceeded
+- Improved error handling (#194)
+- Enhanced function execution failure response
+- Added "processed_content" to ToolResult struct (#192)
+- Implemented support for strict mode for tools (#173)
+- Updated documentation for ChatOpenAI use on Azure
+- Updated config documentation for API keys
+- Updated README examples
+
+### Azure & Google AI Updates
+- Added Azure test for ChatOpenAI usage
+- Added support for system instructions for Google AI (#182)
+- Handle functions with no parameters for Google AI (#183)
+- Handle missing token usage fields for Google AI (#184)
+- Handle empty text parts from GoogleAI responses (#181)
+- Handle all possible finishReasons for ChatGoogleAI (#188)
+
+### Documentation
+- Added LLM Model documentation for tool_choice
+- Updated documentation using new functions
+- Added custom functions notebook
+- Improved documentation formatting (#145)
+- Added links to models in the config section
+- Updated getting started doc for callbacks
+
 ## v0.3.0-rc.0 (2024-06-05)
 
 **Added:**

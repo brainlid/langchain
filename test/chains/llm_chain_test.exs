@@ -1072,8 +1072,7 @@ defmodule LangChain.Chains.LLMChainTest do
     test "returns error when receives overloaded from Anthropic" do
       # Made NOT LIVE here
       expect(ChatAnthropic, :call, fn _model, _prompt, _tools ->
-        {:error,
-         LangChainError.exception(type: "overloaded", message: "Overloaded (from test)")}
+        {:error, LangChainError.exception(type: "overloaded", message: "Overloaded (from test)")}
       end)
 
       model = ChatAnthropic.new!(%{stream: true, model: @anthropic_test_model})
