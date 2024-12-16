@@ -75,51 +75,50 @@ To:
 
 When possible, a `type` value may be set on the `LangChainError`, making it easier to handle some error types programmatically.
 
-### New Features
-- Add AWS Bedrock support to ChatAnthropic (#154)
-- Add support for passing safety settings to Google AI (#186)
-- Support system instructions for Google AI (#182)
-- Add OpenAI's new structured output API (#180)
-- Support strict mode for tools (#173)
-- Add tool_choice for OpenAI and Anthropic (#142)
-- Implement initial support for fallbacks (#207)
-- Add "processed_content" to ToolResult struct from function results (#192)
-- Add support for examples to title chain (#191)
-- Add support for overriding the system prompt on title chains
-- Add OpenAI project authentication (#166)
-- Ability to Summarize an LLM Conversation (#216)
+### Features
+- Added ability to summarize LLM conversations (#216)
+- Implemented initial support for fallbacks (#207)
+- Added AWS Bedrock support for ChatAnthropic (#154)
+- Added OpenAI's new structured output API (#180)
+- Added support for examples to title chain (#191)
+- Added tool_choice support for OpenAI and Anthropic (#142)
+- Added support for passing safety settings to Google AI (#186)
+- Added OpenAI project authentication (#166)
 
-### Bug Fixes
-- Fix content-part encoding and decoding for Google API (#212)
-- Fix specs and examples (#211)
-- Cast tool_calls arguments correctly inside message_deltas (#175)
-- Fix PromptTemplate example (#167)
-- Handle functions with no parameters for Google AI (#183)
-- Handle missing token usage fields for Google AI (#184)
-- Handle empty text parts from GoogleAI responses (#181)
-- Do not duplicate tool call parameters if they are identical (#174)
-- Cancel a message delta when received "overloaded" error (#196)
-- Attempt at Anthropic fix - related to issue #193
-
-### Documentation
-- Add documentation for ChatOpenAI use on Azure
-- Update config documentation for API keys
-- Update the README example for `add_tools`
-- Add links to models in the config section of the README
-- Update documentation using new! functions
-- Update doc example for newer ChatGPT model
-- Add docs to PromptTemplate functions
-- Document AWS Bedrock support with Anthropic Claude (#195)
-- Update LLM Model documentation for tool_choice
-  - OpenAI module doc updated for example on forcing a `tool_choice`
-  - Anthropic module doc updated for example on forcing a `tool_choice`
+### Fixes
+- Fixed specs and examples (#211)
+- Fixed content-part encoding and decoding for Google API (#212)
+- Fixed ChatOllamaAI streaming response (#162)
+- Fixed streaming issue with Azure OpenAI Service (#158, #161)
+- Fixed OpenAI stream decode issue (#156)
+- Fixed typespec error on Message.new_user/1 (#151)
+- Fixed duplicate tool call parameters (#174)
 
 ### Improvements
 - Added error type support for Azure token rate limit exceeded
 - Improved error handling (#194)
-- Improved function execution failure response
-- Detect and process "Too many requests" from AWS Bedrock API
-- Anthropic support for streamed tool calls with parameters (#169)
+- Enhanced function execution failure response
+- Added "processed_content" to ToolResult struct (#192)
+- Implemented support for strict mode for tools (#173)
+- Updated documentation for ChatOpenAI use on Azure
+- Updated config documentation for API keys
+- Updated README examples
+
+### Azure & Google AI Updates
+- Added Azure test for ChatOpenAI usage
+- Added support for system instructions for Google AI (#182)
+- Handle functions with no parameters for Google AI (#183)
+- Handle missing token usage fields for Google AI (#184)
+- Handle empty text parts from GoogleAI responses (#181)
+- Handle all possible finishReasons for ChatGoogleAI (#188)
+
+### Documentation
+- Added LLM Model documentation for tool_choice
+- Updated documentation using new functions
+- Added custom functions notebook
+- Improved documentation formatting (#145)
+- Added links to models in the config section
+- Updated getting started doc for callbacks
 
 ## v0.3.0-rc.0 (2024-06-05)
 
