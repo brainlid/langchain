@@ -286,7 +286,7 @@ defmodule LangChain.Chains.SummarizeConversationChain do
 
   def create_summary_messages(summary_text) when is_binary(summary_text) do
     [
-      Message.new_user!("Summarize our conversation to this point for future reference."),
+      Message.new_user!("Summarize our entire conversation up to this point for future reference."),
       Message.new_assistant!(summary_text)
     ]
   end
