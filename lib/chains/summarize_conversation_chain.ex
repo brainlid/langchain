@@ -24,12 +24,15 @@ defmodule LangChain.Chains.SummarizeConversationChain do
 
   ## Options
 
+  - `:llm` - The LLM to use for performing the summarization. There is no need for streaming.
   - `:keep_count` - The number of raw messages to retain. It will be the
     most recent messages and defaults to 2 (a user and assistant message).
   - `:threshold_count` - The total number of messages (excluding the system
     message) that must be present before the summarizing operation is performed.
     Running the summarization on a short conversation chain will return the
     chain unchanged and not make any calls to an LLM.
+  - `:override_system_prompt` - When the system prompt should be customized for the instructions on how to summarize, this can be used to provide a customized replacement of the system prompt.
+  - `:messages` - When explicit control of multiple messages is needed, they can be provided as a list. They can be `LangChain.PromptTemplate`s and the concatenated list of messages will be in the `@conversation` param. When this is used, any value in  `:override_system_prompt` is ignored.
 
   ## Examples
   A basic example that processes the messages in a separate LLMChain, returning
@@ -85,12 +88,13 @@ defmodule LangChain.Chains.SummarizeConversationChain do
     field :keep_count, :integer, default: 2
     field :threshold_count, :integer, default: 6
     field :override_system_prompt, :string
+    field :messages, {:array, :any}, virtual: true
     field :verbose, :boolean, default: false
   end
 
   @type t :: %SummarizeConversationChain{}
 
-  @create_fields [:llm, :keep_count, :threshold_count, :override_system_prompt, :verbose]
+  @create_fields [:llm, :keep_count, :threshold_count, :override_system_prompt, :messages, :verbose]
   @required_fields [:llm, :keep_count, :threshold_count]
 
   @default_system_prompt ~s|You expertly summarize a conversation into concise bullet points that capture significant details and sentiment for future reference. Summarize the conversation starting with the initial user message. Return only the summary with no additional commentary.
@@ -170,16 +174,9 @@ defmodule LangChain.Chains.SummarizeConversationChain do
   @spec run(t(), String.t(), opts :: Keyword.t()) ::
           {:ok, LLMChain.t()} | {:error, LLMChain.t(), LangChainError.t()}
   def run(%SummarizeConversationChain{} = summarizer, text_to_summarize, opts \\ []) do
-    system_prompt = summarizer.override_system_prompt || @default_system_prompt
-
     messages =
-      [
-        Message.new_system!(system_prompt),
-        PromptTemplate.new!(%{
-          role: :user,
-          text: "<%= @conversation %>"
-        })
-      ]
+      summarizer
+      |> get_messages()
       |> PromptTemplate.to_messages!(%{
         conversation: text_to_summarize
       })
@@ -413,5 +410,23 @@ defmodule LangChain.Chains.SummarizeConversationChain do
     |> String.replace("</AI>", "")
     |> String.replace("<tool>", "")
     |> String.replace("</tool>", "")
+  end
+
+  # Build the messages when not explicitly provided.
+  defp get_messages(%SummarizeConversationChain{messages: nil} = summarizer) do
+    system_prompt = summarizer.override_system_prompt || @default_system_prompt
+
+    [
+      Message.new_system!(system_prompt),
+      PromptTemplate.new!(%{
+        role: :user,
+        text: "<%= @conversation %>"
+      })
+    ]
+  end
+
+  # Return any explicitly provided messages.
+  defp get_messages(%SummarizeConversationChain{messages: messages}) when is_list(messages) do
+    messages
   end
 end

@@ -275,6 +275,38 @@ defmodule LangChain.Chains.SummarizeConversationChainTest do
 
       assert String.starts_with?(summary_text, "- User")
     end
+
+    test "uses explicitly provided messages", %{
+      llm_anthropic: llm,
+      chain: chain
+    } do
+      # Made NOT LIVE here
+      expect(ChatAnthropic, :call, fn _model, _messages, _tools ->
+        {:ok, Message.new_assistant!("- Fake OpenAI summary")}
+      end)
+
+      summarizer =
+        SummarizeConversationChain.new!(%{
+          llm: llm,
+          threshold_count: 30,
+          keep_count: 2,
+          messages: [
+            Message.new_system!("Custom system message"),
+            Message.new_user!("Custom user message"),
+            Message.new_assistant!("Custom assistant message")
+          ]
+        })
+
+      original_chain = LLMChain.add_messages(chain, get_full_conversation())
+
+      {:ok, used_chain} = SummarizeConversationChain.run(summarizer, original_chain)
+
+      [system, user, assistant, returned] = used_chain.messages
+      assert %Message{role: :system, content: "Custom system message"} = system
+      assert %Message{role: :user, content: "Custom user message"} = user
+      assert %Message{role: :assistant, content: "Custom assistant message"} = assistant
+      assert %Message{role: :assistant, content: "- Fake OpenAI summary"} = returned
+    end
   end
 
   describe "summarize/3" do
