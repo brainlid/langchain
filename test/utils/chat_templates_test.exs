@@ -72,18 +72,29 @@ defmodule LangChain.Utils.ChatTemplatesTest do
                    end
     end
 
-    test "raises exception when not alternating user/assistant" do
-      assert_raise LangChainError,
-                   "Conversation roles must alternate user/assistant/user/assistant/...",
-                   fn ->
-                     ChatTemplates.prep_and_validate_messages([
-                       Message.new_system!("system_message"),
-                       Message.new_user!("user_1"),
-                       Message.new_user!("user_2"),
-                       Message.new_assistant!("assistant_response"),
-                       Message.new_user!("user_3")
-                     ])
-                   end
+    test "raises no exception when alternating user/assistant not one for one" do
+      system = Message.new_system!("system_message")
+
+      first = Message.new_user!("user_1")
+
+      rest = [
+        Message.new_user!("user_2"),
+        Message.new_assistant!("assistant_response"),
+        Message.new_user!("user_3")
+      ]
+
+      {s, u, r} =
+        ChatTemplates.prep_and_validate_messages([
+          Message.new_system!("system_message"),
+          Message.new_user!("user_1"),
+          Message.new_user!("user_2"),
+          Message.new_assistant!("assistant_response"),
+          Message.new_user!("user_3")
+        ])
+
+      assert s == system
+      assert u == first
+      assert r == rest
     end
 
     # test "removes special tokens from the message content"

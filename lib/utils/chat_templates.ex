@@ -104,8 +104,11 @@ defmodule LangChain.Utils.ChatTemplates do
   If there is an issue, an exception is raised. Reasons for an exception:
 
   - Only 1 system message is allowed and, if included, it is the first message.
-  - Non-system messages must begin with a user message
-  - Alternates message roles between: user, assistant, user, assistant, etc.
+  - Non-system messages must begin with a user message or assitant message.
+
+  Recent change:
+  - Alternating messages between user / assistant / user / assistant are no longer enforced as not every model has issues.
+  - It is up to the programmer to enforce this if this is something they need.
   """
   @spec prep_and_validate_messages([Message.t()]) ::
           {Message.t() | nil, Message.t(), [Message.t()]} | no_return()
@@ -138,17 +141,16 @@ defmodule LangChain.Utils.ChatTemplates do
     # must alternate user, assistant, user, etc. Put the first user message back
     # on the list for checking it.
     [first_user | rest]
-    |> Enum.with_index()
     |> Enum.each(fn
-      {%Message{role: :user}, index} when is_even(index) ->
+      %Message{role: :user} ->
         :ok
 
-      {%Message{role: :assistant}, index} when is_odd(index) ->
+      %Message{role: :assistant} ->
         :ok
 
       _other ->
         raise LangChainError,
-              "Conversation roles must alternate user/assistant/user/assistant/..."
+              "Conversation roles must be either user or assistant."
     end)
 
     # return 3 element tuple of critical message pieces
