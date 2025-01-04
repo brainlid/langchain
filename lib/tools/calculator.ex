@@ -167,22 +167,32 @@ defmodule LangChain.Tools.Calculator do
   """
   @spec execute(args :: %{String.t() => any()}, context :: map()) ::
           {:ok, String.t()} | {:error, String.t()}
-  def execute(%{"expression" => expr} = _args, _context) do
-    try do
-      case Abacus.eval(expr) do
-        {:ok, number} ->
-          {:ok, to_string(number)}
+  if Code.ensure_loaded?(Abacus) do
+    def execute(%{"expression" => expr} = _args, _context) do
+      try do
+        case Abacus.eval(expr) do
+          {:ok, number} ->
+            {:ok, to_string(number)}
 
-        {:error, reason} ->
-          Logger.warning(
-            "Calculator tool errored in eval of #{inspect(expr)}. Reason: #{inspect(reason)}"
-          )
+          {:error, reason} ->
+            Logger.warning(
+              "Calculator tool errored in eval of #{inspect(expr)}. Reason: #{inspect(reason)}"
+            )
 
-          {:error, "ERROR: #{inspect(expr)} is not a valid expression"}
+            {:error, "ERROR: #{inspect(expr)} is not a valid expression"}
+        end
+      rescue
+        err ->
+          {:error, "ERROR: An invalid expression raised the exception #{inspect(err)}"}
       end
-    rescue
-      err ->
-        {:error, "ERROR: An invalid expression raised the exception #{inspect(err)}"}
+    end
+  else
+    def execute(%{"expression" => expr} = _args, _context) do
+      Logger.warning(
+        "Calculator tool failed to execute expression #{inspect(expr)} because Abacus module not loaded"
+      )
+
+      {:error, "Error: Abacus module not loaded"}
     end
   end
 end
