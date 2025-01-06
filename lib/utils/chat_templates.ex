@@ -80,7 +80,6 @@ defmodule LangChain.Utils.ChatTemplates do
   Note: The `:zephyr` format supports specific system messages.
 
   """
-  import Integer, only: [is_even: 1, is_odd: 1]
   alias LangChain.LangChainError
   alias LangChain.Message
 
