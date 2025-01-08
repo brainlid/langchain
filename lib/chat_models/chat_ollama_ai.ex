@@ -299,6 +299,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
         receive_timeout: ollama_ai.receive_timeout,
         retry: :transient,
         max_retries: 3,
+        inet6: true,
         retry_delay: fn attempt -> 300 * attempt end
       )
 
@@ -337,6 +338,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
     Req.new(
       url: ollama_ai.endpoint,
       json: for_api(ollama_ai, messages, functions),
+      inet6: true,
       receive_timeout: ollama_ai.receive_timeout
     )
     |> Req.post(
