@@ -94,7 +94,14 @@ defmodule LangChain.Chains.SummarizeConversationChain do
 
   @type t :: %SummarizeConversationChain{}
 
-  @create_fields [:llm, :keep_count, :threshold_count, :override_system_prompt, :messages, :verbose]
+  @create_fields [
+    :llm,
+    :keep_count,
+    :threshold_count,
+    :override_system_prompt,
+    :messages,
+    :verbose
+  ]
   @required_fields [:llm, :keep_count, :threshold_count]
 
   @default_system_prompt ~s|You expertly summarize a conversation into concise bullet points that capture significant details and sentiment for future reference. Summarize the conversation starting with the initial user message. Return only the summary with no additional commentary.
@@ -286,7 +293,9 @@ defmodule LangChain.Chains.SummarizeConversationChain do
 
   def create_summary_messages(summary_text) when is_binary(summary_text) do
     [
-      Message.new_user!("Summarize our entire conversation up to this point for future reference."),
+      Message.new_user!(
+        "Summarize our entire conversation up to this point for future reference."
+      ),
       Message.new_assistant!(summary_text)
     ]
   end

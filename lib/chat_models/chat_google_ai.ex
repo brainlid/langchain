@@ -84,7 +84,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
 
     field :stream, :boolean, default: false
 
-    # A list of maps for callback handlers
+    # A list of maps for callback handlers (treat as private)
     field :callbacks, {:array, :map}, default: []
   end
 
@@ -100,7 +100,6 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     :top_k,
     :receive_timeout,
     :stream,
-    :callbacks,
     :safety_settings
   ]
   @required_fields [
@@ -383,7 +382,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
             {:error, reason}
 
           result ->
-            Callbacks.fire(google_ai.callbacks, :on_llm_new_message, [google_ai, result])
+            Callbacks.fire(google_ai.callbacks, :on_llm_new_message, [result])
             result
         end
 
@@ -480,7 +479,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     # else do this. For now, we fire each and every TokenUsage we receive.
     case get_token_usage(data) do
       %TokenUsage{} = token_usage ->
-        Callbacks.fire(model.callbacks, :on_llm_token_usage, [model, token_usage])
+        Callbacks.fire(model.callbacks, :on_llm_token_usage, [token_usage])
         :ok
 
       nil ->

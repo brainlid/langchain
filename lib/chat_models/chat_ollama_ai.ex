@@ -67,8 +67,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
     :temperature,
     :tfs_z,
     :top_k,
-    :top_p,
-    :callbacks
+    :top_p
   ]
 
   @required_fields [:endpoint, :model]
@@ -150,7 +149,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
     # while a lower value (e.g., 0.5) will generate more focused and conservative text. (Default: 0.9)
     field :top_p, :float, default: 0.9
 
-    # A list of maps for callback handlers
+    # A list of maps for callback handlers (treat as private)
     field :callbacks, {:array, :map}, default: []
   end
 

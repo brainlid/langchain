@@ -178,7 +178,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     # Tool choice option
     field :tool_choice, :map
 
-    # A list of maps for callback handlers
+    # A list of maps for callback handlers (treated as internal)
     field :callbacks, {:array, :map}, default: []
 
     # Can send a string user_id to help ChatGPT detect abuse by users of the
@@ -204,7 +204,6 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     :max_tokens,
     :stream_options,
     :user,
-    :callbacks,
     :tool_choice
   ]
   @required_fields [:endpoint, :model]
@@ -580,12 +579,10 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     |> case do
       {:ok, %Req.Response{body: data} = response} ->
         Callbacks.fire(openai.callbacks, :on_llm_ratelimit_info, [
-          openai,
           get_ratelimit_info(response.headers)
         ])
 
         Callbacks.fire(openai.callbacks, :on_llm_token_usage, [
-          openai,
           get_token_usage(data)
         ])
 
@@ -594,7 +591,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
             {:error, reason}
 
           result ->
-            Callbacks.fire(openai.callbacks, :on_llm_new_message, [openai, result])
+            Callbacks.fire(openai.callbacks, :on_llm_new_message, [result])
             result
         end
 
@@ -638,7 +635,6 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     |> case do
       {:ok, %Req.Response{body: data} = response} ->
         Callbacks.fire(openai.callbacks, :on_llm_ratelimit_info, [
-          openai,
           get_ratelimit_info(response.headers)
         ])
 
@@ -743,7 +739,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   def do_process_response(model, %{"choices" => [], "usage" => %{} = _usage} = data) do
     case get_token_usage(data) do
       %TokenUsage{} = token_usage ->
-        Callbacks.fire(model.callbacks, :on_llm_token_usage, [model, token_usage])
+        Callbacks.fire(model.callbacks, :on_llm_token_usage, [token_usage])
         :ok
 
       nil ->

@@ -1,6 +1,6 @@
 defmodule LangChain.Chains.ChainCallbacks do
   @moduledoc """
-  Defines the callbacks fired by an LLMChain.
+  Defines the callbacks fired by an LLMChain and LLM module.
 
   A callback handler is a map that defines the specific callback event with a
   function to execute for that event.
@@ -13,15 +13,93 @@ defmodule LangChain.Chains.ChainCallbacks do
       live_view_pid = self()
 
       my_handlers = %{
-        handle_chain_error_message_created: fn new_message -> send(live_view_pid, {:received_message, new_message})
+        on_llm_new_message: fn _context, new_message -> send(live_view_pid, {:received_message, new_message}),
+
+        handle_chain_error_message_created: fn _context, new_message -> send(live_view_pid, {:received_message, new_message})
       }
 
-      model = SomeLLM.new!(%{callbacks: [my_handlers]})
-      chain = LLMChain.new!(%{llm: model})
+      model = SomeLLM.new!(%{...})
+
+      chain =
+        %{llm: model}
+        |> LLMChain.new!()
+        |> LLMChain.add_callback(my_handlers)
 
   """
+
   alias LangChain.Chains.LLMChain
   alias LangChain.Message
+  alias LangChain.MessageDelta
+  alias LangChain.TokenUsage
+
+  @typedoc """
+  Executed when an LLM is streaming a response and a new MessageDelta (or token)
+  was received.
+
+  - `:index` is optionally present if the LLM supports sending `n` versions of a
+    response.
+
+  The return value is discarded.
+
+  ## Example
+
+  A function declaration that matches the signature.
+
+      def handle_llm_new_delta(chain, delta) do
+        IO.write(delta)
+      end
+  """
+  @type llm_new_delta :: (LLMChain.t(), MessageDelta.t() -> any())
+
+  @typedoc """
+  Executed when an LLM is not streaming and a full message was received.
+
+  The return value is discarded.
+
+  ## Example
+
+  A function declaration that matches the signature.
+
+      def handle_llm_new_message(chain, message) do
+        IO.inspect(message)
+      end
+  """
+  @type llm_new_message :: (LLMChain.t(), Message.t() -> any())
+
+  @typedoc """
+  Executed when an LLM (typically a service) responds with rate limiting
+  information.
+
+  The specific rate limit information depends on the LLM. It returns a map with
+  all the available information included.
+
+  The return value is discarded.
+
+  ## Example
+
+  A function declaration that matches the signature.
+
+      def handle_llm_ratelimit_info(chain, %{} = info) do
+        IO.inspect(info)
+      end
+  """
+  @type llm_ratelimit_info :: (LLMChain.t(), info :: %{String.t() => any()} -> any())
+
+  @typedoc """
+  Executed when an LLM response reports the token usage in a
+  `LangChain.TokenUsage` struct. The data returned depends on the LLM.
+
+  The return value is discarded.
+
+  ## Example
+
+  A function declaration that matches the signature.
+
+      def handle_llm_token_usage(chain, %TokenUsage{} = usage) do
+        IO.inspect(usage)
+      end
+  """
+  @type llm_token_usage :: (LLMChain.t(), TokenUsage.t() -> any())
 
   @typedoc """
   Executed when an LLMChain has completed processing a received assistant
@@ -108,10 +186,17 @@ defmodule LangChain.Chains.ChainCallbacks do
   The supported set of callbacks for an LLM module.
   """
   @type chain_callback_handler :: %{
-          on_message_processed: chain_message_processed(),
-          on_message_processing_error: chain_message_processing_error(),
-          on_error_message_created: chain_error_message_created(),
-          on_tool_response_created: chain_tool_response_created(),
-          on_retries_exceeded: chain_retries_exceeded()
+          # model-level callbacks
+          optional(:on_llm_new_delta) => llm_new_delta(),
+          optional(:on_llm_new_message) => llm_new_message(),
+          optional(:on_llm_ratelimit_info) => llm_ratelimit_info(),
+          optional(:on_llm_token_usage) => llm_token_usage(),
+
+          # Chain-level callbacks
+          optional(:on_message_processed) => chain_message_processed(),
+          optional(:on_message_processing_error) => chain_message_processing_error(),
+          optional(:on_error_message_created) => chain_error_message_created(),
+          optional(:on_tool_response_created) => chain_tool_response_created(),
+          optional(:on_retries_exceeded) => chain_retries_exceeded()
         }
 end
