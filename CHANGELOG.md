@@ -140,6 +140,19 @@ To:
 - `LangChain.ChatModels.ChatOpenAI.new/1` and `LangChain.ChatModels.ChatOpenAI.new!/1` no longer accept `:callbacks` on the chat model.
 - Removal of `LangChain.ChatModels.ChatModel.add_callback/2`
 
+### What else Changed
+* add explicit message support in summarizer by @brainlid in https://github.com/brainlid/langchain/pull/220
+* Change abacus to optional dep by @nallwhy in https://github.com/brainlid/langchain/pull/223
+* Remove constraint of alternating user, assistant by @GenericJam in https://github.com/brainlid/langchain/pull/222
+* Breaking change: consolidate LLM callback functions by @brainlid in https://github.com/brainlid/langchain/pull/228
+* feat: Enable :inet6 for Req.new for Ollama by @mpope9 in https://github.com/brainlid/langchain/pull/227
+* fix: enable verbose_deltas by @cristineguadelupe in https://github.com/brainlid/langchain/pull/197
+
+### New Contributors
+* @nallwhy made their first contribution in https://github.com/brainlid/langchain/pull/223
+* @GenericJam made their first contribution in https://github.com/brainlid/langchain/pull/222
+* @mpope9 made their first contribution in https://github.com/brainlid/langchain/pull/227
+
 ## v0.3.0-rc.1 (2024-12-15)
 
 ### Breaking Changes
