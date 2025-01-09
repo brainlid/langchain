@@ -25,18 +25,6 @@ defmodule LangChain.ChatModels.ChatModel do
   @callback restore_from_map(%{String.t() => any()}) :: {:ok, struct()} | {:error, String.t()}
 
   @doc """
-  Add a `LangChain.ChatModels.LLMCallbacks` callback map to the ChatModel if
-  it includes the `:callback` key.
-  """
-  @spec add_callback(%{optional(:callbacks) => nil | map()}, map()) :: map() | struct()
-  def add_callback(%_{callbacks: callbacks} = model, callback_map) do
-    existing_callbacks = callbacks || []
-    %{model | callbacks: existing_callbacks ++ [callback_map]}
-  end
-
-  def add_callback(model, _callback_map), do: model
-
-  @doc """
   Create a serializable map from a ChatModel's current configuration that can
   later be restored.
   """

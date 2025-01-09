@@ -543,17 +543,19 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     @tag live_call: true, live_open_ai: true
     test "basic content example and fires ratelimit callback" do
       handlers = %{
-        on_llm_ratelimit_info: fn _model, headers ->
+        on_llm_ratelimit_info: fn headers ->
           send(self(), {:fired_ratelimit_info, headers})
         end,
-        on_llm_token_usage: fn _model, usage ->
+        on_llm_token_usage: fn usage ->
           send(self(), {:fired_token_usage, usage})
         end
       }
 
       # https://js.langchain.com/docs/modules/models/chat/
       {:ok, chat} =
-        ChatOpenAI.new(%{temperature: 1, seed: 0, stream: false, callbacks: [handlers]})
+        ChatOpenAI.new(%{temperature: 1, seed: 0, stream: false})
+
+      chat = %ChatOpenAI{chat | callbacks: [handlers]}
 
       {:ok, [%Message{role: :assistant, content: response}]} =
         ChatOpenAI.call(chat, [
@@ -581,14 +583,16 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     @tag live_call: true, live_open_ai: true
     test "basic streamed content example's final result and fires ratelimit callback" do
       handlers = %{
-        on_llm_ratelimit_info: fn _model, headers ->
+        on_llm_ratelimit_info: fn headers ->
           send(self(), {:fired_ratelimit_info, headers})
         end
       }
 
       # https://js.langchain.com/docs/modules/models/chat/
       {:ok, chat} =
-        ChatOpenAI.new(%{temperature: 1, seed: 0, stream: true, callbacks: [handlers]})
+        ChatOpenAI.new(%{temperature: 1, seed: 0, stream: true})
+
+      chat = %ChatOpenAI{chat | callbacks: [handlers]}
 
       {:ok, result} =
         ChatOpenAI.call(chat, [
@@ -655,7 +659,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     @tag live_call: true, live_open_ai: true
     test "basic streamed content fires token usage callback" do
       handlers = %{
-        on_llm_token_usage: fn _model, usage ->
+        on_llm_token_usage: fn usage ->
           send(self(), {:fired_token_usage, usage})
         end
       }
@@ -666,9 +670,10 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
           temperature: 1,
           seed: 0,
           stream: true,
-          stream_options: %{include_usage: true},
-          callbacks: [handlers]
+          stream_options: %{include_usage: true}
         })
+
+      chat = %ChatOpenAI{chat | callbacks: [handlers]}
 
       # %{
       #   "choices" => [],
@@ -841,13 +846,14 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     @tag live_call: true, live_open_ai: true
     test "executes callback function when data is streamed" do
       handler = %{
-        on_llm_new_delta: fn _model, %MessageDelta{} = delta ->
+        on_llm_new_delta: fn %MessageDelta{} = delta ->
           send(self(), {:message_delta, delta})
         end
       }
 
       # https://js.langchain.com/docs/modules/models/chat/
-      {:ok, chat} = ChatOpenAI.new(%{seed: 0, temperature: 1, stream: true, callbacks: [handler]})
+      chat = ChatOpenAI.new!(%{seed: 0, temperature: 1, stream: true})
+      chat = %ChatOpenAI{chat | callbacks: [handler]}
 
       {:ok, _post_results} =
         ChatOpenAI.call(
@@ -880,7 +886,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     @tag live_call: true, live_open_ai: true
     test "executes callback function when data is NOT streamed" do
       handler = %{
-        on_llm_new_message: fn _model, %Message{} = new_message ->
+        on_llm_new_message: fn %Message{} = new_message ->
           send(self(), {:message_received, new_message})
         end
       }
@@ -888,7 +894,9 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       # https://js.langchain.com/docs/modules/models/chat/
       # NOTE streamed. Should receive complete message.
       {:ok, chat} =
-        ChatOpenAI.new(%{seed: 0, temperature: 1, stream: false, callbacks: [handler]})
+        ChatOpenAI.new(%{seed: 0, temperature: 1, stream: false})
+
+      chat = %ChatOpenAI{chat | callbacks: [handler]}
 
       {:ok, [message]} =
         ChatOpenAI.call(
@@ -1292,13 +1300,15 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     @tag live_call: true, live_open_ai: true
     test "supports streaming response calling function with args" do
       handler = %{
-        on_llm_new_delta: fn _model, %MessageDelta{} = data ->
+        on_llm_new_delta: fn %MessageDelta{} = data ->
           # IO.inspect(data, label: "DATA")
           send(self(), {:streamed_fn, data})
         end
       }
 
-      {:ok, chat} = ChatOpenAI.new(%{seed: 0, stream: true, callbacks: [handler]})
+      {:ok, chat} = ChatOpenAI.new(%{seed: 0, stream: true})
+
+      chat = %ChatOpenAI{chat | callbacks: [handler]}
 
       {:ok, message} =
         Message.new_user("Answer the following math question: What is 100 + 300 - 200?")
@@ -1329,13 +1339,15 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     @tag live_call: true, live_open_ai: true
     test "STREAMING handles receiving a timeout error" do
       handler = %{
-        on_llm_new_delta: fn _model, %MessageDelta{} = data ->
+        on_llm_new_delta: fn %MessageDelta{} = data ->
           send(self(), {:streamed_fn, data})
         end
       }
 
-      {:ok, chat} =
-        ChatOpenAI.new(%{seed: 0, stream: true, receive_timeout: 50, callbacks: [handler]})
+      chat =
+        ChatOpenAI.new!(%{seed: 0, stream: true, receive_timeout: 50})
+
+      chat = %ChatOpenAI{chat | callbacks: [handler]}
 
       {:error, %LangChainError{} = reason} =
         ChatOpenAI.call(chat, [Message.new_user!("Why is the sky blue?")], [])
@@ -1677,25 +1689,29 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
   end
 
   # describe "works within a chain" do
+  #   alias LangChain.Chains.LLMChain
   #   @tag live_call: true, live_open_ai: true
-  #   test "supports starting the assistant's response message and continuing it" do
+  #   test "LLM callbacks pass pass the chain context" do
   #     test_pid = self()
 
   #     handler = %{
-  #       on_llm_new_delta: fn _model, %MessageDelta{} = data ->
+  #       on_llm_new_delta: fn %LLMChain{} = _chain, %MessageDelta{} = data ->
   #         send(test_pid, {:streamed_fn, data})
+  #       end,
+  #       on_llm_new_message: fn %LLMChain{} = _chain, %Message{} = data ->
+  #         send(test_pid, {:msg_fn, data})
   #       end
   #     }
 
-  #     {:ok, result_chain, last_message} =
-  #       LLMChain.new!(%{llm: %ChatOpenAI{model: @gpt4, stream: true, callbacks: [handler]}})
+  #     {:ok, result_chain} =
+  #       LLMChain.new!(%{llm: %ChatOpenAI{model: @gpt4, stream: true}})
   #       |> LLMChain.add_message(Message.new_system!("You are a helpful and concise assistant."))
   #       |> LLMChain.add_message(
   #         Message.new_user!(
   #           "What's the capitol of Norway? Please respond with the answer <answer>{{ANSWER}}</answer>"
   #         )
   #       )
-  #       |> LLMChain.add_message(Message.new_assistant!("<answer>"))
+  #       |> LLMChain.add_callback(handler)
   #       |> LLMChain.run()
 
   #     # %LangChain.Message{
@@ -1708,6 +1724,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
   #     #   tool_call_id: nil,
   #     # },
 
+  #     last_message = result_chain.last_message
   #     IO.inspect(result_chain.messages)
   #     IO.inspect(last_message)
   #     # TODO: The received message is not appended to the sent assistant message
@@ -1720,8 +1737,6 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
   #     assert_received {:streamed_fn, data}
   #     assert %MessageDelta{role: :assistant} = data
-
-  #     assert false
   #   end
   # end
 

@@ -1,5 +1,145 @@
 # Changelog
 
+## v0.3.0-rc.2 (2025-01-08)
+
+### Breaking Changes
+
+How LLM callbacks are registered has changed. The callback function's arguments have also changed.
+
+Specifically, this refers to the callbacks:
+
+- `on_llm_new_delta`
+- `on_llm_new_message`
+- `on_llm_ratelimit_info`
+- `on_llm_token_usage`
+
+The callbacks are still supported, but _how_ they are registered and the arguments passed to the linked functions has changed.
+
+Previously, an LLM callback's first argument was the chat model, it is now the LLMChain that is running it.
+
+A ChatModel still has the `callbacks` struct attribute, but it should be considered private.
+
+#### Why the change
+Having some callback functions registered on the chat model and some registered on the chain was confusing. What goes where? Why the difference?
+
+This change moves them all to the same place, removing a source of confusion.
+
+The primary reason for the change is that important information about the **context** of the callback event was not available to the callback function. Information stored in the chain's `custom_context` can be valuable and important, like a user's account ID, but it was not easily accessible in a callback like `on_llm_token_usage` where we might want to record the user's token usage linked to their account.
+
+This important change passes the entire `LLMChain` through to the callback function, giving the function access to the `custom_context`. This makes the LLM (aka chat model) callback functions expect the same arguments as the other chain focused callback functions.
+
+This both unifies how the callbacks operate and what data they have available, and it groups them all together.
+
+#### Adapting to the change
+A before example:
+
+```elixir
+llm_events = %{
+  # 1st argument was the chat model
+  on_llm_new_delta: fn _chat_model, %MessageDelta{} = delta ->
+    # ...
+  end,
+  on_llm_token_usage: fn _chat_model, usage_data ->
+    # ...
+  end
+}
+
+chain_events = %{
+  on_message_processed: fn _chain, tool_msg ->
+    # ...
+  end
+}
+
+# LLM callback events were registered on the chat model
+chat_model = ChatOpenAI.new!(%{stream: true, callbacks: [llm_events]})
+
+{:ok, updated_chain} =
+  %{
+    llm: chat_model,
+    custom_context: %{user_id: 123}
+  }
+  |> LLMChain.new!()
+  |> LLMChain.add_message(Message.new_system!())
+  |> LLMChain.add_message(Message.new_user!("Say hello!"))
+  # Chain callback events were registered on the chain
+  |> LLMChain.add_callback(chain_events)
+  |> LLMChain.run()
+```
+
+This is updated to: (comments highlight changes)
+
+```elixir
+# Events are all combined together
+events = %{
+  # 1st argument is now the LLMChain
+  on_llm_new_delta: fn _chain, %MessageDelta{} = delta ->
+    # ...
+  end,
+  on_llm_token_usage: fn %LLMChain{} = chain, usage_data ->
+    # ... `chain.custom_context` is available
+  end,
+  on_message_processed: fn _chain, tool_msg ->
+    # ...
+  end
+}
+
+# callbacks removed from Chat Model setup
+chat_model = ChatOpenAI.new!(%{stream: true})
+
+{:ok, updated_chain} =
+  %{
+    llm: chat_model,
+    custom_context: %{user_id: 123}
+  }
+  |> LLMChain.new!()
+  |> LLMChain.add_message(Message.new_system!())
+  |> LLMChain.add_message(Message.new_user!("Say hello!"))
+  # All events are registered through `add_callback`
+  |> LLMChain.add_callback(events)
+  |> LLMChain.run()
+```
+
+If you still need access to the LLM in the callback functions, it's available in `chain.llm`.
+
+The change is a breaking change, but should be fairly easy to update.
+
+This consolidates how callback events work and them more powerful by exposing important information to the callback functions.
+
+If you were using the `LLMChain.add_llm_callback/2`, the change is even easier:
+
+From:
+```elixir
+  %{
+    llm: chat_model,
+    custom_context: %{user_id: 123}
+  }
+  |> LLMChain.new!()
+  # ...
+  # LLM callback events could be added later this way
+  |> LLMChain.add_llm_callback(llm_events)
+  |> LLMChain.run()
+```
+
+To:
+```elixir
+  %{
+    llm: chat_model,
+    custom_context: %{user_id: 123}
+  }
+  |> LLMChain.new!()
+  # ...
+  # Use the `add_callback` function instead
+  |> LLMChain.add_callback(llm_events)
+  |> LLMChain.run()
+```
+
+#### Details of the change
+- Removal of the `LangChain.ChatModels.LLMCallbacks` module.
+- The LLM-specific callbacks were migrated to `LangChain.Chains.ChainCallbacks`.
+- Removal of `LangChain.Chains.LLMChain.add_llm_callback/2`
+- `LangChain.ChatModels.ChatOpenAI.new/1` and `LangChain.ChatModels.ChatOpenAI.new!/1` no longer accept `:callbacks` on the chat model.
+- Removal of `LangChain.ChatModels.ChatModel.add_callback/2`
+
 ## v0.3.0-rc.1 (2024-12-15)
 
 ### Breaking Changes

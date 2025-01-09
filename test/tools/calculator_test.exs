@@ -68,30 +68,25 @@ defmodule LangChain.Tools.CalculatorTest do
     test "performs repeated calls until complete with a live LLM" do
       test_pid = self()
 
-      llm_handler = %{
-        on_llm_new_message: fn _model, %Message{} = message ->
+      handlers = %{
+        on_llm_new_message: fn %LLMChain{}, %Message{} = message ->
           send(test_pid, {:callback_msg, message})
-        end
-      }
-
-      chain_handler = %{
+        end,
         on_tool_response_created: fn _chain, %Message{} = tool_message ->
           send(test_pid, {:callback_tool_msg, tool_message})
         end
       }
 
-      model = ChatOpenAI.new!(%{seed: 0, temperature: 0, stream: false, callbacks: [llm_handler]})
+      model = ChatOpenAI.new!(%{seed: 0, temperature: 0, stream: false})
 
       {:ok, updated_chain} =
-        LLMChain.new!(%{
-          llm: model,
-          verbose: false,
-          callbacks: [chain_handler]
-        })
+        %{llm: model, verbose: false}
+        |> LLMChain.new!()
         |> LLMChain.add_message(
           Message.new_user!("Answer the following math question: What is 100 + 300 - 200?")
         )
         |> LLMChain.add_tools(Calculator.new!())
+        |> LLMChain.add_callback(handlers)
         |> LLMChain.run(mode: :while_needs_response)
 
       assert updated_chain.last_message.role == :assistant

@@ -7,7 +7,7 @@ defmodule LangChain.BedrockHelpers do
           secret_access_key: Application.fetch_env!(:langchain, :aws_secret_access_key)
         ]
       end,
-      region: "us-east-1"
+      region: Application.fetch_env!(:langchain, :aws_region)
     }
   end
 

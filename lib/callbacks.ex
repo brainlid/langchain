@@ -13,15 +13,15 @@ defmodule LangChain.Callbacks do
   @spec fire([map()], atom(), [any()]) :: :ok | no_return()
   def fire(callbacks, callback_name, arguments)
 
-  def fire(callbacks, :on_llm_new_message, [model, messages]) when is_list(messages) do
+  def fire(callbacks, :on_llm_new_message, [messages]) when is_list(messages) do
     Enum.each(messages, fn m ->
-      fire(callbacks, :on_llm_new_message, [model, m])
+      fire(callbacks, :on_llm_new_message, [m])
     end)
   end
 
-  def fire(callbacks, :on_llm_new_delta, [model, deltas]) when is_list(deltas) do
+  def fire(callbacks, :on_llm_new_delta, [deltas]) when is_list(deltas) do
     Enum.each(deltas, fn d ->
-      fire(callbacks, :on_llm_new_delta, [model, d])
+      fire(callbacks, :on_llm_new_delta, [d])
     end)
   end
 

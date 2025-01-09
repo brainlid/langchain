@@ -136,7 +136,7 @@ defmodule LangChain.ChatModels.ChatBumblebee do
     # for testing.
     field :seed, :integer, default: nil
 
-    # A list of maps for callback handlers
+    # A list of maps for callback handlers (treat as private)
     field :callbacks, {:array, :map}, default: []
   end
 
@@ -153,8 +153,7 @@ defmodule LangChain.ChatModels.ChatBumblebee do
     # :temperature,
     :seed,
     :template_format,
-    :stream,
-    :callbacks
+    :stream
   ]
   @required_fields [:serving]
 
@@ -255,7 +254,7 @@ defmodule LangChain.ChatModels.ChatBumblebee do
     case Message.new(%{role: :assistant, status: :complete, content: content}) do
       {:ok, message} ->
         # execute the callback with the final message
-        Callbacks.fire(model.callbacks, :on_llm_new_message, [model, message])
+        Callbacks.fire(model.callbacks, :on_llm_new_message, [message])
         # return a list of the complete message. As a list for compatibility.
         [message]
 
@@ -287,13 +286,13 @@ defmodule LangChain.ChatModels.ChatBumblebee do
         fire_token_usage_callback(model, token_summary)
 
         final_delta = MessageDelta.new!(%{role: :assistant, status: :complete})
-        Callbacks.fire(model.callbacks, :on_llm_new_delta, [model, final_delta])
+        Callbacks.fire(model.callbacks, :on_llm_new_delta, [final_delta])
         final_delta
 
       content when is_binary(content) ->
         case MessageDelta.new(%{content: content, role: :assistant, status: :incomplete}) do
           {:ok, delta} ->
-            Callbacks.fire(model.callbacks, :on_llm_new_delta, [model, delta])
+            Callbacks.fire(model.callbacks, :on_llm_new_delta, [delta])
             delta
 
           {:error, %Ecto.Changeset{} = changeset} ->
@@ -318,7 +317,6 @@ defmodule LangChain.ChatModels.ChatBumblebee do
 
   defp fire_token_usage_callback(model, %{input: input, output: output} = _token_summary) do
     Callbacks.fire(model.callbacks, :on_llm_token_usage, [
-      model,
       TokenUsage.new!(%{input: input, output: output})
     ])
   end

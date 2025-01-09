@@ -134,7 +134,11 @@ defmodule LangChain.FunctionParamTest do
       assert expected == FunctionParam.to_json_schema(%{}, param)
 
       param =
-        FunctionParam.new!(%{name: "enabled", type: :boolean, description: "If option is enabled"})
+        FunctionParam.new!(%{
+          name: "enabled",
+          type: :boolean,
+          description: "If option is enabled"
+        })
 
       expected = %{"enabled" => %{"type" => "boolean", "description" => "If option is enabled"}}
       assert expected == FunctionParam.to_json_schema(%{}, param)
