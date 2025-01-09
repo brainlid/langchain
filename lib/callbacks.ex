@@ -40,7 +40,12 @@ defmodule LangChain.Callbacks do
             # execute the function
             apply(callback_fn, arguments)
           rescue
+            err in LangChainError ->
+              raise(err)
+
             err ->
+              IO.inspect(err, label: :err)
+
               msg =
                 "Callback handler for #{inspect(callback_name)} raised an exception: #{inspect(err)}"
 
