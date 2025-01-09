@@ -79,11 +79,16 @@ defmodule LangChain.Utils.ChatTemplates do
 
   Note: The `:zephyr` format supports specific system messages.
 
+  ## Template callback
+
+  It's possible to pass a callback as a template.
+  The function receives the list of messages as first argument and `opts` as second and must return a string.
   """
   alias LangChain.LangChainError
   alias LangChain.Message
 
-  @type chat_format :: :inst | :im_start | :llama_2 | :llama_3 | :zephyr
+  @type template_callback :: ([Message.t()], Keyword.t() -> String.t())
+  @type chat_format :: :inst | :im_start | :llama_2 | :llama_3 | :zephyr | template_callback()
 
   # Option:
   # - `add_generation_prompt`: boolean. Defaults to False.
