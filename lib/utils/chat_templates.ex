@@ -315,6 +315,10 @@ defmodule LangChain.Utils.ChatTemplates do
     )
   end
 
+  def apply_chat_template!(messages, template_callback, opts)
+      when is_function(template_callback, 2),
+      do: template_callback.(messages, opts)
+
   # return the desired true/false value. Only set to true when the last message
   # is a user prompt.
   defp default_add_generation_prompt_value(messages) do
