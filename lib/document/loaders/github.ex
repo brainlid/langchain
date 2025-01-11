@@ -83,18 +83,11 @@ defmodule LangChain.Document.Loaders.Github do
 
     req
     |> Req.get()
-    # parse the body and return it as parsed structs
     |> case do
       {:ok, %Req.Response{body: data, headers: _headers} = _response} ->
-        case process_response(data) do
-          {:error, reason} ->
-            {:error, reason}
-
-          result ->
-            # @TODO check the headers and see if we need to do some pagination
-            # if so, call this function recursively with the next page
-            result
-        end
+        # @TODO check the headers and see if we need to do some pagination
+        # if so, call this function recursively with the next page
+        process_response(data)
 
       {:error, %Req.TransportError{reason: :timeout}} ->
         {:error, "Request timed out"}
