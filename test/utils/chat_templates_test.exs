@@ -6,6 +6,7 @@ defmodule LangChain.Utils.ChatTemplatesTest do
   alias LangChain.Utils.ChatTemplates
   alias LangChain.Message
   alias LangChain.LangChainError
+  alias Langchain.Function
 
   describe "prep_and_validate_messages/1" do
     test "returns 3 item tuple with expected parts" do
@@ -699,4 +700,261 @@ defmodule LangChain.Utils.ChatTemplatesTest do
       assert result == expected
     end
   end
+
+  describe "apply_chat_template!/3 - :llama_3_1_custom_tool_calling format" do
+    test "tool use system message" do
+      messages = [
+        Message.new_system!("system_message"),
+        Message.new_user!("user_prompt")
+      ]
+
+      schema_def = %{
+        type: "object",
+        properties: %{
+          n: %{
+            type: "integer",
+            description: ""
+          }
+        },
+        required: ["n"]
+      }
+
+      {:ok, fun} =
+        LangChain.Function.new(%{
+          "name" => "say_hi",
+          "description" => "Provide a friendly greeting.",
+          "parameters_schema" => schema_def,
+          "function" => &hello_world/2
+        })
+
+      tools = [fun]
+
+      date = Calendar.strftime(DateTime.utc_now(), "%d %B %Y")
+
+      expected =
+        "<|begin_of_text|>\n<|start_header_id|>system<|end_header_id|>\n\nEnvironment: ipython\nTools:\nCutting Knowledge Date: December 2023\nToday Date: 09 January 2025\n\n# Tool Instructions\n- Always execute python code in messages that you share.\n- When looking for real time information use relevant functions if available\n\nYou have access to the following functions:\n\n\nUse the function 'say_hi' to: Provide a friendly greeting.\n{\n  \"n\": {\n    \"description\": \"\",\n    \"param_type\": \"int\",\n    \"required\": false\n  }\n}\n\n\n\n\nIf a you choose to call a function ONLY reply in the following format:\n<{start_tag}={function_name}>{parameters}{end_tag}\nwhere\n\nstart_tag => `<function`\nparameters => a JSON dict with the function argument name as key and function argument value as value.\nend_tag => `</function>`\n\nHere is an example,\n<function=example_function_name>{\"example_name\": \"example_value\"}</function>\n\nReminder:\n- Function calls MUST follow the specified format\n- Required parameters MUST be specified\n- Only call one function at a time\n- Put the entire function call reply on one line\n- Always add your sources when using search results to answer the user query\n\nYou are a helpful assistant.system_message<|eot_id|>\n<|start_header_id|>user<|end_header_id|>\n\nuser_prompt<|eot_id|>\n\n\n<|start_header_id|>assistant<|end_header_id|>\n\n"
+
+      result =
+        ChatTemplates.apply_chat_template_with_tools!(
+          messages,
+          :llama_3_1_custom_tool_calling,
+          tools
+        )
+
+      assert result == expected
+    end
+  end
+
+  describe "llama_3_1_custom_tool_calling_parameter_conversion/1" do
+    test "converts single tool with basic parameters" do
+      tools = [
+        %LangChain.Function{
+          name: "spotify_trending_songs",
+          description: "Get top trending songs on Spotify",
+          parameters_schema: %{
+            type: "object",
+            required: ["n"],
+            properties: %{
+              "n" => %{
+                type: "integer"
+              }
+            }
+          }
+        }
+      ]
+
+      result = LangChain.Utils.ChatTemplates.llama_3_1_custom_tool_calling_parameter_conversion(tools)
+
+      assert [converted_tool] = result
+      assert converted_tool["name"] == "spotify_trending_songs"
+      assert converted_tool["description"] == "Get top trending songs on Spotify"
+      assert converted_tool["parameters"]["n"]["param_type"] == "int"
+      assert converted_tool["parameters"]["n"]["required"] == true
+    end
+
+    test "handles multiple parameter types" do
+      tool = %LangChain.Function{
+        name: "test_tool",
+        description: "Test tool",
+        parameters_schema: %{
+          "type" => "object",
+          "required" => ["int_param"],
+          "properties" => %{
+            "int_param" => %{"type" => "integer", "description" => "Integer param"},
+            "float_param" => %{"type" => "number", "description" => "Float param"},
+            "bool_param" => %{"type" => "boolean", "description" => "Boolean param"},
+            "string_param" => %{"type" => "string", "description" => "String param"}
+          }
+        }
+      }
+
+      [result] = LangChain.Utils.ChatTemplates.llama_3_1_custom_tool_calling_parameter_conversion([tool])
+
+      params = result["parameters"]
+      assert params["int_param"]["param_type"] == "int"
+      assert params["float_param"]["param_type"] == "float"
+      assert params["bool_param"]["param_type"] == "bool"
+      assert params["string_param"]["param_type"] == "string"
+    end
+
+    test "handles empty schema" do
+      tool = %LangChain.Function{
+        name: "empty_tool",
+        description: "Empty tool",
+        parameters_schema: %{}
+      }
+
+      [result] = LangChain.Utils.ChatTemplates.llama_3_1_custom_tool_calling_parameter_conversion([tool])
+
+      assert result["parameters"] == %{}
+    end
+
+    test "handles optional parameters" do
+      tool = %LangChain.Function{
+        name: "optional_tool",
+        description: "Tool with optional params",
+        parameters_schema: %{
+          "type" => "object",
+          "required" => ["required_param"],
+          "properties" => %{
+            "required_param" => %{"type" => "string", "description" => "Required"},
+            "optional_param" => %{"type" => "string", "description" => "Optional"}
+          }
+        }
+      }
+
+      [result] = LangChain.Utils.ChatTemplates.llama_3_1_custom_tool_calling_parameter_conversion([tool])
+
+      assert result["parameters"]["required_param"]["required"] == true
+      assert result["parameters"]["optional_param"]["required"] == false
+    end
+  end
+
+  describe "apply_chat_template!/3 - :llama_3_2_custom_tool_calling format" do
+    test "llama3.2 tool use system message" do
+      messages = [
+        Message.new_system!("system_message"),
+        Message.new_user!("user_prompt")
+      ]
+
+      schema_def = %{
+        type: "object",
+        properties: %{
+          n: %{
+            type: "integer",
+            description: ""
+          }
+        },
+        required: ["n"]
+      }
+
+      {:ok, fun} =
+        LangChain.Function.new(%{
+          "name" => "say_hi",
+          "description" => "Provide a friendly greeting.",
+          "parameters_schema" => schema_def,
+          "function" => &hello_world/2
+        })
+
+      tools = [fun]
+
+      date = Calendar.strftime(DateTime.utc_now(), "%d %B %Y")
+
+      expected =
+        "<|begin_of_text|>\n<|start_header_id|>system<|end_header_id|>\nYou are an expert in composing functions. You are given a question and a set of possible functions.\nBased on the question, you will need to make one or more function/tool calls to achieve the purpose.\nIf none of the functions can be used, point it out. If the given question lacks the parameters required by the function,also point it out. You should only return the function call in tools call sections.\nIf you decide to invoke any of the function(s), you MUST put it in the format of [func_name1(params_name1=params_value1, params_name2=params_value2...), func_name2(params)]\nYou SHOULD NOT include any other text in the response.\nHere is a list of functions in JSON format that you can invoke.[\n  {\n    \"description\": \"Provide a friendly greeting.\",\n    \"name\": \"say_hi\",\n    \"parameters\": {\n      \"n\": {\n        \"description\": \"\",\n        \"param_type\": \"int\",\n        \"required\": false\n      }\n    }\n  }\n]system_message<|eot_id|>\n<|start_header_id|>user<|end_header_id|>\n\nuser_prompt<|eot_id|>\n\n\n<|start_header_id|>assistant<|end_header_id|>\n\n"
+
+      result =
+        ChatTemplates.apply_chat_template_with_tools!(
+          messages,
+          :llama_3_2_custom_tool_calling,
+          tools
+        )
+
+      assert result == expected
+    end
+
+    test "llama3.2 tool respone" do
+
+      schema_def = %{
+        type: "object",
+        properties: %{
+          n: %{
+            type: "integer",
+            description: ""
+          }
+        },
+        required: ["n"]
+      }
+
+      {:ok, fun} =
+        LangChain.Function.new(%{
+          "name" => "say_hi",
+          "description" => "Provide a friendly greeting.",
+          "parameters_schema" => schema_def,
+          "function" => &hello_world/2
+        })
+
+      tools = [fun]
+
+   messages = [
+     %LangChain.Message{
+       content: "Where is the hairbrush located?",
+       processed_content: nil,
+       index: nil,
+       status: :complete,
+       role: :user,
+       name: nil,
+       tool_calls: [],
+       tool_results: nil
+     },
+     %LangChain.Message{
+       content: "[get_location(thing=\"hairbrush\")]",
+       processed_content: nil,
+       index: nil,
+       status: :complete,
+       role: :assistant,
+       name: nil,
+       tool_calls: [
+         %LangChain.Message.ToolCall{
+           status: :complete,
+           type: :function,
+           call_id: "test",
+           name: "get_location",
+           arguments: %{"thing" => "hairbrush"},
+           index: nil
+         }
+       ],
+       tool_results: nil
+     },
+     %LangChain.Message{
+       content: nil,
+       processed_content: nil,
+       index: nil,
+       status: :complete,
+       role: :tool,
+       name: nil,
+       tool_calls: [],
+       tool_results: [
+         %LangChain.Message.ToolResult{
+           type: :function,
+           tool_call_id: "test",
+           name: "get_location",
+           content: "drawer",
+           display_text: nil,
+           is_error: false
+         }
+       ]
+     }
+   ]
+   result =
+    ChatTemplates.apply_chat_template_with_tools!(
+      messages,
+      :llama_3_2_custom_tool_calling,
+      tools
+    ) |> IO.inspect()
+    end
+  end
+
+
+
 end

@@ -40,6 +40,7 @@ defmodule LangChain.MixProject do
       {:gettext, "~> 0.20"},
       {:req, ">= 0.5.2"},
       {:abacus, "~> 2.1.0"},
+      {:nimble_parsec, "~> 1.4"},
       {:nx, ">= 0.7.0", optional: true},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
       {:mimic, "~> 1.8", only: :test}
