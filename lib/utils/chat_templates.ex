@@ -261,6 +261,29 @@ defmodule LangChain.Utils.ChatTemplates do
     )
   end
 
+  def apply_chat_template!(messages, :phi_4, _opts) do
+    # translation form https://huggingface.co/microsoft/phi-4/blob/main/tokenizer_config.json#L774 to Elixir via Claude 3.5 Sonnet Copilot
+    # {% for message in messages %}{% if (message['role'] == 'system') %}{{'<|im_start|>system<|im_sep|>' + message['content'] + '<|im_end|>'}}{% elif (message['role'] == 'user') %}{{'<|im_start|>user<|im_sep|>' + message['content'] + '<|im_end|><|im_start|>assistant<|im_sep|>'}}{% elif (message['role'] == 'assistant') %}{{message['content'] + '<|im_end|>'}}{% endif %}{% endfor %}
+    {system, first_user, rest} = prep_and_validate_messages(messages)
+
+    text = """
+    <%= if @system != nil do %><|im_start|>system<|im_sep|><%= @system.content %><|im_end|><% end %>\
+    <%= if @first_user != nil do %><|im_start|>user<|im_sep|><%= @first_user.content %><|im_end|><|im_start|>assistant<|im_sep|><% end %>\
+    <%= for m <- @rest do %>\
+    <%= if m.role == :user do %><|im_start|>user<|im_sep|><%= m.content %><|im_end|><|im_start|>assistant<|im_sep|>\
+    <% else %><%= m.content %><|im_end|><% end %>\
+    <% end %>
+    """
+
+    EEx.eval_string(text,
+      assigns: [
+        system: system,
+        first_user: first_user,
+        rest: rest
+      ]
+    )
+  end
+
   # Does LLaMa 2 formatted text
   def apply_chat_template!(messages, :llama_2, _opts) do
     # https://huggingface.co/blog/llama2#how-to-prompt-llama-2

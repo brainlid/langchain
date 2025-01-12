@@ -123,7 +123,14 @@ defmodule LangChain.ChatModels.ChatBumblebee do
     # # more focused and deterministic.
     # field :temperature, :float, default: 1.0
 
-    field :template_format, Ecto.Enum, values: [:inst, :im_start, :zephyr, :llama_2, :llama_3]
+    field :template_format, Ecto.Enum, values: [
+      :inst,
+      :im_start,
+      :zephyr,
+      :phi_4,
+      :llama_2,
+      :llama_3
+    ]
 
     # The bumblebee model may compile differently based on the stream true/false
     # option on the serving. Therefore, streaming should be enabled on the
