@@ -79,6 +79,11 @@ defmodule LangChain.Utils.ChatTemplates do
 
   Note: The `:zephyr` format supports specific system messages.
 
+
+  ### `:phi_4`
+
+  The `:phi_4` template format is also supported.
+
   ## Template callback
 
   It's possible to pass a callback as a template.
@@ -88,7 +93,7 @@ defmodule LangChain.Utils.ChatTemplates do
   alias LangChain.Message
 
   @type template_callback :: ([Message.t()], Keyword.t() -> String.t())
-  @type chat_format :: :inst | :im_start | :llama_2 | :llama_3 | :zephyr | template_callback()
+  @type chat_format :: :inst | :im_start | :llama_2 | :llama_3 | :phi_4 | :zephyr | template_callback()
 
   # Option:
   # - `add_generation_prompt`: boolean. Defaults to False.
