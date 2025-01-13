@@ -1835,9 +1835,7 @@ defmodule LangChain.Chains.LLMChainTest do
       updated_chain = LLMChain.add_callback(chain, handler2)
       assert updated_chain.callbacks == [handler1, handler2]
     end
-  end
 
-  describe "add_llm_callback/2" do
     test "appends a callback handler to the chain's LLM", %{chat: chat} do
       handler1 = %{on_llm_new_message: fn %LLMChain{} = _chain, _msg -> IO.puts("MESSAGE 1!") end}
       handler2 = %{on_llm_new_message: fn %LLMChain{} = _chain, _msg -> IO.puts("MESSAGE 2!") end}
