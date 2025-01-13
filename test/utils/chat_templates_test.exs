@@ -479,4 +479,30 @@ defmodule LangChain.Utils.ChatTemplatesTest do
       assert result == expected
     end
   end
+
+  describe "apply_chat_template!/3 - with template callback" do
+    test "formats according to template callback" do
+      messages = [
+        Message.new_system!("system_message"),
+        Message.new_user!("user_prompt"),
+        Message.new_assistant!("assistant_response"),
+        Message.new_user!("user_2nd")
+      ]
+
+      format =
+        "<|start_of_template|><%= for message <- @messages do %><%= message.role %>\n<%= message.content %>\n\n<% end %><|end_of_template|>"
+
+      template_callback = fn messages, _opts ->
+        EEx.eval_string(format,
+          assigns: [messages: messages]
+        )
+      end
+
+      expected =
+        "<|start_of_template|>system\nsystem_message\n\nuser\nuser_prompt\n\nassistant\nassistant_response\n\nuser\nuser_2nd\n\n<|end_of_template|>"
+
+      result = ChatTemplates.apply_chat_template!(messages, template_callback)
+      assert result == expected
+    end
+  end
 end
