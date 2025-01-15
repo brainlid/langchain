@@ -192,7 +192,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
     %{
       model: model.model,
       temperature: model.temperature,
-      messages: messages |> Enum.map(&ChatOpenAI.for_api/1),
+      messages: messages |> Enum.map(&ChatOpenAI.for_api(model, &1)),
       stream: model.stream,
       seed: model.seed,
       num_ctx: model.num_ctx,
