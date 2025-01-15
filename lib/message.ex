@@ -191,7 +191,7 @@ defmodule LangChain.Message do
         changeset
 
       {:ok, content} when is_list(content) ->
-        if role in [:user, :assistant] do
+        if role in [:user, :assistant, :system] do
           # if a list, verify all elements are a ContentPart or PromptTemplate
           if Enum.all?(content, &(match?(%ContentPart{}, &1) or match?(%PromptTemplate{}, &1))) do
             changeset
@@ -199,7 +199,7 @@ defmodule LangChain.Message do
             add_error(changeset, :content, "must be text or a list of ContentParts")
           end
         else
-          # only a user message can have ContentParts
+          # only a user message can have ContentParts (except for ChatAnthropic system messages)
           Logger.error(
             "Invalid message content #{inspect(get_field(changeset, :content))} for role #{role}"
           )

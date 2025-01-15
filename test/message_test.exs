@@ -94,10 +94,6 @@ defmodule LangChain.MessageTest do
       {:ok, message} = Message.new_user("Hi")
       assert message.content == "Hi"
 
-      # content parts not allowed for other role types
-      {:error, changeset} = Message.new_system([part])
-      assert {"is invalid for role system", _} = changeset.errors[:content]
-
       {:error, changeset} =
         Message.new(%{
           role: :tool,
@@ -162,7 +158,7 @@ defmodule LangChain.MessageTest do
       assert msg.role == :user
 
       assert msg.content == [
-               %ContentPart{type: :text, content: "Describe what is in this image:"},
+               %ContentPart{type: :text, content: "Describe what is in this image:", options: []},
                %ContentPart{type: :image, content: "ZmFrZV9pbWFnZV9kYXRh", options: []}
              ]
     end

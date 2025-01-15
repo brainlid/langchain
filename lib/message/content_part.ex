@@ -89,8 +89,8 @@ defmodule LangChain.Message.ContentPart do
   Create a new ContentPart that contains text. Raises an exception if not valid.
   """
   @spec text!(String.t()) :: t() | no_return()
-  def text!(content) do
-    new!(%{type: :text, content: content})
+  def text!(content, opts \\ []) do
+    new!(%{type: :text, content: content, options: opts})
   end
 
   @doc """
