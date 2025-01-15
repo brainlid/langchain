@@ -300,7 +300,12 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   end
 
   def for_api(%Function{} = function) do
-    encoded = ChatOpenAI.for_api(function)
+    encoded =
+      %{
+        "name" => function.name,
+        "parameters" => ChatOpenAI.get_parameters(function)
+      }
+      |> Utils.conditionally_add_to_map("description", function.description)
 
     # For functions with no parameters, Google AI needs the parameters field removing, otherwise it will error
     # with "* GenerateContentRequest.tools[0].function_declarations[0].parameters.properties: should be non-empty for OBJECT type\n"

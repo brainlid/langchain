@@ -125,7 +125,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
       top_p: mistral.top_p,
       safe_prompt: mistral.safe_prompt,
       stream: mistral.stream,
-      messages: Enum.map(messages, &ChatOpenAI.for_api/1)
+      messages: Enum.map(messages, &ChatOpenAI.for_api(mistral, &1))
     }
     |> Utils.conditionally_add_to_map(:random_seed, mistral.random_seed)
     |> Utils.conditionally_add_to_map(:max_tokens, mistral.max_tokens)
