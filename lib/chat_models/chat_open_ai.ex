@@ -1046,7 +1046,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     #  https://platform.openai.com/docs/api-reference/chat/object#chat/object-usage
     TokenUsage.new!(%{
       input: Map.get(usage, "prompt_tokens"),
-      output: Map.get(usage, "completion_tokens")
+      output: Map.get(usage, "completion_tokens"),
+      raw: usage
     })
   end
 

@@ -739,7 +739,8 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     # extract out the reported response token usage
     TokenUsage.new!(%{
       input: Map.get(usage, "promptTokenCount", 0),
-      output: Map.get(usage, "candidatesTokenCount", 0)
+      output: Map.get(usage, "candidatesTokenCount", 0),
+      raw: usage
     })
   end
 

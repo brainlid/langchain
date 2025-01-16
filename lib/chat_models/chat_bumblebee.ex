@@ -322,9 +322,9 @@ defmodule LangChain.ChatModels.ChatBumblebee do
     [result]
   end
 
-  defp fire_token_usage_callback(model, %{input: input, output: output} = _token_summary) do
+  defp fire_token_usage_callback(model, %{input: input, output: output} = token_summary) do
     Callbacks.fire(model.callbacks, :on_llm_token_usage, [
-      TokenUsage.new!(%{input: input, output: output})
+      TokenUsage.new!(%{input: input, output: output, raw: token_summary})
     ])
   end
 

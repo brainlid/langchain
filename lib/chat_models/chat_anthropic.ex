@@ -1021,7 +1021,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     #  https://platform.openai.com/docs/api-reference/chat/object#chat/object-usage
     TokenUsage.new!(%{
       input: Map.get(usage, "input_tokens"),
-      output: Map.get(usage, "output_tokens")
+      output: Map.get(usage, "output_tokens"),
+      raw: usage
     })
   end
 
