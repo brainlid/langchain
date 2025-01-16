@@ -6,7 +6,10 @@ defmodule LangChain.TokenUsage do
 
       %TokenUsage{
         input: 30,
-        output: 15
+        output: 15,
+        raw: %{
+          "total_tokens" => 29
+        }
       }
 
   Input is the tokens from the prompt. Output is the completion or generated
@@ -23,11 +26,12 @@ defmodule LangChain.TokenUsage do
   embedded_schema do
     field :input, :integer
     field :output, :integer
+    field :raw, :map, default: %{}
   end
 
   @type t :: %TokenUsage{}
 
-  @create_fields [:input, :output]
+  @create_fields [:input, :output, :raw]
   # Anthropic returns only the output token count when streaming deltas
   @required_fields [:output]
 
