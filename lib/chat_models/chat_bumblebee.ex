@@ -349,7 +349,6 @@ defmodule LangChain.ChatModels.ChatBumblebee do
       )
       when is_binary(content) do
     fire_token_usage_callback(model, token_summary)
-    IO.inspect(content)
 
     case LLAMA_3_1_CustomToolParser.parse(content) do
       {:ok,
