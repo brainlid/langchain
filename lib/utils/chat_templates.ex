@@ -349,6 +349,10 @@ defmodule LangChain.Utils.ChatTemplates do
     )
   end
 
+  def apply_chat_template!(messages, template_callback, opts)
+      when is_function(template_callback, 2),
+      do: template_callback.(messages, opts)
+
   @doc """
   Transform a list of messages into a text prompt in the desired format for the
   LLM.
@@ -362,13 +366,6 @@ defmodule LangChain.Utils.ChatTemplates do
     trigger the assistant's text generation.
 
   """
-  @spec apply_chat_template_with_tools!(
-          [Message.t()],
-          chat_format,
-          [Function.t()],
-          opts :: Keyword.t()
-        ) ::
-          String.t() | no_return()
   def apply_chat_template_with_tools!(messages, chat_format, tools \\ [], opts \\ [])
   # Does LLaMa 3.1 json tool calling formatted text
   def apply_chat_template_with_tools!(messages, :llama_3_1_json_tool_calling, tools, opts) do
@@ -654,10 +651,6 @@ defp get_param_type(type) do
     _ -> "string"
   end
 end
-
-  def apply_chat_template!(messages, template_callback, opts)
-      when is_function(template_callback, 2),
-      do: template_callback.(messages, opts)
 
   # return the desired true/false value. Only set to true when the last message
   # is a user prompt.
