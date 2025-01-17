@@ -988,7 +988,7 @@ defmodule LangChain.Utils.ChatTemplatesTest do
       messages,
       :llama_3_2_custom_tool_calling,
       tools
-    ) |> IO.inspect()
+    )
     end
   end
 

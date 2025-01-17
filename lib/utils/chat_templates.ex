@@ -625,7 +625,6 @@ def llama_3_1_custom_tool_calling_parameter_conversion(tools) do
     parameters =
       props
       |> Enum.map(fn {param_name, param_config} ->
-        IO.inspect(param_config)
         {
           param_name,
           %{
