@@ -153,8 +153,9 @@ defmodule LangChain.Utils.ChatTemplates do
     |> Enum.each(fn
       %Message{role: :user} ->
         :ok
-
-      {%Message{role: :assistant}, index} when is_odd(index) ->
+      %Message{role: :tool} ->
+        :ok
+      %Message{role: :assistant} ->
         :ok
 
       _other ->
