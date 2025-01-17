@@ -1,5 +1,278 @@
 # Changelog
 
+## v0.3.0-rc.2 (2025-01-08)
+
+### Breaking Changes
+
+How LLM callbacks are registered has changed. The callback function's arguments have also changed.
+
+Specifically, this refers to the callbacks:
+
+- `on_llm_new_delta`
+- `on_llm_new_message`
+- `on_llm_ratelimit_info`
+- `on_llm_token_usage`
+
+The callbacks are still supported, but _how_ they are registered and the arguments passed to the linked functions has changed.
+
+Previously, an LLM callback's first argument was the chat model, it is now the LLMChain that is running it.
+
+A ChatModel still has the `callbacks` struct attribute, but it should be considered private.
+
+#### Why the change
+Having some callback functions registered on the chat model and some registered on the chain was confusing. What goes where? Why the difference?
+
+This change moves them all to the same place, removing a source of confusion.
+
+The primary reason for the change is that important information about the **context** of the callback event was not available to the callback function. Information stored in the chain's `custom_context` can be valuable and important, like a user's account ID, but it was not easily accessible in a callback like `on_llm_token_usage` where we might want to record the user's token usage linked to their account.
+
+This important change passes the entire `LLMChain` through to the callback function, giving the function access to the `custom_context`. This makes the LLM (aka chat model) callback functions expect the same arguments as the other chain focused callback functions.
+
+This both unifies how the callbacks operate and what data they have available, and it groups them all together.
+
+#### Adapting to the change
+A before example:
+
+```elixir
+llm_events = %{
+  # 1st argument was the chat model
+  on_llm_new_delta: fn _chat_model, %MessageDelta{} = delta ->
+    # ...
+  end,
+  on_llm_token_usage: fn _chat_model, usage_data ->
+    # ...
+  end
+}
+
+chain_events = %{
+  on_message_processed: fn _chain, tool_msg ->
+    # ...
+  end
+}
+
+# LLM callback events were registered on the chat model
+chat_model = ChatOpenAI.new!(%{stream: true, callbacks: [llm_events]})
+
+{:ok, updated_chain} =
+  %{
+    llm: chat_model,
+    custom_context: %{user_id: 123}
+  }
+  |> LLMChain.new!()
+  |> LLMChain.add_message(Message.new_system!())
+  |> LLMChain.add_message(Message.new_user!("Say hello!"))
+  # Chain callback events were registered on the chain
+  |> LLMChain.add_callback(chain_events)
+  |> LLMChain.run()
+```
+
+This is updated to: (comments highlight changes)
+
+```elixir
+# Events are all combined together
+events = %{
+  # 1st argument is now the LLMChain
+  on_llm_new_delta: fn _chain, %MessageDelta{} = delta ->
+    # ...
+  end,
+  on_llm_token_usage: fn %LLMChain{} = chain, usage_data ->
+    # ... `chain.custom_context` is available
+  end,
+  on_message_processed: fn _chain, tool_msg ->
+    # ...
+  end
+}
+
+# callbacks removed from Chat Model setup
+chat_model = ChatOpenAI.new!(%{stream: true})
+
+{:ok, updated_chain} =
+  %{
+    llm: chat_model,
+    custom_context: %{user_id: 123}
+  }
+  |> LLMChain.new!()
+  |> LLMChain.add_message(Message.new_system!())
+  |> LLMChain.add_message(Message.new_user!("Say hello!"))
+  # All events are registered through `add_callback`
+  |> LLMChain.add_callback(events)
+  |> LLMChain.run()
+```
+
+If you still need access to the LLM in the callback functions, it's available in `chain.llm`.
+
+The change is a breaking change, but should be fairly easy to update.
+
+This consolidates how callback events work and them more powerful by exposing important information to the callback functions.
+
+If you were using the `LLMChain.add_llm_callback/2`, the change is even easier:
+
+From:
+```elixir
+  %{
+    llm: chat_model,
+    custom_context: %{user_id: 123}
+  }
+  |> LLMChain.new!()
+  # ...
+  # LLM callback events could be added later this way
+  |> LLMChain.add_llm_callback(llm_events)
+  |> LLMChain.run()
+```
+
+To:
+```elixir
+  %{
+    llm: chat_model,
+    custom_context: %{user_id: 123}
+  }
+  |> LLMChain.new!()
+  # ...
+  # Use the `add_callback` function instead
+  |> LLMChain.add_callback(llm_events)
+  |> LLMChain.run()
+```
+
+#### Details of the change
+- Removal of the `LangChain.ChatModels.LLMCallbacks` module.
+- The LLM-specific callbacks were migrated to `LangChain.Chains.ChainCallbacks`.
+- Removal of `LangChain.Chains.LLMChain.add_llm_callback/2`
+- `LangChain.ChatModels.ChatOpenAI.new/1` and `LangChain.ChatModels.ChatOpenAI.new!/1` no longer accept `:callbacks` on the chat model.
+- Removal of `LangChain.ChatModels.ChatModel.add_callback/2`
+
+### What else Changed
+* add explicit message support in summarizer by @brainlid in https://github.com/brainlid/langchain/pull/220
+* Change abacus to optional dep by @nallwhy in https://github.com/brainlid/langchain/pull/223
+* Remove constraint of alternating user, assistant by @GenericJam in https://github.com/brainlid/langchain/pull/222
+* Breaking change: consolidate LLM callback functions by @brainlid in https://github.com/brainlid/langchain/pull/228
+* feat: Enable :inet6 for Req.new for Ollama by @mpope9 in https://github.com/brainlid/langchain/pull/227
+* fix: enable verbose_deltas by @cristineguadelupe in https://github.com/brainlid/langchain/pull/197
+
+### New Contributors
+* @nallwhy made their first contribution in https://github.com/brainlid/langchain/pull/223
+* @GenericJam made their first contribution in https://github.com/brainlid/langchain/pull/222
+* @mpope9 made their first contribution in https://github.com/brainlid/langchain/pull/227
+
+## v0.3.0-rc.1 (2024-12-15)
+
+### Breaking Changes
+- Change return of LLMChain.run/2 ([#170](https://github.com/brainlid/langchain/pull/170))
+- Revamped error handling and handles Anthropic's "overload_error" - ([#194](https://github.com/brainlid/langchain/pull/194))
+
+#### Change return of LLMChain.run/2 ([#170](https://github.com/brainlid/langchain/pull/170))
+
+##### Why the change
+
+Before this change, an `LLMChain`'s `run` function returned `{:ok, updated_chain, last_message}`.
+
+When an assistant (ie LLM) issues a ToolCall and when `run` is in the mode `:until_success` or `:while_need_response`, the `LLMChain` will automatically execute the function and return the result as a new Message back to the LLM. This works great!
+
+The problem comes when an application needs to keep track of all the messages being exchanged during a run operation. That can be done by using callbacks and sending and receiving messages, but that's far from ideal. It makes more sense to have access to that information directly after the `run` operation completes.
+
+##### What this change does
+
+This PR changes the returned type to `{:ok, updated_chain}`.
+
+The `last_message` is available in `updated_chain.last_message`. This cleans up the return API.
+
+This change also adds `%LLMChain{exchanged_messages: exchanged_messages}`,or `updated_chain.exchanged_messages` which is a list of all the messages exchanged between the application and the LLM during the execution of the `run` function.
+
+This breaks the return contract for the `run` function.
+
+##### How to adapt to this change
+
+To adapt to this, if the application isn't using the `last_message` in `{:ok, updated_chain, _last_message}`, then delete the third position in the tuple. Ex: `{:ok, updated_chain}`.
+
+Access to the `last_message` is available on the `updated_chain`.
+
+```elixir
+{:ok, updated_chain} =
+  %{llm: model}
+  |> LLMChain.new!()
+  |> LLMChain.run()
+
+last_message = updated_chain.last_message
+```
+
+NOTE: that the `updated_chain` now includes `updated_chain.exchanged_messages` which can also be used.
+
+#### Revamped error handling and handles Anthropic's "overload_error" - ([#194](https://github.com/brainlid/langchain/pull/194))
+
+**What you need to do:**
+Check your application code for how it is responding to and handling error responses.
+
+If you want to keep the same previous behavior, the following code change will do that:
+
+```elixir
+case LLMChain.run(chain) do
+  {:ok, _updated_chain} ->
+    :ok
+
+  # return the error for display
+  {:error, _updated_chain, %LangChainError{message: reason}} ->
+    {:error, reason}
+end
+```
+
+The change from:
+
+```
+{:error, _updated_chain, reason}
+```
+
+To:
+
+```
+{:error, _updated_chain, %LangChainError{message: reason}}
+```
+
+When possible, a `type` value may be set on the `LangChainError`, making it easier to handle some error types programmatically.
+
+### Features
+- Added ability to summarize LLM conversations (#216)
+- Implemented initial support for fallbacks (#207)
+- Added AWS Bedrock support for ChatAnthropic (#154)
+- Added OpenAI's new structured output API (#180)
+- Added support for examples to title chain (#191)
+- Added tool_choice support for OpenAI and Anthropic (#142)
+- Added support for passing safety settings to Google AI (#186)
+- Added OpenAI project authentication (#166)
+
+### Fixes
+- Fixed specs and examples (#211)
+- Fixed content-part encoding and decoding for Google API (#212)
+- Fixed ChatOllamaAI streaming response (#162)
+- Fixed streaming issue with Azure OpenAI Service (#158, #161)
+- Fixed OpenAI stream decode issue (#156)
+- Fixed typespec error on Message.new_user/1 (#151)
+- Fixed duplicate tool call parameters (#174)
+
+### Improvements
+- Added error type support for Azure token rate limit exceeded
+- Improved error handling (#194)
+- Enhanced function execution failure response
+- Added "processed_content" to ToolResult struct (#192)
+- Implemented support for strict mode for tools (#173)
+- Updated documentation for ChatOpenAI use on Azure
+- Updated config documentation for API keys
+- Updated README examples
+
+### Azure & Google AI Updates
+- Added Azure test for ChatOpenAI usage
+- Added support for system instructions for Google AI (#182)
+- Handle functions with no parameters for Google AI (#183)
+- Handle missing token usage fields for Google AI (#184)
+- Handle empty text parts from GoogleAI responses (#181)
+- Handle all possible finishReasons for ChatGoogleAI (#188)
+
+### Documentation
+- Added LLM Model documentation for tool_choice
+- Updated documentation using new functions
+- Added custom functions notebook
+- Improved documentation formatting (#145)
+- Added links to models in the config section
+- Updated getting started doc for callbacks
+
 ## v0.3.0-rc.0 (2024-06-05)
 
 **Added:**

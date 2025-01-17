@@ -28,6 +28,40 @@ defmodule LangChain.Utils do
     Map.put(map, key, value)
   end
 
+  # Generate wrapped LLM callbacks on the model that include the chain as part
+  # of the context.
+  @doc false
+  @spec rewrap_callbacks_for_model(
+          llm :: struct(),
+          callbacks :: [%{atom() => fun()}],
+          context :: struct()
+        ) :: struct()
+  def rewrap_callbacks_for_model(llm, callbacks, context) do
+    to_wrap = [
+      :on_llm_new_delta,
+      :on_llm_new_message,
+      :on_llm_ratelimit_info,
+      :on_llm_token_usage
+    ]
+
+    # get the LLM callbacks from the chain.
+    new_callbacks =
+      callbacks
+      |> Enum.map(fn callback_map ->
+        callback_map
+        |> Map.take(to_wrap)
+        |> Enum.map(fn {key, fun} ->
+          # return a wrapped/curried function that embeds the chain context into
+          # the call
+          {key, fn arg -> fun.(context, arg) end}
+        end)
+        |> Enum.into(%{})
+      end)
+
+    # put those onto the model and return it
+    %{llm | callbacks: new_callbacks}
+  end
+
   @doc """
   Translates an error message using gettext.
   """
@@ -111,7 +145,7 @@ defmodule LangChain.Utils do
 
   def fire_streamed_callback(model, %MessageDelta{} = delta) do
     # Execute callback handler for single received delta element
-    Callbacks.fire(model.callbacks, :on_llm_new_delta, [model, delta])
+    Callbacks.fire(model.callbacks, :on_llm_new_delta, [delta])
   end
 
   # received unexpected data in the callback, do nothing.
@@ -304,5 +338,16 @@ defmodule LangChain.Utils do
     end
 
     {List.first(system), other}
+  end
+
+  @doc """
+  Replace the system message with a new system message. This retains all other
+  messages as-is. An error is raised if there are more than 1 system messages.
+  """
+  @spec replace_system_message!([Message.t()], Message.t()) :: [Message.t()] | no_return()
+  def replace_system_message!(messages, new_system_message) do
+    {_old_system, rest} = split_system_message(messages)
+    # return the new system message along with the rest
+    [new_system_message | rest]
   end
 end

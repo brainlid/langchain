@@ -6,6 +6,7 @@ defmodule LangChain.Chains.LLMChainTest do
 
   import LangChain.Fixtures
   alias LangChain.ChatModels.ChatOpenAI
+  alias LangChain.ChatModels.ChatAnthropic
   alias LangChain.Chains.LLMChain
   alias LangChain.PromptTemplate
   alias LangChain.Function
@@ -16,6 +17,9 @@ defmodule LangChain.Chains.LLMChainTest do
   alias LangChain.MessageDelta
   alias LangChain.LangChainError
   alias LangChain.MessageProcessors.JsonProcessor
+  alias LangChain.Utils
+
+  @anthropic_test_model "claude-3-opus-20240229"
 
   setup do
     {:ok, chat} = ChatOpenAI.new(%{temperature: 0})
@@ -53,6 +57,21 @@ defmodule LangChain.Chains.LLMChainTest do
         end
       })
 
+    get_date =
+      Function.new!(%{
+        name: "get_date",
+        description: "Returns the date as YYYY-MM-DD",
+        function: fn _args, _context ->
+          # return as a formatted string and the date struct
+          date = Date.new!(2024, 11, 1)
+
+          # Format the date as YYYY-MM-DD
+          formatted_date = Calendar.strftime(date, "%Y-%m-%d")
+
+          {:ok, formatted_date, date}
+        end
+      })
+
     # on setup, delete the Process dictionary key for each test run
     Process.delete(:test_func_failed_once)
 
@@ -85,7 +104,8 @@ defmodule LangChain.Chains.LLMChainTest do
       greet: greet,
       sync: sync,
       fail_func: fail_func,
-      fail_once: fail_once
+      fail_once: fail_once,
+      get_date: get_date
     }
   end
 
@@ -253,7 +273,7 @@ defmodule LangChain.Chains.LLMChainTest do
         )
 
       handler = %{
-        on_llm_new_delta: fn _chain, delta ->
+        on_llm_new_delta: fn %LLMChain{} = _chain, delta ->
           send(self(), {:test_stream_deltas, delta})
         end,
         on_message_processed: fn _chain, message ->
@@ -261,7 +281,7 @@ defmodule LangChain.Chains.LLMChainTest do
         end
       }
 
-      model = ChatOpenAI.new!(%{temperature: 1, seed: 0, stream: true, callbacks: [handler]})
+      model = ChatOpenAI.new!(%{temperature: 1, seed: 0, stream: true})
 
       # We can construct an LLMChain from a PromptTemplate and an LLM.
       {:ok, updated_chain} =
@@ -452,6 +472,29 @@ defmodule LangChain.Chains.LLMChainTest do
       assert tool_call.name == "calculator"
       assert tool_call.arguments == %{"expression" => "100 + 300 - 200"}
       assert updated_chain.messages == [last]
+    end
+
+    test "cancels the current delta when applying an overloaded error", %{chain: chain} do
+      assert chain.messages == []
+
+      updated_chain =
+        chain
+        |> LLMChain.apply_delta(
+          MessageDelta.new!(%{role: :assistant, content: "Greetings from "})
+        )
+        |> LLMChain.apply_delta(MessageDelta.new!(%{content: "your "}))
+        |> LLMChain.apply_delta(MessageDelta.new!(%{content: "favorite "}))
+        |> LLMChain.apply_delta(
+          {:error, LangChainError.exception(type: "overloaded", message: "Overloaded")}
+        )
+
+      # the delta is complete and removed from the chain
+      assert updated_chain.delta == nil
+      # the delta is converted to a message and applied to the messages
+      assert [%Message{} = new_message] = updated_chain.messages
+      assert new_message.role == :assistant
+      assert new_message.content == "Greetings from your favorite "
+      assert new_message.status == :cancelled
     end
   end
 
@@ -871,6 +914,14 @@ defmodule LangChain.Chains.LLMChainTest do
   end
 
   describe "run/1" do
+    test "returns an error when running without messages", %{chain: chain} do
+      assert chain.messages == []
+
+      {:error, error_chain, error} = LLMChain.run(chain)
+      assert error_chain == chain
+      assert error.message == "LLMChain cannot be run without messages"
+    end
+
     @tag live_call: true, live_open_ai: true
     test "custom_context is passed to a custom function" do
       # map of data we want to be passed as `context` to the function when
@@ -932,28 +983,32 @@ defmodule LangChain.Chains.LLMChainTest do
     @tag live_call: true, live_open_ai: true
     test "NON-STREAMING handles receiving an error when no messages sent" do
       # create and run the chain
-      {:error, _updated_chain, reason} =
+      {:error, _updated_chain, %LangChainError{} = reason} =
         LLMChain.new!(%{
           llm: ChatOpenAI.new!(%{seed: 0, stream: false}),
           verbose: false
         })
         |> LLMChain.run()
 
-      assert reason ==
+      assert reason.type == nil
+
+      assert reason.message ==
                "Invalid 'messages': empty array. Expected an array with minimum length 1, but got an empty array instead."
     end
 
     @tag live_call: true, live_open_ai: true
     test "STREAMING handles receiving an error when no messages sent" do
       # create and run the chain
-      {:error, _updated_chain, reason} =
+      {:error, _updated_chain, %LangChainError{} = reason} =
         LLMChain.new!(%{
           llm: ChatOpenAI.new!(%{seed: 0, stream: true}),
           verbose: false
         })
         |> LLMChain.run()
 
-      assert reason ==
+      assert reason.type == nil
+
+      assert reason.message ==
                "Invalid 'messages': empty array. Expected an array with minimum length 1, but got an empty array instead."
     end
 
@@ -1014,6 +1069,23 @@ defmodule LangChain.Chains.LLMChainTest do
       assert_received {:function_called, "fly_regions"}
     end
 
+    test "returns error when receives overloaded from Anthropic" do
+      # Made NOT LIVE here
+      expect(ChatAnthropic, :call, fn _model, _prompt, _tools ->
+        {:error, LangChainError.exception(type: "overloaded", message: "Overloaded (from test)")}
+      end)
+
+      model = ChatAnthropic.new!(%{stream: true, model: @anthropic_test_model})
+
+      assert {:error, _updated_chain, reason} =
+               LLMChain.new!(%{llm: model})
+               |> LLMChain.add_messages([Message.new_user!("Hi")])
+               |> LLMChain.run()
+
+      assert reason.type == "overloaded"
+      assert reason.message == "Overloaded (from test)"
+    end
+
     test "errors when messages have PromptTemplates" do
       messages = [
         PromptTemplate.new!(%{
@@ -1045,13 +1117,14 @@ defmodule LangChain.Chains.LLMChainTest do
 
       # errors when trying to send a PromptTemplate
       # create and run the chain
-      {:error, _updated_chain, reason} =
+      {:error, _updated_chain, %LangChainError{} = reason} =
         %{llm: ChatOpenAI.new!(%{seed: 0})}
         |> LLMChain.new!()
         |> LLMChain.add_messages(messages)
         |> LLMChain.run()
 
-      assert reason =~ ~r/PromptTemplates must be/
+      assert reason.type == nil
+      assert reason.message =~ ~r/PromptTemplates must be/
     end
 
     test "mode: :while_needs_response - increments current_failure_count on parse failure", %{
@@ -1071,7 +1144,7 @@ defmodule LangChain.Chains.LLMChainTest do
         Message.new_user!("Say what I want you to say.")
       ]
 
-      {:error, error_chain, reason} =
+      {:error, error_chain, %LangChainError{} = reason} =
         chain
         |> LLMChain.message_processors([JsonProcessor.new!()])
         |> LLMChain.add_messages(messages)
@@ -1079,7 +1152,8 @@ defmodule LangChain.Chains.LLMChainTest do
         |> LLMChain.run(mode: :while_needs_response)
 
       assert error_chain.current_failure_count == 3
-      assert reason == "Exceeded max failure count"
+      assert reason.type == "exceeded_failure_count"
+      assert reason.message == "Exceeded max failure count"
 
       [m1, m2, m3, m4, m5, m6, m7] = error_chain.messages
 
@@ -1139,7 +1213,7 @@ defmodule LangChain.Chains.LLMChainTest do
           callbacks: [handler]
         })
 
-      {:error, error_chain, reason} =
+      {:error, error_chain, %LangChainError{} = reason} =
         chain
         |> LLMChain.message_processors([JsonProcessor.new!()])
         |> LLMChain.add_messages([
@@ -1149,7 +1223,8 @@ defmodule LangChain.Chains.LLMChainTest do
         |> LLMChain.run(mode: :while_needs_response)
 
       assert error_chain.current_failure_count == 2
-      assert reason == "Exceeded max failure count"
+      assert reason.type == "exceeded_failure_count"
+      assert reason.message == "Exceeded max failure count"
 
       [m1, m2, m3, m4, m5] = error_chain.messages
 
@@ -1352,7 +1427,7 @@ defmodule LangChain.Chains.LLMChainTest do
         {:ok, fake_messages}
       end)
 
-      {:error, updated_chain, reason} =
+      {:error, updated_chain, %LangChainError{} = reason} =
         %{llm: ChatOpenAI.new!(%{stream: false}), verbose: false}
         |> LLMChain.new!()
         |> LLMChain.add_tools([fail_func])
@@ -1360,8 +1435,111 @@ defmodule LangChain.Chains.LLMChainTest do
         |> LLMChain.add_message(Message.new_user!("Execute the fail_func tool."))
         |> LLMChain.run(mode: :until_success)
 
-      assert reason == "Exceeded max failure count"
+      assert reason.type == "exceeded_failure_count"
+      assert reason.message == "Exceeded max failure count"
       assert updated_chain.current_failure_count == 3
+    end
+
+    test "with_fallbacks: re-runs with next LLM after first fails" do
+      # Made NOT LIVE here - handles two calls
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        # IO.puts "FAKE OpenAI ERROR RESULT RETURNED"
+        {:error,
+         LangChainError.exception(type: "too_many_requests", message: "Too many requests!")}
+      end)
+
+      expect(ChatAnthropic, :call, fn _model, _messages, _tools ->
+        {:ok,
+         [
+           Message.new_assistant!(%{content: "fallback worked!"})
+         ]}
+      end)
+
+      {:ok, updated_chain} =
+        %{llm: ChatOpenAI.new!(%{stream: false})}
+        |> LLMChain.new!()
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Why is the sky blue?"))
+        |> LLMChain.run(with_fallbacks: [ChatAnthropic.new!(%{stream: false})])
+
+      # stopped after processing a successful assistant response
+      assert updated_chain.last_message.role == :assistant
+      assert updated_chain.last_message.content == "fallback worked!"
+    end
+
+    test "with_fallbacks: runs each LLM option and returns when all failed" do
+      # Made NOT LIVE here - handles two calls
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        # IO.puts "FAKE OpenAI ERROR RESULT RETURNED"
+        {:error,
+         LangChainError.exception(type: "too_many_requests", message: "Too many requests!")}
+      end)
+
+      expect(ChatAnthropic, :call, fn _model, _messages, _tools ->
+        {:error, LangChainError.exception(type: "overloaded", message: "Overloaded")}
+      end)
+
+      {:error, _updated_chain, reason} =
+        %{llm: ChatOpenAI.new!(%{stream: false})}
+        |> LLMChain.new!()
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Why is the sky blue?"))
+        |> LLMChain.run(with_fallbacks: [ChatAnthropic.new!(%{stream: false})])
+
+      assert %LangChainError{
+               type: "all_fallbacks_failed",
+               message: "Failed all attempts to generate response"
+             } == reason
+    end
+
+    test "with_fallbacks: runs before_fallback function and uses the resulting chain" do
+      # Made NOT LIVE here - handles two calls
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        # IO.puts "FAKE OpenAI ERROR RESULT RETURNED"
+        {:error,
+         LangChainError.exception(type: "too_many_requests", message: "Too many requests!")}
+      end)
+
+      expect(ChatAnthropic, :call, fn _model, _messages, _tools ->
+        {:ok, Message.new_assistant!(%{content: "Claude says it's because it's not red."})}
+      end)
+
+      {:ok, updated_chain} =
+        %{llm: ChatOpenAI.new!(%{stream: false})}
+        |> LLMChain.new!()
+        |> LLMChain.add_message(Message.new_system!("OpenAI system prompt"))
+        |> LLMChain.add_message(Message.new_user!("Why is the sky blue?"))
+        |> LLMChain.run(
+          with_fallbacks: [
+            ChatAnthropic.new!(%{stream: false})
+          ],
+          before_fallback: fn chain ->
+            send(self(), :before_fallback_fired)
+
+            case chain.llm do
+              %ChatAnthropic{} ->
+                # replace the system message
+                %LLMChain{
+                  chain
+                  | messages:
+                      Utils.replace_system_message!(
+                        chain.messages,
+                        Message.new_system!("Anthropic system prompt")
+                      )
+                }
+
+              _open_ai ->
+                chain
+            end
+          end
+        )
+
+      assert [system_msg | _rest] = updated_chain.messages
+      assert system_msg.role == :system
+      assert system_msg.content == "Anthropic system prompt"
+      assert updated_chain.last_message.role == :assistant
+      assert updated_chain.last_message.content == "Claude says it's because it's not red."
+      assert_received :before_fallback_fired
     end
   end
 
@@ -1492,7 +1670,11 @@ defmodule LangChain.Chains.LLMChainTest do
         |> LLMChain.add_message(Message.new_user!("Say hello!"))
         |> LLMChain.add_message(
           new_function_calls!([
-            ToolCall.new!(%{call_id: "call_fake123", name: "greet", arguments: %{"name" => "Tim"}}),
+            ToolCall.new!(%{
+              call_id: "call_fake123",
+              name: "greet",
+              arguments: %{"name" => "Tim"}
+            }),
             ToolCall.new!(%{call_id: "call_fake234", name: "hello_world", arguments: nil}),
             ToolCall.new!(%{
               call_id: "call_fake345",
@@ -1622,6 +1804,20 @@ defmodule LangChain.Chains.LLMChainTest do
       # resets the current_failure_count after processing successfully
       assert updated_chain.current_failure_count == 0
     end
+
+    test "supports returning processed_content to ToolResult", %{chain: chain, get_date: get_date} do
+      chain =
+        chain
+        |> LLMChain.add_tools(get_date)
+        |> LLMChain.add_message(new_function_call!("call_fake123", "get_date", "{}"))
+
+      updated_chain = LLMChain.execute_tool_calls(chain)
+      # get the 1 expected tool result
+      %Message{role: :tool, tool_results: [%ToolResult{} = result]} = updated_chain.last_message
+      assert result.name == "get_date"
+      assert result.content == "2024-11-01"
+      assert result.processed_content == ~D[2024-11-01]
+    end
   end
 
   describe "add_callback/2" do
@@ -1639,12 +1835,10 @@ defmodule LangChain.Chains.LLMChainTest do
       updated_chain = LLMChain.add_callback(chain, handler2)
       assert updated_chain.callbacks == [handler1, handler2]
     end
-  end
 
-  describe "add_llm_callback/2" do
     test "appends a callback handler to the chain's LLM", %{chat: chat} do
-      handler1 = %{on_llm_new_message: fn _chain, _msg -> IO.puts("MESSAGE 1!") end}
-      handler2 = %{on_llm_new_message: fn _chain, _msg -> IO.puts("MESSAGE 2!") end}
+      handler1 = %{on_llm_new_message: fn %LLMChain{} = _chain, _msg -> IO.puts("MESSAGE 1!") end}
+      handler2 = %{on_llm_new_message: fn %LLMChain{} = _chain, _msg -> IO.puts("MESSAGE 2!") end}
 
       # none to start with
       assert chat.callbacks == []
@@ -1652,10 +1846,10 @@ defmodule LangChain.Chains.LLMChainTest do
       chain =
         %{llm: chat}
         |> LLMChain.new!()
-        |> LLMChain.add_llm_callback(handler1)
-        |> LLMChain.add_llm_callback(handler2)
+        |> LLMChain.add_callback(handler1)
+        |> LLMChain.add_callback(handler2)
 
-      assert chain.llm.callbacks == [handler1, handler2]
+      assert chain.callbacks == [handler1, handler2]
     end
   end
 

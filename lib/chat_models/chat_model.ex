@@ -3,10 +3,11 @@ defmodule LangChain.ChatModels.ChatModel do
   alias LangChain.Message
   alias LangChain.MessageDelta
   alias LangChain.Function
+  alias LangChain.LangChainError
   alias LangChain.Utils
 
   @type call_response ::
-          {:ok, Message.t() | [Message.t()] | [MessageDelta.t()]} | {:error, String.t()}
+          {:ok, Message.t() | [Message.t()] | [MessageDelta.t()]} | {:error, LangChainError.t()}
 
   @type tool :: Function.t()
   @type tools :: [tool()]
@@ -22,18 +23,6 @@ defmodule LangChain.ChatModels.ChatModel do
   @callback serialize_config(t()) :: %{String.t() => any()}
 
   @callback restore_from_map(%{String.t() => any()}) :: {:ok, struct()} | {:error, String.t()}
-
-  @doc """
-  Add a `LangChain.ChatModels.LLMCallbacks` callback map to the ChatModel if
-  it includes the `:callback` key.
-  """
-  @spec add_callback(%{optional(:callbacks) => nil | map()}, map()) :: map() | struct()
-  def add_callback(%_{callbacks: callbacks} = model, callback_map) do
-    existing_callbacks = callbacks || []
-    %{model | callbacks: existing_callbacks ++ [callback_map]}
-  end
-
-  def add_callback(model, _callback_map), do: model
 
   @doc """
   Create a serializable map from a ChatModel's current configuration that can

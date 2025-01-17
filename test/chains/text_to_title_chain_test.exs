@@ -9,6 +9,7 @@ defmodule LangChain.Chains.TextToTitleChainTest do
   alias LangChain.Message
   alias LangChain.ChatModels.ChatOpenAI
   alias LangChain.LangChainError
+  alias LangChain.Utils
 
   setup do
     llm = ChatOpenAI.new!(%{model: "gpt-3.5-turbo", stream: false, seed: 0})
@@ -70,6 +71,28 @@ defmodule LangChain.Chains.TextToTitleChainTest do
       assert {:ok, updated_chain} = TextToTitleChain.run(title_chain)
       assert %LLMChain{} = updated_chain
       assert updated_chain.last_message == fake_message
+    end
+
+    test "uses override_system_prompt", %{llm: llm} do
+      fake_message = Message.new_assistant!("Summarized Title")
+
+      # Made NOT LIVE here
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:ok, [fake_message]}
+      end)
+
+      {:ok, updated_chain} =
+        %{
+          llm: llm,
+          input_text: "Initial user text.",
+          override_system_prompt: "Custom system prompt"
+        }
+        |> TextToTitleChain.new!()
+        |> TextToTitleChain.run()
+
+      assert %LLMChain{} = updated_chain
+      {system, _rest} = Utils.split_system_message(updated_chain.messages)
+      assert system.content == "Custom system prompt"
     end
   end
 

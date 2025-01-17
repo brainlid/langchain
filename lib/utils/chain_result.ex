@@ -21,10 +21,10 @@ defmodule LangChain.Utils.ChainResult do
   @spec to_string(
           LLMChain.t()
           | {:ok, LLMChain.t()}
-          | {:error, LLMChain.t(), String.t()}
+          | {:error, LLMChain.t(), LangChainError.t()}
         ) ::
-          {:ok, String.t()} | {:error, LLMChain.t(), String.t()}
-  def to_string({:error, chain, reason}) when is_binary(reason) do
+          {:ok, String.t()} | {:error, LLMChain.t(), LangChainError.t()}
+  def to_string({:error, chain, %LangChainError{} = reason}) do
     # if an error was passed in, forward it through.
     {:error, chain, reason}
   end
@@ -51,15 +51,16 @@ defmodule LangChain.Utils.ChainResult do
   end
 
   def to_string(%LLMChain{last_message: %Message{role: :assistant, status: _incomplete}} = chain) do
-    {:error, chain, "Message is incomplete"}
+    {:error, chain, LangChainError.exception(type: "to_string", message: "Message is incomplete")}
   end
 
   def to_string(%LLMChain{last_message: %Message{}} = chain) do
-    {:error, chain, "Message is not from assistant"}
+    {:error, chain,
+     LangChainError.exception(type: "to_string", message: "Message is not from assistant")}
   end
 
   def to_string(%LLMChain{last_message: nil} = chain) do
-    {:error, chain, "No last message"}
+    {:error, chain, LangChainError.exception(type: "to_string", message: "No last message")}
   end
 
   @doc """
@@ -72,14 +73,15 @@ defmodule LangChain.Utils.ChainResult do
   def to_string!(%LLMChain{} = chain) do
     case ChainResult.to_string(chain) do
       {:ok, result} -> result
-      {:error, _chain, reason} -> raise LangChainError, reason
+      {:error, _chain, %LangChainError{} = exception} -> raise exception
     end
   end
 
   @doc """
   Write the result to the given map as the value of the given key.
   """
-  @spec to_map(LLMChain.t(), map(), any()) :: {:ok, map()} | {:error, String.t()}
+  @spec to_map(LLMChain.t(), map(), any()) ::
+          {:ok, map()} | {:error, LLMChain.t(), LangChainError.t()}
   def to_map(%LLMChain{} = chain, map, key) do
     case ChainResult.to_string(chain) do
       {:ok, value} ->
@@ -100,8 +102,8 @@ defmodule LangChain.Utils.ChainResult do
       {:ok, updated} ->
         updated
 
-      {:error, _chain, reason} ->
-        raise LangChainError, reason
+      {:error, _chain, %LangChainError{} = exception} ->
+        raise exception
     end
   end
 end

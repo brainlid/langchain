@@ -84,7 +84,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
 
     field :stream, :boolean, default: false
 
-    # A list of maps for callback handlers
+    # A list of maps for callback handlers (treat as private)
     field :callbacks, {:array, :map}, default: []
   end
 
@@ -100,7 +100,6 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     :top_k,
     :receive_timeout,
     :stream,
-    :callbacks,
     :safety_settings
   ]
   @required_fields [
@@ -211,15 +210,58 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     }
   end
 
-  def for_api(%Message{} = message) do
+  def for_api(%Message{content: content} = message) when is_binary(content) do
     %{
       "role" => map_role(message.role),
       "parts" => [%{"text" => message.content}]
     }
   end
 
+  def for_api(%Message{content: content} = message) when is_list(content) do
+    %{
+      "role" => message.role,
+      "parts" => Enum.map(content, &for_api/1)
+    }
+  end
+
   def for_api(%ContentPart{type: :text} = part) do
     %{"text" => part.content}
+  end
+
+  # Supported image types: png, jpeg, webp, heic, heif: https://ai.google.dev/gemini-api/docs/vision?lang=rest#technical-details-image
+  def for_api(%ContentPart{type: :image} = part) do
+    mime_type =
+      case Keyword.get(part.options || [], :media, nil) do
+        :png ->
+          "image/png"
+
+        type when type in [:jpeg, :jpg] ->
+          "image/jpeg"
+
+        :webp ->
+          "image/webp"
+
+        :heic ->
+          "image/heic"
+
+        :heif ->
+          "image/heif"
+
+        type when is_binary(type) ->
+          "image/type"
+
+        other ->
+          message = "Received unsupported media type for ContentPart: #{inspect(other)}"
+          Logger.error(message)
+          raise LangChainError, message
+      end
+
+    %{
+      "inline_data" => %{
+        "mime_type" => mime_type,
+        "data" => part.content
+      }
+    }
   end
 
   def for_api(%ToolCall{} = call) do
@@ -258,7 +300,12 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   end
 
   def for_api(%Function{} = function) do
-    encoded = ChatOpenAI.for_api(function)
+    encoded =
+      %{
+        "name" => function.name,
+        "parameters" => ChatOpenAI.get_parameters(function)
+      }
+      |> Utils.conditionally_add_to_map("description", function.description)
 
     # For functions with no parameters, Google AI needs the parameters field removing, otherwise it will error
     # with "* GenerateContentRequest.tools[0].function_declarations[0].parameters.properties: should be non-empty for OBJECT type\n"
@@ -319,7 +366,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
 
   @doc false
   @spec do_api_request(t(), [Message.t()], [Function.t()]) ::
-          list() | struct() | {:error, String.t()}
+          list() | struct() | {:error, LangChainError.t()}
   def do_api_request(%ChatGoogleAI{stream: false} = google_ai, messages, tools) do
     req =
       Req.new(
@@ -340,15 +387,20 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
             {:error, reason}
 
           result ->
-            Callbacks.fire(google_ai.callbacks, :on_llm_new_message, [google_ai, result])
+            Callbacks.fire(google_ai.callbacks, :on_llm_new_message, [result])
             result
         end
 
-      {:ok, %Req.Response{status: status}} ->
-        {:error, "Failed with status: #{inspect(status)}"}
+      {:ok, %Req.Response{status: status} = err} ->
+        {:error,
+         LangChainError.exception(
+           message: "Failed with status: #{inspect(status)}",
+           original: err
+         )}
 
-      {:error, %Req.TransportError{reason: :timeout}} ->
-        {:error, "Request timed out"}
+      {:error, %Req.TransportError{reason: :timeout} = err} ->
+        {:error,
+         LangChainError.exception(type: "timeout", message: "Request timed out", original: err)}
 
       other ->
         Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
@@ -378,21 +430,27 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
         # this behavior by forcing the final delta to have `status: :complete`.
         complete_final_delta(data)
 
-      {:ok, %Req.Response{status: status}} ->
-        {:error, "Failed with status: #{inspect(status)}"}
+      {:ok, %Req.Response{status: status} = err} ->
+        {:error,
+         LangChainError.exception(
+           message: "Failed with status: #{inspect(status)}",
+           original: err
+         )}
 
-      {:error, %LangChainError{message: reason}} ->
-        {:error, reason}
+      {:error, %LangChainError{} = error} ->
+        {:error, error}
 
-      {:error, %Req.TransportError{reason: :timeout}} ->
-        {:error, "Request timed out"}
+      {:error, %Req.TransportError{reason: :timeout} = err} ->
+        {:error,
+         LangChainError.exception(type: "timeout", message: "Request timed out", original: err)}
 
       other ->
         Logger.error(
           "Unhandled and unexpected response from streamed post call. #{inspect(other)}"
         )
 
-        {:error, "Unexpected response"}
+        {:error,
+         LangChainError.exception(type: "unexpected_response", message: "Unexpected response")}
     end
   end
 
@@ -426,7 +484,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     # else do this. For now, we fire each and every TokenUsage we receive.
     case get_token_usage(data) do
       %TokenUsage{} = token_usage ->
-        Callbacks.fire(model.callbacks, :on_llm_token_usage, [model, token_usage])
+        Callbacks.fire(model.callbacks, :on_llm_token_usage, [token_usage])
         :ok
 
       nil ->
@@ -478,8 +536,8 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
       {:ok, message} ->
         message
 
-      {:error, changeset} ->
-        {:error, Utils.changeset_error_to_string(changeset)}
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:error, LangChainError.exception(changeset)}
     end
   end
 
@@ -517,8 +575,8 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
       {:ok, message} ->
         message
 
-      {:error, changeset} ->
-        {:error, Utils.changeset_error_to_string(changeset)}
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:error, LangChainError.exception(changeset)}
     end
   end
 
@@ -539,8 +597,8 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
       {:ok, message} ->
         message
 
-      {:error, changeset} ->
-        {:error, Utils.changeset_error_to_string(changeset)}
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:error, LangChainError.exception(changeset)}
     end
   end
 
@@ -574,25 +632,29 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
       {:ok, message} ->
         message
 
-      {:error, changeset} ->
-        {:error, Utils.changeset_error_to_string(changeset)}
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:error, LangChainError.exception(changeset)}
     end
   end
 
   def do_process_response(_model, %{"error" => %{"message" => reason}}, _) do
     Logger.error("Received error from API: #{inspect(reason)}")
-    {:error, reason}
+    {:error, LangChainError.exception(message: reason)}
   end
 
   def do_process_response(_model, {:error, %Jason.DecodeError{} = response}, _) do
     error_message = "Received invalid JSON: #{inspect(response)}"
     Logger.error(error_message)
-    {:error, error_message}
+
+    {:error,
+     LangChainError.exception(type: "invalid_json", message: error_message, original: response)}
   end
 
   def do_process_response(_model, other, _) do
     Logger.error("Trying to process an unexpected response. #{inspect(other)}")
-    {:error, "Unexpected response"}
+
+    {:error,
+     LangChainError.exception(type: "unexpected_response", message: "Unexpected response")}
   end
 
   @doc false

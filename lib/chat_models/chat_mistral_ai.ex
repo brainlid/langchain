@@ -54,7 +54,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
 
     field :stream, :boolean, default: false
 
-    # A list of maps for callback handlers
+    # A list of maps for callback handlers (treat as private)
     field :callbacks, {:array, :map}, default: []
   end
 
@@ -70,8 +70,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
     :max_tokens,
     :safe_prompt,
     :random_seed,
-    :stream,
-    :callbacks
+    :stream
   ]
   @required_fields [
     :model
@@ -126,7 +125,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
       top_p: mistral.top_p,
       safe_prompt: mistral.safe_prompt,
       stream: mistral.stream,
-      messages: Enum.map(messages, &ChatOpenAI.for_api/1)
+      messages: Enum.map(messages, &ChatOpenAI.for_api(mistral, &1))
     }
     |> Utils.conditionally_add_to_map(:random_seed, mistral.random_seed)
     |> Utils.conditionally_add_to_map(:max_tokens, mistral.max_tokens)
@@ -156,7 +155,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
       end
     rescue
       err in LangChainError ->
-        {:error, err.message}
+        {:error, err}
     end
   end
 
@@ -165,7 +164,10 @@ defmodule LangChain.ChatModels.ChatMistralAI do
   def do_api_request(mistral, messages, functions, retry_count \\ 3)
 
   def do_api_request(_mistral, _messages, _functions, 0) do
-    raise LangChainError, "Retries exceeded. Connection failed."
+    raise LangChainError.exception(
+            type: "retries_exceeded",
+            message: "Retries exceeded. Connection failed."
+          )
   end
 
   def do_api_request(
@@ -195,12 +197,13 @@ defmodule LangChain.ChatModels.ChatMistralAI do
             {:error, reason}
 
           result ->
-            Callbacks.fire(mistral.callbacks, :on_llm_new_message, [mistral, result])
+            Callbacks.fire(mistral.callbacks, :on_llm_new_message, [result])
             result
         end
 
-      {:error, %Req.TransportError{reason: :timeout}} ->
-        {:error, "Request timed out"}
+      {:error, %Req.TransportError{reason: :timeout} = err} ->
+        {:error,
+         LangChainError.exception(type: "timeout", message: "Request timed out", original: err)}
 
       {:error, %Req.TransportError{reason: :closed}} ->
         # Force a retry by making a recursive call decrementing the counter
@@ -237,11 +240,12 @@ defmodule LangChain.ChatModels.ChatMistralAI do
       {:ok, %Req.Response{body: data}} ->
         data
 
-      {:error, %LangChainError{message: reason}} ->
-        {:error, reason}
+      {:error, %LangChainError{} = err} ->
+        {:error, err}
 
-      {:error, %Req.TransportError{reason: :timeout}} ->
-        {:error, "Request timed out"}
+      {:error, %Req.TransportError{reason: :timeout} = err} ->
+        {:error,
+         LangChainError.exception(type: "timeout", message: "Request timed out", original: err)}
 
       {:error, %Req.TransportError{reason: :closed}} ->
         # Force a retry by making a recursive call decrementing the counter
@@ -253,7 +257,8 @@ defmodule LangChain.ChatModels.ChatMistralAI do
           "Unhandled and unexpected response from streamed post call. #{inspect(other)}"
         )
 
-        {:error, "Unexpected response"}
+        {:error,
+         LangChainError.exception(type: "unexpected_response", message: "Unexpected response")}
     end
   end
 
@@ -264,7 +269,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
           | [Message.t()]
           | MessageDelta.t()
           | [MessageDelta.t()]
-          | {:error, String.t()}
+          | {:error, LangChainError.t()}
   def do_process_response(model, %{"choices" => choices}) when is_list(choices) do
     # process each response individually. Return a list of all processed choices
     for choice <- choices do
@@ -344,25 +349,29 @@ defmodule LangChain.ChatModels.ChatMistralAI do
       {:ok, message} ->
         message
 
-      {:error, changeset} ->
-        {:error, Utils.changeset_error_to_string(changeset)}
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:error, LangChainError.exception(changeset)}
     end
   end
 
   def do_process_response(_model, %{"error" => %{"message" => reason}}) do
     Logger.error("Received error from API: #{inspect(reason)}")
-    {:error, reason}
+    {:error, LangChainError.exception(message: reason)}
   end
 
   def do_process_response(_model, {:error, %Jason.DecodeError{} = response}) do
     error_message = "Received invalid JSON: #{inspect(response)}"
     Logger.error(error_message)
-    {:error, error_message}
+
+    {:error,
+     LangChainError.exception(type: "invalid_json", message: error_message, original: response)}
   end
 
   def do_process_response(_model, other) do
     Logger.error("Trying to process an unexpected response. #{inspect(other)}")
-    {:error, "Unexpected response"}
+
+    {:error,
+     LangChainError.exception(type: "unexpected_response", message: "Unexpected response")}
   end
 
   @doc """

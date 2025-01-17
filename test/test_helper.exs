@@ -10,9 +10,16 @@ Application.put_env(
   System.fetch_env!("AWS_SECRET_ACCESS_KEY")
 )
 
+Application.put_env(
+  :langchain,
+  :aws_region,
+  System.get_env("AWS_REGION", "us-east-1")
+)
+
 Mimic.copy(LangChain.Utils.BedrockStreamDecoder)
 Mimic.copy(LangChain.Utils.AwsEventstreamDecoder)
 
+Mimic.copy(Req)
 Mimic.copy(LangChain.ChatModels.ChatOpenAI)
 Mimic.copy(LangChain.ChatModels.ChatAnthropic)
 Mimic.copy(LangChain.ChatModels.ChatMistralAI)

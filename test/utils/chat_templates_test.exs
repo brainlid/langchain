@@ -73,18 +73,29 @@ defmodule LangChain.Utils.ChatTemplatesTest do
                    end
     end
 
-    test "raises exception when not alternating user/assistant" do
-      assert_raise LangChainError,
-                   "Conversation roles must alternate user/assistant/user/assistant/...",
-                   fn ->
-                     ChatTemplates.prep_and_validate_messages([
-                       Message.new_system!("system_message"),
-                       Message.new_user!("user_1"),
-                       Message.new_user!("user_2"),
-                       Message.new_assistant!("assistant_response"),
-                       Message.new_user!("user_3")
-                     ])
-                   end
+    test "raises no exception when alternating user/assistant not one for one" do
+      system = Message.new_system!("system_message")
+
+      first = Message.new_user!("user_1")
+
+      rest = [
+        Message.new_user!("user_2"),
+        Message.new_assistant!("assistant_response"),
+        Message.new_user!("user_3")
+      ]
+
+      {s, u, r} =
+        ChatTemplates.prep_and_validate_messages([
+          Message.new_system!("system_message"),
+          Message.new_user!("user_1"),
+          Message.new_user!("user_2"),
+          Message.new_assistant!("assistant_response"),
+          Message.new_user!("user_3")
+        ])
+
+      assert s == system
+      assert u == first
+      assert r == rest
     end
 
     # test "removes special tokens from the message content"
@@ -466,6 +477,32 @@ defmodule LangChain.Utils.ChatTemplatesTest do
         "<|begin_of_text|>\n<|start_header_id|>system<|end_header_id|>\n\nsystem_message<|eot_id|>\n<|start_header_id|>user<|end_header_id|>\n\nuser_prompt<|eot_id|>\n<|start_header_id|>assistant<|end_header_id|>\n\nassistant_response<|eot_id|>\n<|start_header_id|>user<|end_header_id|>\n\nuser_2nd<|eot_id|>\n<|start_header_id|>assistant<|end_header_id|>\n\n"
 
       result = ChatTemplates.apply_chat_template!(messages, :llama_3)
+      assert result == expected
+    end
+  end
+
+  describe "apply_chat_template!/3 - with template callback" do
+    test "formats according to template callback" do
+      messages = [
+        Message.new_system!("system_message"),
+        Message.new_user!("user_prompt"),
+        Message.new_assistant!("assistant_response"),
+        Message.new_user!("user_2nd")
+      ]
+
+      format =
+        "<|start_of_template|><%= for message <- @messages do %><%= message.role %>\n<%= message.content %>\n\n<% end %><|end_of_template|>"
+
+      template_callback = fn messages, _opts ->
+        EEx.eval_string(format,
+          assigns: [messages: messages]
+        )
+      end
+
+      expected =
+        "<|start_of_template|>system\nsystem_message\n\nuser\nuser_prompt\n\nassistant\nassistant_response\n\nuser\nuser_2nd\n\n<|end_of_template|>"
+
+      result = ChatTemplates.apply_chat_template!(messages, template_callback)
       assert result == expected
     end
   end

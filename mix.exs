@@ -2,7 +2,7 @@ defmodule LangChain.MixProject do
   use Mix.Project
 
   @source_url "https://github.com/brainlid/langchain"
-  @version "0.3.0-rc.0"
+  @version "0.3.0-rc.2"
 
   def project do
     [
@@ -18,7 +18,7 @@ defmodule LangChain.MixProject do
       name: "LangChain",
       homepage_url: @source_url,
       description: """
-      Elixir implementation of a LangChain style framework.
+      Elixir implementation of a LangChain style framework that lets Elixir projects work well with LLMs.
       """
     ]
   end
@@ -39,8 +39,8 @@ defmodule LangChain.MixProject do
       {:ecto, "~> 3.10 or ~> 3.11"},
       {:gettext, "~> 0.20"},
       {:req, ">= 0.5.2"},
-      {:abacus, "~> 2.1.0"},
-      {:nimble_parsec, "~> 1.4"},
+      {:nimble_parsec, "~> 1.4", optional: true},
+      {:abacus, "~> 2.1.0", optional: true},
       {:nx, ">= 0.7.0", optional: true},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
       {:mimic, "~> 1.8", only: :test}
@@ -74,6 +74,7 @@ defmodule LangChain.MixProject do
         Chains: [
           LangChain.Chains.LLMChain,
           LangChain.Chains.TextToTitleChain,
+          LangChain.Chains.SummarizeConversationChain,
           LangChain.Chains.DataExtractionChain
         ],
         Messages: [
@@ -93,7 +94,6 @@ defmodule LangChain.MixProject do
         ],
         Callbacks: [
           LangChain.Callbacks,
-          LangChain.ChatModels.LLMCallbacks,
           LangChain.Chains.ChainCallbacks
         ],
         Routing: [
@@ -110,6 +110,7 @@ defmodule LangChain.MixProject do
         ],
         Utils: [
           LangChain.Utils,
+          LangChain.Utils.BedrockConfig,
           LangChain.Utils.ChatTemplates,
           LangChain.Utils.ChainResult,
           LangChain.Config,

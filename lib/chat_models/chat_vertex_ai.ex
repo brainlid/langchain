@@ -64,7 +64,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     field :stream, :boolean, default: false
     field :json_response, :boolean, default: false
 
-    # A list of maps for callback handlers
+    # A list of maps for callback handlers (treated as internal)
     field :callbacks, {:array, :map}, default: []
   end
 
@@ -79,8 +79,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     :top_k,
     :receive_timeout,
     :stream,
-    :json_response,
-    :callbacks
+    :json_response
   ]
   @required_fields [
     :endpoint,
@@ -153,7 +152,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
         %{
           # Google AI functions use an OpenAI compatible format.
           # See: https://ai.google.dev/docs/function_calling#how_it_works
-          "functionDeclarations" => Enum.map(functions, &ChatOpenAI.for_api/1)
+          "functionDeclarations" => Enum.map(functions, &ChatOpenAI.for_api(vertex_ai, &1))
         }
       ])
     else
@@ -289,13 +288,13 @@ defmodule LangChain.ChatModels.ChatVertexAI do
       end
     rescue
       err in LangChainError ->
-        {:error, err.message}
+        {:error, err}
     end
   end
 
   @doc false
   @spec do_api_request(t(), [Message.t()], [Function.t()]) ::
-          list() | struct() | {:error, String.t()}
+          list() | struct() | {:error, LangChainError.t()}
   def do_api_request(%ChatVertexAI{stream: false} = vertex_ai, messages, tools) do
     req =
       Req.new(
@@ -317,12 +316,13 @@ defmodule LangChain.ChatModels.ChatVertexAI do
             {:error, reason}
 
           result ->
-            Callbacks.fire(vertex_ai.callbacks, :on_llm_new_message, [vertex_ai, result])
+            Callbacks.fire(vertex_ai.callbacks, :on_llm_new_message, [result])
             result
         end
 
-      {:error, %Req.TransportError{reason: :timeout}} ->
-        {:error, "Request timed out"}
+      {:error, %Req.TransportError{reason: :timeout} = err} ->
+        {:error,
+         LangChainError.exception(type: "timeout", message: "Request timed out", original: err)}
 
       other ->
         Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
@@ -353,18 +353,20 @@ defmodule LangChain.ChatModels.ChatVertexAI do
         # this behavior by forcing the final delta to have `status: :complete`.
         complete_final_delta(data)
 
-      {:error, %LangChainError{message: reason}} ->
-        {:error, reason}
+      {:error, %LangChainError{} = error} ->
+        {:error, error}
 
-      {:error, %Req.TransportError{reason: :timeout}} ->
-        {:error, "Request timed out"}
+      {:error, %Req.TransportError{reason: :timeout} = err} ->
+        {:error,
+         LangChainError.exception(type: "timeout", message: "Request timed out", original: err)}
 
       other ->
         Logger.error(
           "Unhandled and unexpected response from streamed post call. #{inspect(other)}"
         )
 
-        {:error, "Unexpected response"}
+        {:error,
+         LangChainError.exception(type: "unexpected_response", message: "Unexpected response")}
     end
   end
 
@@ -428,8 +430,8 @@ defmodule LangChain.ChatModels.ChatVertexAI do
       {:ok, message} ->
         message
 
-      {:error, changeset} ->
-        {:error, Utils.changeset_error_to_string(changeset)}
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:error, LangChainError.exception(changeset)}
     end
   end
 
@@ -468,8 +470,8 @@ defmodule LangChain.ChatModels.ChatVertexAI do
       {:ok, message} ->
         message
 
-      {:error, changeset} ->
-        {:error, Utils.changeset_error_to_string(changeset)}
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:error, LangChainError.exception(changeset)}
     end
   end
 
@@ -486,8 +488,8 @@ defmodule LangChain.ChatModels.ChatVertexAI do
       {:ok, message} ->
         message
 
-      {:error, changeset} ->
-        {:error, Utils.changeset_error_to_string(changeset)}
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:error, LangChainError.exception(changeset)}
     end
   end
 
@@ -530,8 +532,8 @@ defmodule LangChain.ChatModels.ChatVertexAI do
       {:ok, message} ->
         message
 
-      {:error, changeset} ->
-        {:error, Utils.changeset_error_to_string(changeset)}
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:error, LangChainError.exception(changeset)}
     end
   end
 
@@ -543,12 +545,16 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   def do_process_response({:error, %Jason.DecodeError{} = response}, _) do
     error_message = "Received invalid JSON: #{inspect(response)}"
     Logger.error(error_message)
-    {:error, error_message}
+
+    {:error,
+     LangChainError.exception(type: "invalid_json", message: error_message, original: response)}
   end
 
   def do_process_response(other, _) do
     Logger.error("Trying to process an unexpected response. #{inspect(other)}")
-    {:error, "Unexpected response"}
+
+    {:error,
+     LangChainError.exception(type: "unexpected_response", message: "Unexpected response")}
   end
 
   @doc false

@@ -79,12 +79,21 @@ defmodule LangChain.Utils.ChatTemplates do
 
   Note: The `:zephyr` format supports specific system messages.
 
+
+  ### `:phi_4`
+
+  The `:phi_4` template format is also supported.
+
+  ## Template callback
+
+  It's possible to pass a callback as a template.
+  The function receives the list of messages as first argument and `opts` as second and must return a string.
   """
-  import Integer, only: [is_even: 1, is_odd: 1]
   alias LangChain.LangChainError
   alias LangChain.Message
 
-  @type chat_format :: :inst | :im_start | :llama_2 | :llama_3 | :zephyr
+  @type template_callback :: ([Message.t()], Keyword.t() -> String.t())
+  @type chat_format :: :inst | :im_start | :llama_2 | :llama_3 | :phi_4 | :zephyr | template_callback()
 
   # Option:
   # - `add_generation_prompt`: boolean. Defaults to False.
@@ -104,11 +113,14 @@ defmodule LangChain.Utils.ChatTemplates do
   If there is an issue, an exception is raised. Reasons for an exception:
 
   - Only 1 system message is allowed and, if included, it is the first message.
-  - Non-system messages must begin with a user message
-  - Alternates message roles between: user, assistant, user, assistant, etc.
+  - Non-system messages must begin with a user message or assitant message.
+
+  Recent change:
+  - Alternating messages between user / assistant / user / assistant are no longer enforced as not every model has issues.
+  - It is up to the programmer to enforce this if this is something they need.
   """
   @spec prep_and_validate_messages([Message.t()]) ::
-          {Message.t(), Message.t(), [Message.t()]} | no_return()
+          {Message.t() | nil, Message.t(), [Message.t()]} | no_return()
   def prep_and_validate_messages(messages) do
     {system, first_user, rest} =
       case messages do
@@ -138,12 +150,8 @@ defmodule LangChain.Utils.ChatTemplates do
     # must alternate user, assistant, user, etc. Put the first user message back
     # on the list for checking it.
     [first_user | rest]
-    |> Enum.with_index()
     |> Enum.each(fn
-      {%Message{role: :user}, index} when is_even(index) ->
-        :ok
-
-      {%Message{role: :tool}, index} when is_even(index) ->
+      %Message{role: :user} ->
         :ok
 
       {%Message{role: :assistant}, index} when is_odd(index) ->
@@ -151,7 +159,7 @@ defmodule LangChain.Utils.ChatTemplates do
 
       _other ->
         raise LangChainError,
-              "Conversation roles must alternate user/assistant/user/assistant/..."
+              "Conversation roles must be either user or assistant."
     end)
 
     # return 3 element tuple of critical message pieces
@@ -259,6 +267,29 @@ defmodule LangChain.Utils.ChatTemplates do
       assigns: [
         messages: [system, first_user | rest] |> Enum.drop_while(&(&1 == nil)),
         add_generation_prompt: add_generation_prompt
+      ]
+    )
+  end
+
+  def apply_chat_template!(messages, :phi_4, _opts) do
+    # translation form https://huggingface.co/microsoft/phi-4/blob/main/tokenizer_config.json#L774 to Elixir via Claude 3.5 Sonnet Copilot
+    # {% for message in messages %}{% if (message['role'] == 'system') %}{{'<|im_start|>system<|im_sep|>' + message['content'] + '<|im_end|>'}}{% elif (message['role'] == 'user') %}{{'<|im_start|>user<|im_sep|>' + message['content'] + '<|im_end|><|im_start|>assistant<|im_sep|>'}}{% elif (message['role'] == 'assistant') %}{{message['content'] + '<|im_end|>'}}{% endif %}{% endfor %}
+    {system, first_user, rest} = prep_and_validate_messages(messages)
+
+    text = """
+    <%= if @system != nil do %><|im_start|>system<|im_sep|><%= @system.content %><|im_end|><% end %>\
+    <%= if @first_user != nil do %><|im_start|>user<|im_sep|><%= @first_user.content %><|im_end|><|im_start|>assistant<|im_sep|><% end %>\
+    <%= for m <- @rest do %>\
+    <%= if m.role == :user do %><|im_start|>user<|im_sep|><%= m.content %><|im_end|><|im_start|>assistant<|im_sep|>\
+    <% else %><%= m.content %><|im_end|><% end %>\
+    <% end %>
+    """
+
+    EEx.eval_string(text,
+      assigns: [
+        system: system,
+        first_user: first_user,
+        rest: rest
       ]
     )
   end
@@ -623,6 +654,10 @@ defp get_param_type(type) do
     _ -> "string"
   end
 end
+
+  def apply_chat_template!(messages, template_callback, opts)
+      when is_function(template_callback, 2),
+      do: template_callback.(messages, opts)
 
   # return the desired true/false value. Only set to true when the last message
   # is a user prompt.

@@ -14,9 +14,10 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
   alias LangChain.Function
   alias LangChain.FunctionParam
   alias LangChain.BedrockHelpers
+  alias LangChain.LangChainError
 
-  @test_model "claude-3-opus-20240229"
-  @bedrock_test_model "anthropic.claude-3-5-sonnet-20240620-v1:0"
+  @test_model "claude-3-5-sonnet-20241022"
+  @bedrock_test_model "anthropic.claude-3-5-sonnet-20241022-v2:0"
   @apis [:anthropic, :anthropic_bedrock]
 
   defp hello_world(_args, _context) do
@@ -25,6 +26,10 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
 
   defp api_config_for(:anthropic_bedrock) do
     %{bedrock: BedrockHelpers.bedrock_config(), model: @bedrock_test_model}
+  end
+
+  defp api_config_for(:anthropic) do
+    %{model: @test_model}
   end
 
   defp api_config_for(_), do: %{}
@@ -287,16 +292,24 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
 
     test "handles error messages", %{model: model} do
       error = "Invalid API key"
+      message = "Received error from API: #{error}"
 
-      assert {:error, "Received error from API: #{error}"} ==
+      assert {:error, exception} =
                ChatAnthropic.do_process_response(model, %{"message" => error})
+
+      assert exception.type == nil
+      assert exception.message == message
     end
 
     test "handles stream error messages", %{model: model} do
       error = "Internal error"
+      message = "Stream exception received: #{inspect(error)}"
 
-      assert {:error, "Stream exception received: #{inspect(error)}"} ==
+      assert {:error, exception} =
                ChatAnthropic.do_process_response(model, %{bedrock_exception: error})
+
+      assert exception.type == nil
+      assert exception.message == message
     end
   end
 
@@ -495,6 +508,22 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
       assert call.name == "get_weather"
       assert call.arguments == %{"location" => "San Francisco, CA", "unit" => "celsius"}
     end
+
+    test "handles receiving overloaded error", %{model: model} do
+      response = %{
+        "type" => "error",
+        "error" => %{
+          "details" => nil,
+          "type" => "overloaded_error",
+          "message" => "Overloaded"
+        }
+      }
+
+      assert {:error, exception} = ChatAnthropic.do_process_response(model, response)
+
+      assert exception.type == "overloaded_error"
+      assert exception.message == "Overloaded"
+    end
   end
 
   describe "call/2" do
@@ -502,12 +531,12 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
     test "handles when invalid API key given" do
       {:ok, chat} = ChatAnthropic.new(%{stream: true, api_key: "invalid"})
 
-      {:error, reason} =
+      {:error, %LangChainError{} = exception} =
         ChatAnthropic.call(chat, [
           Message.new_user!("Return the response 'Colorful Threads'.")
         ])
 
-      assert reason == "Authentication failure with request"
+      assert exception.message == "Authentication failure with request"
     end
 
     @tag live_call: true, live_anthropic_bedrock: true
@@ -521,13 +550,29 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
           }
         })
 
-      {:error, reason} =
+      {:error, %LangChainError{} = exception} =
         ChatAnthropic.call(chat, [
           Message.new_user!("Return the response 'Colorful Threads'.")
         ])
 
-      assert reason ==
+      assert exception.message ==
                "Received error from API: The security token included in the request is invalid."
+    end
+
+    test "returns error tuple when receiving overloaded_error" do
+      # Made NOT LIVE here
+      expect(Req, :post, fn _req_struct, _opts ->
+        # IO.puts "REQ OVERLOAD USED!!!!"
+        {:ok,
+         {:error,
+          LangChainError.exception(type: "overloaded_error", message: "Overloaded (from test)")}}
+      end)
+
+      model = ChatAnthropic.new!(%{stream: true, model: @test_model})
+      assert {:error, reason} = ChatAnthropic.call(model, "prompt", [])
+
+      assert reason.type == "overloaded_error"
+      assert reason.message == "Overloaded (from test)"
     end
 
     for api <- @apis do
@@ -536,16 +581,18 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
       test "#{BedrockHelpers.prefix_for(api)}basic streamed content example and fires ratelimit callback and token usage",
            %{live_api: api, api_config: api_config} do
         handlers = %{
-          on_llm_ratelimit_info: fn _model, headers ->
+          on_llm_ratelimit_info: fn headers ->
             send(self(), {:fired_ratelimit_info, headers})
           end,
-          on_llm_token_usage: fn _model, usage ->
+          on_llm_token_usage: fn usage ->
             send(self(), {:fired_token_usage, usage})
           end
         }
 
         {:ok, chat} =
-          ChatAnthropic.new(%{stream: true, callbacks: [handlers]} |> Map.merge(api_config))
+          ChatAnthropic.new(%{stream: true} |> Map.merge(api_config))
+
+        chat = %ChatAnthropic{chat | callbacks: [handlers]}
 
         {:ok, result} =
           ChatAnthropic.call(chat, [
@@ -567,13 +614,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
                    role: :assistant
                  },
                  %LangChain.MessageDelta{
-                   content: " up the good work",
-                   status: :incomplete,
-                   index: nil,
-                   role: :assistant
-                 },
-                 %LangChain.MessageDelta{
-                   content: "!",
+                   content: " up the good work!",
                    status: :incomplete,
                    index: nil,
                    role: :assistant
@@ -855,6 +896,28 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
                  "type" => "content_block_delta",
                  "delta" => %{"text" => " Anthrop", "type" => "text_delta"},
                  "index" => 0
+               }
+             ] = parsed
+
+      assert buffer == ""
+    end
+
+    test "handles error overloaded message" do
+      chunk = """
+      event: error\ndata: {\"type\":\"error\",\"error\":{\"details\":null,\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}
+
+      """
+
+      {parsed, buffer} = ChatAnthropic.decode_stream(%ChatAnthropic{}, {chunk, ""})
+
+      assert [
+               %{
+                 "type" => "error",
+                 "error" => %{
+                   "details" => nil,
+                   "type" => "overloaded_error",
+                   "message" => "Overloaded"
+                 }
                }
              ] = parsed
 
@@ -1283,7 +1346,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
         api_config: api_config
       } do
         # https://docs.anthropic.com/en/docs/tool-use
-        {:ok, chat} = ChatAnthropic.new(%{model: @test_model} |> Map.merge(api_config))
+        {:ok, chat} = ChatAnthropic.new(%{model: api_config.model} |> Map.merge(api_config))
 
         message = Message.new_user!("Use the 'do_something' tool.")
 
@@ -1332,7 +1395,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       api_config: api_config
     } do
       # https://docs.anthropic.com/claude/reference/messages-examples#vision
-      {:ok, chat} = ChatAnthropic.new(%{model: @test_model} |> Map.merge(api_config))
+      {:ok, chat} = ChatAnthropic.new(%{model: api_config.model} |> Map.merge(api_config))
 
       message = Message.new_user!("Use the 'do_something' tool with the value 'cat'.")
 
@@ -1371,16 +1434,19 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       # }
     end
 
-    @tag live_call: true, live_anthropic: true
-    test "#{BedrockHelpers.prefix_for(api)} streams a tool call with parameters" do
+    @tag live_call: true, live_api: api
+    test "#{BedrockHelpers.prefix_for(api)} streams a tool call with parameters", %{
+      api_config: api_config
+    } do
       handler = %{
-        on_llm_new_delta: fn _model, delta ->
+        on_llm_new_delta: fn %LLMChain{} = _chain, delta ->
           # IO.inspect(delta, label: "DELTA")
           send(self(), {:streamed_fn, delta})
         end
       }
 
-      {:ok, chat} = ChatAnthropic.new(%{model: @test_model, stream: true, callbacks: [handler]})
+      {:ok, chat} =
+        ChatAnthropic.new(%{model: api_config.model, stream: true} |> Map.merge(api_config))
 
       text =
         "People tell me I should be more patient, but I can't just sit around waiting for that to happen"
@@ -1402,6 +1468,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
         LLMChain.new!(%{llm: chat, verbose: false})
         |> LLMChain.add_message(user_message)
         |> LLMChain.add_tools(tool)
+        |> LLMChain.add_callback(handler)
         |> LLMChain.run(mode: :until_success)
 
       # has the result from the function execution
@@ -1416,20 +1483,22 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
         test_pid = self()
 
         handler = %{
-          on_llm_new_delta: fn _model, delta ->
+          on_llm_new_delta: fn %LLMChain{} = _chain, delta ->
             send(test_pid, {:streamed_fn, delta})
           end
         }
 
         {:ok, chat} =
           ChatAnthropic.new(
-            %{stream: true, callbacks: [handler]}
+            %{stream: true}
             |> Map.merge(api_config)
           )
 
         {:ok, updated_chain} =
-          LLMChain.new!(%{llm: chat})
+          %{llm: chat}
+          |> LLMChain.new!()
           |> LLMChain.add_message(Message.new_user!("Say, 'Hi!'!"))
+          |> LLMChain.add_callback(handler)
           |> LLMChain.run()
 
         assert updated_chain.last_message.content == "Hi!"
@@ -1449,23 +1518,23 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
         test_pid = self()
 
         handler = %{
-          on_llm_new_message: fn _model, message ->
+          on_llm_new_message: fn %LLMChain{} = _chain, message ->
             send(test_pid, {:received_msg, message})
           end,
-          on_llm_ratelimit_info: fn _model, headers ->
+          on_llm_ratelimit_info: fn %LLMChain{} = _chain, headers ->
             send(test_pid, {:fired_ratelimit_info, headers})
           end,
-          on_llm_token_usage: fn _model, usage ->
+          on_llm_token_usage: fn %LLMChain{} = _chain, usage ->
             send(self(), {:fired_token_usage, usage})
           end
         }
 
         {:ok, updated_chain} =
           LLMChain.new!(%{
-            llm:
-              ChatAnthropic.new!(%{stream: false, callbacks: [handler]} |> Map.merge(api_config))
+            llm: ChatAnthropic.new!(%{stream: false} |> Map.merge(api_config))
           })
           |> LLMChain.add_message(Message.new_user!("Say, 'Hi!'!"))
+          |> LLMChain.add_callback(handler)
           |> LLMChain.run()
 
         assert updated_chain.last_message.content == "Hi!"
@@ -1501,24 +1570,26 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
         test_pid = self()
 
         handler = %{
-          on_llm_new_delta: fn _model, delta ->
+          on_llm_new_delta: fn %LLMChain{} = _chain, delta ->
             # IO.inspect(data, label: "DATA")
             send(test_pid, {:streamed_fn, delta})
           end
         }
 
+        chat =
+          ChatAnthropic.new!(
+            %{model: api_config.model, stream: true}
+            |> Map.merge(api_config)
+          )
+
         {:ok, updated_chain} =
-          LLMChain.new!(%{
-            llm:
-              ChatAnthropic.new!(
-                %{model: @test_model, stream: true, callbacks: [handler]}
-                |> Map.merge(api_config)
-              )
-          })
+          %{llm: chat}
+          |> LLMChain.new!()
           |> LLMChain.add_message(Message.new_system!("You are a helpful and concise assistant."))
           |> LLMChain.add_message(Message.new_user!("Say, 'Hi!'!"))
           |> LLMChain.add_message(Message.new_assistant!("Hi!"))
           |> LLMChain.add_message(Message.new_user!("What's the capitol of Norway?"))
+          |> LLMChain.add_callback(handler)
           |> LLMChain.run()
 
         assert updated_chain.last_message.content =~ "Oslo"
@@ -1542,7 +1613,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
     #   }
 
     #   {:ok, result_chain, last_message} =
-    #     LLMChain.new!(%{llm: %ChatAnthropic{model: @test_model, stream: true, callbacks: [handler]}})
+    #     LLMChain.new!(%{llm: %ChatAnthropic{model: api_config.model, stream: true, callbacks: [handler]}})
     #     |> LLMChain.add_message(Message.new_system!("You are a helpful and concise assistant."))
     #     |> LLMChain.add_message(
     #       Message.new_user!(
