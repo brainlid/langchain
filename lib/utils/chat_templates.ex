@@ -619,7 +619,7 @@ end
 def llama_3_1_custom_tool_calling_parameter_conversion(tools) do
   tools
   |> Enum.map(fn %LangChain.Function{name: name, description: description, parameters_schema: schema} ->
-    props = schema[:properties]
+    props = schema[:properties] || schema["properties"] || []
     parameters =
       props
       |> Enum.map(fn {param_name, param_config} ->
