@@ -126,18 +126,18 @@ defmodule LangChain.ChatModels.ChatBumblebee do
     # # more focused and deterministic.
     # field :temperature, :float, default: 1.0
 
-
-    field :template_format, Ecto.Enum, values: [
-      :inst,
-      :im_start,
-      :zephyr,
-      :phi_4,
-      :llama_2,
-      :llama_3,
-      :llama_3_1_json_tool_calling,
-      :llama_3_1_custom_tool_calling,
-      :llama_3_2_custom_tool_calling
-    ]
+    field :template_format, Ecto.Enum,
+      values: [
+        :inst,
+        :im_start,
+        :zephyr,
+        :phi_4,
+        :llama_2,
+        :llama_3,
+        :llama_3_1_json_tool_calling,
+        :llama_3_1_custom_tool_calling,
+        :llama_3_2_custom_tool_calling
+      ]
 
     # The bumblebee model may compile differently based on the stream true/false
     # option on the serving. Therefore, streaming should be enabled on the
@@ -302,6 +302,10 @@ defmodule LangChain.ChatModels.ChatBumblebee do
         %ChatBumblebee{template_format: :llama_3_2_custom_tool_calling} = model
       )
       when is_binary(content) do
+    if !Code.ensure_loaded?(NimbleParsec) do
+      raise "Install NimbleParsec to use custom tool calling"
+    end
+
     fire_token_usage_callback(model, token_summary)
 
     case LLAMA_3_2_CustomToolParser.parse(content) do
@@ -310,10 +314,18 @@ defmodule LangChain.ChatModels.ChatBumblebee do
                role: :assistant,
                status: :complete,
                content: content,
-               tool_calls: Enum.with_index(functions, fn i, %{
-                function_name: name,
-                parameters: parameters
-               } -> ToolCall.new!(%{call_id: Integer.to_string(i), name: name, arguments: parameters}) end)
+               tool_calls:
+                 Enum.with_index(functions, fn i,
+                                               %{
+                                                 function_name: name,
+                                                 parameters: parameters
+                                               } ->
+                   ToolCall.new!(%{
+                     call_id: Integer.to_string(i),
+                     name: name,
+                     arguments: parameters
+                   })
+                 end)
              }) do
           {:ok, message} ->
             # execute the callback with the final message
@@ -348,13 +360,17 @@ defmodule LangChain.ChatModels.ChatBumblebee do
         %ChatBumblebee{template_format: :llama_3_1_custom_tool_calling} = model
       )
       when is_binary(content) do
+    if !Code.ensure_loaded?(NimbleParsec) do
+      raise "Install NimbleParsec to use custom tool calling"
+    end
+
     fire_token_usage_callback(model, token_summary)
 
     case LLAMA_3_1_CustomToolParser.parse(content) do
       {:ok,
        %{
-        function_name: name,
-        parameters: parameters
+         function_name: name,
+         parameters: parameters
        }} ->
         case Message.new(%{
                role: :assistant,
