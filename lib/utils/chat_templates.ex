@@ -153,7 +153,8 @@ defmodule LangChain.Utils.ChatTemplates do
     |> Enum.each(fn
       %Message{role: :user} ->
         :ok
-
+      %Message{role: :tool} ->
+        :ok
       %Message{role: :assistant} ->
         :ok
 
@@ -352,11 +353,311 @@ defmodule LangChain.Utils.ChatTemplates do
       when is_function(template_callback, 2),
       do: template_callback.(messages, opts)
 
+  @doc """
+  Transform a list of messages into a text prompt in the desired format for the
+  LLM.
+  And adds tool configuration.
+
+  ## Options
+
+  - `:add_generation_prompt` - Boolean. Defaults to `true` when the last message
+    is a user prompt. Depending on the format, when a user message is the last
+    message, then the text prompt should begin the portion for the assistant to
+    trigger the assistant's text generation.
+
+  """
+  def apply_chat_template_with_tools!(messages, chat_format, tools \\ [], opts \\ [])
+  # Does LLaMa 3.1 json tool calling formatted text
+  def apply_chat_template_with_tools!(messages, :llama_3_1_json_tool_calling, tools, opts) do
+    # <|begin_of_text|>
+    # <|start_header_id|>system<|end_header_id|>
+    #
+    # You are a helpful assistant.<|eot_id|>
+    # <|start_header_id|>user<|end_header_id|>
+    #
+    # What do you know about elixir?<|eot_id|>
+    # <|start_header_id|>assistant<|end_header_id|>
+
+    add_generation_prompt =
+      Keyword.get(opts, :add_generation_prompt, default_add_generation_prompt_value(messages))
+
+    {system, first_user, rest} = prep_and_validate_messages(messages)
+
+    rest =
+      rest
+      |> Enum.map(fn message ->
+        case message.role do
+          :tool ->
+            tool_result = Enum.at(message.tool_results, 0)
+            content = Jason.encode!(%{output: tool_result.content})
+            %{message | content: content, role: "ipython"}
+
+          _ ->
+            message
+        end
+      end)
+
+    tools_json_schema_string =
+      tools
+      |> Enum.map(fn %LangChain.Function{
+                       name: name,
+                       description: description,
+                       parameters_schema: schema
+                     } ->
+        %{
+          type: "function",
+          function: %{
+            name: name,
+            description: description,
+            parameters: schema
+          }
+        }
+      end)
+      |> Jason.encode!()
+      |> Jason.Formatter.pretty_print()
+
+    # intentionally indentaion and newlines!!! for explicit control of newlines and spaces.
+    text =
+      """
+      <|begin_of_text|>
+      <|start_header_id|>system<|end_header_id|>
+
+      <%= @system_content %>
+
+      Cutting Knowledge Date: December 2023
+      Today Date: <%= @date %>
+
+      When you receive a tool call response, use the output to format an answer to the orginal user question.
+
+      You are a helpful assistant with tool calling capabilities.<|eot_id|>
+      <|start_header_id|>user<|end_header_id|>
+
+      Given the following functions, please respond with a JSON for a function call with its proper arguments that best answers the given prompt.
+
+      Respond in the format {"name": function name, "parameters": dictionary of argument name and its value}. Do not use variables.
+      <%= @tools_json_schema_string %>
+
+      <%= @first_user.content %><|eot_id|>
+      <%= for message <- @rest do %><|start_header_id|><%= message.role %><|end_header_id|>
+
+      <%= message.content %><|eot_id|>
+      <% end %><%= if @add_generation_prompt do %><|start_header_id|>assistant<|end_header_id|>
+
+      <% end %>
+      """
+      |> String.slice(0..-2//1)
+
+    EEx.eval_string(text,
+      assigns: [
+        tools_json_schema_string: tools_json_schema_string,
+        date: Calendar.strftime(DateTime.utc_now(), "%d %B %Y"),
+        system_content:
+          case system do
+            nil -> ""
+            system -> system.content
+          end,
+        first_user: first_user,
+        rest: rest |> Enum.drop_while(&(&1 == nil)),
+        add_generation_prompt: add_generation_prompt
+      ]
+    )
+  end
+
+def apply_chat_template_with_tools!(messages, :llama_3_1_custom_tool_calling, tools, opts) do
+  add_generation_prompt =
+    Keyword.get(opts, :add_generation_prompt, default_add_generation_prompt_value(messages))
+
+  {system, first_user, rest} = prep_and_validate_messages(messages)
+
+  # Convert tool results
+  rest = rest |> Enum.map(fn message ->
+    case message.role do
+      :tool ->
+        tool_result = Enum.at(message.tool_results, 0)
+        content = Jason.encode!(%{output: tool_result.content})
+        %{message | content: content, role: "ipython"}
+      _ ->
+        message
+    end
+  end)
+
+  # Format tools as simple JSON schema
+  tools_json_schema_string =
+    llama_3_1_custom_tool_calling_parameter_conversion(tools)
+
+  text = """
+  <|begin_of_text|>
+  <|start_header_id|>system<|end_header_id|>
+
+  Environment: ipython
+  Tools:
+  Cutting Knowledge Date: December 2023
+  Today Date: <%= @date %>
+
+  # Tool Instructions
+  - Always execute python code in messages that you share.
+  - When looking for real time information use relevant functions if available
+
+  You have access to the following functions:
+
+  <%= for tool <- @tools_json_schema_string do %>
+  Use the function '<%= tool["name"] %>' to: <%= tool["description"] %>
+  <%= tool["parameters"] |> Jason.encode!() |> Jason.Formatter.pretty_print() %>
+
+
+  <% end %>
+
+  If a you choose to call a function ONLY reply in the following format:
+  <{start_tag}={function_name}>{parameters}{end_tag}
+  where
+
+  start_tag => `<function`
+  parameters => a JSON dict with the function argument name as key and function argument value as value.
+  end_tag => `</function>`
+
+  Here is an example,
+  <function=example_function_name>{"example_name": "example_value"}</function>
+
+  Reminder:
+  - Function calls MUST follow the specified format
+  - Required parameters MUST be specified
+  - Only call one function at a time
+  - Put the entire function call reply on one line
+  - Always add your sources when using search results to answer the user query
+
+  You are a helpful assistant.<%= @system_content %><|eot_id|>
+  <|start_header_id|>user<|end_header_id|>
+
+  <%= @first_user.content %><|eot_id|>
+  <%= for message <- @rest do %>
+  <|start_header_id|><%= message.role %><|end_header_id|>
+
+  <%= message.content %><|eot_id|>
+  <% end %>
+  <%= if @add_generation_prompt do %>
+  <|start_header_id|>assistant<|end_header_id|>
+
+  <% end %>
+  """
+  |> String.slice(0..-2//1)
+
+  EEx.eval_string(text,
+    assigns: [
+      tools: tools,
+      tools_json_schema_string: tools_json_schema_string,
+      date: Calendar.strftime(DateTime.utc_now(), "%d %B %Y"),
+      first_user: first_user,
+      system_content:
+        case system do
+          nil -> ""
+          system -> system.content
+        end,
+      rest: rest |> Enum.drop_while(&(&1 == nil)),
+      add_generation_prompt: add_generation_prompt
+    ]
+  )
+end
+
+def apply_chat_template_with_tools!(messages, :llama_3_2_custom_tool_calling, tools, opts) do
+  add_generation_prompt =
+    Keyword.get(opts, :add_generation_prompt, default_add_generation_prompt_value(messages))
+
+  {system, first_user, rest} = prep_and_validate_messages(messages)
+
+  # Convert tool results
+  rest = rest |> Enum.map(fn message ->
+    case message.role do
+      :tool ->
+        tool_result = Enum.at(message.tool_results, 0)
+        content = Jason.encode!([%{output: tool_result.content}])
+        %{message | content: content, role: "ipython"}
+      _ ->
+        message
+    end
+  end)
+
+  # Format tools as simple JSON schema
+  tools_json_schema_string =
+    llama_3_1_custom_tool_calling_parameter_conversion(tools)
+
+  text = """
+  <|start_header_id|>system<|end_header_id|>
+You are an expert in composing functions. You are given a question and a set of possible functions.
+Based on the question, you will need to make one or more function/tool calls to achieve the purpose.
+If none of the functions can be used, point it out. If the given question lacks the parameters required by the function,also point it out. You should only return the function call in tools call sections.
+If you decide to invoke any of the function(s), you MUST put it in the format of [func_name1(params_name1=params_value1, params_name2=params_value2...), func_name2(params)]
+You SHOULD NOT include any other text in the response.
+Here is a list of functions in JSON format that you can invoke.<%= @tools_json_schema_string |> Jason.encode!() |> Jason.Formatter.pretty_print() %><%= @system_content %>
+<|eot_id|><|start_header_id|>user<|end_header_id|>
+
+  <%= @first_user.content %><|eot_id|><%= for message <- @rest do %><|start_header_id|><%= message.role %><|end_header_id|>
+
+  <%= message.content %><|eot_id|><% end %><%= if @add_generation_prompt do %>
+  <|start_header_id|>assistant<|end_header_id|>
+
+  <% end %>
+  """
+  |> String.slice(0..-2//1)
+
+  EEx.eval_string(text,
+    assigns: [
+      tools: tools,
+      tools_json_schema_string: tools_json_schema_string,
+      date: Calendar.strftime(DateTime.utc_now(), "%d %B %Y"),
+      first_user: first_user,
+      system_content:
+        case system do
+          nil -> ""
+          system -> system.content
+        end,
+      rest: rest |> Enum.drop_while(&(&1 == nil)),
+      add_generation_prompt: add_generation_prompt
+    ]
+  )
+end
+
+def llama_3_1_custom_tool_calling_parameter_conversion(tools) do
+  tools
+  |> Enum.map(fn %LangChain.Function{name: name, description: description, parameters_schema: schema} ->
+    props = schema[:properties] || schema["properties"] || []
+    parameters =
+      props
+      |> Enum.map(fn {param_name, param_config} ->
+        {
+          param_name,
+          %{
+            "param_type" => get_param_type(param_config[:type] || param_config["type"] || "string"),
+            "description" => param_config[:description] || param_config["description"] || "",
+            "required" => param_name in (schema[:required] || schema["required"] || [])
+          }
+        }
+      end)
+      |> Enum.into(%{})
+
+
+    %{
+      "name" => name,
+      "description" => description,
+      "parameters" => parameters
+    }
+  end)
+end
+
+defp get_param_type(type) do
+  case type do
+    "integer" -> "int"
+    "number" -> "float"
+    "boolean" -> "bool"
+    _ -> "string"
+  end
+end
+
   # return the desired true/false value. Only set to true when the last message
   # is a user prompt.
   defp default_add_generation_prompt_value(messages) do
     case List.last(messages) do
       %Message{role: :user} -> true
+      %Message{role: :tool} -> true
       _other -> false
     end
   end
