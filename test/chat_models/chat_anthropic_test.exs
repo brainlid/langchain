@@ -104,6 +104,41 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
       assert "You are my helpful hero." == data[:system]
     end
 
+    test "supports prompt caching in the system message" do
+      {:ok, anthropic} = ChatAnthropic.new()
+
+      # this example is from https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching.
+      data =
+        ChatAnthropic.for_api(
+          anthropic,
+          [
+            Message.new_system!([
+              ContentPart.text!(
+                "You are an AI assistant tasked with analyzing literary works. Your goal is to provide insightful commentary on themes, characters, and writing style.\n"
+              ),
+              ContentPart.text!("<the entire contents of Pride and Prejudice>",
+                cache_control: true
+              )
+            ])
+          ],
+          []
+        )
+
+      assert data.system ==
+               [
+                 %{
+                   "text" =>
+                     "You are an AI assistant tasked with analyzing literary works. Your goal is to provide insightful commentary on themes, characters, and writing style.\n",
+                   "type" => "text"
+                 },
+                 %{
+                   "cache_control" => %{"type" => "ephemeral"},
+                   "text" => "<the entire contents of Pride and Prejudice>",
+                   "type" => "text"
+                 }
+               ]
+    end
+
     test "generates a map for an API call with max_tokens set" do
       {:ok, anthropic} =
         ChatAnthropic.new(%{

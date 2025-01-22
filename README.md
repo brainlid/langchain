@@ -122,6 +122,14 @@ A list of models to use:
 - [OpenAI models on Azure](https://learn.microsoft.com/en-us/azure/ai-services/openai/concepts/models)
 - [Gemini AI models](https://ai.google.dev/gemini-api/docs/models/gemini)
 
+## Prompt caching
+
+ChatGPT and Claude both offer prefix-based prompt caching, which can offer cost and performance benefits for longer prompts. Gemini offers context caching, which is similar. 
+
+- [ChatGPT's prompt caching](https://openai.com/index/api-prompt-caching/) is automatic for prompts longer than 1024 tokens, caching the longest common prefix.
+- [Claude's prompt caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching) is not automatic. It's prefixing processes tools, system, and then messages, in that order, up to and including the block designated with {"cache_control": {"type": "ephemeral"}} . See LangChain.ChatModels.ChatAnthropicTest and for an example.
+- [Gemini's context caching]((https://ai.google.dev/gemini-api/docs/caching?lang=python)) requires a seperate call which is not supported by Langchain. 
+
 ## Usage
 
 The central module in this library is `LangChain.Chains.LLMChain`. Most other pieces are either inputs to this, or structures used by it. For understanding how to use the library, start there.

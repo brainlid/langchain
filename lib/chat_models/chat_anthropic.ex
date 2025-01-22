@@ -220,12 +220,18 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   def for_api(%ChatAnthropic{} = anthropic, messages, tools) do
     # separate the system message from the rest. Handled separately.
     {system, messages} =
-      Utils.split_system_message(messages, "Anthropic only supports a single System message")
+      Utils.split_system_message(
+        messages,
+        "Anthropic only supports a single System message, however, you may use multiple ContentParts for the System message to indicate where prompt caching should be used."
+      )
 
     system_text =
       case system do
         nil ->
           nil
+
+        %Message{role: :system, content: [_ | _]} = message ->
+          for_api(message)
 
         %Message{role: :system, content: content} ->
           content
@@ -806,7 +812,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   end
 
   @doc """
-  Convert a LangChain structure to the expected map of data for the OpenAI API.
+  Convert a LangChain structure to the expected map of data for the Anthropic API.
   """
   @spec for_api(Message.t() | ContentPart.t() | Function.t()) ::
           %{String.t() => any()} | no_return()
@@ -859,8 +865,19 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     }
   end
 
+  def for_api(%Message{role: :system, content: content}) when is_list(content) do
+    Enum.map(content, &for_api(&1))
+  end
+
   def for_api(%ContentPart{type: :text} = part) do
-    %{"type" => "text", "text" => part.content}
+    case Keyword.fetch(part.options || [], :cache_control) do
+      :error ->
+        %{"type" => "text", "text" => part.content}
+
+      {:ok, setting} ->
+        setting = if setting == true, do: %{"type" => "ephemeral"}, else: setting
+        %{"type" => "text", "text" => part.content, "cache_control" => setting}
+    end
   end
 
   def for_api(%ContentPart{type: :image} = part) do
@@ -1013,12 +1030,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   end
 
   defp get_token_usage(%{"usage" => usage} = _response_body) do
-    # extract out the reported response token usage
-    #
-    #    defp get_token_usage(%{"usage" => usage} = _response_body) do
-    # extract out the reported response token usage
-    #
-    #  https://platform.openai.com/docs/api-reference/chat/object#chat/object-usage
+    # if prompt caching has been used the response will also contain
+    # "cache_creation_input_tokens" and "cache_read_input_tokens"
     TokenUsage.new!(%{
       input: Map.get(usage, "input_tokens"),
       output: Map.get(usage, "output_tokens")
