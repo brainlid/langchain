@@ -122,7 +122,6 @@ defmodule LangChain.Chains.LLMChain do
   use Ecto.Schema
   import Ecto.Changeset
   require Logger
-  alias LangChain.ChatModels.ChatModel
   alias LangChain.Callbacks
   alias LangChain.Chains.ChainCallbacks
   alias LangChain.PromptTemplate
@@ -205,7 +204,7 @@ defmodule LangChain.Chains.LLMChain do
   """
   @type message_processor :: (t(), Message.t() -> processor_return())
 
-  @create_fields [:llm, :tools, :custom_context, :max_retry_count, :callbacks, :verbose]
+  @create_fields [:llm, :tools, :custom_context, :max_retry_count, :callbacks, :verbose, :verbose_deltas]
   @required_fields [:llm]
 
   @doc """
@@ -523,8 +522,11 @@ defmodule LangChain.Chains.LLMChain do
     # then execute the `.call` function on that module.
     %module{} = chain.llm
 
+    # wrap and link the model's callbacks.
+    use_llm = Utils.rewrap_callbacks_for_model(chain.llm, chain.callbacks, chain)
+
     # handle and output response
-    case module.call(chain.llm, chain.messages, chain.tools) do
+    case module.call(use_llm, chain.messages, chain.tools) do
       {:ok, [%Message{} = message]} ->
         if chain.verbose, do: IO.inspect(message, label: "SINGLE MESSAGE RESPONSE")
         {:ok, process_message(chain, message)}
@@ -1021,15 +1023,6 @@ defmodule LangChain.Chains.LLMChain do
   @spec add_callback(t(), ChainCallbacks.chain_callback_handler()) :: t()
   def add_callback(%LLMChain{callbacks: callbacks} = chain, additional_callback) do
     %LLMChain{chain | callbacks: callbacks ++ [additional_callback]}
-  end
-
-  @doc """
-  Add a `LangChain.ChatModels.LLMCallbacks` callback map to the chain's `:llm` model if
-  it supports the `:callback` key.
-  """
-  @spec add_llm_callback(t(), map()) :: t()
-  def add_llm_callback(%LLMChain{llm: model} = chain, callback_map) do
-    %LLMChain{chain | llm: ChatModel.add_callback(model, callback_map)}
   end
 
   # a pipe-friendly execution of callbacks that returns the chain

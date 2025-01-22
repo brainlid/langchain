@@ -108,6 +108,18 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
   `https://some-subdomain.cognitiveservices.azure.com/openai/deployments/gpt-4o-mini/chat/completions?api-version=2024-08-01-preview"`
 
+  ## Reasoning Model Support
+
+  OpenAI made some significant API changes with the introduction of their "reasoning" models. This includes the `o1` and `o1-mini` models.
+
+  To enable this mode, set `:reasoning_mode` to `true`:
+
+      model = ChatOpenAI.new!(%{reasoning_mode: true})
+
+  Setting `reasoning_mode` to `true` does at least the two following things:
+
+  - Set `:developer` as the `role` for system messages. The OpenAI documentation says API calls to `o1` and newer models must use the `role: :developer` instead of `role: :system` and errors if not set correctly.
+  - The `:reasoning_effort` option included in LLM requests. This setting is only permitted on a reasoning model. The `:reasoning_effort` values support the "low", "medium" (default), and "high" options specified in the OpenAI documentation. This instructs the LLM on how much time, and tokens, should be spent on thinking through and reasoning about the request and the response.
   """
   use Ecto.Schema
   require Logger
@@ -115,6 +127,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   alias __MODULE__
   alias LangChain.Config
   alias LangChain.ChatModels.ChatModel
+  alias LangChain.PromptTemplate
   alias LangChain.Message
   alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
@@ -155,6 +168,19 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     # their existing frequency in the text so far, decreasing the model's
     # likelihood to repeat the same line verbatim.
     field :frequency_penalty, :float, default: 0.0
+
+    # Used when working with a reasoning model like `o1` and newer. This setting
+    # is required when working with those models as the API behavior needs to
+    # change.
+    field :reasoning_mode, :boolean, default: false
+
+    # o1 models only
+    #
+    # Constrains effort on reasoning for reasoning models. Currently supported
+    # values are `low`, `medium`, and `high`. Reducing reasoning effort can result in
+    # faster responses and fewer tokens used on reasoning in a response.
+    field :reasoning_effort, :string, default: "medium"
+
     # Duration in seconds for the response to be received. When streaming a very
     # lengthy response, a longer time limit may be required. However, when it
     # goes on too long by itself, it tends to hallucinate more.
@@ -178,7 +204,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     # Tool choice option
     field :tool_choice, :map
 
-    # A list of maps for callback handlers
+    # A list of maps for callback handlers (treated as internal)
     field :callbacks, {:array, :map}, default: []
 
     # Can send a string user_id to help ChatGPT detect abuse by users of the
@@ -198,13 +224,14 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     :seed,
     :n,
     :stream,
+    :reasoning_mode,
+    :reasoning_effort,
     :receive_timeout,
     :json_response,
     :json_schema,
     :max_tokens,
     :stream_options,
     :user,
-    :callbacks,
     :tool_choice
   ]
   @required_fields [:endpoint, :model]
@@ -276,7 +303,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       messages:
         messages
         |> Enum.reduce([], fn m, acc ->
-          case for_api(m) do
+          case for_api(openai, m) do
             %{} = data ->
               [data | acc]
 
@@ -288,22 +315,26 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       response_format: set_response_format(openai),
       user: openai.user
     }
+    |> Utils.conditionally_add_to_map(
+      :reasoning_effort,
+      if(openai.reasoning_mode, do: openai.reasoning_effort, else: nil)
+    )
     |> Utils.conditionally_add_to_map(:max_tokens, openai.max_tokens)
     |> Utils.conditionally_add_to_map(:seed, openai.seed)
     |> Utils.conditionally_add_to_map(
       :stream_options,
       get_stream_options_for_api(openai.stream_options)
     )
-    |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(tools))
+    |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(openai, tools))
     |> Utils.conditionally_add_to_map(:tool_choice, get_tool_choice(openai))
   end
 
-  defp get_tools_for_api(nil), do: []
+  defp get_tools_for_api(%_{} = _model, nil), do: []
 
-  defp get_tools_for_api(tools) do
+  defp get_tools_for_api(%_{} = model, tools) do
     Enum.map(tools, fn
       %Function{} = function ->
-        %{"type" => "function", "function" => for_api(function)}
+        %{"type" => "function", "function" => for_api(model, function)}
     end)
   end
 
@@ -342,20 +373,62 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   defp get_tool_choice(%ChatOpenAI{}), do: nil
 
   @doc """
-  Convert a LangChain structure to the expected map of data for the OpenAI API.
+  Convert a LangChain Message-based structure to the expected map of data for
+  the OpenAI API. This happens within the context of the model configuration as
+  well. The additional context is needed to correctly convert a role to either
+  `:system` or `:developer`.
+
+  NOTE: The `ChatOpenAI` model's functions are reused in other modules. For this
+  reason, model is more generally defined as a struct.
   """
-  @spec for_api(Message.t() | ContentPart.t() | Function.t()) ::
+  @spec for_api(
+          struct(),
+          Message.t()
+          | PromptTemplate.t()
+          | ToolCall.t()
+          | ToolResult.t()
+          | ContentPart.t()
+          | Function.t()
+        ) ::
           %{String.t() => any()} | [%{String.t() => any()}]
-  def for_api(%Message{role: :assistant, tool_calls: tool_calls} = msg)
+  def for_api(%_{} = model, %Message{content: content} = msg) when is_binary(content) do
+    role = get_message_role(model, msg.role)
+
+    %{
+      "role" => role,
+      "content" => msg.content
+    }
+    |> Utils.conditionally_add_to_map("name", msg.name)
+  end
+
+  def for_api(%_{} = model, %Message{role: :user, content: content} = msg)
+      when is_list(content) do
+    %{
+      "role" => msg.role,
+      "content" => Enum.map(content, &for_api(model, &1))
+    }
+    |> Utils.conditionally_add_to_map("name", msg.name)
+  end
+
+  def for_api(%_{} = _model, %ToolResult{type: :function} = result) do
+    # a ToolResult becomes a stand-alone %Message{role: :tool} response.
+    %{
+      "role" => :tool,
+      "tool_call_id" => result.tool_call_id,
+      "content" => result.content
+    }
+  end
+
+  def for_api(%_{} = model, %Message{role: :assistant, tool_calls: tool_calls} = msg)
       when is_list(tool_calls) do
     %{
       "role" => :assistant,
       "content" => msg.content
     }
-    |> Utils.conditionally_add_to_map("tool_calls", Enum.map(tool_calls, &for_api(&1)))
+    |> Utils.conditionally_add_to_map("tool_calls", Enum.map(tool_calls, &for_api(model, &1)))
   end
 
-  def for_api(%Message{role: :tool, tool_results: tool_results} = _msg)
+  def for_api(%_{} = _model, %Message{role: :tool, tool_results: tool_results} = _msg)
       when is_list(tool_results) do
     # ToolResults turn into a list of tool messages for OpenAI
     Enum.map(tool_results, fn result ->
@@ -367,40 +440,12 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     end)
   end
 
-  def for_api(%Message{content: content} = msg) when is_binary(content) do
-    %{
-      "role" => msg.role,
-      "content" => msg.content
-    }
-    |> Utils.conditionally_add_to_map("name", msg.name)
-  end
-
-  def for_api(%Message{role: :user, content: content} = msg) when is_list(content) do
-    %{
-      "role" => msg.role,
-      "content" => Enum.map(content, &for_api(&1))
-    }
-    |> Utils.conditionally_add_to_map("name", msg.name)
-  end
-
-  def for_api(%ToolResult{type: :function} = result) do
-    # a ToolResult becomes a stand-alone %Message{role: :tool} response.
-    %{
-      "role" => :tool,
-      "tool_call_id" => result.tool_call_id,
-      "content" => result.content
-    }
-  end
-
-  def for_api(%LangChain.PromptTemplate{} = _template) do
-    raise LangChain.LangChainError, "PromptTemplates must be converted to messages."
-  end
-
-  def for_api(%ContentPart{type: :text} = part) do
+  def for_api(%_{} = _model, %ContentPart{type: :text} = part) do
     %{"type" => "text", "text" => part.content}
   end
 
-  def for_api(%ContentPart{type: image} = part) when image in [:image, :image_url] do
+  def for_api(%_{} = _model, %ContentPart{type: image} = part)
+      when image in [:image, :image_url] do
     media_prefix =
       case Keyword.get(part.options || [], :media, nil) do
         nil ->
@@ -438,7 +483,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   end
 
   # ToolCall support
-  def for_api(%ToolCall{type: :function} = fun) do
+  def for_api(%_{} = _model, %ToolCall{type: :function} = fun) do
     %{
       "id" => fun.call_id,
       "type" => "function",
@@ -450,7 +495,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   end
 
   # Function support
-  def for_api(%Function{} = fun) do
+  def for_api(%_{} = _model, %Function{} = fun) do
     %{
       "name" => fun.name,
       "parameters" => get_parameters(fun)
@@ -458,21 +503,32 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     |> Utils.conditionally_add_to_map("description", fun.description)
   end
 
-  defp get_parameters(%Function{parameters: [], parameters_schema: nil} = _fun) do
+  def for_api(%_{} = _model, %PromptTemplate{} = _template) do
+    raise LangChain.LangChainError, "PromptTemplates must be converted to messages."
+  end
+
+  @doc false
+  def get_parameters(%Function{parameters: [], parameters_schema: nil} = _fun) do
     %{
       "type" => "object",
       "properties" => %{}
     }
   end
 
-  defp get_parameters(%Function{parameters: [], parameters_schema: schema} = _fun)
-       when is_map(schema) do
+  def get_parameters(%Function{parameters: [], parameters_schema: schema} = _fun)
+      when is_map(schema) do
     schema
   end
 
-  defp get_parameters(%Function{parameters: params} = _fun) do
+  def get_parameters(%Function{parameters: params} = _fun) do
     FunctionParam.to_parameters_schema(params)
   end
+
+  # Convert a message role into either `:system` or :developer` based on the
+  # message role and the system config.
+  defp get_message_role(%ChatOpenAI{reasoning_mode: true}, :system), do: :developer
+  defp get_message_role(%ChatOpenAI{}, role), do: role
+  defp get_message_role(_model, role), do: role
 
   @doc """
   Calls the OpenAI API passing the ChatOpenAI struct with configuration, plus
@@ -580,12 +636,10 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     |> case do
       {:ok, %Req.Response{body: data} = response} ->
         Callbacks.fire(openai.callbacks, :on_llm_ratelimit_info, [
-          openai,
           get_ratelimit_info(response.headers)
         ])
 
         Callbacks.fire(openai.callbacks, :on_llm_token_usage, [
-          openai,
           get_token_usage(data)
         ])
 
@@ -594,7 +648,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
             {:error, reason}
 
           result ->
-            Callbacks.fire(openai.callbacks, :on_llm_new_message, [openai, result])
+            Callbacks.fire(openai.callbacks, :on_llm_new_message, [result])
             result
         end
 
@@ -638,7 +692,6 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     |> case do
       {:ok, %Req.Response{body: data} = response} ->
         Callbacks.fire(openai.callbacks, :on_llm_ratelimit_info, [
-          openai,
           get_ratelimit_info(response.headers)
         ])
 
@@ -743,7 +796,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   def do_process_response(model, %{"choices" => [], "usage" => %{} = _usage} = data) do
     case get_token_usage(data) do
       %TokenUsage{} = token_usage ->
-        Callbacks.fire(model.callbacks, :on_llm_token_usage, [model, token_usage])
+        Callbacks.fire(model.callbacks, :on_llm_token_usage, [token_usage])
         :ok
 
       nil ->
@@ -893,11 +946,23 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   # MS Azure returns numeric error codes. Interpret them when possible to give a computer-friendly reason
   #
   # https://learn.microsoft.com/en-us/troubleshoot/azure/azure-kubernetes/create-upgrade-delete/429-too-many-requests-errors
-  def do_process_response(_model, %{"error" => %{"code" => code, "message" => reason}}) do
+  def do_process_response(_model, %{
+        "error" => %{"code" => code, "message" => reason} = error_data
+      }) do
     type =
       case code do
         "429" ->
           "rate_limit_exceeded"
+
+        "unsupported_value" ->
+          if String.contains?(reason, "does not support 'system' with this model") do
+            Logger.error(
+              "This model requires 'reasoning_mode' to be enabled. Reason: #{inspect(reason)}"
+            )
+
+            # return the API error type as the exception type information
+            error_data["type"]
+          end
 
         _other ->
           nil
@@ -1000,6 +1065,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         :model,
         :temperature,
         :frequency_penalty,
+        :reasoning_mode,
+        :reasoning_effort,
         :receive_timeout,
         :seed,
         :n,

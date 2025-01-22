@@ -54,7 +54,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
 
     field :stream, :boolean, default: false
 
-    # A list of maps for callback handlers
+    # A list of maps for callback handlers (treat as private)
     field :callbacks, {:array, :map}, default: []
   end
 
@@ -70,8 +70,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
     :max_tokens,
     :safe_prompt,
     :random_seed,
-    :stream,
-    :callbacks
+    :stream
   ]
   @required_fields [
     :model
@@ -126,7 +125,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
       top_p: mistral.top_p,
       safe_prompt: mistral.safe_prompt,
       stream: mistral.stream,
-      messages: Enum.map(messages, &ChatOpenAI.for_api/1)
+      messages: Enum.map(messages, &ChatOpenAI.for_api(mistral, &1))
     }
     |> Utils.conditionally_add_to_map(:random_seed, mistral.random_seed)
     |> Utils.conditionally_add_to_map(:max_tokens, mistral.max_tokens)
@@ -198,7 +197,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
             {:error, reason}
 
           result ->
-            Callbacks.fire(mistral.callbacks, :on_llm_new_message, [mistral, result])
+            Callbacks.fire(mistral.callbacks, :on_llm_new_message, [result])
             result
         end
 

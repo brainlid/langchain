@@ -15,13 +15,17 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   Anthropic returns rate limit information in the response headers. Those can be
   accessed using an LLM callback like this:
 
-      handlers = %{
-        on_llm_ratelimit_info: fn _model, headers ->
+      handler = %{
+        on_llm_ratelimit_info: fn _chain, headers ->
           IO.inspect(headers)
         end
       }
 
-      {:ok, chat} = ChatAnthropic.new(%{callbacks: [handlers]})
+      %{llm: ChatAnthropic.new!(%{model: "..."})}
+      |> LLMChain.new!()
+      # ... add messages ...
+      |> LLMChain.add_callback(handler)
+      |> LLMChain.run()
 
   When a request is received, something similar to the following will be output
   to the console.
@@ -152,7 +156,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     # Whether to stream the response
     field :stream, :boolean, default: false
 
-    # A list of maps for callback handlers
+    # A list of maps for callback handlers (treat as private)
     field :callbacks, {:array, :map}, default: []
 
     # Tool choice option
@@ -172,7 +176,6 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     :top_p,
     :top_k,
     :stream,
-    :callbacks,
     :tool_choice
   ]
   @required_fields [:endpoint, :model]
@@ -374,12 +377,10 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     |> case do
       {:ok, %Req.Response{status: 200, body: data} = response} ->
         Callbacks.fire(anthropic.callbacks, :on_llm_ratelimit_info, [
-          anthropic,
           get_ratelimit_info(response.headers)
         ])
 
         Callbacks.fire(anthropic.callbacks, :on_llm_token_usage, [
-          anthropic,
           get_token_usage(data)
         ])
 
@@ -388,7 +389,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
             {:error, reason}
 
           result ->
-            Callbacks.fire(anthropic.callbacks, :on_llm_new_message, [anthropic, result])
+            Callbacks.fire(anthropic.callbacks, :on_llm_new_message, [result])
             result
         end
 
@@ -403,6 +404,10 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         # Force a retry by making a recursive call decrementing the counter
         Logger.debug(fn -> "Mint connection closed: retry count = #{inspect(retry_count)}" end)
         do_api_request(anthropic, messages, tools, retry_count - 1)
+
+      {:error, %LangChainError{}} = error ->
+        # pass through the already handled exception
+        error
 
       other ->
         message = "Unexpected and unhandled API response! #{inspect(other)}"
@@ -435,7 +440,6 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     |> case do
       {:ok, %Req.Response{body: data} = response} ->
         Callbacks.fire(anthropic.callbacks, :on_llm_ratelimit_info, [
-          anthropic,
           get_ratelimit_info(response.headers)
         ])
 
@@ -454,6 +458,10 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         # Force a retry by making a recursive call decrementing the counter
         Logger.debug(fn -> "Mint connection closed: retry count = #{inspect(retry_count)}" end)
         do_api_request(anthropic, messages, tools, retry_count - 1)
+
+      {:error, %LangChainError{}} = error ->
+        # pass through the already handled exception
+        error
 
       other ->
         message = "Unhandled and unexpected response from streamed post call. #{inspect(other)}"
@@ -598,7 +606,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         } = data
       ) do
     # if we received usage data, fire any callbacks for it.
-    Callbacks.fire(model.callbacks, :on_llm_token_usage, [model, get_token_usage(data)])
+    Callbacks.fire(model.callbacks, :on_llm_token_usage, [get_token_usage(data)])
 
     %{
       role: :assistant,

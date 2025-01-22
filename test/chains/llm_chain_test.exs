@@ -273,7 +273,7 @@ defmodule LangChain.Chains.LLMChainTest do
         )
 
       handler = %{
-        on_llm_new_delta: fn _chain, delta ->
+        on_llm_new_delta: fn %LLMChain{} = _chain, delta ->
           send(self(), {:test_stream_deltas, delta})
         end,
         on_message_processed: fn _chain, message ->
@@ -281,7 +281,7 @@ defmodule LangChain.Chains.LLMChainTest do
         end
       }
 
-      model = ChatOpenAI.new!(%{temperature: 1, seed: 0, stream: true, callbacks: [handler]})
+      model = ChatOpenAI.new!(%{temperature: 1, seed: 0, stream: true})
 
       # We can construct an LLMChain from a PromptTemplate and an LLM.
       {:ok, updated_chain} =
@@ -1670,7 +1670,11 @@ defmodule LangChain.Chains.LLMChainTest do
         |> LLMChain.add_message(Message.new_user!("Say hello!"))
         |> LLMChain.add_message(
           new_function_calls!([
-            ToolCall.new!(%{call_id: "call_fake123", name: "greet", arguments: %{"name" => "Tim"}}),
+            ToolCall.new!(%{
+              call_id: "call_fake123",
+              name: "greet",
+              arguments: %{"name" => "Tim"}
+            }),
             ToolCall.new!(%{call_id: "call_fake234", name: "hello_world", arguments: nil}),
             ToolCall.new!(%{
               call_id: "call_fake345",
@@ -1831,12 +1835,10 @@ defmodule LangChain.Chains.LLMChainTest do
       updated_chain = LLMChain.add_callback(chain, handler2)
       assert updated_chain.callbacks == [handler1, handler2]
     end
-  end
 
-  describe "add_llm_callback/2" do
     test "appends a callback handler to the chain's LLM", %{chat: chat} do
-      handler1 = %{on_llm_new_message: fn _chain, _msg -> IO.puts("MESSAGE 1!") end}
-      handler2 = %{on_llm_new_message: fn _chain, _msg -> IO.puts("MESSAGE 2!") end}
+      handler1 = %{on_llm_new_message: fn %LLMChain{} = _chain, _msg -> IO.puts("MESSAGE 1!") end}
+      handler2 = %{on_llm_new_message: fn %LLMChain{} = _chain, _msg -> IO.puts("MESSAGE 2!") end}
 
       # none to start with
       assert chat.callbacks == []
@@ -1844,10 +1846,10 @@ defmodule LangChain.Chains.LLMChainTest do
       chain =
         %{llm: chat}
         |> LLMChain.new!()
-        |> LLMChain.add_llm_callback(handler1)
-        |> LLMChain.add_llm_callback(handler2)
+        |> LLMChain.add_callback(handler1)
+        |> LLMChain.add_callback(handler2)
 
-      assert chain.llm.callbacks == [handler1, handler2]
+      assert chain.callbacks == [handler1, handler2]
     end
   end
 

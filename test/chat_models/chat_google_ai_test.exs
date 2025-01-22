@@ -680,17 +680,18 @@ defmodule ChatModels.ChatGoogleAITest do
     @tag live_call: true, live_google_ai: true
     test "basic non-streamed response works and fires token usage callback" do
       handlers = %{
-        on_llm_token_usage: fn _model, usage ->
+        on_llm_token_usage: fn usage ->
           send(self(), {:fired_token_usage, usage})
         end
       }
 
-      {:ok, chat} =
-        ChatGoogleAI.new(%{
+      chat =
+        ChatGoogleAI.new!(%{
           temperature: 0,
-          stream: false,
-          callbacks: [handlers]
+          stream: false
         })
+
+      chat = %ChatGoogleAI{chat | callbacks: [handlers]}
 
       {:ok, result} =
         ChatGoogleAI.call(chat, [
@@ -721,7 +722,7 @@ defmodule ChatModels.ChatGoogleAITest do
     @tag live_call: true, live_google_ai: true
     test "streamed response works and fires token usage callback" do
       handlers = %{
-        on_llm_token_usage: fn _model, usage ->
+        on_llm_token_usage: fn usage ->
           # NOTE: The token usage fires for every received delta. That's an
           # oddity with Google.
           #
@@ -730,12 +731,13 @@ defmodule ChatModels.ChatGoogleAITest do
         end
       }
 
-      {:ok, chat} =
-        ChatGoogleAI.new(%{
+      chat =
+        ChatGoogleAI.new!(%{
           temperature: 0,
-          stream: true,
-          callbacks: [handlers]
+          stream: true
         })
+
+      chat = %ChatGoogleAI{chat | callbacks: [handlers]}
 
       {:ok, result} =
         ChatGoogleAI.call(chat, [
@@ -767,31 +769,28 @@ defmodule ChatModels.ChatGoogleAITest do
 
       test_pid = self()
 
-      llm_handler = %{
-        on_llm_new_message: fn _model, %Message{} = message ->
+      handlers = %{
+        on_llm_new_message: fn %LLMChain{} = _chain, %Message{} = message ->
           send(test_pid, {:callback_msg, message})
-        end
-      }
-
-      chain_handler = %{
+        end,
         on_tool_response_created: fn _chain, %Message{} = tool_message ->
           send(test_pid, {:callback_tool_msg, tool_message})
         end
       }
 
-      model = ChatGoogleAI.new!(%{temperature: 0, stream: false, callbacks: [llm_handler]})
+      model = ChatGoogleAI.new!(%{temperature: 0, stream: false})
 
       {:ok, updated_chain} =
         LLMChain.new!(%{
           llm: model,
           verbose: false,
-          stream: false,
-          callbacks: [chain_handler]
+          stream: false
         })
         |> LLMChain.add_message(
           Message.new_user!("Answer the following math question: What is 100 + 300 - 200?")
         )
         |> LLMChain.add_tools(Calculator.new!())
+        |> LLMChain.add_callback(handlers)
         |> LLMChain.run(mode: :while_needs_response)
 
       assert %Message{} = updated_chain.last_message

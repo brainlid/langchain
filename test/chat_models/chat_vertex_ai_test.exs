@@ -26,7 +26,10 @@ defmodule ChatModels.ChatVertexAITest do
   describe "new/1" do
     test "works with minimal attr" do
       assert {:ok, %ChatVertexAI{} = vertex_ai} =
-               ChatVertexAI.new(%{"model" => "gemini-pro", "endpoint" => "http://localhost:1234/"})
+               ChatVertexAI.new(%{
+                 "model" => "gemini-pro",
+                 "endpoint" => "http://localhost:1234/"
+               })
 
       assert vertex_ai.model == "gemini-pro"
     end

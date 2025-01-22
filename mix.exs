@@ -2,7 +2,7 @@ defmodule LangChain.MixProject do
   use Mix.Project
 
   @source_url "https://github.com/brainlid/langchain"
-  @version "0.3.0-rc.1"
+  @version "0.3.0-rc.2"
 
   def project do
     [
@@ -18,7 +18,7 @@ defmodule LangChain.MixProject do
       name: "LangChain",
       homepage_url: @source_url,
       description: """
-      Elixir implementation of a LangChain style framework.
+      Elixir implementation of a LangChain style framework that lets Elixir projects work well with LLMs.
       """
     ]
   end
@@ -93,7 +93,6 @@ defmodule LangChain.MixProject do
         ],
         Callbacks: [
           LangChain.Callbacks,
-          LangChain.ChatModels.LLMCallbacks,
           LangChain.Chains.ChainCallbacks
         ],
         Routing: [

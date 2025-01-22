@@ -25,13 +25,13 @@ defmodule LangChain.ChatModels.ChatBumblebeeTest do
   describe "do_process_response/3" do
     setup do
       handler = %{
-        on_llm_new_delta: fn _model, delta ->
+        on_llm_new_delta: fn delta ->
           send(self(), {:callback_delta, delta})
         end,
-        on_llm_new_message: fn _model, message ->
+        on_llm_new_message: fn message ->
           send(self(), {:callback_message, message})
         end,
-        on_llm_token_usage: fn _model, usage ->
+        on_llm_token_usage: fn usage ->
           send(self(), {:callback_usage, usage})
         end
       }
@@ -40,7 +40,8 @@ defmodule LangChain.ChatModels.ChatBumblebeeTest do
     end
 
     test "handles non-streamed full text response", %{handler: handler} do
-      model = ChatBumblebee.new!(%{serving: Fake, stream: false, callbacks: [handler]})
+      model = ChatBumblebee.new!(%{serving: Fake, stream: false})
+      model = %ChatBumblebee{model | callbacks: [handler]}
 
       response = %{
         results: [
@@ -61,7 +62,8 @@ defmodule LangChain.ChatModels.ChatBumblebeeTest do
     end
 
     test "handles stream when stream: false", %{handler: handler} do
-      model = ChatBumblebee.new!(%{serving: Fake, stream: false, callbacks: [handler]})
+      model = ChatBumblebee.new!(%{serving: Fake, stream: false})
+      model = %ChatBumblebee{model | callbacks: [handler]}
 
       expected_message = Message.new_assistant!(%{content: "Hello.", status: :complete})
 
@@ -79,7 +81,8 @@ defmodule LangChain.ChatModels.ChatBumblebeeTest do
     test "handles a stream when stream: false and no stream_done requested", %{
       handler: handler
     } do
-      model = ChatBumblebee.new!(%{serving: Fake, stream: false, callbacks: [handler]})
+      model = ChatBumblebee.new!(%{serving: Fake, stream: false})
+      model = %ChatBumblebee{model | callbacks: [handler]}
 
       expected_message = Message.new_assistant!(%{content: "Hello.", status: :complete})
 
@@ -97,7 +100,8 @@ defmodule LangChain.ChatModels.ChatBumblebeeTest do
     test "handles a stream when stream: true and no stream_done requested", %{
       handler: handler
     } do
-      model = ChatBumblebee.new!(%{serving: Fake, stream: true, callbacks: [handler]})
+      model = ChatBumblebee.new!(%{serving: Fake, stream: true})
+      model = %ChatBumblebee{model | callbacks: [handler]}
 
       expected_deltas = [
         MessageDelta.new!(%{content: "Hel", status: :incomplete, role: :assistant}),
@@ -121,7 +125,8 @@ defmodule LangChain.ChatModels.ChatBumblebeeTest do
     end
 
     test "handles stream when stream: true", %{handler: handler} do
-      model = ChatBumblebee.new!(%{serving: Fake, stream: true, callbacks: [handler]})
+      model = ChatBumblebee.new!(%{serving: Fake, stream: true})
+      model = %ChatBumblebee{model | callbacks: [handler]}
 
       expected_deltas = [
         %MessageDelta{content: "He", status: :incomplete, role: :assistant},

@@ -64,7 +64,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     field :stream, :boolean, default: false
     field :json_response, :boolean, default: false
 
-    # A list of maps for callback handlers
+    # A list of maps for callback handlers (treated as internal)
     field :callbacks, {:array, :map}, default: []
   end
 
@@ -79,8 +79,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     :top_k,
     :receive_timeout,
     :stream,
-    :json_response,
-    :callbacks
+    :json_response
   ]
   @required_fields [
     :endpoint,
@@ -153,7 +152,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
         %{
           # Google AI functions use an OpenAI compatible format.
           # See: https://ai.google.dev/docs/function_calling#how_it_works
-          "functionDeclarations" => Enum.map(functions, &ChatOpenAI.for_api/1)
+          "functionDeclarations" => Enum.map(functions, &ChatOpenAI.for_api(vertex_ai, &1))
         }
       ])
     else
@@ -317,7 +316,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
             {:error, reason}
 
           result ->
-            Callbacks.fire(vertex_ai.callbacks, :on_llm_new_message, [vertex_ai, result])
+            Callbacks.fire(vertex_ai.callbacks, :on_llm_new_message, [result])
             result
         end
 
