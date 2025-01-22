@@ -204,7 +204,15 @@ defmodule LangChain.Chains.LLMChain do
   """
   @type message_processor :: (t(), Message.t() -> processor_return())
 
-  @create_fields [:llm, :tools, :custom_context, :max_retry_count, :callbacks, :verbose, :verbose_deltas]
+  @create_fields [
+    :llm,
+    :tools,
+    :custom_context,
+    :max_retry_count,
+    :callbacks,
+    :verbose,
+    :verbose_deltas
+  ]
   @required_fields [:llm]
 
   @doc """

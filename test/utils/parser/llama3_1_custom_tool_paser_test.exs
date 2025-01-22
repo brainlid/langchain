@@ -17,7 +17,6 @@ defmodule Langchain.Utils.Parser.LLAMA_3_1_CustomToolParserTest do
       assert LLAMA_3_1_CustomToolParser.parse(input) == expected
     end
 
-
     test "handles invalid JSON in parameters" do
       input = ~s(<function=test>{invalid_json}</function>)
       assert {:error, _} = LLAMA_3_1_CustomToolParser.parse(input)
