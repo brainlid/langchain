@@ -1034,7 +1034,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     # "cache_creation_input_tokens" and "cache_read_input_tokens"
     TokenUsage.new!(%{
       input: Map.get(usage, "input_tokens"),
-      output: Map.get(usage, "output_tokens")
+      output: Map.get(usage, "output_tokens"),
+      raw: usage
     })
   end
 

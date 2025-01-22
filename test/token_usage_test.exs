@@ -7,10 +7,12 @@ defmodule LangChain.TokenUsageTest do
 
   describe "new/1" do
     test "accepts valid data" do
-      assert {:ok, %TokenUsage{} = usage} = TokenUsage.new(%{"input" => 1, "output" => 2})
+      assert {:ok, %TokenUsage{} = usage} =
+               TokenUsage.new(%{"input" => 1, "output" => 2, "raw" => %{"total_tokens" => 29}})
 
       assert usage.input == 1
       assert usage.output == 2
+      assert usage.raw == %{"total_tokens" => 29}
     end
 
     test "returns error when invalid" do
