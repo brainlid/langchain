@@ -8,20 +8,23 @@ defmodule Langchain.Utils.Parser.LLAMA_3_2_CustomToolParserTest do
 
       expected = {
         :ok,
-        [%{
-          function_name: "get_user_info",
-          parameters: %{
-            "user_id" => 7890,
-            "special" => "black"
+        [
+          %{
+            function_name: "get_user_info",
+            parameters: %{
+              "user_id" => 7890,
+              "special" => "black"
+            }
           }
-        }]
+        ]
       }
 
       assert LLAMA_3_2_CustomToolParser.parse(input) == expected
     end
 
     test "successfully parses valid twp function calls" do
-      input = "[get_user_info(user_id=7890, special='black'),get_user_info(user_id=7891, special='blue')]"
+      input =
+        "[get_user_info(user_id=7890, special='black'),get_user_info(user_id=7891, special='blue')]"
 
       expected = {
         :ok,
@@ -46,17 +49,19 @@ defmodule Langchain.Utils.Parser.LLAMA_3_2_CustomToolParserTest do
       assert LLAMA_3_2_CustomToolParser.parse(input) == expected
     end
 
-test "successfully parses valid function call hairbrush" do
+    test "successfully parses valid function call hairbrush" do
       input = "[get_location(thing=\"hairbrush\")]"
 
       expected = {
         :ok,
-        [%{
-          function_name: "get_location",
-          parameters: %{
-            "thing" => "hairbrush"
+        [
+          %{
+            function_name: "get_location",
+            parameters: %{
+              "thing" => "hairbrush"
+            }
           }
-        }]
+        ]
       }
 
       assert LLAMA_3_2_CustomToolParser.parse(input) == expected
@@ -64,12 +69,15 @@ test "successfully parses valid function call hairbrush" do
 
     test "handles missing parameters" do
       input = "[get_users()]"
-      assert {:ok, [%{function_name: "get_users", parameters: %{}}]} = LLAMA_3_2_CustomToolParser.parse(input)
+
+      assert {:ok, [%{function_name: "get_users", parameters: %{}}]} =
+               LLAMA_3_2_CustomToolParser.parse(input)
     end
-#
-    #test "handles invalid input" do
+
+    #
+    # test "handles invalid input" do
     #  input = "[invalid_function]<|eot_id|>"
     #  assert {:error, _} = LLAMA_3_2_CustomToolParser.parse(input)
-    #end
+    # end
   end
 end

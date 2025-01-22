@@ -8,7 +8,7 @@ Mix.install(
     {:exla, ">= 0.0.0"},
     {:axon, ">= 0.5.1"},
     {:nx, ">= 0.5.1"},
-    {:langchain, github: "marcnnn/langchain", branch: "llama3_1_json_tool"}
+    {:langchain, ">= 0.3.0"}
   ],
   config: [nx: [default_backend: EXLA.Backend]]
 )

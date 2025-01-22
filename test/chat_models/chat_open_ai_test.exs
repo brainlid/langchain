@@ -224,7 +224,10 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
   describe "for_api/1" do
     test "turns a text ContentPart into the expected JSON format" do
       expected = %{"type" => "text", "text" => "Tell me about this image:"}
-      result = ChatOpenAI.for_api(ChatOpenAI.new!(), ContentPart.text!("Tell me about this image:"))
+
+      result =
+        ChatOpenAI.for_api(ChatOpenAI.new!(), ContentPart.text!("Tell me about this image:"))
+
       assert result == expected
     end
 
@@ -240,34 +243,75 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
         "image_url" => %{"url" => "image_base64_data", "detail" => "low"}
       }
 
-      result = ChatOpenAI.for_api(ChatOpenAI.new!(), ContentPart.image!("image_base64_data", detail: "low"))
+      result =
+        ChatOpenAI.for_api(
+          ChatOpenAI.new!(),
+          ContentPart.image!("image_base64_data", detail: "low")
+        )
+
       assert result == expected
     end
 
     test "turns ContentPart's media type the expected JSON values" do
       expected = "data:image/jpg;base64,image_base64_data"
-      result = ChatOpenAI.for_api(ChatOpenAI.new!(), ContentPart.image!("image_base64_data", media: :jpg))
+
+      result =
+        ChatOpenAI.for_api(
+          ChatOpenAI.new!(),
+          ContentPart.image!("image_base64_data", media: :jpg)
+        )
+
       assert %{"image_url" => %{"url" => ^expected}} = result
 
       expected = "data:image/jpg;base64,image_base64_data"
-      result = ChatOpenAI.for_api(ChatOpenAI.new!(), ContentPart.image!("image_base64_data", media: :jpeg))
+
+      result =
+        ChatOpenAI.for_api(
+          ChatOpenAI.new!(),
+          ContentPart.image!("image_base64_data", media: :jpeg)
+        )
+
       assert %{"image_url" => %{"url" => ^expected}} = result
 
       expected = "data:image/gif;base64,image_base64_data"
-      result = ChatOpenAI.for_api(ChatOpenAI.new!(), ContentPart.image!("image_base64_data", media: :gif))
+
+      result =
+        ChatOpenAI.for_api(
+          ChatOpenAI.new!(),
+          ContentPart.image!("image_base64_data", media: :gif)
+        )
+
       assert %{"image_url" => %{"url" => ^expected}} = result
 
       expected = "data:image/webp;base64,image_base64_data"
-      result = ChatOpenAI.for_api(ChatOpenAI.new!(), ContentPart.image!("image_base64_data", media: :webp))
+
+      result =
+        ChatOpenAI.for_api(
+          ChatOpenAI.new!(),
+          ContentPart.image!("image_base64_data", media: :webp)
+        )
+
       assert %{"image_url" => %{"url" => ^expected}} = result
 
       expected = "data:image/png;base64,image_base64_data"
-      result = ChatOpenAI.for_api(ChatOpenAI.new!(), ContentPart.image!("image_base64_data", media: :png))
+
+      result =
+        ChatOpenAI.for_api(
+          ChatOpenAI.new!(),
+          ContentPart.image!("image_base64_data", media: :png)
+        )
+
       assert %{"image_url" => %{"url" => ^expected}} = result
 
       # an string value is passed through
       expected = "data:file/pdf;base64,image_base64_data"
-      result = ChatOpenAI.for_api(ChatOpenAI.new!(), ContentPart.image!("image_base64_data", media: "file/pdf"))
+
+      result =
+        ChatOpenAI.for_api(
+          ChatOpenAI.new!(),
+          ContentPart.image!("image_base64_data", media: "file/pdf")
+        )
+
       assert %{"image_url" => %{"url" => ^expected}} = result
     end
 
@@ -283,7 +327,12 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
         "image_url" => %{"url" => "url-to-image", "detail" => "low"}
       }
 
-      result = ChatOpenAI.for_api(ChatOpenAI.new!(), ContentPart.image_url!("url-to-image", detail: "low"))
+      result =
+        ChatOpenAI.for_api(
+          ChatOpenAI.new!(),
+          ContentPart.image_url!("url-to-image", detail: "low")
+        )
+
       assert result == expected
     end
 

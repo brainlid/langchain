@@ -6,7 +6,6 @@ defmodule LangChain.Utils.ChatTemplatesTest do
   alias LangChain.Utils.ChatTemplates
   alias LangChain.Message
   alias LangChain.LangChainError
-  alias Langchain.Function
 
   describe "prep_and_validate_messages/1" do
     test "returns 3 item tuple with expected parts" do
@@ -800,7 +799,8 @@ defmodule LangChain.Utils.ChatTemplatesTest do
         }
       ]
 
-      result = LangChain.Utils.ChatTemplates.llama_3_1_custom_tool_calling_parameter_conversion(tools)
+      result =
+        LangChain.Utils.ChatTemplates.llama_3_1_custom_tool_calling_parameter_conversion(tools)
 
       assert [converted_tool] = result
       assert converted_tool["name"] == "spotify_trending_songs"
@@ -825,7 +825,8 @@ defmodule LangChain.Utils.ChatTemplatesTest do
         }
       }
 
-      [result] = LangChain.Utils.ChatTemplates.llama_3_1_custom_tool_calling_parameter_conversion([tool])
+      [result] =
+        LangChain.Utils.ChatTemplates.llama_3_1_custom_tool_calling_parameter_conversion([tool])
 
       params = result["parameters"]
       assert params["int_param"]["param_type"] == "int"
@@ -841,7 +842,8 @@ defmodule LangChain.Utils.ChatTemplatesTest do
         parameters_schema: %{}
       }
 
-      [result] = LangChain.Utils.ChatTemplates.llama_3_1_custom_tool_calling_parameter_conversion([tool])
+      [result] =
+        LangChain.Utils.ChatTemplates.llama_3_1_custom_tool_calling_parameter_conversion([tool])
 
       assert result["parameters"] == %{}
     end
@@ -860,7 +862,8 @@ defmodule LangChain.Utils.ChatTemplatesTest do
         }
       }
 
-      [result] = LangChain.Utils.ChatTemplates.llama_3_1_custom_tool_calling_parameter_conversion([tool])
+      [result] =
+        LangChain.Utils.ChatTemplates.llama_3_1_custom_tool_calling_parameter_conversion([tool])
 
       assert result["parameters"]["required_param"]["required"] == true
       assert result["parameters"]["optional_param"]["required"] == false
@@ -895,8 +898,6 @@ defmodule LangChain.Utils.ChatTemplatesTest do
 
       tools = [fun]
 
-      date = Calendar.strftime(DateTime.utc_now(), "%d %B %Y")
-
       expected =
         "<|start_header_id|>system<|end_header_id|>\nYou are an expert in composing functions. You are given a question and a set of possible functions.\nBased on the question, you will need to make one or more function/tool calls to achieve the purpose.\nIf none of the functions can be used, point it out. If the given question lacks the parameters required by the function,also point it out. You should only return the function call in tools call sections.\nIf you decide to invoke any of the function(s), you MUST put it in the format of [func_name1(params_name1=params_value1, params_name2=params_value2...), func_name2(params)]\nYou SHOULD NOT include any other text in the response.\nHere is a list of functions in JSON format that you can invoke.[\n  {\n    \"description\": \"Provide a friendly greeting.\",\n    \"name\": \"say_hi\",\n    \"parameters\": {\n      \"n\": {\n        \"description\": \"\",\n        \"param_type\": \"int\",\n        \"required\": false\n      }\n    }\n  }\n]system_message\n<|eot_id|><|start_header_id|>user<|end_header_id|>\n\nuser_prompt<|eot_id|>\n<|start_header_id|>assistant<|end_header_id|>\n\n"
 
@@ -910,8 +911,7 @@ defmodule LangChain.Utils.ChatTemplatesTest do
       assert result == expected
     end
 
-    test "llama3.2 tool respone" do
-
+    test "llama3.2 tool response" do
       schema_def = %{
         type: "object",
         properties: %{
@@ -933,65 +933,66 @@ defmodule LangChain.Utils.ChatTemplatesTest do
 
       tools = [fun]
 
-   messages = [
-     %LangChain.Message{
-       content: "Where is the hairbrush located?",
-       processed_content: nil,
-       index: nil,
-       status: :complete,
-       role: :user,
-       name: nil,
-       tool_calls: [],
-       tool_results: nil
-     },
-     %LangChain.Message{
-       content: "[get_location(thing=\"hairbrush\")]",
-       processed_content: nil,
-       index: nil,
-       status: :complete,
-       role: :assistant,
-       name: nil,
-       tool_calls: [
-         %LangChain.Message.ToolCall{
-           status: :complete,
-           type: :function,
-           call_id: "test",
-           name: "get_location",
-           arguments: %{"thing" => "hairbrush"},
-           index: nil
-         }
-       ],
-       tool_results: nil
-     },
-     %LangChain.Message{
-       content: nil,
-       processed_content: nil,
-       index: nil,
-       status: :complete,
-       role: :tool,
-       name: nil,
-       tool_calls: [],
-       tool_results: [
-         %LangChain.Message.ToolResult{
-           type: :function,
-           tool_call_id: "test",
-           name: "get_location",
-           content: "drawer",
-           display_text: nil,
-           is_error: false
-         }
-       ]
-     }
-   ]
-   result =
-    ChatTemplates.apply_chat_template_with_tools!(
-      messages,
-      :llama_3_2_custom_tool_calling,
-      tools
-    )
+      messages = [
+        %LangChain.Message{
+          content: "Where is the hairbrush located?",
+          processed_content: nil,
+          index: nil,
+          status: :complete,
+          role: :user,
+          name: nil,
+          tool_calls: [],
+          tool_results: nil
+        },
+        %LangChain.Message{
+          content: "[get_location(thing=\"hairbrush\")]",
+          processed_content: nil,
+          index: nil,
+          status: :complete,
+          role: :assistant,
+          name: nil,
+          tool_calls: [
+            %LangChain.Message.ToolCall{
+              status: :complete,
+              type: :function,
+              call_id: "test",
+              name: "get_location",
+              arguments: %{"thing" => "hairbrush"},
+              index: nil
+            }
+          ],
+          tool_results: nil
+        },
+        %LangChain.Message{
+          content: nil,
+          processed_content: nil,
+          index: nil,
+          status: :complete,
+          role: :tool,
+          name: nil,
+          tool_calls: [],
+          tool_results: [
+            %LangChain.Message.ToolResult{
+              type: :function,
+              tool_call_id: "test",
+              name: "get_location",
+              content: "drawer",
+              display_text: nil,
+              is_error: false
+            }
+          ]
+        }
+      ]
+
+      result =
+        ChatTemplates.apply_chat_template_with_tools!(
+          messages,
+          :llama_3_2_custom_tool_calling,
+          tools
+        )
+
+      assert result ==
+               "<|start_header_id|>system<|end_header_id|>\nYou are an expert in composing functions. You are given a question and a set of possible functions.\nBased on the question, you will need to make one or more function/tool calls to achieve the purpose.\nIf none of the functions can be used, point it out. If the given question lacks the parameters required by the function,also point it out. You should only return the function call in tools call sections.\nIf you decide to invoke any of the function(s), you MUST put it in the format of [func_name1(params_name1=params_value1, params_name2=params_value2...), func_name2(params)]\nYou SHOULD NOT include any other text in the response.\nHere is a list of functions in JSON format that you can invoke.[\n  {\n    \"description\": \"Provide a friendly greeting.\",\n    \"name\": \"say_hi\",\n    \"parameters\": {\n      \"n\": {\n        \"description\": \"\",\n        \"param_type\": \"int\",\n        \"required\": false\n      }\n    }\n  }\n]\n<|eot_id|><|start_header_id|>user<|end_header_id|>\n\nWhere is the hairbrush located?<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n[get_location(thing=\"hairbrush\")]<|eot_id|><|start_header_id|>ipython<|end_header_id|>\n\n[{\"output\":\"drawer\"}]<|eot_id|>\n<|start_header_id|>assistant<|end_header_id|>\n\n"
     end
   end
-
-
-
 end
