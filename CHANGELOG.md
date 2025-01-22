@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.3.0 (2025-01-22)
+
+No more breaking changes.
+
+### Upgrading from v0.2.0 - v0.3.0
+
+There were several breaking changes made in the different Release Candidates. All changes were kept. Refer to the CHANGELOG documentation for rc.0, rc.1 and rc.2 for specific examples and coverage on needed code updates.
+
+### Added
+- LLAMA 3.1 JSON tool call support with Bumblebee (#198)
+- Raw field to TokenUsage (#236) - this returns the raw LLM token usage information, giving access to LLM-specific data.
+- Prompt caching support for Claude (#226)
+- Support for Ollama keep_alive API parameter (#237)
+- Support for o1 OpenAI model (#234)
+- Bumblebee Phi-4 support (#233)
+
+### Changed
+- Apply chat template from callback (#231)
+
 ## v0.3.0-rc.2 (2025-01-08)
 
 ### Breaking Changes
