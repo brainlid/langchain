@@ -49,6 +49,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
 
   @create_fields [
     :endpoint,
+    :keep_alive,
     :mirostat,
     :mirostat_eta,
     :mirostat_tau,
@@ -77,6 +78,10 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   @primary_key false
   embedded_schema do
     field :endpoint, :string, default: "http://localhost:11434/api/chat"
+
+    # Change Keep Alive setting for unloading the model from memory.
+    # (Default: "5m", set to a negative interval to disable)
+    field :keep_alive, :string, default: "5m"
 
     # Enable Mirostat sampling for controlling perplexity.
     # (default: 0, 0 = disabled, 1 = Mirostat, 2 = Mirostat 2.0)
@@ -199,6 +204,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
       num_predict: model.num_predict,
       repeat_last_n: model.repeat_last_n,
       repeat_penalty: model.repeat_penalty,
+      keep_alive: model.keep_alive,
       mirostat: model.mirostat,
       mirostat_eta: model.mirostat_eta,
       mirostat_tau: model.mirostat_tau,
@@ -411,6 +417,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
       model,
       [
         :endpoint,
+        :keep_alive,
         :model,
         :mirostat,
         :mirostat_eta,
