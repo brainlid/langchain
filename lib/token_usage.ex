@@ -15,6 +15,8 @@ defmodule LangChain.TokenUsage do
   Input is the tokens from the prompt. Output is the completion or generated
   tokens returned.
 
+  Refer to the `raw` token usage information for access to LLM-specific information that may be available.
+
   """
   use Ecto.Schema
   import Ecto.Changeset
