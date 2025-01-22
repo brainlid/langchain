@@ -257,6 +257,7 @@ defmodule ChatModels.ChatOllamaAITest do
 
       assert result == %{
                "endpoint" => "http://localhost:11434/api/chat",
+               "keep_alive" => "5m",
                "mirostat" => 0,
                "mirostat_eta" => 0.1,
                "mirostat_tau" => 5.0,
