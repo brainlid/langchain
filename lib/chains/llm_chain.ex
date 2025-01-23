@@ -338,6 +338,21 @@ defmodule LangChain.Chains.LLMChain do
     replaced before running against the configured LLM. This is helpful, for
     example, when a different system prompt is needed for Anthropic vs OpenAI.
 
+  ## Mode Examples
+
+  **Use Case**: A chat with an LLM where functions are available to the LLM:
+
+      LLMChain.run(chain, mode: :while_needs_response)
+
+  This will execute any LLM called functions, returning the result to the LLM,
+  and giving it a chance to respond to the results.
+
+  **Use Case**: An application that exposes a function to the LLM, but we want
+  to stop once the function is successfully executed. When errors are
+  encountered, the LLM should be given error feedback and allowed to try again.
+
+      LLMChain.run(chain, mode: :until_success)
+
   """
   @spec run(t(), Keyword.t()) :: {:ok, t()} | {:error, t(), LangChainError.t()}
   def run(chain, opts \\ [])
