@@ -4,7 +4,7 @@
 
 ```elixir
 Mix.install([
-  {:langchain, github: "brainlid/langchain"},
+  {:langchain, "~> 0.3.0"},
   {:kino, "~> 0.12.0"}
 ])
 ```
@@ -79,7 +79,7 @@ This is where we add **context** to our image description request. We'll assume 
 
 **NOTE:** Make sure the `:media` option matches both the image and what is supported by the LLM you are connecting with.
 
-```elixir
+````elixir
 alias LangChain.Message
 alias LangChain.Message.ContentPart
 alias LangChain.PromptTemplate
@@ -117,17 +117,19 @@ messages = [
 
     <%= @extra_image_info %>
 
-    Output in the following JSON format:
+    Output in the following format:
 
+    ```json
     {
       "alt": "generated alt text",
       "caption": "generation caption text"
     }
+    ```
     """),
     ContentPart.image!(image_data, media: :jpg, detail: "low")
   ])
 ]
-```
+````
 
 Before we continue, notice that the System message provides the general context for what we are doing and what we want from the LLM.
 
@@ -169,7 +171,7 @@ Everything is ready to make the request!
 
 Now, we'll submit the request to the server and review the response. For this example, the "image_data_from_other_system" is a substitute for a database call or other lookup for the information we have on the image.
 
-```elixir
+````elixir
 alias LangChain.Chains.LLMChain
 alias LangChain.MessageProcessors.JsonProcessor
 
@@ -185,7 +187,7 @@ image_data_from_other_system = "image of urban art mural on underpass at 507 Kin
   |> LLMChain.run(mode: :until_success)
 
 updated_chain.last_message.processed_content
-```
+````
 
 Notice that when running the chain, we use the option `mode: :until_success`. Some LLMs are better are generating valid JSON than other LLMs. When we included the `JsonProcesser`, it parses the assistant's content, converting it into an Elixir map. The converted data is stored on the `message.processed_content`.
 
@@ -225,12 +227,12 @@ Let's setup our Anthropic chat model.
 ```elixir
 alias LangChain.ChatModels.ChatAnthropic
 
-anthropic_chat_model = ChatAnthropic.new!(%{model: "claude-3-opus-20240229"})
+anthropic_chat_model = ChatAnthropic.new!(%{model: "claude-3-5-sonnet-latest"})
 ```
 
 Now we run the same messages through an identical LLMChain but passing in the Anthropic chat model.
 
-```elixir
+````elixir
 alias LangChain.Chains.LLMChain
 alias LangChain.MessageProcessors.JsonProcessor
 
@@ -246,7 +248,7 @@ image_data_from_other_system = "image of urban art mural on underpass at 507 Kin
   |> LLMChain.run(mode: :until_success)
 
 updated_chain.last_message.processed_content
-```
+````
 
 Nice! The Elixir LangChain library abstracted away the differences between the two services. With no code changes, we can make a similar request about the image from Anthropic's Claude LLM as well!
 
@@ -262,3 +264,5 @@ Here's what I got from it:
 ```
 
 We would want to run multiple tests on a small sampling of images and tweak our prompt until we are happy with the result. Then, we can process full batch and save our work as a template for future projects as well.
+
+<!-- livebook:{"offset":12833,"stamp":{"token":"XCP.ima-5H7hVmSu3ukHhzotNc1v6kxQNfrdVgWq9fQbqecYia8FBsPHDdAnj9Kk-bZbTOj0Dm6xuwH0qQAJHp4aKwWZFcWb0V_5oRVwaD8NBLyAAq5Ih1RC1ksRmBMCJ8jH7B7tRfksKMMvbicRcpv-","version":2}} -->

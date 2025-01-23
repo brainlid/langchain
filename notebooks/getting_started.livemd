@@ -2,7 +2,7 @@
 
 ```elixir
 Mix.install([
-  {:langchain, "~> 0.3.0-rc.0"},
+  {:langchain, "~> 0.3.0"},
   {:kino, "~> 0.12.0"}
 ])
 ```
@@ -97,15 +97,15 @@ handler = %{
 {:ok, updated_chain} =
   %{
     # llm config for streaming and the deltas callback
-    llm: ChatOpenAI.new!(%{model: "gpt-4o", stream: true, callbacks: [handler]}),
-    # chain callbacks
-    callbacks: [handler]
+    llm: ChatOpenAI.new!(%{model: "gpt-4o", stream: true})
   }
   |> LLMChain.new!()
   |> LLMChain.add_messages([
     Message.new_system!("You are a helpful assistant."),
     Message.new_user!("Write a haiku about the capital of the United States")
   ])
+  # register the callbacks
+  |> LLMChain.add_callback(handler)
   |> LLMChain.run()
 
 updated_chain.last_message.content
@@ -125,4 +125,4 @@ Finally, once the full message is received, the chain's `on_message_processed` c
 
 With the basics covered, you're ready to start integrating an LLM into your Elixir application! Check out other notebooks for more specific examples and other ways to use it.
 
-<!-- livebook:{"offset":4645,"stamp":{"token":"XCP.asU02sHrPSt9UBUyNKE-Qa7G_WNBlxckoWay59yU1E9XLuliANsNDenOGjrq1uZmDm9a0vajWcrseaOSYqLHOegBXQ7fLmYNTULDwEYEmtLVmnTEKbYN8BnqGuuayL2HKO7GZ2dWye7NzpYSoSh5","version":2}} -->
+<!-- livebook:{"offset":4654,"stamp":{"token":"XCP.i78jbBuPatFHM44quDBAU4hgc6ay4m6vFYa2oeCvONoMt0BoNyGTfJYcVJQVQuY1rU0KY3XceHNz07WamDRWUW60TxM82sMwVt99AzMKnXbiI-GAzL4fJhKlGsVBAX0NB0zACWWvoFi4eVu2RsMi","version":2}} -->

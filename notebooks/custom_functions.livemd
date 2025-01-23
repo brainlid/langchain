@@ -4,7 +4,7 @@
 
 ```elixir
 Mix.install([
-  {:langchain, "~> 0.3.0-rc.0"}
+  {:langchain, "~> 0.3.0"}
 ])
 ```
 
@@ -80,7 +80,8 @@ function =
   name: "get_user_info",
   description: "Return JSON object of the current users's relevant information.",
   display_text: nil,
-  function: #Function<41.125776118/2 in :erl_eval.expr/6>,
+  strict: false,
+  function: #Function<41.18682967/2 in :erl_eval.expr/6>,
   async: true,
   parameters_schema: nil,
   parameters: []
@@ -193,13 +194,17 @@ chat_model = ChatOpenAI.new!(%{model: "gpt-4o", temperature: 1, stream: false})
   api_key: nil,
   temperature: 1.0,
   frequency_penalty: 0.0,
+  reasoning_mode: false,
+  reasoning_effort: "medium",
   receive_timeout: 60000,
   seed: nil,
   n: 1,
   json_response: false,
+  json_schema: nil,
   stream: false,
   max_tokens: nil,
   stream_options: nil,
+  tool_choice: nil,
   callbacks: [],
   user: nil
 }
@@ -259,13 +264,17 @@ LLM: %LangChain.ChatModels.ChatOpenAI{
   api_key: nil,
   temperature: 1.0,
   frequency_penalty: 0.0,
+  reasoning_mode: false,
+  reasoning_effort: "medium",
   receive_timeout: 60000,
   seed: nil,
   n: 1,
   json_response: false,
+  json_schema: nil,
   stream: false,
   max_tokens: nil,
   stream_options: nil,
+  tool_choice: nil,
   callbacks: [],
   user: nil
 }
@@ -296,7 +305,8 @@ TOOLS: [
     name: "get_user_info",
     description: "Return JSON object of the current users's relevant information.",
     display_text: nil,
-    function: #Function<41.125776118/2 in :erl_eval.expr/6>,
+    strict: false,
+    function: #Function<41.18682967/2 in :erl_eval.expr/6>,
     async: true,
     parameters_schema: nil,
     parameters: []
@@ -313,7 +323,7 @@ SINGLE MESSAGE RESPONSE: %LangChain.Message{
     %LangChain.Message.ToolCall{
       status: :complete,
       type: :function,
-      call_id: "call_Na42ylypjHbP2IkigPbDQBNV",
+      call_id: "call_2puDjavxfbFQ7uDvrE9vafnZ",
       name: "get_user_info",
       arguments: %{},
       index: nil
@@ -332,7 +342,7 @@ MESSAGE PROCESSED: %LangChain.Message{
     %LangChain.Message.ToolCall{
       status: :complete,
       type: :function,
-      call_id: "call_Na42ylypjHbP2IkigPbDQBNV",
+      call_id: "call_2puDjavxfbFQ7uDvrE9vafnZ",
       name: "get_user_info",
       arguments: %{},
       index: nil
@@ -342,7 +352,7 @@ MESSAGE PROCESSED: %LangChain.Message{
 }
 EXECUTING FUNCTION: "get_user_info"
 
-17:37:37.179 [debug] Executing function "get_user_info"
+09:10:30.474 [debug] Executing function "get_user_info"
 FUNCTION RESULT: "{\"name\":\"Joan Jett\",\"user_id\":2,\"account_type\":\"member\",\"favorite_animal\":\"Aardvark\"}"
 TOOL RESULTS: %LangChain.Message{
   content: nil,
@@ -355,16 +365,17 @@ TOOL RESULTS: %LangChain.Message{
   tool_results: [
     %LangChain.Message.ToolResult{
       type: :function,
-      tool_call_id: "call_Na42ylypjHbP2IkigPbDQBNV",
+      tool_call_id: "call_2puDjavxfbFQ7uDvrE9vafnZ",
       name: "get_user_info",
       content: "{\"name\":\"Joan Jett\",\"user_id\":2,\"account_type\":\"member\",\"favorite_animal\":\"Aardvark\"}",
+      processed_content: nil,
       display_text: nil,
       is_error: false
     }
   ]
 }
 SINGLE MESSAGE RESPONSE: %LangChain.Message{
-  content: "Joan's favorite,    \nAardvark graces night with charm,   \nSilent earth's delight.",
+  content: "Long snout seeking ants,  \nNight wanderer of moonlight,  \nAardvark's gentle grace.",
   processed_content: nil,
   index: 0,
   status: :complete,
@@ -374,7 +385,7 @@ SINGLE MESSAGE RESPONSE: %LangChain.Message{
   tool_results: nil
 }
 MESSAGE PROCESSED: %LangChain.Message{
-  content: "Joan's favorite,    \nAardvark graces night with charm,   \nSilent earth's delight.",
+  content: "Long snout seeking ants,  \nNight wanderer of moonlight,  \nAardvark's gentle grace.",
   processed_content: nil,
   index: 0,
   status: :complete,
@@ -383,15 +394,15 @@ MESSAGE PROCESSED: %LangChain.Message{
   tool_calls: [],
   tool_results: nil
 }
-Joan's favorite,
-Aardvark graces night with charm,
-Silent earth's delight.
+Long snout seeking ants,  
+Night wanderer of moonlight,  
+Aardvark's gentle grace.
 ```
 
 <!-- livebook:{"output":true} -->
 
 ```
-"Joan's favorite,    \nAardvark graces night with charm,   \nSilent earth's delight."
+"Long snout seeking ants,  \nNight wanderer of moonlight,  \nAardvark's gentle grace."
 ```
 
 **TIP:** Try changing the `context` to `user_id: 1` now and see what happens when a different user context is provided.
@@ -411,4 +422,4 @@ With this, we could expose functions that allow the LLM to request additional in
 
 The rest is up to us.
 
-<!-- livebook:{"offset":13586,"stamp":{"token":"XCP._l56WhgDkzWkHI2NYGvSJh4deP7F3zSqtFDIS5NIYuLaU7Xo7-QRUpNA8bYELuO7Byhz7UZGwLJtRDrszDpBLbduoG4NnFeLv4BHdJ1S4rcjqbu2vVNCrOA","version":2}} -->
+<!-- livebook:{"offset":13867,"stamp":{"token":"XCP.UFYBKiTKTivrWqsgBsbdfATOyTtvmvReV-H7dpctAL0z8OepBUJOuQTNOu2-7E33qPbB-Jeyp-I32rgPfwdwE98Ed2JQRodZ3PL1Pn_lWFzuVrqSKbEGO8yYAUxoqCC8kpGjDeoKqIardsK0OtpE","version":2}} -->
