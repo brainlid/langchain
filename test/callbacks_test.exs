@@ -34,7 +34,7 @@ defmodule LangChain.CallbacksTest do
       handlers = %{custom: fn _value -> raise ArgumentError, "BOOM!" end}
 
       assert_raise LangChainError,
-                   "Callback handler for :custom raised an exception: %ArgumentError{message: \"BOOM!\"}",
+                   "Callback handler for :custom raised an exception: (ArgumentError) BOOM! at test/callbacks_test.exs:#{__ENV__.line - 3}: anonymous fn/1 in LangChain.CallbacksTest.\"test fire/3 handles when a handler errors\"/1",
                    fn ->
                      Callbacks.fire([handlers], :custom, ["123"])
                    end

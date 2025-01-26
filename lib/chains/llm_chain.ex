@@ -978,7 +978,9 @@ defmodule LangChain.Chains.LLMChain do
       end
     rescue
       err ->
-        Logger.error("Function #{function.name} failed in execution. Exception: #{inspect(err)}")
+        Logger.error(
+          "Function #{function.name} failed in execution. Exception: #{LangChainError.format_exception(err, __STACKTRACE__)}"
+        )
 
         ToolResult.new!(%{
           tool_call_id: call.call_id,
