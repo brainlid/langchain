@@ -281,8 +281,11 @@ defmodule LangChain.Function do
       end
     rescue
       err ->
-        Logger.error("Function #{function.name} failed in execution. Exception: #{inspect(err)}")
-        {:error, "ERROR: #{inspect(err)}"}
+        Logger.error(
+          "Function! #{function.name} failed in execution. Exception: #{LangChainError.format_exception(err, __STACKTRACE__)}"
+        )
+
+        {:error, "ERROR: #{LangChainError.format_exception(err, __STACKTRACE__, :short)}"}
     end
   end
 

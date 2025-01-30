@@ -1756,7 +1756,10 @@ defmodule LangChain.Chains.LLMChainTest do
 
       assert updated_chain.last_message.role == :tool
       [%ToolResult{} = result] = updated_chain.last_message.tool_results
-      assert result.content == "ERROR: %RuntimeError{message: \"Stuff went boom!\"}"
+
+      assert result.content ==
+               "ERROR: (RuntimeError) Stuff went boom! at test/chains/llm_chain_test.exs:#{__ENV__.line - 19}: anonymous fn/2 in LangChain.Chains.LLMChainTest.\"test execute_tool_calls/2 catches exceptions from executed function and returns Tool result with error message\"/1"
+
       assert result.is_error == true
     end
 

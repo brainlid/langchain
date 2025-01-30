@@ -42,7 +42,7 @@ defmodule LangChain.Callbacks do
           rescue
             err ->
               msg =
-                "Callback handler for #{inspect(callback_name)} raised an exception: #{inspect(err)}"
+                "Callback handler for #{inspect(callback_name)} raised an exception: #{LangChainError.format_exception(err, __STACKTRACE__, :short)}"
 
               Logger.error(msg)
               raise LangChainError, msg
