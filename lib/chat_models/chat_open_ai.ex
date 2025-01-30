@@ -312,9 +312,9 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           end
         end)
         |> Enum.reverse(),
-      response_format: set_response_format(openai),
       user: openai.user
     }
+    |> Utils.conditionally_add_to_map(:response_format, set_response_format(openai))
     |> Utils.conditionally_add_to_map(
       :reasoning_effort,
       if(openai.reasoning_mode, do: openai.reasoning_effort, else: nil)
@@ -357,7 +357,11 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   end
 
   defp set_response_format(%ChatOpenAI{json_response: false}) do
-    %{"type" => "text"}
+    # NOTE: The default handling when unspecified is `%{"type" => "text"}`
+    #
+    # For improved compatibility with other APIs like LMStudio, this returns a
+    # `nil` which has the same effect.
+    nil
   end
 
   defp get_tool_choice(%ChatOpenAI{

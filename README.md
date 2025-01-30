@@ -12,6 +12,7 @@ Currently supported AI services:
 - Ollama
 - Mistral
 - Bumblebee self-hosted models - including Llama, Mistral and Zephyr
+- [LMStudio](https://lmstudio.ai/docs/api/endpoints/openai) via their OpenAI compatibility API
 
 **LangChain** is short for Language Chain. An LLM, or Large Language Model, is the "Language" part. This library makes it easier for Elixir applications to "chain" or connect different processes, integrations, libraries, services, or functionality together with an LLM.
 
@@ -124,11 +125,11 @@ A list of models to use:
 
 ## Prompt caching
 
-ChatGPT and Claude both offer prefix-based prompt caching, which can offer cost and performance benefits for longer prompts. Gemini offers context caching, which is similar. 
+ChatGPT and Claude both offer prefix-based prompt caching, which can offer cost and performance benefits for longer prompts. Gemini offers context caching, which is similar.
 
 - [ChatGPT's prompt caching](https://openai.com/index/api-prompt-caching/) is automatic for prompts longer than 1024 tokens, caching the longest common prefix.
 - [Claude's prompt caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching) is not automatic. It's prefixing processes tools, system, and then messages, in that order, up to and including the block designated with {"cache_control": {"type": "ephemeral"}} . See LangChain.ChatModels.ChatAnthropicTest and for an example.
-- [Gemini's context caching]((https://ai.google.dev/gemini-api/docs/caching?lang=python)) requires a seperate call which is not supported by Langchain. 
+- [Gemini's context caching]((https://ai.google.dev/gemini-api/docs/caching?lang=python)) requires a seperate call which is not supported by Langchain.
 
 ## Usage
 
