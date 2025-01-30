@@ -120,7 +120,8 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert data.model == @test_model
       assert data.temperature == 1
       assert data.frequency_penalty == 0.5
-      assert data.response_format == %{"type" => "text"}
+      # NOTE: %{"type" => "text"} is the default when not specified
+      assert data[:response_format] == nil
     end
 
     test "generates a map for an API call with JSON response set to true" do
@@ -2178,7 +2179,8 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
       data = ChatOpenAI.for_api(openai, [], [])
 
-      assert data.response_format == %{"type" => "text"}
+      # NOTE: %{"type" => "text"} is the default
+      assert data[:response_format] == nil
     end
 
     test "generates a map for an API call with json_object format when json_response is true and no schema" do
