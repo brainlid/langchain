@@ -580,8 +580,6 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert result == expected
     end
 
-    # @mrluc I found the issue! It's with OpenAI's converting a Message into JSON when the LLM includes talking content AND a tool call. It isn't including the tool call content in the JSON that goes back to OpenAI. Should be an easy fix.
-
     test "turns an assistant message with text and tool calls into expected JSON format" do
       openai = ChatOpenAI.new!()
 
