@@ -2,7 +2,12 @@
 
 ## v0.3.1 (2025-02-05)
 
-Bug fix release.
+### Added
+- Include stacktrace context in messages for caught exceptions from LLM functions & function callbacks. (#241)
+
+### Changes
+- Support LMStudio when using ChatOpenAI (#243)
+- Fix issue with OpenAI converting an assistant message to JSON when the AI is talking while making tool calls in the same message (#245)
 
 ## v0.3.0 (2025-01-22)
 
