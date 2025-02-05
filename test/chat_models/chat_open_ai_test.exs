@@ -580,6 +580,50 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert result == expected
     end
 
+    # @mrluc I found the issue! It's with OpenAI's converting a Message into JSON when the LLM includes talking content AND a tool call. It isn't including the tool call content in the JSON that goes back to OpenAI. Should be an easy fix.
+
+    test "turns an assistant message with text and tool calls into expected JSON format" do
+      openai = ChatOpenAI.new!()
+
+      # NOTE: Does not include tool_calls if empty
+      expected = %{
+        "role" => :assistant,
+        "content" =>
+          "It seems there was an error, as the response indicates that `a.txt` is present rather than showing the current directory path. Let me try that again.",
+        "tool_calls" => [
+          %{
+            "function" => %{
+              "arguments" => "{\"command\":\"pwd\"}",
+              "name" => "execute_command"
+            },
+            "id" => "call_123",
+            "type" => "function"
+          }
+        ]
+      }
+
+      result =
+        ChatOpenAI.for_api(openai, %Message{
+          content:
+            "It seems there was an error, as the response indicates that `a.txt` is present rather than showing the current directory path. Let me try that again.",
+          status: :complete,
+          role: :assistant,
+          tool_calls: [
+            %ToolCall{
+              status: :complete,
+              type: :function,
+              call_id: "call_123",
+              name: "execute_command",
+              arguments: %{"command" => "pwd"},
+              index: nil
+            }
+          ],
+          tool_results: nil
+        })
+
+      assert result == expected
+    end
+
     test "turns a ToolResult into the expected JSON format" do
       openai = ChatOpenAI.new!()
       result = ToolResult.new!(%{tool_call_id: "tool_abc123", content: "Hello World!"})

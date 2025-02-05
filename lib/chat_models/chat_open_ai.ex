@@ -211,6 +211,10 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     # application.
     # https://platform.openai.com/docs/guides/safety-best-practices/end-user-ids
     field :user, :string
+
+    # For help with debugging. It outputs the RAW Req response received and the
+    # RAW Elixir map being submitted to the API.
+    field :verbose_api, :boolean, default: false
   end
 
   @type t :: %ChatOpenAI{}
@@ -403,6 +407,19 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       "content" => msg.content
     }
     |> Utils.conditionally_add_to_map("name", msg.name)
+    |> Utils.conditionally_add_to_map(
+      "tool_calls",
+      Enum.map(msg.tool_calls || [], &for_api(model, &1))
+    )
+  end
+
+  def for_api(%_{} = model, %Message{role: :assistant, tool_calls: tool_calls} = msg)
+      when is_list(tool_calls) do
+    %{
+      "role" => :assistant,
+      "content" => msg.content
+    }
+    |> Utils.conditionally_add_to_map("tool_calls", Enum.map(tool_calls, &for_api(model, &1)))
   end
 
   def for_api(%_{} = model, %Message{role: :user, content: content} = msg)
@@ -421,15 +438,6 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       "tool_call_id" => result.tool_call_id,
       "content" => result.content
     }
-  end
-
-  def for_api(%_{} = model, %Message{role: :assistant, tool_calls: tool_calls} = msg)
-      when is_list(tool_calls) do
-    %{
-      "role" => :assistant,
-      "content" => msg.content
-    }
-    |> Utils.conditionally_add_to_map("tool_calls", Enum.map(tool_calls, &for_api(model, &1)))
   end
 
   def for_api(%_{} = _model, %Message{role: :tool, tool_results: tool_results} = _msg)
@@ -616,10 +624,16 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         tools,
         retry_count
       ) do
+    raw_data = for_api(openai, messages, tools)
+
+    if openai.verbose_api do
+      IO.inspect(raw_data, label: "RAW DATA BEING SUBMITTED")
+    end
+
     req =
       Req.new(
         url: openai.endpoint,
-        json: for_api(openai, messages, tools),
+        json: raw_data,
         # required for OpenAI API
         auth: {:bearer, get_api_key(openai)},
         # required for Azure OpenAI version
@@ -639,6 +653,10 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     # parse the body and return it as parsed structs
     |> case do
       {:ok, %Req.Response{body: data} = response} ->
+        if openai.verbose_api do
+          IO.inspect(raw_data, label: "RAW REQ RESPONSE")
+        end
+
         Callbacks.fire(openai.callbacks, :on_llm_ratelimit_info, [
           get_ratelimit_info(response.headers)
         ])
