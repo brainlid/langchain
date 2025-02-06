@@ -27,6 +27,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   alias LangChain.LangChainError
   alias LangChain.Utils
   alias LangChain.Callbacks
+  alias LangChain.NativeTool
 
   @behaviour ChatModel
 
@@ -176,14 +177,25 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
       |> LangChain.Utils.conditionally_add_to_map("safetySettings", google_ai.safety_settings)
 
     if functions && not Enum.empty?(functions) do
-      req
-      |> Map.put("tools", [
-        %{
-          # Google AI functions use an OpenAI compatible format.
-          # See: https://ai.google.dev/docs/function_calling#how_it_works
-          "functionDeclarations" => Enum.map(functions, &for_api/1)
-        }
-      ])
+      native_tools = Enum.filter(functions, &match?(%NativeTool{}, &1))
+      function_tools = Enum.filter(functions, &match?(%Function{}, &1))
+
+      tools_array = []
+      tools_array =
+        if function_tools != [] do
+          tools_array ++ [%{"functionDeclarations" => Enum.map(function_tools, &for_api/1)}]
+        else
+          tools_array
+        end
+
+      tools_array =
+        if native_tools != [] do
+          tools_array ++ Enum.map(native_tools, &for_api/1)
+        else
+          tools_array
+        end
+
+      Map.put(req, "tools", tools_array)
     else
       req
     end
@@ -201,9 +213,6 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   end
 
   def for_api(%Message{role: :tool} = message) do
-    # Function response is whacky. They don't explain why it has this extra nested structure.
-    #
-    # https://ai.google.dev/gemini-api/docs/function-calling#expandable-7
     %{
       "role" => map_role(:tool),
       "parts" => Enum.map(message.tool_results, &for_api/1)
@@ -214,6 +223,13 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     %{
       "role" => map_role(message.role),
       "parts" => [%{"text" => message.content}]
+    }
+  end
+
+  def for_api(%Message{content: content} = message) when is_list(content) do
+    %{
+      "role" => message.role,
+      "parts" => Enum.map(content, &for_api/1)
     }
   end
 
@@ -314,6 +330,14 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     else
       encoded
     end
+  end
+
+  def for_api(%NativeTool{name: name, configuration: %{}=config}) do
+    %{name => config}
+  end
+
+  def for_api(%NativeTool{name: name, configuration: nil}) do
+    name
   end
 
   @doc """
@@ -527,7 +551,8 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
       role: unmap_role(content_data["role"]),
       content: text_part,
       complete: true,
-      index: data["index"]
+      index: data["index"],
+      metadata: (if data["groundingMetadata"], do: data["groundingMetadata"], else: nil)
     }
     |> Utils.conditionally_add_to_map(:tool_calls, tool_calls_from_parts)
     |> Utils.conditionally_add_to_map(:tool_results, tool_result_from_parts)
