@@ -925,7 +925,9 @@ defmodule LangChain.Chains.LLMChain do
       # fire the callbacks
       if chain.verbose, do: IO.inspect(result_message, label: "TOOL RESULTS")
 
-      fire_callback_and_return(updated_chain, :on_tool_response_created, [result_message])
+      updated_chain
+      |> fire_callback_and_return(:on_message_processed, [result_message])
+      |> fire_callback_and_return(:on_tool_response_created, [result_message])
     else
       # Not a complete tool call
       chain
