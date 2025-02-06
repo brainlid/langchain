@@ -1655,8 +1655,11 @@ defmodule LangChain.Chains.LLMChainTest do
       test_pid = self()
 
       handler = %{
+        on_message_processed: fn _chain, tool_msg ->
+          send(test_pid, {:message_processed_callback_fired, tool_msg})
+        end,
         on_tool_response_created: fn _chain, tool_msg ->
-          send(test_pid, {:message_callback_fired, tool_msg})
+          send(test_pid, {:response_created_callback_fired, tool_msg})
         end
       }
 
@@ -1694,7 +1697,10 @@ defmodule LangChain.Chains.LLMChainTest do
 
       [tool1, tool2, tool3] = tool_message.tool_results
 
-      assert_receive {:message_callback_fired, callback_message}
+      assert_receive {:message_processed_callback_fired, callback_message}
+      assert %Message{role: :tool} = callback_message
+
+      assert_receive {:response_created_callback_fired, callback_message}
       assert %Message{role: :tool} = callback_message
       assert [tool1, tool2, tool3] == callback_message.tool_results
 
