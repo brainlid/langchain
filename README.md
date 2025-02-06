@@ -185,7 +185,7 @@ custom_fn =
   })
 
 # create and run the chain
-{:ok, updated_chain}} =
+{:ok, updated_chain} =
   LLMChain.new!(%{
     llm: ChatOpenAI.new!(),
     custom_context: custom_context,
@@ -194,9 +194,10 @@ custom_fn =
   |> LLMChain.add_tools(custom_fn)
   |> LLMChain.add_message(Message.new_user!("Where is the hairbrush located?"))
   |> LLMChain.run(mode: :while_needs_response)
+  |> ChainResult.to_string()
 
 # print the LLM's answer
-IO.puts(update |> ChainResult.to_string())
+IO.puts(updated_chain)
 # => "The hairbrush is located in the drawer."
 ```
 
