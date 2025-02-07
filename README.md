@@ -194,10 +194,9 @@ custom_fn =
   |> LLMChain.add_tools(custom_fn)
   |> LLMChain.add_message(Message.new_user!("Where is the hairbrush located?"))
   |> LLMChain.run(mode: :while_needs_response)
-  |> ChainResult.to_string()
 
 # print the LLM's answer
-IO.puts(updated_chain)
+IO.puts(ChainResult.to_string(updated_chain))
 # => "The hairbrush is located in the drawer."
 ```
 
