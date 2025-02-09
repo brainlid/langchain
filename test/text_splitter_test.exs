@@ -102,5 +102,16 @@ defmodule TextSplitterTest do
 
       assert expected_output == output
     end
+
+    test "Splitting by characters and keeping the separator that is regex special char" do
+      text = "foo.bar.baz.123"
+      expected_output = ["foo", ".bar", ".baz", ".123"]
+      {:ok, character_splitter} =
+        TextSplitter.new(%{separator: ".", chunk_size: 1, chunk_overlap: 0})
+      output =
+        character_splitter
+        |> TextSplitter.split_text(text)
+      assert expected_output == output
+    end
   end
 end
