@@ -43,50 +43,46 @@ defmodule LangChain.TextSplitter do
   defp join_docs(docs, separator), do: Enum.join(docs, separator)
 
   defp merge_split_helper(d, acc, text_splitter) do
+    separator_len = String.length(text_splitter.separator)
     len = String.length(d)
-    separator_length =
-      if Enum.count(acc.current_doc) > 0,
-         do: String.length(text_splitter.separator),
-         else: 0
 
-    if acc.total <= text_splitter.chunk_overlap or
-         (acc.total + len + separator_length <=
-            text_splitter.chunk_size and
-            acc.total <= 0) do
-      dbg("BASE CASE")
-      acc |> dbg
+    test_separator_length =
+      if Enum.count(acc.current_doc) > 0, do: separator_len, else: 0
+
+    if not (acc.total > text_splitter.chunk_overlap or
+              (acc.total + len + test_separator_length >
+                 text_splitter.chunk_size and
+                 acc.total > 0)) do
+      acc
     else
-      dbg("RECURSIVE CASE")
+      separator_length =
+        if Enum.count(acc.current_doc) > 1, do: separator_len, else: 0
+
       new_total =
         acc.total -
           (acc.current_doc
            |> Enum.at(0, "")
            |> String.length()) - separator_length
-    
+
       new_current_doc = acc.current_doc |> Enum.drop(1)
 
       merge_split_helper(
         d,
-        %{acc | total: new_total, current_doc: new_current_doc} |> dbg,
+        %{acc | total: new_total, current_doc: new_current_doc},
         text_splitter
       )
     end
   end
 
   defp merge_splits(splits, %TextSplitter{} = text_splitter) do
-    separator_len = String.length(text_splitter.separator)
-    first_split = List.first(splits)
-    acc = %{current_doc: [first_split], docs: [], total: String.length(first_split)}
-    |> dbg
+    acc = %{current_doc: [], docs: [], total: 0}
 
     output_acc =
       splits
-      |> Enum.drop(1)
       |> Enum.reduce(
         acc,
         fn d, acc ->
           len = String.length(d)
-          acc |> dbg
 
           separator_length =
             if Enum.count(acc.current_doc) > 0,
@@ -98,7 +94,7 @@ defmodule LangChain.TextSplitter do
                  text_splitter.chunk_size do
               if Enum.count(acc.current_doc) > 0 do
                 doc = join_docs(acc.current_doc, text_splitter.separator)
-                acc = %{acc | docs: acc.docs ++ [doc]} |> dbg
+                acc = %{acc | docs: acc.docs ++ [doc]}
                 merge_split_helper(d, acc, text_splitter)
               else
                 acc
@@ -107,7 +103,14 @@ defmodule LangChain.TextSplitter do
               acc
             end
 
-          %{acc | current_doc: acc.current_doc ++ [d], total: acc.total + separator_len + len}
+          acc = %{acc | current_doc: acc.current_doc ++ [d]}
+
+          separator_length =
+            if Enum.count(acc.current_doc) > 1,
+              do: String.length(text_splitter.separator),
+              else: 0
+
+          %{acc | total: acc.total + separator_length + len}
         end
       )
 

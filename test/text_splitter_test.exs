@@ -73,7 +73,7 @@ defmodule TextSplitterTest do
 
       assert expected_output == output
     end
-    
+
     @tag :wip
     test "Splitting by character count when shorter words are first" do
       text = "a a foo bar baz"
