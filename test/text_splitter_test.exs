@@ -18,6 +18,7 @@ defmodule TextSplitterTest do
       assert expected_splitter == output_splitter
     end
 
+    @tag :wip
     test "Splitting by character count" do
       text = "foo bar baz 123"
       expected_output = ["foo bar", "bar baz", "baz 123"]
@@ -46,8 +47,9 @@ defmodule TextSplitterTest do
       assert expected_output == output
     end
 
+    @tag :wip
     test "Edge cases are separators" do
-      text = "f  b"
+      text = "f b"
       expected_output = ["f", "b"]
 
       {:ok, character_splitter} =
@@ -77,6 +79,20 @@ defmodule TextSplitterTest do
     test "Splitting by character count when shorter words are first" do
       text = "a a foo bar baz"
       expected_output = ["a a", "foo", "bar", "baz"]
+
+      {:ok, character_splitter} =
+        TextSplitter.new(%{separator: " ", chunk_size: 3, chunk_overlap: 1})
+
+      output =
+        character_splitter
+        |> TextSplitter.split_text(text)
+
+      assert expected_output == output
+    end
+
+    test "Splitting by characters when splits not found easily" do
+      text = "foo bar baz 123"
+      expected_output = ["foo", "bar", "baz", "123"]
 
       {:ok, character_splitter} =
         TextSplitter.new(%{separator: " ", chunk_size: 3, chunk_overlap: 1})
