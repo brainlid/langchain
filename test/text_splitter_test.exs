@@ -4,6 +4,7 @@ defmodule TextSplitterTest do
   alias LangChain.TextSplitter
 
   describe "CharacterTextSplitter" do
+    @tag :wip
     test "text splitting by character count" do
       text = "foo bar baz 123"
       expected_output = ["foo bar", "bar baz", "baz 123"]

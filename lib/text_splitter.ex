@@ -4,8 +4,9 @@ defmodule LangChain.TextSplitter do
   @chunk_overlap 3
   
   def split_text(text) do
-    splits = split_text_with_regex(text)
-    merge_splits(splits)
+    text
+    |> split_text_with_regex
+    |> merge_splits
   end
 
   defp split_text_with_regex(text) do
@@ -19,9 +20,9 @@ defmodule LangChain.TextSplitter do
     IO.inspect(acc)
     total = acc.total
     len = String.length(d)
-    if (total < @chunk_overlap) or
-         (total + len + String.length(@separator) < @chunk_size) and
-         (total < 0) do
+    if (total <= @chunk_overlap) or
+         (total + len + String.length(@separator) <= @chunk_size) and
+         (total <= 0) do
       acc
     else
       new_total = acc.total - (acc.current_doc
@@ -41,7 +42,7 @@ defmodule LangChain.TextSplitter do
     separator_len = String.length(@separator)
     first_split = List.first(splits)
     acc = %{current_doc: [first_split], docs: [], total: String.length(first_split)}
-    splits
+    output_acc = splits
     |> Enum.drop(1)
     |> Enum.reduce(
       acc,
@@ -49,10 +50,14 @@ defmodule LangChain.TextSplitter do
         IO.puts("REDUCTION!!!!!")
         IO.inspect(acc)
         len = String.length(d)
-        doc = join_docs(acc.current_doc)
+        separator_length =
+          if Enum.count(acc.current_doc) > 0,
+             do: String.length(@separator), else: 0
+        
         acc =
-          if (acc.total + len) > @chunk_size do
+          if (acc.total + len + separator_length) > @chunk_size do
                 if Enum.count(acc.current_doc) do
+                  doc = join_docs(acc.current_doc)
                   acc = %{acc | docs: acc.docs ++ [doc]}
                   merge_split_helper(d, acc)
                 else
@@ -67,5 +72,6 @@ defmodule LangChain.TextSplitter do
         }
       end
     )
+    output_acc.docs ++ [join_docs(output_acc.current_doc)]
   end
 end
