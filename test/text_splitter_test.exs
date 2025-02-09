@@ -18,6 +18,21 @@ defmodule TextSplitterTest do
       assert expected_splitter == output_splitter
     end
 
+    test "New TextSplitter with keep_separator" do
+      expected_splitter = %TextSplitter{
+        separator: " ",
+        chunk_overlap: 0,
+        chunk_size: 2,
+        keep_separator: :start
+      }
+
+      assert {:ok, %TextSplitter{} = output_splitter} =
+               %{separator: " ", chunk_overlap: 0, chunk_size: 2, keep_separator: :start}
+               |> TextSplitter.new()
+
+      assert expected_splitter == output_splitter
+    end
+
     test "Splitting by character count" do
       text = "foo bar baz 123"
       expected_output = ["foo bar", "bar baz", "baz 123"]
@@ -74,7 +89,6 @@ defmodule TextSplitterTest do
       assert expected_output == output
     end
 
-    @tag :wip
     test "Splitting by character count when shorter words are first" do
       text = "a a foo bar baz"
       expected_output = ["a a", "foo", "bar", "baz"]
@@ -103,14 +117,24 @@ defmodule TextSplitterTest do
       assert expected_output == output
     end
 
-    test "Splitting by characters and keeping the separator that is regex special char" do
+    @tag :wip
+    test "Splitting by characters and keeping separator that is a regex special char" do
       text = "foo.bar.baz.123"
       expected_output = ["foo", ".bar", ".baz", ".123"]
+
       {:ok, character_splitter} =
-        TextSplitter.new(%{separator: ".", chunk_size: 1, chunk_overlap: 0})
+        TextSplitter.new(%{
+          separator: ".",
+          chunk_size: 1,
+          chunk_overlap: 0,
+          keep_separator: :start,
+          is_separator_regex: true
+        })
+
       output =
         character_splitter
         |> TextSplitter.split_text(text)
+
       assert expected_output == output
     end
   end

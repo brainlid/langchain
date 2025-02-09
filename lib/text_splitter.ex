@@ -8,6 +8,7 @@ defmodule LangChain.TextSplitter do
     field :separator, :string, default: " "
     field :chunk_size, :integer
     field :chunk_overlap, :integer
+    field :keep_separator, Ecto.Enum, values: [:start, :end]
   end
 
   @type t :: %TextSplitter{}
@@ -15,7 +16,8 @@ defmodule LangChain.TextSplitter do
   @update_fields [
     :separator,
     :chunk_size,
-    :chunk_overlap
+    :chunk_overlap,
+    :keep_separator
   ]
   @create_fields @update_fields
 
@@ -35,8 +37,42 @@ defmodule LangChain.TextSplitter do
          text,
          %TextSplitter{} = text_splitter
        ) do
-    text
-    |> String.split(text_splitter.separator)
+    {:ok, separator} =
+      text_splitter.separator
+      |> Regex.escape()
+      |> Regex.compile()
+
+    chunk_and_join = fn x ->
+      x
+      |> Enum.chunk_every(2)
+      |> Enum.map(&Enum.join(&1, ""))
+    end
+
+    if Enum.any?(
+         [:end, :start],
+         fn x -> x == text_splitter.keep_separator end
+       ) do
+      splits =
+        separator
+        |> Regex.split(text, include_captures: true)
+
+      case text_splitter.keep_separator do
+        :start ->
+          [
+            splits |> List.first()
+            | splits
+              |> Enum.drop(1)
+              |> chunk_and_join.()
+          ]
+
+        :end ->
+          splits
+          |> chunk_and_join.()
+      end
+    else
+      separator
+      |> Regex.split(text)
+    end
     |> Enum.filter(fn x -> x != "" end)
   end
 
