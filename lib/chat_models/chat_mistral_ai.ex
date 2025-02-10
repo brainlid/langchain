@@ -390,30 +390,30 @@ defmodule LangChain.ChatModels.ChatMistralAI do
   # Parse final or partial responses to produce the appropriate LangChain structure.
   @doc false
   @spec do_process_response(
-    %{:callbacks => [map()]},
-    data :: %{String.t() => any()} | {:error, any()}
-  ) ::
+          %{:callbacks => [map()]},
+          data :: %{String.t() => any()} | {:error, any()}
+        ) ::
+          :skip
+          | Message.t()
+          | [Message.t()]
+          | MessageDelta.t()
+          | [MessageDelta.t()]
+          | {:error, String.t()}
+  def do_process_response(model, %{"choices" => [], "usage" => %{} = _usage} = data) do
+    case get_token_usage(data) do
+      %TokenUsage{} = token_usage ->
+        Callbacks.fire(model.callbacks, :on_llm_token_usage, [token_usage])
+        :ok
+
+      nil ->
+        :ok
+    end
+
+    # this stand-alone TokenUsage message is skipped and not returned
     :skip
-    | Message.t()
-    | [Message.t()]
-    | MessageDelta.t()
-    | [MessageDelta.t()]
-    | {:error, String.t()}
-def do_process_response(model, %{"choices" => [], "usage" => %{} = _usage} = data) do
-case get_token_usage(data) do
-%TokenUsage{} = token_usage ->
-  Callbacks.fire(model.callbacks, :on_llm_token_usage, [token_usage])
-  :ok
+  end
 
-nil ->
-  :ok
-end
-
-# this stand-alone TokenUsage message is skipped and not returned
-:skip
-end
-
-def do_process_response(_model, %{"choices" => []}), do: :skip
+  def do_process_response(_model, %{"choices" => []}), do: :skip
 
   def do_process_response(model, %{"choices" => choices}) when is_list(choices) do
     Enum.map(choices, &do_process_response(model, &1))
@@ -424,11 +424,16 @@ def do_process_response(_model, %{"choices" => []}), do: :skip
     Mistral returned a response with a "choices" key that is not a list.
     data: #{inspect(data)}
     """)
+
     :skip
   end
 
   # Partial 'delta' format: look for any embedded "tool_calls"
-  def do_process_response(model, %{"delta" => delta_body, "finish_reason" => finish, "index" => index}) do
+  def do_process_response(model, %{
+        "delta" => delta_body,
+        "finish_reason" => finish,
+        "index" => index
+      }) do
     status =
       case finish do
         nil ->
@@ -483,7 +488,8 @@ def do_process_response(_model, %{"choices" => []}), do: :skip
   # Complete message with tool calls:
   def do_process_response(
         model,
-        %{"finish_reason" => finish_reason, "message" => %{"tool_calls" => calls} = message} = data
+        %{"finish_reason" => finish_reason, "message" => %{"tool_calls" => calls} = message} =
+          data
       )
       when finish_reason in ["tool_calls", "stop"] do
     tool_calls =
@@ -507,11 +513,14 @@ def do_process_response(_model, %{"choices" => []}), do: :skip
   end
 
   # Tool call from a complete message
-  def do_process_response(_model, %{
-        "function" => %{"arguments" => args, "name" => name},
-        "id" => call_id,
-        "index" => _maybe_index
-      } = _data) do
+  def do_process_response(
+        _model,
+        %{
+          "function" => %{"arguments" => args, "name" => name},
+          "id" => call_id,
+          "index" => _maybe_index
+        } = _data
+      ) do
     case ToolCall.new(%{
            type: :function,
            status: :complete,
@@ -557,14 +566,18 @@ def do_process_response(_model, %{"choices" => []}), do: :skip
   end
 
   def do_process_response(_model, {:error, %Jason.DecodeError{} = response}) do
-    error_message = "Received invalid JSON from Mistral: #{inspect(response)}"
+    error_message = "Received invalid JSON: #{inspect(response)}"
     Logger.error(error_message)
-    {:error, LangChainError.exception(type: "invalid_json", message: error_message, original: response)}
+
+    {:error,
+     LangChainError.exception(type: "invalid_json", message: error_message, original: response)}
   end
 
   def do_process_response(_model, other) do
     Logger.error("Trying to process an unexpected response from Mistral: #{inspect(other)}")
-    {:error, LangChainError.exception(type: "unexpected_response", message: "Unexpected response")}
+
+    {:error,
+     LangChainError.exception(type: "unexpected_response", message: "Unexpected response")}
   end
 
   defp get_token_usage(%{"usage" => usage} = _response_body) do
