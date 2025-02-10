@@ -9,6 +9,7 @@ defmodule LangChain.TextSplitter do
     field :chunk_size, :integer
     field :chunk_overlap, :integer
     field :keep_separator, Ecto.Enum, values: [:start, :end]
+    field :is_separator_regex, :boolean, default: false
   end
 
   @type t :: %TextSplitter{}
@@ -17,7 +18,8 @@ defmodule LangChain.TextSplitter do
     :separator,
     :chunk_size,
     :chunk_overlap,
-    :keep_separator
+    :keep_separator,
+    :is_separator_regex
   ]
   @create_fields @update_fields
 
@@ -38,9 +40,13 @@ defmodule LangChain.TextSplitter do
          %TextSplitter{} = text_splitter
        ) do
     {:ok, separator} =
-      text_splitter.separator
-      |> Regex.escape()
-      |> Regex.compile()
+      if text_splitter.is_separator_regex do
+        text_splitter.separator |> Regex.compile()
+      else
+        text_splitter.separator
+        |> Regex.escape()
+        |> Regex.compile()
+      end
 
     chunk_and_join = fn x ->
       x

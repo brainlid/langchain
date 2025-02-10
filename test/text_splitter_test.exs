@@ -117,25 +117,85 @@ defmodule TextSplitterTest do
       assert expected_output == output
     end
 
-    @tag :wip
-    test "Splitting by characters and keeping separator that is a regex special char" do
+    test "Splitting by characters and keeping at start separator that is a regex special char" do
       text = "foo.bar.baz.123"
       expected_output = ["foo", ".bar", ".baz", ".123"]
 
-      {:ok, character_splitter} =
-        TextSplitter.new(%{
-          separator: ".",
-          chunk_size: 1,
-          chunk_overlap: 0,
-          keep_separator: :start,
-          is_separator_regex: true
-        })
+      base_params = %{
+        chunk_size: 1,
+        chunk_overlap: 0,
+        keep_separator: :start
+      }
 
-      output =
-        character_splitter
-        |> TextSplitter.split_text(text)
+      test_params = [
+        %{separator: ".", is_separator_regex: false},
+        %{separator: Regex.escape("."), is_separator_regex: true}
+      ]
 
-      assert expected_output == output
+      for tt <- test_params do
+        {:ok, character_splitter} =
+          TextSplitter.new(Map.merge(base_params, tt))
+
+        output =
+          character_splitter
+          |> TextSplitter.split_text(text)
+
+        assert expected_output == output
+      end
+    end
+
+    test "Splitting by characters and keeping at end separator that is a regex special char" do
+      text = "foo.bar.baz.123"
+      expected_output = ["foo.", "bar.", "baz.", "123"]
+
+      base_params = %{
+        chunk_size: 1,
+        chunk_overlap: 0,
+        keep_separator: :end
+      }
+
+      test_params = [
+        %{separator: ".", is_separator_regex: false},
+        %{separator: Regex.escape("."), is_separator_regex: true}
+      ]
+
+      for tt <- test_params do
+        {:ok, character_splitter} =
+          TextSplitter.new(Map.merge(base_params, tt))
+
+        output =
+          character_splitter
+          |> TextSplitter.split_text(text)
+
+        assert expected_output == output
+      end
+    end
+
+    @tag :wip
+    test "Splitting by characters and discard separator that is a regex special char" do
+      text = "foo.bar.baz.123"
+      expected_output = ["foo", "bar", "baz", "123"]
+
+      base_params = %{
+        chunk_size: 1,
+        chunk_overlap: 0
+      }
+
+      test_params = [
+        %{separator: ".", is_separator_regex: false},
+        %{separator: Regex.escape("."), is_separator_regex: true}
+      ]
+
+      for tt <- test_params do
+        {:ok, character_splitter} =
+          TextSplitter.new(Map.merge(base_params, tt))
+
+        output =
+          character_splitter
+          |> TextSplitter.split_text(text)
+
+        assert expected_output == output
+      end
     end
   end
 end
