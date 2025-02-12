@@ -84,6 +84,8 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
 
     field :stream, :boolean, default: false
 
+    field :structured_output, :boolean, default: false
+
     # A list of maps for callback handlers (treat as private)
     field :callbacks, {:array, :map}, default: []
   end
@@ -100,7 +102,8 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     :top_k,
     :receive_timeout,
     :stream,
-    :safety_settings
+    :safety_settings,
+    :structured_output
   ]
   @required_fields [
     :endpoint,
@@ -144,6 +147,21 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     |> validate_required(@required_fields)
   end
 
+  defp generation_config(%ChatGoogleAI{structured_output: true} = google_ai)  do
+    %{
+      "temperature" => google_ai.temperature,
+      "response_mime_type"=> "application/json"
+    }
+  end
+
+  defp generation_config(%ChatGoogleAI{} = google_ai)  do
+    %{
+      "temperature" => google_ai.temperature,
+      "topP" => google_ai.top_p,
+      "topK" => google_ai.top_k
+    }
+  end
+
   def for_api(%ChatGoogleAI{} = google_ai, messages, functions) do
     {system, messages} =
       Utils.split_system_message(messages, "Google AI only supports a single System message")
@@ -166,11 +184,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     req =
       %{
         "contents" => messages_for_api,
-        "generationConfig" => %{
-          "temperature" => google_ai.temperature,
-          "topP" => google_ai.top_p,
-          "topK" => google_ai.top_k
-        }
+        "generationConfig" =>  generation_config(google_ai)
       }
       |> LangChain.Utils.conditionally_add_to_map("system_instruction", system_instruction)
       |> LangChain.Utils.conditionally_add_to_map("safetySettings", google_ai.safety_settings)
