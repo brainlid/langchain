@@ -1,34 +1,33 @@
 defmodule TextSplitterTest do
   use ExUnit.Case
-
-  alias LangChain.TextSplitter
+  alias LangChain.TextSplitter.CharacterTextSplitter
 
   describe "CharacterTextSplitter" do
     test "New TextSplitter" do
-      expected_splitter = %TextSplitter{
+      expected_splitter = %CharacterTextSplitter{
         separator: " ",
         chunk_overlap: 0,
         chunk_size: 2
       }
 
-      assert {:ok, %TextSplitter{} = output_splitter} =
+      assert {:ok, %CharacterTextSplitter{} = output_splitter} =
                %{separator: " ", chunk_overlap: 0, chunk_size: 2}
-               |> TextSplitter.new()
+               |> CharacterTextSplitter.new()
 
       assert expected_splitter == output_splitter
     end
 
     test "New TextSplitter with keep_separator" do
-      expected_splitter = %TextSplitter{
+      expected_splitter = %CharacterTextSplitter{
         separator: " ",
         chunk_overlap: 0,
         chunk_size: 2,
         keep_separator: :start
       }
 
-      assert {:ok, %TextSplitter{} = output_splitter} =
+      assert {:ok, %CharacterTextSplitter{} = output_splitter} =
                %{separator: " ", chunk_overlap: 0, chunk_size: 2, keep_separator: :start}
-               |> TextSplitter.new()
+               |> CharacterTextSplitter.new()
 
       assert expected_splitter == output_splitter
     end
@@ -37,12 +36,13 @@ defmodule TextSplitterTest do
       text = "foo bar baz 123"
       expected_output = ["foo bar", "bar baz", "baz 123"]
 
-      {:ok, character_splitter} =
-        TextSplitter.new(%{separator: " ", chunk_size: 7, chunk_overlap: 3})
+      character_splitter =
+        CharacterTextSplitter.new!(
+          %{separator: " ", chunk_size: 7, chunk_overlap: 3})
 
       output =
         character_splitter
-        |> TextSplitter.split_text(text)
+        |> CharacterTextSplitter.split_text(text)
 
       assert expected_output == output
     end
@@ -51,12 +51,13 @@ defmodule TextSplitterTest do
       text = "foo  bar"
       expected_output = ["foo", "bar"]
 
-      {:ok, character_splitter} =
-        TextSplitter.new(%{separator: " ", chunk_size: 2, chunk_overlap: 0})
+      character_splitter =
+        CharacterTextSplitter.new!(
+          %{separator: " ", chunk_size: 2, chunk_overlap: 0})
 
       output =
         character_splitter
-        |> TextSplitter.split_text(text)
+        |> CharacterTextSplitter.split_text(text)
 
       assert expected_output == output
     end
@@ -65,12 +66,12 @@ defmodule TextSplitterTest do
       text = "f b"
       expected_output = ["f", "b"]
 
-      {:ok, character_splitter} =
-        TextSplitter.new(%{separator: " ", chunk_size: 2, chunk_overlap: 0})
+      character_splitter =
+        CharacterTextSplitter.new!(%{separator: " ", chunk_size: 2, chunk_overlap: 0})
 
       output =
         character_splitter
-        |> TextSplitter.split_text(text)
+        |> CharacterTextSplitter.split_text(text)
 
       assert expected_output == output
     end
@@ -79,12 +80,12 @@ defmodule TextSplitterTest do
       text = "foo bar baz a a"
       expected_output = ["foo", "bar", "baz", "a a"]
 
-      {:ok, character_splitter} =
-        TextSplitter.new(%{separator: " ", chunk_size: 3, chunk_overlap: 1})
+      character_splitter =
+        CharacterTextSplitter.new!(%{separator: " ", chunk_size: 3, chunk_overlap: 1})
 
       output =
         character_splitter
-        |> TextSplitter.split_text(text)
+        |> CharacterTextSplitter.split_text(text)
 
       assert expected_output == output
     end
@@ -93,12 +94,12 @@ defmodule TextSplitterTest do
       text = "a a foo bar baz"
       expected_output = ["a a", "foo", "bar", "baz"]
 
-      {:ok, character_splitter} =
-        TextSplitter.new(%{separator: " ", chunk_size: 3, chunk_overlap: 1})
+      character_splitter =
+        CharacterTextSplitter.new!(%{separator: " ", chunk_size: 3, chunk_overlap: 1})
 
       output =
         character_splitter
-        |> TextSplitter.split_text(text)
+        |> CharacterTextSplitter.split_text(text)
 
       assert expected_output == output
     end
@@ -107,12 +108,12 @@ defmodule TextSplitterTest do
       text = "foo bar baz 123"
       expected_output = ["foo", "bar", "baz", "123"]
 
-      {:ok, character_splitter} =
-        TextSplitter.new(%{separator: " ", chunk_size: 3, chunk_overlap: 1})
+      character_splitter =
+        CharacterTextSplitter.new!(%{separator: " ", chunk_size: 3, chunk_overlap: 1})
 
       output =
         character_splitter
-        |> TextSplitter.split_text(text)
+        |> CharacterTextSplitter.split_text(text)
 
       assert expected_output == output
     end
@@ -133,12 +134,12 @@ defmodule TextSplitterTest do
       ]
 
       for tt <- test_params do
-        {:ok, character_splitter} =
-          TextSplitter.new(Map.merge(base_params, tt))
+        character_splitter =
+          CharacterTextSplitter.new!(Map.merge(base_params, tt))
 
         output =
           character_splitter
-          |> TextSplitter.split_text(text)
+          |> CharacterTextSplitter.split_text(text)
 
         assert expected_output == output
       end
@@ -160,18 +161,17 @@ defmodule TextSplitterTest do
       ]
 
       for tt <- test_params do
-        {:ok, character_splitter} =
-          TextSplitter.new(Map.merge(base_params, tt))
+        character_splitter =
+          CharacterTextSplitter.new!(Map.merge(base_params, tt))
 
         output =
           character_splitter
-          |> TextSplitter.split_text(text)
+          |> CharacterTextSplitter.split_text(text)
 
         assert expected_output == output
       end
     end
 
-    @tag :wip
     test "Splitting by characters and discard separator that is a regex special char" do
       text = "foo.bar.baz.123"
       expected_output = ["foo", "bar", "baz", "123"]
@@ -187,12 +187,12 @@ defmodule TextSplitterTest do
       ]
 
       for tt <- test_params do
-        {:ok, character_splitter} =
-          TextSplitter.new(Map.merge(base_params, tt))
+         character_splitter =
+          CharacterTextSplitter.new!(Map.merge(base_params, tt))
 
         output =
           character_splitter
-          |> TextSplitter.split_text(text)
+          |> CharacterTextSplitter.split_text(text)
 
         assert expected_output == output
       end
