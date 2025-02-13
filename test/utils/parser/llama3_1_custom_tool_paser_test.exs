@@ -1,6 +1,6 @@
-defmodule Langchain.Utils.Parser.LLAMA_3_1_CustomToolParserTest do
+defmodule LangChain.Utils.Parser.LLAMA_3_1_CustomToolParserTest do
   use ExUnit.Case
-  alias Langchain.Utils.Parser.LLAMA_3_1_CustomToolParser
+  alias LangChain.Utils.Parser.LLAMA_3_1_CustomToolParser
 
   describe "parse/1" do
     test "successfully parses valid function call" do
