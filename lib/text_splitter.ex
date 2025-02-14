@@ -1,4 +1,14 @@
 defmodule LangChain.TextSplitter do
+  @moduledoc """
+  The `TextSplitter` is a basic text splitter that divides text based on specified characters. It operates as follows:
+  
+  - It takes a `chunk_size` parameter that determines the maximum number of characters in each chunk.
+  - It splits the text at specified separator characters.
+  - If no separator is found within the `chunk_size`, it will create a chunk larger than the specified size.
+
+  The purpose is to prepare text for processing by large language models with limited context windows, or where a shorter context window is desired.
+  """
+
   defp join_docs(docs, separator), do: Enum.join(docs, separator)
 
   defp merge_split_helper(d, acc, text_splitter) do
