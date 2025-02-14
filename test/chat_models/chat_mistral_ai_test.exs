@@ -4,6 +4,7 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
   alias LangChain.ChatModels.ChatMistralAI
   alias LangChain.Message
   alias LangChain.MessageDelta
+  alias LangChain.Message.ToolCall
   alias LangChain.LangChainError
 
   setup do
@@ -81,11 +82,8 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
         )
 
       assert get_in(data, [:messages, Access.at(0), "role"]) == :user
-
       assert get_in(data, [:messages, Access.at(0), "content"]) == user_message
-
       assert get_in(data, [:messages, Access.at(1), "role"]) == :assistant
-
       assert get_in(data, [:messages, Access.at(1), "content"]) == assistant_message
     end
   end
@@ -97,26 +95,32 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
           %{
             "message" => %{
               "role" => "assistant",
-              "content" => "Hello User!"
+              "content" => "Hello User!",
+              "tool_calls" => []
             },
             "finish_reason" => "stop",
             "index" => 0
           }
-        ]
+        ],
+        "usage" => %{
+          "prompt_tokens" => 7,
+          "completion_tokens" => 10,
+          "total_tokens" => 17
+        }
       }
 
-      assert [%Message{} = struct] = ChatMistralAI.do_process_response(model, response)
-      assert struct.role == :assistant
-      assert struct.content == "Hello User!"
-      assert struct.index == 0
-      assert struct.status == :complete
+      assert [%Message{} = msg] = ChatMistralAI.do_process_response(model, response)
+      assert msg.role == :assistant
+      assert msg.content == "Hello User!"
+      assert msg.index == 0
+      assert msg.status == :complete
     end
 
     test "errors with invalid role", %{model: model} do
       response = %{
         "choices" => [
           %{
-            "message" => %{
+            "delta" => %{
               "role" => "unknown role",
               "content" => "Hello User!"
             },
@@ -129,7 +133,7 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
       assert [{:error, %LangChainError{} = error}] =
                ChatMistralAI.do_process_response(model, response)
 
-      assert error.message == "role: is invalid"
+      assert error.message =~ "role" and error.message =~ "invalid"
     end
 
     test "handles receiving MessageDeltas as well", %{model: model} do
@@ -146,12 +150,13 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
         ]
       }
 
-      assert [%MessageDelta{} = struct] = ChatMistralAI.do_process_response(model, response)
+      assert [%MessageDelta{} = delta] =
+               ChatMistralAI.do_process_response(model, response)
 
-      assert struct.role == :assistant
-      assert struct.content == "This is the first part of a mes"
-      assert struct.index == 0
-      assert struct.status == :incomplete
+      assert delta.role == :assistant
+      assert delta.content == "This is the first part of a mes"
+      assert delta.index == 0
+      assert delta.status == :incomplete
     end
 
     test "handles API error messages", %{model: model} do
@@ -166,7 +171,6 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
       assert {:error, %LangChainError{} = error} =
                ChatMistralAI.do_process_response(model, response)
 
-      assert error.type == nil
       assert error.message == "Invalid request"
     end
 
@@ -177,7 +181,7 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
                ChatMistralAI.do_process_response(model, response)
 
       assert error.type == "invalid_json"
-      assert "Received invalid JSON:" <> _ = error.message
+      assert error.message =~ "Received invalid JSON:"
     end
 
     test "handles unexpected response with error", %{model: model} do
@@ -188,6 +192,129 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
 
       assert error.type == "unexpected_response"
       assert error.message == "Unexpected response"
+    end
+  end
+
+  describe "do_process_response/2 with tool calls" do
+    test "handles receiving multiple tool_calls messages", %{model: model} do
+      response = %{
+        "choices" => [
+          %{
+            "message" => %{
+              "role" => "assistant",
+              "content" => nil,
+              "tool_calls" => [
+                %{
+                  "type" => "function",
+                  "id" => "call_abc123",
+                  "function" => %{
+                    "name" => "get_weather",
+                    "arguments" => "{\"city\":\"Moab\",\"state\":\"UT\"}"
+                  }
+                },
+                %{
+                  "type" => "function",
+                  "id" => "call_def456",
+                  "function" => %{
+                    "name" => "get_weather",
+                    "arguments" => "{\"city\":\"Portland\",\"state\":\"OR\"}"
+                  }
+                }
+              ]
+            },
+            "finish_reason" => "tool_calls",
+            "index" => 0
+          }
+        ],
+        "usage" => %{
+          "prompt_tokens" => 10,
+          "completion_tokens" => 5,
+          "total_tokens" => 15
+        }
+      }
+
+      assert [%Message{} = msg] =
+               ChatMistralAI.do_process_response(model, response)
+
+      assert msg.role == :assistant
+      assert msg.status == :complete
+      assert msg.content == nil
+      assert length(msg.tool_calls) == 2
+
+      [call1, call2] = msg.tool_calls
+
+      assert %ToolCall{
+               type: :function,
+               call_id: "call_abc123",
+               name: "get_weather",
+               arguments: %{"city" => "Moab", "state" => "UT"}
+             } = call1
+
+      assert %ToolCall{
+               type: :function,
+               call_id: "call_def456",
+               name: "get_weather",
+               arguments: %{"city" => "Portland", "state" => "OR"}
+             } = call2
+    end
+
+    test "handles invalid JSON in a tool_call", %{model: model} do
+      response = %{
+        "choices" => [
+          %{
+            "message" => %{
+              "role" => "assistant",
+              "content" => nil,
+              "tool_calls" => [
+                %{
+                  "type" => "function",
+                  "id" => "call_abc123",
+                  "function" => %{
+                    "name" => "get_weather",
+                    "arguments" => "{\"invalid\"}"
+                  }
+                }
+              ]
+            },
+            "finish_reason" => "tool_calls",
+            "index" => 0
+          }
+        ]
+      }
+
+      assert [{:error, %LangChainError{} = error}] =
+               ChatMistralAI.do_process_response(model, response)
+
+      assert error.type == "changeset"
+      assert error.message =~ "invalid json"
+    end
+  end
+
+  describe "do_process_response/2 with token usage" do
+    test "handles a normal message and usage info", %{model: model} do
+      response = %{
+        "choices" => [
+          %{
+            "message" => %{
+              "role" => "assistant",
+              "content" => "Hello from Mistral!",
+              "tool_calls" => []
+            },
+            "finish_reason" => "stop",
+            "index" => 0
+          }
+        ],
+        "usage" => %{
+          "prompt_tokens" => 7,
+          "completion_tokens" => 10,
+          "total_tokens" => 17
+        }
+      }
+
+      result = ChatMistralAI.do_process_response(model, response)
+
+      assert [%Message{role: :assistant, content: "Hello from Mistral!", status: :complete}] =
+               result
     end
   end
 

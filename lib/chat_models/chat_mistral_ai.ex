@@ -4,10 +4,13 @@ defmodule LangChain.ChatModels.ChatMistralAI do
   import Ecto.Changeset
   alias __MODULE__
   alias LangChain.Config
-  alias LangChain.ChatModels.ChatOpenAI
   alias LangChain.ChatModels.ChatModel
   alias LangChain.Function
   alias LangChain.Message
+  alias LangChain.Message.ContentPart
+  alias LangChain.Message.ToolCall
+  alias LangChain.Message.ToolResult
+  alias LangChain.TokenUsage
   alias LangChain.MessageDelta
   alias LangChain.LangChainError
   alias LangChain.Utils
@@ -24,37 +27,35 @@ defmodule LangChain.ChatModels.ChatMistralAI do
   embedded_schema do
     field :endpoint, :string, default: @default_endpoint
 
-    # The version of the API to use.
+    # The version/model of the Mistral API to use.
     field :model, :string
     field :api_key, :string
 
-    # What sampling temperature to use, between 0 and 1. Higher values like 0.8
-    # will make the output more random, while lower values like 0.2 will make it
-    # more focused and deterministic.
+    # Sampling temperature, 0..1 for Mistral
     field :temperature, :float, default: 0.9
 
-    # The topP parameter changes how the model selects tokens for output. Tokens
-    # are selected from the most to least probable until the sum 3of their
-    # probabilities equals the topP value. For example, if tokens A, B, and C have
-    # a probability of 0.3, 0.2, and 0.1 and the topP value is 0.5, then the model
-    # will select either A or B as the next token by using the temperature and exclude
-    # C as a candidate. The default topP value is 0.95.
+    # top_p param to shape token selection
     field :top_p, :float, default: 1.0
 
-    # Duration in seconds for the response to be received. When streaming a very
-    # lengthy response, a longer time limit may be required. However, when it
-    # goes on too long by itself, it tends to hallucinate more.
+    # Duration in milliseconds for the response to be received.
     field :receive_timeout, :integer, default: @receive_timeout
 
+    # Maximum tokens to generate in the response
     field :max_tokens, :integer
 
+    # Some Mistral deployments allow a "safe_prompt" option
     field :safe_prompt, :boolean, default: false
 
+    # Optional random seed for reproducible outputs.
     field :random_seed, :integer
 
+    # Whether to stream partial/delta responses
     field :stream, :boolean, default: false
 
-    # A list of maps for callback handlers (treat as private)
+    # For choosing a specific tool call (like forcing a function execution).
+    field :tool_choice, :map
+
+    # A list of callback handlers
     field :callbacks, {:array, :map}, default: []
   end
 
@@ -70,7 +71,8 @@ defmodule LangChain.ChatModels.ChatMistralAI do
     :max_tokens,
     :safe_prompt,
     :random_seed,
-    :stream
+    :stream,
+    :tool_choice
   ]
   @required_fields [
     :model
@@ -78,19 +80,8 @@ defmodule LangChain.ChatModels.ChatMistralAI do
 
   @spec get_api_key(t) :: String.t()
   defp get_api_key(%ChatMistralAI{api_key: api_key}) do
-    # if no API key is set default to `""` which will raise an API error
+    # If no API key is set, fall back to the globally configured Mistral API key
     api_key || Config.resolve(:mistral_api_key)
-  end
-
-  @spec get_headers(t) :: [tuple()]
-  defp get_headers(%ChatMistralAI{} = chat) do
-    api_key = get_api_key(chat)
-
-    [
-      Authorization: "Bearer #{api_key}",
-      "Content-Type": "application/json",
-      Accept: "application/json"
-    ]
   end
 
   @spec new(attrs :: map()) :: {:ok, t} | {:error, Ecto.Changeset.t()}
@@ -117,36 +108,159 @@ defmodule LangChain.ChatModels.ChatMistralAI do
     |> validate_required(@required_fields)
   end
 
-  @spec for_api(t, message :: [map()], functions :: [map()]) :: %{atom() => any()}
-  def for_api(%ChatMistralAI{} = mistral, messages, _functions) do
+  @doc """
+  Formats this struct plus the given messages and tools as a request payload.
+  """
+  @spec for_api(t(), [Message.t()], ChatModel.tools()) :: %{atom() => any()}
+  def for_api(%ChatMistralAI{} = mistral, messages, tools) do
     %{
       model: mistral.model,
       temperature: mistral.temperature,
       top_p: mistral.top_p,
       safe_prompt: mistral.safe_prompt,
       stream: mistral.stream,
-      messages: Enum.map(messages, &ChatOpenAI.for_api(mistral, &1))
+      messages: Enum.map(messages, &for_api(mistral, &1))
     }
     |> Utils.conditionally_add_to_map(:random_seed, mistral.random_seed)
     |> Utils.conditionally_add_to_map(:max_tokens, mistral.max_tokens)
+    |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(mistral, tools))
+    |> Utils.conditionally_add_to_map(:tool_choice, get_tool_choice(mistral))
   end
 
-  @impl ChatModel
-  def call(mistral, prompt, functions \\ [])
+  # Add a more complete function to map tools. This mirrors ChatOpenAI approach.
+  defp get_tools_for_api(%__MODULE__{} = _model, nil), do: []
 
-  def call(%ChatMistralAI{} = mistral, prompt, functions) when is_binary(prompt) do
+  defp get_tools_for_api(%__MODULE__{} = model, tools) when is_list(tools) do
+    Enum.map(tools, fn
+      %Function{} = function ->
+        %{"type" => "function", "function" => for_api(model, function)}
+    end)
+  end
+
+  defp get_tool_choice(%ChatMistralAI{
+         tool_choice: %{"type" => "function", "function" => %{"name" => name}} = _tool_choice
+       })
+       when is_binary(name) and byte_size(name) > 0,
+       do: %{"type" => "function", "function" => %{"name" => name}}
+
+  defp get_tool_choice(%ChatMistralAI{tool_choice: %{"type" => type} = _tool_choice})
+       when is_binary(type) and byte_size(type) > 0,
+       do: type
+
+  defp get_tool_choice(%ChatMistralAI{}), do: nil
+
+  @doc """
+  Converts a LangChain Message-based structure into the expected map of data for
+  Mistral. We also include any `tool_calls` stored on the message.
+  """
+  @spec for_api(
+          struct(),
+          Message.t()
+          | ContentPart.t()
+          | ToolCall.t()
+          | ToolResult.t()
+          | Function.t()
+        ) ::
+          %{String.t() => any()} | [%{String.t() => any()}]
+  def for_api(%_{} = model, %Message{content: content} = msg) when is_binary(content) do
+    role = get_message_role(model, msg.role)
+
+    %{
+      "role" => role,
+      "content" => msg.content
+    }
+    |> Utils.conditionally_add_to_map("name", msg.name)
+    |> Utils.conditionally_add_to_map(
+      "tool_calls",
+      Enum.map(msg.tool_calls || [], &for_api(model, &1))
+    )
+  end
+
+  def for_api(%_{} = model, %Message{role: :assistant, tool_calls: tool_calls} = msg)
+      when is_list(tool_calls) do
+    %{
+      "role" => :assistant,
+      "content" => msg.content
+    }
+    |> Utils.conditionally_add_to_map("tool_calls", Enum.map(tool_calls, &for_api(model, &1)))
+  end
+
+  def for_api(%_{} = model, %Message{role: :user, content: content} = msg)
+      when is_list(content) do
+    # A user message can hold an array of ContentParts
+    %{
+      "role" => msg.role,
+      "content" => Enum.map(content, &for_api(model, &1))
+    }
+    |> Utils.conditionally_add_to_map("name", msg.name)
+  end
+
+  # ToolResult => stand-alone message with "role: :tool"
+  def for_api(%_{} = _model, %ToolResult{type: :function} = result) do
+    %{
+      "role" => :tool,
+      "tool_call_id" => result.tool_call_id,
+      "content" => result.content
+    }
+  end
+
+  # When an assistant message has go-betweens for tool results, for example
+  def for_api(%_{} = _model, %Message{role: :tool, tool_results: [result | _]} = _msg) do
+    %{
+      "role" => "tool",
+      "content" => result.content,
+      "tool_call_id" => result.tool_call_id
+    }
+  end
+
+  # Handle empty tool_results
+  def for_api(%_{} = _model, %Message{role: :tool, tool_results: []} = _msg) do
+    %{
+      "role" => "tool",
+      "content" => ""
+    }
+  end
+
+  # ToolCall => "function" style request
+  def for_api(%_{} = _model, %ToolCall{type: :function} = fun) do
+    %{
+      "id" => fun.call_id,
+      "type" => "function",
+      "function" => %{
+        "name" => fun.name,
+        "arguments" => Jason.encode!(fun.arguments)
+      }
+    }
+  end
+
+  def for_api(_model, %Function{} = fun) do
+    %{
+      "name" => fun.name,
+      "description" => fun.description,
+      "parameters" => fun.parameters_schema || %{}
+    }
+  end
+
+  # Implementation only: more straightforward approach for Mistral
+  defp get_message_role(%ChatMistralAI{}, role), do: role
+
+  @doc """
+  Calls the Mistral API passing the ChatMistralAI struct plus either a simple string
+  prompt or a list of messages as the prompt. Optionally pass in a list of tools.
+  """
+  @impl ChatModel
+  def call(%__MODULE__{} = openai, prompt, tools) when is_binary(prompt) and is_list(tools) do
     messages = [
       Message.new_system!(),
       Message.new_user!(prompt)
     ]
 
-    call(mistral, messages, functions)
+    call(openai, messages, tools)
   end
 
-  def call(%ChatMistralAI{} = mistral, messages, functions) when is_list(messages) do
+  def call(%__MODULE__{} = openai, messages, tools) when is_list(messages) and is_list(tools) do
     try do
-      # make base api request and perform high-level success/failure checks
-      case do_api_request(mistral, messages, functions) do
+      case do_api_request(openai, messages, tools) do
         {:error, reason} ->
           {:error, reason}
 
@@ -159,29 +273,34 @@ defmodule LangChain.ChatModels.ChatMistralAI do
     end
   end
 
-  @spec do_api_request(t(), [Message.t()], [Function.t()], integer()) ::
-          list() | struct() | {:error, String.t()}
-  def do_api_request(mistral, messages, functions, retry_count \\ 3)
+  # Make the API request. If `stream: true`, we handle partial chunk deltas;
+  # otherwise, we parse a single complete body.
+  @doc false
+  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), integer()) ::
+          list() | struct() | {:error, LangChainError.t()}
+  def do_api_request(openai, messages, tools, retry_count \\ 3)
 
-  def do_api_request(_mistral, _messages, _functions, 0) do
-    raise LangChainError.exception(
-            type: "retries_exceeded",
-            message: "Retries exceeded. Connection failed."
-          )
+  def do_api_request(_openai, _messages, _tools, 0) do
+    raise LangChainError, "Retries exceeded. Connection failed."
   end
 
   def do_api_request(
-        %ChatMistralAI{stream: false} = mistral,
+        %__MODULE__{stream: false} = mistralai,
         messages,
-        functions,
+        tools,
         retry_count
       ) do
+    raw_data = for_api(mistralai, messages, tools)
+
     req =
       Req.new(
-        url: mistral.endpoint,
-        json: for_api(mistral, messages, functions),
-        headers: get_headers(mistral),
-        receive_timeout: mistral.receive_timeout,
+        url: mistralai.endpoint,
+        json: raw_data,
+        auth: {:bearer, get_api_key(mistralai)},
+        headers: [
+          {"api-key", get_api_key(mistralai)}
+        ],
+        receive_timeout: mistralai.receive_timeout,
         retry: :transient,
         max_retries: 3,
         retry_delay: fn attempt -> 300 * attempt end
@@ -189,15 +308,18 @@ defmodule LangChain.ChatModels.ChatMistralAI do
 
     req
     |> Req.post()
-    # parse the body and return it as parsed structs
     |> case do
-      {:ok, %Req.Response{body: data}} ->
-        case do_process_response(mistral, data) do
-          {:error, reason} ->
+      {:ok, %Req.Response{body: data} = _response} ->
+        Callbacks.fire(mistralai.callbacks, :on_llm_token_usage, [
+          get_token_usage(data)
+        ])
+
+        case do_process_response(mistralai, data) do
+          {:error, %LangChainError{} = reason} ->
             {:error, reason}
 
           result ->
-            Callbacks.fire(mistral.callbacks, :on_llm_new_message, [result])
+            Callbacks.fire(mistralai.callbacks, :on_llm_new_message, [result])
             result
         end
 
@@ -206,9 +328,8 @@ defmodule LangChain.ChatModels.ChatMistralAI do
          LangChainError.exception(type: "timeout", message: "Request timed out", original: err)}
 
       {:error, %Req.TransportError{reason: :closed}} ->
-        # Force a retry by making a recursive call decrementing the counter
-        Logger.debug(fn -> "Mint connection closed: retry count = #{inspect(retry_count)}" end)
-        do_api_request(mistral, messages, functions, retry_count - 1)
+        Logger.debug(fn -> "Connection closed: retry count = #{inspect(retry_count)}" end)
+        do_api_request(mistralai, messages, tools, retry_count - 1)
 
       other ->
         Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
@@ -217,70 +338,102 @@ defmodule LangChain.ChatModels.ChatMistralAI do
   end
 
   def do_api_request(
-        %ChatMistralAI{stream: true} = mistral,
+        %__MODULE__{stream: true} = mistralai,
         messages,
-        functions,
+        tools,
         retry_count
       ) do
-    Req.new(
-      url: mistral.endpoint,
-      json: for_api(mistral, messages, functions),
-      headers: get_headers(mistral),
-      receive_timeout: mistral.receive_timeout
-    )
-    |> Req.post(
-      into:
-        Utils.handle_stream_fn(
-          mistral,
-          &ChatOpenAI.decode_stream/1,
-          &do_process_response(mistral, &1)
-        )
-    )
-    |> case do
-      {:ok, %Req.Response{body: data}} ->
-        data
+    # Implement streaming similarly to ChatOpenAI if/when Mistral supports it fully.
+    # The approach is the same, but actual streaming chunk formats might differ.
+    # For simplicity, we can skip or do a placeholder if streaming is not provided yet.
+    raw_data = for_api(mistralai, messages, tools)
 
-      {:error, %LangChainError{} = err} ->
-        {:error, err}
+    req =
+      Req.new(
+        url: mistralai.endpoint,
+        json: raw_data,
+        auth: {:bearer, get_api_key(mistralai)},
+        headers: [
+          {"api-key", get_api_key(mistralai)}
+        ],
+        receive_timeout: mistralai.receive_timeout
+      )
+
+    req
+    |> Req.post()
+    |> case do
+      {:ok, %Req.Response{body: data} = _response} ->
+        # If Mistral streaming is not truly chunk-based, treat logic the same as non-stream for now.
+        case do_process_response(mistralai, data) do
+          {:error, %LangChainError{} = reason} ->
+            {:error, reason}
+
+          result ->
+            Callbacks.fire(mistralai.callbacks, :on_llm_new_message, [result])
+            result
+        end
 
       {:error, %Req.TransportError{reason: :timeout} = err} ->
         {:error,
          LangChainError.exception(type: "timeout", message: "Request timed out", original: err)}
 
       {:error, %Req.TransportError{reason: :closed}} ->
-        # Force a retry by making a recursive call decrementing the counter
-        Logger.debug(fn -> "Mint connection closed: retry count = #{inspect(retry_count)}" end)
-        do_api_request(mistral, messages, functions, retry_count - 1)
+        Logger.debug(fn -> "Connection closed: retry count = #{inspect(retry_count)}" end)
+        do_api_request(mistralai, messages, tools, retry_count - 1)
 
       other ->
-        Logger.error(
-          "Unhandled and unexpected response from streamed post call. #{inspect(other)}"
-        )
-
-        {:error,
-         LangChainError.exception(type: "unexpected_response", message: "Unexpected response")}
+        Logger.error("Unhandled and unexpected response from streamed call. #{inspect(other)}")
+        {:error, LangChainError.exception(type: "unexpected_response", message: "Unexpected")}
     end
   end
 
-  # Parse a new message response
+  # Parse final or partial responses to produce the appropriate LangChain structure.
   @doc false
-  @spec do_process_response(t(), data :: %{String.t() => any()} | {:error, any()}) ::
-          Message.t()
+  @spec do_process_response(
+          %{:callbacks => [map()]},
+          data :: %{String.t() => any()} | {:error, any()}
+        ) ::
+          :skip
+          | Message.t()
           | [Message.t()]
           | MessageDelta.t()
           | [MessageDelta.t()]
-          | {:error, LangChainError.t()}
-  def do_process_response(model, %{"choices" => choices}) when is_list(choices) do
-    # process each response individually. Return a list of all processed choices
-    for choice <- choices do
-      do_process_response(model, choice)
+          | {:error, String.t()}
+  def do_process_response(model, %{"choices" => [], "usage" => %{} = _usage} = data) do
+    case get_token_usage(data) do
+      %TokenUsage{} = token_usage ->
+        Callbacks.fire(model.callbacks, :on_llm_token_usage, [token_usage])
+        :ok
+
+      nil ->
+        :ok
     end
+
+    # this stand-alone TokenUsage message is skipped and not returned
+    :skip
   end
 
-  def do_process_response(
-        _model,
-        %{"delta" => delta_body, "finish_reason" => finish, "index" => index} = _msg
-      ) do
+  def do_process_response(_model, %{"choices" => []}), do: :skip
+
+  def do_process_response(model, %{"choices" => choices}) when is_list(choices) do
+    Enum.map(choices, &do_process_response(model, &1))
+  end
+
+  def do_process_response(_model, %{"choices" => _not_a_list} = data) do
+    Logger.warning("""
+    Mistral returned a response with a "choices" key that is not a list.
+    data: #{inspect(data)}
+    """)
+
+    :skip
+  end
+
+  # Partial 'delta' format: look for any embedded "tool_calls"
+  def do_process_response(model, %{
+        "delta" => delta_body,
+        "finish_reason" => finish,
+        "index" => index
+      }) do
     status =
       case finish do
         nil ->
@@ -300,13 +453,20 @@ defmodule LangChain.ChatModels.ChatMistralAI do
           nil
       end
 
-    # more explicitly interpret the role. We treat a "function_call" as a a role
-    # while OpenAI addresses it as an "assistant". Technically, they are correct
-    # that the assistant is issuing the function_call.
+    # If partial chunk references some tool calls
+    tool_calls =
+      case delta_body do
+        %{"tool_calls" => calls} when is_list(calls) ->
+          Enum.map(calls, &do_process_response(model, &1))
+
+        _ ->
+          nil
+      end
+
     role =
       case delta_body do
         %{"role" => role} -> role
-        _other -> "unknown"
+        _ -> "unknown"
       end
 
     data =
@@ -314,38 +474,9 @@ defmodule LangChain.ChatModels.ChatMistralAI do
       |> Map.put("role", role)
       |> Map.put("index", index)
       |> Map.put("status", status)
+      |> Map.put("tool_calls", tool_calls)
 
     case MessageDelta.new(data) do
-      {:ok, message} ->
-        message
-
-      {:error, changeset} ->
-        {:error, Utils.changeset_error_to_string(changeset)}
-    end
-  end
-
-  def do_process_response(_model, %{
-        "finish_reason" => finish_reason,
-        "message" => message,
-        "index" => index
-      }) do
-    status =
-      case finish_reason do
-        "stop" ->
-          :complete
-
-        "length" ->
-          :length
-
-        "model_length" ->
-          :length
-
-        other ->
-          Logger.warning("Unsupported finish_reason in message. Reason: #{inspect(other)}")
-          nil
-      end
-
-    case Message.new(Map.merge(message, %{"status" => status, "index" => index})) do
       {:ok, message} ->
         message
 
@@ -354,8 +485,83 @@ defmodule LangChain.ChatModels.ChatMistralAI do
     end
   end
 
+  # Complete message with tool calls:
+  def do_process_response(
+        model,
+        %{"finish_reason" => finish_reason, "message" => %{"tool_calls" => calls} = message} =
+          data
+      )
+      when finish_reason in ["tool_calls", "stop"] do
+    tool_calls =
+      if is_list(calls),
+        do: Enum.map(calls, &do_process_response(model, &1)),
+        else: []
+
+    case Message.new(%{
+           "role" => "assistant",
+           "content" => message["content"],
+           "complete" => true,
+           "index" => data["index"],
+           "tool_calls" => tool_calls
+         }) do
+      {:ok, msg} ->
+        msg
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:error, LangChainError.exception(changeset)}
+    end
+  end
+
+  # Tool call from a complete message
+  def do_process_response(
+        _model,
+        %{
+          "function" => %{"arguments" => args, "name" => name},
+          "id" => call_id,
+          "index" => _maybe_index
+        } = _data
+      ) do
+    case ToolCall.new(%{
+           type: :function,
+           status: :complete,
+           name: name,
+           arguments: args,
+           call_id: call_id
+         }) do
+      {:ok, %ToolCall{} = call} ->
+        call
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        reason = Utils.changeset_error_to_string(changeset)
+        Logger.error("Failed to process ToolCall. Reason: #{reason}")
+        {:error, LangChainError.exception(changeset)}
+    end
+  end
+
+  def do_process_response(_model, %{
+        "function" => %{"arguments" => args, "name" => name},
+        "id" => call_id,
+        "type" => "function"
+      }) do
+    case ToolCall.new(%{
+           type: :function,
+           status: :complete,
+           name: name,
+           arguments: args,
+           call_id: call_id
+         }) do
+      {:ok, %ToolCall{} = call} ->
+        call
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        reason = Utils.changeset_error_to_string(changeset)
+        Logger.error("Failed to process ToolCall. Reason: #{reason}")
+        {:error, LangChainError.exception(changeset)}
+    end
+  end
+
   def do_process_response(_model, %{"error" => %{"message" => reason}}) do
-    Logger.error("Received error from API: #{inspect(reason)}")
+    Logger.error("Received error from Mistral API: #{inspect(reason)}")
     {:error, LangChainError.exception(message: reason)}
   end
 
@@ -368,11 +574,24 @@ defmodule LangChain.ChatModels.ChatMistralAI do
   end
 
   def do_process_response(_model, other) do
-    Logger.error("Trying to process an unexpected response. #{inspect(other)}")
+    Logger.error("Trying to process an unexpected response from Mistral: #{inspect(other)}")
 
     {:error,
      LangChainError.exception(type: "unexpected_response", message: "Unexpected response")}
   end
+
+  defp get_token_usage(%{"usage" => usage} = _response_body) do
+    # extract out the reported response token usage
+    #
+    #  https://platform.mistralai.com/docs/api-reference/chat/object#chat/object-usage
+    TokenUsage.new!(%{
+      input: Map.get(usage, "prompt_tokens"),
+      output: Map.get(usage, "completion_tokens"),
+      raw: usage
+    })
+  end
+
+  defp get_token_usage(_response_body), do: nil
 
   @doc """
   Generate a config map that can later restore the model's configuration.
@@ -398,7 +617,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
   end
 
   @doc """
-  Restores the model from the config.
+  Restores the model from the config map.
   """
   @impl ChatModel
   def restore_from_map(%{"version" => 1} = data) do
