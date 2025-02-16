@@ -1,6 +1,7 @@
 defmodule TextSplitterTest do
   use ExUnit.Case
   alias LangChain.TextSplitter.CharacterTextSplitter
+  doctest CharacterTextSplitter
 
   describe "CharacterTextSplitter" do
     test "New TextSplitter" do
