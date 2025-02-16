@@ -52,7 +52,7 @@ defmodule LangChain.TextSplitter.CharacterTextSplitter do
   Build a new ChracterTextSplitter and return an `:ok`/`:error` tuple with the result.
   """
   def new(attrs \\ %{}) do
-    %TextSplitter.CharacterTextSplitter{} 
+    %TextSplitter.CharacterTextSplitter{}
     |> cast(attrs, @create_fields)
     |> apply_action(:insert)
   end
@@ -84,7 +84,7 @@ defmodule LangChain.TextSplitter.CharacterTextSplitter do
       iex> text = "foo.bar.baz"
       iex> CharacterTextSplitter.split_text(text_splitter, text)
       ["foo.", "bar.", "baz"]
-  
+
   In order to keep the separator at the beginning of a chunk, provide the
   `keep_separator: :start` option:
       iex> text_splitter = CharacterTextSplitter.new!(%{separator: ".", chunk_size: 3, chunk_overlap: 0, keep_separator: :start})

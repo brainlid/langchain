@@ -38,8 +38,7 @@ defmodule TextSplitterTest do
       expected_output = ["foo bar", "bar baz", "baz 123"]
 
       character_splitter =
-        CharacterTextSplitter.new!(
-          %{separator: " ", chunk_size: 7, chunk_overlap: 3})
+        CharacterTextSplitter.new!(%{separator: " ", chunk_size: 7, chunk_overlap: 3})
 
       output =
         character_splitter
@@ -53,8 +52,7 @@ defmodule TextSplitterTest do
       expected_output = ["foo", "bar"]
 
       character_splitter =
-        CharacterTextSplitter.new!(
-          %{separator: " ", chunk_size: 2, chunk_overlap: 0})
+        CharacterTextSplitter.new!(%{separator: " ", chunk_size: 2, chunk_overlap: 0})
 
       output =
         character_splitter
@@ -188,7 +186,7 @@ defmodule TextSplitterTest do
       ]
 
       for tt <- test_params do
-         character_splitter =
+        character_splitter =
           CharacterTextSplitter.new!(Map.merge(base_params, tt))
 
         output =

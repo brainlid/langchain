@@ -35,7 +35,7 @@ defmodule LangChain.TextSplitter do
   end
 
   @doc false
-  def merge_splits(splits,  text_splitter) do
+  def merge_splits(splits, text_splitter) do
     acc = %{current_doc: [], docs: [], total: 0}
 
     output_acc =
