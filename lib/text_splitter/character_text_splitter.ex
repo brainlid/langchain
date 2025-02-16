@@ -20,7 +20,7 @@ defmodule LangChain.TextSplitter.CharacterTextSplitter do
   * `chunk_size` - Integer number of characters that a chunk should have.
   * `chunk_overlap` - Integer number of characters that two consecutive chunks should share.
   * `keep_separator` - Either `nil`, `:start` or `:end`. If `nil`, the separator is discarded from the output chunks. `:start` and `:end` keep the separator at the start or end of the output chunks.
-  * `is_separator_regex` - Boolean default false. If true, the `separator` string is not escaped.
+  * `is_separator_regex` - Boolean defaulting to `false`. If `true`, the `separator` string is not escaped.
   """
   use Ecto.Schema
   import Ecto.Changeset
