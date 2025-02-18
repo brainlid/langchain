@@ -182,8 +182,12 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     # to pretend like it worked.
     [
       %{
-        "role" => :system,
+        "role" => :user,
         "parts" => [%{"text" => message.content}]
+      },
+      %{
+        "role" => :model,
+        "parts" => [%{"text" => ""}]
       }
     ]
   end
