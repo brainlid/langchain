@@ -34,6 +34,10 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     field :model, :string, default: "gemini-pro"
     field :api_key, :string
 
+    # Instructs the model in how to behave
+    # Not supported on all models
+    field :system_instruction, :string
+
     # What sampling temperature to use, between 0 and 2. Higher values like 0.8
     # will make the output more random, while lower values like 0.2 will make it
     # more focused and deterministic.
@@ -74,6 +78,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     :endpoint,
     :model,
     :api_key,
+    :system_instruction,
     :temperature,
     :top_p,
     :top_k,
@@ -137,6 +142,14 @@ defmodule LangChain.ChatModels.ChatVertexAI do
         "topK" => vertex_ai.top_k
       }
     }
+
+    req =
+      if vertex_ai.system_instruction do
+        req
+        |> Map.put("system_instruction", %{"parts" => %{"text" => vertex_ai.system_instruction}})
+      else
+        req
+      end
 
     req =
       if vertex_ai.json_response do
