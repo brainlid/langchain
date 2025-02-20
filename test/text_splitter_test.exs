@@ -1,6 +1,7 @@
 defmodule TextSplitterTest do
   use ExUnit.Case
   alias LangChain.TextSplitter.CharacterTextSplitter
+  alias LangChain.TextSplitter.RecursiveCharacterTextSplitter
   doctest CharacterTextSplitter
 
   describe "CharacterTextSplitter" do
@@ -195,6 +196,25 @@ defmodule TextSplitterTest do
 
         assert expected_output == output
       end
+    end
+  end
+
+  describe "RecursiveCharacterTextSplitter" do
+    test "recursive_character_text_splitter" do
+      split_tags = [",", "."]
+      query = "Apple,banana,orange and tomato."
+
+      splitter =
+        RecursiveCharacterTextSplitter.new!(%{
+          chunk_size: 10,
+          chunk_overlap: 0,
+          separators: split_tags,
+          keep_separator: :start
+        })
+
+      result = splitter
+      |> RecursiveCharacterTextSplitter.split_text(query)
+      assert ["Apple,", "banana,", "orange and tomato."] == result 
     end
   end
 end
