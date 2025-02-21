@@ -34,10 +34,6 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     field :model, :string, default: "gemini-pro"
     field :api_key, :string
 
-    # Instructs the model in how to behave
-    # Not supported on all models
-    field :system_instruction, :string
-
     # What sampling temperature to use, between 0 and 2. Higher values like 0.8
     # will make the output more random, while lower values like 0.2 will make it
     # more focused and deterministic.
@@ -78,7 +74,6 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     :endpoint,
     :model,
     :api_key,
-    :system_instruction,
     :temperature,
     :top_p,
     :top_k,
@@ -128,8 +123,11 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   end
 
   def for_api(%ChatVertexAI{} = vertex_ai, messages, functions) do
+    sys_instructions = messages |> Enum.find(fn x -> x.role == :system end) |> List.wrap()
+    other_messages = Enum.reject(messages, fn x -> x in sys_instructions end) |> List.wrap()
+
     messages_for_api =
-      messages
+      other_messages
       |> Enum.map(&for_api/1)
       |> List.flatten()
       |> List.wrap()
@@ -144,9 +142,13 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     }
 
     req =
-      if vertex_ai.system_instruction do
+      if length(sys_instructions) == 1 do
+        sys_instruction =
+          sys_instructions
+          |> List.first()
+          |> for_api()
         req
-        |> Map.put("system_instruction", %{"parts" => %{"text" => vertex_ai.system_instruction}})
+        |> Map.put("system_instruction", sys_instruction)
       else
         req
       end
@@ -191,18 +193,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   end
 
   defp for_api(%Message{role: :system} = message) do
-    # No system messages support means we need to fake a prompt and response
-    # to pretend like it worked.
-    [
-      %{
-        "role" => :user,
-        "parts" => [%{"text" => message.content}]
-      },
-      %{
-        "role" => :model,
-        "parts" => [%{"text" => ""}]
-      }
-    ]
+    %{"parts" => %{"text" => message.content}}
   end
 
   defp for_api(%Message{role: :user, content: content}) when is_list(content) do
