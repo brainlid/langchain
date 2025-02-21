@@ -123,8 +123,11 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   end
 
   def for_api(%ChatVertexAI{} = vertex_ai, messages, functions) do
+    sys_instructions = messages |> Enum.find(fn x -> x.role == :system end) |> List.wrap()
+    other_messages = Enum.reject(messages, fn x -> x in sys_instructions end) |> List.wrap()
+
     messages_for_api =
-      messages
+      other_messages
       |> Enum.map(&for_api/1)
       |> List.flatten()
       |> List.wrap()
@@ -137,6 +140,18 @@ defmodule LangChain.ChatModels.ChatVertexAI do
         "topK" => vertex_ai.top_k
       }
     }
+
+    req =
+      if length(sys_instructions) == 1 do
+        sys_instruction =
+          sys_instructions
+          |> List.first()
+          |> for_api()
+        req
+        |> Map.put("system_instruction", sys_instruction)
+      else
+        req
+      end
 
     req =
       if vertex_ai.json_response do
@@ -178,18 +193,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   end
 
   defp for_api(%Message{role: :system} = message) do
-    # No system messages support means we need to fake a prompt and response
-    # to pretend like it worked.
-    [
-      %{
-        "role" => :user,
-        "parts" => [%{"text" => message.content}]
-      },
-      %{
-        "role" => :model,
-        "parts" => [%{"text" => ""}]
-      }
-    ]
+    %{"parts" => %{"text" => message.content}}
   end
 
   defp for_api(%Message{role: :user, content: content}) when is_list(content) do
