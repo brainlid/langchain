@@ -203,29 +203,22 @@ defmodule TextSplitterTest do
     test "recursive_character_text_splitter" do
       split_tags = [",", "."]
       query = "Apple,banana,orange and tomato."
-      splitter =
-        RecursiveCharacterTextSplitter.new!(%{
-          chunk_size: 10,
-          chunk_overlap: 0,
-          separators: split_tags,
-          keep_separator: :end
-        })
-
-      result = splitter
-      |> RecursiveCharacterTextSplitter.split_text(query)
-      assert ["Apple,", "banana,", "orange and tomato."] == result
-
-      splitter =
-        RecursiveCharacterTextSplitter.new!(%{
-          chunk_size: 10,
-          chunk_overlap: 0,
-          separators: split_tags,
-          keep_separator: :start
-        })
-
-      result = splitter
-      |> RecursiveCharacterTextSplitter.split_text(query)
-      assert ["Apple", ",banana", ",orange and tomato", "."] == result       
+      expected_output_1 = ["Apple,", "banana,", "orange and tomato."]
+      expected_output_2 = ["Apple", ",banana", ",orange and tomato", "."]
+      base_params = %{chunk_size: 10,
+                      chunk_overlap: 0,
+                      separators: split_tags}
+      test_data = [
+        %{expected: expected_output_1, params: %{keep_separator: :end}},
+        %{expected: expected_output_2, params: %{keep_separator: :start}}
+      ]
+      for tt <- test_data do
+        splitter =
+          RecursiveCharacterTextSplitter.new!(
+            Map.merge(base_params, tt.params))
+        output = splitter |> RecursiveCharacterTextSplitter.split_text(query)
+        assert tt.expected == output        
+      end
     end
 
     @tag :wip
