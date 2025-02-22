@@ -203,7 +203,6 @@ defmodule TextSplitterTest do
     test "recursive_character_text_splitter" do
       split_tags = [",", "."]
       query = "Apple,banana,orange and tomato."
-
       splitter =
         RecursiveCharacterTextSplitter.new!(%{
           chunk_size: 10,
@@ -227,6 +226,41 @@ defmodule TextSplitterTest do
       result = splitter
       |> RecursiveCharacterTextSplitter.split_text(query)
       assert ["Apple", ",banana", ",orange and tomato", "."] == result       
+    end
+
+    @tag :wip
+    test "Iterative splitter discard separator" do
+      text = "....5X..3Y...4X....5Y..."
+      base_params = %{
+        chunk_overlap: 0,
+        is_separator_regex: false,
+        separators: ["X", "Y"],
+      }
+      expected_output_1 = [
+        "....5",
+        "..3",
+        "...4",
+        "....5",
+        "..."]
+      expected_output_2 = [
+        "....5",
+        "X..3",
+        "Y...4",
+        "X....5",
+        "Y..."]      
+      test_data = [
+        %{expected: expected_output_1,
+          params: %{chunk_size: 5}},
+        %{expected: expected_output_2,
+          params: %{chunk_size: 6, keep_separator: :start}},        
+      ]
+      for tt <- test_data do
+        splitter =
+          RecursiveCharacterTextSplitter.new!(
+            Map.merge(base_params, tt.params))
+        output = splitter |> RecursiveCharacterTextSplitter.split_text(text)
+        assert tt.expected == output
+      end
     end
   end
 end

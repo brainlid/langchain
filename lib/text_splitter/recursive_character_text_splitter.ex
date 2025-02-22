@@ -91,7 +91,7 @@ defmodule LangChain.TextSplitter.RecursiveCharacterTextSplitter do
             acc
           end
         cond do
-          Enum.count(new_separators) == 1 ->
+          Enum.count(new_separators) <= 1 ->
             %{acc | final_chunks: acc.final_chunks ++ [split]}
           true ->
             new_recursive_splitter =
