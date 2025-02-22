@@ -3,6 +3,7 @@ defmodule LangChain.TextSplitter.RecursiveCharacterTextSplitter do
   import Ecto.Changeset
   alias LangChain.LangChainError
   alias LangChain.TextSplitter
+  alias LangChain.TextSplitter.CharacterTextSplitter
   alias __MODULE__
 
   @primary_key false
@@ -46,5 +47,71 @@ defmodule LangChain.TextSplitter.RecursiveCharacterTextSplitter do
         raise LangChainError, changeset
     end
   end
-  
+
+  def split_text(%RecursiveCharacterTextSplitter{} = text_splitter, text) do
+    new_separators =
+      text_splitter.separators
+      |> Enum.map(fn s ->
+        if text_splitter.is_separator_regex,
+          do: s,
+          else: s |> Regex.escape()
+      end)
+      |> Enum.drop_while(fn s -> not (s |> Regex.compile!() |> Regex.match?(text)) end)
+
+    separator =
+      if Enum.count(new_separators) > 0,
+        do: List.first(new_separators),
+        else:
+          text_splitter.separators
+          |> List.last()
+          |> Regex.escape()
+
+    character_text_splitter =
+      CharacterTextSplitter.new!(
+        text_splitter
+        |> Map.from_struct()
+        |> Map.delete(:separators)
+        |> Map.put(:is_separator_regex, true)
+        |> Map.put_new(:separator, separator)
+      )
+
+    acc = %{good_splits: [], final_chunks: []}
+    splits = character_text_splitter |> CharacterTextSplitter.split_text(text)
+    recursive_splits = splits
+    |> Enum.reduce(acc, fn split, acc ->
+      if String.length(split) < text_splitter.chunk_size do
+        %{acc | good_splits: acc.good_splits ++ [split]}
+      else
+        acc =
+          if Enum.count(acc.good_splits) > 0 do
+            merged_text =
+              TextSplitter.merge_splits(acc.good_splits, character_text_splitter)
+            %{good_splits: [], final_chunks: acc.final_chunks ++ merged_text}            
+          else
+            acc
+          end
+        cond do
+          Enum.count(new_separators) == 1 ->
+            %{acc | final_chunks: acc.final_chunks ++ [split]}
+          true ->
+            new_recursive_splitter =
+              %{text_splitter |> Map.from_struct() |
+                separators: new_separators |> Enum.drop(1),
+                is_separator_regex: true}
+              |> RecursiveCharacterTextSplitter.new!()
+            other_info =
+              new_recursive_splitter
+              |> RecursiveCharacterTextSplitter.split_text(split)
+            %{acc | final_chunks: acc.final_chunks ++ other_info}
+        end
+      end
+    end)
+    if Enum.count(recursive_splits.good_splits) > 0 do
+      merged_text = recursive_splits.good_splits
+      |> TextSplitter.merge_splits(character_text_splitter)
+      recursive_splits.final_chunks ++ merged_text
+    else
+      recursive_splits.final_chunks
+    end
+  end
 end

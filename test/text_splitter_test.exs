@@ -209,12 +209,24 @@ defmodule TextSplitterTest do
           chunk_size: 10,
           chunk_overlap: 0,
           separators: split_tags,
+          keep_separator: :end
+        })
+
+      result = splitter
+      |> RecursiveCharacterTextSplitter.split_text(query)
+      assert ["Apple,", "banana,", "orange and tomato."] == result
+
+      splitter =
+        RecursiveCharacterTextSplitter.new!(%{
+          chunk_size: 10,
+          chunk_overlap: 0,
+          separators: split_tags,
           keep_separator: :start
         })
 
       result = splitter
       |> RecursiveCharacterTextSplitter.split_text(query)
-      assert ["Apple,", "banana,", "orange and tomato."] == result 
+      assert ["Apple", ",banana", ",orange and tomato", "."] == result       
     end
   end
 end
