@@ -2,8 +2,21 @@ defmodule LangChain.ChatModels.ChatPerplexity do
   @moduledoc """
   Represents the [Perplexity Chat model](https://docs.perplexity.ai/api-reference/chat-completions).
 
-  Parses and validates inputs for making requests to the Perplexity Chat API.
-  Converts responses into specialized `LangChain` data structures.
+  This module implements a client for the Perplexity Chat API, providing functions to validate input parameters,
+  format API requests, and parse API responses into LangChain's structured data types.
+
+  Perplexity does not natively support tool calling in the same manner as some other chat models.
+  To overcome this limitation, this module employs a workaround using structured outputs via a JSON schema.
+  When tools are provided, the API request is augmented with a JSON schema that defines the expected format
+  for tool calls. The response processing logic then detects and decodes these tool call details, converting them
+  into corresponding ToolCall structs. This approach allows LangChain to seamlessly emulate tool calling functionality
+  and integrate it with its standard workflow, similar to how ChatOpenAI handles function calls.
+
+  In addition, this module supports various configuration options such as temperature, top_p, top_k,
+  and streaming, as well as callbacks for token usage and new message events.
+
+  Overall, this implementation provides a unified interface for interacting with the Perplexity Chat API
+  while working around its limitations regarding tool calling.
   """
   use Ecto.Schema
   require Logger
@@ -13,6 +26,7 @@ defmodule LangChain.ChatModels.ChatPerplexity do
   alias LangChain.ChatModels.ChatModel
   alias LangChain.Message
   alias LangChain.MessageDelta
+  alias LangChain.Message.ToolCall
   alias LangChain.TokenUsage
   alias LangChain.LangChainError
   alias LangChain.Utils
@@ -31,7 +45,7 @@ defmodule LangChain.ChatModels.ChatPerplexity do
   @primary_key false
   embedded_schema do
     field :endpoint, :string, default: @default_endpoint
-    field :model, :string
+    field :model, :string, default: "sonar-reasoning-pro"
     field :api_key, :string
 
     # What sampling temperature to use, between 0 and 2.
@@ -146,7 +160,32 @@ defmodule LangChain.ChatModels.ChatPerplexity do
   Return the params formatted for an API request.
   """
   @spec for_api(t(), [Message.t()], ChatModel.tools()) :: %{atom() => any()}
-  def for_api(%ChatPerplexity{} = perplexity, messages, _tools) do
+  def for_api(%ChatPerplexity{} = perplexity, messages, tools) do
+    # If tools are provided, we'll create a JSON schema to emulate tool calls
+    response_format =
+      if length(tools) > 0 do
+        tool_schema = %{
+          "type" => "object",
+          "properties" => %{
+            "tool_calls" => %{
+              "type" => "array",
+              "items" => %{
+                "type" => "object",
+                "required" => ["name", "arguments"],
+                "properties" => %{
+                  "name" => %{"type" => "string", "enum" => Enum.map(tools, & &1.name)},
+                  "arguments" => %{"type" => "object"}
+                }
+              }
+            }
+          }
+        }
+
+        %{"type" => "json_schema", "json_schema" => tool_schema}
+      else
+        perplexity.response_format
+      end
+
     %{
       model: perplexity.model,
       messages: Enum.map(messages, &for_api(perplexity, &1)),
@@ -165,7 +204,7 @@ defmodule LangChain.ChatModels.ChatPerplexity do
       perplexity.return_related_questions
     )
     |> Utils.conditionally_add_to_map(:search_recency_filter, perplexity.search_recency_filter)
-    |> Utils.conditionally_add_to_map(:response_format, perplexity.response_format)
+    |> Utils.conditionally_add_to_map(:response_format, response_format)
   end
 
   @doc """
@@ -366,16 +405,49 @@ defmodule LangChain.ChatModels.ChatPerplexity do
 
   def do_process_response(
         _model,
-        %{"finish_reason" => finish_reason, "message" => message, "index" => index}
+        %{"finish_reason" => finish_reason, "message" => %{"content" => content}} = data
       ) do
     status = finish_reason_to_status(finish_reason)
 
-    case Message.new(Map.merge(message, %{"status" => status, "index" => index})) do
-      {:ok, message} ->
-        message
+    # Try to parse content as JSON for potential tool calls
+    case Jason.decode(content) do
+      {:ok, %{"tool_calls" => tool_calls}} when is_list(tool_calls) ->
+        # Convert JSON tool calls to Message struct with tool calls
+        case Message.new(%{
+               "role" => :assistant,
+               "content" => nil,
+               "status" => status,
+               "index" => data["index"],
+               "tool_calls" =>
+                 Enum.map(tool_calls, fn call ->
+                   tool_call =
+                     ToolCall.new!(%{
+                       type: :function,
+                       status: :complete,
+                       name: call["name"],
+                       arguments: Jason.encode!(call["arguments"]),
+                       call_id: Ecto.UUID.generate()
+                     })
 
-      {:error, %Ecto.Changeset{} = changeset} ->
-        {:error, LangChainError.exception(changeset)}
+                   # Force the arguments field to be a JSON string even if the ToolCall schema casts it
+                   %{tool_call | arguments: Jason.encode!(call["arguments"])}
+                 end)
+             }) do
+          {:ok, message} -> message
+          {:error, changeset} -> {:error, LangChainError.exception(changeset)}
+        end
+
+      _ ->
+        # Regular message processing
+        case Message.new(%{
+               "role" => :assistant,
+               "content" => content,
+               "status" => status,
+               "index" => data["index"]
+             }) do
+          {:ok, message} -> message
+          {:error, changeset} -> {:error, LangChainError.exception(changeset)}
+        end
     end
   end
 

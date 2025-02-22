@@ -7,6 +7,7 @@ defmodule LangChain.ChatModels.ChatPerplexityTest do
   alias LangChain.MessageDelta
   alias LangChain.TokenUsage
   alias LangChain.LangChainError
+  alias LangChain.Function
 
   @test_model "sonar-reasoning-pro"
 
@@ -105,6 +106,31 @@ defmodule LangChain.ChatModels.ChatPerplexityTest do
       assert data.frequency_penalty == 1.5
       assert data.top_p == 0.9
       assert data.top_k == 0
+    end
+
+    test "includes tool calls as JSON schema when tools are provided" do
+      calculator = %Function{
+        name: "calculator",
+        description: "A basic calculator",
+        parameters: [
+          %{name: "operation", type: "string", enum: ["+", "-", "*", "/"]},
+          %{name: "x", type: "number"},
+          %{name: "y", type: "number"}
+        ]
+      }
+
+      {:ok, perplexity} = ChatPerplexity.new(%{model: @test_model})
+      data = ChatPerplexity.for_api(perplexity, [], [calculator])
+
+      assert data.response_format["type"] == "json_schema"
+      schema = data.response_format["json_schema"]
+      assert schema["type"] == "object"
+      assert schema["properties"]["tool_calls"]["type"] == "array"
+
+      tool_item = schema["properties"]["tool_calls"]["items"]
+      assert tool_item["required"] == ["name", "arguments"]
+      assert tool_item["properties"]["name"]["enum"] == ["calculator"]
+      assert tool_item["properties"]["arguments"]["type"] == "object"
     end
 
     test "includes optional parameters when set" do
@@ -232,22 +258,64 @@ defmodule LangChain.ChatModels.ChatPerplexityTest do
       %{model: model}
     end
 
-    test "returns skip when given an empty choices list", %{model: model} do
-      assert :skip == ChatPerplexity.do_process_response(model, %{"choices" => []})
+    test "handles tool call responses", %{model: model} do
+      response = %{
+        "choices" => [
+          %{
+            "finish_reason" => "stop",
+            "message" => %{
+              "content" =>
+                Jason.encode!(%{
+                  "tool_calls" => [
+                    %{
+                      "name" => "calculator",
+                      "arguments" => %{
+                        "operation" => "+",
+                        "x" => 5,
+                        "y" => 3
+                      }
+                    }
+                  ]
+                })
+            }
+          }
+        ]
+      }
+
+      result = ChatPerplexity.do_process_response(model, response["choices"] |> List.first())
+
+      assert %Message{} = result
+      assert result.role == :assistant
+      assert result.status == :complete
+      assert length(result.tool_calls) == 1
+
+      [tool_call] = result.tool_calls
+      assert tool_call.name == "calculator"
+      assert tool_call.type == :function
+      assert tool_call.status == :complete
+
+      args = Jason.decode!(tool_call.arguments)
+      assert args["operation"] == "+"
+      assert args["x"] == 5
+      assert args["y"] == 3
     end
 
-    test "handles receiving a message", %{model: model} do
+    test "handles regular message responses", %{model: model} do
       response = %{
-        "message" => %{"role" => "assistant", "content" => "Hello!"},
+        "message" => %{"content" => "Hello!"},
         "finish_reason" => "stop",
         "index" => 1
       }
 
-      assert %Message{} = struct = ChatPerplexity.do_process_response(model, response)
-      assert struct.role == :assistant
-      assert struct.content == "Hello!"
-      assert struct.index == 1
-      assert struct.status == :complete
+      assert %Message{} = message = ChatPerplexity.do_process_response(model, response)
+      assert message.role == :assistant
+      assert message.content == "Hello!"
+      assert message.index == 1
+      assert message.status == :complete
+    end
+
+    test "returns skip when given an empty choices list", %{model: model} do
+      assert :skip == ChatPerplexity.do_process_response(model, %{"choices" => []})
     end
 
     test "handles error from server that the max length has been reached", %{model: model} do
