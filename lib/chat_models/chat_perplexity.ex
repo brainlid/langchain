@@ -164,24 +164,26 @@ defmodule LangChain.ChatModels.ChatPerplexity do
     # If tools are provided, we'll create a JSON schema to emulate tool calls
     response_format =
       if length(tools) > 0 do
-        tool_schema = %{
-          "type" => "object",
-          "properties" => %{
-            "tool_calls" => %{
-              "type" => "array",
-              "items" => %{
-                "type" => "object",
-                "required" => ["name", "arguments"],
-                "properties" => %{
-                  "name" => %{"type" => "string", "enum" => Enum.map(tools, & &1.name)},
-                  "arguments" => %{"type" => "object"}
+        %{
+          "type" => "json_object_with_schema",
+          "schema" => %{
+            "type" => "object",
+            "required" => ["tool_calls"],
+            "properties" => %{
+              "tool_calls" => %{
+                "type" => "array",
+                "items" => %{
+                  "type" => "object",
+                  "required" => ["name", "arguments"],
+                  "properties" => %{
+                    "name" => %{"type" => "string", "enum" => Enum.map(tools, & &1.name)},
+                    "arguments" => %{"type" => "object"}
+                  }
                 }
               }
             }
           }
         }
-
-        %{"type" => "json_schema", "json_schema" => tool_schema}
       else
         perplexity.response_format
       end
@@ -382,22 +384,42 @@ defmodule LangChain.ChatModels.ChatPerplexity do
   end
 
   @doc false
-  def do_process_response(model, %{"choices" => [], "usage" => %{} = _usage} = data) do
-    case get_token_usage(data) do
+  def do_process_response(_model, %{"error" => %{"message" => reason, "type" => type}}) do
+    Logger.error("Received error from API: #{inspect(reason)}")
+    {:error, LangChainError.exception(type: type, message: reason)}
+  end
+
+  def do_process_response(_model, %{"error" => %{"message" => reason}}) do
+    Logger.error("Received error from API: #{inspect(reason)}")
+    {:error, LangChainError.exception(message: reason)}
+  end
+
+  def do_process_response(model, %{"choices" => [], "usage" => %{} = usage} = _data) do
+    case get_token_usage(%{"usage" => usage}) do
       %TokenUsage{} = token_usage ->
         Callbacks.fire(model.callbacks, :on_llm_token_usage, [token_usage])
-        :ok
+        :skip
 
       nil ->
-        :ok
+        :skip
     end
-
-    :skip
   end
 
   def do_process_response(_model, %{"choices" => []}), do: :skip
 
-  def do_process_response(model, %{"choices" => choices} = _data) when is_list(choices) do
+  def do_process_response(model, %{"choices" => choices} = data) when is_list(choices) do
+    # Fire token usage callback if present
+    if usage = Map.get(data, "usage") do
+      case get_token_usage(%{"usage" => usage}) do
+        %TokenUsage{} = token_usage ->
+          Callbacks.fire(model.callbacks, :on_llm_token_usage, [token_usage])
+
+        nil ->
+          :ok
+      end
+    end
+
+    # Process each response individually
     for choice <- choices do
       do_process_response(model, choice)
     end

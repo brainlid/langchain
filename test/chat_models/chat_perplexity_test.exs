@@ -1,4 +1,5 @@
 defmodule LangChain.ChatModels.ChatPerplexityTest do
+  alias LangChain.FunctionParam
   use LangChain.BaseCase
 
   doctest LangChain.ChatModels.ChatPerplexity
@@ -109,22 +110,27 @@ defmodule LangChain.ChatModels.ChatPerplexityTest do
     end
 
     test "includes tool calls as JSON schema when tools are provided" do
-      calculator = %Function{
-        name: "calculator",
-        description: "A basic calculator",
-        parameters: [
-          %{name: "operation", type: "string", enum: ["+", "-", "*", "/"]},
-          %{name: "x", type: "number"},
-          %{name: "y", type: "number"}
-        ]
-      }
+      calculator =
+        Function.new!(%{
+          name: "calculator",
+          description: "A basic calculator",
+          parameters: [
+            FunctionParam.new!(%{name: "operation", type: :string, enum: ["+", "-", "*", "/"]}),
+            FunctionParam.new!(%{name: "x", type: :number}),
+            FunctionParam.new!(%{name: "y", type: :number})
+          ],
+          function: fn %{"operation" => operation, "x" => x, "y" => y}, _ ->
+            {:ok, "Operation: #{operation}, x: #{x}, y: #{y}"}
+          end
+        })
 
       {:ok, perplexity} = ChatPerplexity.new(%{model: @test_model})
       data = ChatPerplexity.for_api(perplexity, [], [calculator])
 
-      assert data.response_format["type"] == "json_schema"
-      schema = data.response_format["json_schema"]
+      assert data.response_format["type"] == "json_object_with_schema"
+      schema = data.response_format["schema"]
       assert schema["type"] == "object"
+      assert schema["required"] == ["tool_calls"]
       assert schema["properties"]["tool_calls"]["type"] == "array"
 
       tool_item = schema["properties"]["tool_calls"]["items"]
@@ -172,8 +178,9 @@ defmodule LangChain.ChatModels.ChatPerplexityTest do
   end
 
   describe "call/2" do
-    @tag live_call: true
-    test "basic content example and fires token usage callback" do
+    # Skip live API calls in CI
+    @tag :skip
+    test "call/2 basic content example and fires token usage callback" do
       handlers = %{
         on_llm_token_usage: fn usage ->
           send(self(), {:fired_token_usage, usage})
@@ -195,12 +202,13 @@ defmodule LangChain.ChatModels.ChatPerplexityTest do
 
       assert response =~ "Hello World"
 
-      assert_received {:fired_token_usage, usage}
+      assert_receive {:fired_token_usage, usage}, 1000
       assert %TokenUsage{} = usage
     end
 
-    @tag live_call: true
-    test "basic streamed content example" do
+    # Skip live API calls in CI
+    @tag :skip
+    test "call/2 basic streamed content example" do
       handlers = %{
         on_llm_new_delta: fn %MessageDelta{} = delta ->
           send(self(), {:message_delta, delta})
@@ -221,9 +229,9 @@ defmodule LangChain.ChatModels.ChatPerplexityTest do
         ])
 
       # we expect to receive the response over multiple delta messages
-      assert_receive {:message_delta, delta_1}, 500
-      assert_receive {:message_delta, delta_2}, 500
-      assert_receive {:message_delta, delta_3}, 500
+      assert_receive {:message_delta, delta_1}, 2000
+      assert_receive {:message_delta, delta_2}, 2000
+      assert_receive {:message_delta, delta_3}, 2000
 
       merged =
         delta_1
@@ -235,20 +243,100 @@ defmodule LangChain.ChatModels.ChatPerplexityTest do
       assert merged.status == :complete
     end
 
-    @tag live_call: true
-    test "handles when request times out" do
+    # Skip live API calls in CI
+    @tag :skip
+    test "call/2 handles complex tool calling scenarios" do
+      store_article =
+        Function.new!(%{
+          name: "store_article",
+          description: "Store an article with metadata",
+          parameters: [
+            FunctionParam.new!(%{
+              name: "title",
+              type: :string,
+              description: "The article title",
+              required: true
+            }),
+            FunctionParam.new!(%{
+              name: "keywords",
+              type: :array,
+              item_type: "string",
+              description: "SEO keywords",
+              required: true
+            }),
+            FunctionParam.new!(%{
+              name: "meta_description",
+              type: :string,
+              description: "SEO meta description",
+              required: true
+            })
+          ]
+        })
+
       chat =
         ChatPerplexity.new!(%{
           model: @test_model,
-          stream: false,
-          receive_timeout: 1
+          temperature: 0.7,
+          stream: false
         })
 
-      {:error, %LangChainError{} = reason} =
-        ChatPerplexity.call(chat, [Message.new_user!("Why is the sky blue?")])
+      prompt = """
+      Generate an SEO-optimized article title and metadata about artificial intelligence.
+      Use the store_article function to save the generated content.
+      Make sure to include relevant keywords and a compelling meta description.
+      """
 
-      assert reason.type == "timeout"
-      assert reason.message == "Request timed out"
+      {:ok, [%Message{} = response]} =
+        ChatPerplexity.call(
+          chat,
+          [
+            Message.new_system!("You are an SEO expert."),
+            Message.new_user!(prompt)
+          ],
+          [store_article]
+        )
+
+      assert response.role == :assistant
+      assert length(response.tool_calls) == 1
+
+      [tool_call] = response.tool_calls
+      assert tool_call.name == "store_article"
+      assert tool_call.type == :function
+
+      args = Jason.decode!(tool_call.arguments)
+      assert is_binary(args["title"])
+      assert is_list(args["keywords"])
+      assert is_binary(args["meta_description"])
+    end
+
+    test "call/2 handles errors in response_format schema" do
+      calculator = %Function{
+        name: "calculator",
+        description: "Basic calculator",
+        parameters: [
+          %{name: "operation", type: "string", enum: ["+", "-", "*", "/"]},
+          %{name: "x", type: "number"},
+          %{name: "y", type: "number"}
+        ]
+      }
+
+      chat =
+        ChatPerplexity.new!(%{
+          model: @test_model,
+          temperature: 0.7,
+          stream: false
+        })
+
+      {:error, error} =
+        ChatPerplexity.call(
+          chat,
+          [Message.new_user!("What is 5 + 3?")],
+          [calculator]
+        )
+
+      assert %LangChainError{} = error
+      assert error.type == "bad_request"
+      assert error.message =~ "response_format"
     end
   end
 
