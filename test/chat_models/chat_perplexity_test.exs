@@ -127,8 +127,8 @@ defmodule LangChain.ChatModels.ChatPerplexityTest do
       {:ok, perplexity} = ChatPerplexity.new(%{model: @test_model})
       data = ChatPerplexity.for_api(perplexity, [], [calculator])
 
-      assert data.response_format["type"] == "json_object_with_schema"
-      schema = data.response_format["schema"]
+      assert data.response_format["type"] == "json_schema"
+      schema = data.response_format["json_schema"]
       assert schema["type"] == "object"
       assert schema["required"] == ["tool_calls"]
       assert schema["properties"]["tool_calls"]["type"] == "array"
@@ -260,25 +260,25 @@ defmodule LangChain.ChatModels.ChatPerplexityTest do
           name: "store_article",
           description: "Store an article with metadata",
           parameters: [
-            %FunctionParam{
+            FunctionParam.new!(%{
               name: "title",
               type: :string,
               description: "The article title",
               required: true
-            },
-            %FunctionParam{
+            }),
+            FunctionParam.new!(%{
               name: "keywords",
               type: :array,
               item_type: "string",
               description: "SEO keywords",
               required: true
-            },
-            %FunctionParam{
+            }),
+            FunctionParam.new!(%{
               name: "meta_description",
               type: :string,
               description: "SEO meta description",
               required: true
-            }
+            })
           ],
           function: fn %{"title" => title, "keywords" => keywords, "meta_description" => meta}, _ ->
             {:ok, "Stored article: #{title} with #{length(keywords)} keywords and meta: #{meta}"}
@@ -326,9 +326,19 @@ defmodule LangChain.ChatModels.ChatPerplexityTest do
         name: "calculator",
         description: "Basic calculator",
         parameters: [
-          %{name: "operation", type: "string", enum: ["+", "-", "*", "/"]},
-          %{name: "x", type: "number"},
-          %{name: "y", type: "number"}
+          FunctionParam.new!(%{
+            name: "operation",
+            type: :string,
+            enum: ["+", "-", "*", "/"]
+          }),
+          FunctionParam.new!(%{
+            name: "x",
+            type: :number
+          }),
+          FunctionParam.new!(%{
+            name: "y",
+            type: :number
+          })
         ]
       }
 

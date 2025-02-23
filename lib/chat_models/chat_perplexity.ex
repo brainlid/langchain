@@ -176,8 +176,39 @@ defmodule LangChain.ChatModels.ChatPerplexity do
                   "type" => "object",
                   "required" => ["name", "arguments"],
                   "properties" => %{
-                    "name" => %{"type" => "string", "enum" => Enum.map(tools, & &1.name)},
-                    "arguments" => %{"type" => "object"}
+                    "name" => %{
+                      "type" => "string",
+                      "enum" => Enum.map(tools, & &1.name)
+                    },
+                    "arguments" => %{
+                      "type" => "object",
+                      "properties" => Enum.reduce(tools, %{}, fn tool, acc ->
+                        case tool do
+                          %{parameters: params} when is_list(params) ->
+                            Map.merge(acc, Enum.reduce(params, %{}, fn param, inner_acc ->
+                              param_schema = %{"type" => to_string(param.type)}
+
+                              param_schema =
+                                if param.description,
+                                  do: Map.put(param_schema, "description", param.description),
+                                  else: param_schema
+
+                              param_schema =
+                                if param.required,
+                                  do: Map.put(param_schema, "required", param.required),
+                                  else: param_schema
+
+                              param_schema =
+                                if param.enum,
+                                  do: Map.put(param_schema, "enum", param.enum),
+                                  else: param_schema
+
+                              Map.put(inner_acc, param.name, param_schema)
+                            end))
+                          _ -> acc
+                        end
+                      end)
+                    }
                   }
                 }
               }
@@ -475,15 +506,17 @@ defmodule LangChain.ChatModels.ChatPerplexity do
 
   def do_process_response(
         _model,
-        %{"delta" => %{"content" => content} = delta, "index" => index} = msg
+        %{"choices" => [%{"delta" => delta} = choice | _]} = _msg
       ) do
     status =
-      case msg do
+      case choice do
         %{"finish_reason" => reason} -> finish_reason_to_status(reason)
         _ -> :incomplete
       end
 
     role = Map.get(delta, "role", :assistant)
+    content = Map.get(delta, "content")
+    index = Map.get(choice, "index", 0)
 
     case MessageDelta.new(%{
       "role" => role,
@@ -496,26 +529,7 @@ defmodule LangChain.ChatModels.ChatPerplexity do
     end
   end
 
-  def do_process_response(
-        _model,
-        %{"delta" => %{"role" => role}, "index" => index} = msg
-      ) do
-    status =
-      case msg do
-        %{"finish_reason" => reason} -> finish_reason_to_status(reason)
-        _ -> :incomplete
-      end
-
-    case MessageDelta.new(%{
-      "role" => role,
-      "content" => nil,
-      "index" => index,
-      "status" => status
-    }) do
-      {:ok, message} -> message
-      {:error, changeset} -> {:error, LangChainError.exception(changeset)}
-    end
-  end
+  def do_process_response(_model, %{"choices" => []} = _msg), do: :skip
 
   def do_process_response(_model, {:error, %Jason.DecodeError{} = response}) do
     error_message = "Received invalid JSON: #{inspect(response)}"
