@@ -110,14 +110,14 @@ defmodule LangChain.TextSplitter.CharacterTextSplitter do
   def split_text(%CharacterTextSplitter{} = text_splitter, text) do
     text
     |> split_text_with_regex(text_splitter)
-    |> TextSplitter.merge_splits(text_splitter)
+    |> TextSplitter.merge_splits(text_splitter, text_splitter.separator)
   end
 
   @doc false
   def split_text_with_regex(
-         text,
-         %CharacterTextSplitter{} = text_splitter
-       ) do
+        text,
+        %CharacterTextSplitter{} = text_splitter
+      ) do
     {:ok, separator} =
       if text_splitter.is_separator_regex do
         text_splitter.separator |> Regex.compile()
