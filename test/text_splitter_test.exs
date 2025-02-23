@@ -2,6 +2,7 @@ defmodule TextSplitterTest do
   use ExUnit.Case
   alias LangChain.TextSplitter.CharacterTextSplitter
   alias LangChain.TextSplitter.RecursiveCharacterTextSplitter
+  alias LangChain.TextSplitter.LanguageSeparators
   doctest CharacterTextSplitter
 
   describe "CharacterTextSplitter" do
@@ -260,7 +261,6 @@ defmodule TextSplitterTest do
       end
     end
 
-    @tag :wip
     test "Iterative text splitter" do
       text = "Hi.\n\nI'm Iglesias.\n\nHow? Are? You?\nOkay then f f f f.
 This is a weird text to write, but gotta test the splittingggg some how.
@@ -297,6 +297,77 @@ Bye!\n\n-I."
 
       output = splitter |> RecursiveCharacterTextSplitter.split_text(text)
       assert output == expected_output
+    end
+  end
+
+  describe "Language splitters" do
+    test "Python test splitter" do
+      fake_python_text = """
+      class Foo:
+
+          def bar():
+
+
+      def foo():
+
+      def testing_func():
+
+      def bar():
+      """
+
+      split_0 = "class Foo:\n\n    def bar():"
+      split_1 = "def foo():"
+      split_2 = "def testing_func():"
+      split_3 = "def bar():"
+      expected_splits = [split_0, split_1, split_2, split_3]
+
+      splitter =
+        RecursiveCharacterTextSplitter.new!(%{
+          separators: LanguageSeparators.python(),
+          keep_separator: :start,
+          chunk_size: 30,
+          chunk_overlap: 0
+        })
+
+      splits =
+        splitter
+        |> RecursiveCharacterTextSplitter.split_text(fake_python_text)
+
+      assert splits == expected_splits
+    end
+
+    test "More python splitting" do
+      code = "
+def hello_world():
+    print(\"Hello, World!\")
+
+# Call the function
+hello_world()
+    "
+
+      expected_splits = [
+        "def",
+        "hello_world():",
+        "print(\"Hello,",
+        "World!\")",
+        "# Call the",
+        "function",
+        "hello_world()"
+      ]
+
+      splitter =
+        RecursiveCharacterTextSplitter.new!(%{
+          separators: LanguageSeparators.python(),
+          keep_separator: :start,
+          chunk_size: 16,
+          chunk_overlap: 0
+        })
+
+      splits =
+        splitter
+        |> RecursiveCharacterTextSplitter.split_text(code)
+
+      assert splits == expected_splits
     end
   end
 end
