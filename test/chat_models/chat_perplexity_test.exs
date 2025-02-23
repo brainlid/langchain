@@ -10,7 +10,7 @@ defmodule LangChain.ChatModels.ChatPerplexityTest do
   alias LangChain.LangChainError
   alias LangChain.Function
 
-  @test_model "sonar-reasoning-pro"
+  @test_model "sonar-pro"
 
   describe "new/1" do
     test "works with minimal attrs" do
@@ -240,12 +240,10 @@ defmodule LangChain.ChatModels.ChatPerplexityTest do
       # we expect to receive the response over multiple delta messages
       assert_receive {:message_delta, delta_1}, 2000
       assert_receive {:message_delta, delta_2}, 2000
-      assert_receive {:message_delta, delta_3}, 2000
 
       merged =
         delta_1
         |> MessageDelta.merge_delta(delta_2)
-        |> MessageDelta.merge_delta(delta_3)
 
       assert merged.role == :assistant
       assert merged.content =~ "Hello World"

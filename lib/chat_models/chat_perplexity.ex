@@ -347,14 +347,15 @@ defmodule LangChain.ChatModels.ChatPerplexity do
     )
     |> Req.post(
       into:
-        Utils.handle_stream_fn(perplexity, &decode_stream/1, &do_process_response(perplexity, &1))
+        Utils.handle_stream_fn(
+          perplexity,
+          &decode_stream/1,
+          &process_stream_chunk(perplexity, &1)
+        )
     )
     |> case do
-      {:ok, %Req.Response{body: data}} ->
-        data
-
-      {:error, %LangChainError{} = error} ->
-        {:error, error}
+      {:ok, response} ->
+        {:ok, response}
 
       {:error, %Req.TransportError{reason: :timeout} = err} ->
         {:error,
@@ -365,12 +366,8 @@ defmodule LangChain.ChatModels.ChatPerplexity do
         do_api_request(perplexity, messages, tools, retry_count - 1)
 
       other ->
-        Logger.error(
-          "Unhandled and unexpected response from streamed post call. #{inspect(other)}"
-        )
-
-        {:error,
-         LangChainError.exception(type: "unexpected_response", message: "Unexpected response")}
+        Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
+        other
     end
   end
 
@@ -504,28 +501,66 @@ defmodule LangChain.ChatModels.ChatPerplexity do
     end
   end
 
+  @doc false
   def do_process_response(
         _model,
-        %{"choices" => [%{"delta" => delta} = choice | _]} = _msg
+        %{
+          "choices" => [
+            %{
+              "delta" => %{"role" => role, "content" => content},
+              "finish_reason" => finish,
+              "index" => index
+            } = _choice
+          ]
+        }
       ) do
-    status =
-      case choice do
-        %{"finish_reason" => reason} -> finish_reason_to_status(reason)
-        _ -> :incomplete
-      end
+    status = finish_reason_to_status(finish)
 
-    role = Map.get(delta, "role", :assistant)
-    content = Map.get(delta, "content")
-    index = Map.get(choice, "index", 0)
+    data =
+      %{}
+      |> Map.put("role", role)
+      |> Map.put("content", content)
+      |> Map.put("index", index)
+      |> Map.put("status", status)
 
-    case MessageDelta.new(%{
-      "role" => role,
-      "content" => content,
-      "index" => index,
-      "status" => status
-    }) do
-      {:ok, message} -> message
-      {:error, changeset} -> {:error, LangChainError.exception(changeset)}
+    case MessageDelta.new(data) do
+      {:ok, message} ->
+        send(self(), {:message_delta, message})
+        message
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:error, LangChainError.exception(changeset)}
+    end
+  end
+
+  def do_process_response(
+        _model,
+        %{
+          "choices" => [
+            %{
+              "delta" => %{"content" => content},
+              "finish_reason" => finish,
+              "index" => index
+            } = _choice
+          ]
+        }
+      ) do
+    status = finish_reason_to_status(finish)
+
+    data =
+      %{}
+      |> Map.put("role", "assistant")
+      |> Map.put("content", content)
+      |> Map.put("index", index)
+      |> Map.put("status", status)
+
+    case MessageDelta.new(data) do
+      {:ok, message} ->
+        send(self(), {:message_delta, message})
+        message
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:error, LangChainError.exception(changeset)}
     end
   end
 
@@ -599,5 +634,54 @@ defmodule LangChain.ChatModels.ChatPerplexity do
   @impl ChatModel
   def restore_from_map(%{"version" => 1} = data) do
     ChatPerplexity.new(data)
+  end
+
+  defp process_stream_chunk(_perplexity, %{
+         "choices" => [
+           %{
+             "delta" => %{"content" => content},
+             "finish_reason" => finish_reason
+           }
+           | _
+         ]
+       })
+       when finish_reason in [nil, "stop"] do
+    delta = %MessageDelta{content: content, role: :assistant, status: :complete}
+    send(self(), {:message_delta, delta})
+    {:cont, delta}
+  end
+
+  defp process_stream_chunk(_perplexity, %{
+         "choices" => [
+           %{"delta" => %{"content" => content}} | _
+         ]
+       }) do
+    delta = %MessageDelta{content: content, role: :assistant}
+    send(self(), {:message_delta, delta})
+    {:cont, delta}
+  end
+
+  defp process_stream_chunk(_perplexity, %{
+         "choices" => [
+           %{"finish_reason" => finish_reason} | _
+         ]
+       })
+       when finish_reason in [nil, "stop"] do
+    delta = %MessageDelta{status: :complete}
+    send(self(), {:message_delta, delta})
+    {:cont, delta}
+  end
+
+  defp process_stream_chunk(_perplexity, %{
+         "choices" => [
+           %{"message" => message} | _
+         ]
+       }) do
+    send(self(), {:message, message})
+    {:cont, message}
+  end
+
+  defp process_stream_chunk(_perplexity, _chunk) do
+    {:cont, %MessageDelta{}}
   end
 end
