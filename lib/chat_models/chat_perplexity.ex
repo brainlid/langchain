@@ -165,8 +165,8 @@ defmodule LangChain.ChatModels.ChatPerplexity do
     response_format =
       if length(tools) > 0 do
         %{
-          "type" => "json_object_with_schema",
-          "schema" => %{
+          "type" => "json_schema",
+          "json_schema" => %{
             "type" => "object",
             "required" => ["tool_calls"],
             "properties" => %{
@@ -475,28 +475,45 @@ defmodule LangChain.ChatModels.ChatPerplexity do
 
   def do_process_response(
         _model,
-        %{"delta" => delta_body, "finish_reason" => finish, "index" => index} = _msg
+        %{"delta" => %{"content" => content} = delta, "index" => index} = msg
       ) do
-    status = finish_reason_to_status(finish)
-
-    role =
-      case delta_body do
-        %{"role" => role} -> role
-        _other -> "unknown"
+    status =
+      case msg do
+        %{"finish_reason" => reason} -> finish_reason_to_status(reason)
+        _ -> :incomplete
       end
 
-    data =
-      delta_body
-      |> Map.put("role", role)
-      |> Map.put("index", index)
-      |> Map.put("status", status)
+    role = Map.get(delta, "role", :assistant)
 
-    case MessageDelta.new(data) do
-      {:ok, message} ->
-        message
+    case MessageDelta.new(%{
+      "role" => role,
+      "content" => content,
+      "index" => index,
+      "status" => status
+    }) do
+      {:ok, message} -> message
+      {:error, changeset} -> {:error, LangChainError.exception(changeset)}
+    end
+  end
 
-      {:error, %Ecto.Changeset{} = changeset} ->
-        {:error, LangChainError.exception(changeset)}
+  def do_process_response(
+        _model,
+        %{"delta" => %{"role" => role}, "index" => index} = msg
+      ) do
+    status =
+      case msg do
+        %{"finish_reason" => reason} -> finish_reason_to_status(reason)
+        _ -> :incomplete
+      end
+
+    case MessageDelta.new(%{
+      "role" => role,
+      "content" => nil,
+      "index" => index,
+      "status" => status
+    }) do
+      {:ok, message} -> message
+      {:error, changeset} -> {:error, LangChainError.exception(changeset)}
     end
   end
 
