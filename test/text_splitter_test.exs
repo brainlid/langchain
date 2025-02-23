@@ -805,7 +805,7 @@ class Program
 
       assert splits == expected_splits
     end
-    
+
     test "C and C++ splitting" do
       code = "
 #include <iostream>
@@ -817,14 +817,14 @@ int main() {
     "
 
       expected_splits = [
-       "#include",
+        "#include",
         "<iostream>",
         "int main() {",
         "std::cout",
         "<< \"Hello,",
         "World!\" <<",
         "std::endl;",
-        "return 0;\n}",
+        "return 0;\n}"
       ]
 
       splitter =
@@ -841,7 +841,7 @@ int main() {
 
       assert splits == expected_splits
     end
-    
+
     test "Scala splitting" do
       code = "
 object HelloWorld {
@@ -852,7 +852,7 @@ object HelloWorld {
     "
 
       expected_splits = [
-       "object",
+        "object",
         "HelloWorld {",
         "def",
         "main(args:",
@@ -860,7 +860,7 @@ object HelloWorld {
         "Unit = {",
         "println(\"Hello,",
         "World!\")",
-        "}\n}",
+        "}\n}"
       ]
 
       splitter =
@@ -877,7 +877,7 @@ object HelloWorld {
 
       assert splits == expected_splits
     end
-    
+
     test "Ruby splitting" do
       code = "
 def hello_world
@@ -892,7 +892,7 @@ hello_world
         "puts \"Hello,",
         "World!\"",
         "end",
-        "hello_world",
+        "hello_world"
       ]
 
       splitter =
@@ -909,7 +909,7 @@ hello_world
 
       assert splits == expected_splits
     end
-    
+
     test "Php splitting" do
       code = "
 <?php
@@ -930,7 +930,7 @@ hello_world();
         "World!\";",
         "}",
         "hello_world();",
-        "?>",
+        "?>"
       ]
 
       splitter =
@@ -963,7 +963,7 @@ helloWorld()
         "print(\"Hello,",
         "World!\")",
         "}",
-        "helloWorld()",
+        "helloWorld()"
       ]
 
       splitter =
@@ -980,7 +980,7 @@ helloWorld()
 
       assert splits == expected_splits
     end
-    
+
     test "Rust splitting" do
       code = "
 fn main() {
@@ -989,7 +989,11 @@ fn main() {
     "
 
       expected_splits = [
-        "fn main() {", "println!(\"Hello", ",", "World!\");", "}"
+        "fn main() {",
+        "println!(\"Hello",
+        ",",
+        "World!\");",
+        "}"
       ]
 
       splitter =
@@ -1006,6 +1010,7 @@ fn main() {
 
       assert splits == expected_splits
     end
+
     test "Markdown splitting" do
       code = "
 # Sample Document
@@ -1037,7 +1042,7 @@ b = 2
     "
 
       expected_splits = [
-     "# Sample",
+        "# Sample",
         "Document",
         "## Section",
         "This is the",
@@ -1060,7 +1065,7 @@ b = 2
         "block",
         "# sample code",
         "a = 1\nb = 2",
-        "```",
+        "```"
       ]
 
       splitter =
@@ -1077,7 +1082,7 @@ b = 2
 
       assert splits == expected_splits
     end
-    
+
     test "Latex splitting" do
       code = "
 Hi Harrison!
@@ -1101,7 +1106,7 @@ Hi Harrison!
 
       assert splits == expected_splits
     end
-    
+
     test "Html splitting" do
       code = "
 <h1>Sample Document</h1>
@@ -1131,7 +1136,7 @@ Hi Harrison!
         "<h3>A block</h3>",
         "<div class=\"amazing\">",
         "<p>Some text</p>",
-        "<p>Some more text</p>\n            </div>",        
+        "<p>Some more text</p>\n            </div>"
       ]
 
       splitter =
@@ -1148,7 +1153,7 @@ Hi Harrison!
 
       assert splits == expected_splits
     end
-    
+
     test "Solidity splitting" do
       code = "
 pragma solidity ^0.8.20;
@@ -1171,7 +1176,7 @@ pragma solidity ^0.8.20;
         "returns(uint) {",
         "return  a",
         "+ b;",
-        "}\n  }",      
+        "}\n  }"
       ]
 
       splitter =
@@ -1188,7 +1193,7 @@ pragma solidity ^0.8.20;
 
       assert splits == expected_splits
     end
-    
+
     test "Lua splitting" do
       code = "
 local variable = 10
@@ -1229,7 +1234,7 @@ end
         "until i >=",
         "variable",
         "end",
-        "end\nend",
+        "end\nend"
       ]
 
       splitter =
@@ -1246,6 +1251,7 @@ end
 
       assert splits == expected_splits
     end
+
     test "Haskell splitting" do
       code = "
         main :: IO ()
@@ -1269,7 +1275,7 @@ end
         "add :: Int ->",
         "Int -> Int",
         "add x y = x",
-        "+ y",
+        "+ y"
       ]
 
       splitter =
@@ -1287,7 +1293,7 @@ end
 
       assert splits == expected_splits
     end
-    
+
     test "Powershell short code splitting" do
       code = "
 # Check if a file exists
@@ -1302,7 +1308,7 @@ if (Test-Path $filePath) {
       expected_splits = [
         "# Check if a file exists\n$filePath = \"C:\\temp\\file.txt\"",
         "if (Test-Path $filePath) {\n    # File exists\n} else {",
-        "# File does not exist\n}",
+        "# File does not exist\n}"
       ]
 
       splitter =
@@ -1320,7 +1326,7 @@ if (Test-Path $filePath) {
 
       assert splits == expected_splits
     end
-    
+
     test "Powershell long code splitting" do
       code = "
 # Get a list of all processes and export to CSV
@@ -1344,7 +1350,7 @@ $csvContent | ForEach-Object {
         "# Read the CSV file and display its content",
         "$csvContent = Import-Csv -Path \"C:\\temp\\processes.csv\"",
         "$csvContent | ForEach-Object {\n    $_.ProcessName\n}",
-        "# End of script",        
+        "# End of script"
       ]
 
       splitter =
