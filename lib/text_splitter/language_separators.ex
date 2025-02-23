@@ -192,7 +192,7 @@ defmodule LangChain.TextSplitter.LanguageSeparators do
     "\n-+\n",
     "\n\\*+\n",
     # Split along directive markers
-    "\n\n.. *\n\n",
+    "\n\n.. \*\n\n",
     # Split by the normal type of lines
     "\n\n",
     "\n",

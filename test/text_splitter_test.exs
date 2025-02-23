@@ -5,6 +5,8 @@ defmodule TextSplitterTest do
   alias LangChain.TextSplitter.LanguageSeparators
   doctest CharacterTextSplitter
 
+  @chunk_size 16
+
   describe "CharacterTextSplitter" do
     test "New TextSplitter" do
       expected_splitter = %CharacterTextSplitter{
@@ -300,7 +302,7 @@ Bye!\n\n-I."
     end
   end
 
-  describe "Language splitters" do
+  describe "Programming languages splitters" do
     test "Python test splitter" do
       fake_python_text = """
       class Foo:
@@ -359,7 +361,285 @@ hello_world()
         RecursiveCharacterTextSplitter.new!(%{
           separators: LanguageSeparators.python(),
           keep_separator: :start,
-          chunk_size: 16,
+          chunk_size: @chunk_size,
+          chunk_overlap: 0
+        })
+
+      splits =
+        splitter
+        |> RecursiveCharacterTextSplitter.split_text(code)
+
+      assert splits == expected_splits
+    end
+
+    test "Golang splitting" do
+      code = "
+package main
+
+import \"fmt\"
+
+func helloWorld() {
+    fmt.Println(\"Hello, World!\")
+}
+
+func main() {
+    helloWorld()
+}
+    "
+
+      expected_splits = [
+        "package main",
+        "import \"fmt\"",
+        "func",
+        "helloWorld() {",
+        "fmt.Println(\"He",
+        "llo,",
+        "World!\")",
+        "}",
+        "func main() {",
+        "helloWorld()",
+        "}"
+      ]
+
+      splitter =
+        RecursiveCharacterTextSplitter.new!(%{
+          separators: LanguageSeparators.go(),
+          keep_separator: :start,
+          chunk_size: @chunk_size,
+          chunk_overlap: 0
+        })
+
+      splits =
+        splitter
+        |> RecursiveCharacterTextSplitter.split_text(code)
+
+      assert splits == expected_splits
+    end
+
+    @tag :wip
+    test "Rst splitting" do
+      code = "
+Sample Document
+===============
+
+Section
+-------
+
+This is the content of the section.
+
+Lists
+-------
+
+- Item 1
+- Item 2
+- Item 3
+
+Comment
+*******
+Not a comment
+
+.. This is a comment
+    "
+
+      expected_splits = [
+        "Sample Document",
+        "===============",
+        "Section",
+        "-------",
+        "This is the",
+        "content of the",
+        "section.",
+        "Lists",
+        "-------",
+        "- Item 1",
+        "- Item 2",
+        "- Item 3",
+        "Comment",
+        "*******",
+        "Not a comment",
+        ".. This is a",
+        "comment"
+      ]
+
+      splitter =
+        RecursiveCharacterTextSplitter.new!(%{
+          separators: LanguageSeparators.rst(),
+          keep_separator: :start,
+          chunk_size: @chunk_size,
+          chunk_overlap: 0,
+          is_separator_regex: true
+        })
+
+      splits =
+        splitter
+        |> RecursiveCharacterTextSplitter.split_text(code)
+
+      assert splits == expected_splits
+      code = "harry\n***\nbabylon is"
+
+      chunks =
+        splitter
+        |> RecursiveCharacterTextSplitter.split_text(code)
+
+      assert chunks == ["harry", "***\nbabylon is"]
+    end
+
+    test "Proto splitting" do
+      code = "
+syntax = \"proto3\";
+
+package example;
+
+message Person {
+    string name = 1;
+    int32 age = 2;
+    repeated string hobbies = 3;
+}      
+    "
+
+      expected_splits = [
+        "syntax =",
+        "\"proto3\";",
+        "package",
+        "example;",
+        "message Person",
+        "{",
+        "string name",
+        "= 1;",
+        "int32 age =",
+        "2;",
+        "repeated",
+        "string hobbies",
+        "= 3;",
+        "}"
+      ]
+
+      splitter =
+        RecursiveCharacterTextSplitter.new!(%{
+          separators: LanguageSeparators.proto(),
+          keep_separator: :start,
+          chunk_size: @chunk_size,
+          chunk_overlap: 0
+        })
+
+      splits =
+        splitter
+        |> RecursiveCharacterTextSplitter.split_text(code)
+
+      assert splits == expected_splits
+    end
+
+    test "Javscript splitting" do
+      code = "
+function helloWorld() {
+  console.log(\"Hello, World!\");
+}
+
+// Call the function
+helloWorld();      
+    "
+
+      expected_splits = [
+        "function",
+        "helloWorld() {",
+        "console.log(\"He",
+        "llo,",
+        "World!\");",
+        "}",
+        "// Call the",
+        "function",
+        "helloWorld();"
+      ]
+
+      splitter =
+        RecursiveCharacterTextSplitter.new!(%{
+          separators: LanguageSeparators.js(),
+          keep_separator: :start,
+          chunk_size: @chunk_size,
+          chunk_overlap: 0
+        })
+
+      splits =
+        splitter
+        |> RecursiveCharacterTextSplitter.split_text(code)
+
+      assert splits == expected_splits
+    end
+
+    test "Cobol splitting" do
+      code = "
+IDENTIFICATION DIVISION.
+PROGRAM-ID. HelloWorld.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+01 GREETING           PIC X(12)   VALUE 'Hello, World!'.
+PROCEDURE DIVISION.
+DISPLAY GREETING.
+STOP RUN.
+    "
+
+      expected_splits = [
+        "IDENTIFICATION",
+        "DIVISION.",
+        "PROGRAM-ID.",
+        "HelloWorld.",
+        "DATA DIVISION.",
+        "WORKING-STORAGE",
+        "SECTION.",
+        "01 GREETING",
+        "PIC X(12)",
+        "VALUE 'Hello,",
+        "World!'.",
+        "PROCEDURE",
+        "DIVISION.",
+        "DISPLAY",
+        "GREETING.",
+        "STOP RUN."
+      ]
+
+      splitter =
+        RecursiveCharacterTextSplitter.new!(%{
+          separators: LanguageSeparators.cobol(),
+          keep_separator: :start,
+          chunk_size: @chunk_size,
+          chunk_overlap: 0
+        })
+
+      splits =
+        splitter
+        |> RecursiveCharacterTextSplitter.split_text(code)
+
+      assert splits == expected_splits
+    end
+
+    test "Typescript splitting" do
+      code = "
+function helloWorld(): void {
+  console.log(\"Hello, World!\");
+}
+
+// Call the function
+helloWorld();
+    "
+
+      expected_splits = [
+        "function",
+        "helloWorld():",
+        "void {",
+        "console.log(\"He",
+        "llo,",
+        "World!\");",
+        "}",
+        "// Call the",
+        "function",
+        "helloWorld();"
+      ]
+
+      splitter =
+        RecursiveCharacterTextSplitter.new!(%{
+          separators: LanguageSeparators.ts(),
+          keep_separator: :start,
+          chunk_size: @chunk_size,
           chunk_overlap: 0
         })
 
