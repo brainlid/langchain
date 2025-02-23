@@ -53,7 +53,7 @@ defmodule LangChain.TextSplitter.CharacterTextSplitter do
   """
   def new(attrs \\ %{}) do
     %TextSplitter.CharacterTextSplitter{}
-    |> cast(attrs, @create_fields)
+    |> cast(attrs, @create_fields, empty_values: [nil])
     |> apply_action(:insert)
   end
 
@@ -113,7 +113,8 @@ defmodule LangChain.TextSplitter.CharacterTextSplitter do
     |> TextSplitter.merge_splits(text_splitter)
   end
 
-  defp split_text_with_regex(
+  @doc false
+  def split_text_with_regex(
          text,
          %CharacterTextSplitter{} = text_splitter
        ) do

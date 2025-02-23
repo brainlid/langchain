@@ -1,6 +1,7 @@
 defmodule LangChain.TextSplitter do
   @moduledoc false
-  defp join_docs(docs, separator), do: Enum.join(docs, separator)
+  defp join_docs(docs, separator),
+       do: Enum.join(docs, separator)
 
   defp merge_split_helper(d, acc, text_splitter) do
     separator_len = String.length(text_splitter.separator)
@@ -37,6 +38,12 @@ defmodule LangChain.TextSplitter do
   @doc false
   def merge_splits(splits, text_splitter) do
     acc = %{current_doc: [], docs: [], total: 0}
+    plain_separator =
+      if text_splitter.is_separator_regex do
+        Macro.unescape_string(text_splitter.separator)
+      else
+        text_splitter.separator
+      end
 
     output_acc =
       splits
@@ -47,14 +54,14 @@ defmodule LangChain.TextSplitter do
 
           separator_length =
             if Enum.count(acc.current_doc) > 0,
-              do: String.length(text_splitter.separator),
+              do: String.length(plain_separator),
               else: 0
 
           acc =
             if acc.total + len + separator_length >
                  text_splitter.chunk_size do
               if Enum.count(acc.current_doc) > 0 do
-                doc = join_docs(acc.current_doc, text_splitter.separator)
+                doc = join_docs(acc.current_doc, plain_separator)
                 acc = %{acc | docs: acc.docs ++ [doc]}
                 merge_split_helper(d, acc, text_splitter)
               else
@@ -68,13 +75,12 @@ defmodule LangChain.TextSplitter do
 
           separator_length =
             if Enum.count(acc.current_doc) > 1,
-              do: String.length(text_splitter.separator),
+              do: String.length(plain_separator),
               else: 0
 
           %{acc | total: acc.total + separator_length + len}
         end
       )
-
-    output_acc.docs ++ [join_docs(output_acc.current_doc, text_splitter.separator)]
+    output_acc.docs ++ [join_docs(output_acc.current_doc, plain_separator)]
   end
 end
