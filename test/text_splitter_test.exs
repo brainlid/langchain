@@ -16,7 +16,7 @@ defmodule TextSplitterTest do
                %{separator: " ", chunk_overlap: 0, chunk_size: 2}
                |> CharacterTextSplitter.new()
 
-      assert expected_splitter == output_splitter
+      assert output_splitter == expected_splitter
     end
 
     test "New TextSplitter with keep_separator" do
@@ -31,7 +31,7 @@ defmodule TextSplitterTest do
                %{separator: " ", chunk_overlap: 0, chunk_size: 2, keep_separator: :start}
                |> CharacterTextSplitter.new()
 
-      assert expected_splitter == output_splitter
+      assert output_splitter == expected_splitter
     end
 
     test "Splitting by character count" do
@@ -45,7 +45,7 @@ defmodule TextSplitterTest do
         character_splitter
         |> CharacterTextSplitter.split_text(text)
 
-      assert expected_output == output
+      assert output == expected_output
     end
 
     test "Splitting character by count doesn't create empty documents" do
@@ -59,7 +59,7 @@ defmodule TextSplitterTest do
         character_splitter
         |> CharacterTextSplitter.split_text(text)
 
-      assert expected_output == output
+      assert output ==  expected_output
     end
 
     test "Edge cases are separators" do
@@ -73,7 +73,7 @@ defmodule TextSplitterTest do
         character_splitter
         |> CharacterTextSplitter.split_text(text)
 
-      assert expected_output == output
+      assert output == expected_output
     end
 
     test "Splitting by character count on long words" do
@@ -87,7 +87,7 @@ defmodule TextSplitterTest do
         character_splitter
         |> CharacterTextSplitter.split_text(text)
 
-      assert expected_output == output
+      assert output == expected_output
     end
 
     test "Splitting by character count when shorter words are first" do
@@ -101,7 +101,7 @@ defmodule TextSplitterTest do
         character_splitter
         |> CharacterTextSplitter.split_text(text)
 
-      assert expected_output == output
+      assert output == expected_output
     end
 
     test "Splitting by characters when splits not found easily" do
@@ -115,7 +115,7 @@ defmodule TextSplitterTest do
         character_splitter
         |> CharacterTextSplitter.split_text(text)
 
-      assert expected_output == output
+      assert output == expected_output
     end
 
     test "Splitting by characters and keeping at start separator that is a regex special char" do
@@ -141,7 +141,7 @@ defmodule TextSplitterTest do
           character_splitter
           |> CharacterTextSplitter.split_text(text)
 
-        assert expected_output == output
+        assert output == expected_output
       end
     end
 
@@ -168,7 +168,7 @@ defmodule TextSplitterTest do
           character_splitter
           |> CharacterTextSplitter.split_text(text)
 
-        assert expected_output == output
+        assert output == expected_output
       end
     end
 
@@ -194,7 +194,7 @@ defmodule TextSplitterTest do
           character_splitter
           |> CharacterTextSplitter.split_text(text)
 
-        assert expected_output == output
+        assert output == expected_output
       end
     end
   end
@@ -205,55 +205,96 @@ defmodule TextSplitterTest do
       query = "Apple,banana,orange and tomato."
       expected_output_1 = ["Apple,", "banana,", "orange and tomato."]
       expected_output_2 = ["Apple", ",banana", ",orange and tomato", "."]
-      base_params = %{chunk_size: 10,
-                      chunk_overlap: 0,
-                      separators: split_tags}
+      base_params = %{chunk_size: 10, chunk_overlap: 0, separators: split_tags}
+
       test_data = [
         %{expected: expected_output_1, params: %{keep_separator: :end}},
         %{expected: expected_output_2, params: %{keep_separator: :start}}
       ]
+
       for tt <- test_data do
         splitter =
-          RecursiveCharacterTextSplitter.new!(
-            Map.merge(base_params, tt.params))
+          RecursiveCharacterTextSplitter.new!(Map.merge(base_params, tt.params))
+
         output = splitter |> RecursiveCharacterTextSplitter.split_text(query)
-        assert tt.expected == output        
+        assert tt.expected == output
       end
     end
 
-    @tag :wip
     test "Iterative splitter discard separator" do
       text = "....5X..3Y...4X....5Y..."
+
       base_params = %{
         chunk_overlap: 0,
         is_separator_regex: false,
-        separators: ["X", "Y"],
+        separators: ["X", "Y"]
       }
+
       expected_output_1 = [
         "....5",
         "..3",
         "...4",
         "....5",
-        "..."]
+        "..."
+      ]
+
       expected_output_2 = [
         "....5",
         "X..3",
         "Y...4",
         "X....5",
-        "Y..."]      
-      test_data = [
-        %{expected: expected_output_1,
-          params: %{chunk_size: 5}},
-        %{expected: expected_output_2,
-          params: %{chunk_size: 6, keep_separator: :start}},        
+        "Y..."
       ]
+
+      test_data = [
+        %{expected: expected_output_1, params: %{chunk_size: 5}},
+        %{expected: expected_output_2, params: %{chunk_size: 6, keep_separator: :start}}
+      ]
+
       for tt <- test_data do
         splitter =
-          RecursiveCharacterTextSplitter.new!(
-            Map.merge(base_params, tt.params))
+          RecursiveCharacterTextSplitter.new!(Map.merge(base_params, tt.params))
+
         output = splitter |> RecursiveCharacterTextSplitter.split_text(text)
         assert tt.expected == output
       end
+    end
+
+    @tag :wip
+    test "Iterative text splitter" do
+      text = "Hi.\n\nI'm Iglesias.\n\nHow? Are? You?\nOkay then f f f f.
+This is a weird text to write, but gotta test the splittingggg some how.
+
+Bye!\n\n-I."
+
+      expected_output = [
+        "Hi.",
+        "I'm",
+        "Iglesias.",
+        "How? Are?",
+        "You?",
+        "Okay then",
+        "f f f f.",
+        "This is a",
+        "weird",
+        "text to",
+        "write,",
+        "but gotta",
+        "test the",
+        "splitting",
+        "gggg",
+        "some how.",
+        "Bye!",
+        "-I."
+      ]
+
+      splitter =
+        RecursiveCharacterTextSplitter.new!(
+          %{chunk_size: 10,
+            chunk_overlap: 1})
+
+      output = splitter |> RecursiveCharacterTextSplitter.split_text(text)
+      assert output == expected_output
     end
   end
 end
