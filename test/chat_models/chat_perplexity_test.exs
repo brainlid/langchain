@@ -128,7 +128,9 @@ defmodule LangChain.ChatModels.ChatPerplexityTest do
       data = ChatPerplexity.for_api(perplexity, [], [calculator])
 
       assert data.response_format["type"] == "json_schema"
-      schema = data.response_format["json_schema"]
+
+      # The schema is nested under json_schema.schema
+      schema = data.response_format["json_schema"]["schema"]
       assert schema["type"] == "object"
       assert schema["required"] == ["tool_calls"]
       assert schema["properties"]["tool_calls"]["type"] == "array"
@@ -278,7 +280,8 @@ defmodule LangChain.ChatModels.ChatPerplexityTest do
               required: true
             })
           ],
-          function: fn %{"title" => title, "keywords" => keywords, "meta_description" => meta}, _ ->
+          function: fn %{"title" => title, "keywords" => keywords, "meta_description" => meta},
+                       _ ->
             {:ok, "Stored article: #{title} with #{length(keywords)} keywords and meta: #{meta}"}
           end
         })
@@ -291,9 +294,19 @@ defmodule LangChain.ChatModels.ChatPerplexityTest do
         })
 
       prompt = """
+      Rules:
+      1. Provide only the final answer. It is important that you do not include any explanation on the steps below.
+      2. Do not show the intermediate steps information.
+
+      Steps:
       Generate an SEO-optimized article title and metadata about artificial intelligence.
       Use the store_article function to save the generated content.
       Make sure to include relevant keywords and a compelling meta description.
+
+      Output a JSON object with the following fields:
+      - title: The article title
+      - keywords: An array of SEO keywords
+      - meta_description: The SEO meta description
       """
 
       {:ok, [%Message{} = response]} =
@@ -313,10 +326,9 @@ defmodule LangChain.ChatModels.ChatPerplexityTest do
       assert tool_call.name == "store_article"
       assert tool_call.type == :function
 
-      args = Jason.decode!(tool_call.arguments)
-      assert is_binary(args["title"])
-      assert is_list(args["keywords"])
-      assert is_binary(args["meta_description"])
+      assert is_binary(tool_call.arguments["title"])
+      assert is_list(tool_call.arguments["keywords"])
+      assert is_binary(tool_call.arguments["meta_description"])
     end
 
     test "call/2 handles errors in response_format schema" do

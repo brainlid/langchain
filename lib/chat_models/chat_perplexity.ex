@@ -17,6 +17,25 @@ defmodule LangChain.ChatModels.ChatPerplexity do
 
   Overall, this implementation provides a unified interface for interacting with the Perplexity Chat API
   while working around its limitations regarding tool calling.
+
+  ## Tool Calls
+
+  In order to use tool calls, you need specifically prompt Perplexity as outlined in their
+  [Prompt Guide](https://docs.perplexity.ai/guides/prompt-guide) as well as the
+  [Structured Outputs Guide](https://docs.perplexity.ai/guides/structured-outputs).
+
+  Provide it additional prompting like:
+
+  ```
+  Rules:
+  1. Provide only the final answer. It is important that you do not include any explanation on the steps below.
+  2. Do not show the intermediate steps information.
+
+  Output a JSON object with the following fields:
+  - title: The article title
+  - keywords: An array of SEO keywords
+  - meta_description: The SEO meta description
+  ```
   """
   use Ecto.Schema
   require Logger
@@ -161,53 +180,26 @@ defmodule LangChain.ChatModels.ChatPerplexity do
   """
   @spec for_api(t(), [Message.t()], ChatModel.tools()) :: %{atom() => any()}
   def for_api(%ChatPerplexity{} = perplexity, messages, tools) do
-    # If tools are provided, we'll create a JSON schema to emulate tool calls
     response_format =
-      if length(tools) > 0 do
+      if tools && !Enum.empty?(tools) do
         %{
           "type" => "json_schema",
           "json_schema" => %{
-            "type" => "object",
-            "required" => ["tool_calls"],
-            "properties" => %{
-              "tool_calls" => %{
-                "type" => "array",
-                "items" => %{
-                  "type" => "object",
-                  "required" => ["name", "arguments"],
-                  "properties" => %{
-                    "name" => %{
-                      "type" => "string",
-                      "enum" => Enum.map(tools, & &1.name)
-                    },
-                    "arguments" => %{
-                      "type" => "object",
-                      "properties" => Enum.reduce(tools, %{}, fn tool, acc ->
-                        case tool do
-                          %{parameters: params} when is_list(params) ->
-                            Map.merge(acc, Enum.reduce(params, %{}, fn param, inner_acc ->
-                              param_schema = %{"type" => to_string(param.type)}
-
-                              param_schema =
-                                if param.description,
-                                  do: Map.put(param_schema, "description", param.description),
-                                  else: param_schema
-
-                              param_schema =
-                                if param.required,
-                                  do: Map.put(param_schema, "required", param.required),
-                                  else: param_schema
-
-                              param_schema =
-                                if param.enum,
-                                  do: Map.put(param_schema, "enum", param.enum),
-                                  else: param_schema
-
-                              Map.put(inner_acc, param.name, param_schema)
-                            end))
-                          _ -> acc
-                        end
-                      end)
+            "schema" => %{
+              "type" => "object",
+              "required" => ["tool_calls"],
+              "properties" => %{
+                "tool_calls" => %{
+                  "type" => "array",
+                  "items" => %{
+                    "type" => "object",
+                    "required" => ["name", "arguments"],
+                    "properties" => %{
+                      "name" => %{
+                        "type" => "string",
+                        "enum" => Enum.map(tools, & &1.name)
+                      },
+                      "arguments" => build_arguments_schema(tools)
                     }
                   }
                 }
@@ -240,6 +232,50 @@ defmodule LangChain.ChatModels.ChatPerplexity do
     |> Utils.conditionally_add_to_map(:response_format, response_format)
   end
 
+  defp build_arguments_schema([tool | _]) do
+    properties =
+      tool.parameters
+      |> Enum.map(fn param ->
+        {param.name, param_to_json_schema(param)}
+      end)
+      |> Map.new()
+
+    required =
+      tool.parameters
+      |> Enum.filter(& &1.required)
+      |> Enum.map(& &1.name)
+
+    %{
+      "type" => "object",
+      "required" => required,
+      "properties" => properties
+    }
+  end
+
+  defp param_to_json_schema(param) do
+    base = %{"type" => atom_to_json_type(param.type)}
+
+    base
+    |> add_enum(param)
+    |> add_items(param)
+  end
+
+  defp atom_to_json_type(:string), do: "string"
+  defp atom_to_json_type(:number), do: "number"
+  defp atom_to_json_type(:integer), do: "integer"
+  defp atom_to_json_type(:boolean), do: "boolean"
+  defp atom_to_json_type(:array), do: "array"
+  defp atom_to_json_type(:object), do: "object"
+
+  defp add_enum(schema, %{enum: enum}) when enum in [nil, []], do: schema
+  defp add_enum(schema, %{enum: enum}), do: Map.put(schema, "enum", enum)
+
+  defp add_items(schema, %{type: :array, item_type: item_type}) do
+    Map.put(schema, "items", %{"type" => atom_to_json_type(String.to_existing_atom(item_type))})
+  end
+
+  defp add_items(schema, _), do: schema
+
   @doc """
   Convert a LangChain Message-based structure to the expected map of data for
   the Perplexity API.
@@ -271,7 +307,7 @@ defmodule LangChain.ChatModels.ChatPerplexity do
           {:error, reason}
 
         parsed_data ->
-          {:ok, parsed_data}
+          {:ok, [parsed_data]}
       end
     rescue
       err in LangChainError ->
@@ -305,13 +341,14 @@ defmodule LangChain.ChatModels.ChatPerplexity do
     req
     |> Req.post()
     |> case do
-      {:ok, %Req.Response{body: data} = _response} ->
+      {:ok, %Req.Response{body: data}} ->
         Callbacks.fire(perplexity.callbacks, :on_llm_token_usage, [
           get_token_usage(data)
         ])
 
-        case do_process_response(perplexity, data) do
+        case do_process_response(perplexity, data, tools) do
           {:error, %LangChainError{} = reason} ->
+            Logger.error("Error processing response: #{inspect(reason)}")
             {:error, reason}
 
           result ->
@@ -412,6 +449,87 @@ defmodule LangChain.ChatModels.ChatPerplexity do
   end
 
   @doc false
+  @spec do_process_response(t(), map(), ChatModel.tools()) ::
+          Message.t() | {:error, LangChainError.t()}
+  def do_process_response(model, %{"choices" => [choice | _]} = data, tools) do
+    # Fire token usage callback if present
+    if usage = Map.get(data, "usage") do
+      case get_token_usage(%{"usage" => usage}) do
+        %TokenUsage{} = token_usage ->
+          Callbacks.fire(model.callbacks, :on_llm_token_usage, [token_usage])
+
+        nil ->
+          :ok
+      end
+    end
+
+    # Process the first choice
+    do_process_response(model, choice, tools)
+  end
+
+  def do_process_response(
+        _model,
+        %{"finish_reason" => finish_reason, "message" => %{"content" => content, "role" => role}} =
+          data,
+        tools
+      )
+      when tools != [] do
+    status = finish_reason_to_status(finish_reason)
+
+    # Try to parse content as JSON since we expect structured output
+    case Jason.decode(content) do
+      {:ok, _parsed} ->
+        # Create a tool call from the parsed content
+        tool_call =
+          ToolCall.new!(%{
+            type: :function,
+            status: :complete,
+            name: List.first(tools).name,
+            # Keep the original JSON string
+            arguments: content,
+            call_id: Ecto.UUID.generate()
+          })
+
+        case Message.new(%{
+               "role" => role,
+               "content" => nil,
+               "status" => status,
+               "index" => data["index"],
+               "tool_calls" => [tool_call]
+             }) do
+          {:ok, message} -> message
+          {:error, changeset} -> {:error, LangChainError.exception(changeset)}
+        end
+
+      {:error, _} ->
+        {:error,
+         LangChainError.exception(
+           type: "bad_request",
+           message: "response_format: expected JSON structured output but got: #{content}"
+         )}
+    end
+  end
+
+  def do_process_response(
+        _model,
+        %{"finish_reason" => finish_reason, "message" => %{"content" => content, "role" => role}} =
+          data,
+        tools
+      )
+      when tools == [] do
+    status = finish_reason_to_status(finish_reason)
+
+    case Message.new(%{
+           "role" => role,
+           "content" => content,
+           "status" => status,
+           "index" => data["index"]
+         }) do
+      {:ok, message} -> message
+      {:error, changeset} -> {:error, LangChainError.exception(changeset)}
+    end
+  end
+
   def do_process_response(_model, %{"error" => %{"message" => reason, "type" => type}}) do
     Logger.error("Received error from API: #{inspect(reason)}")
     {:error, LangChainError.exception(type: type, message: reason)}
@@ -422,7 +540,7 @@ defmodule LangChain.ChatModels.ChatPerplexity do
     {:error, LangChainError.exception(message: reason)}
   end
 
-  def do_process_response(model, %{"choices" => [], "usage" => %{} = usage} = _data) do
+  def do_process_response(model, %{"choices" => %{} = usage} = _data) do
     case get_token_usage(%{"usage" => usage}) do
       %TokenUsage{} = token_usage ->
         Callbacks.fire(model.callbacks, :on_llm_token_usage, [token_usage])
