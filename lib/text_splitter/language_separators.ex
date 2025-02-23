@@ -1,4 +1,32 @@
 defmodule LangChain.TextSplitter.LanguageSeparators do
+  @cpp [
+    # Split along class definitions
+    "\nclass ",
+    # Split along function definitions
+    "\nvoid ",
+    "\nint ",
+    "\nfloat ",
+    "\ndouble ",
+    # Split along control flow statements
+    "\nif ",
+    "\nfor ",
+    "\nwhile ",
+    "\nswitch ",
+    "\ncase ",
+    # Split by the normal type of lines
+    "\n\n",
+    "\n",
+    " ",
+    ""
+  ]
+  def cpp() do
+    @cpp
+  end
+
+  def c() do
+    @cpp
+  end
+
   @python [
     # First, try to split along class definitions
     "\nclass ",

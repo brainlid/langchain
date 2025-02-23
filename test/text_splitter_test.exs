@@ -416,7 +416,6 @@ func main() {
       assert splits == expected_splits
     end
 
-    @tag :wip
     test "Rst splitting" do
       code = "
 Sample Document
@@ -640,6 +639,720 @@ helloWorld();
           separators: LanguageSeparators.ts(),
           keep_separator: :start,
           chunk_size: @chunk_size,
+          chunk_overlap: 0
+        })
+
+      splits =
+        splitter
+        |> RecursiveCharacterTextSplitter.split_text(code)
+
+      assert splits == expected_splits
+    end
+
+    test "Java splitting" do
+      code = "
+public class HelloWorld {
+    public static void main(String[] args) {
+        System.out.println(\"Hello, World!\");
+    }
+}
+    "
+
+      expected_splits = [
+        "public class",
+        "HelloWorld {",
+        "public",
+        "static void",
+        "main(String[]",
+        "args) {",
+        "System.out.prin",
+        "tln(\"Hello,",
+        "World!\");",
+        "}\n}"
+      ]
+
+      splitter =
+        RecursiveCharacterTextSplitter.new!(%{
+          separators: LanguageSeparators.java(),
+          keep_separator: :start,
+          chunk_size: @chunk_size,
+          chunk_overlap: 0
+        })
+
+      splits =
+        splitter
+        |> RecursiveCharacterTextSplitter.split_text(code)
+
+      assert splits == expected_splits
+    end
+
+    test "Kotlin splitting" do
+      code = "
+class HelloWorld {
+    companion object {
+        @JvmStatic
+        fun main(args: Array<String>) {
+            println(\"Hello, World!\")
+        }
+    }
+}
+    "
+
+      expected_splits = [
+        "class",
+        "HelloWorld {",
+        "companion",
+        "object {",
+        "@JvmStatic",
+        "fun",
+        "main(args:",
+        "Array<String>)",
+        "{",
+        "println(\"Hello,",
+        "World!\")",
+        "}\n    }",
+        "}"
+      ]
+
+      splitter =
+        RecursiveCharacterTextSplitter.new!(%{
+          separators: LanguageSeparators.kotlin(),
+          keep_separator: :start,
+          chunk_size: @chunk_size,
+          chunk_overlap: 0
+        })
+
+      splits =
+        splitter
+        |> RecursiveCharacterTextSplitter.split_text(code)
+
+      assert splits == expected_splits
+    end
+
+    test "Csharp splitting" do
+      code = "
+using System;
+class Program
+{
+    static void Main()
+    {
+        int age = 30; // Change the age value as needed
+
+        // Categorize the age without any console output
+        if (age < 18)
+        {
+            // Age is under 18
+        }
+        else if (age >= 18 && age < 65)
+        {
+            // Age is an adult
+        }
+        else
+        {
+            // Age is a senior citizen
+        }
+    }
+}
+    "
+
+      expected_splits = [
+        "using System;",
+        "class Program\n{",
+        "static void",
+        "Main()",
+        "{",
+        "int age",
+        "= 30; // Change",
+        "the age value",
+        "as needed",
+        "//",
+        "Categorize the",
+        "age without any",
+        "console output",
+        "if (age",
+        "< 18)",
+        "{",
+        "//",
+        "Age is under 18",
+        "}",
+        "else if",
+        "(age >= 18 &&",
+        "age < 65)",
+        "{",
+        "//",
+        "Age is an adult",
+        "}",
+        "else",
+        "{",
+        "//",
+        "Age is a senior",
+        "citizen",
+        "}\n    }",
+        "}"
+      ]
+
+      splitter =
+        RecursiveCharacterTextSplitter.new!(%{
+          separators: LanguageSeparators.csharp(),
+          keep_separator: :start,
+          chunk_size: @chunk_size,
+          chunk_overlap: 0
+        })
+
+      splits =
+        splitter
+        |> RecursiveCharacterTextSplitter.split_text(code)
+
+      assert splits == expected_splits
+    end
+    
+    test "C and C++ splitting" do
+      code = "
+#include <iostream>
+
+int main() {
+    std::cout << \"Hello, World!\" << std::endl;
+    return 0;
+}
+    "
+
+      expected_splits = [
+       "#include",
+        "<iostream>",
+        "int main() {",
+        "std::cout",
+        "<< \"Hello,",
+        "World!\" <<",
+        "std::endl;",
+        "return 0;\n}",
+      ]
+
+      splitter =
+        RecursiveCharacterTextSplitter.new!(%{
+          separators: LanguageSeparators.c(),
+          keep_separator: :start,
+          chunk_size: @chunk_size,
+          chunk_overlap: 0
+        })
+
+      splits =
+        splitter
+        |> RecursiveCharacterTextSplitter.split_text(code)
+
+      assert splits == expected_splits
+    end
+    
+    test "Scala splitting" do
+      code = "
+object HelloWorld {
+  def main(args: Array[String]): Unit = {
+    println(\"Hello, World!\")
+  }
+}
+    "
+
+      expected_splits = [
+       "object",
+        "HelloWorld {",
+        "def",
+        "main(args:",
+        "Array[String]):",
+        "Unit = {",
+        "println(\"Hello,",
+        "World!\")",
+        "}\n}",
+      ]
+
+      splitter =
+        RecursiveCharacterTextSplitter.new!(%{
+          separators: LanguageSeparators.scala(),
+          keep_separator: :start,
+          chunk_size: @chunk_size,
+          chunk_overlap: 0
+        })
+
+      splits =
+        splitter
+        |> RecursiveCharacterTextSplitter.split_text(code)
+
+      assert splits == expected_splits
+    end
+    
+    test "Ruby splitting" do
+      code = "
+def hello_world
+  puts \"Hello, World!\"
+end
+
+hello_world
+    "
+
+      expected_splits = [
+        "def hello_world",
+        "puts \"Hello,",
+        "World!\"",
+        "end",
+        "hello_world",
+      ]
+
+      splitter =
+        RecursiveCharacterTextSplitter.new!(%{
+          separators: LanguageSeparators.ruby(),
+          keep_separator: :start,
+          chunk_size: @chunk_size,
+          chunk_overlap: 0
+        })
+
+      splits =
+        splitter
+        |> RecursiveCharacterTextSplitter.split_text(code)
+
+      assert splits == expected_splits
+    end
+    
+    test "Php splitting" do
+      code = "
+<?php
+function hello_world() {
+    echo \"Hello, World!\";
+}
+
+hello_world();
+?>
+    "
+
+      expected_splits = [
+        "<?php",
+        "function",
+        "hello_world() {",
+        "echo",
+        "\"Hello,",
+        "World!\";",
+        "}",
+        "hello_world();",
+        "?>",
+      ]
+
+      splitter =
+        RecursiveCharacterTextSplitter.new!(%{
+          separators: LanguageSeparators.php(),
+          keep_separator: :start,
+          chunk_size: @chunk_size,
+          chunk_overlap: 0
+        })
+
+      splits =
+        splitter
+        |> RecursiveCharacterTextSplitter.split_text(code)
+
+      assert splits == expected_splits
+    end
+
+    test "Swift splitting" do
+      code = "
+func helloWorld() {
+    print(\"Hello, World!\")
+}
+
+helloWorld()
+    "
+
+      expected_splits = [
+        "func",
+        "helloWorld() {",
+        "print(\"Hello,",
+        "World!\")",
+        "}",
+        "helloWorld()",
+      ]
+
+      splitter =
+        RecursiveCharacterTextSplitter.new!(%{
+          separators: LanguageSeparators.swift(),
+          keep_separator: :start,
+          chunk_size: @chunk_size,
+          chunk_overlap: 0
+        })
+
+      splits =
+        splitter
+        |> RecursiveCharacterTextSplitter.split_text(code)
+
+      assert splits == expected_splits
+    end
+    
+    test "Rust splitting" do
+      code = "
+fn main() {
+    println!(\"Hello, World!\");
+}
+    "
+
+      expected_splits = [
+        "fn main() {", "println!(\"Hello", ",", "World!\");", "}"
+      ]
+
+      splitter =
+        RecursiveCharacterTextSplitter.new!(%{
+          separators: LanguageSeparators.rust(),
+          keep_separator: :start,
+          chunk_size: @chunk_size,
+          chunk_overlap: 0
+        })
+
+      splits =
+        splitter
+        |> RecursiveCharacterTextSplitter.split_text(code)
+
+      assert splits == expected_splits
+    end
+    test "Markdown splitting" do
+      code = "
+# Sample Document
+
+## Section
+
+This is the content of the section.
+
+## Lists
+
+- Item 1
+- Item 2
+- Item 3
+
+### Horizontal lines
+
+***********
+____________
+-------------------
+
+#### Code blocks
+```
+This is a code block
+
+# sample code
+a = 1
+b = 2
+```
+    "
+
+      expected_splits = [
+     "# Sample",
+        "Document",
+        "## Section",
+        "This is the",
+        "content of the",
+        "section.",
+        "## Lists",
+        "- Item 1",
+        "- Item 2",
+        "- Item 3",
+        "### Horizontal",
+        "lines",
+        "***********",
+        "____________",
+        "---------------",
+        "----",
+        "#### Code",
+        "blocks",
+        "```",
+        "This is a code",
+        "block",
+        "# sample code",
+        "a = 1\nb = 2",
+        "```",
+      ]
+
+      splitter =
+        RecursiveCharacterTextSplitter.new!(%{
+          separators: LanguageSeparators.markdown(),
+          keep_separator: :start,
+          chunk_size: @chunk_size,
+          chunk_overlap: 0
+        })
+
+      splits =
+        splitter
+        |> RecursiveCharacterTextSplitter.split_text(code)
+
+      assert splits == expected_splits
+    end
+    
+    test "Latex splitting" do
+      code = "
+Hi Harrison!
+\\chapter{1}
+    "
+
+      expected_splits = ["Hi Harrison!", "\\chapter{1}"]
+
+      splitter =
+        RecursiveCharacterTextSplitter.new!(%{
+          separators: LanguageSeparators.latex(),
+          is_separator_regex: true,
+          keep_separator: :start,
+          chunk_size: @chunk_size,
+          chunk_overlap: 0
+        })
+
+      splits =
+        splitter
+        |> RecursiveCharacterTextSplitter.split_text(code)
+
+      assert splits == expected_splits
+    end
+    
+    test "Html splitting" do
+      code = "
+<h1>Sample Document</h1>
+    <h2>Section</h2>
+        <p id=\"1234\">Reference content.</p>
+
+    <h2>Lists</h2>
+        <ul>
+            <li>Item 1</li>
+            <li>Item 2</li>
+            <li>Item 3</li>
+        </ul>
+
+        <h3>A block</h3>
+            <div class=\"amazing\">
+                <p>Some text</p>
+                <p>Some more text</p>
+            </div>
+    "
+
+      expected_splits = [
+        "<h1>Sample Document</h1>\n    <h2>Section</h2>",
+        "<p id=\"1234\">Reference content.</p>",
+        "<h2>Lists</h2>\n        <ul>",
+        "<li>Item 1</li>\n            <li>Item 2</li>",
+        "<li>Item 3</li>\n        </ul>",
+        "<h3>A block</h3>",
+        "<div class=\"amazing\">",
+        "<p>Some text</p>",
+        "<p>Some more text</p>\n            </div>",        
+      ]
+
+      splitter =
+        RecursiveCharacterTextSplitter.new!(%{
+          separators: LanguageSeparators.html(),
+          keep_separator: :start,
+          chunk_size: 60,
+          chunk_overlap: 0
+        })
+
+      splits =
+        splitter
+        |> RecursiveCharacterTextSplitter.split_text(code)
+
+      assert splits == expected_splits
+    end
+    
+    test "Solidity splitting" do
+      code = "
+pragma solidity ^0.8.20;
+  contract HelloWorld {
+    function add(uint a, uint b) pure public returns(uint) {
+      return  a + b;
+    }
+  }
+    "
+
+      expected_splits = [
+        "pragma solidity",
+        "^0.8.20;",
+        "contract",
+        "HelloWorld {",
+        "function",
+        "add(uint a,",
+        "uint b) pure",
+        "public",
+        "returns(uint) {",
+        "return  a",
+        "+ b;",
+        "}\n  }",      
+      ]
+
+      splitter =
+        RecursiveCharacterTextSplitter.new!(%{
+          separators: LanguageSeparators.sol(),
+          keep_separator: :start,
+          chunk_size: @chunk_size,
+          chunk_overlap: 0
+        })
+
+      splits =
+        splitter
+        |> RecursiveCharacterTextSplitter.split_text(code)
+
+      assert splits == expected_splits
+    end
+    
+    test "Lua splitting" do
+      code = "
+local variable = 10
+
+function add(a, b)
+    return a + b
+end
+
+if variable > 5 then
+    for i=1, variable do
+        while i < variable do
+            repeat
+                print(i)
+                i = i + 1
+            until i >= variable
+        end
+    end
+end
+    "
+
+      expected_splits = [
+        "local variable",
+        "= 10",
+        "function add(a,",
+        "b)",
+        "return a +",
+        "b",
+        "end",
+        "if variable > 5",
+        "then",
+        "for i=1,",
+        "variable do",
+        "while i",
+        "< variable do",
+        "repeat",
+        "print(i)",
+        "i = i + 1",
+        "until i >=",
+        "variable",
+        "end",
+        "end\nend",
+      ]
+
+      splitter =
+        RecursiveCharacterTextSplitter.new!(%{
+          separators: LanguageSeparators.lua(),
+          keep_separator: :start,
+          chunk_size: @chunk_size,
+          chunk_overlap: 0
+        })
+
+      splits =
+        splitter
+        |> RecursiveCharacterTextSplitter.split_text(code)
+
+      assert splits == expected_splits
+    end
+    test "Haskell splitting" do
+      code = "
+        main :: IO ()
+        main = do
+          putStrLn \"Hello, World!\"
+
+        -- Some sample functions
+        add :: Int -> Int -> Int
+        add x y = x + y      
+    "
+
+      expected_splits = [
+        "main ::",
+        "IO ()",
+        "main = do",
+        "putStrLn",
+        "\"Hello, World!\"",
+        "--",
+        "Some sample",
+        "functions",
+        "add :: Int ->",
+        "Int -> Int",
+        "add x y = x",
+        "+ y",
+      ]
+
+      splitter =
+        RecursiveCharacterTextSplitter.new!(%{
+          separators: LanguageSeparators.haskell(),
+          is_separator_regex: true,
+          keep_separator: :start,
+          chunk_size: @chunk_size,
+          chunk_overlap: 0
+        })
+
+      splits =
+        splitter
+        |> RecursiveCharacterTextSplitter.split_text(code)
+
+      assert splits == expected_splits
+    end
+    
+    test "Powershell short code splitting" do
+      code = "
+# Check if a file exists
+$filePath = \"C:\\temp\\file.txt\"
+if (Test-Path $filePath) {
+    # File exists
+} else {
+    # File does not exist
+}
+    "
+
+      expected_splits = [
+        "# Check if a file exists\n$filePath = \"C:\\temp\\file.txt\"",
+        "if (Test-Path $filePath) {\n    # File exists\n} else {",
+        "# File does not exist\n}",
+      ]
+
+      splitter =
+        RecursiveCharacterTextSplitter.new!(%{
+          separators: LanguageSeparators.powershell(),
+          is_separator_regex: true,
+          keep_separator: :start,
+          chunk_size: 60,
+          chunk_overlap: 0
+        })
+
+      splits =
+        splitter
+        |> RecursiveCharacterTextSplitter.split_text(code)
+
+      assert splits == expected_splits
+    end
+    
+    test "Powershell long code splitting" do
+      code = "
+# Get a list of all processes and export to CSV
+$processes = Get-Process
+$processes | Export-Csv -Path \"C:\\temp\\processes.csv\" -NoTypeInformation
+
+# Read the CSV file and display its content
+$csvContent = Import-Csv -Path \"C:\\temp\\processes.csv\"
+$csvContent | ForEach-Object {
+    $_.ProcessName
+}
+
+# End of script
+    "
+
+      expected_splits = [
+        "# Get a list of all processes and export to CSV",
+        "$processes = Get-Process",
+        "$processes | Export-Csv -Path \"C:\\temp\\processes.csv\"",
+        "-NoTypeInformation",
+        "# Read the CSV file and display its content",
+        "$csvContent = Import-Csv -Path \"C:\\temp\\processes.csv\"",
+        "$csvContent | ForEach-Object {\n    $_.ProcessName\n}",
+        "# End of script",        
+      ]
+
+      splitter =
+        RecursiveCharacterTextSplitter.new!(%{
+          separators: LanguageSeparators.powershell(),
+          is_separator_regex: true,
+          keep_separator: :start,
+          chunk_size: 60,
           chunk_overlap: 0
         })
 
