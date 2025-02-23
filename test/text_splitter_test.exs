@@ -59,7 +59,7 @@ defmodule TextSplitterTest do
         character_splitter
         |> CharacterTextSplitter.split_text(text)
 
-      assert output ==  expected_output
+      assert output == expected_output
     end
 
     test "Edge cases are separators" do
@@ -289,9 +289,11 @@ Bye!\n\n-I."
       ]
 
       splitter =
-        RecursiveCharacterTextSplitter.new!(
-          %{chunk_size: 10,
-            chunk_overlap: 1})
+        RecursiveCharacterTextSplitter.new!(%{
+          keep_separator: :start,
+          chunk_size: 10,
+          chunk_overlap: 1
+        })
 
       output = splitter |> RecursiveCharacterTextSplitter.split_text(text)
       assert output == expected_output
