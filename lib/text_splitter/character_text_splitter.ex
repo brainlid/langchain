@@ -49,7 +49,7 @@ defmodule LangChain.TextSplitter.CharacterTextSplitter do
   @create_fields @update_fields
 
   @doc """
-  Build a new ChracterTextSplitter and return an `:ok`/`:error` tuple with the result.
+  Build a new CharacterTextSplitter and return an `:ok`/`:error` tuple with the result.
   """
   def new(attrs \\ %{}) do
     %TextSplitter.CharacterTextSplitter{}
