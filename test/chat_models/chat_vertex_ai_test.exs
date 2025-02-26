@@ -132,14 +132,13 @@ defmodule ChatModels.ChatVertexAITest do
              } = tool_result
     end
 
-    test "expands system messages into two", %{vertex_ai: vertex_ai} do
+    test "generates a map containing a system message", %{vertex_ai: vertex_ai} do
       message = "These are some instructions."
 
       data = ChatVertexAI.for_api(vertex_ai, [Message.new_system!(message)], [])
 
-      assert %{"contents" => [msg1, msg2]} = data
-      assert %{"role" => :user, "parts" => [%{"text" => ^message}]} = msg1
-      assert %{"role" => :model, "parts" => [%{"text" => ""}]} = msg2
+      assert %{"system_instruction" => msg1} = data
+      assert %{"parts" => %{"text" => ^message}} = msg1
     end
 
     test "generates a map containing function declarations", %{
