@@ -20,6 +20,7 @@ env:
   AWS_ACCESS_KEY_ID: invalid
   AWS_SECRET_ACCESS_KEY: invalid
   AWS_REGION: invalid
+  PERPLEXITY_API_KEY: invalid
 
 permissions:
   contents: read

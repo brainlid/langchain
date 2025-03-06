@@ -13,6 +13,7 @@ Currently supported AI services:
 - Mistral
 - Bumblebee self-hosted models - including Llama, Mistral and Zephyr
 - [LMStudio](https://lmstudio.ai/docs/api/endpoints/openai) via their OpenAI compatibility API
+- Perplexity
 
 **LangChain** is short for Language Chain. An LLM, or Large Language Model, is the "Language" part. This library makes it easier for Elixir applications to "chain" or connect different processes, integrations, libraries, services, or functionality together with an LLM.
 
