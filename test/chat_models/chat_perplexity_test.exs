@@ -331,6 +331,7 @@ defmodule LangChain.ChatModels.ChatPerplexityTest do
       assert is_binary(tool_call.arguments["meta_description"])
     end
 
+    @tag live_call: true, live_perplexity_ai: true
     test "call/2 handles errors in response_format schema" do
       calculator = %Function{
         name: "calculator",
