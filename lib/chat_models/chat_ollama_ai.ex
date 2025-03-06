@@ -29,6 +29,11 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
 
   Usage examples and more details are in the LangChain documentation or the
   module's function docs.
+
+  ## Tool Support
+
+  Currently, `ChatOllamaAI` supports tool calls when not streaming the responses.
+  Streaming tool calls is not yet supported.
   """
   use Ecto.Schema
   require Logger
