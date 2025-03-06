@@ -133,6 +133,7 @@ defmodule LangChain.Chains.LLMChain do
   alias LangChain.Function
   alias LangChain.LangChainError
   alias LangChain.Utils
+  alias LangChain.NativeTool
 
   @primary_key false
   embedded_schema do
@@ -273,7 +274,7 @@ defmodule LangChain.Chains.LLMChain do
   @doc """
   Add a tool to an LLMChain.
   """
-  @spec add_tools(t(), Function.t() | [Function.t()]) :: t() | no_return()
+  @spec add_tools(t(), NativeTool.t() | Function.t() | [Function.t()]) :: t() | no_return()
   def add_tools(%LLMChain{tools: existing} = chain, tools) do
     updated = existing ++ List.wrap(tools)
 
