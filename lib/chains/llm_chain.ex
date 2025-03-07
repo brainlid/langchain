@@ -427,6 +427,19 @@ defmodule LangChain.Chains.LLMChain do
           try_chain_with_llm(use_chain, tail, before_fallback_fn, run_fn)
       end
     rescue
+      err in LangChainError ->
+        if err.type == :stop do
+          # Handle explicitly raised StopError
+          {:error, use_chain, err}
+        else
+          # Handle other LangChainError types
+          Logger.error(
+            "Rescued from exception during with_fallback processing. Error: #{inspect(err)}"
+          )
+
+          try_chain_with_llm(use_chain, tail, before_fallback_fn, run_fn)
+        end
+
       err ->
         # Log the error and try again.
         Logger.error(
