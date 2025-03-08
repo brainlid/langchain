@@ -12,12 +12,12 @@ defmodule LangChain.TextSplitter.RecursiveCharacterTextSplitter do
   The main characterstinc of this splitter is that tries to keep
   paragraphs, sentences or code functions together as long as possible.
 
-  `LanguageSeparators` provide separator lists for some programming and markup languages.
+  `LangChain.TextSplitter.LanguageSeparators` provide separator lists for some programming and markup languages.
 
   How it works:
   - It splits the text at the first specified `separator` characters
     from the given `separators` list.
-    It uses `CharacterTextSplitter` to do so.
+    It uses `LangChain.TextSplitter.CharacterTextSplitter` to do so.
   - For each of the above splits, it calls itself recursively
     using the tail of the `separators` list.
 
@@ -28,7 +28,7 @@ defmodule LangChain.TextSplitter.RecursiveCharacterTextSplitter do
   * `chunk_overlap` - Integer number of characters that two consecutive chunks should share.
   * `keep_separator` - Either `:discard_separator`, `:start` or `:end`. If `nil`, the separator is discarded from the output chunks. `:start` and `:end` keep the separator at the start or end of the output chunks. Defaults to `start`.
   * `is_separator_regex` - Boolean defaulting to `false`. If `true`, the `separator` string is not escaped. Defaults to `false`
-  """  
+  """
   use Ecto.Schema
   import Ecto.Changeset
   alias LangChain.LangChainError
@@ -41,9 +41,11 @@ defmodule LangChain.TextSplitter.RecursiveCharacterTextSplitter do
     field :separators, {:array, :string}, default: ["\n\n", "\n", " ", ""]
     field :chunk_size, :integer
     field :chunk_overlap, :integer
+
     field :keep_separator, Ecto.Enum,
-          values: [:discard_separator, :start, :end],
-          default: :start
+      values: [:discard_separator, :start, :end],
+      default: :start
+
     field :is_separator_regex, :boolean, default: false
   end
 
@@ -80,6 +82,46 @@ defmodule LangChain.TextSplitter.RecursiveCharacterTextSplitter do
     end
   end
 
+  @doc """
+  Splits text recursively based on a list of characters.
+  By default, the `separators` characters are kept at the start
+      iex> split_tags = [",", "."]
+      iex> base_params = %{chunk_size: 10, chunk_overlap: 0, separators: split_tags}
+      iex> query = "Apple,banana,orange and tomato."
+      iex> splitter = RecursiveCharacterTextSplitter.new!(base_params)    
+      iex> splitter |> RecursiveCharacterTextSplitter.split_text(query)
+      ["Apple", ",banana", ",orange and tomato", "."]
+
+  We can keep the separator at the end of a chunk, providing the
+  `keep_separator: :end` option:
+      iex> split_tags = [",", "."]
+      iex> base_params = %{chunk_size: 10, chunk_overlap: 0, separators: split_tags, keep_separator: :end}
+      iex> query = "Apple,banana,orange and tomato."
+      iex> splitter = RecursiveCharacterTextSplitter.new!(base_params)    
+      iex> splitter |> RecursiveCharacterTextSplitter.split_text(query)
+      ["Apple,", "banana,", "orange and tomato."]
+
+  See `LangChain.TextSplitter.CharacterTextSplitter` for the usage of the different options.
+
+  `LanguageSeparators` provides `separators` for multiple
+  programming and markdown languages.
+  To split Python code:
+      iex> python_code = "
+      ...>def hello_world():
+      ...>  print('Hello, World')
+      ...>
+      ...>            
+      ...># Call the function
+      ...>hello_world()"
+      iex> splitter =
+      ...>  RecursiveCharacterTextSplitter.new!(%{
+      ...>    separators: LanguageSeparators.python(),
+      ...>    keep_separator: :start,
+      ...>    chunk_size: 16,
+      ...>    chunk_overlap: 0})
+      iex> splitter |> RecursiveCharacterTextSplitter.split_text(python_code)
+      ["def", "hello_world():", "print('Hello,", "World')", "# Call the", "function", "hello_world()"]
+  """
   def split_text(%RecursiveCharacterTextSplitter{} = text_splitter, text) do
     new_separators =
       text_splitter.separators
