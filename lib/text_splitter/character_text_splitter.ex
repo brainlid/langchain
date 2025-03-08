@@ -33,9 +33,11 @@ defmodule LangChain.TextSplitter.CharacterTextSplitter do
     field :separator, :string, default: " "
     field :chunk_size, :integer
     field :chunk_overlap, :integer
+
     field :keep_separator, Ecto.Enum,
-          values: [:discard_separator, :start, :end],
-          default: :discard_separator
+      values: [:discard_separator, :start, :end],
+      default: :discard_separator
+
     field :is_separator_regex, :boolean, default: false
   end
 

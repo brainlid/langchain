@@ -1,4 +1,8 @@
 defmodule LangChain.TextSplitter.LanguageSeparators do
+  @moduledoc """
+  Separators lists for programming and markdown languages.
+  Useful to use with `LangChain.TextSplitter.RecursiveCharacterTextSplitter`.
+  """
   @cpp [
     # Split along class definitions
     "\nclass ",
