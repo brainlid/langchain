@@ -1,4 +1,34 @@
 defmodule LangChain.TextSplitter.RecursiveCharacterTextSplitter do
+  @moduledoc """
+  The `RecursiveCharacterTextSplitter` is the recommended spliltter for generic text.
+  It splits the text based on a list of characters.
+  It uses each of these characters sequentially, until the text is split
+  into small enough chunks. The default list is `["\n\n", "\n", " ", ""]`.
+
+  The purpose is to prepare text for processing
+  by large language models with limited context windows,
+  or where a shorter context window is desired.
+
+  The main characterstinc of this splitter is that tries to keep
+  paragraphs, sentences or code functions together as long as possible.
+
+  `LanguageSeparators` provide separator lists for some programming and markup languages.
+
+  How it works:
+  - It splits the text at the first specified `separator` characters
+    from the given `separators` list.
+    It uses `CharacterTextSplitter` to do so.
+  - For each of the above splits, it calls itself recursively
+    using the tail of the `separators` list.
+
+  A `RecursiveCharacterTextSplitter` is defined using a schema.
+  * `separators` - List of string that split a given text.
+    The default list is `["\n\n", "\n", " ", ""]`.
+  * `chunk_size` - Integer number of characters that a chunk should have.
+  * `chunk_overlap` - Integer number of characters that two consecutive chunks should share.
+  * `keep_separator` - Either `:discard_separator`, `:start` or `:end`. If `nil`, the separator is discarded from the output chunks. `:start` and `:end` keep the separator at the start or end of the output chunks. Defaults to `start`.
+  * `is_separator_regex` - Boolean defaulting to `false`. If `true`, the `separator` string is not escaped. Defaults to `false`
+  """  
   use Ecto.Schema
   import Ecto.Changeset
   alias LangChain.LangChainError
