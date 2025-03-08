@@ -4,6 +4,7 @@ defmodule TextSplitterTest do
   alias LangChain.TextSplitter.RecursiveCharacterTextSplitter
   alias LangChain.TextSplitter.LanguageSeparators
   doctest CharacterTextSplitter
+  doctest RecursiveCharacterTextSplitter
 
   @chunk_size 16
 
@@ -250,8 +251,10 @@ defmodule TextSplitterTest do
       ]
 
       test_data = [
-        %{expected: expected_output_1, params: %{chunk_size: 5,
-                                                 keep_separator: :discard_separator}},
+        %{
+          expected: expected_output_1,
+          params: %{chunk_size: 5, keep_separator: :discard_separator}
+        },
         %{expected: expected_output_2, params: %{chunk_size: 6}}
       ]
 
