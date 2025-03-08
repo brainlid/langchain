@@ -105,6 +105,11 @@ defmodule LangChain.MixProject do
           LangChain.Images.OpenAIImage,
           LangChain.Images.GeneratedImage
         ],
+        "Text Splitter": [
+          LangChain.TextSplitter.CharacterTextSplitter,
+          LangChain.TextSplitter.RecursiveCharacterTextSplitter,
+          LangChain.TextSplitter.LanguageSeparators
+        ],
         Tools: [
           LangChain.Tools.Calculator
         ],
