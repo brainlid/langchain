@@ -250,8 +250,9 @@ defmodule TextSplitterTest do
       ]
 
       test_data = [
-        %{expected: expected_output_1, params: %{chunk_size: 5}},
-        %{expected: expected_output_2, params: %{chunk_size: 6, keep_separator: :start}}
+        %{expected: expected_output_1, params: %{chunk_size: 5,
+                                                 keep_separator: :discard_separator}},
+        %{expected: expected_output_2, params: %{chunk_size: 6}}
       ]
 
       for tt <- test_data do

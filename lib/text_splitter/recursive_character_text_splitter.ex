@@ -11,7 +11,9 @@ defmodule LangChain.TextSplitter.RecursiveCharacterTextSplitter do
     field :separators, {:array, :string}, default: ["\n\n", "\n", " ", ""]
     field :chunk_size, :integer
     field :chunk_overlap, :integer
-    field :keep_separator, Ecto.Enum, values: [:start, :end]
+    field :keep_separator, Ecto.Enum,
+          values: [:discard_separator, :start, :end],
+          default: :start
     field :is_separator_regex, :boolean, default: false
   end
 
@@ -82,7 +84,7 @@ defmodule LangChain.TextSplitter.RecursiveCharacterTextSplitter do
       |> CharacterTextSplitter.split_text_with_regex(character_text_splitter)
 
     merge_separator =
-      if not is_nil(text_splitter.keep_separator),
+      if not (text_splitter.keep_separator == :discard_separator),
         do: "",
         else: character_text_splitter.separator
 
