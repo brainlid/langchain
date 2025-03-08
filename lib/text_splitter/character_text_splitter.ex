@@ -15,12 +15,12 @@ defmodule LangChain.TextSplitter.CharacterTextSplitter do
   by large language models with limited context windows,
   or where a shorter context window is desired.
 
-  A CharacterTextSplitter is defined using a schema.
+  A `CharacterTextSplitter` is defined using a schema.
   * `separator` - String that splits a given text.
   * `chunk_size` - Integer number of characters that a chunk should have.
   * `chunk_overlap` - Integer number of characters that two consecutive chunks should share.
-  * `keep_separator` - Either `nil`, `:start` or `:end`. If `nil`, the separator is discarded from the output chunks. `:start` and `:end` keep the separator at the start or end of the output chunks.
-  * `is_separator_regex` - Boolean defaulting to `false`. If `true`, the `separator` string is not escaped.
+  * `keep_separator` - Either `:discard_separator`, `:start` or `:end`. If `:discard_separator`, the separator is discarded from the output chunks. `:start` and `:end` keep the separator at the start or end of the output chunks. Defaults to `:discard_separator`.
+  * `is_separator_regex` - Boolean defaulting to `false`. If `true`, the `separator` string is not escaped. Defaults to `false`
   """
   use Ecto.Schema
   import Ecto.Changeset
@@ -33,7 +33,9 @@ defmodule LangChain.TextSplitter.CharacterTextSplitter do
     field :separator, :string, default: " "
     field :chunk_size, :integer
     field :chunk_overlap, :integer
-    field :keep_separator, Ecto.Enum, values: [:start, :end]
+    field :keep_separator, Ecto.Enum,
+          values: [:discard_separator, :start, :end],
+          default: :discard_separator
     field :is_separator_regex, :boolean, default: false
   end
 
