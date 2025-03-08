@@ -13,6 +13,7 @@ defmodule LangChain.TextSplitter.RecursiveCharacterTextSplitter do
   paragraphs, sentences or code functions together as long as possible.
 
   `LangChain.TextSplitter.LanguageSeparators` provide separator lists for some programming and markup languages.
+  To use these Separators, it's recommended to set the `is_separator_regex` option to `true`.
 
   How it works:
   - It splits the text at the first specified `separator` characters
@@ -105,6 +106,7 @@ defmodule LangChain.TextSplitter.RecursiveCharacterTextSplitter do
 
   `LanguageSeparators` provides `separators` for multiple
   programming and markdown languages.
+  To use these Separators, it's recommended to set the `is_separator_regex` option to `true`.
   To split Python code:
       iex> python_code = "
       ...>def hello_world():
@@ -117,6 +119,7 @@ defmodule LangChain.TextSplitter.RecursiveCharacterTextSplitter do
       ...>  RecursiveCharacterTextSplitter.new!(%{
       ...>    separators: LanguageSeparators.python(),
       ...>    keep_separator: :start,
+      ...>    is_separator_regex: :true,
       ...>    chunk_size: 16,
       ...>    chunk_overlap: 0})
       iex> splitter |> RecursiveCharacterTextSplitter.split_text(python_code)
