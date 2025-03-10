@@ -9,6 +9,36 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   returned delta, where the generated token count is incremented with one. Other
   services return the total TokenUsage data at the end. This Chat model fires
   the callback each time it is received.
+
+  **Google Search Integration**
+
+  Starting with Gemini 2.0, this module supports Google Search as a native tool,
+  allowing the model to automatically search the web for recent information to ground
+  its responses and improve factuality. Check out the [Google AI Documentation](https://ai.google.dev/gemini-api/docs/grounding?lang=rest)
+  for more information.
+
+  Example Usage:
+
+  ```elixir
+  alias LangChain.Chains.LLMChain
+  alias LangChain.Message
+  alias LangChain.NativeTool
+
+  model = ChatGoogleAI.new!(%{temperature: 0, stream: false, model: "gemini-2.0-flash"})
+
+  {:ok, updated_chain} =
+     %{llm: model, verbose: false, stream: false}
+     |> LLMChain.new!()
+     |> LLMChain.add_message(
+       Message.new_user!("What is the current Google stock price?")
+     )
+     |> LLMChain.add_tools(NativeTool.new!(%{name: "google_search", configuration: %{}}))
+     |> LLMChain.run()
+  ```
+
+  The above call will return the current Google stock price.
+
+  When `google_search` is used, the model will also return grounding information in the metadata attribute of the assistant message.
   """
   use Ecto.Schema
   require Logger

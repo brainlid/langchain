@@ -1,4 +1,45 @@
 defmodule LangChain.NativeTool do
+  @moduledoc """
+  Represents built-in tools available from AI/LLM services that can be used within the LangChain framework.
+
+  Native tools are functionalities provided directly by language model services (like Google AI, OpenAI)
+  that can be invoked by LLMs to perform specific actions or retrieve information. They are
+  "native" because they're built into the AI service itself, rather than implemented externally.
+
+  Each native tool has:
+  - A unique name that identifies it (e.g., "google_search", "code_interpreter")
+  - A configuration map that contains tool-specific settings
+
+  ## Google Search Grounding
+
+  Starting with Gemini 2.0, Google Search is available as a native tool. This enables the model
+  to decide when to use Google Search to enhance the factuality and recency of responses.
+
+  Google Search as a tool enables:
+  - More accurate and up-to-date answers with grounding sources
+  - Retrieving information from the web for further analysis
+  - Finding relevant images, videos, or other media for multimodal reasoning
+  - Supporting specialized tasks like coding, technical troubleshooting, etc.
+
+  ### Example with Google Search
+
+  ```elixir
+  alias LangChain.Chains.LLMChain
+  alias LangChain.Message
+  alias LangChain.NativeTool
+
+  model = ChatGoogleAI.new!(%{temperature: 0, stream: false, model: "gemini-2.0-flash"})
+
+  {:ok, updated_chain} =
+     %{llm: model, verbose: false, stream: false}
+     |> LLMChain.new!()
+     |> LLMChain.add_message(
+       Message.new_user!("What is the current Google stock price?")
+     )
+     |> LLMChain.add_tools(NativeTool.new!(%{name: "google_search", configuration: %{}}))
+     |> LLMChain.run()
+  ```
+  """
   use Ecto.Schema
   import Ecto.Changeset
 
