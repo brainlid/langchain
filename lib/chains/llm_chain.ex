@@ -420,6 +420,11 @@ defmodule LangChain.Chains.LLMChain do
         {:ok, result} ->
           {:ok, result}
 
+        {:error, error_chain, %LangChainError{type: "exceeded_failure_count"} = reason} ->
+          # Don't retry on exceeded failure count
+          Logger.warning("LLM call failed, skipping fallback. Reason: #{inspect(reason)}")
+          {:error, error_chain, reason}
+
         {:error, _error_chain, reason} ->
           # run attempt received an error. Try again with the next LLM
           Logger.warning("LLM call failed, using next fallback. Reason: #{inspect(reason)}")
