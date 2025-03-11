@@ -92,7 +92,7 @@ The function `name` we provide is how the LLM will execute the function if the L
 
 The `description` is for the LLM to know what the function can do so it can decide which function to call for which purpose.
 
-The `function` argument is passed an annonymous function whose job it is to be the glue that bridges data coming from the LLM with context from our application before calling other functions from our application.
+The `function` argument is passed an anonymous function whose job it is to be the glue that bridges data coming from the LLM with context from our application before calling other functions from our application.
 
 The `LangChain.Function` acts as a bridge between the LLM and our application. The Elixir function receives 2 arguments. The first is any arguments passed to the function by the LLM if we defined any as being required. In this example, the LLM doesn't provide any arguments. The second argument is an application context that we'll get to next.
 
@@ -132,7 +132,7 @@ In this example, we want the assistant to generate Haiku poems about the current
 
 The instructions we're giving the LLM will require it to execute the function to get additional information. Yes, this is both a simple and contrived example. In a real system, we wouldn't even make the API call to the server for a "trial" user and we could pass along the additional information with the first request.
 
-What we're demonstrating here is that the LLM can interact with our Elixir application, use multiple pieces of returned information to make business logic decisions and fullfil our system requests.
+What we're demonstrating here is that the LLM can interact with our Elixir application, use multiple pieces of returned information to make business logic decisions and fulfil our system requests.
 
 ```elixir
 alias LangChain.Message
@@ -226,7 +226,7 @@ context = %{user_id: 2}
 %{user_id: 2}
 ```
 
-After trying this with `user_id: 2`, a member who should have a Haiku generated for them, change it to `user_id: 1` to see it be polietly denied.
+After trying this with `user_id: 2`, a member who should have a Haiku generated for them, change it to `user_id: 1` to see it be politely denied.
 
 ## Making the API Call
 
@@ -236,7 +236,7 @@ Notice the `custom_context: context` setting that is passed in when creating the
 
 Also, note the `verbose: true` setting. That causes a number of `IO.inspect` calls to be printed showing what's happening internally.
 
-Additionally, the `stream: false` option says we want the result only when it's complete. This example isn't setup for receving a streaming response. We're keeping it simple!
+Additionally, the `stream: false` option says we want the result only when it's complete. This example isn't setup for receiving a streaming response. We're keeping it simple!
 
 ```elixir
 alias LangChain.Chains.LLMChain

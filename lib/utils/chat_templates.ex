@@ -114,7 +114,7 @@ defmodule LangChain.Utils.ChatTemplates do
   If there is an issue, an exception is raised. Reasons for an exception:
 
   - Only 1 system message is allowed and, if included, it is the first message.
-  - Non-system messages must begin with a user message or assitant message.
+  - Non-system messages must begin with a user message or assistant message.
 
   Recent change:
   - Alternating messages between user / assistant / user / assistant are no longer enforced as not every model has issues.
@@ -419,7 +419,7 @@ defmodule LangChain.Utils.ChatTemplates do
       |> Jason.encode!()
       |> Jason.Formatter.pretty_print()
 
-    # intentionally indentaion and newlines!!! for explicit control of newlines and spaces.
+    # intentionally indentation and newlines!!! for explicit control of newlines and spaces.
     text =
       """
       <|begin_of_text|>
@@ -430,7 +430,7 @@ defmodule LangChain.Utils.ChatTemplates do
       Cutting Knowledge Date: December 2023
       Today Date: <%= @date %>
 
-      When you receive a tool call response, use the output to format an answer to the orginal user question.
+      When you receive a tool call response, use the output to format an answer to the original user question.
 
       You are a helpful assistant with tool calling capabilities.<|eot_id|>
       <|start_header_id|>user<|end_header_id|>

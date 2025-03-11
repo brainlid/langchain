@@ -200,7 +200,7 @@ defmodule LangChain.Chains.LLMChain do
   @typedoc """
   A message processor is an arity 2 function that takes an LLMChain and a
   Message. It is used to "pre-process" the received message from the LLM.
-  Processors can be chained together to preform a sequence of transformations.
+  Processors can be chained together to perform a sequence of transformations.
   """
   @type message_processor :: (t(), Message.t() -> processor_return())
 
@@ -307,7 +307,7 @@ defmodule LangChain.Chains.LLMChain do
   - `mode: :until_success` - (for non-interactive processing done by the LLM
     where it may repeatedly fail and need to re-try) Repeatedly evaluates a
     received message through any message processors, returning any errors to the
-    LLM until it either succeeds or exceeds the `max_retry_count`. Ths includes
+    LLM until it either succeeds or exceeds the `max_retry_count`. This includes
     evaluating received `ToolCall`s until they succeed. If an LLM makes 3
     ToolCalls in a single message and 2 succeed while 1 fails, the success
     responses are returned to the LLM with the failure response of the remaining
