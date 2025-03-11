@@ -75,7 +75,7 @@ Here we setup our messages. The user message contains multiple `ContentPart`s. O
 
 This is where we add **context** to our image description request. We'll assume that we have programmatic access to the images and that we also have access to some data about the image from an external system.
 
-**TIP:** To get consitency across all the images in our set, we'll have better success by providing an example of the type of output we want.
+**TIP:** To get consistency across all the images in our set, we'll have better success by providing an example of the type of output we want.
 
 **NOTE:** Make sure the `:media` option matches both the image and what is supported by the LLM you are connecting with.
 
@@ -157,7 +157,7 @@ Specifically, we instruct it to output in the following format:
 }
 ```
 
-To make working with that output easier, we'll use a `JsonProcessor` for processing messages from the LLM. It has the added ability to return a JSON formatting error to the LLM in the case when it get's it wrong.
+To make working with that output easier, we'll use a `JsonProcessor` for processing messages from the LLM. It has the added ability to return a JSON formatting error to the LLM in the case when it gets it wrong.
 
 We'll see this next when we put it all together.
 
@@ -189,7 +189,7 @@ image_data_from_other_system = "image of urban art mural on underpass at 507 Kin
 updated_chain.last_message.processed_content
 ````
 
-Notice that when running the chain, we use the option `mode: :until_success`. Some LLMs are better are generating valid JSON than other LLMs. When we included the `JsonProcesser`, it parses the assistant's content, converting it into an Elixir map. The converted data is stored on the `message.processed_content`.
+Notice that when running the chain, we use the option `mode: :until_success`. Some LLMs are better are generating valid JSON than other LLMs. When we included the `JsonProcessor`, it parses the assistant's content, converting it into an Elixir map. The converted data is stored on the `message.processed_content`.
 
 If the LLM fails to give us valid JSON, the `JsonProcessor` generates a `:user` message reporting the issue for the LLM. The `:until_success` mode will repeatedly make the round-trip requests to the LLM, giving it an opportunity to fix it. But don't worry, it won't run forever! The LLMChain's `max_retry_count` gives up after X failures, the default being 3.
 

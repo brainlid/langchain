@@ -835,7 +835,7 @@ defmodule LangChain.Chains.LLMChainTest do
         end
       }
 
-      # internal hack to assign a callback. Verifying it get's executed.
+      # internal hack to assign a callback. Verifying it gets executed.
       chain = %LLMChain{chain | callbacks: [handler]}
 
       chain =
@@ -856,7 +856,7 @@ defmodule LangChain.Chains.LLMChainTest do
 
     test "when halted, adds original message plus new message returned from processor and fires 2 callbacks",
          %{chain: chain} do
-      # Verifying it get's executed.
+      # Verifying it gets executed.
       handler = %{
         on_message_processing_error: fn _chain, item ->
           send(self(), {:processing_error_callback, item})
