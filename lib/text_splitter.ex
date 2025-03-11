@@ -1,5 +1,6 @@
 defmodule LangChain.TextSplitter do
   @moduledoc false
+
   defp join_docs(docs, separator) do
     text =
       docs
