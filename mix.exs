@@ -8,7 +8,7 @@ defmodule LangChain.MixProject do
     [
       app: :langchain,
       version: @version,
-      elixir: "~> 1.14",
+      elixir: "~> 1.16",
       elixirc_paths: elixirc_paths(Mix.env()),
       test_options: [docs: true],
       start_permanent: Mix.env() == :prod,

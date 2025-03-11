@@ -131,15 +131,16 @@ defmodule LangChain.ChatModels.ChatVertexAI do
       |> List.flatten()
       |> List.wrap()
 
-    req = %{
-      "contents" => messages_for_api,
-      "generationConfig" => %{
-        "temperature" => vertex_ai.temperature,
-        "topP" => vertex_ai.top_p,
-        "topK" => vertex_ai.top_k
+    req =
+      %{
+        "contents" => messages_for_api,
+        "generationConfig" => %{
+          "temperature" => vertex_ai.temperature,
+          "topP" => vertex_ai.top_p,
+          "topK" => vertex_ai.top_k
+        }
       }
-    }
-    |> Utils.conditionally_add_to_map("system_instruction", for_api(sys_instructions))
+      |> Utils.conditionally_add_to_map("system_instruction", for_api(sys_instructions))
 
     req =
       if vertex_ai.json_response do

@@ -1,3 +1,7 @@
+[![Elixir CI](https://github.com/brainlid/langchain/actions/workflows/elixir.yml/badge.svg)](https://github.com/brainlid/langchain/actions/workflows/elixir.yml)
+[![Module Version](https://img.shields.io/hexpm/v/langchain.svg)](https://hex.pm/packages/langchain)
+[![Hex Docs](https://img.shields.io/badge/hex-docs-lightgreen.svg)](https://hexdocs.pm/langchain)
+
 # ![Logo with chat chain links](https://github.com/brainlid/langchain/blob/main/images/elixir-langchain-link-logo_32px.png?raw=true) Elixir LangChain
 
 Elixir LangChain enables Elixir applications to integrate AI services and self-hosted models into an application.
