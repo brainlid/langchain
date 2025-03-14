@@ -29,7 +29,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
 
     # The version/model of the Mistral API to use.
     field :model, :string
-    field :api_key, :string
+    field :api_key, :string, redact: true
 
     # Sampling temperature, 0..1 for Mistral
     field :temperature, :float, default: 0.9
