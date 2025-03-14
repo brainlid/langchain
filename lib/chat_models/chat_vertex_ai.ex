@@ -32,7 +32,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     field :endpoint, :string
 
     field :model, :string, default: "gemini-pro"
-    field :api_key, :string
+    field :api_key, :string, redact: true
 
     # What sampling temperature to use, between 0 and 2. Higher values like 0.8
     # will make the output more random, while lower values like 0.2 will make it
