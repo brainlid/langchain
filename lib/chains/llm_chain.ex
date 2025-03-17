@@ -419,6 +419,11 @@ defmodule LangChain.Chains.LLMChain do
         {:ok, result} ->
           {:ok, result}
 
+        {:error, error_chain, %LangChainError{type: "exceeded_failure_count"} = reason} ->
+          # Don't retry on exceeded failure count
+          Logger.warning("LLM call failed, skipping fallback. Reason: #{inspect(reason)}")
+          {:error, error_chain, reason}
+
         {:error, _error_chain, reason} ->
           # run attempt received an error. Try again with the next LLM
           Logger.warning("LLM call failed, using next fallback. Reason: #{inspect(reason)}")
@@ -426,6 +431,19 @@ defmodule LangChain.Chains.LLMChain do
           try_chain_with_llm(use_chain, tail, before_fallback_fn, run_fn)
       end
     rescue
+      err in LangChainError ->
+        if err.type == :stop do
+          # Handle explicitly raised StopError
+          {:error, use_chain, err}
+        else
+          # Handle other LangChainError types
+          Logger.error(
+            "Rescued from exception during with_fallback processing. Error: #{inspect(err)}"
+          )
+
+          try_chain_with_llm(use_chain, tail, before_fallback_fn, run_fn)
+        end
+
       err ->
         # Log the error and try again.
         Logger.error(
