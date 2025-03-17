@@ -761,6 +761,30 @@ defmodule ChatModels.ChatGoogleAITest do
     end
   end
 
+  describe "google_search native tool" do
+    @tag live_call: true, live_google_ai: true
+    test "should include grounding metadata in response" do
+      alias LangChain.Chains.LLMChain
+      alias LangChain.Message
+      alias LangChain.NativeTool
+
+      model = ChatGoogleAI.new!(%{temperature: 0, stream: false, model: "gemini-2.0-flash"})
+
+      {:ok, updated_chain} =
+        %{llm: model, verbose: false, stream: false}
+        |> LLMChain.new!()
+        |> LLMChain.add_message(
+          Message.new_user!("What is the current Google stock price?")
+        )
+        |> LLMChain.add_tools(NativeTool.new!(%{name: "google_search", configuration: %{}}))
+        |> LLMChain.run()
+
+      assert %Message{} = updated_chain.last_message
+      assert updated_chain.last_message.role == :assistant
+      assert Map.has_key?(updated_chain.last_message.metadata, "groundingChunks")
+    end
+  end
+
   describe "calculator with GoogleAI model" do
     @tag live_call: true, live_google_ai: true
     test "should work" do

@@ -104,6 +104,9 @@ defmodule LangChain.Message do
     # A `:tool` role contains one or more `tool_results` from the system having
     # used tools.
     field :tool_results, :any, virtual: true
+
+    # Additional metadata about the message.
+    field :metadata, :map
   end
 
   @type t :: %Message{}
@@ -117,7 +120,8 @@ defmodule LangChain.Message do
     :tool_calls,
     :tool_results,
     :index,
-    :name
+    :name,
+    :metadata
   ]
   @create_fields @update_fields
   @required_fields [:role]
