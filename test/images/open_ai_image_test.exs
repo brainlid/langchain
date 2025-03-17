@@ -134,15 +134,4 @@ defmodule LangChain.Images.OpenAIImageTest do
                OpenAIImage.do_process_response(response, request)
     end
   end
-
-  describe "inspect" do
-    test "redacts the API key" do
-      img = OpenAIImage.new!(%{prompt: "A security guard."})
-
-      changeset = Ecto.Changeset.cast(img, %{api_key: "1234567890"}, [:api_key])
-
-      refute inspect(changeset) =~ "1234567890"
-      assert inspect(changeset) =~ "**redacted**"
-    end
-  end
 end

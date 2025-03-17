@@ -46,7 +46,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     # The version of the API to use.
     field :api_version, :string, default: @default_api_version
     field :model, :string, default: "gemini-pro"
-    field :api_key, :string, redact: true
+    field :api_key, :string
 
     # What sampling temperature to use, between 0 and 2. Higher values like 0.8
     # will make the output more random, while lower values like 0.2 will make it

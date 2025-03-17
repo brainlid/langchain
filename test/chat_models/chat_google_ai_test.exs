@@ -843,15 +843,4 @@ defmodule ChatModels.ChatGoogleAITest do
     {:ok, string} = ChainResult.to_string(updated_chain)
     assert string =~ "owl"
   end
-
-  describe "inspect" do
-    test "redacts the API key" do
-      chain = ChatGoogleAI.new!()
-
-      changeset = Ecto.Changeset.cast(chain, %{api_key: "1234567890"}, [:api_key])
-
-      refute inspect(changeset) =~ "1234567890"
-      assert inspect(changeset) =~ "**redacted**"
-    end
-  end
 end

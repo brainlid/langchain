@@ -26,7 +26,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
 
     # The version of the API to use.
     field :model, :string
-    field :api_key, :string, redact: true
+    field :api_key, :string
 
     # What sampling temperature to use, between 0 and 1. Higher values like 0.8
     # will make the output more random, while lower values like 0.2 will make it
