@@ -28,7 +28,7 @@ defmodule LangChain.Images.OpenAIImage do
     # API key for OpenAI. If not set, will use global api key. Allows for usage
     # of a different API key per-call if desired. For instance, allowing a
     # customer to provide their own.
-    field :api_key, :string
+    field :api_key, :string, redact: true
     # Duration in seconds for the response to be received. When streaming a very
     # lengthy response, a longer time limit may be required. However, when it
     # goes on too long by itself, it tends to hallucinate more.
