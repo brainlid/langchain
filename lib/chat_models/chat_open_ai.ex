@@ -145,7 +145,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     # API key for OpenAI. If not set, will use global api key. Allows for usage
     # of a different API key per-call if desired. For instance, allowing a
     # customer to provide their own.
-    field :api_key, :string, redact: true
+    field :api_key, :string
 
     # What sampling temperature to use, between 0 and 2. Higher values like 0.8
     # will make the output more random, while lower values like 0.2 will make it
