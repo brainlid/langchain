@@ -1659,4 +1659,15 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
              }
     end
   end
+
+  describe "inspect" do
+    test "redacts the API key" do
+      chain = ChatAnthropic.new!()
+
+      changeset = Ecto.Changeset.cast(chain, %{api_key: "1234567890"}, [:api_key])
+
+      refute inspect(changeset) =~ "1234567890"
+      assert inspect(changeset) =~ "**redacted**"
+    end
+  end
 end

@@ -112,7 +112,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     # API key for Anthropic. If not set, will use global api key. Allows for usage
     # of a different API key per-call if desired. For instance, allowing a
     # customer to provide their own.
-    field :api_key, :string
+    field :api_key, :string, redact: true
 
     # https://docs.anthropic.com/claude/reference/versions
     field :api_version, :string, default: "2023-06-01"
