@@ -5,7 +5,7 @@ defmodule LangChain.Gettext do
   By using [Gettext](https://hexdocs.pm/gettext),
   your module gains a set of macros for translations, for example:
 
-      import LangChain.Gettext
+      use Gettext, backend: LangChain.Gettext
 
       # Simple translation
       gettext("Here is the string to translate")
@@ -18,7 +18,10 @@ defmodule LangChain.Gettext do
       # Domain-based translation
       dgettext("errors", "Here is the error message to translate")
 
+      # Context-based message
+      pgettext("email", "Email text to translate")
+
   See the [Gettext Docs](https://hexdocs.pm/gettext) for detailed usage.
   """
-  use Gettext, otp_app: :langchain
+  use Gettext.Backend, otp_app: :langchain
 end
