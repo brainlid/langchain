@@ -236,7 +236,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     :max_tokens,
     :stream_options,
     :user,
-    :tool_choice
+    :tool_choice,
+    :verbose_api
   ]
   @required_fields [:endpoint, :model]
 
@@ -654,7 +655,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     |> case do
       {:ok, %Req.Response{body: data} = response} ->
         if openai.verbose_api do
-          IO.inspect(raw_data, label: "RAW REQ RESPONSE")
+          IO.inspect(response, label: "RAW REQ RESPONSE")
         end
 
         Callbacks.fire(openai.callbacks, :on_llm_ratelimit_info, [
