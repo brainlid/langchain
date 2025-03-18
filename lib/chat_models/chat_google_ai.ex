@@ -211,6 +211,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
       function_tools = Enum.filter(functions, &match?(%Function{}, &1))
 
       tools_array = []
+
       tools_array =
         if function_tools != [] do
           tools_array ++ [%{"functionDeclarations" => Enum.map(function_tools, &for_api/1)}]
@@ -362,7 +363,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     end
   end
 
-  def for_api(%NativeTool{name: name, configuration: %{}=config}) do
+  def for_api(%NativeTool{name: name, configuration: %{} = config}) do
     %{name => config}
   end
 
@@ -582,7 +583,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
       content: text_part,
       complete: true,
       index: data["index"],
-      metadata: (if data["groundingMetadata"], do: data["groundingMetadata"], else: nil)
+      metadata: if(data["groundingMetadata"], do: data["groundingMetadata"], else: nil)
     }
     |> Utils.conditionally_add_to_map(:tool_calls, tool_calls_from_parts)
     |> Utils.conditionally_add_to_map(:tool_results, tool_result_from_parts)

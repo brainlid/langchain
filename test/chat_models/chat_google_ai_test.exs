@@ -773,9 +773,7 @@ defmodule ChatModels.ChatGoogleAITest do
       {:ok, updated_chain} =
         %{llm: model, verbose: false, stream: false}
         |> LLMChain.new!()
-        |> LLMChain.add_message(
-          Message.new_user!("What is the current Google stock price?")
-        )
+        |> LLMChain.add_message(Message.new_user!("What is the current Google stock price?"))
         |> LLMChain.add_tools(NativeTool.new!(%{name: "google_search", configuration: %{}}))
         |> LLMChain.run()
 
