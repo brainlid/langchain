@@ -1762,9 +1762,67 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
                "api_version" => "2023-06-01",
                "top_k" => nil,
                "top_p" => nil,
+               "beta_headers" => ["tools-2024-04-04"],
                "module" => "Elixir.LangChain.ChatModels.ChatAnthropic",
                "version" => 1
              }
+    end
+
+    test "includes beta_headers in the serialized config" do
+      custom_beta_headers = ["custom-beta-feature-1", "custom-beta-feature-2"]
+
+      model =
+        ChatAnthropic.new!(%{
+          model: "claude-3-haiku-20240307",
+          beta_headers: custom_beta_headers
+        })
+
+      result = ChatAnthropic.serialize_config(model)
+
+      assert result["beta_headers"] == custom_beta_headers
+    end
+  end
+
+  describe "beta_headers" do
+    test "adds beta headers to request headers when provided" do
+      expect(Req, :post, fn req_struct, _opts ->
+        assert req_struct.headers["anthropic-beta"] == ["beta1"]
+      end)
+
+      model = ChatAnthropic.new!(%{stream: true, model: @test_model, beta_headers: ["beta1"]})
+      ChatAnthropic.call(model, "prompt", [])
+    end
+
+    test "joins multiple beta headers with commas" do
+      expect(Req, :post, fn req_struct, _opts ->
+        assert req_struct.headers["anthropic-beta"] == ["beta1,beta2"]
+      end)
+
+      model =
+        ChatAnthropic.new!(%{stream: true, model: @test_model, beta_headers: ["beta1", "beta2"]})
+
+      ChatAnthropic.call(model, "prompt", [])
+    end
+
+    test "does not add anthropic-beta header when beta_headers is empty" do
+      expect(Req, :post, fn req_struct, _opts ->
+        refute Map.has_key?(req_struct.headers, "anthropic-beta")
+      end)
+
+      model =
+        ChatAnthropic.new!(%{stream: true, model: @test_model, beta_headers: []})
+
+      ChatAnthropic.call(model, "prompt", [])
+    end
+
+    test "defaults to tools-2024-04-04 when beta_headers is not provided" do
+      expect(Req, :post, fn req_struct, _opts ->
+        assert req_struct.headers["anthropic-beta"] == ["tools-2024-04-04"]
+      end)
+
+      model = ChatAnthropic.new!(%{stream: true, model: @test_model})
+
+      ChatAnthropic.call(model, "prompt", [])
     end
   end
 
