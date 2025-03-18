@@ -1203,6 +1203,65 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       assert json == expected
     end
 
+    test "tool results support prompt caching" do
+      tool_success_result =
+        Message.new_tool_result!(%{
+          tool_results: [
+            ToolResult.new!(%{
+              tool_call_id: "toolu_123",
+              content: "tool answer",
+              options: [cache_control: true]
+            })
+          ]
+        })
+
+      json = ChatAnthropic.for_api(tool_success_result)
+
+      expected = %{
+        "role" => "user",
+        "content" => [
+          %{
+            "type" => "tool_result",
+            "tool_use_id" => "toolu_123",
+            "content" => "tool answer",
+            "is_error" => false,
+            "cache_control" => %{"type" => "ephemeral"}
+          }
+        ]
+      }
+
+      assert json == expected
+
+      tool_error_result =
+        Message.new_tool_result!(%{
+          tool_results: [
+            ToolResult.new!(%{
+              tool_call_id: "toolu_234",
+              content: "stuff failed",
+              is_error: true,
+              options: [cache_control: true]
+            })
+          ]
+        })
+
+      json = ChatAnthropic.for_api(tool_error_result)
+
+      expected = %{
+        "role" => "user",
+        "content" => [
+          %{
+            "type" => "tool_result",
+            "tool_use_id" => "toolu_234",
+            "content" => "stuff failed",
+            "is_error" => true,
+            "cache_control" => %{"type" => "ephemeral"}
+          }
+        ]
+      }
+
+      assert json == expected
+    end
+
     test "turns a tool result into expected JSON format" do
       tool_success_result = ToolResult.new!(%{tool_call_id: "toolu_123", content: "tool answer"})
 

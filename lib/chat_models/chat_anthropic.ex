@@ -102,6 +102,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
   @current_config_version 1
 
+  @default_cache_control_block %{"type" => "ephemeral"}
+
   # allow up to 1 minute for response.
   @receive_timeout 60_000
 
@@ -875,7 +877,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         %{"type" => "text", "text" => part.content}
 
       {:ok, setting} ->
-        setting = if setting == true, do: %{"type" => "ephemeral"}, else: setting
+        setting = if setting == true, do: @default_cache_control_block, else: setting
         %{"type" => "text", "text" => part.content, "cache_control" => setting}
     end
   end
@@ -943,11 +945,24 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
   # ToolResult support
   def for_api(%ToolResult{} = result) do
-    %{
-      "type" => "tool_result",
-      "tool_use_id" => result.tool_call_id,
-      "content" => result.content
-    }
+    case Keyword.fetch(result.options || [], :cache_control) do
+      :error ->
+        %{
+          "type" => "tool_result",
+          "tool_use_id" => result.tool_call_id,
+          "content" => result.content
+        }
+
+      {:ok, setting} ->
+        setting = if setting == true, do: @default_cache_control_block, else: setting
+
+        %{
+          "type" => "tool_result",
+          "tool_use_id" => result.tool_call_id,
+          "content" => result.content,
+          "cache_control" => setting
+        }
+    end
     |> Utils.conditionally_add_to_map("is_error", result.is_error)
   end
 
