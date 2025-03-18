@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.3.2 (2025-03-17)
+
+### Added
+- Support for Perplexity AI https://github.com/brainlid/langchain/pull/261
+- Enable tool support for ollama (if the model supports it and only when not streaming) https://github.com/brainlid/langchain/pull/164
+- Added `on_message_processed` callback when tool response is created: When a Tool response message is created, it already fired an on_tool_response_created, but it now also fires the more general on_message_processed, because a tool result can certainly be considered being processed. https://github.com/brainlid/langchain/pull/248
+- Added Tool Calls and TokenUsage for Mistral.ai https://github.com/brainlid/langchain/pull/253
+- Added `LangChain.TextSplitter` with character and recursive character splitting support https://github.com/brainlid/langchain/pull/256
+- Add native tool functionality (e.g. `google_search` for Gemini) https://github.com/brainlid/langchain/pull/250
+
+### Changes
+- Improved System instruction support for Vertex AI https://github.com/brainlid/langchain/pull/260
+- Redact api-key from models when logged https://github.com/brainlid/langchain/pull/266
+
 ## v0.3.1 (2025-02-05)
 
 ### Added
