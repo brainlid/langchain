@@ -163,6 +163,10 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
     # Tool choice option
     field :tool_choice, :map
+
+    # Beta headers
+    # https://docs.anthropic.com/claude/docs/tool-use - requires tools-2024-04-04 header during beta
+    field :beta_headers, {:array, :string}, default: ["tools-2024-04-04"]
   end
 
   @type t :: %ChatAnthropic{}
@@ -178,7 +182,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     :top_p,
     :top_k,
     :stream,
-    :tool_choice
+    :tool_choice,
+    :beta_headers
   ]
   @required_fields [:endpoint, :model]
 
@@ -481,14 +486,21 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     api_key || Config.resolve(:anthropic_key, "")
   end
 
-  defp headers(%ChatAnthropic{bedrock: nil, api_key: api_key, api_version: api_version}) do
+  defp headers(%ChatAnthropic{
+         bedrock: nil,
+         api_key: api_key,
+         api_version: api_version,
+         beta_headers: beta_headers
+       }) do
     %{
       "x-api-key" => get_api_key(api_key),
       "content-type" => "application/json",
-      "anthropic-version" => api_version,
-      # https://docs.anthropic.com/claude/docs/tool-use - requires this header during beta
-      "anthropic-beta" => "tools-2024-04-04"
+      "anthropic-version" => api_version
     }
+    |> Utils.conditionally_add_to_map(
+      "anthropic-beta",
+      if(!Enum.empty?(beta_headers), do: Enum.join(beta_headers, ","))
+    )
   end
 
   defp headers(%ChatAnthropic{bedrock: %BedrockConfig{}}) do
@@ -1073,7 +1085,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         :receive_timeout,
         :top_p,
         :top_k,
-        :stream
+        :stream,
+        :beta_headers
       ],
       @current_config_version
     )
