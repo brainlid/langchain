@@ -13,9 +13,9 @@ defmodule LangChain.Chains.ChainCallbacks do
       live_view_pid = self()
 
       my_handlers = %{
-        on_llm_new_message: fn _chain, new_message -> send(live_view_pid, {:received_message, new_message}),
-        on_llm_new_delta: fn _chain, new_delta -> send(live_view_pid, {:received_delta, new_delta}),
-        on_error_message_created: fn _chain, new_message -> send(live_view_pid, {:received_message, new_message})
+        on_llm_new_message: fn _chain, new_message -> send(live_view_pid, {:received_message, new_message}) end,
+        on_llm_new_delta: fn _chain, new_delta -> send(live_view_pid, {:received_delta, new_delta}) end,
+        on_error_message_created: fn _chain, new_message -> send(live_view_pid, {:received_message, new_message}) end
       }
 
       model = SomeLLM.new!(%{...})
