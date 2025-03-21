@@ -55,6 +55,23 @@ defmodule LangChain.Message.ContentPartTest do
     end
   end
 
+  describe("file/1") do
+    test "returns a file data configured ContentPart" do
+      %ContentPart{} = part = ContentPart.file!(:base64.encode("fake_file_data"))
+      assert part.type == :file
+      assert part.content == "ZmFrZV9maWxlX2RhdGE="
+    end
+
+    test "supports 'filename' option" do
+      %ContentPart{} =
+        part = ContentPart.file!(Base.encode64("fake_file_data"), filename: "my_file.pdf")
+
+      assert part.type == :file
+      assert part.content == "ZmFrZV9maWxlX2RhdGE="
+      assert part.options == [filename: "my_file.pdf"]
+    end
+  end
+
   describe("image_url!/1") do
     test "returns a image_url configured ContentPart" do
       url =

@@ -457,6 +457,16 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     %{"type" => "text", "text" => part.content}
   end
 
+  def for_api(%_{} = _model, %ContentPart{type: :file, options: opts} = part) do
+    %{
+      "type" => "file",
+      "file" => %{
+        "filename" => Keyword.get(opts, :filename, "file.pdf"),
+        "file_data" => "data:application/pdf;base64," <> part.content
+      }
+    }
+  end
+
   def for_api(%_{} = _model, %ContentPart{type: image} = part)
       when image in [:image, :image_url] do
     media_prefix =
