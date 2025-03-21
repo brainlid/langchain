@@ -8,7 +8,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
   ## Callbacks
 
-  See the set of available callback: `LangChain.ChatModels.LLMCallbacks`
+  See the set of available callbacks: `LangChain.Chains.ChainCallbacks`
 
   ### Rate Limit API Response Headers
 

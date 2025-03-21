@@ -1,6 +1,9 @@
 defmodule LangChain.Callbacks do
   @moduledoc """
   Defines the structure of callbacks and provides utilities for executing them.
+
+  See `LangChain.Chains.ChainCallbacks` for the list of callbacks that can be
+  used.
   """
   require Logger
   alias LangChain.LangChainError
