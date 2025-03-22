@@ -155,7 +155,7 @@ defmodule ChatModels.ChatGoogleAITest do
              } = tool_result
     end
 
-    test "generate a map containing a text and an image part (bug #209)", %{google_ai: google_ai} do
+    test "generate a map containing text and inline image parts", %{google_ai: google_ai} do
       messages = [
         %LangChain.Message{
           content:
