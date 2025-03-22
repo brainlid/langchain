@@ -61,6 +61,60 @@ defmodule ChatModels.ChatVertexAITest do
       assert %{"temperature" => 1.0, "topK" => 1.0, "topP" => 1.0} = config
     end
 
+    test "generate a map containing a text, inline image, and image url parts", %{
+      vertex_ai: google_ai
+    } do
+      messages = [
+        %LangChain.Message{
+          content:
+            "You are an expert at providing an image description for assistive technology and SEO benefits.",
+          role: :system
+        },
+        %LangChain.Message{
+          content: [
+            %LangChain.Message.ContentPart{
+              type: :text,
+              content: "This is the text."
+            },
+            %LangChain.Message.ContentPart{
+              type: :image,
+              content: "/9j/4AAQSkz",
+              options: [media: "image/jpeg"]
+            },
+            %LangChain.Message.ContentPart{
+              type: :image_url,
+              content: "http://localhost:1234/image.jpg",
+              options: [media: "image/jpeg"]
+            }
+          ],
+          role: :user
+        }
+      ]
+
+      data = ChatVertexAI.for_api(google_ai, messages, [])
+      assert %{"contents" => [msg1]} = data
+
+      assert %{
+               "parts" => [
+                 %{
+                   "text" => "This is the text."
+                 },
+                 %{
+                   "inlineData" => %{
+                     "mimeType" => "image/jpeg",
+                     "data" => "/9j/4AAQSkz"
+                   }
+                 },
+                 %{
+                   "fileData" => %{
+                     "fileUri" => "http://localhost:1234/image.jpg",
+                     "mimeType" => "image/jpeg"
+                   }
+                 }
+               ]
+             } = msg1
+    end
+
     test "generates a map containing user and assistant messages", %{vertex_ai: vertex_ai} do
       user_message = "Hello Assistant!"
       assistant_message = "Hello User!"
