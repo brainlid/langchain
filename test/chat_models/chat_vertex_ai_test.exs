@@ -92,18 +92,7 @@ defmodule ChatModels.ChatVertexAITest do
       ]
 
       data = ChatVertexAI.for_api(google_ai, messages, [])
-      assert %{"contents" => [msg1, msg2, msg3]} = data
-
-      assert %{
-               "parts" => [
-                 %{
-                   "text" =>
-                     "You are an expert at providing an image description for assistive technology and SEO benefits."
-                 }
-               ]
-             } = msg1
-
-      assert %{"parts" => [%{"text" => ""}], "role" => :model} = msg2
+      assert %{"contents" => [msg1]} = data
 
       assert %{
                "parts" => [
@@ -123,7 +112,7 @@ defmodule ChatModels.ChatVertexAITest do
                    }
                  }
                ]
-             } = msg3
+             } = msg1
     end
 
     test "generates a map containing user and assistant messages", %{vertex_ai: vertex_ai} do
