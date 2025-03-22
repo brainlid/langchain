@@ -216,7 +216,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     %{
       "fileData" => %{
         "mimeType" => Keyword.fetch!(part.options, :media),
-        "data" => part.content
+        "fileUri" => part.content
       }
     }
   end
