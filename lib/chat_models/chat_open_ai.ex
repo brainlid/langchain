@@ -12,7 +12,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
   ## Callbacks
 
-  See the set of available callback: `LangChain.ChatModels.LLMCallbacks`
+  See the set of available callbacks: `LangChain.Chains.ChainCallbacks`
 
   ### Rate Limit API Response Headers
 
@@ -158,7 +158,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     # API key for OpenAI. If not set, will use global api key. Allows for usage
     # of a different API key per-call if desired. For instance, allowing a
     # customer to provide their own.
-    field :api_key, :string
+    field :api_key, :string, redact: true
 
     # What sampling temperature to use, between 0 and 2. Higher values like 0.8
     # will make the output more random, while lower values like 0.2 will make it
@@ -211,6 +211,10 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     # application.
     # https://platform.openai.com/docs/guides/safety-best-practices/end-user-ids
     field :user, :string
+
+    # For help with debugging. It outputs the RAW Req response received and the
+    # RAW Elixir map being submitted to the API.
+    field :verbose_api, :boolean, default: false
   end
 
   @type t :: %ChatOpenAI{}
@@ -232,7 +236,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     :max_tokens,
     :stream_options,
     :user,
-    :tool_choice
+    :tool_choice,
+    :verbose_api
   ]
   @required_fields [:endpoint, :model]
 
@@ -312,9 +317,9 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           end
         end)
         |> Enum.reverse(),
-      response_format: set_response_format(openai),
       user: openai.user
     }
+    |> Utils.conditionally_add_to_map(:response_format, set_response_format(openai))
     |> Utils.conditionally_add_to_map(
       :reasoning_effort,
       if(openai.reasoning_mode, do: openai.reasoning_effort, else: nil)
@@ -357,7 +362,11 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   end
 
   defp set_response_format(%ChatOpenAI{json_response: false}) do
-    %{"type" => "text"}
+    # NOTE: The default handling when unspecified is `%{"type" => "text"}`
+    #
+    # For improved compatibility with other APIs like LMStudio, this returns a
+    # `nil` which has the same effect.
+    nil
   end
 
   defp get_tool_choice(%ChatOpenAI{
@@ -399,6 +408,19 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       "content" => msg.content
     }
     |> Utils.conditionally_add_to_map("name", msg.name)
+    |> Utils.conditionally_add_to_map(
+      "tool_calls",
+      Enum.map(msg.tool_calls || [], &for_api(model, &1))
+    )
+  end
+
+  def for_api(%_{} = model, %Message{role: :assistant, tool_calls: tool_calls} = msg)
+      when is_list(tool_calls) do
+    %{
+      "role" => :assistant,
+      "content" => msg.content
+    }
+    |> Utils.conditionally_add_to_map("tool_calls", Enum.map(tool_calls, &for_api(model, &1)))
   end
 
   def for_api(%_{} = model, %Message{role: :user, content: content} = msg)
@@ -417,15 +439,6 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       "tool_call_id" => result.tool_call_id,
       "content" => result.content
     }
-  end
-
-  def for_api(%_{} = model, %Message{role: :assistant, tool_calls: tool_calls} = msg)
-      when is_list(tool_calls) do
-    %{
-      "role" => :assistant,
-      "content" => msg.content
-    }
-    |> Utils.conditionally_add_to_map("tool_calls", Enum.map(tool_calls, &for_api(model, &1)))
   end
 
   def for_api(%_{} = _model, %Message{role: :tool, tool_results: tool_results} = _msg)
@@ -612,10 +625,16 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         tools,
         retry_count
       ) do
+    raw_data = for_api(openai, messages, tools)
+
+    if openai.verbose_api do
+      IO.inspect(raw_data, label: "RAW DATA BEING SUBMITTED")
+    end
+
     req =
       Req.new(
         url: openai.endpoint,
-        json: for_api(openai, messages, tools),
+        json: raw_data,
         # required for OpenAI API
         auth: {:bearer, get_api_key(openai)},
         # required for Azure OpenAI version
@@ -635,6 +654,10 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     # parse the body and return it as parsed structs
     |> case do
       {:ok, %Req.Response{body: data} = response} ->
+        if openai.verbose_api do
+          IO.inspect(response, label: "RAW REQ RESPONSE")
+        end
+
         Callbacks.fire(openai.callbacks, :on_llm_ratelimit_info, [
           get_ratelimit_info(response.headers)
         ])

@@ -2,7 +2,12 @@ defmodule ChatModels.ChatOllamaAITest do
   use LangChain.BaseCase
 
   doctest LangChain.ChatModels.ChatOllamaAI
+
   alias LangChain.ChatModels.ChatOllamaAI
+  alias LangChain.Function
+  alias LangChain.FunctionParam
+
+  use Mimic
 
   setup do
     model = ChatOllamaAI.new!(%{"model" => "llama2:latest"})
@@ -124,6 +129,304 @@ defmodule ChatModels.ChatOllamaAITest do
       assert system_msg["content"] == "You are a weather man"
       assert user_msg["content"] == "What color is the sky?"
     end
+
+    test "generates a map for an API call with a tool", %{ollama_ai: ollama_ai} do
+      fun =
+        Function.new!(%{
+          name: "give_greeting",
+          description: "Gives a friendly greeting for the given subject",
+          parameters_schema: %{
+            type: "object",
+            properties: %{
+              name: %{
+                type: "string",
+                description: "The subject to greet"
+              }
+            },
+            required: ["name"]
+          },
+          function: fn %{"name" => name} = _arguments, _context -> {:ok, "Hello, #{name}!"} end
+        })
+
+      expected = [
+        %{
+          "function" => %{
+            "description" => "Gives a friendly greeting for the given subject",
+            "name" => "give_greeting",
+            "parameters" => %{
+              type: "object",
+              required: ["name"],
+              properties: %{
+                name: %{type: "string", description: "The subject to greet"}
+              }
+            }
+          },
+          "type" => "function"
+        }
+      ]
+
+      data = ChatOllamaAI.for_api(ollama_ai, [], [fun])
+
+      assert expected == data.tools
+    end
+
+    test "generates a map for an API call with a tool using FunctionParams", %{
+      ollama_ai: ollama_ai
+    } do
+      fun =
+        Function.new!(%{
+          name: "give_greeting",
+          description: "Gives a friendly greeting for the given subject",
+          parameters: [
+            FunctionParam.new!(%{name: "name", type: :string, required: true})
+          ],
+          function: fn %{"name" => name} = _arguments, _context -> {:ok, "Hello, #{name}!"} end
+        })
+
+      expected = [
+        %{
+          "function" => %{
+            "description" => "Gives a friendly greeting for the given subject",
+            "name" => "give_greeting",
+            "parameters" => %{
+              "properties" => %{"name" => %{"type" => "string"}},
+              "required" => ["name"],
+              "type" => "object"
+            }
+          },
+          "type" => "function"
+        }
+      ]
+
+      data = ChatOllamaAI.for_api(ollama_ai, [], [fun])
+
+      assert expected == data.tools
+    end
+
+    test "generates a map for an API call with a tool without parameters", %{ollama_ai: ollama_ai} do
+      fun =
+        Function.new!(%{
+          name: "greet_the_world",
+          description: "Be friendly to the world",
+          function: fn _arguments, _context -> {:ok, "Hello, world!"} end
+        })
+
+      expected = [
+        %{
+          "function" => %{
+            "description" => "Be friendly to the world",
+            "name" => "greet_the_world",
+            "parameters" => %{"properties" => %{}, "type" => "object"}
+          },
+          "type" => "function"
+        }
+      ]
+
+      data = ChatOllamaAI.for_api(ollama_ai, [], [fun])
+
+      assert expected == data.tools
+    end
+
+    test "generates a map for an API call without tools", %{ollama_ai: ollama_ai} do
+      data = ChatOllamaAI.for_api(ollama_ai, [], nil)
+
+      assert data[:tools] == nil
+    end
+
+    test "for assistant message with non-empty tool_calls, generates an assistant message with a list of ToolCall messages",
+         %{ollama_ai: ollama_ai} do
+      tool_call =
+        Message.ToolCall.new!(%{
+          call_id: "call_123",
+          name: "give_greeting",
+          arguments: %{"name" => "world"}
+        })
+
+      expected = [
+        %{
+          "content" => nil,
+          "role" => :assistant,
+          "tool_calls" => [
+            %{
+              "function" => %{
+                "arguments" => %{"name" => "world"},
+                "name" => "give_greeting"
+              },
+              "id" => "call_123",
+              "type" => "function"
+            }
+          ]
+        }
+      ]
+
+      data =
+        ChatOllamaAI.for_api(ollama_ai, [Message.new_assistant!(%{tool_calls: [tool_call]})], [])
+
+      assert expected == data.messages
+    end
+
+    test "for assistant message empty tool-calls, generates an assistant message", %{
+      ollama_ai: ollama_ai
+    } do
+      data = ChatOllamaAI.for_api(ollama_ai, [Message.new_assistant!("Hello, world!")], [])
+      expected = [%{"content" => "Hello, world!", "role" => :assistant}]
+
+      assert expected == data.messages
+    end
+
+    test "for tool call, generate expected structure" do
+      tool_call =
+        Message.ToolCall.new!(%{
+          call_id: "call_123",
+          name: "give_greeting",
+          arguments: %{"name" => "world"}
+        })
+
+      expected = %{
+        "function" => %{"arguments" => %{"name" => "world"}, "name" => "give_greeting"},
+        "id" => "call_123",
+        "type" => "function"
+      }
+
+      assert expected == ChatOllamaAI.for_api(tool_call)
+    end
+
+    test "for function, return expected structure" do
+      function =
+        Function.new!(%{
+          name: "give_greeting",
+          description: "Gives a friendly greeting to the given recipient",
+          parameters: [
+            FunctionParam.new!(%{name: "name", type: :string, required: true})
+          ],
+          function: fn %{"name" => name} = _args, _context ->
+            {:ok, "Hello, #{name}!"}
+          end
+        })
+
+      expected = %{
+        "description" => "Gives a friendly greeting to the given recipient",
+        "name" => "give_greeting",
+        "parameters" => %{
+          "properties" => %{
+            "name" => %{"type" => "string"}
+          },
+          "required" => ["name"],
+          "type" => "object"
+        }
+      }
+
+      assert expected == ChatOllamaAI.for_api(function)
+    end
+
+    test "for message with a list of tool results, generate expected structure" do
+      tool_result =
+        Message.ToolResult.new!(%{
+          type: :function,
+          tool_call_id: "call_123",
+          name: "give_greeting",
+          content: "Hello, world!",
+          display_text: nil,
+          is_error: false
+        })
+
+      message =
+        Message.new_tool_result!(%{
+          tool_results: [tool_result]
+        })
+
+      expected = [%{"role" => :tool, "content" => "Hello, world!"}]
+      assert expected == ChatOllamaAI.for_api(message)
+    end
+
+    test "for user message, generate expected structure" do
+      message = Message.new_user!("Hello!")
+      expected = %{"role" => :user, "content" => "Hello!"}
+
+      assert expected == ChatOllamaAI.for_api(message)
+    end
+
+    test "for nested messages, handle them all", %{ollama_ai: ollama_ai} do
+      messages = [
+        %LangChain.Message{
+          content: "Where is the hairbrush located?",
+          processed_content: nil,
+          index: nil,
+          status: :complete,
+          role: :user,
+          name: nil,
+          tool_calls: [],
+          tool_results: nil
+        },
+        %LangChain.Message{
+          content: nil,
+          processed_content: nil,
+          index: nil,
+          status: :complete,
+          role: :assistant,
+          name: nil,
+          tool_calls: [
+            %LangChain.Message.ToolCall{
+              status: :complete,
+              type: :function,
+              call_id: "54836033-8394-4a97-abc5-34c2d4b9fdbf",
+              name: "custom",
+              arguments: %{"thing" => "hairbrush"},
+              index: nil
+            }
+          ],
+          tool_results: nil
+        },
+        %LangChain.Message{
+          content: nil,
+          processed_content: nil,
+          index: nil,
+          status: :complete,
+          role: :tool,
+          name: nil,
+          tool_calls: [],
+          tool_results: [
+            %LangChain.Message.ToolResult{
+              type: :function,
+              tool_call_id: "54836033-8394-4a97-abc5-34c2d4b9fdbf",
+              name: "custom",
+              content: "drawer",
+              display_text: nil,
+              is_error: false
+            }
+          ]
+        },
+        %LangChain.Message{
+          content: "The hairbrush is located in the drawer.",
+          processed_content: nil,
+          index: nil,
+          status: :complete,
+          role: :assistant,
+          name: nil,
+          tool_calls: [],
+          tool_results: nil
+        }
+      ]
+
+      expected = [
+        %{"content" => "Where is the hairbrush located?", "role" => :user},
+        %{
+          "content" => nil,
+          "role" => :assistant,
+          "tool_calls" => [
+            %{
+              "function" => %{"arguments" => %{"thing" => "hairbrush"}, "name" => "custom"},
+              "id" => "54836033-8394-4a97-abc5-34c2d4b9fdbf",
+              "type" => "function"
+            }
+          ]
+        },
+        %{"content" => "drawer", "role" => :tool},
+        %{"content" => "The hairbrush is located in the drawer.", "role" => :assistant}
+      ]
+
+      assert %{messages: ^expected} = ChatOllamaAI.for_api(ollama_ai, messages, nil)
+    end
   end
 
   describe "call/2" do
@@ -190,6 +493,90 @@ defmodule ChatModels.ChatOllamaAITest do
 
       assert reason == "model '#{invalid_model}' not found, try pulling it first"
     end
+
+    @tag live_call: true, live_ollama_ai: true
+    test "provided tool is not necessarily used", %{
+      models: %{llama31: model},
+      tools: %{locator: locator}
+    } do
+      {:ok, chat} = ChatOllamaAI.new(model)
+      {:ok, msg} = Message.new_user("Good morning")
+      {:ok, %{tool_calls: calls} = _message} = ChatOllamaAI.call(chat, [msg], [locator])
+
+      assert [] == calls
+    end
+
+    @tag live_call: true, live_ollama_ai: true
+    test "provided tool is called (online)", %{
+      models: %{llama31: model},
+      tools: %{locator: locator}
+    } do
+      {:ok, chat} = ChatOllamaAI.new(model)
+      {:ok, msg} = Message.new_user("Where is the hairbrush located?")
+      {:ok, %{tool_calls: calls} = _message} = ChatOllamaAI.call(chat, [msg], [locator])
+
+      assert [%Message.ToolCall{name: "locator", arguments: %{"thing" => "hairbrush"}}] = calls
+    end
+
+    @tag live_ollama_ai: true
+    test "provided tool is called", %{models: %{llama31: model}, tools: %{locator: locator}} do
+      {:ok, chat} = ChatOllamaAI.new(model)
+      {:ok, msg} = Message.new_user("Where is the hairbrush located?")
+
+      expect(ChatOllamaAI, :do_api_request, fn _model, _msgs, _tools ->
+        %LangChain.Message{
+          content: nil,
+          processed_content: nil,
+          index: nil,
+          status: :complete,
+          role: :assistant,
+          name: nil,
+          tool_calls: [
+            %LangChain.Message.ToolCall{
+              status: :complete,
+              type: :function,
+              call_id: "4806e4e4-b1fd-48a4-b969-b6ae0045bb90",
+              name: "locator",
+              arguments: %{"thing" => "hairbrush"},
+              index: nil
+            }
+          ],
+          tool_results: nil
+        }
+      end)
+
+      {:ok, %{tool_calls: calls} = _message} = ChatOllamaAI.call(chat, [msg], [locator])
+
+      assert [%Message.ToolCall{name: "locator", arguments: %{"thing" => "hairbrush"}}] = calls
+    end
+
+    setup do
+      locator =
+        Function.new!(%{
+          name: "locator",
+          description: "Returns the location of the requested element or item.",
+          parameters: [
+            FunctionParam.new!(%{
+              name: "thing",
+              type: :string,
+              description: "the thing whose location is being request"
+            })
+          ],
+          function: fn %{"thing" => thing} = _arguments, context ->
+            # our context is a pretend item/location location map
+            {:ok, context[thing]}
+          end
+        })
+
+      llama31 = %{
+        model: "llama3.1:latest",
+        temperature: 1,
+        seed: 0,
+        stream: false
+      }
+
+      {:ok, %{models: %{llama31: llama31}, tools: %{locator: locator}}}
+    end
   end
 
   describe "do_process_response/1" do
@@ -231,6 +618,48 @@ defmodule ChatModels.ChatOllamaAITest do
       assert struct.role == :assistant
       assert struct.content == "Gre"
       assert struct.status == :incomplete
+    end
+
+    test "handles receiving a tool call request response", %{model: model} do
+      response = %{
+        "created_at" => "2024-08-05T09:13:24.222066Z",
+        "done" => true,
+        "done_reason" => "stop",
+        "eval_count" => 17,
+        "eval_duration" => 303_049_000,
+        "load_duration" => 12_754_875,
+        "message" => %{
+          "content" => "",
+          "role" => "assistant",
+          "tool_calls" => [
+            %{
+              "function" => %{
+                "arguments" => %{"thing" => "hairbrush"},
+                "name" => "custom"
+              }
+            }
+          ]
+        },
+        "model" => "llama3.1",
+        "prompt_eval_count" => 160,
+        "prompt_eval_duration" => 441_402_000,
+        "total_duration" => 757_930_875
+      }
+
+      assert %Message{} = msg = ChatOllamaAI.do_process_response(model, response)
+      assert msg.role == :assistant
+      assert msg.content == nil
+      assert msg.index == nil
+
+      assert [
+               %LangChain.Message.ToolCall{
+                 status: :complete,
+                 type: :function,
+                 name: "custom",
+                 arguments: %{"thing" => "hairbrush"},
+                 index: nil
+               }
+             ] = msg.tool_calls
     end
   end
 

@@ -197,14 +197,13 @@ defmodule ChatModels.ChatVertexAITest do
              } = tool_result
     end
 
-    test "expands system messages into two", %{vertex_ai: vertex_ai} do
+    test "generates a map containing a system message", %{vertex_ai: vertex_ai} do
       message = "These are some instructions."
 
       data = ChatVertexAI.for_api(vertex_ai, [Message.new_system!(message)], [])
 
-      assert %{"contents" => [msg1, msg2]} = data
-      assert %{"role" => :user, "parts" => [%{"text" => ^message}]} = msg1
-      assert %{"role" => :model, "parts" => [%{"text" => ""}]} = msg2
+      assert %{"system_instruction" => msg1} = data
+      assert %{"parts" => %{"text" => ^message}} = msg1
     end
 
     test "generates a map containing function declarations", %{
@@ -426,6 +425,17 @@ defmodule ChatModels.ChatVertexAITest do
                "version" => 1,
                "json_response" => false
              }
+    end
+  end
+
+  describe "inspect" do
+    test "redacts the API key" do
+      chain = ChatVertexAI.new!(%{"model" => "gemini-pro", "endpoint" => "http://localhost:1000"})
+
+      changeset = Ecto.Changeset.cast(chain, %{api_key: "1234567890"}, [:api_key])
+
+      refute inspect(changeset) =~ "1234567890"
+      assert inspect(changeset) =~ "**redacted**"
     end
   end
 end

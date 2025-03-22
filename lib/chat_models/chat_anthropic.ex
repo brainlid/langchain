@@ -8,7 +8,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
   ## Callbacks
 
-  See the set of available callback: `LangChain.ChatModels.LLMCallbacks`
+  See the set of available callbacks: `LangChain.Chains.ChainCallbacks`
 
   ### Rate Limit API Response Headers
 
@@ -102,6 +102,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
   @current_config_version 1
 
+  @default_cache_control_block %{"type" => "ephemeral"}
+
   # allow up to 1 minute for response.
   @receive_timeout 60_000
 
@@ -116,7 +118,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     # API key for Anthropic. If not set, will use global api key. Allows for usage
     # of a different API key per-call if desired. For instance, allowing a
     # customer to provide their own.
-    field :api_key, :string
+    field :api_key, :string, redact: true
 
     # https://docs.anthropic.com/claude/reference/versions
     field :api_version, :string, default: "2023-06-01"
@@ -161,6 +163,10 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
     # Tool choice option
     field :tool_choice, :map
+
+    # Beta headers
+    # https://docs.anthropic.com/claude/docs/tool-use - requires tools-2024-04-04 header during beta
+    field :beta_headers, {:array, :string}, default: ["tools-2024-04-04"]
   end
 
   @type t :: %ChatAnthropic{}
@@ -176,7 +182,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     :top_p,
     :top_k,
     :stream,
-    :tool_choice
+    :tool_choice,
+    :beta_headers
   ]
   @required_fields [:endpoint, :model]
 
@@ -479,14 +486,21 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     api_key || Config.resolve(:anthropic_key, "")
   end
 
-  defp headers(%ChatAnthropic{bedrock: nil, api_key: api_key, api_version: api_version}) do
+  defp headers(%ChatAnthropic{
+         bedrock: nil,
+         api_key: api_key,
+         api_version: api_version,
+         beta_headers: beta_headers
+       }) do
     %{
       "x-api-key" => get_api_key(api_key),
       "content-type" => "application/json",
-      "anthropic-version" => api_version,
-      # https://docs.anthropic.com/claude/docs/tool-use - requires this header during beta
-      "anthropic-beta" => "tools-2024-04-04"
+      "anthropic-version" => api_version
     }
+    |> Utils.conditionally_add_to_map(
+      "anthropic-beta",
+      if(!Enum.empty?(beta_headers), do: Enum.join(beta_headers, ","))
+    )
   end
 
   defp headers(%ChatAnthropic{bedrock: %BedrockConfig{}}) do
@@ -875,7 +889,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         %{"type" => "text", "text" => part.content}
 
       {:ok, setting} ->
-        setting = if setting == true, do: %{"type" => "ephemeral"}, else: setting
+        setting = if setting == true, do: @default_cache_control_block, else: setting
         %{"type" => "text", "text" => part.content, "cache_control" => setting}
     end
   end
@@ -943,11 +957,24 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
   # ToolResult support
   def for_api(%ToolResult{} = result) do
-    %{
-      "type" => "tool_result",
-      "tool_use_id" => result.tool_call_id,
-      "content" => result.content
-    }
+    case Keyword.fetch(result.options || [], :cache_control) do
+      :error ->
+        %{
+          "type" => "tool_result",
+          "tool_use_id" => result.tool_call_id,
+          "content" => result.content
+        }
+
+      {:ok, setting} ->
+        setting = if setting == true, do: @default_cache_control_block, else: setting
+
+        %{
+          "type" => "tool_result",
+          "tool_use_id" => result.tool_call_id,
+          "content" => result.content,
+          "cache_control" => setting
+        }
+    end
     |> Utils.conditionally_add_to_map("is_error", result.is_error)
   end
 
@@ -1058,7 +1085,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         :receive_timeout,
         :top_p,
         :top_k,
-        :stream
+        :stream,
+        :beta_headers
       ],
       @current_config_version
     )

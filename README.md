@@ -1,3 +1,7 @@
+[![Elixir CI](https://github.com/brainlid/langchain/actions/workflows/elixir.yml/badge.svg)](https://github.com/brainlid/langchain/actions/workflows/elixir.yml)
+[![Module Version](https://img.shields.io/hexpm/v/langchain.svg)](https://hex.pm/packages/langchain)
+[![Hex Docs](https://img.shields.io/badge/hex-docs-lightgreen.svg)](https://hexdocs.pm/langchain)
+
 # ![Logo with chat chain links](https://github.com/brainlid/langchain/blob/main/images/elixir-langchain-link-logo_32px.png?raw=true) Elixir LangChain
 
 Elixir LangChain enables Elixir applications to integrate AI services and self-hosted models into an application.
@@ -12,6 +16,8 @@ Currently supported AI services:
 - Ollama
 - Mistral
 - Bumblebee self-hosted models - including Llama, Mistral and Zephyr
+- [LMStudio](https://lmstudio.ai/docs/api/endpoints/openai) via their OpenAI compatibility API
+- Perplexity
 
 **LangChain** is short for Language Chain. An LLM, or Large Language Model, is the "Language" part. This library makes it easier for Elixir applications to "chain" or connect different processes, integrations, libraries, services, or functionality together with an LLM.
 
@@ -124,11 +130,11 @@ A list of models to use:
 
 ## Prompt caching
 
-ChatGPT and Claude both offer prefix-based prompt caching, which can offer cost and performance benefits for longer prompts. Gemini offers context caching, which is similar. 
+ChatGPT and Claude both offer prefix-based prompt caching, which can offer cost and performance benefits for longer prompts. Gemini offers context caching, which is similar.
 
 - [ChatGPT's prompt caching](https://openai.com/index/api-prompt-caching/) is automatic for prompts longer than 1024 tokens, caching the longest common prefix.
 - [Claude's prompt caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching) is not automatic. It's prefixing processes tools, system, and then messages, in that order, up to and including the block designated with {"cache_control": {"type": "ephemeral"}} . See LangChain.ChatModels.ChatAnthropicTest and for an example.
-- [Gemini's context caching]((https://ai.google.dev/gemini-api/docs/caching?lang=python)) requires a seperate call which is not supported by Langchain. 
+- [Gemini's context caching]((https://ai.google.dev/gemini-api/docs/caching?lang=python)) requires a separate call which is not supported by Langchain.
 
 ## Usage
 
@@ -184,7 +190,7 @@ custom_fn =
   })
 
 # create and run the chain
-{:ok, updated_chain}} =
+{:ok, updated_chain} =
   LLMChain.new!(%{
     llm: ChatOpenAI.new!(),
     custom_context: custom_context,
@@ -195,7 +201,7 @@ custom_fn =
   |> LLMChain.run(mode: :while_needs_response)
 
 # print the LLM's answer
-IO.puts(update |> ChainResult.to_string())
+IO.puts(ChainResult.to_string!(updated_chain))
 # => "The hairbrush is located in the drawer."
 ```
 

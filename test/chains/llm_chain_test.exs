@@ -835,7 +835,7 @@ defmodule LangChain.Chains.LLMChainTest do
         end
       }
 
-      # internal hack to assign a callback. Verifying it get's executed.
+      # internal hack to assign a callback. Verifying it gets executed.
       chain = %LLMChain{chain | callbacks: [handler]}
 
       chain =
@@ -856,7 +856,7 @@ defmodule LangChain.Chains.LLMChainTest do
 
     test "when halted, adds original message plus new message returned from processor and fires 2 callbacks",
          %{chain: chain} do
-      # Verifying it get's executed.
+      # Verifying it gets executed.
       handler = %{
         on_message_processing_error: fn _chain, item ->
           send(self(), {:processing_error_callback, item})
@@ -1655,8 +1655,11 @@ defmodule LangChain.Chains.LLMChainTest do
       test_pid = self()
 
       handler = %{
+        on_message_processed: fn _chain, tool_msg ->
+          send(test_pid, {:message_processed_callback_fired, tool_msg})
+        end,
         on_tool_response_created: fn _chain, tool_msg ->
-          send(test_pid, {:message_callback_fired, tool_msg})
+          send(test_pid, {:response_created_callback_fired, tool_msg})
         end
       }
 
@@ -1694,7 +1697,10 @@ defmodule LangChain.Chains.LLMChainTest do
 
       [tool1, tool2, tool3] = tool_message.tool_results
 
-      assert_receive {:message_callback_fired, callback_message}
+      assert_receive {:message_processed_callback_fired, callback_message}
+      assert %Message{role: :tool} = callback_message
+
+      assert_receive {:response_created_callback_fired, callback_message}
       assert %Message{role: :tool} = callback_message
       assert [tool1, tool2, tool3] == callback_message.tool_results
 
@@ -1756,7 +1762,10 @@ defmodule LangChain.Chains.LLMChainTest do
 
       assert updated_chain.last_message.role == :tool
       [%ToolResult{} = result] = updated_chain.last_message.tool_results
-      assert result.content == "ERROR: %RuntimeError{message: \"Stuff went boom!\"}"
+
+      assert result.content ==
+               "ERROR: (RuntimeError) Stuff went boom! at test/chains/llm_chain_test.exs:#{__ENV__.line - 19}: anonymous fn/2 in LangChain.Chains.LLMChainTest.\"test execute_tool_calls/2 catches exceptions from executed function and returns Tool result with error message\"/1"
+
       assert result.is_error == true
     end
 

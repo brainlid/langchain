@@ -1,6 +1,9 @@
 defmodule LangChain.Callbacks do
   @moduledoc """
   Defines the structure of callbacks and provides utilities for executing them.
+
+  See `LangChain.Chains.ChainCallbacks` for the list of callbacks that can be
+  used.
   """
   require Logger
   alias LangChain.LangChainError
@@ -42,7 +45,7 @@ defmodule LangChain.Callbacks do
           rescue
             err ->
               msg =
-                "Callback handler for #{inspect(callback_name)} raised an exception: #{inspect(err)}"
+                "Callback handler for #{inspect(callback_name)} raised an exception: #{LangChainError.format_exception(err, __STACKTRACE__, :short)}"
 
               Logger.error(msg)
               raise LangChainError, msg

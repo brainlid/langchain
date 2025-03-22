@@ -71,6 +71,15 @@ defmodule LangChain.MessageProcessors.JsonProcessor do
       {:cont, updated_chain, updated_message} =
         JsonProcessor.run(chain, message, ~r/```json(.*?)```/s)
 
+
+  ## JsonProcessor vs Tool Usage
+
+  The `JsonProcessor` is not compatible with tool usage. Some simpler models do
+  not support tool usage and the `JsonProcessor` can help get structured
+  responses out of them more easily.
+
+  The `JsonProcessor` is run on the assistant's response. If the response is a
+  ToolCall, then the response does not contain text JSON contents to process.
   """
   alias LangChain.Chains.LLMChain
   alias LangChain.Message

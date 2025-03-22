@@ -47,4 +47,19 @@ defmodule LangChain.LangChainError do
       original: Keyword.get(opts, :original)
     }
   end
+
+  @doc """
+  Formats the exception as a string using a stacktrace to provide context.
+  """
+  @spec format_exception(exception :: struct(), trace :: Exception.stacktrace(), format :: atom()) ::
+          String.t()
+  def format_exception(exception, trace, format \\ :full_stacktrace) do
+    case format do
+      :short ->
+        "(#{inspect(exception.__struct__)}) #{Exception.message(exception)} at #{Enum.at(trace, 0) |> Exception.format_stacktrace_entry()}"
+
+      _ ->
+        Exception.format(:error, exception, trace)
+    end
+  end
 end

@@ -2,13 +2,13 @@ defmodule LangChain.MixProject do
   use Mix.Project
 
   @source_url "https://github.com/brainlid/langchain"
-  @version "0.3.0"
+  @version "0.3.2"
 
   def project do
     [
       app: :langchain,
       version: @version,
-      elixir: "~> 1.14",
+      elixir: "~> 1.16",
       elixirc_paths: elixirc_paths(Mix.env()),
       test_options: [docs: true],
       start_permanent: Mix.env() == :prod,
@@ -104,6 +104,11 @@ defmodule LangChain.MixProject do
           LangChain.Images,
           LangChain.Images.OpenAIImage,
           LangChain.Images.GeneratedImage
+        ],
+        "Text Splitter": [
+          LangChain.TextSplitter.CharacterTextSplitter,
+          LangChain.TextSplitter.RecursiveCharacterTextSplitter,
+          LangChain.TextSplitter.LanguageSeparators
         ],
         Tools: [
           LangChain.Tools.Calculator

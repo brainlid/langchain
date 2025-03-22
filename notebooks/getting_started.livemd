@@ -87,7 +87,7 @@ handler = %{
     IO.write(data.content)
   end,
   on_message_processed: fn _chain, %Message{} = data ->
-    # the message was assmebled and is processed
+    # the message was assembled and is processed
     IO.puts("")
     IO.puts("")
     IO.inspect(data.content, label: "COMPLETED MESSAGE")

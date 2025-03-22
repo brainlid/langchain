@@ -133,6 +133,7 @@ defmodule LangChain.Chains.LLMChain do
   alias LangChain.Function
   alias LangChain.LangChainError
   alias LangChain.Utils
+  alias LangChain.NativeTool
 
   @primary_key false
   embedded_schema do
@@ -200,7 +201,7 @@ defmodule LangChain.Chains.LLMChain do
   @typedoc """
   A message processor is an arity 2 function that takes an LLMChain and a
   Message. It is used to "pre-process" the received message from the LLM.
-  Processors can be chained together to preform a sequence of transformations.
+  Processors can be chained together to perform a sequence of transformations.
   """
   @type message_processor :: (t(), Message.t() -> processor_return())
 
@@ -273,7 +274,7 @@ defmodule LangChain.Chains.LLMChain do
   @doc """
   Add a tool to an LLMChain.
   """
-  @spec add_tools(t(), Function.t() | [Function.t()]) :: t() | no_return()
+  @spec add_tools(t(), NativeTool.t() | Function.t() | [Function.t()]) :: t() | no_return()
   def add_tools(%LLMChain{tools: existing} = chain, tools) do
     updated = existing ++ List.wrap(tools)
 
@@ -307,7 +308,7 @@ defmodule LangChain.Chains.LLMChain do
   - `mode: :until_success` - (for non-interactive processing done by the LLM
     where it may repeatedly fail and need to re-try) Repeatedly evaluates a
     received message through any message processors, returning any errors to the
-    LLM until it either succeeds or exceeds the `max_retry_count`. Ths includes
+    LLM until it either succeeds or exceeds the `max_retry_count`. This includes
     evaluating received `ToolCall`s until they succeed. If an LLM makes 3
     ToolCalls in a single message and 2 succeed while 1 fails, the success
     responses are returned to the LLM with the failure response of the remaining
@@ -925,7 +926,9 @@ defmodule LangChain.Chains.LLMChain do
       # fire the callbacks
       if chain.verbose, do: IO.inspect(result_message, label: "TOOL RESULTS")
 
-      fire_callback_and_return(updated_chain, :on_tool_response_created, [result_message])
+      updated_chain
+      |> fire_callback_and_return(:on_message_processed, [result_message])
+      |> fire_callback_and_return(:on_tool_response_created, [result_message])
     else
       # Not a complete tool call
       chain
@@ -978,7 +981,9 @@ defmodule LangChain.Chains.LLMChain do
       end
     rescue
       err ->
-        Logger.error("Function #{function.name} failed in execution. Exception: #{inspect(err)}")
+        Logger.error(
+          "Function #{function.name} failed in execution. Exception: #{LangChainError.format_exception(err, __STACKTRACE__)}"
+        )
 
         ToolResult.new!(%{
           tool_call_id: call.call_id,

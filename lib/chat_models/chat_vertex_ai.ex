@@ -32,7 +32,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     field :endpoint, :string
 
     field :model, :string, default: "gemini-pro"
-    field :api_key, :string
+    field :api_key, :string, redact: true
 
     # What sampling temperature to use, between 0 and 2. Higher values like 0.8
     # will make the output more random, while lower values like 0.2 will make it
@@ -123,20 +123,24 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   end
 
   def for_api(%ChatVertexAI{} = vertex_ai, messages, functions) do
+    {sys_instructions, other_messages} = Utils.split_system_message(messages)
+
     messages_for_api =
-      messages
+      other_messages
       |> Enum.map(&for_api/1)
       |> List.flatten()
       |> List.wrap()
 
-    req = %{
-      "contents" => messages_for_api,
-      "generationConfig" => %{
-        "temperature" => vertex_ai.temperature,
-        "topP" => vertex_ai.top_p,
-        "topK" => vertex_ai.top_k
+    req =
+      %{
+        "contents" => messages_for_api,
+        "generationConfig" => %{
+          "temperature" => vertex_ai.temperature,
+          "topP" => vertex_ai.top_p,
+          "topK" => vertex_ai.top_k
+        }
       }
-    }
+      |> Utils.conditionally_add_to_map("system_instruction", for_api(sys_instructions))
 
     req =
       if vertex_ai.json_response do
@@ -178,18 +182,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   end
 
   defp for_api(%Message{role: :system} = message) do
-    # No system messages support means we need to fake a prompt and response
-    # to pretend like it worked.
-    [
-      %{
-        "role" => :user,
-        "parts" => [%{"text" => message.content}]
-      },
-      %{
-        "role" => :model,
-        "parts" => [%{"text" => ""}]
-      }
-    ]
+    %{"parts" => %{"text" => message.content}}
   end
 
   defp for_api(%Message{role: :user, content: content}) when is_list(content) do
@@ -245,6 +238,8 @@ defmodule LangChain.ChatModels.ChatVertexAI do
       }
     }
   end
+
+  defp for_api(nil), do: nil
 
   @doc """
   Calls the Google AI API passing the ChatVertexAI struct with configuration,

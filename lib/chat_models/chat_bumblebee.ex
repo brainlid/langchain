@@ -109,8 +109,8 @@ defmodule LangChain.ChatModels.ChatBumblebee do
   alias LangChain.Utils.ChatTemplates
   alias LangChain.Callbacks
   alias LangChain.Message.ToolCall
-  alias Langchain.Utils.Parser.LLAMA_3_1_CustomToolParser
-  alias Langchain.Utils.Parser.LLAMA_3_2_CustomToolParser
+  alias LangChain.Utils.Parser.LLAMA_3_1_CustomToolParser
+  alias LangChain.Utils.Parser.LLAMA_3_2_CustomToolParser
 
   @behaviour ChatModel
 

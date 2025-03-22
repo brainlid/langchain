@@ -38,6 +38,8 @@ defmodule LangChain.Message.ToolResult do
     field :display_text, :string
     # flag if the result is an error
     field :is_error, :boolean, default: false
+    # options potentially LLM specific (i.e. cache control for Anthropic)
+    field :options, :any, virtual: true
   end
 
   @type t :: %ToolResult{}
@@ -49,7 +51,8 @@ defmodule LangChain.Message.ToolResult do
     :content,
     :processed_content,
     :display_text,
-    :is_error
+    :is_error,
+    :options
   ]
   @create_fields @update_fields
   @required_fields [:type, :tool_call_id, :content]

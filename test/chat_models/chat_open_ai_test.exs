@@ -120,7 +120,8 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert data.model == @test_model
       assert data.temperature == 1
       assert data.frequency_penalty == 0.5
-      assert data.response_format == %{"type" => "text"}
+      # NOTE: %{"type" => "text"} is the default when not specified
+      assert data[:response_format] == nil
     end
 
     test "generates a map for an API call with JSON response set to true" do
@@ -575,6 +576,48 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
       result =
         ChatOpenAI.for_api(openai, Message.new_assistant!(%{content: "Hi.", tool_calls: []}))
+
+      assert result == expected
+    end
+
+    test "turns an assistant message with text and tool calls into expected JSON format" do
+      openai = ChatOpenAI.new!()
+
+      # NOTE: Does not include tool_calls if empty
+      expected = %{
+        "role" => :assistant,
+        "content" =>
+          "It seems there was an error, as the response indicates that `a.txt` is present rather than showing the current directory path. Let me try that again.",
+        "tool_calls" => [
+          %{
+            "function" => %{
+              "arguments" => "{\"command\":\"pwd\"}",
+              "name" => "execute_command"
+            },
+            "id" => "call_123",
+            "type" => "function"
+          }
+        ]
+      }
+
+      result =
+        ChatOpenAI.for_api(openai, %Message{
+          content:
+            "It seems there was an error, as the response indicates that `a.txt` is present rather than showing the current directory path. Let me try that again.",
+          status: :complete,
+          role: :assistant,
+          tool_calls: [
+            %ToolCall{
+              status: :complete,
+              type: :function,
+              call_id: "call_123",
+              name: "execute_command",
+              arguments: %{"command" => "pwd"},
+              index: nil
+            }
+          ],
+          tool_results: nil
+        })
 
       assert result == expected
     end
@@ -2178,7 +2221,8 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
       data = ChatOpenAI.for_api(openai, [], [])
 
-      assert data.response_format == %{"type" => "text"}
+      # NOTE: %{"type" => "text"} is the default
+      assert data[:response_format] == nil
     end
 
     test "generates a map for an API call with json_object format when json_response is true and no schema" do
@@ -2215,6 +2259,17 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
                "type" => "json_schema",
                "json_schema" => json_schema
              }
+    end
+  end
+
+  describe "inspect" do
+    test "redacts the API key" do
+      chain = ChatOpenAI.new!()
+
+      changeset = Ecto.Changeset.cast(chain, %{api_key: "1234567890"}, [:api_key])
+
+      refute inspect(changeset) =~ "1234567890"
+      assert inspect(changeset) =~ "**redacted**"
     end
   end
 end

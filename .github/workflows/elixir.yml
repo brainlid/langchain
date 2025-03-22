@@ -9,9 +9,9 @@ name: Elixir CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
 env:
   OPENAI_API_KEY: invalid
@@ -20,30 +20,52 @@ env:
   AWS_ACCESS_KEY_ID: invalid
   AWS_SECRET_ACCESS_KEY: invalid
   AWS_REGION: invalid
+  PERPLEXITY_API_KEY: invalid
 
 permissions:
   contents: read
 
 jobs:
-  build:
-
-    name: Build and test
+  test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - pair:
+              elixir: "1.16"
+              otp: "25"
+          - pair:
+              elixir: "1.18"
+              otp: "27"
+            lint: lint
 
     steps:
-    - uses: actions/checkout@v4
-      name: Set up Elixir
-    - uses: erlef/setup-beam@v1
-      with:
-        elixir-version: 'v1.18.1-otp-27' # [Required] Define the Elixir version
-        otp-version: 'OTP-27.0'      # [Required] Define the Erlang/OTP version
-    - name: Restore dependencies cache
-      uses: actions/cache@v3
-      with:
-        path: deps
-        key: ${{ runner.os }}-mix-${{ hashFiles('**/mix.lock') }}
-        restore-keys: ${{ runner.os }}-mix-
-    - name: Install dependencies
-      run: mix deps.get
-    - name: Run tests
-      run: mix test
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: "1.18"
+          otp-version: "27"
+
+      - uses: actions/cache@v4
+        with:
+          path: deps
+          key: ${{ runner.os }}-mix-${{ hashFiles('**/mix.lock') }}
+          restore-keys: ${{ runner.os }}-mix-
+
+      - run: mix deps.get
+
+      - run: mix format --check-formatted
+        if: ${{ matrix.lint }}
+
+      - run: mix deps.get && mix deps.unlock --check-unused
+        if: ${{ matrix.lint }}
+
+      - run: mix deps.compile
+
+      - run: mix compile --warnings-as-errors
+        if: ${{ matrix.lint }}
+
+      - name: Run tests
+        run: mix test

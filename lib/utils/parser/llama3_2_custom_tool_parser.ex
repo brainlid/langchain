@@ -1,5 +1,5 @@
 if Code.ensure_loaded?(NimbleParsec) do
-  defmodule Langchain.Utils.Parser.LLAMA_3_2_CustomToolParser do
+  defmodule LangChain.Utils.Parser.LLAMA_3_2_CustomToolParser do
     import NimbleParsec
 
     # Basic components
