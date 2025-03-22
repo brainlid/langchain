@@ -337,6 +337,27 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert result == expected
     end
 
+    test "turns a file ContentPart into the expected JSON format" do
+      file_base64_data = "some_file_base64_data"
+      filename = "my_file.pdf"
+
+      expected = %{
+        "type" => "file",
+        "file" => %{
+          "filename" => filename,
+          "file_data" => "data:application/pdf;base64," <> file_base64_data
+        }
+      }
+
+      result =
+        ChatOpenAI.for_api(
+          ChatOpenAI.new!(),
+          ContentPart.file!(file_base64_data, media: :pdf, filename: filename)
+        )
+
+      assert result == expected
+    end
+
     test "turns a tool_call into expected JSON format" do
       tool_call =
         ToolCall.new!(%{call_id: "call_abc123", name: "hello_world", arguments: "{}"})

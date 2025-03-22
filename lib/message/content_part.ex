@@ -9,6 +9,7 @@ defmodule LangChain.Message.ContentPart do
   - `:text` - The message part is text.
   - `:image_url` - The message part is a URL to an image.
   - `:image` - The message part is image data that is base64 encoded text.
+  - `:file` - The message part is file data that is base64 encoded text.
 
   ## Fields
 
@@ -43,7 +44,7 @@ defmodule LangChain.Message.ContentPart do
 
   @primary_key false
   embedded_schema do
-    field :type, Ecto.Enum, values: [:text, :image_url, :image], default: :text
+    field :type, Ecto.Enum, values: [:text, :image_url, :image, :file], default: :text
     field :content, :string
     field :options, :any, virtual: true
   end
@@ -118,6 +119,14 @@ defmodule LangChain.Message.ContentPart do
   @spec image!(String.t(), Keyword.t()) :: t() | no_return()
   def image!(content, opts \\ []) do
     new!(%{type: :image, content: content, options: opts})
+  end
+
+  @doc """
+  Create a new ContentPart that contains a file encoded as base64 data.
+  """
+  @spec file!(String.t(), Keyword.t()) :: t() | no_return()
+  def file!(content, opts \\ []) do
+    new!(%{type: :file, content: content, options: opts})
   end
 
   @doc """
