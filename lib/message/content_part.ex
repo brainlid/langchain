@@ -122,8 +122,7 @@ defmodule LangChain.Message.ContentPart do
   end
 
   @doc """
-  Create a new ContentPart that contains a file encoded as base6
-  data.
+  Create a new ContentPart that contains a file encoded as base64 data.
   """
   @spec file!(String.t(), Keyword.t()) :: t() | no_return()
   def file!(content, opts \\ []) do
