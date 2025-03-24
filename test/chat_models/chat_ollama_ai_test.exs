@@ -75,26 +75,27 @@ defmodule ChatModels.ChatOllamaAITest do
     test "generates a map for an API call with no messages", %{ollama_ai: ollama_ai} do
       data = ChatOllamaAI.for_api(ollama_ai, [], [])
       assert data.model == "llama2:latest"
-      assert data.temperature == 0.4
       assert data.stream == false
       assert data.messages == []
-      assert data.seed == 0
-      assert data.num_ctx == 2048
-      assert data.num_predict == 128
-      assert data.repeat_last_n == 64
-      assert data.repeat_penalty == 1.1
-      assert data.mirostat == 0
-      assert data.mirostat_eta == 0.1
-      assert data.mirostat_tau == 5.0
-      assert data.num_gqa == 8
-      assert data.num_gpu == 1
-      assert data.num_thread == 0
       assert data.receive_timeout == 300_000
+
+      assert data.options.temperature == 0.4
+      assert data.options.seed == 0
+      assert data.options.num_ctx == 2048
+      assert data.options.num_predict == 128
+      assert data.options.repeat_last_n == 64
+      assert data.options.repeat_penalty == 1.1
+      assert data.options.mirostat == 0
+      assert data.options.mirostat_eta == 0.1
+      assert data.options.mirostat_tau == 5.0
+      assert data.options.num_gqa == 8
+      assert data.options.num_gpu == 1
+      assert data.options.num_thread == 0
       # TODO: figure out why this is field is is being cast to nil instead of empty string
-      assert data.stop == nil
-      assert data.tfs_z == 0.0
-      assert data.top_k == 0
-      assert data.top_p == 0.0
+      assert data.options.stop == nil
+      assert data.options.tfs_z == 0.0
+      assert data.options.top_k == 0
+      assert data.options.top_p == 0.0
     end
 
     test "generates a map for an API call with a single message", %{ollama_ai: ollama_ai} do
@@ -102,7 +103,7 @@ defmodule ChatModels.ChatOllamaAITest do
 
       data = ChatOllamaAI.for_api(ollama_ai, [Message.new_user!(user_message)], [])
       assert data.model == "llama2:latest"
-      assert data.temperature == 0.4
+      assert data.options.temperature == 0.4
 
       assert [%{"content" => "What color is the sky?", "role" => :user}] = data.messages
     end
@@ -119,7 +120,7 @@ defmodule ChatModels.ChatOllamaAITest do
         )
 
       assert data.model == "llama2:latest"
-      assert data.temperature == 0.4
+      assert data.options.temperature == 0.4
 
       assert [
                %{"role" => :system} = system_msg,

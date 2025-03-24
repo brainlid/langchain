@@ -215,26 +215,27 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   def for_api(%ChatOllamaAI{} = model, messages, tools) do
     %{
       model: model.model,
-      temperature: model.temperature,
       messages: messages_for_api(messages),
       stream: model.stream,
-      seed: model.seed,
-      num_ctx: model.num_ctx,
-      num_predict: model.num_predict,
-      repeat_last_n: model.repeat_last_n,
-      repeat_penalty: model.repeat_penalty,
-      keep_alive: model.keep_alive,
-      mirostat: model.mirostat,
-      mirostat_eta: model.mirostat_eta,
-      mirostat_tau: model.mirostat_tau,
-      num_gqa: model.num_gqa,
-      num_gpu: model.num_gpu,
-      num_thread: model.num_thread,
-      receive_timeout: model.receive_timeout,
-      stop: model.stop,
-      tfs_z: model.tfs_z,
-      top_k: model.top_k,
-      top_p: model.top_p
+      options: %{
+        temperature: model.temperature,
+        seed: model.seed,
+        num_ctx: model.num_ctx,
+        num_predict: model.num_predict,
+        repeat_last_n: model.repeat_last_n,
+        repeat_penalty: model.repeat_penalty,
+        mirostat: model.mirostat,
+        mirostat_eta: model.mirostat_eta,
+        mirostat_tau: model.mirostat_tau,
+        num_gqa: model.num_gqa,
+        num_gpu: model.num_gpu,
+        num_thread: model.num_thread,
+        stop: model.stop,
+        tfs_z: model.tfs_z,
+        top_k: model.top_k,
+        top_p: model.top_p
+      },
+      receive_timeout: model.receive_timeout
     }
     |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(tools))
   end
