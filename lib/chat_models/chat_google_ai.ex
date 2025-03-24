@@ -311,6 +311,26 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     }
   end
 
+  def for_api(%ContentPart{type: :file, options: opts} = part) do
+    mime_type =
+      case Keyword.get(opts || [], :media, nil) do
+        type when is_binary(type) ->
+          "application/#{type}"
+
+        other ->
+          message = "Received unsupported media type for ContentPart: #{inspect(other)}"
+          Logger.error(message)
+          raise LangChainError, message
+      end
+
+    %{
+      "inline_data" => %{
+        "mime_type" => mime_type,
+        "data" => part.content
+      }
+    }
+  end
+
   def for_api(%ToolCall{} = call) do
     %{
       "functionCall" => %{
