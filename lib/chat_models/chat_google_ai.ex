@@ -793,6 +793,8 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
         :top_p,
         :top_k,
         :receive_timeout,
+        :json_response,
+        :json_schema,
         :stream,
         :safety_settings
       ],
