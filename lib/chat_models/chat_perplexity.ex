@@ -50,6 +50,7 @@ defmodule LangChain.ChatModels.ChatPerplexity do
   alias LangChain.LangChainError
   alias LangChain.Utils
   alias LangChain.Callbacks
+  alias LangChain.Telemetry
 
   @behaviour ChatModel
 
@@ -301,18 +302,38 @@ defmodule LangChain.ChatModels.ChatPerplexity do
   end
 
   def call(%ChatPerplexity{} = perplexity, messages, tools) when is_list(messages) do
-    try do
-      case do_api_request(perplexity, messages, tools) do
-        {:error, reason} ->
-          {:error, reason}
+    metadata = %{
+      model: perplexity.model,
+      message_count: length(messages),
+      tools_count: length(tools)
+    }
 
-        parsed_data ->
-          {:ok, [parsed_data]}
+    Telemetry.span([:langchain, :llm, :call], metadata, fn ->
+      try do
+        # Track the prompt being sent
+        Telemetry.llm_prompt(
+          %{system_time: System.system_time()},
+          %{model: perplexity.model, messages: messages}
+        )
+
+        case do_api_request(perplexity, messages, tools) do
+          {:error, reason} ->
+            {:error, reason}
+
+          parsed_data ->
+            # Track the response being received
+            Telemetry.llm_response(
+              %{system_time: System.system_time()},
+              %{model: perplexity.model, response: parsed_data}
+            )
+
+            {:ok, [parsed_data]}
+        end
+      rescue
+        err in LangChainError ->
+          {:error, err}
       end
-    rescue
-      err in LangChainError ->
-        {:error, err}
-    end
+    end)
   end
 
   @doc false
@@ -353,6 +374,17 @@ defmodule LangChain.ChatModels.ChatPerplexity do
 
           result ->
             Callbacks.fire(perplexity.callbacks, :on_llm_new_message, [result])
+            
+            # Track non-streaming response completion
+            Telemetry.emit_event(
+              [:langchain, :llm, :response, streaming: false],
+              %{system_time: System.system_time()},
+              %{
+                model: perplexity.model,
+                response_size: byte_size(inspect(result))
+              }
+            )
+            
             result
         end
 
@@ -619,19 +651,14 @@ defmodule LangChain.ChatModels.ChatPerplexity do
     end
   end
 
-  @doc false
-  def do_process_response(
-        _model,
-        %{
-          "choices" => [
-            %{
-              "delta" => %{"role" => role, "content" => content},
-              "finish_reason" => finish,
-              "index" => index
-            } = _choice
-          ]
-        }
-      ) do
+  def do_process_response(_model, %{"choices" => [
+    %{
+      "delta" => %{"role" => role, "content" => content},
+      "finish_reason" => finish,
+      "index" => index
+    } = _choice
+  ]
+  }) do
     status = finish_reason_to_status(finish)
 
     data =

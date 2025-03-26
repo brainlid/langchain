@@ -231,19 +231,40 @@ defmodule LangChain.ChatModels.ChatBumblebee do
   end
 
   def call(%ChatBumblebee{} = model, messages, functions) when is_list(messages) do
-    try do
-      # make base api request and perform high-level success/failure checks
-      case do_serving_request(model, messages, functions) do
-        {:error, reason} ->
-          {:error, reason}
+    metadata = %{
+      model: inspect(model.serving),
+      template_format: model.template_format,
+      message_count: length(messages),
+      tools_count: length(functions)
+    }
 
-        parsed_data ->
-          {:ok, parsed_data}
+    LangChain.Telemetry.span([:langchain, :llm, :call], metadata, fn ->
+      try do
+        # Track the prompt being sent
+        LangChain.Telemetry.llm_prompt(
+          %{system_time: System.system_time()},
+          %{model: inspect(model.serving), messages: messages}
+        )
+
+        # make base api request and perform high-level success/failure checks
+        case do_serving_request(model, messages, functions) do
+          {:error, reason} ->
+            {:error, reason}
+
+          parsed_data ->
+            # Track the response being received
+            LangChain.Telemetry.llm_response(
+              %{system_time: System.system_time()},
+              %{model: inspect(model.serving), response: parsed_data}
+            )
+
+            {:ok, parsed_data}
+        end
+      rescue
+        err in LangChainError ->
+          {:error, err}
       end
-    rescue
-      err in LangChainError ->
-        {:error, err}
-    end
+    end)
   end
 
   @doc false
@@ -461,6 +482,16 @@ defmodule LangChain.ChatModels.ChatBumblebee do
       when is_binary(content) do
     fire_token_usage_callback(model, token_summary)
 
+    # Track non-streaming response completion
+    LangChain.Telemetry.emit_event(
+      [:langchain, :llm, :response, streaming: false],
+      %{system_time: System.system_time()},
+      %{
+        model: inspect(model.serving),
+        response_size: byte_size(content)
+      }
+    )
+
     case Message.new(%{role: :assistant, status: :complete, content: content}) do
       {:ok, message} ->
         # execute the callback with the final message
@@ -494,6 +525,13 @@ defmodule LangChain.ChatModels.ChatBumblebee do
     chunk_processor = fn
       {:done, %{token_summary: token_summary}} ->
         fire_token_usage_callback(model, token_summary)
+
+        # Track stream completion
+        LangChain.Telemetry.emit_event(
+          [:langchain, :llm, :response, streaming: true],
+          %{system_time: System.system_time()},
+          %{model: inspect(model.serving)}
+        )
 
         final_delta = MessageDelta.new!(%{role: :assistant, status: :complete})
         Callbacks.fire(model.callbacks, :on_llm_new_delta, [final_delta])
