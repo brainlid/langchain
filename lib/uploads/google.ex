@@ -21,7 +21,6 @@ defmodule LangChain.Uploads.Google do
 
     # Upload the actual file
     {:ok, upload_resp} = do_upload_file(upload_url, path, num_bytes)
-    {:ok, upload_resp["file"]["uri"]}
   end
 
   defp get_mime_type(path) do
@@ -33,7 +32,7 @@ defmodule LangChain.Uploads.Google do
     end
   end
 
-  defp initialize_upload(base_url, api_key, num_bytes, mime_type, display_name) do
+  defp initialize_upload_request(base_url, api_key, num_bytes, mime_type, display_name) do
     url = "#{base_url}/upload/v1beta/files?key=#{api_key}"
 
     headers = [
