@@ -150,6 +150,8 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   """
   @spec new(attrs :: map()) :: {:ok, t} | {:error, Ecto.Changeset.t()}
   def new(%{} = attrs \\ %{}) do
+    attrs = Map.merge(%{api_key: Config.resolve(:google_ai_key, "")}, attrs)
+
     %ChatGoogleAI{}
     |> cast(attrs, @create_fields)
     |> common_validation()

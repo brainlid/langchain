@@ -3,10 +3,13 @@ defmodule LangChain.Uploads.Google do
 
   alias LangChain.Message.ContentPart
 
-  def upload_file(path, api_key, base_url \\ @base_url) do
+  def upload_file(google_config, file_path) do
     # Get file metadata
-    {:ok, mime_type} = get_mime_type(path)
-    num_bytes = File.stat!(path).size
+    api_key = google_config.api_key
+    base_url = google_config.endpoint
+
+    {:ok, mime_type} = get_mime_type(file_path)
+    num_bytes = File.stat!(file_path).size
     display_name = "TEXT"
 
     # Initial resumable upload request
@@ -20,7 +23,7 @@ defmodule LangChain.Uploads.Google do
       )
 
     # Upload the actual file
-    do_upload_file(upload_url, path, num_bytes)
+    do_upload_file(upload_url, file_path, num_bytes)
   end
 
   defp get_mime_type(path) do
@@ -76,7 +79,7 @@ defmodule LangChain.Uploads.Google do
      %ContentPart{
        type: :file_url,
        content: response.body["file"]["uri"],
-       options: %{mime_type: response.body["file"]["mimeType"]}
+       options: %{media: response.body["file"]["mimeType"]}
      }}
   end
 end
