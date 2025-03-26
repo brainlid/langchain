@@ -261,18 +261,38 @@ defmodule LangChain.ChatModels.ChatMistralAI do
 
   def call(%__MODULE__{} = mistralai, messages, tools)
       when is_list(messages) and is_list(tools) do
-    try do
-      case do_api_request(mistralai, messages, tools) do
-        {:error, reason} ->
-          {:error, reason}
+    metadata = %{
+      model: mistralai.model,
+      message_count: length(messages),
+      tools_count: length(tools)
+    }
 
-        parsed_data ->
-          {:ok, parsed_data}
+    LangChain.Telemetry.span([:langchain, :llm, :call], metadata, fn ->
+      try do
+        # Track the prompt being sent
+        LangChain.Telemetry.llm_prompt(
+          %{system_time: System.system_time()},
+          %{model: mistralai.model, messages: messages}
+        )
+
+        case do_api_request(mistralai, messages, tools) do
+          {:error, reason} ->
+            {:error, reason}
+
+          parsed_data ->
+            # Track the response being received
+            LangChain.Telemetry.llm_response(
+              %{system_time: System.system_time()},
+              %{model: openai.model, response: parsed_data}
+            )
+
+            {:ok, parsed_data}
+        end
+      rescue
+        err in LangChainError ->
+          {:error, err}
       end
-    rescue
-      err in LangChainError ->
-        {:error, err}
-    end
+    end)
   end
 
   # Make the API request. If `stream: true`, we handle partial chunk deltas;
@@ -321,6 +341,16 @@ defmodule LangChain.ChatModels.ChatMistralAI do
             {:error, reason}
 
           result ->
+            # Track non-streaming response completion
+            LangChain.Telemetry.emit_event(
+              [:langchain, :llm, :response, streaming: false],
+              %{system_time: System.system_time()},
+              %{
+                model: mistralai.model,
+                response_size: byte_size(inspect(result))
+              }
+            )
+
             Callbacks.fire(mistralai.callbacks, :on_llm_new_message, [result])
             result
         end
@@ -404,7 +434,10 @@ defmodule LangChain.ChatModels.ChatMistralAI do
   def do_process_response(model, %{"choices" => choices, "usage" => %{} = _usage} = data) do
     case get_token_usage(data) do
       %TokenUsage{} = token_usage ->
-        Callbacks.fire(model.callbacks, :on_llm_token_usage, [token_usage])
+        Callbacks.fire(model.callbacks, :on_llm_token_usage, [
+          get_token_usage(data)
+        ])
+
         :ok
 
       nil ->
