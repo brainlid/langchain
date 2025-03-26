@@ -209,7 +209,7 @@ defmodule ChatModels.ChatGoogleAITest do
 
       result =
         ChatGoogleAI.for_api(
-          ChatOpenAI.new!(),
+          ChatGoogleAI.new!(),
           ContentPart.file!(file_base64_data, media: "application/pdf")
         )
 
@@ -223,7 +223,7 @@ defmodule ChatModels.ChatGoogleAITest do
         LangChainError,
         "Received no media type for ContentPart",
         ChatGoogleAI.for_api(
-          ChatOpenAI.new!(),
+          ChatGoogleAI.new!(),
           ContentPart.file!(file_base64_data)
         )
       )
