@@ -275,37 +275,19 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     %{"text" => part.content}
   end
 
-  # Supported image types: png, jpeg, webp, heic, heif: https://ai.google.dev/gemini-api/docs/vision?lang=rest#technical-details-image
+  def for_api(%ContentPart{type: :file_url} = part) do
+    %{
+      "file_data" => %{
+        "mime_type" => part.options[:media],
+        "file_uri" => part.content
+      }
+    }
+  end
+
   def for_api(%ContentPart{type: :image} = part) do
-    mime_type =
-      case Keyword.get(part.options || [], :media, nil) do
-        :png ->
-          "image/png"
-
-        type when type in [:jpeg, :jpg] ->
-          "image/jpeg"
-
-        :webp ->
-          "image/webp"
-
-        :heic ->
-          "image/heic"
-
-        :heif ->
-          "image/heif"
-
-        type when is_binary(type) ->
-          "image/type"
-
-        other ->
-          message = "Received unsupported media type for ContentPart: #{inspect(other)}"
-          Logger.error(message)
-          raise LangChainError, message
-      end
-
     %{
       "inline_data" => %{
-        "mime_type" => mime_type,
+        "mime_type" => get_mime_type(part),
         "data" => part.content
       }
     }
@@ -818,5 +800,36 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   defp finish_reason_to_status(other) do
     Logger.warning("Unsupported finishReason in response. Reason: #{inspect(other)}")
     nil
+  end
+
+  # Supported image types: png, jpeg, webp, heic, heif: https://ai.google.dev/gemini-api/docs/vision?lang=rest#technical-details-image
+  defp get_mime_type(part) do
+    case Keyword.get(part.options || [], :media, nil) do
+      :png ->
+        "image/png"
+
+      type when type in [:jpeg, :jpg] ->
+        "image/jpeg"
+
+      :webp ->
+        "image/webp"
+
+      :heic ->
+        "image/heic"
+
+      :heif ->
+        "image/heif"
+
+      "application" <> type ->
+        "application/#{type}"
+
+      type when is_binary(type) ->
+        "image/type"
+
+      other ->
+        message = "Received unsupported media type for ContentPart: #{inspect(other)}"
+        Logger.error(message)
+        raise LangChainError, message
+    end
   end
 end

@@ -44,7 +44,7 @@ defmodule LangChain.Message.ContentPart do
 
   @primary_key false
   embedded_schema do
-    field :type, Ecto.Enum, values: [:text, :image_url, :image, :file], default: :text
+    field :type, Ecto.Enum, values: [:text, :image_url, :image, :file_url, :file], default: :text
     field :content, :string
     field :options, :any, virtual: true
   end
