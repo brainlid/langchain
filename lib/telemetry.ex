@@ -17,6 +17,8 @@ defmodule LangChain.Telemetry do
   * `[:langchain, :llm, :call, :exception]` - Emitted when an LLM call raises an exception
   * `[:langchain, :llm, :prompt]` - Emitted when a prompt is sent to an LLM
   * `[:langchain, :llm, :response]` - Emitted when a response is received from an LLM
+  * `[:langchain, :llm, :response, :non_streaming]` - Emitted when a non-streaming response is received from an LLM
+  * `[:langchain, :llm, :response, :streaming]` - Emitted when a streaming response is received from an LLM
   * `[:langchain, :chain, :execute, :start]` - Emitted when a chain execution starts
   * `[:langchain, :chain, :execute, :stop]` - Emitted when a chain execution completes
   * `[:langchain, :chain, :execute, :exception]` - Emitted when a chain execution raises an exception

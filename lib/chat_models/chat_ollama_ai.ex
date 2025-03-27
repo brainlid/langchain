@@ -434,7 +434,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
           result ->
             # Track non-streaming response completion
             LangChain.Telemetry.emit_event(
-              [:langchain, :llm, :response, streaming: false],
+              [:langchain, :llm, :response, :non_streaming],
               %{system_time: System.system_time()},
               %{
                 model: ollama_ai.model,

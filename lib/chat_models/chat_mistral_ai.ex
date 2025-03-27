@@ -343,7 +343,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
           result ->
             # Track non-streaming response completion
             LangChain.Telemetry.emit_event(
-              [:langchain, :llm, :response, streaming: false],
+              [:langchain, :llm, :response, :non_streaming],
               %{system_time: System.system_time()},
               %{
                 model: mistralai.model,
@@ -434,10 +434,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
   def do_process_response(model, %{"choices" => choices, "usage" => %{} = _usage} = data) do
     case get_token_usage(data) do
       %TokenUsage{} = token_usage ->
-        Callbacks.fire(model.callbacks, :on_llm_token_usage, [
-          get_token_usage(data)
-        ])
-
+        Callbacks.fire(model.callbacks, :on_llm_token_usage, [token_usage])
         :ok
 
       nil ->

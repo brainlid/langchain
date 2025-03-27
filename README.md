@@ -240,6 +240,16 @@ See the [`LangChain.ChatModels.ChatBumblebee` documentation](https://hexdocs.pm/
 
 ## Testing
 
+Before you can run the tests, make sure you have the environment variables set.
+
+You can do this by running:
+
+```
+source .envrc_template
+```
+
+Or you can copy it to `.envrc` and populate it with your private API values.
+
 To run all the tests including the ones that perform live calls against the OpenAI API, use the following command:
 
 ```

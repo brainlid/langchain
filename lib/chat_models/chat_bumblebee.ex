@@ -484,11 +484,11 @@ defmodule LangChain.ChatModels.ChatBumblebee do
 
     # Track non-streaming response completion
     LangChain.Telemetry.emit_event(
-      [:langchain, :llm, :response, streaming: false],
+      [:langchain, :llm, :response, :non_streaming],
       %{system_time: System.system_time()},
       %{
         model: inspect(model.serving),
-        response_size: byte_size(content)
+        response_size: byte_size(inspect(content))
       }
     )
 
