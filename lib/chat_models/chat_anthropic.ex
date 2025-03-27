@@ -93,7 +93,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       # Enable thinking and budget 2,000 tokens for the thinking space.
       model = ChatAnthropic.new!(%{
         model: "claude-3-7-sonnet-latest",
-        thinking: %{type: "enabled", budget: 2000}
+        thinking: %{type: "enabled", budget_tokens: 2000}
       })
 
       # Disable thinking
@@ -129,6 +129,11 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   @current_config_version 1
 
   @default_cache_control_block %{"type" => "ephemeral"}
+
+  # TODO: Add "thinking" support - https://docs.anthropic.com/en/api/messages#body-thinking
+
+  # TODO: https://docs.anthropic.com/en/api/messages#body-messages - Messages support for images:
+  # > We currently support the base64 source type for images, and the image/jpeg, image/png, image/gif, and image/webp media types.
 
   # allow up to 1 minute for response.
   @receive_timeout 60_000
@@ -292,7 +297,9 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     |> Utils.conditionally_add_to_map(:max_tokens, anthropic.max_tokens)
     |> Utils.conditionally_add_to_map(:top_p, anthropic.top_p)
     |> Utils.conditionally_add_to_map(:top_k, anthropic.top_k)
+    |> Utils.conditionally_add_to_map(:thinking, anthropic.thinking)
     |> maybe_transform_for_bedrock(anthropic.bedrock)
+    |> IO.inspect(label: "FOR API")
   end
 
   defp maybe_transform_for_bedrock(body, nil), do: body
@@ -775,6 +782,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
   @doc false
   def decode_stream(%ChatAnthropic{bedrock: nil}, {chunk, buffer}) do
+    IO.inspect(chunk, label: "RAW CHUNK")
+
     # Combine the incoming data with the buffered incomplete data
     combined_data = buffer <> chunk
     # Split data by double newline to find complete messages
@@ -791,28 +800,29 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
     processed =
       to_process
-      # Trim whitespace from each line
-      |> Stream.map(&String.trim/1)
-      # Ignore empty lines
-      |> Stream.reject(&(&1 == ""))
-      # Filter lines based on some condition
-      |> Stream.filter(&relevant_event?/1)
-      # Split the event from the data into separate lines
-      |> Stream.map(&extract_data(&1))
-      |> Enum.reduce([], fn json, done ->
-        json
-        |> Jason.decode()
-        |> case do
-          {:ok, parsed} ->
-            # wrap each parsed response into an array of 1. This matches the
-            # return type of some LLMs where they return `n` number of responses.
-            # This is for compatibility.
-            # {done ++ Enum.map(parsed, &([&1])), ""}
-            done ++ [parsed]
+      |> Enum.reduce([], fn chunk, acc ->
+        # Split chunk into lines
+        lines = String.split(chunk, "\n", trim: true)
 
-          {:error, reason} ->
-            Logger.error("Failed to JSON decode streamed data: #{inspect(reason)}")
-            done
+        # Find the data line that contains the JSON
+        case Enum.find(lines, &String.starts_with?(&1, "data: ")) do
+          nil ->
+            acc
+          data_line ->
+            # Extract and parse the JSON data
+            json = String.replace_prefix(data_line, "data: ", "")
+            case Jason.decode(json) do
+              {:ok, parsed} ->
+                # Clean up the response format
+                cleaned = case parsed do
+                  %{"type" => "content_block_start", "content_block" => %{"signature" => _}} = block ->
+                    content_block = Map.delete(block["content_block"], "signature")
+                    put_in(block, ["content_block"], content_block)
+                  other -> other
+                end
+                acc ++ [cleaned]
+              {:error, _} -> acc
+            end
         end
       end)
 
@@ -1128,5 +1138,154 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   @impl ChatModel
   def restore_from_map(%{"version" => 1} = data) do
     ChatAnthropic.new(data)
+  end
+
+  def parse_stream_events({chunk, buffer}) do
+    # Combine the incoming data with the buffered incomplete data
+    combined_data = buffer <> chunk
+
+    # Split data by double newline to find complete messages
+    entries = String.split(combined_data, "\n\n", trim: true)
+
+    # The last part may be incomplete if it doesn't end with "\n\n"
+    {to_process, incomplete} =
+      if String.ends_with?(combined_data, "\n\n") do
+        {entries, ""}
+      else
+        # process all but the last, keep the last as incomplete
+        {Enum.slice(entries, 0..-2//1), List.last(entries)}
+      end
+
+    processed =
+      to_process
+      |> Enum.reduce([], fn chunk, acc ->
+        # Split chunk into lines
+        lines = String.split(chunk, "\n", trim: true)
+
+        # Find the data line that contains the JSON
+        case Enum.find(lines, &String.starts_with?(&1, "data: ")) do
+          nil ->
+            acc
+          data_line ->
+            # Extract and parse the JSON data
+            json = String.replace_prefix(data_line, "data: ", "")
+            case Jason.decode(json) do
+              {:ok, parsed} -> acc ++ [parsed]
+              {:error, _} -> acc
+            end
+        end
+      end)
+
+    {processed, incomplete}
+  end
+
+  @doc false
+  def decode_stream_new({chunk, buffer}) do
+    # Combine the incoming data with the buffered incomplete data
+    combined_data = buffer <> chunk
+
+    # Split data by double newline to find complete messages
+    entries = String.split(combined_data, "\n\n", trim: true)
+
+    # The last part may be incomplete if it doesn't end with "\n\n"
+    {to_process, incomplete} =
+      if String.ends_with?(combined_data, "\n\n") do
+        {entries, ""}
+      else
+        # process all but the last, keep the last as incomplete
+        {Enum.slice(entries, 0..-2//1), List.last(entries)}
+      end
+
+    processed =
+      to_process
+      # Trim whitespace from each line
+      |> Stream.map(&String.trim/1)
+      # Ignore empty lines
+      |> Stream.reject(&(&1 == ""))
+      # Filter lines based on some condition
+      |> Stream.filter(&relevant_event?/1)
+      # Split the event from the data into separate lines
+      |> Stream.map(&extract_data(&1))
+      |> Enum.reduce([], fn json, done ->
+        json
+        |> Jason.decode()
+        |> case do
+          {:ok, parsed} -> done ++ [parsed]
+          {:error, reason} ->
+            Logger.error("Failed to JSON decode streamed data: #{inspect(reason)}")
+            done
+        end
+      end)
+
+    {processed, incomplete}
+  end
+
+  defp relevant_event?("event: content_block_delta\n" <> _rest), do: true
+  defp relevant_event?("event: content_block_start\n" <> _rest), do: true
+  defp relevant_event?("event: message_delta\n" <> _rest), do: true
+  defp relevant_event?("event: error\n" <> _rest), do: true
+  # ignoring
+  defp relevant_event?("event: message_start\n" <> _rest), do: false
+  defp relevant_event?("event: ping\n" <> _rest), do: false
+  defp relevant_event?("event: content_block_stop\n" <> _rest), do: false
+  defp relevant_event?("event: message_stop\n" <> _rest), do: false
+  # catch-all for when we miss something
+  defp relevant_event?(event) do
+    Logger.error("Unsupported event received when parsing Anthropic response: #{inspect(event)}")
+    false
+  end
+
+  # process data for an event
+  defp extract_data("event: " <> line) do
+    [_prefix, json] = String.split(line, "data: ", trim: true)
+    json
+  end
+
+  # assumed the response is JSON. Return as-is
+  defp extract_data(json), do: json
+
+  defp consume_event_line("event: " <> rest) do
+    case String.split(rest, "\n", parts: 2) do
+      [_event, data] ->
+        data
+
+      [_] ->
+        # no new line found. Entire string is the event
+        ""
+    end
+  end
+
+  # it doesn't start with an "event"
+  defp consume_event_line(line) do
+    line
+  end
+
+  defp get_event_data_pairs(lines) do
+    # Group lines together by events
+    {events, _} =
+      Enum.reduce(lines, {[], nil}, fn line, {acc, current_event} ->
+        cond do
+          String.starts_with?(line, "event: ") ->
+            event_type = String.replace(line, "event: ", "")
+            {acc, %{"type" => event_type}}
+
+          String.starts_with?(line, "data: ") && current_event != nil ->
+            data_json = String.replace(line, "data: ", "")
+
+            case Jason.decode(data_json) do
+              {:ok, decoded} ->
+                event = Map.merge(current_event, decoded)
+                {acc ++ [event], nil}
+
+              _ ->
+                {acc, current_event}
+            end
+
+          true ->
+            {acc, current_event}
+        end
+      end)
+
+    events
   end
 end

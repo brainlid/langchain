@@ -960,6 +960,186 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
     end
   end
 
+  describe "parse_stream_events/1" do
+    test "decodes a single chunk line as received from a real server call" do
+      chunks = [
+        "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_017vYxGobHipWyoZT5uDbGnJ\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude-3-7-sonnet-20250219\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":55,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"output_tokens\":4}} }\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\",\"signature\":\"\"}             }\n\n",
+        "event: ping\ndata: {\"type\": \"ping\"}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"Let's ad\"}               }\n\n",
+        "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"d these numbers.\\n400 + 50 = 450\\n450 \"}               }\n\n",
+        "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"+ 3 = 453\\n\\nSo 400 + 50\"}           }\n\n",
+        "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\" + 3 = 453\"}        }\n\n",
+        "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"ErUBCkYIARgCIkCspHHl1+BPuvAExtRMzy6e6DGYV4vI7D8dgqnzLm7RbQ5e4j+aAopCyq29fZqUNNdZbOLleuq/DYIyXjX4HIyIEgwE4N3Vb+9hzkFk/NwaDOy3fw0f0zqRZhAk4CIwp18hR9UsOWYC+pkvt1SnIOGCXBcLdwUxIoUeG3z6WfNwWJV7fulSvz7EVCN5ypzwKh2m/EY9LS1DK1EdUc770O8XdI/j4i0ibc8zRNIjvA==\"}             }\n\nevent: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0    }\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"text\",\"text\":\"\"}           }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"The answer is 453.\\n\\n400 + 50 = 450\\n450 + 3 =\"}   }\n\n",
+        "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\" 453\"}       }\n\nevent: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":1  }\n\n",
+        "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":80}   }\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"             }\n\n"
+      ]
+
+      first_chunk = List.first(chunks)
+      {parsed, buffer} = ChatAnthropic.parse_stream_events({first_chunk, ""})
+
+      assert parsed == [
+               %{
+                 "type" => "message_start",
+                 "message" => %{
+                   "id" => "msg_017vYxGobHipWyoZT5uDbGnJ",
+                   "type" => "message",
+                   "role" => "assistant",
+                   "model" => "claude-3-7-sonnet-20250219",
+                   "content" => [],
+                   "stop_reason" => nil,
+                   "stop_sequence" => nil,
+                   "usage" => %{
+                     "input_tokens" => 55,
+                     "cache_creation_input_tokens" => 0,
+                     "cache_read_input_tokens" => 0,
+                     "output_tokens" => 4
+                   }
+                 }
+               },
+               %{
+                 "type" => "content_block_start",
+                 "index" => 0,
+                 "content_block" => %{"type" => "thinking", "thinking" => "", "signature" => ""}
+               }
+             ]
+
+      assert buffer == ""
+
+      next_chunk = Enum.at(chunks, 1)
+
+      {parsed, buffer} = ChatAnthropic.parse_stream_events({next_chunk, ""})
+
+      assert parsed == [
+               %{"type" => "ping"},
+               %{"type" => "content_block_delta", "index" => 0, "delta" => %{"type" => "thinking_delta", "thinking" => "Let's ad"}}
+             ]
+
+      assert buffer == ""
+
+    end
+
+    test "decodes a single thinking block start event" do
+      chunk = """
+      event: content_block_start
+      data: {"type": "content_block_start", "index": 0, "content_block": {"type": "thinking", "thinking": ""}}
+
+      """
+
+      {parsed, buffer} = ChatAnthropic.decode_stream_new({chunk, ""})
+
+      assert parsed == [
+               %{
+                 "type" => "content_block_start",
+                 "index" => 0,
+                 "content_block" => %{"type" => "thinking", "thinking" => ""}
+               }
+             ]
+
+      assert buffer == ""
+    end
+
+    test "decodes a single thinking event containing a newline" do
+      chunk = """
+      event: content_block_delta
+      data: {"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": "Let me solve this step by step:\n\n1. First break down 27 * 453"}}
+
+      """
+
+      {parsed, buffer} = ChatAnthropic.decode_stream_new({chunk, ""})
+
+      assert parsed == [
+               %{
+                 "type" => "content_block_delta",
+                 "index" => 0,
+                 "delta" => %{
+                   "type" => "thinking_delta",
+                   "thinking" => "Let me solve this step by step:\n\n1. First break down 27 * 453"
+                 }
+               }
+             ]
+
+      assert buffer == ""
+    end
+
+    test "decodes a complete stream of events" do
+      chunk = """
+      event: message_start
+      data: {"type": "message_start", "message": {"id": "msg_01...", "type": "message", "role": "assistant", "content": [], "model": "claude-3-7-sonnet-20250219", "stop_reason": null, "stop_sequence": null}}
+
+      event: content_block_start
+      data: {"type": "content_block_start", "index": 0, "content_block": {"type": "thinking", "thinking": ""}}
+
+      event: content_block_delta
+      data: {"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": "Let me solve this step by step:\n\n1. First break down 27 * 453"}}
+
+      event: content_block_delta
+      data: {"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": "\n2. 453 = 400 + 50 + 3"}}
+
+      event: content_block_delta
+      data: {"type": "content_block_delta", "index": 0, "delta": {"type": "signature_delta", "signature": "EqQBCgIYAhIM1gbcDa9GJwZA2b3hGgxBdjrkzLoky3dl1pkiMOYds..."}}
+
+      event: content_block_stop
+      data: {"type": "content_block_stop", "index": 0}
+
+      event: content_block_start
+      data: {"type": "content_block_start", "index": 1, "content_block": {"type": "text", "text": ""}}
+
+      event: content_block_delta
+      data: {"type": "content_block_delta", "index": 1, "delta": {"type": "text_delta", "text": "27 * 453 = 12,231"}}
+
+      event: content_block_stop
+      data: {"type": "content_block_stop", "index": 1}
+
+      event: message_delta
+      data: {"type": "message_delta", "delta": {"stop_reason": "end_turn", "stop_sequence": null}}
+
+      event: message_stop
+      data: {"type": "message_stop"}
+
+      """
+
+      {parsed, buffer} = ChatAnthropic.decode_stream_new({chunk, ""})
+
+      IO.inspect(parsed, label: "PARSED")
+
+      assert length(parsed) == 11
+      assert buffer == ""
+
+      # Verify first event
+      assert Enum.at(parsed, 0) == %{
+               "message" => %{
+                 "content" => [],
+                 "id" => "msg_01...",
+                 "model" => "claude-3-7-sonnet-20250219",
+                 "role" => "assistant",
+                 "stop_reason" => nil,
+                 "stop_sequence" => nil,
+                 "type" => "message"
+               },
+               "type" => "message_start"
+             }
+
+      # Verify last event
+      assert Enum.at(parsed, -1) == %{"type" => "message_stop"}
+    end
+  end
+
+  describe "live thinking test" do
+    test "decodes a live thinking event" do
+      # TODO: LIVE!!!!!
+      llm =
+        ChatAnthropic.new!(%{
+          stream: true,
+          model: "claude-3-7-sonnet-20250219",
+          thinking: %{type: "enabled", budget_tokens: 1024}
+        })
+
+      result = ChatAnthropic.call(llm, "What is 400 + 50 + 3?")
+      IO.inspect(result, label: "RESULT")
+
+      assert false
+    end
+  end
+
   describe "for_api/1" do
     test "turns a basic user message into the expected JSON format" do
       expected = %{"role" => "user", "content" => "Hi."}
