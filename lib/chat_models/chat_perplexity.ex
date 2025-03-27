@@ -374,17 +374,17 @@ defmodule LangChain.ChatModels.ChatPerplexity do
 
           result ->
             Callbacks.fire(perplexity.callbacks, :on_llm_new_message, [result])
-            
+
             # Track non-streaming response completion
             Telemetry.emit_event(
-              [:langchain, :llm, :response, streaming: false],
+              [:langchain, :llm, :response, :non_streaming],
               %{system_time: System.system_time()},
               %{
                 model: perplexity.model,
                 response_size: byte_size(inspect(result))
               }
             )
-            
+
             result
         end
 
@@ -651,14 +651,15 @@ defmodule LangChain.ChatModels.ChatPerplexity do
     end
   end
 
-  def do_process_response(_model, %{"choices" => [
-    %{
-      "delta" => %{"role" => role, "content" => content},
-      "finish_reason" => finish,
-      "index" => index
-    } = _choice
-  ]
-  }) do
+  def do_process_response(_model, %{
+         "choices" => [
+           %{
+             "delta" => %{"role" => role, "content" => content},
+             "finish_reason" => finish,
+             "index" => index
+           } = _choice
+         ]
+       }) do
     status = finish_reason_to_status(finish)
 
     data =
@@ -686,7 +687,8 @@ defmodule LangChain.ChatModels.ChatPerplexity do
               "delta" => %{"content" => content},
               "finish_reason" => finish,
               "index" => index
-            } = _choice
+            }
+            | _
           ]
         }
       ) do
