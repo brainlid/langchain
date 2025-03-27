@@ -1,8 +1,9 @@
 defmodule LangChain.Message.ContentPart do
   @moduledoc """
   Models a `ContentPart`. Some LLMs support combining text, images, and possibly
-  other content as part of a single user message. A `ContentPart` represents a
-  block, or part, of a message's content that is all of one type.
+  other content as part of a single user message or other content parts like
+  "thinking" may be part of an assistant's response message. A `ContentPart`
+  represents a block, or part, of a message's content that is all of one type.
 
   ## Types
 
@@ -10,13 +11,21 @@ defmodule LangChain.Message.ContentPart do
   - `:image_url` - The message part is a URL to an image.
   - `:image` - The message part is image data that is base64 encoded text.
   - `:file` - The message part is file data that is base64 encoded text.
+  - `:thinking` - A thinking block from a reasoning model like Anthropic.
+  - `:unsupported` - A part that is not supported but may need to be present.
+    This includes Anthropic's `redacted_thinking` block which has no value in
+    being displayed because it is encrypted, but can be provided back to the LLM
+    to maintain reasoning continuity. The specific parts of the data are stored
+    in `:options`.
 
   ## Fields
 
   - `:content` - Text content.
   - `:options` - Options that may be specific to the LLM for a particular
     message type. For example, multi-modal message (ones that include image
-    data) use the `:media` option to specify the mimetype information.
+    data) use the `:media` option to specify the mimetype information. Options
+    may also contain key-value settings like `cache_control: true` for models
+    like Anthropic that support caching.
 
   ## Image mime types
 
@@ -44,7 +53,10 @@ defmodule LangChain.Message.ContentPart do
 
   @primary_key false
   embedded_schema do
-    field :type, Ecto.Enum, values: [:text, :image_url, :image, :file], default: :text
+    field :type, Ecto.Enum,
+      values: [:text, :image_url, :image, :file, :thinking, :unsupported],
+      default: :text
+
     field :content, :string
     field :options, :any, virtual: true
   end
