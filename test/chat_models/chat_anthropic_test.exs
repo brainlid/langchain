@@ -1004,17 +1004,72 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 
       assert buffer == ""
 
+      # Line 2
       next_chunk = Enum.at(chunks, 1)
 
       {parsed, buffer} = ChatAnthropic.parse_stream_events({next_chunk, ""})
 
       assert parsed == [
                %{"type" => "ping"},
-               %{"type" => "content_block_delta", "index" => 0, "delta" => %{"type" => "thinking_delta", "thinking" => "Let's ad"}}
+               %{
+                 "type" => "content_block_delta",
+                 "index" => 0,
+                 "delta" => %{"type" => "thinking_delta", "thinking" => "Let's ad"}
+               }
              ]
 
       assert buffer == ""
 
+      # Line 3
+      next_chunk = Enum.at(chunks, 2)
+
+      {parsed, buffer} = ChatAnthropic.parse_stream_events({next_chunk, ""})
+
+      assert parsed == [
+               %{
+                 "type" => "content_block_delta",
+                 "delta" => %{
+                   "thinking" => "d these numbers.\n400 + 50 = 450\n450 ",
+                   "type" => "thinking_delta"
+                 },
+                 "index" => 0
+               }
+             ]
+
+      assert buffer == ""
+
+      # Line 6
+      next_chunk = Enum.at(chunks, 5)
+
+      {parsed, buffer} = ChatAnthropic.parse_stream_events({next_chunk, ""})
+
+      assert parsed == [
+               %{
+                 "delta" => %{
+                   "type" => "signature_delta",
+                   "signature" =>
+                     "ErUBCkYIARgCIkCspHHl1+BPuvAExtRMzy6e6DGYV4vI7D8dgqnzLm7RbQ5e4j+aAopCyq29fZqUNNdZbOLleuq/DYIyXjX4HIyIEgwE4N3Vb+9hzkFk/NwaDOy3fw0f0zqRZhAk4CIwp18hR9UsOWYC+pkvt1SnIOGCXBcLdwUxIoUeG3z6WfNwWJV7fulSvz7EVCN5ypzwKh2m/EY9LS1DK1EdUc770O8XdI/j4i0ibc8zRNIjvA=="
+                 },
+                 "index" => 0,
+                 "type" => "content_block_delta"
+               },
+               %{"index" => 0, "type" => "content_block_stop"},
+               %{
+                 "content_block" => %{"text" => "", "type" => "text"},
+                 "index" => 1,
+                 "type" => "content_block_start"
+               },
+               %{
+                 "delta" => %{
+                   "text" => "The answer is 453.\n\n400 + 50 = 450\n450 + 3 =",
+                   "type" => "text_delta"
+                 },
+                 "index" => 1,
+                 "type" => "content_block_delta"
+               }
+             ]
+
+      assert buffer == ""
     end
 
     test "decodes a single thinking block start event" do
