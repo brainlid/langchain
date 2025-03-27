@@ -69,6 +69,7 @@ defmodule LangChain.MixProject do
           LangChain.ChatModels.ChatVertexAI,
           LangChain.ChatModels.ChatMistralAI,
           LangChain.ChatModels.ChatOllamaAI,
+          LangChain.ChatModels.ChatPerplexity,
           LangChain.ChatModels.ChatModel
         ],
         Chains: [
