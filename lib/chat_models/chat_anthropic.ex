@@ -77,6 +77,32 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         bedrock: BedrockConfig.from_application_env!()
       })
 
+  ## Thinking
+
+  Models like Claude 3.7 Sonnet introduced a hybrid approach which allows for "thinking" and reasoning.
+  See the [Anthropic thinking documentation](https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking)
+  for up-to-date instructions on the usage.
+
+  For instance, enabling thinking may require the `temperature` to be set to `1` and other settings like `topP` may not be allowed.
+
+  The model supports a `:thinking` attribute where the data is a map that matches the structure in the
+  [Anthropic documentation](https://docs.anthropic.com/en/api/messages#body-thinking). It is passed along as-is.
+
+  **Example:**
+
+      # Enable thinking and budget 2,000 tokens for the thinking space.
+      model = ChatAnthropic.new!(%{
+        model: "claude-3-7-sonnet-latest",
+        thinking: %{type: "enabled", budget: 2000}
+      })
+
+      # Disable thinking
+      model = ChatAnthropic.new!(%{
+        model: "claude-3-7-sonnet-latest",
+        thinking: %{type: "disabled"}
+      })
+
+  As of the documentation for Claude 3.7 Sonnet, the minimum budget for thinking is 1024 tokens.
   """
   use Ecto.Schema
   require Logger
@@ -161,6 +187,9 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     # A list of maps for callback handlers (treat as private)
     field :callbacks, {:array, :map}, default: []
 
+    # Supported on "thinking" models like Claude 3.7 and later.
+    field :thinking, :map
+
     # Tool choice option
     field :tool_choice, :map
 
@@ -182,6 +211,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     :top_p,
     :top_k,
     :stream,
+    :thinking,
     :tool_choice,
     :beta_headers
   ]
