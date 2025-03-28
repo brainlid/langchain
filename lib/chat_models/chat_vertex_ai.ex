@@ -273,18 +273,38 @@ defmodule LangChain.ChatModels.ChatVertexAI do
 
   def call(%ChatVertexAI{} = vertex_ai, messages, tools)
       when is_list(messages) do
-    try do
-      case do_api_request(vertex_ai, messages, tools) do
-        {:error, reason} ->
-          {:error, reason}
+    metadata = %{
+      model: vertex_ai.model,
+      message_count: length(messages),
+      tools_count: length(tools)
+    }
 
-        parsed_data ->
-          {:ok, parsed_data}
+    LangChain.Telemetry.span([:langchain, :llm, :call], metadata, fn ->
+      try do
+        # Track the prompt being sent
+        LangChain.Telemetry.llm_prompt(
+          %{system_time: System.system_time()},
+          %{model: vertex_ai.model, messages: messages}
+        )
+
+        case do_api_request(vertex_ai, messages, tools) do
+          {:error, reason} ->
+            {:error, reason}
+
+          parsed_data ->
+            # Track the response being received
+            LangChain.Telemetry.llm_response(
+              %{system_time: System.system_time()},
+              %{model: vertex_ai.model, response: parsed_data}
+            )
+
+            {:ok, parsed_data}
+        end
+      rescue
+        err in LangChainError ->
+          {:error, err}
       end
-    rescue
-      err in LangChainError ->
-        {:error, err}
-    end
+    end)
   end
 
   @doc false
@@ -312,6 +332,17 @@ defmodule LangChain.ChatModels.ChatVertexAI do
 
           result ->
             Callbacks.fire(vertex_ai.callbacks, :on_llm_new_message, [result])
+
+            # Track non-streaming response completion
+            LangChain.Telemetry.emit_event(
+              [:langchain, :llm, :response, :non_streaming],
+              %{system_time: System.system_time()},
+              %{
+                model: vertex_ai.model,
+                response_size: byte_size(inspect(result))
+              }
+            )
+
             result
         end
 

@@ -324,19 +324,39 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   end
 
   def call(%ChatAnthropic{} = anthropic, messages, functions) when is_list(messages) do
-    try do
-      # make base api request and perform high-level success/failure checks
-      case do_api_request(anthropic, messages, functions) do
-        {:error, %LangChainError{} = error} ->
-          {:error, error}
+    metadata = %{
+      model: anthropic.model,
+      message_count: length(messages),
+      tools_count: length(functions)
+    }
 
-        parsed_data ->
-          {:ok, parsed_data}
+    LangChain.Telemetry.span([:langchain, :llm, :call], metadata, fn ->
+      try do
+        # Track the prompt being sent
+        LangChain.Telemetry.llm_prompt(
+          %{system_time: System.system_time()},
+          %{model: anthropic.model, messages: messages}
+        )
+
+        # make base api request and perform high-level success/failure checks
+        case do_api_request(anthropic, messages, functions) do
+          {:error, %LangChainError{} = error} ->
+            {:error, error}
+
+          parsed_data ->
+            # Track the response being received
+            LangChain.Telemetry.llm_response(
+              %{system_time: System.system_time()},
+              %{model: anthropic.model, response: parsed_data}
+            )
+
+            {:ok, parsed_data}
+        end
+      rescue
+        err in LangChainError ->
+          {:error, err}
       end
-    rescue
-      err in LangChainError ->
-        {:error, err}
-    end
+    end)
   end
 
   # Call Anthropic's API.
@@ -429,6 +449,12 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         tools,
         retry_count
       ) do
+    # Track the prompt being sent for streaming
+    LangChain.Telemetry.llm_prompt(
+      %{system_time: System.system_time(), streaming: true},
+      %{model: anthropic.model, messages: messages}
+    )
+
     Req.new(
       url: url(anthropic),
       json: for_api(anthropic, messages, tools),
@@ -449,6 +475,13 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         Callbacks.fire(anthropic.callbacks, :on_llm_ratelimit_info, [
           get_ratelimit_info(response.headers)
         ])
+
+        # Track the stream completion
+        LangChain.Telemetry.emit_event(
+          [:langchain, :llm, :response, streaming: true],
+          %{system_time: System.system_time()},
+          %{model: anthropic.model}
+        )
 
         data
 
