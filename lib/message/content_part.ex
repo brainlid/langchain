@@ -54,7 +54,7 @@ defmodule LangChain.Message.ContentPart do
   @primary_key false
   embedded_schema do
     field :type, Ecto.Enum,
-      values: [:text, :image_url, :image, :file, :thinking, :unsupported],
+      values: [:text, :image_url, :image, :file, :file_url, :thinking, :unsupported],
       default: :text
 
     field :content, :string
@@ -147,6 +147,14 @@ defmodule LangChain.Message.ContentPart do
   @spec image_url!(String.t(), Keyword.t()) :: t() | no_return()
   def image_url!(content, opts \\ []) do
     new!(%{type: :image_url, content: content, options: opts})
+  end
+
+  @doc """
+  Create a new ContentPart that contains a URL to an file. Raises an exception if not valid.
+  """
+  @spec file_url!(String.t(), Keyword.t()) :: t() | no_return()
+  def file_url!(content, opts \\ []) do
+    new!(%{type: :file_url, content: content, options: opts})
   end
 
   @doc false

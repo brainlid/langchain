@@ -72,6 +72,21 @@ defmodule LangChain.Message.ContentPartTest do
     end
   end
 
+  describe("file_url/1") do
+    test "returns a file data configured ContentPart" do
+      %ContentPart{} = part = ContentPart.file_url!("example.com/file.pdf", media: "application/pdf")
+      assert part.type == :file_url
+      assert part.content == "example.com/file.pdf"
+    end
+
+    test "supports 'media' option" do
+      %ContentPart{} = part = ContentPart.file_url!("example.com/file.pdf", media: "application/pdf")
+      assert part.type == :file_url
+      assert part.content == "example.com/file.pdf"
+      assert part.options == [media: "application/pdf"]
+    end
+  end
+
   describe("image_url!/1") do
     test "returns a image_url configured ContentPart" do
       url =

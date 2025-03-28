@@ -275,6 +275,15 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     %{"text" => part.content}
   end
 
+  def for_api(%ContentPart{type: :file_url} = part) do
+    %{
+      "file_data" => %{
+        "mime_type" => part.options[:media],
+        "file_uri" => part.content
+      }
+    }
+  end
+
   # Supported image types: png, jpeg, webp, heic, heif: https://ai.google.dev/gemini-api/docs/vision?lang=rest#technical-details-image
   def for_api(%ContentPart{type: :image} = part) do
     mime_type =
