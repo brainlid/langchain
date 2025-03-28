@@ -458,12 +458,23 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   end
 
   def for_api(%_{} = _model, %ContentPart{type: :file, options: opts} = part) do
+    file_params =
+      case Keyword.get(opts, :type, :base64) do
+        :file_id ->
+          %{
+            "file_id" => part.content
+          }
+
+        :base64 ->
+          %{
+            "filename" => Keyword.get(opts, :filename, "file.pdf"),
+            "file_data" => "data:application/pdf;base64," <> part.content
+          }
+      end
+
     %{
       "type" => "file",
-      "file" => %{
-        "filename" => Keyword.get(opts, :filename, "file.pdf"),
-        "file_data" => "data:application/pdf;base64," <> part.content
-      }
+      "file" => file_params
     }
   end
 
