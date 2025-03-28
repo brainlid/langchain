@@ -11,6 +11,7 @@ defmodule LangChain.Message.ContentPart do
   - `:image_url` - The message part is a URL to an image.
   - `:image` - The message part is image data that is base64 encoded text.
   - `:file` - The message part is file data that is base64 encoded text.
+  - `:file_url` - The message part is a URL to a file.
   - `:thinking` - A thinking block from a reasoning model like Anthropic.
   - `:unsupported` - A part that is not supported but may need to be present.
     This includes Anthropic's `redacted_thinking` block which has no value in
