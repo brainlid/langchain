@@ -311,6 +311,33 @@ defmodule ChatModels.ChatGoogleAITest do
       refute Map.has_key?(data, "system_instruction")
     end
 
+    test "support file_url", %{google_ai: google_ai} do
+      message =
+        Message.new_user!([
+          ContentPart.text!("User prompt"),
+          ContentPart.file_url!("example.com/test.pdf", media: "application/pdf")
+        ])
+
+      data = ChatGoogleAI.for_api(google_ai, [message], [])
+
+      assert %{
+               "contents" => [
+                 %{
+                   "parts" => [
+                     %{"text" => "User prompt"},
+                     %{
+                       "file_data" => %{
+                         "file_uri" => "example.com/test.pdf",
+                         "mime_type" => "application/pdf"
+                       }
+                     }
+                   ],
+                   "role" => :user
+                 }
+               ]
+             } = data
+    end
+
     test "raises an error if more than one system message is present", %{google_ai: google_ai} do
       assert_raise LangChainError, "Google AI only supports a single System message", fn ->
         ChatGoogleAI.for_api(
