@@ -1141,7 +1141,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   end
 
   def parse_stream_events({chunk, buffer}) do
-    # Combine the incoming data with the buffered incomplete data
+    # Combine the incoming data with any buffered incomplete data
     combined_data = buffer <> chunk
 
     # Split data by double newline to find complete messages
@@ -1162,7 +1162,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         # Split chunk into lines
         lines = String.split(chunk, "\n", trim: true)
 
-        # Find the data line that contains the JSON
+        # Find the data line that contains the JSON. The data contains all the
+        # information we need so we skip the "event: " lines.
         case Enum.find(lines, &String.starts_with?(&1, "data: ")) do
           nil ->
             acc
