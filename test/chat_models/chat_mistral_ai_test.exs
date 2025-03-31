@@ -7,6 +7,7 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
   alias LangChain.Message.ToolCall
   alias LangChain.LangChainError
   alias LangChain.TokenUsage
+  alias LangChain.Function
 
   setup do
     model = ChatMistralAI.new!(%{"model" => "mistral-tiny"})
@@ -452,6 +453,35 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
 
       assert_received {:fired_token_usage, usage}
       assert %TokenUsage{input: 18, output: 4} = usage
+    end
+
+    @tag live_call: true, live_mistral_ai: true
+    test "streamed response with tool calls work" do
+      chat =
+        ChatMistralAI.new!(%{
+          temperature: 0,
+          model: "mistral-small-2503",
+          stream: true
+        })
+
+      function =
+        Function.new!(%{
+          name: "current_time",
+          description: "Get the current time",
+          function: fn _args, _context -> {:ok, dbg("It's late")} end
+        })
+
+      {:ok, result} =
+        ChatMistralAI.call(
+          chat,
+          [
+            Message.new_user!("Call the current_time function and return the response.")
+          ],
+          [function]
+        )
+
+      tool_call_msg = Enum.find(result, fn [msg] -> msg.tool_calls != nil end)
+      assert [%MessageDelta{tool_calls: [%ToolCall{name: "current_time"}]}] = tool_call_msg
     end
   end
 end

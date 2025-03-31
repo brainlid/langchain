@@ -452,6 +452,9 @@ defmodule LangChain.ChatModels.ChatMistralAI do
         "model_length" ->
           :length
 
+        "tool_calls" ->
+          :complete
+
         other ->
           Logger.warning("Unsupported finish_reason in delta message. Reason: #{inspect(other)}")
           nil
