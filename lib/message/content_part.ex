@@ -27,6 +27,10 @@ defmodule LangChain.Message.ContentPart do
     may also contain key-value settings like `cache_control: true` for models
     like Anthropic that support caching.
 
+    When receiving content parts like with Anthropic Claude's thinking model,
+    the options may contain LLM specific data that is recommended to be
+    preserved like a `signature` or `redacted_thinking` data used by the LLM.
+
   ## Image mime types
 
   The `:media` option is used to specify the mime type of the image. Various
@@ -65,7 +69,7 @@ defmodule LangChain.Message.ContentPart do
 
   @update_fields [:type, :content, :options]
   @create_fields @update_fields
-  @required_fields [:type, :content]
+  @required_fields [:type]
 
   @doc """
   Build a new message and return an `:ok`/`:error` tuple with the result.
@@ -160,4 +164,59 @@ defmodule LangChain.Message.ContentPart do
     changeset
     |> validate_required(@required_fields)
   end
+
+  @doc """
+  Merge two `ContentPart` structs for the same index in a MessageDelta. The
+  first `ContentPart` is the `primary` one that smaller deltas are merged into.
+  The primary is what is being accumulated.
+
+  A set of ContentParts can be merged like this:
+
+      Enum.reduce(list_of_content_parts, nil, fn new_part, acc ->
+        ContentPart.merge_part(acc, new_part)
+      end)
+
+  """
+  @spec merge_part(nil | t(), t()) :: t()
+  def merge_part(nil, %ContentPart{} = new_part), do: new_part
+
+  def merge_part(%ContentPart{} = primary, %ContentPart{} = content_part) do
+    primary
+    |> append_content(content_part)
+    |> update_options(content_part)
+  end
+
+  # text content being merged
+  defp append_content(
+         %ContentPart{type: primary_type, content: primary_content} = primary,
+         %ContentPart{
+           type: new_type,
+           content: new_content
+         }
+       )
+       when is_binary(primary_content) and is_binary(new_content) and primary_type == new_type do
+    %ContentPart{primary | content: (primary.content || "") <> new_content}
+  end
+
+  defp append_content(%ContentPart{} = primary, %ContentPart{content: nil}), do: primary
+
+  # Merge options from content_part into primary. When text, combine the options
+  # and merge in newly encountered keys.
+  defp update_options(%ContentPart{} = primary, %ContentPart{options: nil}), do: primary
+
+  defp update_options(%ContentPart{options: nil} = primary, %ContentPart{options: new_opts}) do
+    %ContentPart{primary | options: new_opts}
+  end
+
+  defp update_options(%ContentPart{options: primary_opts} = primary, %ContentPart{
+         options: new_opts
+       })
+       when is_map(primary_opts) and is_map(new_opts) do
+    # When merging maps, concatenate the values of matching keys (used for
+    # signatures, redacted content, etc)
+    merged_opts = Map.merge(primary_opts, new_opts, fn _k, v1, v2 -> v1 <> v2 end)
+    %ContentPart{primary | options: merged_opts}
+  end
+
+  defp update_options(%ContentPart{} = primary, %ContentPart{}), do: primary
 end
