@@ -41,11 +41,14 @@ defmodule LangChain.MessageDelta do
     field :role, Ecto.Enum, values: [:unknown, :assistant], default: :unknown
 
     field :tool_calls, :any, virtual: true
+
+    # Additional metadata about the message.
+    field :metadata, :map
   end
 
   @type t :: %MessageDelta{}
 
-  @create_fields [:role, :content, :index, :status, :tool_calls]
+  @create_fields [:role, :content, :index, :status, :tool_calls, :metadata]
   @required_fields []
 
   @doc """
@@ -118,6 +121,7 @@ defmodule LangChain.MessageDelta do
     |> update_status(delta_part)
   end
 
+  # text content being merged
   defp append_content(%MessageDelta{role: :assistant} = primary, %MessageDelta{
          content: new_content
        })
