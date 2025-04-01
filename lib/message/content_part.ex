@@ -21,11 +21,11 @@ defmodule LangChain.Message.ContentPart do
   ## Fields
 
   - `:content` - Text content.
-  - `:options` - Options that may be specific to the LLM for a particular
-    message type. For example, multi-modal message (ones that include image
-    data) use the `:media` option to specify the mimetype information. Options
-    may also contain key-value settings like `cache_control: true` for models
-    like Anthropic that support caching.
+  - `:options` - Options are a keyword list of values that may be specific to
+    the LLM for a particular message type. For example, multi-modal message
+    (ones that include image data) use the `:media` option to specify the
+    mimetype information. Options may also contain key-value settings like
+    `cache_control: true` for models like Anthropic that support caching.
 
     When receiving content parts like with Anthropic Claude's thinking model,
     the options may contain LLM specific data that is recommended to be
@@ -211,10 +211,10 @@ defmodule LangChain.Message.ContentPart do
   defp update_options(%ContentPart{options: primary_opts} = primary, %ContentPart{
          options: new_opts
        })
-       when is_map(primary_opts) and is_map(new_opts) do
-    # When merging maps, concatenate the values of matching keys (used for
+       when is_list(primary_opts) and is_list(new_opts) do
+    # When merging keyword lists, concatenate the values of matching keys (used for
     # signatures, redacted content, etc)
-    merged_opts = Map.merge(primary_opts, new_opts, fn _k, v1, v2 -> v1 <> v2 end)
+    merged_opts = Keyword.merge(primary_opts, new_opts, fn _k, v1, v2 -> v1 <> v2 end)
     %ContentPart{primary | options: merged_opts}
   end
 
