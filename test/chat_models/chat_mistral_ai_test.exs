@@ -6,6 +6,8 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
   alias LangChain.MessageDelta
   alias LangChain.Message.ToolCall
   alias LangChain.LangChainError
+  alias LangChain.TokenUsage
+  alias LangChain.Function
 
   setup do
     model = ChatMistralAI.new!(%{"model" => "mistral-tiny"})
@@ -364,6 +366,122 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
 
       refute inspect(changeset) =~ "1234567890"
       assert inspect(changeset) =~ "**redacted**"
+    end
+  end
+
+  describe "live tests and token usage information" do
+    @tag live_call: true, live_mistral_ai: true
+    test "basic non-streamed response works and fires token usage callback" do
+      handlers = %{
+        on_llm_token_usage: fn usage ->
+          send(self(), {:fired_token_usage, usage})
+        end
+      }
+
+      chat =
+        ChatMistralAI.new!(%{
+          temperature: 0,
+          model: "mistral-small-2503",
+          stream: false
+        })
+
+      chat = %ChatMistralAI{chat | callbacks: [handlers]}
+
+      {:ok, result} =
+        ChatMistralAI.call(
+          chat,
+          [
+            Message.new_user!(
+              "Return the response 'Colorful Threads'. Don't return anything else."
+            )
+          ],
+          []
+        )
+
+      # returns a list of MessageDeltas. A list of a list because it's "n" choices.
+      assert result == [
+               %Message{
+                 content: "Colorful Threads",
+                 status: :complete,
+                 role: :assistant,
+                 index: 0,
+                 tool_calls: []
+               }
+             ]
+
+      assert_received {:fired_token_usage, usage}
+      assert %TokenUsage{input: 18, output: 4} = usage
+    end
+
+    @tag live_call: true, live_mistral_ai: true
+    test "streamed response works and fires token usage callback" do
+      handlers = %{
+        on_llm_token_usage: fn usage ->
+          send(self(), {:fired_token_usage, usage})
+        end
+      }
+
+      chat =
+        ChatMistralAI.new!(%{
+          temperature: 0,
+          model: "mistral-small-2503",
+          stream: true
+        })
+
+      chat = %ChatMistralAI{chat | callbacks: [handlers]}
+
+      {:ok, result} =
+        ChatMistralAI.call(
+          chat,
+          [
+            Message.new_user!(
+              "Return the response 'Colorful Threads'. Don't return anything else."
+            )
+          ],
+          []
+        )
+
+      result_string =
+        Enum.map_join(result, fn msg ->
+          assert [%MessageDelta{role: :assistant, content: content, tool_calls: nil}] = msg
+          content
+        end)
+
+      [last_delta] = List.last(result)
+      assert last_delta.status == :complete
+      assert result_string == "Colorful Threads"
+
+      assert_received {:fired_token_usage, usage}
+      assert %TokenUsage{input: 18, output: 4} = usage
+    end
+
+    @tag live_call: true, live_mistral_ai: true
+    test "streamed response with tool calls work" do
+      chat =
+        ChatMistralAI.new!(%{
+          temperature: 0,
+          model: "mistral-small-2503",
+          stream: true
+        })
+
+      function =
+        Function.new!(%{
+          name: "current_time",
+          description: "Get the current time",
+          function: fn _args, _context -> {:ok, dbg("It's late")} end
+        })
+
+      {:ok, result} =
+        ChatMistralAI.call(
+          chat,
+          [
+            Message.new_user!("Call the current_time function and return the response.")
+          ],
+          [function]
+        )
+
+      tool_call_msg = Enum.find(result, fn [msg] -> msg.tool_calls != nil end)
+      assert [%MessageDelta{tool_calls: [%ToolCall{name: "current_time"}]}] = tool_call_msg
     end
   end
 end
