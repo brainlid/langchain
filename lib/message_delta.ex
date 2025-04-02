@@ -132,12 +132,39 @@ defmodule LangChain.MessageDelta do
   def merge_delta(nil, %MessageDelta{} = delta_part), do: delta_part
 
   def merge_delta(%MessageDelta{role: :assistant} = primary, %MessageDelta{} = delta_part) do
+    new_delta = upgrade_to_content_parts(delta_part)
+
     primary
-    |> append_content(delta_part)
-    |> merge_tool_calls(delta_part)
-    |> update_index(delta_part)
-    |> update_status(delta_part)
-    |> accumulate_token_usage(delta_part)
+    |> append_content(new_delta)
+    |> merge_tool_calls(new_delta)
+    |> update_index(new_delta)
+    |> update_status(new_delta)
+    |> accumulate_token_usage(new_delta)
+  end
+
+  @doc """
+  Converts a list of MessageDelta structs into a single merged MessageDelta.
+
+  This is primarily a tool for testing, allowing you to easily combine multiple
+  deltas that would typically be received in a streaming response into a single
+  delta that can be converted to a message.
+
+  ## Examples
+
+      iex> deltas = [
+      ...>   %LangChain.MessageDelta{content: "", role: :assistant, status: :incomplete},
+      ...>   %LangChain.MessageDelta{content: "Hello", role: :assistant, status: :incomplete},
+      ...>   %LangChain.MessageDelta{content: " world", role: :assistant, status: :complete}
+      ...> ]
+      iex> LangChain.MessageDelta.merge_deltas(deltas)
+      %LangChain.MessageDelta{content: "Hello world", role: :assistant, status: :complete}
+
+  """
+  @spec merge_deltas(list(t())) :: t() | nil
+  def merge_deltas(deltas) do
+    Enum.reduce(deltas, nil, fn new_delta, acc ->
+      merge_delta(acc, new_delta)
+    end)
   end
 
   # ContentPart being merged
@@ -371,5 +398,26 @@ defmodule LangChain.MessageDelta do
   def accumulate_token_usage(%MessageDelta{} = primary, %MessageDelta{} = _delta_part) do
     # No usage data to accumulate
     primary
+  end
+
+  @doc """
+  Upgrades a MessageDelta's content to use ContentPart.text! if it contains a string.
+  This is for backward compatibility with models that don't yet support ContentPart streaming.
+
+  ## Examples
+
+      iex> delta = %LangChain.MessageDelta{content: "Hello world"}
+      iex> upgraded = upgrade_to_content_parts(delta)
+      iex> upgraded.content
+      %LangChain.Message.ContentPart{type: :text, content: "Hello world"}
+
+  """
+  @spec upgrade_to_content_parts(t()) :: t()
+  def upgrade_to_content_parts(%MessageDelta{content: content} = delta) when is_binary(content) do
+    %MessageDelta{delta | content: ContentPart.text!(content)}
+  end
+
+  def upgrade_to_content_parts(%MessageDelta{} = delta) do
+    delta
   end
 end
