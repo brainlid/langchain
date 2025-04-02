@@ -151,11 +151,31 @@ defmodule LangChain.MessageDelta do
   defp append_content(
          %MessageDelta{role: :assistant, content: parts_list} = primary,
          %MessageDelta{
-           content: %ContentPart{} = new_content_part,
+           content: new_delta_content,
            index: index
          }
        )
-       when is_list(parts_list) do
+       when is_list(parts_list) and not is_nil(new_delta_content) do
+    # Incoming delta has a single ContentPart, not a list
+    case new_delta_content do
+      %ContentPart{} = part ->
+        merge_content_part_at_index(primary, part, index)
+    end
+  end
+
+  defp append_content(%MessageDelta{} = primary, %MessageDelta{} = _delta_part) do
+    # no content to merge
+    primary
+  end
+
+  # Helper function to merge a content part at a specific index
+  defp merge_content_part_at_index(
+         %MessageDelta{} = primary,
+         %ContentPart{} = new_content_part,
+         index
+       ) do
+    parts_list = primary.content
+
     # If the index is beyond the current list length, pad with nil values
     padded_list =
       if index >= length(parts_list) do
@@ -179,11 +199,6 @@ defmodule LangChain.MessageDelta do
     updated_list = List.replace_at(padded_list, index, merged_part)
 
     %MessageDelta{primary | content: updated_list}
-  end
-
-  defp append_content(%MessageDelta{} = primary, %MessageDelta{} = _delta_part) do
-    # no content to merge
-    primary
   end
 
   # Insert or update a content part in the list based on its index
