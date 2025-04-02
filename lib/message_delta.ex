@@ -138,35 +138,35 @@ defmodule LangChain.MessageDelta do
   defp append_content(
          %MessageDelta{role: :assistant, content: parts_list} = primary,
          %MessageDelta{
-           content: [new_content_part | _],
+           content: %ContentPart{} = new_content_part,
            index: index
          }
        )
        when is_list(parts_list) do
+    # If the index is beyond the current list length, pad with nil values
+    padded_list =
+      if index >= length(parts_list) do
+        parts_list ++ List.duplicate(nil, index - length(parts_list) + 1)
+      else
+        parts_list
+      end
+
     # Get the content part at the specified index from the primary's content list
-    primary_part = Enum.at(parts_list, index)
+    primary_part = Enum.at(padded_list, index)
 
-    merged_part = ContentPart.merge_part(primary_part, new_content_part)
+    # Merge the parts if we have an existing part, otherwise use the new part
+    merged_part =
+      if primary_part do
+        ContentPart.merge_part(primary_part, new_content_part)
+      else
+        new_content_part
+      end
 
-    %MessageDelta{primary | content: List.replace_at(parts_list, index, merged_part)}
+    # Replace the part at the specified index
+    updated_list = List.replace_at(padded_list, index, merged_part)
+
+    %MessageDelta{primary | content: updated_list}
   end
-
-  # text content being merged
-  # defp append_content(%MessageDelta{role: :assistant} = primary, %MessageDelta{
-  #        content: new_content
-  # } = new_delta)
-  #      when is_binary(new_content) do
-  #   %MessageDelta{primary | content: (primary.content || "") <> new_content}
-  # end
-
-  # # Handle merging a single content part into a list
-  # defp append_content(%MessageDelta{role: :assistant, content: parts_list} = primary, %MessageDelta{
-  #        content: new_content
-  #      })
-  #      when is_list(parts_list) and is_struct(new_content, ContentPart) do
-  #   merged_parts = insert_or_update_content_part(parts_list, new_content)
-  #   %MessageDelta{primary | content: merged_parts}
-  # end
 
   defp append_content(%MessageDelta{} = primary, %MessageDelta{} = _delta_part) do
     # no content to merge
@@ -329,7 +329,10 @@ defmodule LangChain.MessageDelta do
 
   """
   @spec accumulate_token_usage(t(), t()) :: t()
-  def accumulate_token_usage(%MessageDelta{} = primary, %MessageDelta{metadata: %{usage: new_usage}} = _delta_part)
+  def accumulate_token_usage(
+        %MessageDelta{} = primary,
+        %MessageDelta{metadata: %{usage: new_usage}} = _delta_part
+      )
       when not is_nil(new_usage) do
     current_usage = TokenUsage.get(primary)
     combined_usage = TokenUsage.add(current_usage, new_usage)

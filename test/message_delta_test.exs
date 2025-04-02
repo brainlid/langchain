@@ -539,11 +539,227 @@ defmodule LangChain.MessageDeltaTest do
     end
 
     test "handles merging a simple set of thinking content parts" do
-      assert false
+      delta_1 = %MessageDelta{
+        content: [],
+        status: :incomplete,
+        index: nil,
+        role: :assistant
+      }
+
+      delta_2 = %MessageDelta{
+        content: %ContentPart{
+          type: :thinking,
+          content: "Let's think about",
+          options: nil
+        },
+        status: :incomplete,
+        index: 0,
+        role: :assistant
+      }
+
+      delta_3 = %MessageDelta{
+        content: %ContentPart{
+          type: :thinking,
+          content: " this problem",
+          options: nil
+        },
+        status: :incomplete,
+        index: 0,
+        role: :assistant
+      }
+
+      merged =
+        delta_1
+        |> MessageDelta.merge_delta(delta_2)
+        |> MessageDelta.merge_delta(delta_3)
+
+      assert merged == %MessageDelta{
+               content: [
+                 %ContentPart{
+                   type: :thinking,
+                   content: "Let's think about this problem",
+                   options: nil
+                 }
+               ],
+               status: :incomplete,
+               index: 0,
+               role: :assistant
+             }
     end
 
     test "handles merging a set of thinking content parts with different indexes" do
-      assert false
+      delta_1 = %MessageDelta{
+        content: [],
+        status: :incomplete,
+        index: nil,
+        role: :assistant
+      }
+
+      delta_2 = %MessageDelta{
+        content: %ContentPart{
+          type: :thinking,
+          content: "First thought",
+          options: nil
+        },
+        status: :incomplete,
+        index: 0,
+        role: :assistant
+      }
+
+      delta_3 = %MessageDelta{
+        content: %ContentPart{
+          type: :thinking,
+          content: "Second thought",
+          options: nil
+        },
+        status: :incomplete,
+        index: 1,
+        role: :assistant
+      }
+
+      delta_4 = %MessageDelta{
+        content: %ContentPart{
+          type: :thinking,
+          content: " More first thought",
+          options: nil
+        },
+        status: :incomplete,
+        index: 0,
+        role: :assistant
+      }
+
+      merged =
+        delta_1
+        |> MessageDelta.merge_delta(delta_2)
+        |> MessageDelta.merge_delta(delta_3)
+        |> MessageDelta.merge_delta(delta_4)
+
+      assert merged == %MessageDelta{
+               content: [
+                 %ContentPart{
+                   type: :thinking,
+                   content: "First thought More first thought",
+                   options: nil
+                 },
+                 %ContentPart{
+                   type: :thinking,
+                   content: "Second thought",
+                   options: nil
+                 }
+               ],
+               status: :incomplete,
+               index: 0,
+               role: :assistant
+             }
+    end
+
+    test "handles merging content parts with gaps in indices" do
+      delta_1 = %MessageDelta{
+        content: [],
+        status: :incomplete,
+        index: nil,
+        role: :assistant
+      }
+
+      delta_2 = %MessageDelta{
+        content: %ContentPart{
+          type: :text,
+          content: "First part",
+          options: nil
+        },
+        status: :incomplete,
+        index: 0,
+        role: :assistant
+      }
+
+      delta_3 = %MessageDelta{
+        content: %ContentPart{
+          type: :text,
+          content: "Third part",
+          options: nil
+        },
+        status: :incomplete,
+        index: 2,
+        role: :assistant
+      }
+
+      merged =
+        delta_1
+        |> MessageDelta.merge_delta(delta_2)
+        |> MessageDelta.merge_delta(delta_3)
+
+      assert merged == %MessageDelta{
+               content: [
+                 %ContentPart{
+                   type: :text,
+                   content: "First part",
+                   options: nil
+                 },
+                 nil,
+                 %ContentPart{
+                   type: :text,
+                   content: "Third part",
+                   options: nil
+                 }
+               ],
+               status: :incomplete,
+               index: 2,
+               role: :assistant
+             }
+    end
+
+    test "handles merging content parts with different types" do
+      delta_1 = %MessageDelta{
+        content: [],
+        status: :incomplete,
+        index: nil,
+        role: :assistant
+      }
+
+      delta_2 = %MessageDelta{
+        content: %ContentPart{
+          type: :text,
+          content: "Text content",
+          options: nil
+        },
+        status: :incomplete,
+        index: 0,
+        role: :assistant
+      }
+
+      delta_3 = %MessageDelta{
+        content: %ContentPart{
+          type: :thinking,
+          content: "Thinking content",
+          options: nil
+        },
+        status: :incomplete,
+        index: 1,
+        role: :assistant
+      }
+
+      merged =
+        delta_1
+        |> MessageDelta.merge_delta(delta_2)
+        |> MessageDelta.merge_delta(delta_3)
+
+      assert merged == %MessageDelta{
+               content: [
+                 %ContentPart{
+                   type: :text,
+                   content: "Text content",
+                   options: nil
+                 },
+                 %ContentPart{
+                   type: :thinking,
+                   content: "Thinking content",
+                   options: nil
+                 }
+               ],
+               status: :incomplete,
+               index: 1,
+               role: :assistant
+             }
     end
 
     test "correctly merges thinking deltas with signature and usage" do
@@ -641,7 +857,8 @@ defmodule LangChain.MessageDeltaTest do
               type: :thinking,
               content: nil,
               options: [
-                signature: "ErUBCkYIARgCIkCspHHl1+BPuvAExtRMzy6e6DGYV4vI7D8dgqnzLm7RbQ5e4j+aAopCyq29fZqUNNdZbOLleuq/DYIyXjX4HIyIEgwE4N3Vb+9hzkFk/NwaDOy3fw0f0zqRZhAk4CIwp18hR9UsOWYC+pkvt1SnIOGCXBcLdwUxIoUeG3z6WfNwWJV7fulSvz7EVCN5ypzwKh2m/EY9LS1DK1EdUc770O8XdI/j4i0ibc8zRNIjvA=="
+                signature:
+                  "ErUBCkYIARgCIkCspHHl1+BPuvAExtRMzy6e6DGYV4vI7D8dgqnzLm7RbQ5e4j+aAopCyq29fZqUNNdZbOLleuq/DYIyXjX4HIyIEgwE4N3Vb+9hzkFk/NwaDOy3fw0f0zqRZhAk4CIwp18hR9UsOWYC+pkvt1SnIOGCXBcLdwUxIoUeG3z6WfNwWJV7fulSvz7EVCN5ypzwKh2m/EY9LS1DK1EdUc770O8XdI/j4i0ibc8zRNIjvA=="
               ]
             }
           ],
