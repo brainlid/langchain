@@ -762,6 +762,55 @@ defmodule LangChain.MessageDeltaTest do
              }
     end
 
+    test "handles merging a thinking part with the signature" do
+      delta_1 = %MessageDelta{
+        content: [
+          %ContentPart{
+            type: :thinking,
+            content: "450 + 3 = 453",
+            options: nil
+          }
+        ],
+        status: :incomplete,
+        index: 0,
+        role: :assistant
+      }
+
+      delta_2 = %MessageDelta{
+        content: [
+          %ContentPart{
+            type: :thinking,
+            content: nil,
+            options: [
+              signature:
+                "ErUBCkYIARgCIkCspHHl1+BPuvAExtRMzy6e6DGYV4vI7D8dgqnzLm7RbQ5e4j+aAopCyq29fZqUNNdZbOLleuq/DYIyXjX4HIyIEgwE4N3Vb+9hzkFk/NwaDOy3fw0f0zqRZhAk4CIwp18hR9UsOWYC+pkvt1SnIOGCXBcLdwUxIoUeG3z6WfNwWJV7fulSvz7EVCN5ypzwKh2m/EY9LS1DK1EdUc770O8XdI/j4i0ibc8zRNIjvA=="
+            ]
+          }
+        ],
+        status: :incomplete,
+        index: 0,
+        role: :assistant
+      }
+
+      merged = MessageDelta.merge_delta(delta_1, delta_2)
+
+      assert merged == %MessageDelta{
+               content: [
+                 %ContentPart{
+                   type: :thinking,
+                   content: "450 + 3 = 453",
+                   options: [
+                     signature:
+                       "ErUBCkYIARgCIkCspHHl1+BPuvAExtRMzy6e6DGYV4vI7D8dgqnzLm7RbQ5e4j+aAopCyq29fZqUNNdZbOLleuq/DYIyXjX4HIyIEgwE4N3Vb+9hzkFk/NwaDOy3fw0f0zqRZhAk4CIwp18hR9UsOWYC+pkvt1SnIOGCXBcLdwUxIoUeG3z6WfNwWJV7fulSvz7EVCN5ypzwKh2m/EY9LS1DK1EdUc770O8XdI/j4i0ibc8zRNIjvA=="
+                   ]
+                 }
+               ],
+               status: :incomplete,
+               index: 0,
+               role: :assistant
+             }
+    end
+
     test "correctly merges thinking deltas with signature and usage" do
       deltas = [
         %LangChain.MessageDelta{
