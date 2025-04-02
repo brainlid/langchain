@@ -29,6 +29,7 @@ defmodule LangChain.MessageDelta do
   alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
   alias LangChain.Utils
+  alias LangChain.TokenUsage
 
   @primary_key false
   embedded_schema do
@@ -123,6 +124,7 @@ defmodule LangChain.MessageDelta do
     |> merge_tool_calls(delta_part)
     |> update_index(delta_part)
     |> update_status(delta_part)
+    |> accumulate_token_usage(delta_part)
   end
 
   # ContentPart being merged
@@ -299,5 +301,44 @@ defmodule LangChain.MessageDelta do
       {:error, changeset} ->
         {:error, Utils.changeset_error_to_string(changeset)}
     end
+  end
+
+  @doc """
+  Accumulates token usage from delta messages. Uses `LangChain.TokenUsage.add/2` to combine
+  the usage data from both deltas.
+
+  ## Example
+
+      iex> alias LangChain.TokenUsage
+      iex> alias LangChain.MessageDelta
+      iex> delta1 = %MessageDelta{
+      ...>   metadata: %{
+      ...>     usage: %TokenUsage{input: 10, output: 5}
+      ...>   }
+      ...> }
+      iex> delta2 = %MessageDelta{
+      ...>   metadata: %{
+      ...>     usage: %TokenUsage{input: 5, output: 15}
+      ...>   }
+      ...> }
+      iex> result = MessageDelta.accumulate_token_usage(delta1, delta2)
+      iex> result.metadata.usage.input
+      15
+      iex> result.metadata.usage.output
+      20
+
+  """
+  @spec accumulate_token_usage(t(), t()) :: t()
+  def accumulate_token_usage(%MessageDelta{} = primary, %MessageDelta{metadata: %{usage: new_usage}} = _delta_part)
+      when not is_nil(new_usage) do
+    current_usage = TokenUsage.get(primary)
+    combined_usage = TokenUsage.add(current_usage, new_usage)
+
+    %MessageDelta{primary | metadata: Map.put(primary.metadata || %{}, :usage, combined_usage)}
+  end
+
+  def accumulate_token_usage(%MessageDelta{} = primary, %MessageDelta{} = _delta_part) do
+    # No usage data to accumulate
+    primary
   end
 end

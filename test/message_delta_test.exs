@@ -1,6 +1,6 @@
 defmodule LangChain.MessageDeltaTest do
   use ExUnit.Case
-  doctest LangChain.MessageDelta
+  doctest LangChain.MessageDelta, import: true
   import LangChain.Fixtures
   alias LangChain.Message
   alias LangChain.Message.ContentPart
