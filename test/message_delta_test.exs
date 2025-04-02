@@ -13,6 +13,7 @@ defmodule LangChain.MessageDeltaTest do
       assert {:ok, %MessageDelta{} = msg} = MessageDelta.new(%{})
       assert msg.role == :unknown
       assert msg.content == nil
+      assert msg.merged_content == []
       assert msg.status == :incomplete
       assert msg.index == nil
     end
@@ -28,6 +29,7 @@ defmodule LangChain.MessageDeltaTest do
 
       assert msg.role == :assistant
       assert msg.content == "Hi!"
+      assert msg.merged_content == []
       assert msg.status == :complete
       assert msg.index == 1
     end
@@ -52,6 +54,7 @@ defmodule LangChain.MessageDeltaTest do
 
       assert msg.role == :assistant
       assert msg.content == nil
+      assert msg.merged_content == []
       assert msg.tool_calls == [tool_call]
       assert msg.status == :complete
       assert msg.index == 1
@@ -64,10 +67,7 @@ defmodule LangChain.MessageDeltaTest do
     end
 
     test "accepts receiving thinking content as a list of content parts" do
-      result_1 = MessageDelta.new!(%{content: [], role: :assistant})
-      assert %MessageDelta{content: [], role: :assistant} == result_1
-
-      result_2 =
+      result =
         MessageDelta.new!(%{
           content: [
             ContentPart.new!(%{
@@ -83,14 +83,20 @@ defmodule LangChain.MessageDeltaTest do
                content: [
                  %ContentPart{type: :thinking, options: nil, content: "Let's add these numbers."}
                ],
+               merged_content: [],
                role: :assistant
-             } == result_2
+             } == result
     end
   end
 
   describe "new!/1" do
     test "returns struct when valid" do
-      assert %MessageDelta{role: :assistant, content: "Hi!", status: :incomplete} =
+      assert %MessageDelta{
+               role: :assistant,
+               content: "Hi!",
+               merged_content: [],
+               status: :incomplete
+             } =
                MessageDelta.new!(%{
                  "content" => "Hi!",
                  "role" => "assistant"
@@ -1107,6 +1113,7 @@ defmodule LangChain.MessageDeltaTest do
 
       assert upgraded == %MessageDelta{
                content: ContentPart.text!("Hello world"),
+               merged_content: [],
                role: :assistant,
                status: :incomplete
              }
@@ -1151,6 +1158,7 @@ defmodule LangChain.MessageDeltaTest do
 
       assert upgraded == %MessageDelta{
                content: nil,
+               merged_content: [],
                role: :assistant,
                status: :incomplete
              }

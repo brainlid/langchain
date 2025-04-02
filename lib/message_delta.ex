@@ -25,13 +25,21 @@ defmodule LangChain.MessageDelta do
   about the message delta. It is used to store token usage, model, and other LLM-specific
   information.
 
-  ## Content
+  ## Content Fields
 
-  The `content` field is has two modes of operating.
+  The module uses two content-related fields:
 
-  - Mode 1: A single, small MessageDelta will receive a `LangChain.Message.ContentPart` struct for the content's value.
-  - Mode 2: When merging a set of small MessageDeltas, the content can become a list of ContentParts. This supports receiving multi-modal responses like images or audio. But it can also receive `thinking` content that is separate from the final `text` content.
+  * `content` - The raw content received from the LLM. This can be either a string
+    (for backward compatibility) or a `LangChain.Message.ContentPart` struct. This field
+    is cleared (set to `nil`) after merging into `merged_content`.
 
+  * `merged_content` - The accumulated list of `ContentPart`s after merging deltas.
+    This is the source of truth for the message content and is used when converting
+    to a `LangChain.Message`. When merging deltas:
+    - For string content, it's converted to a `ContentPart` of type `:text`
+    - For `ContentPart` content, it's merged based on the `index` field
+    - Multiple content parts can be maintained in the list to support multi-modal
+      responses (text, images, audio) or separate thinking content from final text
   """
   use Ecto.Schema
   import Ecto.Changeset
@@ -47,6 +55,8 @@ defmodule LangChain.MessageDelta do
   @primary_key false
   embedded_schema do
     field :content, :any, virtual: true
+    # The accumulated list of ContentParts after merging deltas
+    field :merged_content, :any, virtual: true, default: []
     # Marks if the delta completes the message.
     field :status, Ecto.Enum, values: [:incomplete, :complete, :length], default: :incomplete
     # When requesting multiple choices for a response, the `index` represents
@@ -63,7 +73,7 @@ defmodule LangChain.MessageDelta do
 
   @type t :: %MessageDelta{}
 
-  @create_fields [:role, :content, :index, :status, :tool_calls, :metadata]
+  @create_fields [:role, :content, :index, :status, :tool_calls, :metadata, :merged_content]
   @required_fields []
 
   @doc """
@@ -73,9 +83,6 @@ defmodule LangChain.MessageDelta do
   def new(attrs \\ %{}) do
     %MessageDelta{}
     |> cast(attrs, @create_fields)
-
-    # TODO: Change this to cast content when it's a string to a ContentPart of text, making it backward compatible for models.
-
     |> Utils.assign_string_value(:content, attrs)
     |> validate_required(@required_fields)
     |> apply_action(:insert)
@@ -100,6 +107,14 @@ defmodule LangChain.MessageDelta do
   Merge two `MessageDelta` structs. The first `MessageDelta` is the `primary`
   one that smaller deltas are merged into.
 
+  The merging process:
+  1. Migrates any string content to `ContentPart`s for backward compatibility
+  2. Merges the content into `merged_content` based on the `index` field
+  3. Clears the `content` field (sets to `nil`) after merging
+  4. Updates other fields (tool_calls, status, etc.)
+
+  ## Examples
+
       iex> delta_1 =
       ...>   %LangChain.MessageDelta{
       ...>     content: nil,
@@ -117,15 +132,18 @@ defmodule LangChain.MessageDelta do
       ...>     status: :incomplete
       ...>   }
       iex> LangChain.MessageDelta.merge_delta(delta_1, delta_2)
-      %LangChain.MessageDelta{content: "Hello", status: :incomplete, index: 0, role: :assistant, tool_calls: []}
+      %LangChain.MessageDelta{
+        content: nil,
+        merged_content: [%LangChain.Message.ContentPart{type: :text, content: "Hello"}],
+        status: :incomplete,
+        index: 0,
+        role: :assistant,
+        tool_calls: []
+      }
 
   A set of deltas can be easily merged like this:
 
-      [first | rest] = list_of_delta_message
-
-      Enum.reduce(rest, first, fn new_delta, acc ->
-        MessageDelta.merge_delta(acc, new_delta)
-      end)
+        MessageDelta.merge_deltas(list_of_delta_messages)
 
   """
   @spec merge_delta(nil | t(), t()) :: t()
@@ -141,43 +159,32 @@ defmodule LangChain.MessageDelta do
     |> update_index(new_delta)
     |> update_status(new_delta)
     |> accumulate_token_usage(new_delta)
+    |> clear_content()
   end
 
-  @doc """
-  Converts a list of MessageDelta structs into a single merged MessageDelta.
-
-  This is primarily a tool for testing, allowing you to easily combine multiple
-  deltas that would typically be received in a streaming response into a single
-  delta that can be converted to a message.
-
-  ## Examples
-
-      iex> deltas = [
-      ...>   %LangChain.MessageDelta{content: "", role: :assistant, status: :incomplete},
-      ...>   %LangChain.MessageDelta{content: "Hello", role: :assistant, status: :incomplete},
-      ...>   %LangChain.MessageDelta{content: " world", role: :assistant, status: :complete}
-      ...> ]
-      iex> LangChain.MessageDelta.merge_deltas(deltas)
-      %LangChain.MessageDelta{content: [%LangChain.Message.ContentPart{type: :text, content: "Hello world"}], role: :assistant, status: :complete}
-
-  """
-  @spec merge_deltas(list(t())) :: t() | nil
-  def merge_deltas(deltas) do
-    Enum.reduce(deltas, nil, fn new_delta, acc ->
-      merge_delta(acc, new_delta)
-    end)
+  # Clear the content field after merging into merged_content
+  defp clear_content(%MessageDelta{} = delta) do
+    %MessageDelta{delta | content: nil}
   end
 
   # ContentPart being merged
   defp append_content(
-         %MessageDelta{role: :assistant, content: []} = primary,
+         %MessageDelta{role: :assistant, merged_content: %ContentPart{} = primary_part} = primary,
          %MessageDelta{content: %ContentPart{} = new_content_part}
        ) do
-    %MessageDelta{primary | content: [new_content_part]}
+    merged_part = ContentPart.merge_part(primary_part, new_content_part)
+    %MessageDelta{primary | merged_content: [merged_part]}
   end
 
   defp append_content(
-         %MessageDelta{role: :assistant, content: parts_list} = primary,
+         %MessageDelta{role: :assistant, merged_content: []} = primary,
+         %MessageDelta{content: %ContentPart{} = new_content_part}
+       ) do
+    %MessageDelta{primary | merged_content: [new_content_part]}
+  end
+
+  defp append_content(
+         %MessageDelta{role: :assistant, merged_content: parts_list} = primary,
          %MessageDelta{
            content: new_delta_content,
            index: index
@@ -188,12 +195,32 @@ defmodule LangChain.MessageDelta do
     case new_delta_content do
       %ContentPart{} = part ->
         merge_content_part_at_index(primary, part, index)
+
+      content when is_binary(content) ->
+        # Upgrade string content to a ContentPart
+        part = ContentPart.text!(content)
+        merge_content_part_at_index(primary, part, index)
     end
   end
 
-  defp append_content(%MessageDelta{} = primary, %MessageDelta{} = _delta_part) do
-    # no content to merge
-    primary
+  defp append_content(%MessageDelta{} = primary, %MessageDelta{} = delta_part) do
+    # Handle case where primary has no content and delta has string content
+    case {primary.merged_content, delta_part.content} do
+      {nil, content} when is_binary(content) ->
+        %MessageDelta{primary | merged_content: [ContentPart.text!(content)]}
+
+      {[], content} when is_binary(content) ->
+        %MessageDelta{primary | merged_content: [ContentPart.text!(content)]}
+
+      {%ContentPart{} = part, content} when is_binary(content) ->
+        new_part = ContentPart.text!(content)
+        merged_part = ContentPart.merge_part(part, new_part)
+        %MessageDelta{primary | merged_content: [merged_part]}
+
+      _ ->
+        # no content to merge
+        primary
+    end
   end
 
   # Helper function to merge a content part at a specific index
@@ -202,7 +229,7 @@ defmodule LangChain.MessageDelta do
          %ContentPart{} = new_content_part,
          index
        ) do
-    parts_list = primary.content
+    parts_list = primary.merged_content
 
     # If the index is beyond the current list length, pad with nil values
     padded_list =
@@ -226,23 +253,7 @@ defmodule LangChain.MessageDelta do
     # Replace the part at the specified index
     updated_list = List.replace_at(padded_list, index, merged_part)
 
-    %MessageDelta{primary | content: updated_list}
-  end
-
-  # Insert or update a content part in the list based on its index
-  defp insert_or_update_content_part(parts_list, part) when is_list(parts_list) do
-    # Find the position index of the item
-    idx = Enum.find_index(parts_list, fn item -> item.index == part.index end)
-
-    case idx do
-      nil ->
-        # not in the list, append the part to the list
-        parts_list ++ [part]
-
-      position ->
-        # Update the existing part at the position
-        List.replace_at(parts_list, position, part)
-    end
+    %MessageDelta{primary | merged_content: updated_list}
   end
 
   defp merge_tool_calls(
@@ -349,6 +360,7 @@ defmodule LangChain.MessageDelta do
       delta
       |> Map.from_struct()
       |> Map.put(:status, msg_status)
+      |> Map.put(:content, delta.merged_content)
 
     case Message.new(attrs) do
       {:ok, message} ->
