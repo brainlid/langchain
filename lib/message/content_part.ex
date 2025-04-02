@@ -63,7 +63,7 @@ defmodule LangChain.Message.ContentPart do
       default: :text
 
     field :content, :string
-    field :options, :any, virtual: true
+    field :options, :any, virtual: true, default: []
   end
 
   @type t :: %ContentPart{}
