@@ -164,6 +164,32 @@ defmodule LangChain.MessageDelta do
     |> clear_content()
   end
 
+  @doc """
+  Merges a list of `MessageDelta`s into a single `MessageDelta`. The deltas
+  are merged in order, with each delta being merged into the result of the
+  previous merge.
+
+  ## Examples
+
+      iex> deltas = [
+      ...>   %LangChain.MessageDelta{content: "Hello", role: :assistant},
+      ...>   %LangChain.MessageDelta{content: " world", role: :assistant},
+      ...>   %LangChain.MessageDelta{content: "!", role: :assistant, status: :complete}
+      ...> ]
+      iex> MessageDelta.merge_deltas(deltas)
+      %LangChain.MessageDelta{
+        content: nil,
+        merged_content: [%LangChain.Message.ContentPart{type: :text, content: "Hello world!"}],
+        status: :complete,
+        role: :assistant
+      }
+
+  """
+  @spec merge_deltas([t()]) :: t()
+  def merge_deltas(deltas) when is_list(deltas) do
+    Enum.reduce(deltas, nil, &merge_delta/2)
+  end
+
   # Clear the content field after merging into merged_content
   defp clear_content(%MessageDelta{} = delta) do
     %MessageDelta{delta | content: nil}
