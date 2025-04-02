@@ -179,16 +179,14 @@ defmodule LangChain.MessageDeltaTest do
     end
 
     test "correctly merges assistant content with a tool_call" do
-      [first | rest] = delta_content_with_function_call() |> List.flatten()
-
-      merged =
-        Enum.reduce(rest, first, fn new_delta, acc ->
-          MessageDelta.merge_delta(acc, new_delta)
-        end)
+      merged = delta_content_with_function_call() |> List.flatten() |> MessageDelta.merge_deltas()
 
       expected = %LangChain.MessageDelta{
-        content:
-          "Sure, I can help with that. First, let's check which regions are currently available for deployment on Fly.io. Please wait a moment while I fetch this information for you.",
+        content: [
+          ContentPart.text!(
+            "Sure, I can help with that. First, let's check which regions are currently available for deployment on Fly.io. Please wait a moment while I fetch this information for you."
+          )
+        ],
         index: 0,
         tool_calls: [
           ToolCall.new!(%{call_id: "call_123", name: "regions_list", arguments: "{}", index: 0})
@@ -331,17 +329,15 @@ defmodule LangChain.MessageDeltaTest do
     end
 
     test "correctly merges message with tool_call split over multiple deltas and index is not by position" do
-      first_delta =
-        %LangChain.MessageDelta{
-          content: "",
-          status: :incomplete,
-          index: nil,
-          role: :assistant,
-          tool_calls: nil
-        }
-
       deltas =
         [
+          %LangChain.MessageDelta{
+            content: "",
+            status: :incomplete,
+            index: nil,
+            role: :assistant,
+            tool_calls: nil
+          },
           %LangChain.MessageDelta{
             content: "stu",
             status: :incomplete,
@@ -461,13 +457,10 @@ defmodule LangChain.MessageDeltaTest do
           }
         ]
 
-      combined =
-        Enum.reduce(deltas, first_delta, fn d, acc ->
-          MessageDelta.merge_delta(acc, d)
-        end)
+      combined = MessageDelta.merge_deltas(deltas)
 
       assert combined == %LangChain.MessageDelta{
-               content: "stuff",
+               content: ContentPart.text!("stuff"),
                status: :complete,
                index: nil,
                role: :assistant,
@@ -487,7 +480,7 @@ defmodule LangChain.MessageDeltaTest do
       {:ok, message} = MessageDelta.to_message(combined)
 
       assert message == %Message{
-               content: "stuff",
+               content: ContentPart.text!("stuff"),
                status: :complete,
                role: :assistant,
                tool_calls: [
@@ -897,7 +890,8 @@ defmodule LangChain.MessageDeltaTest do
             type: :thinking,
             content: nil,
             options: [
-              signature: "ErUBCkYIARgCIkCspHHl1+BPuvAExtRMzy6e6DGYV4vI7D8dgqnzLm7RbQ5e4j+aAopCyq29fZqUNNdZbOLleuq/DYIyXjX4HIyIEgwE4N3Vb+9hzkFk/NwaDOy3fw0f0zqRZhAk4CIwp18hR9UsOWYC+pkvt1SnIOGCXBcLdwUxIoUeG3z6WfNwWJV7fulSvz7EVCN5ypzwKh2m/EY9LS1DK1EdUc770O8XdI/j4i0ibc8zRNIjvA=="
+              signature:
+                "ErUBCkYIARgCIkCspHHl1+BPuvAExtRMzy6e6DGYV4vI7D8dgqnzLm7RbQ5e4j+aAopCyq29fZqUNNdZbOLleuq/DYIyXjX4HIyIEgwE4N3Vb+9hzkFk/NwaDOy3fw0f0zqRZhAk4CIwp18hR9UsOWYC+pkvt1SnIOGCXBcLdwUxIoUeG3z6WfNwWJV7fulSvz7EVCN5ypzwKh2m/EY9LS1DK1EdUc770O8XdI/j4i0ibc8zRNIjvA=="
             ]
           },
           status: :incomplete,
@@ -963,46 +957,54 @@ defmodule LangChain.MessageDeltaTest do
           MessageDelta.merge_delta(acc, d)
         end)
 
-        # TODO: Release as an RC?
-        # TODO: Breaking change for deltas. Allow for legacy deltas to be merged using string contents? Until all the models are updated, it will be broken.
-        # TODO: All other models need to be updated to put streamed text content into a ContentPart.
-        # TODO: Also supports receiving streamed multi-modal content.
-        # TODO: Update the token usage callback event to still fire, but with the fully completed information?
+      # TODO: Release as an RC?
+      # TODO: Breaking change for deltas. Allow for legacy deltas to be merged using string contents? Until all the models are updated, it will be broken.
+      # TODO: All other models need to be updated to put streamed text content into a ContentPart.
+      # TODO: Also supports receiving streamed multi-modal content.
+      # TODO: Update the token usage callback event to still fire, but with the fully completed information?
 
-        # TODO: Can keep the .text! way of creating an internal ContentPart. Changes the results of the deltas but doesn't require all the models to change.
+      # TODO: Can keep the .text! way of creating an internal ContentPart. Changes the results of the deltas but doesn't require all the models to change.
 
-        %LangChain.MessageDelta{
+      # TODO: Need to fix merging content with ToolCalls. Failing tests.
+
             # TODO: Missing the non-thinking content part. Was incorrectly merged? Or just skipped?
-            content: [
-            %LangChain.Message.ContentPart{
-              type: :thinking,
-              content: "Let's add these numbers.\n400 + 50 = 450\n450 + 3 = 453\n\nSo 400 + 50 + 3 = 453",
-              options: [
-                signature: "ErUBCkYIARgCIkCspHHl1+BPuvAExtRMzy6e6DGYV4vI7D8dgqnzLm7RbQ5e4j+aAopCyq29fZqUNNdZbOLleuq/DYIyXjX4HIyIEgwE4N3Vb+9hzkFk/NwaDOy3fw0f0zqRZhAk4CIwp18hR9UsOWYC+pkvt1SnIOGCXBcLdwUxIoUeG3z6WfNwWJV7fulSvz7EVCN5ypzwKh2m/EY9LS1DK1EdUc770O8XdI/j4i0ibc8zRNIjvA=="
-              ]
-            }
-          ],
-          status: :complete,
-          # TODO: The index shouldn't be included like this? It's not the message index and it's part of the content list index. Only set the index during the message start event? So the update_index function would set it if nil but not change it if already set? It's only used for building pieces of the delta. Doesn't mean anything at the end. Leave it? Oh... I just wouldn't need to merge it into the primary. It's only needed for the incoming delta to know how to apply it correctly.
-          index: 1,
-          role: :assistant,
-          tool_calls: nil,
-          metadata: %{
-            usage: %LangChain.TokenUsage{
-              input: 55,
-              output: 84,
-              raw: %{
-                "cache_creation_input_tokens" => 0,
-                "cache_read_input_tokens" => 0,
-                "input_tokens" => 55,
-                "output_tokens" => 84
-              }
+      %LangChain.MessageDelta{
+            # TODO: Missing the non-thinking content part. Was incorrectly merged? Or just skipped?
+        content: [
+          %LangChain.Message.ContentPart{
+            type: :thinking,
+            content:
+              "Let's add these numbers.\n400 + 50 = 450\n450 + 3 = 453\n\nSo 400 + 50 + 3 = 453",
+            options: [
+              signature:
+                "ErUBCkYIARgCIkCspHHl1+BPuvAExtRMzy6e6DGYV4vI7D8dgqnzLm7RbQ5e4j+aAopCyq29fZqUNNdZbOLleuq/DYIyXjX4HIyIEgwE4N3Vb+9hzkFk/NwaDOy3fw0f0zqRZhAk4CIwp18hR9UsOWYC+pkvt1SnIOGCXBcLdwUxIoUeG3z6WfNwWJV7fulSvz7EVCN5ypzwKh2m/EY9LS1DK1EdUc770O8XdI/j4i0ibc8zRNIjvA=="
+            ]
+          },
+          %LangChain.Message.ContentPart{
+            type: :text,
+            content: "The answer is 453.\n\n400 + 50 = 450\n450 + 3 = 453",
+            options: []
+          }
+        ],
+        status: :complete,
+        index: 1,
+        role: :assistant,
+        tool_calls: nil,
+        metadata: %{
+          usage: %LangChain.TokenUsage{
+            input: 55,
+            output: 84,
+            raw: %{
+              "cache_creation_input_tokens" => 0,
+              "cache_read_input_tokens" => 0,
+              "input_tokens" => 55,
+              "output_tokens" => 84
             }
           }
         }
+      }
 
-
-        IO.inspect combined
+      IO.inspect(combined)
       assert combined == "BOO"
 
       # should correctly convert to a message
@@ -1107,7 +1109,7 @@ defmodule LangChain.MessageDeltaTest do
     end
   end
 
-  describe "upgrade_to_content_parts/1" do
+  describe "migrate_to_content_parts/1" do
     test "converts string content to a ContentPart of text" do
       delta = %MessageDelta{
         content: "Hello world",
@@ -1115,7 +1117,7 @@ defmodule LangChain.MessageDeltaTest do
         status: :incomplete
       }
 
-      upgraded = MessageDelta.upgrade_to_content_parts(delta)
+      upgraded = MessageDelta.migrate_to_content_parts(delta)
 
       assert upgraded == %MessageDelta{
                content: ContentPart.text!("Hello world"),
@@ -1135,7 +1137,7 @@ defmodule LangChain.MessageDeltaTest do
         status: :incomplete
       }
 
-      upgraded = MessageDelta.upgrade_to_content_parts(delta)
+      upgraded = MessageDelta.migrate_to_content_parts(delta)
 
       assert upgraded == delta
     end
@@ -1147,7 +1149,7 @@ defmodule LangChain.MessageDeltaTest do
         status: :incomplete
       }
 
-      upgraded = MessageDelta.upgrade_to_content_parts(delta)
+      upgraded = MessageDelta.migrate_to_content_parts(delta)
 
       assert upgraded == delta
     end
@@ -1159,10 +1161,10 @@ defmodule LangChain.MessageDeltaTest do
         status: :incomplete
       }
 
-      upgraded = MessageDelta.upgrade_to_content_parts(delta)
+      upgraded = MessageDelta.migrate_to_content_parts(delta)
 
       assert upgraded == %MessageDelta{
-               content: ContentPart.text!(""),
+               content: nil,
                role: :assistant,
                status: :incomplete
              }
