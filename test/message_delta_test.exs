@@ -1106,4 +1106,66 @@ defmodule LangChain.MessageDeltaTest do
       assert reason == "tool_calls: arguments: invalid json"
     end
   end
+
+  describe "upgrade_to_content_parts/1" do
+    test "converts string content to a ContentPart of text" do
+      delta = %MessageDelta{
+        content: "Hello world",
+        role: :assistant,
+        status: :incomplete
+      }
+
+      upgraded = MessageDelta.upgrade_to_content_parts(delta)
+
+      assert upgraded == %MessageDelta{
+               content: ContentPart.text!("Hello world"),
+               role: :assistant,
+               status: :incomplete
+             }
+    end
+
+    test "leaves existing ContentPart content unchanged" do
+      delta = %MessageDelta{
+        content: %ContentPart{
+          type: :thinking,
+          content: "Let's think about this",
+          options: nil
+        },
+        role: :assistant,
+        status: :incomplete
+      }
+
+      upgraded = MessageDelta.upgrade_to_content_parts(delta)
+
+      assert upgraded == delta
+    end
+
+    test "handles nil content" do
+      delta = %MessageDelta{
+        content: nil,
+        role: :assistant,
+        status: :incomplete
+      }
+
+      upgraded = MessageDelta.upgrade_to_content_parts(delta)
+
+      assert upgraded == delta
+    end
+
+    test "handles empty string content" do
+      delta = %MessageDelta{
+        content: "",
+        role: :assistant,
+        status: :incomplete
+      }
+
+      upgraded = MessageDelta.upgrade_to_content_parts(delta)
+
+      assert upgraded == %MessageDelta{
+               content: ContentPart.text!(""),
+               role: :assistant,
+               status: :incomplete
+             }
+    end
+  end
 end

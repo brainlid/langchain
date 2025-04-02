@@ -129,12 +129,13 @@ defmodule LangChain.MessageDelta do
 
   """
   @spec merge_delta(nil | t(), t()) :: t()
-  def merge_delta(nil, %MessageDelta{} = delta_part), do: delta_part
+  def merge_delta(nil, %MessageDelta{} = delta_part), do: migrate_to_content_parts(delta_part)
 
   def merge_delta(%MessageDelta{role: :assistant} = primary, %MessageDelta{} = delta_part) do
-    new_delta = upgrade_to_content_parts(delta_part)
+    new_delta = migrate_to_content_parts(delta_part)
 
     primary
+    |> migrate_to_content_parts()
     |> append_content(new_delta)
     |> merge_tool_calls(new_delta)
     |> update_index(new_delta)
@@ -157,7 +158,7 @@ defmodule LangChain.MessageDelta do
       ...>   %LangChain.MessageDelta{content: " world", role: :assistant, status: :complete}
       ...> ]
       iex> LangChain.MessageDelta.merge_deltas(deltas)
-      %LangChain.MessageDelta{content: "Hello world", role: :assistant, status: :complete}
+      %LangChain.MessageDelta{content: [%LangChain.Message.ContentPart{type: :text, content: "Hello world"}], role: :assistant, status: :complete}
 
   """
   @spec merge_deltas(list(t())) :: t() | nil
@@ -401,23 +402,26 @@ defmodule LangChain.MessageDelta do
   end
 
   @doc """
-  Upgrades a MessageDelta's content to use ContentPart.text! if it contains a string.
+  Migrates a MessageDelta's string content to use `LangChain.Message.ContentPart`.
   This is for backward compatibility with models that don't yet support ContentPart streaming.
 
   ## Examples
 
       iex> delta = %LangChain.MessageDelta{content: "Hello world"}
-      iex> upgraded = upgrade_to_content_parts(delta)
+      iex> upgraded = migrate_to_content_parts(delta)
       iex> upgraded.content
       %LangChain.Message.ContentPart{type: :text, content: "Hello world"}
 
   """
-  @spec upgrade_to_content_parts(t()) :: t()
-  def upgrade_to_content_parts(%MessageDelta{content: content} = delta) when is_binary(content) do
+  @spec migrate_to_content_parts(t()) :: t()
+  def migrate_to_content_parts(%MessageDelta{content: ""} = delta),
+    do: %MessageDelta{delta | content: nil}
+
+  def migrate_to_content_parts(%MessageDelta{content: content} = delta) when is_binary(content) do
     %MessageDelta{delta | content: ContentPart.text!(content)}
   end
 
-  def upgrade_to_content_parts(%MessageDelta{} = delta) do
+  def migrate_to_content_parts(%MessageDelta{} = delta) do
     delta
   end
 end
