@@ -18,6 +18,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
 
   @test_model "claude-3-5-sonnet-20241022"
   @bedrock_test_model "anthropic.claude-3-5-sonnet-20241022-v2:0"
+  @claude_3_7 "claude-3-7-sonnet-20250219"
   @apis [:anthropic, :anthropic_bedrock]
 
   defp hello_world(_args, _context) do
@@ -375,7 +376,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
         "message" => %{
           "content" => [],
           "id" => "msg_017vYxGobHipWyoZT5uDbGnJ",
-          "model" => "claude-3-7-sonnet-20250219",
+          "model" => @claude_3_7,
           "role" => "assistant",
           "stop_reason" => nil,
           "stop_sequence" => nil,
@@ -452,8 +453,8 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
 
       assert %MessageDelta{} = struct = ChatAnthropic.do_process_response(model, response)
       assert struct.role == :assistant
-      assert struct.content == "Hello"
-      assert is_nil(struct.index)
+      assert struct.content == ContentPart.text!("Hello")
+      assert struct.index == 0
     end
 
     test "handles receiving a content_block_start event for tool call", %{model: model} do
@@ -652,10 +653,10 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
       assert struct.content ==
                ContentPart.new!(%{
                  type: :thinking,
-                 other: %{
+                 options: [
                    signature:
                      "ErUBCkYIARgCIkCspHHl1+BPuvAExtRMzy6e6DGYV4vI7D8dgqnzLm7RbQ5e4j+aAopCyq29fZqUNNdZbOLleuq/DYIyXjX4HIyIEgwE4N3Vb+9hzkFk/NwaDOy3fw0f0zqRZhAk4CIwp18hR9UsOWYC+pkvt1SnIOGCXBcLdwUxIoUeG3z6WfNwWJV7fulSvz7EVCN5ypzwKh2m/EY9LS1DK1EdUc770O8XdI/j4i0ibc8zRNIjvA=="
-                 }
+                 ]
                })
 
       assert struct.index == 0
@@ -672,7 +673,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
             "message" => %{
               "content" => [],
               "id" => "msg_017vYxGobHipWyoZT5uDbGnJ",
-              "model" => "claude-3-7-sonnet-20250219",
+              "model" => @claude_3_7,
               "role" => "assistant",
               "stop_reason" => nil,
               "stop_sequence" => nil,
@@ -1317,8 +1318,10 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
     end
   end
 
-  describe "parse_stream_events/1" do
-    test "decodes a single chunk line as received from a real server call" do
+  describe "parse_stream_events/2" do
+    setup _ do
+      model = ChatAnthropic.new!(%{stream: true, model: @claude_3_7})
+
       chunks = [
         "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_017vYxGobHipWyoZT5uDbGnJ\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude-3-7-sonnet-20250219\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":55,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"output_tokens\":4}} }\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\",\"signature\":\"\"}             }\n\n",
         "event: ping\ndata: {\"type\": \"ping\"}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"Let's ad\"}               }\n\n",
@@ -1347,7 +1350,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
                    "id" => "msg_017vYxGobHipWyoZT5uDbGnJ",
                    "type" => "message",
                    "role" => "assistant",
-                   "model" => "claude-3-7-sonnet-20250219",
+                   "model" => @claude_3_7,
                    "content" => [],
                    "stop_reason" => nil,
                    "stop_sequence" => nil,
@@ -1452,7 +1455,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
             "message" => %{
               "content" => [],
               "id" => "msg_017vYxGobHipWyoZT5uDbGnJ",
-              "model" => "claude-3-7-sonnet-20250219",
+              "model" => @claude_3_7,
               "role" => "assistant",
               "stop_reason" => nil,
               "stop_sequence" => nil,
@@ -1537,16 +1540,31 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
   end
 
   describe "live thinking test" do
-    test "decodes a live thinking event" do
-      # TODO: LIVE!!!!!
+    @tag live_call: true, live_anthropic: true
+    test "decodes a live streamed thinking call" do
       llm =
         ChatAnthropic.new!(%{
           stream: true,
-          model: "claude-3-7-sonnet-20250219",
+          model: @claude_3_7,
           thinking: %{type: "enabled", budget_tokens: 1024}
         })
 
-      result = ChatAnthropic.call(llm, "What is 400 + 50 + 3?")
+      {:ok, deltas} = ChatAnthropic.call(llm, "What is 400 + 50 + 3?")
+      IO.inspect(deltas, label: "RESULT DELTAS")
+
+      assert false
+    end
+
+    @tag live_call: true, live_anthropic: true
+    test "decodes a live NON-streamed thinking call" do
+      llm =
+        ChatAnthropic.new!(%{
+          stream: false,
+          model: @claude_3_7,
+          thinking: %{type: "enabled", budget_tokens: 1024}
+        })
+
+      {:ok, result} = ChatAnthropic.call(llm, "What is 400 + 50 + 3?")
       IO.inspect(result, label: "RESULT")
 
       assert false
