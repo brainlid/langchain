@@ -156,7 +156,7 @@ defmodule LangChain.MessageDelta do
 
     primary
     |> migrate_to_content_parts()
-    |> append_content(new_delta)
+    |> append_to_merged_content(new_delta)
     |> merge_tool_calls(new_delta)
     |> update_index(new_delta)
     |> update_status(new_delta)
@@ -176,7 +176,7 @@ defmodule LangChain.MessageDelta do
       ...>   %LangChain.MessageDelta{content: " world", role: :assistant},
       ...>   %LangChain.MessageDelta{content: "!", role: :assistant, status: :complete}
       ...> ]
-      iex> MessageDelta.merge_deltas(deltas)
+      iex> LangChain.MessageDelta.merge_deltas(deltas)
       %LangChain.MessageDelta{
         content: nil,
         merged_content: [%LangChain.Message.ContentPart{type: :text, content: "Hello world!"}],
@@ -196,7 +196,7 @@ defmodule LangChain.MessageDelta do
   end
 
   # ContentPart being merged
-  defp append_content(
+  defp append_to_merged_content(
          %MessageDelta{role: :assistant, merged_content: %ContentPart{} = primary_part} = primary,
          %MessageDelta{content: %ContentPart{} = new_content_part}
        ) do
@@ -204,14 +204,14 @@ defmodule LangChain.MessageDelta do
     %MessageDelta{primary | merged_content: [merged_part]}
   end
 
-  defp append_content(
+  defp append_to_merged_content(
          %MessageDelta{role: :assistant, merged_content: []} = primary,
          %MessageDelta{content: %ContentPart{} = new_content_part}
        ) do
     %MessageDelta{primary | merged_content: [new_content_part]}
   end
 
-  defp append_content(
+  defp append_to_merged_content(
          %MessageDelta{role: :assistant, merged_content: parts_list} = primary,
          %MessageDelta{
            content: new_delta_content,
@@ -231,7 +231,7 @@ defmodule LangChain.MessageDelta do
     end
   end
 
-  defp append_content(%MessageDelta{} = primary, %MessageDelta{} = delta_part) do
+  defp append_to_merged_content(%MessageDelta{} = primary, %MessageDelta{} = delta_part) do
     # Handle case where primary has no content and delta has string content
     case {primary.merged_content, delta_part.content} do
       {nil, content} when is_binary(content) ->
