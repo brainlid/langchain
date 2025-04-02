@@ -76,4 +76,36 @@ defmodule LangChain.TokenUsage do
   def total(%TokenUsage{} = usage) do
     usage.input + usage.output
   end
+
+  @doc """
+  Combines two TokenUsage structs by adding their respective input and output values.
+  The raw maps are merged, with values being added if they are numeric.
+
+  ## Example
+
+      iex> usage1 = LangChain.TokenUsage.new!(%{input: 10, output: 20, raw: %{"total_tokens" => 30}})
+      iex> usage2 = LangChain.TokenUsage.new!(%{input: 5, output: 15, raw: %{"total_tokens" => 20}})
+      iex> combined = LangChain.TokenUsage.add(usage1, usage2)
+      iex> combined.input
+      15
+      iex> combined.output
+      35
+      iex> combined.raw["total_tokens"]
+      50
+
+  """
+  @spec add(t(), t()) :: t()
+  def add(%TokenUsage{} = usage1, %TokenUsage{} = usage2) do
+    new!(%{
+      input: (usage1.input || 0) + (usage2.input || 0),
+      output: (usage1.output || 0) + (usage2.output || 0),
+      raw: merge_raw_values(usage1.raw, usage2.raw)
+    })
+  end
+
+  defp merge_raw_values(raw1, raw2) do
+    Map.merge(raw1, raw2, fn _k, v1, v2 ->
+      if is_number(v1) and is_number(v2), do: v1 + v2, else: v2
+    end)
+  end
 end
