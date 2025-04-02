@@ -19,6 +19,19 @@ defmodule LangChain.MessageDelta do
   across many message deltas and must be fully assembled before it can be
   executed.
 
+  ## Metadata
+
+  The `metadata` field is a map that can contain any additional information
+  about the message delta. It is used to store token usage, model, and other LLM-specific
+  information.
+
+  ## Content
+
+  The `content` field is has two modes of operating.
+
+  - Mode 1: A single, small MessageDelta will receive a `LangChain.Message.ContentPart` struct for the content's value.
+  - Mode 2: When merging a set of small MessageDeltas, the content can become a list of ContentParts. This supports receiving multi-modal responses like images or audio. But it can also receive `thinking` content that is separate from the final `text` content.
+
   """
   use Ecto.Schema
   import Ecto.Changeset
