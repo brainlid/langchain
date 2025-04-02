@@ -100,5 +100,45 @@ defmodule LangChain.TokenUsageTest do
       assert combined.raw["input_tokens"] == 85
       assert combined.raw["output_tokens"] == 6
     end
+
+    test "handles nil arguments" do
+      usage = TokenUsage.new!(%{input: 10, output: 20})
+
+      assert TokenUsage.add(nil, nil) == nil
+      assert TokenUsage.add(usage, nil) == usage
+      assert TokenUsage.add(nil, usage) == usage
+    end
+  end
+
+  describe "get/1" do
+    test "extracts token usage from message metadata" do
+      usage = TokenUsage.new!(%{input: 10, output: 20})
+      message = %LangChain.Message{metadata: %{usage: usage}}
+
+      assert TokenUsage.get(message) == usage
+    end
+
+    test "extracts token usage from message delta metadata" do
+      usage = TokenUsage.new!(%{input: 10, output: 20})
+      delta = %LangChain.MessageDelta{metadata: %{usage: usage}}
+
+      assert TokenUsage.get(delta) == usage
+    end
+
+    test "returns nil when no usage in metadata" do
+      message = %LangChain.Message{metadata: %{}}
+      assert TokenUsage.get(message) == nil
+    end
+
+    test "returns nil when metadata is nil" do
+      message = %LangChain.Message{metadata: nil}
+      assert TokenUsage.get(message) == nil
+    end
+
+    test "returns nil for invalid struct" do
+      assert TokenUsage.get(%{}) == nil
+      assert TokenUsage.get(%{metadata: %{}}) == nil
+      assert TokenUsage.get(%{metadata: %{usage: "not a token usage"}}) == nil
+    end
   end
 end

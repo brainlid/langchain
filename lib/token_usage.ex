@@ -81,6 +81,9 @@ defmodule LangChain.TokenUsage do
   Combines two TokenUsage structs by adding their respective input and output values.
   The raw maps are merged, with values being added if they are numeric.
 
+  If both arguments are nil, returns nil.
+  If one argument is nil, returns the non-nil argument.
+
   ## Example
 
       iex> usage1 = LangChain.TokenUsage.new!(%{input: 10, output: 20, raw: %{"total_tokens" => 30}})
@@ -94,7 +97,10 @@ defmodule LangChain.TokenUsage do
       50
 
   """
-  @spec add(t(), t()) :: t()
+  @spec add(t() | nil, t() | nil) :: t() | nil
+  def add(nil, nil), do: nil
+  def add(nil, usage), do: usage
+  def add(usage, nil), do: usage
   def add(%TokenUsage{} = usage1, %TokenUsage{} = usage2) do
     new!(%{
       input: (usage1.input || 0) + (usage2.input || 0),
@@ -108,4 +114,24 @@ defmodule LangChain.TokenUsage do
       if is_number(v1) and is_number(v2), do: v1 + v2, else: v2
     end)
   end
+
+  @doc """
+  Extracts token usage information from a `LangChain.Message` or
+  `LangChain.MessageDelta` struct's metadata. Returns nil if no token usage
+  information is found.
+
+  ## Example
+
+      iex> message = %LangChain.Message{metadata: %{usage: %LangChain.TokenUsage{input: 10, output: 20}}}
+      iex> LangChain.TokenUsage.get(message)
+      %LangChain.TokenUsage{input: 10, output: 20}
+
+      iex> message = %LangChain.Message{metadata: %{}}
+      iex> LangChain.TokenUsage.get(message)
+      nil
+
+  """
+  @spec get(%{metadata: %{usage: t()}} | %{metadata: map() | nil}) :: t() | nil
+  def get(%{metadata: %{usage: %TokenUsage{} = usage}}), do: usage
+  def get(_), do: nil
 end
