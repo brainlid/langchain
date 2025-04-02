@@ -712,12 +712,13 @@ defmodule LangChain.MessageDeltaTest do
         # TODO: Breaking change for deltas. Allow for legacy deltas to be merged using string contents? Until all the models are updated, it will be broken.
         # TODO: All other models need to be updated to put streamed text content into a ContentPart.
         # TODO: Also supports receiving streamed multi-modal content.
+        # TODO: Update the token usage callback event to still fire, but with the fully completed information?
 
         # TODO: Can keep the .text! way of creating an internal ContentPart. Changes the results of the deltas but doesn't require all the models to change.
 
         %LangChain.MessageDelta{
-          content: [
             # TODO: Missing the non-thinking content part. Was incorrectly merged? Or just skipped?
+            content: [
             %LangChain.Message.ContentPart{
               type: :thinking,
               content: "Let's add these numbers.\n400 + 50 = 450\n450 + 3 = 453\n\nSo 400 + 50 + 3 = 453",
@@ -727,24 +728,24 @@ defmodule LangChain.MessageDeltaTest do
             }
           ],
           status: :complete,
-          # TODO: The index shouldn't be included like this? It's not the message index and it's part of the content list index.
+          # TODO: The index shouldn't be included like this? It's not the message index and it's part of the content list index. Only set the index during the message start event? So the update_index function would set it if nil but not change it if already set? It's only used for building pieces of the delta. Doesn't mean anything at the end. Leave it? Oh... I just wouldn't need to merge it into the primary. It's only needed for the incoming delta to know how to apply it correctly.
           index: 1,
           role: :assistant,
           tool_calls: nil,
-          # TODO: TokenUsage is not being merged
           metadata: %{
             usage: %LangChain.TokenUsage{
               input: 55,
-              output: 4,
+              output: 84,
               raw: %{
                 "cache_creation_input_tokens" => 0,
                 "cache_read_input_tokens" => 0,
                 "input_tokens" => 55,
-                "output_tokens" => 4
+                "output_tokens" => 84
               }
             }
           }
         }
+
 
         IO.inspect combined
       assert combined == "BOO"
