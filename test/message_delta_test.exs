@@ -845,13 +845,11 @@ defmodule LangChain.MessageDeltaTest do
           metadata: nil
         },
         %LangChain.MessageDelta{
-          content: [
-            %LangChain.Message.ContentPart{
-              type: :thinking,
-              content: "Let's ad",
-              options: nil
-            }
-          ],
+          content: %LangChain.Message.ContentPart{
+            type: :thinking,
+            content: "Let's ad",
+            options: nil
+          },
           status: :incomplete,
           index: 0,
           role: :assistant,
@@ -859,13 +857,11 @@ defmodule LangChain.MessageDeltaTest do
           metadata: nil
         },
         %LangChain.MessageDelta{
-          content: [
-            %LangChain.Message.ContentPart{
-              type: :thinking,
-              content: "d these numbers.\n400 + 50 = 450\n450 ",
-              options: nil
-            }
-          ],
+          content: %LangChain.Message.ContentPart{
+            type: :thinking,
+            content: "d these numbers.\n400 + 50 = 450\n450 ",
+            options: nil
+          },
           status: :incomplete,
           index: 0,
           role: :assistant,
@@ -873,13 +869,11 @@ defmodule LangChain.MessageDeltaTest do
           metadata: nil
         },
         %LangChain.MessageDelta{
-          content: [
-            %LangChain.Message.ContentPart{
-              type: :thinking,
-              content: "+ 3 = 453\n\nSo 400 + 50",
-              options: nil
-            }
-          ],
+          content: %LangChain.Message.ContentPart{
+            type: :thinking,
+            content: "+ 3 = 453\n\nSo 400 + 50",
+            options: nil
+          },
           status: :incomplete,
           index: 0,
           role: :assistant,
@@ -887,13 +881,11 @@ defmodule LangChain.MessageDeltaTest do
           metadata: nil
         },
         %LangChain.MessageDelta{
-          content: [
-            %LangChain.Message.ContentPart{
-              type: :thinking,
-              content: " + 3 = 453",
-              options: nil
-            }
-          ],
+          content: %LangChain.Message.ContentPart{
+            type: :thinking,
+            content: " + 3 = 453",
+            options: nil
+          },
           status: :incomplete,
           index: 0,
           role: :assistant,
@@ -901,16 +893,13 @@ defmodule LangChain.MessageDeltaTest do
           metadata: nil
         },
         %LangChain.MessageDelta{
-          content: [
-            %LangChain.Message.ContentPart{
-              type: :thinking,
-              content: nil,
-              options: [
-                signature:
-                  "ErUBCkYIARgCIkCspHHl1+BPuvAExtRMzy6e6DGYV4vI7D8dgqnzLm7RbQ5e4j+aAopCyq29fZqUNNdZbOLleuq/DYIyXjX4HIyIEgwE4N3Vb+9hzkFk/NwaDOy3fw0f0zqRZhAk4CIwp18hR9UsOWYC+pkvt1SnIOGCXBcLdwUxIoUeG3z6WfNwWJV7fulSvz7EVCN5ypzwKh2m/EY9LS1DK1EdUc770O8XdI/j4i0ibc8zRNIjvA=="
-              ]
-            }
-          ],
+          content: %LangChain.Message.ContentPart{
+            type: :thinking,
+            content: nil,
+            options: [
+              signature: "ErUBCkYIARgCIkCspHHl1+BPuvAExtRMzy6e6DGYV4vI7D8dgqnzLm7RbQ5e4j+aAopCyq29fZqUNNdZbOLleuq/DYIyXjX4HIyIEgwE4N3Vb+9hzkFk/NwaDOy3fw0f0zqRZhAk4CIwp18hR9UsOWYC+pkvt1SnIOGCXBcLdwUxIoUeG3z6WfNwWJV7fulSvz7EVCN5ypzwKh2m/EY9LS1DK1EdUc770O8XdI/j4i0ibc8zRNIjvA=="
+            ]
+          },
           status: :incomplete,
           index: 0,
           role: :assistant,
