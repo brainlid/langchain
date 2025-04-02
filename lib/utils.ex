@@ -350,4 +350,24 @@ defmodule LangChain.Utils do
     # return the new system message along with the rest
     [new_system_message | rest]
   end
+
+
+  @doc """
+  Changeset helper function for processing streamed text from an LLM.
+
+  A delta of " " a single empty space is expected. The "cast" process of the
+  changeset turns this into `nil` causing us to lose data.
+
+  We want to take whatever we are given here.
+  """
+  def assign_string_value(changeset, field, attrs) do
+    # get both possible versions of the arguments.
+    val = Map.get(attrs, field) || Map.get(attrs, to_string(field))
+    # if we got a string, use it as-is without casting
+    if is_binary(val) do
+      Ecto.Changeset.put_change(changeset, field, val)
+    else
+      changeset
+    end
+  end
 end

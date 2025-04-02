@@ -54,6 +54,7 @@ defmodule LangChain.Message.ContentPart do
   require Logger
   alias __MODULE__
   alias LangChain.LangChainError
+  alias LangChain.Utils
 
   @primary_key false
   embedded_schema do
@@ -78,6 +79,7 @@ defmodule LangChain.Message.ContentPart do
   def new(attrs \\ %{}) do
     %ContentPart{}
     |> cast(attrs, @create_fields)
+    |> Utils.assign_string_value(:content, attrs)
     |> common_validations()
     |> apply_action(:insert)
   end

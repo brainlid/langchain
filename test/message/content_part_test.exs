@@ -15,6 +15,16 @@ defmodule LangChain.Message.ContentPartTest do
       refute changeset.valid?
       assert {"can't be blank", _} = changeset.errors[:type]
     end
+
+    test "accepts an empty string content as-is" do
+      {:ok, %ContentPart{} = part} = ContentPart.new(%{type: :text, content: ""})
+      assert part.type == :text
+      assert part.content == ""
+
+      {:ok, %ContentPart{} = part} = ContentPart.new(%{type: :text, content: " "})
+      assert part.type == :text
+      assert part.content == " "
+    end
   end
 
   describe "new!/1" do

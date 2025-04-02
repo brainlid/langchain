@@ -26,6 +26,7 @@ defmodule LangChain.MessageDelta do
   alias __MODULE__
   alias LangChain.LangChainError
   alias LangChain.Message
+  alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
   alias LangChain.Utils
 
@@ -58,7 +59,10 @@ defmodule LangChain.MessageDelta do
   def new(attrs \\ %{}) do
     %MessageDelta{}
     |> cast(attrs, @create_fields)
-    |> assign_string_value(:content, attrs)
+
+    # TODO: Change this to cast content when it's a string to a ContentPart of text, making it backward compatible for models.
+
+    |> Utils.assign_string_value(:content, attrs)
     |> validate_required(@required_fields)
     |> apply_action(:insert)
   end
@@ -121,17 +125,66 @@ defmodule LangChain.MessageDelta do
     |> update_status(delta_part)
   end
 
-  # text content being merged
-  defp append_content(%MessageDelta{role: :assistant} = primary, %MessageDelta{
-         content: new_content
-       })
-       when is_binary(new_content) do
-    %MessageDelta{primary | content: (primary.content || "") <> new_content}
+  # ContentPart being merged
+  defp append_content(
+         %MessageDelta{role: :assistant, content: []} = primary,
+         %MessageDelta{content: %ContentPart{} = new_content_part}
+       ) do
+    %MessageDelta{primary | content: [new_content_part]}
   end
+
+  defp append_content(
+         %MessageDelta{role: :assistant, content: parts_list} = primary,
+         %MessageDelta{
+           content: [new_content_part | _],
+           index: index
+         }
+       )
+       when is_list(parts_list) do
+    # Get the content part at the specified index from the primary's content list
+    primary_part = Enum.at(parts_list, index)
+
+    merged_part = ContentPart.merge_part(primary_part, new_content_part)
+
+    %MessageDelta{primary | content: List.replace_at(parts_list, index, merged_part)}
+  end
+
+  # text content being merged
+  # defp append_content(%MessageDelta{role: :assistant} = primary, %MessageDelta{
+  #        content: new_content
+  # } = new_delta)
+  #      when is_binary(new_content) do
+  #   %MessageDelta{primary | content: (primary.content || "") <> new_content}
+  # end
+
+  # # Handle merging a single content part into a list
+  # defp append_content(%MessageDelta{role: :assistant, content: parts_list} = primary, %MessageDelta{
+  #        content: new_content
+  #      })
+  #      when is_list(parts_list) and is_struct(new_content, ContentPart) do
+  #   merged_parts = insert_or_update_content_part(parts_list, new_content)
+  #   %MessageDelta{primary | content: merged_parts}
+  # end
 
   defp append_content(%MessageDelta{} = primary, %MessageDelta{} = _delta_part) do
     # no content to merge
     primary
+  end
+
+  # Insert or update a content part in the list based on its index
+  defp insert_or_update_content_part(parts_list, part) when is_list(parts_list) do
+    # Find the position index of the item
+    idx = Enum.find_index(parts_list, fn item -> item.index == part.index end)
+
+    case idx do
+      nil ->
+        # not in the list, append the part to the list
+        parts_list ++ [part]
+
+      position ->
+        # Update the existing part at the position
+        List.replace_at(parts_list, position, part)
+    end
   end
 
   defp merge_tool_calls(
@@ -188,22 +241,6 @@ defmodule LangChain.MessageDelta do
   defp update_status(%MessageDelta{} = primary, %MessageDelta{} = _delta_part) do
     # status flag not updated
     primary
-  end
-
-  # The contents and arguments get streamed as a string. A delta of " " a single empty space
-  # is expected. The "cast" process of the changeset turns this into `nil`
-  # causing us to lose data.
-  #
-  # We want to take whatever we are given here.
-  defp assign_string_value(changeset, field, attrs) do
-    # get both possible versions of the arguments.
-    val = Map.get(attrs, field) || Map.get(attrs, to_string(field))
-    # if we got a string, use it as-is without casting
-    if is_binary(val) do
-      put_change(changeset, field, val)
-    else
-      changeset
-    end
   end
 
   # given the list of tool calls, insert or update the item into the list based
