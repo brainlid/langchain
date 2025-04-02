@@ -119,10 +119,15 @@ defmodule LangChain.MessageDeltaTest do
         status: :incomplete
       }
 
-      assert delta == MessageDelta.merge_delta(nil, delta)
+      merged = MessageDelta.merge_delta(nil, delta)
+      assert merged.content == ContentPart.text!("Hello! How can I assist you today?")
+      assert merged.merged_content == []
+      assert merged.index == 0
+      assert merged.role == :assistant
+      assert merged.status == :incomplete
     end
 
-    test "handles migrating string content for first received delta" do
+    test "migrates string content for first received delta" do
       delta = %MessageDelta{
         content: "Hello! How can I assist you today?",
         index: 0,
@@ -131,7 +136,8 @@ defmodule LangChain.MessageDeltaTest do
       }
 
       expected = %MessageDelta{
-        content: ContentPart.text!("Hello! How can I assist you today?"),
+        content: nil,
+        merged_content: [ContentPart.text!("Hello! How can I assist you today?")],
         index: 0,
         role: :assistant,
         status: :incomplete

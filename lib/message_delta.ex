@@ -147,7 +147,9 @@ defmodule LangChain.MessageDelta do
 
   """
   @spec merge_delta(nil | t(), t()) :: t()
-  def merge_delta(nil, %MessageDelta{} = delta_part), do: migrate_to_content_parts(delta_part)
+  def merge_delta(nil, %MessageDelta{} = delta_part) do
+    merge_delta(%MessageDelta{role: :assistant}, delta_part)
+  end
 
   def merge_delta(%MessageDelta{role: :assistant} = primary, %MessageDelta{} = delta_part) do
     new_delta = migrate_to_content_parts(delta_part)
