@@ -299,7 +299,6 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     |> Utils.conditionally_add_to_map(:top_k, anthropic.top_k)
     |> Utils.conditionally_add_to_map(:thinking, anthropic.thinking)
     |> maybe_transform_for_bedrock(anthropic.bedrock)
-    |> IO.inspect(label: "FOR API")
   end
 
   defp maybe_transform_for_bedrock(body, nil), do: body
@@ -583,13 +582,54 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   end
 
   def do_process_response(_model, %{
+        "type" => "message_start",
+        "message" => %{
+          "type" => "message",
+          "role" => role,
+          "content" => content,
+          "usage" => usage
+        }
+      }) do
+    %{
+      role: role,
+      content: content,
+      status: :incomplete,
+      metadata: %{usage: get_token_usage(usage)}
+    }
+    |> MessageDelta.new()
+    |> to_response()
+  end
+
+  def do_process_response(_model, %{
         "type" => "content_block_start",
+        "index" => index,
+        "content_block" => %{
+          "type" => "thinking",
+          "thinking" => content,
+          "signature" => signature
+        }
+      }) do
+    %{
+      role: :assistant,
+      content:
+        ContentPart.new!(%{type: :thinking, content: content, options: [signature: signature]}),
+      status: :incomplete,
+      index: index
+    }
+    |> MessageDelta.new()
+    |> to_response()
+  end
+
+  def do_process_response(_model, %{
+        "type" => "content_block_start",
+        "index" => index,
         "content_block" => %{"type" => "text", "text" => content}
       }) do
     %{
       role: :assistant,
-      content: content,
-      status: :incomplete
+      content: ContentPart.text!(content),
+      status: :incomplete,
+      index: index
     }
     |> MessageDelta.new()
     |> to_response()
@@ -597,12 +637,14 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
   def do_process_response(_model, %{
         "type" => "content_block_delta",
+        "index" => index,
         "delta" => %{"type" => "text_delta", "text" => content}
       }) do
     %{
       role: :assistant,
-      content: content,
-      status: :incomplete
+      content: ContentPart.text!(content),
+      status: :incomplete,
+      index: index
     }
     |> MessageDelta.new()
     |> to_response()
@@ -648,21 +690,68 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     |> to_response()
   end
 
+  def do_process_response(_model, %{
+        "type" => "content_block_delta",
+        "index" => content_index,
+        "delta" => %{"type" => "thinking_delta", "thinking" => thinking}
+      }) do
+    %{
+      role: :assistant,
+      status: :incomplete,
+      index: content_index,
+      content: ContentPart.new!(%{type: :thinking, content: thinking})
+    }
+    |> MessageDelta.new()
+    |> to_response()
+  end
+
+  def do_process_response(_model, %{
+        "type" => "content_block_delta",
+        "index" => content_index,
+        "delta" => %{"type" => "signature_delta", "signature" => signature}
+      }) do
+    %{
+      role: :assistant,
+      status: :incomplete,
+      index: content_index,
+      content: ContentPart.new!(%{type: :thinking, options: [signature: signature]})
+    }
+    |> MessageDelta.new()
+    |> to_response()
+  end
+
+  # # TODO: redacted_thinking - need a real streamed example of it
+  # def do_process_response(_model, %{
+  #       "type" => "content_block_delta",
+  #       "index" => content_index,
+  #       "delta" => %{"type" => "signature_delta", "signature" => signature}
+  #     }) do
+  #   %{
+  #     role: :assistant,
+  #     status: :incomplete,
+  #     index: content_index,
+  #     content: [ContentPart.new!(%{type: :thinking, options: %{signature: signature}})]
+  #   }
+  #   |> MessageDelta.new()
+  #   |> to_response()
+  # end
+
   def do_process_response(
         model,
         %{
           "type" => "message_delta",
           "delta" => %{"stop_reason" => stop_reason},
-          "usage" => _usage
-        } = data
+          "usage" => usage
+        } = _data
       ) do
     # if we received usage data, fire any callbacks for it.
-    Callbacks.fire(model.callbacks, :on_llm_token_usage, [get_token_usage(data)])
+    Callbacks.fire(model.callbacks, :on_llm_token_usage, [get_token_usage(usage)])
 
     %{
       role: :assistant,
-      content: "",
-      status: stop_reason_to_status(stop_reason)
+      content: nil,
+      status: stop_reason_to_status(stop_reason),
+      metadata: %{usage: get_token_usage(usage)}
     }
     |> MessageDelta.new()
     |> to_response()
@@ -781,9 +870,10 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   end
 
   @doc false
-  def decode_stream(%ChatAnthropic{bedrock: nil}, {chunk, buffer}) do
-    # Combine the incoming data with the buffered incomplete data
+  def parse_stream_events(%ChatAnthropic{bedrock: nil}, {chunk, buffer}) do
+    # Combine the incoming data with any buffered incomplete data
     combined_data = buffer <> chunk
+
     # Split data by double newline to find complete messages
     entries = String.split(combined_data, "\n\n", trim: true)
 
@@ -798,58 +888,95 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
     processed =
       to_process
-      # Trim whitespace from each line
-      |> Stream.map(&String.trim/1)
-      # Ignore empty lines
-      |> Stream.reject(&(&1 == ""))
-      # Filter lines based on some condition
-      |> Stream.filter(&relevant_event?/1)
-      # Split the event from the data into separate lines
-      |> Stream.map(&extract_data(&1))
-      |> Enum.reduce([], fn json, done ->
-        json
-        |> Jason.decode()
-        |> case do
-          {:ok, parsed} ->
-            # wrap each parsed response into an array of 1. This matches the
-            # return type of some LLMs where they return `n` number of responses.
-            # This is for compatibility.
-            # {done ++ Enum.map(parsed, &([&1])), ""}
-            done ++ [parsed]
+      |> Enum.reduce([], fn chunk, acc ->
+        # Split chunk into lines
+        lines = String.split(chunk, "\n", trim: true)
 
-          {:error, reason} ->
-            Logger.error("Failed to JSON decode streamed data: #{inspect(reason)}")
-            done
+        # Find the data line that contains the JSON. The data contains all the
+        # information we need so we skip the "event: " lines.
+        case Enum.find(lines, &String.starts_with?(&1, "data: ")) do
+          nil ->
+            acc
 
+          data_line ->
+            # Extract and parse the JSON data
+            json = String.replace_prefix(data_line, "data: ", "")
+
+            case Jason.decode(json) do
+              {:ok, parsed} -> acc ++ [parsed]
+              {:error, _} -> acc
+            end
         end
       end)
 
     {processed, incomplete}
   end
 
-  defp relevant_event?("event: content_block_delta\n" <> _rest), do: true
-  defp relevant_event?("event: content_block_start\n" <> _rest), do: true
-  defp relevant_event?("event: message_delta\n" <> _rest), do: true
-  defp relevant_event?("event: error\n" <> _rest), do: true
+  @doc false
+  def decode_stream(%ChatAnthropic{bedrock: nil} = model, {chunk, buffer}) do
+    {to_process, incomplete} = parse_stream_events(model, {chunk, buffer})
+
+    processed = Enum.filter(to_process, &relevant_event?/1)
+
+    # # Combine the incoming data with the buffered incomplete data
+    # combined_data = buffer <> chunk
+    # # Split data by double newline to find complete messages
+    # entries = String.split(combined_data, "\n\n", trim: true)
+
+    # # The last part may be incomplete if it doesn't end with "\n\n"
+    # {to_process, incomplete} =
+    #   if String.ends_with?(combined_data, "\n\n") do
+    #     {entries, ""}
+    #   else
+    #     # process all but the last, keep the last as incomplete
+    #     {Enum.slice(entries, 0..-2//1), List.last(entries)}
+    #   end
+
+    # processed =
+    #   to_process
+    # # Trim whitespace from each line
+    # |> Stream.map(&String.trim/1)
+    # # Ignore empty lines
+    # |> Stream.reject(&(&1 == ""))
+    # Filter lines based on some condition
+    # |> Stream.filter(&relevant_event?/1)
+    # Split the event from the data into separate lines
+    # |> Stream.map(&extract_data(&1))
+    # |> Enum.reduce([], fn json, done ->
+    #   json
+    #   |> Jason.decode()
+    #   |> case do
+    #     {:ok, parsed} ->
+    #       # wrap each parsed response into an array of 1. This matches the
+    #       # return type of some LLMs where they return `n` number of responses.
+    #       # This is for compatibility.
+    #       # {done ++ Enum.map(parsed, &([&1])), ""}
+    #       done ++ [parsed]
+
+    #     {:error, reason} ->
+    #       Logger.error("Failed to JSON decode streamed data: #{inspect(reason)}")
+    #       done
+
+    #   end
+    # end)
+
+    {processed, incomplete}
+  end
+
+  def relevant_event?(%{"type" => "message_start"}), do: true
+  def relevant_event?(%{"type" => "content_block_delta"}), do: true
+  def relevant_event?(%{"type" => "content_block_start"}), do: true
+  def relevant_event?(%{"type" => "message_delta"}), do: true
+  def relevant_event?(%{"type" => "error"}), do: true
   # ignoring
-  defp relevant_event?("event: message_start\n" <> _rest), do: false
-  defp relevant_event?("event: ping\n" <> _rest), do: false
-  defp relevant_event?("event: content_block_stop\n" <> _rest), do: false
-  defp relevant_event?("event: message_stop\n" <> _rest), do: false
+  def relevant_event?(%{"type" => "ping"}), do: false
+  def relevant_event?(%{"type" => "content_block_stop"}), do: false
+  def relevant_event?(%{"type" => "message_stop"}), do: false
   # catch-all for when we miss something
-  defp relevant_event?(event) do
+  def relevant_event?(event) do
     Logger.error("Unsupported event received when parsing Anthropic response: #{inspect(event)}")
     false
   end
-
-  # process data for an event
-  defp extract_data("event: " <> line) do
-    [_prefix, json] = String.split(line, "data: ", trim: true)
-    json
-  end
-
-  # assumed the response is JSON. Return as-is
-  defp extract_data(json), do: json
 
   @doc false
   def decode_stream(%ChatAnthropic{bedrock: %BedrockConfig{}}, {chunk, buffer}, chunks \\ []) do
@@ -857,7 +984,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
     chunks =
       Enum.filter(chunks, fn chunk ->
-        Map.has_key?(chunk, :bedrock_exception) || relevant_event?("event: #{chunk["type"]}\n")
+        Map.has_key?(chunk, :bedrock_exception) || relevant_event?(chunk)
       end)
 
     {chunks, remaining}
@@ -1094,17 +1221,17 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     return
   end
 
-  defp get_token_usage(%{"usage" => usage} = _response_body) do
+  defp get_token_usage(usage_data) do
     # if prompt caching has been used the response will also contain
     # "cache_creation_input_tokens" and "cache_read_input_tokens"
     TokenUsage.new!(%{
-      input: Map.get(usage, "input_tokens"),
-      output: Map.get(usage, "output_tokens"),
-      raw: usage
+      input: Map.get(usage_data, "input_tokens"),
+      output: Map.get(usage_data, "output_tokens"),
+      raw: usage_data
     })
   end
 
-  defp get_token_usage(_response_body), do: %{}
+  defp get_token_usage(_usage_data), do: nil
 
   @doc """
   Generate a config map that can later restore the model's configuration.
@@ -1136,45 +1263,5 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   @impl ChatModel
   def restore_from_map(%{"version" => 1} = data) do
     ChatAnthropic.new(data)
-  end
-
-  def parse_stream_events({chunk, buffer}) do
-    # Combine the incoming data with any buffered incomplete data
-    combined_data = buffer <> chunk
-
-    # Split data by double newline to find complete messages
-    entries = String.split(combined_data, "\n\n", trim: true)
-
-    # The last part may be incomplete if it doesn't end with "\n\n"
-    {to_process, incomplete} =
-      if String.ends_with?(combined_data, "\n\n") do
-        {entries, ""}
-      else
-        # process all but the last, keep the last as incomplete
-        {Enum.slice(entries, 0..-2//1), List.last(entries)}
-      end
-
-    processed =
-      to_process
-      |> Enum.reduce([], fn chunk, acc ->
-        # Split chunk into lines
-        lines = String.split(chunk, "\n", trim: true)
-
-        # Find the data line that contains the JSON. The data contains all the
-        # information we need so we skip the "event: " lines.
-        case Enum.find(lines, &String.starts_with?(&1, "data: ")) do
-          nil ->
-            acc
-          data_line ->
-            # Extract and parse the JSON data
-            json = String.replace_prefix(data_line, "data: ", "")
-            case Jason.decode(json) do
-              {:ok, parsed} -> acc ++ [parsed]
-              {:error, _} -> acc
-            end
-        end
-      end)
-
-    {processed, incomplete}
   end
 end
