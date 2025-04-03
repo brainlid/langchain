@@ -201,6 +201,9 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     # Beta headers
     # https://docs.anthropic.com/claude/docs/tool-use - requires tools-2024-04-04 header during beta
     field :beta_headers, {:array, :string}, default: ["tools-2024-04-04"]
+
+    # Additional level of raw api request and response data
+    field :verbose_api, :boolean, default: false
   end
 
   @type t :: %ChatAnthropic{}
@@ -218,7 +221,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     :stream,
     :thinking,
     :tool_choice,
-    :beta_headers
+    :beta_headers,
+    :verbose_api
   ]
   @required_fields [:endpoint, :model]
 
@@ -402,10 +406,16 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         tools,
         retry_count
       ) do
+    raw_data = for_api(anthropic, messages, tools)
+
+    if anthropic.verbose_api do
+      IO.inspect(raw_data, label: "RAW DATA BEING SUBMITTED")
+    end
+
     req =
       Req.new(
         url: url(anthropic),
-        json: for_api(anthropic, messages, tools),
+        json: raw_data,
         headers: headers(anthropic),
         receive_timeout: anthropic.receive_timeout,
         retry: :transient,
@@ -419,6 +429,10 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     # parse the body and return it as parsed structs
     |> case do
       {:ok, %Req.Response{status: 200, body: data} = response} ->
+        if anthropic.verbose_api do
+          IO.inspect(response, label: "RAW REQ RESPONSE")
+        end
+
         Callbacks.fire(anthropic.callbacks, :on_llm_ratelimit_info, [
           get_ratelimit_info(response.headers)
         ])
@@ -465,9 +479,15 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         tools,
         retry_count
       ) do
+    raw_data = for_api(anthropic, messages, tools)
+
+    if anthropic.verbose_api do
+      IO.inspect(raw_data, label: "RAW DATA BEING SUBMITTED")
+    end
+
     Req.new(
       url: url(anthropic),
-      json: for_api(anthropic, messages, tools),
+      json: raw_data,
       headers: headers(anthropic),
       receive_timeout: anthropic.receive_timeout,
       aws_sigv4: aws_sigv4_opts(anthropic.bedrock)
@@ -914,7 +934,15 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
   @doc false
   def decode_stream(%ChatAnthropic{bedrock: nil} = model, {chunk, buffer}) do
+    if model.verbose_api do
+      IO.inspect(chunk, label:      "RCVD RAW CHUNK")
+    end
+
     {to_process, incomplete} = parse_stream_events(model, {chunk, buffer})
+
+    if model.verbose_api do
+      IO.inspect(to_process, label: "RAW TO PROCESS")
+    end
 
     processed = Enum.filter(to_process, &relevant_event?/1)
 
