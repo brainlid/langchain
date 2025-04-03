@@ -261,16 +261,22 @@ defmodule LangChain.MessageDelta do
        ) do
     parts_list = primary.merged_content
 
+    # If index is nil, assume position 0 for backward compatibility with some chat models
+    position = index || 0
+
+    # Compute the length once to avoid multiple calculations
+    list_length = length(parts_list)
+
     # If the index is beyond the current list length, pad with nil values
     padded_list =
-      if index >= length(parts_list) do
-        parts_list ++ List.duplicate(nil, index - length(parts_list) + 1)
+      if position >= list_length do
+        parts_list ++ List.duplicate(nil, position - list_length + 1)
       else
         parts_list
       end
 
     # Get the content part at the specified index from the primary's content list
-    primary_part = Enum.at(padded_list, index)
+    primary_part = Enum.at(padded_list, position)
 
     # Merge the parts if we have an existing part, otherwise use the new part
     merged_part =
@@ -281,7 +287,7 @@ defmodule LangChain.MessageDelta do
       end
 
     # Replace the part at the specified index
-    updated_list = List.replace_at(padded_list, index, merged_part)
+    updated_list = List.replace_at(padded_list, position, merged_part)
 
     %MessageDelta{primary | merged_content: updated_list}
   end
