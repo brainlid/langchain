@@ -36,6 +36,21 @@ defmodule LangChain.Message do
   support it, and they may require using specific models trained for it. See the
   documentation for the LLM or service for details on their level of support.
 
+  ## Assistant Content Parts
+
+  Assistant Content Parts are implemented through
+  `LangChain.Message.ContentPart`. A list of them can be supplied as the
+  "content" for a message. Only a few LLMs support it, and they may require
+  using specific models trained for it. See the documentation for the LLM or
+  service for details on their level of support.
+
+  An example of this is Anthropic's Claude 3.7 Sonnet and it's "thinking"
+  content parts. The service may also return redacted_thinking content parts
+  that can be sent back to maintain continuity of the conversation.
+
+  This also supports the idea of an assistant returning an image along with
+  text.
+
   ## Processed Content
 
   The `processed_content` field is a handy place to store the results of
