@@ -150,7 +150,8 @@ defmodule LangChain.MessageDeltaTest do
       merged = MessageDelta.merge_deltas(delta_content_sample())
 
       expected = %LangChain.MessageDelta{
-        content: ContentPart.text!("Hello! How can I assist you today?"),
+        content: nil,
+        merged_content: [ContentPart.text!("Hello! How can I assist you today?")],
         index: 0,
         role: :assistant,
         status: :complete
@@ -164,6 +165,7 @@ defmodule LangChain.MessageDeltaTest do
 
       expected = %MessageDelta{
         content: nil,
+        merged_content: [],
         index: 0,
         tool_calls: [
           %ToolCall{
@@ -202,7 +204,8 @@ defmodule LangChain.MessageDeltaTest do
       merged = delta_content_with_function_call() |> List.flatten() |> MessageDelta.merge_deltas()
 
       expected = %LangChain.MessageDelta{
-        content: [
+        content: nil,
+        merged_content: [
           ContentPart.text!(
             "Sure, I can help with that. First, let's check which regions are currently available for deployment on Fly.io. Please wait a moment while I fetch this information for you."
           )
@@ -326,7 +329,8 @@ defmodule LangChain.MessageDeltaTest do
       merged = MessageDelta.merge_deltas(deltas)
 
       assert merged == %LangChain.MessageDelta{
-               content: ContentPart.text!("stuff"),
+               content: nil,
+               merged_content: [ContentPart.text!("stuff")],
                status: :incomplete,
                index: nil,
                role: :assistant,
@@ -475,7 +479,8 @@ defmodule LangChain.MessageDeltaTest do
       combined = MessageDelta.merge_deltas(deltas)
 
       assert combined == %LangChain.MessageDelta{
-               content: ContentPart.text!("stuff"),
+               content: nil,
+               merged_content: [ContentPart.text!("stuff")],
                status: :complete,
                index: nil,
                role: :assistant,
@@ -495,7 +500,7 @@ defmodule LangChain.MessageDeltaTest do
       {:ok, message} = MessageDelta.to_message(combined)
 
       assert message == %Message{
-               content: ContentPart.text!("stuff"),
+               content: [ContentPart.text!("stuff")],
                status: :complete,
                role: :assistant,
                tool_calls: [
@@ -533,16 +538,17 @@ defmodule LangChain.MessageDeltaTest do
       merged = MessageDelta.merge_delta(delta_1, delta_2)
 
       assert merged == %MessageDelta{
-               content: [
+               content: nil,
+               merged_content: [
                  %ContentPart{
                    type: :thinking,
                    content: nil,
                    options: %{signature: ""}
-                 },
-                 role: :assistant,
-                 status: :incomplete,
-                 index: nil
-               ]
+                 }
+               ],
+               role: :assistant,
+               status: :incomplete,
+               index: nil
              }
     end
 
@@ -579,7 +585,8 @@ defmodule LangChain.MessageDeltaTest do
         |> MessageDelta.merge_deltas()
 
       assert merged == %MessageDelta{
-               content: [
+               content: nil,
+               merged_content: [
                  %ContentPart{
                    type: :thinking,
                    content: "Let's think about this problem",
@@ -635,7 +642,8 @@ defmodule LangChain.MessageDeltaTest do
         |> MessageDelta.merge_deltas()
 
       assert merged == %MessageDelta{
-               content: [
+               content: nil,
+               merged_content: [
                  %ContentPart{
                    type: :thinking,
                    content: "First thought More first thought",
@@ -686,7 +694,8 @@ defmodule LangChain.MessageDeltaTest do
         |> MessageDelta.merge_deltas()
 
       assert merged == %MessageDelta{
-               content: [
+               content: nil,
+               merged_content: [
                  %ContentPart{
                    type: :text,
                    content: "First part",
@@ -741,7 +750,8 @@ defmodule LangChain.MessageDeltaTest do
         |> MessageDelta.merge_delta(delta_3)
 
       assert merged == %MessageDelta{
-               content: [
+               content: nil,
+               merged_content: [
                  %ContentPart{
                    type: :text,
                    content: "Text content",
@@ -789,7 +799,8 @@ defmodule LangChain.MessageDeltaTest do
         |> MessageDelta.merge_deltas()
 
       assert merged == %MessageDelta{
-               content: [
+               content: nil,
+               merged_content: [
                  %ContentPart{
                    type: :thinking,
                    content: "450 + 3 = 453",
@@ -805,241 +816,244 @@ defmodule LangChain.MessageDeltaTest do
              }
     end
 
-    # test "correctly merges thinking deltas with signature and usage" do
-    #   deltas = [
-    #     %LangChain.MessageDelta{
-    #       content: [],
-    #       status: :incomplete,
-    #       index: nil,
-    #       role: :assistant,
-    #       tool_calls: nil,
-    #       metadata: %{
-    #         usage: %LangChain.TokenUsage{
-    #           input: 55,
-    #           output: 4,
-    #           raw: %{
-    #             "cache_creation_input_tokens" => 0,
-    #             "cache_read_input_tokens" => 0,
-    #             "input_tokens" => 55,
-    #             "output_tokens" => 4
-    #           }
-    #         }
-    #       }
-    #     },
-    #     %LangChain.MessageDelta{
-    #       content: %LangChain.Message.ContentPart{
-    #         type: :thinking,
-    #         content: "",
-    #         options: [signature: ""]
-    #       },
-    #       status: :incomplete,
-    #       index: 0,
-    #       role: :assistant,
-    #       tool_calls: nil,
-    #       metadata: nil
-    #     },
-    #     %LangChain.MessageDelta{
-    #       content: %LangChain.Message.ContentPart{
-    #         type: :thinking,
-    #         content: "Let's ad",
-    #         options: nil
-    #       },
-    #       status: :incomplete,
-    #       index: 0,
-    #       role: :assistant,
-    #       tool_calls: nil,
-    #       metadata: nil
-    #     },
-    #     %LangChain.MessageDelta{
-    #       content: %LangChain.Message.ContentPart{
-    #         type: :thinking,
-    #         content: "d these numbers.\n400 + 50 = 450\n450 ",
-    #         options: nil
-    #       },
-    #       status: :incomplete,
-    #       index: 0,
-    #       role: :assistant,
-    #       tool_calls: nil,
-    #       metadata: nil
-    #     },
-    #     %LangChain.MessageDelta{
-    #       content: %LangChain.Message.ContentPart{
-    #         type: :thinking,
-    #         content: "+ 3 = 453\n\nSo 400 + 50",
-    #         options: nil
-    #       },
-    #       status: :incomplete,
-    #       index: 0,
-    #       role: :assistant,
-    #       tool_calls: nil,
-    #       metadata: nil
-    #     },
-    #     %LangChain.MessageDelta{
-    #       content: %LangChain.Message.ContentPart{
-    #         type: :thinking,
-    #         content: " + 3 = 453",
-    #         options: nil
-    #       },
-    #       status: :incomplete,
-    #       index: 0,
-    #       role: :assistant,
-    #       tool_calls: nil,
-    #       metadata: nil
-    #     },
-    #     %LangChain.MessageDelta{
-    #       content: %LangChain.Message.ContentPart{
-    #         type: :thinking,
-    #         content: nil,
-    #         options: [
-    #           signature:
-    #             "ErUBCkYIARgCIkCspHHl1+BPuvAExtRMzy6e6DGYV4vI7D8dgqnzLm7RbQ5e4j+aAopCyq29fZqUNNdZbOLleuq/DYIyXjX4HIyIEgwE4N3Vb+9hzkFk/NwaDOy3fw0f0zqRZhAk4CIwp18hR9UsOWYC+pkvt1SnIOGCXBcLdwUxIoUeG3z6WfNwWJV7fulSvz7EVCN5ypzwKh2m/EY9LS1DK1EdUc770O8XdI/j4i0ibc8zRNIjvA=="
-    #         ]
-    #       },
-    #       status: :incomplete,
-    #       index: 0,
-    #       role: :assistant,
-    #       tool_calls: nil,
-    #       metadata: nil
-    #     },
-    #     %LangChain.MessageDelta{
-    #       content: %LangChain.Message.ContentPart{
-    #         type: :text,
-    #         content: "",
-    #         options: []
-    #       },
-    #       status: :incomplete,
-    #       index: 1,
-    #       role: :assistant,
-    #       tool_calls: nil,
-    #       metadata: nil
-    #     },
-    #     %LangChain.MessageDelta{
-    #       content: %LangChain.Message.ContentPart{
-    #         type: :text,
-    #         content: "The answer is 453.\n\n400 + 50 = 450\n450 + 3 =",
-    #         options: []
-    #       },
-    #       status: :incomplete,
-    #       index: 1,
-    #       role: :assistant,
-    #       tool_calls: nil,
-    #       metadata: nil
-    #     },
-    #     %LangChain.MessageDelta{
-    #       content: %LangChain.Message.ContentPart{
-    #         type: :text,
-    #         content: " 453",
-    #         options: []
-    #       },
-    #       status: :incomplete,
-    #       index: 1,
-    #       role: :assistant,
-    #       tool_calls: nil,
-    #       metadata: nil
-    #     },
-    #     %LangChain.MessageDelta{
-    #       content: nil,
-    #       status: :complete,
-    #       index: nil,
-    #       role: :assistant,
-    #       tool_calls: nil,
-    #       metadata: %{
-    #         usage: %LangChain.TokenUsage{
-    #           input: nil,
-    #           output: 80,
-    #           raw: %{"output_tokens" => 80}
-    #         }
-    #       }
-    #     }
-    #   ]
+    # TODO: DO NOT DELETE. THIS IS IMPORTANT.
+    @tag live_test: true
+    test "correctly merges thinking deltas with signature and usage" do
+      deltas = [
+        %LangChain.MessageDelta{
+          content: [],
+          status: :incomplete,
+          index: nil,
+          role: :assistant,
+          tool_calls: nil,
+          metadata: %{
+            usage: %LangChain.TokenUsage{
+              input: 55,
+              output: 4,
+              raw: %{
+                "cache_creation_input_tokens" => 0,
+                "cache_read_input_tokens" => 0,
+                "input_tokens" => 55,
+                "output_tokens" => 4
+              }
+            }
+          }
+        },
+        %LangChain.MessageDelta{
+          content: %LangChain.Message.ContentPart{
+            type: :thinking,
+            content: "",
+            options: [signature: ""]
+          },
+          status: :incomplete,
+          index: 0,
+          role: :assistant,
+          tool_calls: nil,
+          metadata: nil
+        },
+        %LangChain.MessageDelta{
+          content: %LangChain.Message.ContentPart{
+            type: :thinking,
+            content: "Let's ad",
+            options: nil
+          },
+          status: :incomplete,
+          index: 0,
+          role: :assistant,
+          tool_calls: nil,
+          metadata: nil
+        },
+        %LangChain.MessageDelta{
+          content: %LangChain.Message.ContentPart{
+            type: :thinking,
+            content: "d these numbers.\n400 + 50 = 450\n450 ",
+            options: nil
+          },
+          status: :incomplete,
+          index: 0,
+          role: :assistant,
+          tool_calls: nil,
+          metadata: nil
+        },
+        %LangChain.MessageDelta{
+          content: %LangChain.Message.ContentPart{
+            type: :thinking,
+            content: "+ 3 = 453\n\nSo 400 + 50",
+            options: nil
+          },
+          status: :incomplete,
+          index: 0,
+          role: :assistant,
+          tool_calls: nil,
+          metadata: nil
+        },
+        %LangChain.MessageDelta{
+          content: %LangChain.Message.ContentPart{
+            type: :thinking,
+            content: " + 3 = 453",
+            options: nil
+          },
+          status: :incomplete,
+          index: 0,
+          role: :assistant,
+          tool_calls: nil,
+          metadata: nil
+        },
+        %LangChain.MessageDelta{
+          content: %LangChain.Message.ContentPart{
+            type: :thinking,
+            content: nil,
+            options: [
+              signature:
+                "ErUBCkYIARgCIkCspHHl1+BPuvAExtRMzy6e6DGYV4vI7D8dgqnzLm7RbQ5e4j+aAopCyq29fZqUNNdZbOLleuq/DYIyXjX4HIyIEgwE4N3Vb+9hzkFk/NwaDOy3fw0f0zqRZhAk4CIwp18hR9UsOWYC+pkvt1SnIOGCXBcLdwUxIoUeG3z6WfNwWJV7fulSvz7EVCN5ypzwKh2m/EY9LS1DK1EdUc770O8XdI/j4i0ibc8zRNIjvA=="
+            ]
+          },
+          status: :incomplete,
+          index: 0,
+          role: :assistant,
+          tool_calls: nil,
+          metadata: nil
+        },
+        %LangChain.MessageDelta{
+          content: %LangChain.Message.ContentPart{
+            type: :text,
+            content: "",
+            options: []
+          },
+          status: :incomplete,
+          index: 1,
+          role: :assistant,
+          tool_calls: nil,
+          metadata: nil
+        },
+        %LangChain.MessageDelta{
+          content: %LangChain.Message.ContentPart{
+            type: :text,
+            content: "The answer is 453.\n\n400 + 50 = 450\n450 + 3 =",
+            options: []
+          },
+          status: :incomplete,
+          index: 1,
+          role: :assistant,
+          tool_calls: nil,
+          metadata: nil
+        },
+        %LangChain.MessageDelta{
+          content: %LangChain.Message.ContentPart{
+            type: :text,
+            content: " 453",
+            options: []
+          },
+          status: :incomplete,
+          index: 1,
+          role: :assistant,
+          tool_calls: nil,
+          metadata: nil
+        },
+        %LangChain.MessageDelta{
+          content: nil,
+          status: :complete,
+          index: nil,
+          role: :assistant,
+          tool_calls: nil,
+          metadata: %{
+            usage: %LangChain.TokenUsage{
+              input: nil,
+              output: 80,
+              raw: %{"output_tokens" => 80}
+            }
+          }
+        }
+      ]
 
-    #   combined = MessageDelta.merge_deltas(deltas)
+      combined = MessageDelta.merge_deltas(deltas)
 
-    #   # TODO: Release as an RC?
-    #   # TODO: Breaking change for deltas. Allow for legacy deltas to be merged using string contents? Until all the models are updated, it will be broken.
-    #   # TODO: All other models need to be updated to put streamed text content into a ContentPart.
-    #   # TODO: Also supports receiving streamed multi-modal content.
-    #   # TODO: Update the token usage callback event to still fire, but with the fully completed information?
+      # TODO: Release as an RC?
+      # TODO: Breaking change for deltas. Allow for legacy deltas to be merged using string contents? Until all the models are updated, it will be broken.
+      # TODO: All other models need to be updated to put streamed text content into a ContentPart.
+      # TODO: Also supports receiving streamed multi-modal content.
+      # TODO: Update the token usage callback event to still fire, but with the fully completed information?
 
-    #   # TODO: Can keep the .text! way of creating an internal ContentPart. Changes the results of the deltas but doesn't require all the models to change.
+      # TODO: Can keep the .text! way of creating an internal ContentPart. Changes the results of the deltas but doesn't require all the models to change.
 
-    #   # TODO: Need to fix merging content with ToolCalls. Failing tests.
+      # TODO: Need to fix merging content with ToolCalls. Failing tests.
 
-    #   # TODO: Missing the non-thinking content part. Was incorrectly merged? Or just skipped?
-    #   %LangChain.MessageDelta{
-    #     # TODO: Missing the non-thinking content part. Was incorrectly merged? Or just skipped?
-    #     content: [
-    #       %LangChain.Message.ContentPart{
-    #         type: :thinking,
-    #         content:
-    #           "Let's add these numbers.\n400 + 50 = 450\n450 + 3 = 453\n\nSo 400 + 50 + 3 = 453",
-    #         options: [
-    #           signature:
-    #             "ErUBCkYIARgCIkCspHHl1+BPuvAExtRMzy6e6DGYV4vI7D8dgqnzLm7RbQ5e4j+aAopCyq29fZqUNNdZbOLleuq/DYIyXjX4HIyIEgwE4N3Vb+9hzkFk/NwaDOy3fw0f0zqRZhAk4CIwp18hR9UsOWYC+pkvt1SnIOGCXBcLdwUxIoUeG3z6WfNwWJV7fulSvz7EVCN5ypzwKh2m/EY9LS1DK1EdUc770O8XdI/j4i0ibc8zRNIjvA=="
-    #         ]
-    #       },
-    #       %LangChain.Message.ContentPart{
-    #         type: :text,
-    #         content: "The answer is 453.\n\n400 + 50 = 450\n450 + 3 = 453",
-    #         options: []
-    #       }
-    #     ],
-    #     status: :complete,
-    #     index: 1,
-    #     role: :assistant,
-    #     tool_calls: nil,
-    #     metadata: %{
-    #       usage: %LangChain.TokenUsage{
-    #         input: 55,
-    #         output: 84,
-    #         raw: %{
-    #           "cache_creation_input_tokens" => 0,
-    #           "cache_read_input_tokens" => 0,
-    #           "input_tokens" => 55,
-    #           "output_tokens" => 84
-    #         }
-    #       }
-    #     }
-    #   }
+      # TODO: Missing the non-thinking content part. Was incorrectly merged? Or just skipped?
+      %LangChain.MessageDelta{
+        # TODO: Missing the non-thinking content part. Was incorrectly merged? Or just skipped?
+        content: [
+          %LangChain.Message.ContentPart{
+            type: :thinking,
+            content:
+              "Let's add these numbers.\n400 + 50 = 450\n450 + 3 = 453\n\nSo 400 + 50 + 3 = 453",
+            options: [
+              signature:
+                "ErUBCkYIARgCIkCspHHl1+BPuvAExtRMzy6e6DGYV4vI7D8dgqnzLm7RbQ5e4j+aAopCyq29fZqUNNdZbOLleuq/DYIyXjX4HIyIEgwE4N3Vb+9hzkFk/NwaDOy3fw0f0zqRZhAk4CIwp18hR9UsOWYC+pkvt1SnIOGCXBcLdwUxIoUeG3z6WfNwWJV7fulSvz7EVCN5ypzwKh2m/EY9LS1DK1EdUc770O8XdI/j4i0ibc8zRNIjvA=="
+            ]
+          },
+          %LangChain.Message.ContentPart{
+            type: :text,
+            content: "The answer is 453.\n\n400 + 50 = 450\n450 + 3 = 453",
+            options: []
+          }
+        ],
+        status: :complete,
+        index: 1,
+        role: :assistant,
+        tool_calls: nil,
+        metadata: %{
+          usage: %LangChain.TokenUsage{
+            input: 55,
+            output: 84,
+            raw: %{
+              "cache_creation_input_tokens" => 0,
+              "cache_read_input_tokens" => 0,
+              "input_tokens" => 55,
+              "output_tokens" => 84
+            }
+          }
+        }
+      }
 
-    #   IO.inspect(combined)
-    #   assert combined == "BOO"
+      IO.inspect(combined)
+      assert combined == "BOO"
 
-    #   # should correctly convert to a message
-    #   {:ok, message} = MessageDelta.to_message(combined)
+      # should correctly convert to a message
+      {:ok, message} = MessageDelta.to_message(combined)
 
-    #   assert message == %Message{
-    #            content: "stuff",
-    #            status: :complete,
-    #            role: :assistant,
-    #            tool_calls: [
-    #              %LangChain.Message.ToolCall{
-    #                status: :complete,
-    #                type: :function,
-    #                call_id: "toolu_123",
-    #                name: "do_something",
-    #                arguments: %{"value" => "People are people."},
-    #                index: 1
-    #              }
-    #            ]
-    #          }
+      assert message == %Message{
+               content: "stuff",
+               status: :complete,
+               role: :assistant,
+               tool_calls: [
+                 %LangChain.Message.ToolCall{
+                   status: :complete,
+                   type: :function,
+                   call_id: "toolu_123",
+                   name: "do_something",
+                   arguments: %{"value" => "People are people."},
+                   index: 1
+                 }
+               ]
+             }
 
-    #   assert false
-    # end
+      assert false
+    end
   end
 
   describe "to_message/1" do
     test "transform a merged and complete MessageDelta to a Message" do
       # :assistant content type
       delta = %LangChain.MessageDelta{
-        content: "Hello! How can I assist you?",
+        content: nil,
+        merged_content: [ContentPart.text!("Hello! How can I assist you?")],
         role: :assistant,
         status: :complete
       }
 
       {:ok, %Message{} = msg} = MessageDelta.to_message(delta)
       assert msg.role == :assistant
-      assert msg.content == "Hello! How can I assist you?"
+      assert msg.content == [ContentPart.text!("Hello! How can I assist you?")]
 
       # :assistant type
       delta = %LangChain.MessageDelta{
@@ -1066,6 +1080,7 @@ defmodule LangChain.MessageDeltaTest do
     test "does not transform an incomplete MessageDelta to a Message" do
       delta = %LangChain.MessageDelta{
         content: "Hello! How can I assist ",
+        merged_content: [ContentPart.text!("Hello! How can I assist ")],
         role: :assistant,
         status: :incomplete
       }
@@ -1076,13 +1091,14 @@ defmodule LangChain.MessageDeltaTest do
     test "transforms a delta stopped for length" do
       delta = %LangChain.MessageDelta{
         content: "Hello! How can I assist ",
+        merged_content: [ContentPart.text!("Hello! How can I assist ")],
         role: :assistant,
         status: :length
       }
 
       assert {:ok, message} = MessageDelta.to_message(delta)
       assert message.role == :assistant
-      assert message.content == "Hello! How can I assist "
+      assert message.content == [ContentPart.text!("Hello! How can I assist ")]
       assert message.status == :length
     end
 
