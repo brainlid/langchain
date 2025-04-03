@@ -120,8 +120,8 @@ defmodule LangChain.MessageDeltaTest do
       }
 
       merged = MessageDelta.merge_delta(nil, delta)
-      assert merged.content == ContentPart.text!("Hello! How can I assist you today?")
-      assert merged.merged_content == []
+      assert merged.content == nil
+      assert merged.merged_content == [ContentPart.text!("Hello! How can I assist you today?")]
       assert merged.index == 0
       assert merged.role == :assistant
       assert merged.status == :incomplete
@@ -161,7 +161,7 @@ defmodule LangChain.MessageDeltaTest do
     end
 
     test "correctly merge multiple tool calls in a delta" do
-      merged = MessageDelta.merge_deltas(delta_content_sample())
+      merged = MessageDelta.merge_deltas(deltas_for_multiple_tool_calls())
 
       expected = %MessageDelta{
         content: nil,
@@ -548,7 +548,7 @@ defmodule LangChain.MessageDeltaTest do
                ],
                role: :assistant,
                status: :incomplete,
-               index: nil
+               index: 0
              }
     end
 
