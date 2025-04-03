@@ -371,6 +371,143 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
       assert is_nil(struct.index)
     end
 
+    test "handles receiving a complete message with thinking", %{model: model} do
+      response = %{
+        "content" => [
+          %{
+            "signature" =>
+              "ErUBCkYIAhgCIkCjvrY94GV6fW82e0vtSzgOMjj50Xi8cgtzBCrd40+oqA/JPL0zXEzrAfm5wYXouROoJ7pdFGghKXip41uqFGT7EgykmZx29tPiUdB2z+0aDMccABirA75MuvB0miIwNHtxSOApjBf0ugl+Td/9cqDgC6sMQqXwgoQDx4OLgFBQeFi82nAidRi0+QDlcF3/Kh0nUGyGp1bFenHB7KazXjcNg2XOs9Lfz2UBG3nJVQ==",
+            "thinking" =>
+              "This is a basic addition problem. I need to add all the numbers together.\n\n400 + 50 = 450\n450 + 3 = 453\n\nSo the answer is 453.",
+            "type" => "thinking"
+          },
+          %{"text" => "The sum of 400 + 50 + 3 is 453.", "type" => "text"}
+        ],
+        "id" => "msg_01D877HzPUSSWs881P3dSm8c",
+        "model" => "claude-3-7-sonnet-20250219",
+        "role" => "assistant",
+        "stop_reason" => "end_turn",
+        "stop_sequence" => nil,
+        "type" => "message",
+        "usage" => %{
+          "cache_creation_input_tokens" => 0,
+          "cache_read_input_tokens" => 0,
+          "input_tokens" => 55,
+          "output_tokens" => 74
+        }
+      }
+
+      assert %Message{} = struct = ChatAnthropic.do_process_response(model, response)
+
+      assert struct == %LangChain.Message{
+               content: [
+                 %LangChain.Message.ContentPart{
+                   type: :thinking,
+                   content:
+                     "This is a basic addition problem. I need to add all the numbers together.\n\n400 + 50 = 450\n450 + 3 = 453\n\nSo the answer is 453.",
+                   options: [
+                     signature:
+                       "ErUBCkYIAhgCIkCjvrY94GV6fW82e0vtSzgOMjj50Xi8cgtzBCrd40+oqA/JPL0zXEzrAfm5wYXouROoJ7pdFGghKXip41uqFGT7EgykmZx29tPiUdB2z+0aDMccABirA75MuvB0miIwNHtxSOApjBf0ugl+Td/9cqDgC6sMQqXwgoQDx4OLgFBQeFi82nAidRi0+QDlcF3/Kh0nUGyGp1bFenHB7KazXjcNg2XOs9Lfz2UBG3nJVQ=="
+                   ]
+                 },
+                 %LangChain.Message.ContentPart{
+                   type: :text,
+                   content: "The sum of 400 + 50 + 3 is 453.",
+                   options: []
+                 }
+               ],
+               processed_content: nil,
+               index: nil,
+               status: :complete,
+               role: :assistant,
+               name: nil,
+               tool_calls: [],
+               tool_results: nil,
+               metadata: %{
+                 usage: %LangChain.TokenUsage{
+                   input: 55,
+                   output: 74,
+                   raw: %{
+                     "cache_creation_input_tokens" => 0,
+                     "cache_read_input_tokens" => 0,
+                     "input_tokens" => 55,
+                     "output_tokens" => 74
+                   }
+                 }
+               }
+             }
+    end
+
+    test "handles receiving a complete message with redacted thinking", %{model: model} do
+      # Message prompt:
+      # "ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB"
+
+      response = %{
+        "content" => [
+          %{
+            "data" =>
+              "EtEFCkYIAhgCKkB5MF4IWF6ZUk73fPrddkcENccAG4Ctacz8IeXEagiWsu5YTopMPuNdb/xuvw2T3oX3VuWyVAg5coEqmP3HPMnkEgzSBdTdNApcEh9KxQQaDHB/cJWBjUb32VKHnSIwOck0q4wJ+lKr5dOBFnqKLORXvh1E6L4o5azEkdcn3m/VsF/z9ukn/zIVfCHl6VkoKrgEXZ9Nx0seFKT2yqdAxtihL5guHVathGDCW32fEDS/ANVtKdIm6AoDNzwpN8nIqbUWOHpJjL+vhQpJ/8NxaP4hOKM+Qp9gt50DZCOf+576mpn0BOjB52QQJ/BxzjyuJjbs8WvsvvEKpcj9/oTWoC/XPAlywlRWvXBOynlDrB8zNOBnvYqQArpGvTTNGka7SsrohBHxPymholns0nazFO8TjrzYJDrrsshi4GvfVIIfvRxQp76q244C1nCoWDeV4lOOWpb+VTwZBqkcyVfA27jyAIHhhyVfxpxi1OKNpO3+j0k3pZKsrVa54ddPoImLeVrOjPRFsgH/kK+o5n1qkDsZaEb/+vqRiyAxgg9Yz3JBG/eB2yhEtconwm70Uu+FsmRhMq0XxrifnJO3XA1NFUzM7SVZDB32xNwocYS8XQMGe8An5Wz6NfY5QpMpAtbpCD5dcyI1N84gU97dLjwbURq2HdERAc6KU0eKPImCRhqJzPps49hVdJinTSsYb/RJW10LpqKbysPb5Via7H/XD/zbeTIv3Sbtnmyw/5vSP6Mm60+XJem3iDN78kuJKNsWVqON6HCdbN/MB5wG8AqIbzhSlwR9ZzFjyIfbrnUa934xwzK0vY7da09IInfqZsKPqiTtEfps0Uv810p4kZCldJfwER9jgJRUNsohhXp6p2rWZ9xlAR3QqHlAyEO1qB+ctm1CszS2IDNltCi5xnXTXFa7D11i99UrCO1pgouaalRKedxnC1Qc9cZnUw==",
+            "type" => "redacted_thinking"
+          },
+          %{
+            "text" =>
+              "I notice you've sent what appears to be some kind of test string or prompt. I don't have any special \"magic strings\" or hidden commands that would change my behavior. I'm Claude, an AI assistant made by Anthropic to be helpful, harmless, and honest.\n\nIs there something specific I can help you with today? I'm happy to answer questions, provide information, or assist with various tasks within my capabilities.",
+            "type" => "text"
+          }
+        ],
+        "id" => "msg_01NAJgmpwCPiHMLjyUkEq5Vp",
+        "model" => "claude-3-7-sonnet-20250219",
+        "role" => "assistant",
+        "stop_reason" => "end_turn",
+        "stop_sequence" => nil,
+        "type" => "message",
+        "usage" => %{
+          "cache_creation_input_tokens" => 0,
+          "cache_read_input_tokens" => 0,
+          "input_tokens" => 99,
+          "output_tokens" => 248
+        }
+      }
+
+      assert %Message{} = struct = ChatAnthropic.do_process_response(model, response)
+
+      assert struct == %LangChain.Message{
+               content: [
+                 %LangChain.Message.ContentPart{
+                   type: :unsupported,
+                   content:
+                     "EtEFCkYIAhgCKkB5MF4IWF6ZUk73fPrddkcENccAG4Ctacz8IeXEagiWsu5YTopMPuNdb/xuvw2T3oX3VuWyVAg5coEqmP3HPMnkEgzSBdTdNApcEh9KxQQaDHB/cJWBjUb32VKHnSIwOck0q4wJ+lKr5dOBFnqKLORXvh1E6L4o5azEkdcn3m/VsF/z9ukn/zIVfCHl6VkoKrgEXZ9Nx0seFKT2yqdAxtihL5guHVathGDCW32fEDS/ANVtKdIm6AoDNzwpN8nIqbUWOHpJjL+vhQpJ/8NxaP4hOKM+Qp9gt50DZCOf+576mpn0BOjB52QQJ/BxzjyuJjbs8WvsvvEKpcj9/oTWoC/XPAlywlRWvXBOynlDrB8zNOBnvYqQArpGvTTNGka7SsrohBHxPymholns0nazFO8TjrzYJDrrsshi4GvfVIIfvRxQp76q244C1nCoWDeV4lOOWpb+VTwZBqkcyVfA27jyAIHhhyVfxpxi1OKNpO3+j0k3pZKsrVa54ddPoImLeVrOjPRFsgH/kK+o5n1qkDsZaEb/+vqRiyAxgg9Yz3JBG/eB2yhEtconwm70Uu+FsmRhMq0XxrifnJO3XA1NFUzM7SVZDB32xNwocYS8XQMGe8An5Wz6NfY5QpMpAtbpCD5dcyI1N84gU97dLjwbURq2HdERAc6KU0eKPImCRhqJzPps49hVdJinTSsYb/RJW10LpqKbysPb5Via7H/XD/zbeTIv3Sbtnmyw/5vSP6Mm60+XJem3iDN78kuJKNsWVqON6HCdbN/MB5wG8AqIbzhSlwR9ZzFjyIfbrnUa934xwzK0vY7da09IInfqZsKPqiTtEfps0Uv810p4kZCldJfwER9jgJRUNsohhXp6p2rWZ9xlAR3QqHlAyEO1qB+ctm1CszS2IDNltCi5xnXTXFa7D11i99UrCO1pgouaalRKedxnC1Qc9cZnUw==",
+                   options: [type: "redacted_thinking"]
+                 },
+                 %LangChain.Message.ContentPart{
+                   type: :text,
+                   content:
+                     "I notice you've sent what appears to be some kind of test string or prompt. I don't have any special \"magic strings\" or hidden commands that would change my behavior. I'm Claude, an AI assistant made by Anthropic to be helpful, harmless, and honest.\n\nIs there something specific I can help you with today? I'm happy to answer questions, provide information, or assist with various tasks within my capabilities.",
+                   options: []
+                 }
+               ],
+               processed_content: nil,
+               index: nil,
+               status: :complete,
+               role: :assistant,
+               name: nil,
+               tool_calls: [],
+               tool_results: nil,
+               metadata: %{
+                 usage: %LangChain.TokenUsage{
+                   input: 99,
+                   output: 248,
+                   raw: %{
+                     "cache_creation_input_tokens" => 0,
+                     "cache_read_input_tokens" => 0,
+                     "input_tokens" => 99,
+                     "output_tokens" => 248
+                   }
+                 }
+               }
+             }
+    end
+
     test "handles receiving a message_start event and parses usage to metadata", %{model: model} do
       response = %{
         "message" => %{

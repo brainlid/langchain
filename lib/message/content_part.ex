@@ -92,6 +92,10 @@ defmodule LangChain.Message.ContentPart do
       ContentPart.new!(%{type: :text, content: "Greetings!"})
 
       ContentPart.new!(%{type: :image_url, content: "https://example.com/images/house.jpg"})
+
+      ContentPart.new!(%{type: :thinking, content: "I've been asked...", options: [signature: "SIGNATURE_DATA"]}
+
+      ContentPart.new!(%{type: :unsupported, content: "redacted_data", options: [type: "redacted_thinking"]}
   """
   @spec new!(attrs :: map()) :: t() | no_return()
   def new!(attrs \\ %{}) do

@@ -585,12 +585,16 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   def do_process_response(_model, %{
         "role" => "assistant",
         "content" => contents,
-        "stop_reason" => stop_reason
+        "stop_reason" => stop_reason,
+        "type" => "message",
+        "usage" => usage
       }) do
     new_message =
       %{
         role: :assistant,
-        status: stop_reason_to_status(stop_reason)
+        content: [],
+        status: stop_reason_to_status(stop_reason),
+        metadata: %{usage: get_token_usage(usage)}
       }
       |> Message.new()
       |> to_response()
@@ -648,6 +652,26 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     %{
       role: :assistant,
       content: ContentPart.text!(content),
+      status: :incomplete,
+      index: index
+    }
+    |> MessageDelta.new()
+    |> to_response()
+  end
+
+  def do_process_response(_model, %{
+        "type" => "content_block_start",
+        "index" => index,
+        "content_block" => %{"type" => "redacted_thinking", "data" => content}
+      }) do
+    %{
+      role: :assistant,
+      content:
+        ContentPart.new!(%{
+          type: :unsupported,
+          content: content,
+          options: [redacted_thinking: true]
+        }),
       status: :incomplete,
       index: index
     }
@@ -828,7 +852,48 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     do: message
 
   defp do_process_content_response(%Message{} = message, %{"type" => "text", "text" => text}) do
-    %Message{message | content: text}
+    %Message{message | content: message.content ++ [ContentPart.text!(text)]}
+  end
+
+  defp do_process_content_response(%Message{} = message, %{
+         "type" => "redacted_thinking",
+         "data" => data
+       }) do
+    parts = message.content || []
+
+    %Message{
+      message
+      | content:
+          parts ++
+            [
+              ContentPart.new!(%{
+                type: :unsupported,
+                content: data,
+                options: [type: "redacted_thinking"]
+              })
+            ]
+    }
+  end
+
+  defp do_process_content_response(%Message{} = message, %{
+         "type" => "thinking",
+         "thinking" => thinking,
+         "signature" => signature
+       }) do
+    parts = message.content || []
+
+    %Message{
+      message
+      | content:
+          parts ++
+            [
+              ContentPart.new!(%{
+                type: :thinking,
+                content: thinking,
+                options: [signature: signature]
+              })
+            ]
+    }
   end
 
   defp do_process_content_response(
@@ -935,7 +1000,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   @doc false
   def decode_stream(%ChatAnthropic{bedrock: nil} = model, {chunk, buffer}) do
     if model.verbose_api do
-      IO.inspect(chunk, label:      "RCVD RAW CHUNK")
+      IO.inspect(chunk, label: "RCVD RAW CHUNK")
     end
 
     {to_process, incomplete} = parse_stream_events(model, {chunk, buffer})
