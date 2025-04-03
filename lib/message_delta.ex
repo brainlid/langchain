@@ -22,24 +22,32 @@ defmodule LangChain.MessageDelta do
   ## Metadata
 
   The `metadata` field is a map that can contain any additional information
-  about the message delta. It is used to store token usage, model, and other LLM-specific
-  information.
+  about the message delta. It is used to store token usage, model, and other
+  LLM-specific information.
 
   ## Content Fields
 
+  The `content` field may contain:
+  - A string (for backward compatibility)
+  - A `LangChain.Message.ContentPart` struct
+  - An empty list `[]` that is received from some services like Anthropic, which
+    is a signal that the content will be a list of content parts
+
   The module uses two content-related fields:
 
-  * `content` - The raw content received from the LLM. This can be either a string
-    (for backward compatibility) or a `LangChain.Message.ContentPart` struct. This field
+  * `content` - The raw content received from the LLM. This can be either a
+    string (for backward compatibility), a `LangChain.Message.ContentPart`
+    struct, or a `[]` indicating it will be a list of content parts. This field
     is cleared (set to `nil`) after merging into `merged_content`.
 
-  * `merged_content` - The accumulated list of `ContentPart`s after merging deltas.
-    This is the source of truth for the message content and is used when converting
-    to a `LangChain.Message`. When merging deltas:
+  * `merged_content` - The accumulated list of `ContentPart`s after merging
+    deltas. This is the source of truth for the message content and is used when
+    converting to a `LangChain.Message`. When merging deltas:
     - For string content, it's converted to a `ContentPart` of type `:text`
     - For `ContentPart` content, it's merged based on the `index` field
-    - Multiple content parts can be maintained in the list to support multi-modal
-      responses (text, images, audio) or separate thinking content from final text
+    - Multiple content parts can be maintained in the list to support
+      multi-modal responses (text, images, audio) or separate thinking content
+      from final text
   """
   use Ecto.Schema
   import Ecto.Changeset
@@ -223,12 +231,11 @@ defmodule LangChain.MessageDelta do
        when is_list(parts_list) and not is_nil(new_delta_content) do
     # Incoming delta has a single ContentPart, not a list
     case new_delta_content do
-      %ContentPart{} = part ->
-        merge_content_part_at_index(primary, part, index)
+      [] ->
+        # Incoming delta will be a list of ContentParts
+        primary
 
-      content when is_binary(content) ->
-        # Upgrade string content to a ContentPart
-        part = ContentPart.text!(content)
+      %ContentPart{} = part ->
         merge_content_part_at_index(primary, part, index)
     end
   end
