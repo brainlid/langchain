@@ -113,7 +113,7 @@ defmodule LangChain.MessageTest do
 
       # can be a string
       {:ok, message} = Message.new_user("Hi")
-      assert message.content == "Hi"
+      assert message.content == [ContentPart.text!("Hi")]
 
       {:error, changeset} =
         Message.new(%{
@@ -149,12 +149,12 @@ defmodule LangChain.MessageTest do
   describe "new_system/1" do
     test "creates a system message" do
       assert {:ok, %Message{role: :system} = msg} = Message.new_system("You are an AI.")
-      assert msg.content == "You are an AI."
+      assert msg.content == [ContentPart.text!("You are an AI.")]
     end
 
     test "provides default content" do
       assert {:ok, msg} = Message.new_system()
-      assert msg.content == "You are a helpful assistant."
+      assert msg.content == [ContentPart.text!("You are a helpful assistant.")]
     end
 
     test "requires content" do
@@ -167,7 +167,7 @@ defmodule LangChain.MessageTest do
   describe "new_user/1" do
     test "creates a user message" do
       assert {:ok, %Message{role: :user} = msg} = Message.new_user("Hello!")
-      assert msg.content == "Hello!"
+      assert msg.content == [ContentPart.text!("Hello!")]
     end
 
     test "requires content" do
@@ -222,7 +222,7 @@ defmodule LangChain.MessageTest do
   describe "new_user!/1" do
     test "creates a user message" do
       assert %Message{role: :user} = msg = Message.new_user!("Hello!")
-      assert msg.content == "Hello!"
+      assert msg.content == [ContentPart.text!("Hello!")]
       assert msg.status == :complete
     end
 
@@ -238,7 +238,7 @@ defmodule LangChain.MessageTest do
       assert {:ok, %Message{role: :assistant} = msg} =
                Message.new_assistant(%{content: "Greetings non-AI!", status: "complete"})
 
-      assert msg.content == "Greetings non-AI!"
+      assert msg.content == [ContentPart.text!("Greetings non-AI!")]
       assert msg.status == :complete
     end
 
@@ -246,7 +246,7 @@ defmodule LangChain.MessageTest do
       assert {:ok, %Message{role: :assistant} = msg} =
                Message.new_assistant(%{content: "Greetings ", status: :cancelled})
 
-      assert msg.content == "Greetings "
+      assert msg.content == [ContentPart.text!("Greetings ")]
       assert msg.status == :cancelled
     end
 
@@ -281,7 +281,7 @@ defmodule LangChain.MessageTest do
   describe "new_assistant!/1" do
     test "creates a assistant message" do
       assert %Message{role: :assistant} = msg = Message.new_assistant!(%{content: "Hello!"})
-      assert msg.content == "Hello!"
+      assert msg.content == [ContentPart.text!("Hello!")]
     end
   end
 
