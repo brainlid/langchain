@@ -21,6 +21,8 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
   @claude_3_7 "claude-3-7-sonnet-20250219"
   @apis [:anthropic, :anthropic_bedrock]
 
+  # TODO: Verify full message signature and redacted_thinking format
+
   defp hello_world(_args, _context) do
     "Hello world!"
   end
@@ -1090,6 +1092,67 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
                "Received error from API: The security token included in the request is invalid."
     end
 
+    @tag live_call: true, live_anthropic: true
+    test "handles tool_call with text content response when NOT streaming" do
+      chat =
+        ChatAnthropic.new!(%{
+          stream: false,
+          model: @claude_3_7,
+          verbose_api: true
+        })
+
+      {:ok, deltas} =
+        ChatAnthropic.call(
+          chat,
+          [
+            Message.new_user!(
+              "Use the do_thing tool and tell me you are using it at the same time."
+            )
+          ],
+          [
+            Function.new!(%{
+              name: "do_thing",
+              parameters: [FunctionParam.new!(%{type: :string, name: "value", required: true})],
+              function: fn _args, _context -> :ok end
+            })
+          ]
+        )
+
+      # TODO: Verify it works when NOT streaming. The Message content should now be a ContentPart list
+
+      IO.inspect(deltas, label: "DELTAS")
+      assert false
+
+      # TODO: Create a function that merges a list of deltas into a single delta that is converted to a message. Does it exist?
+
+      # TODO: Keep the message_delta_tests where the content is a string. Add a backward compatible upgrade_to_content_parts in the merge function.
+
+      # TODO: The content should be a ContentPart list
+      # TODO: The metadata should include usage
+      # TODO: I _think_ the index in the tool call should have a value
+
+      %LangChain.Message{
+        content: "I'll use the \"do_thing\" tool for you right now. ",
+        processed_content: nil,
+        index: nil,
+        status: :complete,
+        role: :assistant,
+        name: nil,
+        tool_calls: [
+          %LangChain.Message.ToolCall{
+            status: :complete,
+            type: :function,
+            call_id: "toolu_01QmbvVtpHfH2q7AdYDUiJTZ",
+            name: "do_thing",
+            arguments: %{"value" => "example value"},
+            index: nil
+          }
+        ],
+        tool_results: nil,
+        metadata: nil
+      }
+    end
+
     test "returns error tuple when receiving overloaded_error" do
       # Made NOT LIVE here
       expect(Req, :post, fn _req_struct, _opts ->
@@ -1712,11 +1775,36 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       llm =
         ChatAnthropic.new!(%{
           stream: false,
-          model: @claude_3_7,
-          thinking: %{type: "enabled", budget_tokens: 1024}
+          model: "claude-3-haiku-20240307",
+          # model: @claude_3_7,
+          # thinking: %{type: "enabled", budget_tokens: 1024},
+          verbose_api: true
         })
 
-      {:ok, result} = ChatAnthropic.call(llm, "What is 400 + 50 + 3?")
+      # {:ok, result} = ChatAnthropic.call(llm, "What is 400 + 50 + 3?")
+      # IO.inspect(result, label: "RESULT")
+      {:ok, result} = ChatAnthropic.call(llm, "Say \"Hello!\"")
+      IO.inspect(result, label: "RESULT")
+
+      assert false
+    end
+
+    @tag live_call: true, live_anthropic: true
+    test "decodes a live NON-streamed thinking call with redacted thinking content" do
+      llm =
+        ChatAnthropic.new!(%{
+          stream: true,
+          model: @claude_3_7,
+          thinking: %{type: "enabled", budget_tokens: 1024},
+          verbose_api: true
+        })
+
+      {:ok, result} =
+        ChatAnthropic.call(
+          llm,
+          "ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB"
+        )
+
       IO.inspect(result, label: "RESULT")
 
       assert false
@@ -1726,7 +1814,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
   describe "for_api/1" do
     test "turns a basic user message into the expected JSON format" do
       expected = %{"role" => "user", "content" => "Hi."}
-      result = ChatAnthropic.for_api(Message.new_user!("Hi."))
+      result = ChatAnthropic.message_for_api(Message.new_user!("Hi."))
       assert result == expected
     end
 
@@ -1747,7 +1835,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       }
 
       result =
-        ChatAnthropic.for_api(
+        ChatAnthropic.message_for_api(
           Message.new_user!([
             ContentPart.text!("Tell me about this image:"),
             ContentPart.image!("base64-text-data", media: :jpeg)
