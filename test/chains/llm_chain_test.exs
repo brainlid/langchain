@@ -238,7 +238,13 @@ defmodule LangChain.Chains.LLMChainTest do
       new_chain = LLMChain.cancel_delta(updated_chain, :cancelled)
       assert new_chain.delta == nil
 
-      assert %Message{role: :assistant, content: "Sock", status: :cancelled} =
+      content = [ContentPart.text!("Sock")]
+
+      assert %Message{
+               role: :assistant,
+               content: ^content,
+               status: :cancelled
+             } =
                new_chain.last_message
     end
   end
@@ -375,12 +381,14 @@ defmodule LangChain.Chains.LLMChainTest do
         |> LLMChain.apply_prompt_templates([prompt], %{product: "colorful socks"})
         |> LLMChain.run()
 
-      assert %Message{role: :assistant, content: "Socktastic!", status: :complete} =
+        content = [ContentPart.text!("Socktastic!")]
+
+      assert %Message{role: :assistant, content: ^content, status: :complete} =
                updated_chain.last_message
 
       # we should have received a message for the completed, combined message
       assert_received {:fake_full_message, message}
-      assert %Message{role: :assistant, content: "Socktastic!"} = message
+      assert %Message{role: :assistant, content: ^content} = message
     end
   end
 
