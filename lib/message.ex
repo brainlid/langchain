@@ -148,6 +148,7 @@ defmodule LangChain.Message do
   def new(attrs \\ %{}) do
     %Message{}
     |> cast(attrs, @create_fields)
+    |> migrate_to_content_parts()
     |> common_validations()
     |> apply_action(:insert)
   end
@@ -487,4 +488,24 @@ defmodule LangChain.Message do
   end
 
   def tool_had_errors?(%Message{} = _message), do: false
+
+  # Migrates a Message's string content to use `LangChain.Message.ContentPart`.
+  # This is for backward compatibility with models that don't yet support ContentPart.
+  @spec migrate_to_content_parts(Ecto.Changeset.t()) :: Ecto.Changeset.t()
+  defp migrate_to_content_parts(%Ecto.Changeset{} = changeset) do
+    case fetch_change(changeset, :content) do
+      {:ok, content} when is_binary(content) ->
+        put_change(changeset, :content, [ContentPart.text!(content)])
+
+      # Don't modify if it's already a ContentPart or a list of ContentParts
+      {:ok, %ContentPart{}} ->
+        changeset
+
+      {:ok, content} when is_list(content) ->
+        changeset
+
+      _ ->
+        changeset
+    end
+  end
 end

@@ -1,6 +1,6 @@
 defmodule LangChain.MessageTest do
   use ExUnit.Case
-  doctest LangChain.Message
+  doctest LangChain.Message, import: true
   alias LangChain.Message
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult
@@ -14,14 +14,14 @@ defmodule LangChain.MessageTest do
                Message.new(%{"role" => "system", "content" => "hello!", "index" => 0})
 
       assert msg.role == :system
-      assert msg.content == "hello!"
+      assert msg.content == [ContentPart.text!("hello!")]
       assert msg.index == 0
     end
 
     test "accepts atom keys and role enum" do
       assert {:ok, %Message{} = msg} = Message.new(%{role: :system, content: "hello!"})
       assert msg.role == :system
-      assert msg.content == "hello!"
+      assert msg.content == [ContentPart.text!("hello!")]
     end
 
     test "returns error when invalid" do
@@ -66,6 +66,27 @@ defmodule LangChain.MessageTest do
 
       refute changeset.valid?
       assert {"arguments: invalid json", _} = changeset.errors[:tool_calls]
+    end
+
+    test "migrates string content to a list of ContentPart objects for system messages" do
+      assert {:ok, %Message{} = msg} = Message.new(%{role: :system, content: "Hello world"})
+      assert [%ContentPart{type: :text, content: "Hello world"}] = msg.content
+    end
+
+    test "migrates string content to a list of ContentPart objects for user messages" do
+      assert {:ok, %Message{} = msg} = Message.new(%{role: :user, content: "Hello world"})
+      assert [%ContentPart{type: :text, content: "Hello world"}] = msg.content
+    end
+
+    test "does not migrate content when it's already a list of ContentPart objects" do
+      content_parts = [ContentPart.text!("Hello"), ContentPart.text!(" world")]
+      assert {:ok, %Message{} = msg} = Message.new(%{role: :user, content: content_parts})
+      assert content_parts = msg.content
+    end
+
+    test "does not migrate content when it's nil" do
+      assert {:ok, %Message{} = msg} = Message.new(%{role: :assistant, content: nil})
+      assert msg.content == nil
     end
   end
 
@@ -116,6 +137,12 @@ defmodule LangChain.MessageTest do
       assert message.content == nil
       # the tool call gets completed
       assert message.tool_calls == [Map.put(tool_call, :status, :complete)]
+    end
+
+    test "fails to accept a single ContentPart as content" do
+      content_part = ContentPart.text!("Hello world")
+      assert {:error, changeset} = Message.new(%{role: :user, content: content_part})
+      assert {"must be text or a list of ContentParts", _} = changeset.errors[:content]
     end
   end
 
