@@ -317,12 +317,18 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
         "role" => "assistant",
         "content" => [%{"type" => "text", "text" => "Greetings!"}],
         "model" => "claude-3-haiku-20240307",
-        "stop_reason" => "end_turn"
+        "stop_reason" => "end_turn",
+        "usage" => %{
+          "cache_creation_input_tokens" => 0,
+          "cache_read_input_tokens" => 0,
+          "input_tokens" => 17,
+          "output_tokens" => 11
+        }
       }
 
       assert %Message{} = struct = ChatAnthropic.do_process_response(model, response)
       assert struct.role == :assistant
-      assert struct.content == "Greetings!"
+      assert struct.content == [ContentPart.text!("Greetings!")]
       assert is_nil(struct.index)
     end
 
@@ -362,12 +368,18 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
         "role" => "assistant",
         "content" => [%{"type" => "text", "text" => "Greetings!"}],
         "model" => "claude-3-haiku-20240307",
-        "stop_reason" => "end_turn"
+        "stop_reason" => "end_turn",
+        "usage" => %{
+          "cache_creation_input_tokens" => 0,
+          "cache_read_input_tokens" => 0,
+          "input_tokens" => 17,
+          "output_tokens" => 11
+        }
       }
 
       assert %Message{} = struct = ChatAnthropic.do_process_response(model, response)
       assert struct.role == :assistant
-      assert struct.content == "Greetings!"
+      assert struct.content == [ContentPart.text!("Greetings!")]
       assert is_nil(struct.index)
     end
 
@@ -577,7 +589,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
 
       assert %MessageDelta{} = struct = ChatAnthropic.do_process_response(model, response)
       assert struct.role == :assistant
-      assert struct.content == ""
+      assert struct.content == %ContentPart{type: :text, options: [], content: ""}
       assert is_nil(struct.index)
     end
 
@@ -690,7 +702,8 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
         "role" => "assistant",
         "stop_reason" => "tool_use",
         "stop_sequence" => nil,
-        "type" => "message"
+        "type" => "message",
+        "usage" => %{"input_tokens" => 324, "output_tokens" => 36}
       }
 
       assert %Message{} = struct = ChatAnthropic.do_process_response(model, response)
@@ -723,7 +736,8 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
             "name" => "get_weather",
             "input" => %{"location" => "San Francisco, CA", "unit" => "celsius"}
           }
-        ]
+        ],
+        "usage" => %{"input_tokens" => 324, "output_tokens" => 36}
       }
 
       assert %Message{} = struct = ChatAnthropic.do_process_response(model, response)
@@ -1683,7 +1697,8 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
         ChatAnthropic.new!(%{
           stream: true,
           model: @claude_3_7,
-          thinking: %{type: "enabled", budget_tokens: 1024}
+          thinking: %{type: "enabled", budget_tokens: 1024},
+          verbose_api: true
         })
 
       {:ok, deltas} = ChatAnthropic.call(llm, "What is 400 + 50 + 3?")

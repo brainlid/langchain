@@ -974,70 +974,41 @@ defmodule LangChain.MessageDeltaTest do
       # TODO: Also supports receiving streamed multi-modal content.
       # TODO: Update the token usage callback event to still fire, but with the fully completed information?
 
-      # TODO: Can keep the .text! way of creating an internal ContentPart. Changes the results of the deltas but doesn't require all the models to change.
-
-      # TODO: Need to fix merging content with ToolCalls. Failing tests.
-
-      # TODO: Missing the non-thinking content part. Was incorrectly merged? Or just skipped?
-      %LangChain.MessageDelta{
-        # TODO: Missing the non-thinking content part. Was incorrectly merged? Or just skipped?
-        content: [
-          %LangChain.Message.ContentPart{
-            type: :thinking,
-            content:
-              "Let's add these numbers.\n400 + 50 = 450\n450 + 3 = 453\n\nSo 400 + 50 + 3 = 453",
-            options: [
-              signature:
-                "ErUBCkYIARgCIkCspHHl1+BPuvAExtRMzy6e6DGYV4vI7D8dgqnzLm7RbQ5e4j+aAopCyq29fZqUNNdZbOLleuq/DYIyXjX4HIyIEgwE4N3Vb+9hzkFk/NwaDOy3fw0f0zqRZhAk4CIwp18hR9UsOWYC+pkvt1SnIOGCXBcLdwUxIoUeG3z6WfNwWJV7fulSvz7EVCN5ypzwKh2m/EY9LS1DK1EdUc770O8XdI/j4i0ibc8zRNIjvA=="
-            ]
-          },
-          %LangChain.Message.ContentPart{
-            type: :text,
-            content: "The answer is 453.\n\n400 + 50 = 450\n450 + 3 = 453",
-            options: []
-          }
-        ],
-        status: :complete,
-        index: 1,
-        role: :assistant,
-        tool_calls: nil,
-        metadata: %{
-          usage: %LangChain.TokenUsage{
-            input: 55,
-            output: 84,
-            raw: %{
-              "cache_creation_input_tokens" => 0,
-              "cache_read_input_tokens" => 0,
-              "input_tokens" => 55,
-              "output_tokens" => 84
-            }
-          }
-        }
-      }
-
-      IO.inspect(combined)
-      assert combined == "BOO"
-
-      # should correctly convert to a message
-      {:ok, message} = MessageDelta.to_message(combined)
-
-      assert message == %Message{
-               content: "stuff",
-               status: :complete,
-               role: :assistant,
-               tool_calls: [
-                 %LangChain.Message.ToolCall{
-                   status: :complete,
-                   type: :function,
-                   call_id: "toolu_123",
-                   name: "do_something",
-                   arguments: %{"value" => "People are people."},
-                   index: 1
+      assert combined == %LangChain.MessageDelta{
+               content: nil,
+               merged_content: [
+                 %LangChain.Message.ContentPart{
+                   type: :thinking,
+                   content:
+                     "Let's add these numbers.\n400 + 50 = 450\n450 + 3 = 453\n\nSo 400 + 50 + 3 = 453",
+                   options: [
+                     signature:
+                       "ErUBCkYIARgCIkCspHHl1+BPuvAExtRMzy6e6DGYV4vI7D8dgqnzLm7RbQ5e4j+aAopCyq29fZqUNNdZbOLleuq/DYIyXjX4HIyIEgwE4N3Vb+9hzkFk/NwaDOy3fw0f0zqRZhAk4CIwp18hR9UsOWYC+pkvt1SnIOGCXBcLdwUxIoUeG3z6WfNwWJV7fulSvz7EVCN5ypzwKh2m/EY9LS1DK1EdUc770O8XdI/j4i0ibc8zRNIjvA=="
+                   ]
+                 },
+                 %LangChain.Message.ContentPart{
+                   type: :text,
+                   content: "The answer is 453.\n\n400 + 50 = 450\n450 + 3 = 453",
+                   options: []
                  }
-               ]
+               ],
+               status: :complete,
+               index: 1,
+               role: :assistant,
+               tool_calls: nil,
+               metadata: %{
+                 usage: %LangChain.TokenUsage{
+                   input: 55,
+                   output: 84,
+                   raw: %{
+                     "cache_creation_input_tokens" => 0,
+                     "cache_read_input_tokens" => 0,
+                     "input_tokens" => 55,
+                     "output_tokens" => 84
+                   }
+                 }
+               }
              }
-
-      assert false
     end
   end
 
@@ -1074,7 +1045,7 @@ defmodule LangChain.MessageDeltaTest do
       assert call.name == "calculator"
       # parses the arguments
       assert call.arguments == %{"expression" => "100 + 300 - 200"}
-      assert msg.content == nil
+      assert msg.content == []
     end
 
     test "does not transform an incomplete MessageDelta to a Message" do
