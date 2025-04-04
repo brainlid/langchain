@@ -1,6 +1,6 @@
 ---
-description: 
-globs: 
+description:
+globs:
 alwaysApply: true
 ---
 
@@ -41,3 +41,6 @@ end
 
 Test fixtures are functions located in [fixtures.ex](mdc:test/support/fixtures.ex).
 
+## Writing Code
+
+Don't remove large blocks of commented out code when generating new code unless explicitly instructed to do so.
