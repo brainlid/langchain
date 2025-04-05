@@ -109,8 +109,18 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
       ])
 
       result = ChatAnthropic.get_system_text(msg)
-      IO.inspect result
-      assert false
+
+      assert result == [
+        %{
+          "text" => "You are an AI assistant tasked with analyzing literary works. Your goal is to provide insightful commentary on themes, characters, and writing style.\n",
+          "type" => "text"
+        },
+        %{
+          "cache_control" => %{"type" => "ephemeral"},
+          "text" => "<the entire contents of Pride and Prejudice>",
+          "type" => "text"
+        }
+      ]
     end
   end
 

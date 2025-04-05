@@ -259,6 +259,19 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     |> validate_number(:receive_timeout, greater_than_or_equal_to: 0)
   end
 
+
+  def get_system_text(nil) do
+    get_system_text(Message.new_system!())
+  end
+
+  def get_system_text(%Message{role: :system, content: content} = _message) when is_binary(content) do
+    [%{"type" => "text", "text" => content}]
+  end
+
+  def get_system_text(%Message{role: :system, content: content} = _message) when is_list(content) do
+    Enum.map(content, &content_part_for_api/1)
+  end
+
   @doc """
   Return the params formatted for an API request.
   """
@@ -271,18 +284,6 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         "Anthropic only supports a single System message, however, you may use multiple ContentParts for the System message to indicate where prompt caching should be used."
       )
 
-    system_text =
-      case system do
-        nil ->
-          nil
-
-        %Message{role: :system, content: [_ | _]} = message ->
-          for_api(message)
-
-        %Message{role: :system, content: content} ->
-          content
-      end
-
     messages =
       messages
       |> Enum.map(&for_api/1)
@@ -292,10 +293,11 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       model: anthropic.model,
       temperature: anthropic.temperature,
       stream: anthropic.stream,
-      messages: messages
+      messages: messages,
+      # Anthropic sets the `system` message on the request body, not as part of
+      # the messages list.
+      system: get_system_text(system)
     }
-    # Anthropic sets the `system` message on the request body, not as part of the messages list.
-    |> Utils.conditionally_add_to_map(:system, system_text)
     |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(tools))
     |> Utils.conditionally_add_to_map(:tool_choice, get_tool_choice(anthropic))
     |> Utils.conditionally_add_to_map(:max_tokens, anthropic.max_tokens)
