@@ -127,6 +127,7 @@ defmodule LangChain.Chains.LLMChain do
   alias LangChain.PromptTemplate
   alias __MODULE__
   alias LangChain.Message
+  alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult
   alias LangChain.MessageDelta
@@ -704,7 +705,7 @@ defmodule LangChain.Chains.LLMChain do
       )
       when is_list(processors) and processors != [] do
     # start `processed_content` with the message's content
-    message = %Message{message | processed_content: message.content}
+    message = %Message{message | processed_content: ContentPart.parts_to_string(message.content)}
 
     processors
     |> Enum.reduce_while(message, fn proc, m = _acc ->
