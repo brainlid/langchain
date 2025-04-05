@@ -228,4 +228,36 @@ defmodule LangChain.Message.ContentPart do
   end
 
   defp update_options(%ContentPart{} = primary, %ContentPart{}), do: primary
+
+  @doc """
+  Helper function for easily getting plain text from a list of ContentParts.
+
+  This function processes a list of ContentParts and joins the text parts together
+  using "\n\n" characters. Only parts where `type: :text` are used. All other parts
+  are ignored.
+
+  ## Examples
+
+      iex> parts = [
+      ...>   text!("Hello"),
+      ...>   image!("base64data"),
+      ...>   text!("world")
+      ...> ]
+      iex> parts_to_string(parts)
+      "Hello\\n\\nworld"
+
+      iex> parts_to_string([])
+      nil
+  """
+  @spec parts_to_string([t()]) :: nil | String.t()
+  def parts_to_string(parts) when is_list(parts) do
+    parts
+    |> Enum.filter(fn part -> part.type == :text end)
+    |> Enum.map(fn part -> part.content end)
+    |> Enum.join("\n\n")
+    |> case do
+      "" -> nil
+      content -> content
+    end
+  end
 end

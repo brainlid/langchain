@@ -1,6 +1,6 @@
 defmodule LangChain.Message.ContentPartTest do
   use ExUnit.Case
-  doctest LangChain.Message.ContentPart
+  doctest LangChain.Message.ContentPart, import: true
   alias LangChain.Message.ContentPart
 
   describe "new/1" do
@@ -146,6 +146,43 @@ defmodule LangChain.Message.ContentPartTest do
       assert merged.type == :unsupported
       assert merged.content == nil
       assert merged.options == [redacted: "redactedREDACTEDredactedMOREmoreMORE"]
+    end
+  end
+
+  describe "parts_to_string/1" do
+    test "joins text content parts with double newlines" do
+      parts = [
+        ContentPart.text!("Hello"),
+        ContentPart.text!("world"),
+        ContentPart.text!("how are you")
+      ]
+
+      assert ContentPart.parts_to_string(parts) == "Hello\n\nworld\n\nhow are you"
+    end
+
+    test "ignores non-text content parts" do
+      parts = [
+        ContentPart.text!("Hello"),
+        ContentPart.image!("base64data"),
+        ContentPart.text!("world"),
+        ContentPart.image_url!("https://example.com/image.jpg"),
+        ContentPart.text!("how are you")
+      ]
+
+      assert ContentPart.parts_to_string(parts) == "Hello\n\nworld\n\nhow are you"
+    end
+
+    test "returns nil for empty list" do
+      assert ContentPart.parts_to_string([]) == nil
+    end
+
+    test "returns nil for list with no text parts" do
+      parts = [
+        ContentPart.image!("base64data"),
+        ContentPart.image_url!("https://example.com/image.jpg")
+      ]
+
+      assert ContentPart.parts_to_string(parts) == nil
     end
   end
 end
