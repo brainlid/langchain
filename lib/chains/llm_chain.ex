@@ -646,12 +646,8 @@ defmodule LangChain.Chains.LLMChain do
   `last_message` and list of messages are updated.
   """
   @spec apply_delta(t(), MessageDelta.t() | {:error, LangChainError.t()}) :: t()
-  def apply_delta(%LLMChain{delta: nil} = chain, %MessageDelta{} = new_delta) do
-    %LLMChain{chain | delta: new_delta}
-  end
-
-  def apply_delta(%LLMChain{delta: %MessageDelta{} = delta} = chain, %MessageDelta{} = new_delta) do
-    merged = MessageDelta.merge_delta(delta, new_delta)
+  def apply_delta(%LLMChain{} = chain, %MessageDelta{} = new_delta) do
+    merged = MessageDelta.merge_delta(chain.delta, new_delta)
     delta_to_message_when_complete(%LLMChain{chain | delta: merged})
   end
 

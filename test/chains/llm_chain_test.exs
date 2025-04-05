@@ -402,22 +402,25 @@ defmodule LangChain.Chains.LLMChainTest do
     end
 
     test "when the first delta, assigns it to `delta`", %{chain: chain} do
-      delta = MessageDelta.new!(%{role: :assistant, content: "Greetings from"})
+      delta = MessageDelta.new!(%{role: :assistant, content: ContentPart.text!("Greetings from")})
 
       assert chain.delta == nil
       updated_chain = LLMChain.apply_delta(chain, delta)
-      assert updated_chain.delta == delta
+      assert updated_chain.delta.merged_content == [ContentPart.text!("Greetings from")]
+      assert updated_chain.delta.content == nil
+      assert updated_chain.delta.role == :assistant
+      assert updated_chain.delta.status == :incomplete
     end
 
     test "merges to existing delta and returns merged on struct", %{chain: chain} do
       updated_chain =
         chain
         |> LLMChain.apply_delta(
-          MessageDelta.new!(%{role: :assistant, content: "Greetings from "})
+          MessageDelta.new!(%{role: :assistant, content: ContentPart.text!("Greetings from ")})
         )
-        |> LLMChain.apply_delta(MessageDelta.new!(%{content: "your "}))
+        |> LLMChain.apply_delta(MessageDelta.new!(%{content: ContentPart.text!("your ")}))
 
-      assert updated_chain.delta.content == "Greetings from your "
+      assert updated_chain.delta.merged_content == [ContentPart.text!("Greetings from your ")]
     end
 
     test "when final delta received, transforms to a message and applies it", %{chain: chain} do
@@ -437,7 +440,7 @@ defmodule LangChain.Chains.LLMChainTest do
       # the delta is converted to a message and applied to the messages
       assert [%Message{} = new_message] = updated_chain.messages
       assert new_message.role == :assistant
-      assert new_message.content == "Greetings from your favorite assistant."
+      assert new_message.content == [ContentPart.text!("Greetings from your favorite assistant.")]
       assert new_message.status == :complete
     end
 
@@ -460,7 +463,7 @@ defmodule LangChain.Chains.LLMChainTest do
       # the delta is converted to a message and applied to the messages
       assert [%Message{} = new_message] = updated_chain.messages
       assert new_message.role == :assistant
-      assert new_message.content == "Greetings from your favorite assistant."
+      assert new_message.content == [ContentPart.text!("Greetings from your favorite assistant.")]
       assert new_message.status == :length
     end
 
@@ -501,7 +504,7 @@ defmodule LangChain.Chains.LLMChainTest do
       # the delta is converted to a message and applied to the messages
       assert [%Message{} = new_message] = updated_chain.messages
       assert new_message.role == :assistant
-      assert new_message.content == "Greetings from your favorite "
+      assert new_message.content == [ContentPart.text!("Greetings from your favorite ")]
       assert new_message.status == :cancelled
     end
   end
@@ -732,7 +735,7 @@ defmodule LangChain.Chains.LLMChainTest do
       updated = LLMChain.apply_prompt_templates(chain, templates, %{subject: "Pomeranians"})
       assert length(updated.messages) == 2
       assert [%Message{role: :system}, %Message{role: :user} = user_msg] = updated.messages
-      assert user_msg.content == "Give a brief description of Pomeranians."
+      assert user_msg.content == [ContentPart.text!("Give a brief description of Pomeranians.")]
       assert updated.last_message == user_msg
       assert updated.needs_response
     end
@@ -745,7 +748,7 @@ defmodule LangChain.Chains.LLMChainTest do
       updated = LLMChain.quick_prompt(chain, "Hello!")
       assert length(updated.messages) == 2
       assert [%Message{role: :system}, %Message{role: :user} = user_msg] = updated.messages
-      assert user_msg.content == "Hello!"
+      assert user_msg.content == [ContentPart.text!("Hello!")]
       assert updated.last_message == user_msg
       assert updated.needs_response
     end
@@ -1237,10 +1240,10 @@ defmodule LangChain.Chains.LLMChainTest do
       [m1, m2, m3, m4, m5] = error_chain.messages
 
       assert m1.role == :user
-      assert m1.content == "Say what I want you to say."
+      assert m1.content == [ContentPart.text!("Say what I want you to say.")]
 
       assert m2.role == :assistant
-      assert m2.content == "Not what you wanted"
+      assert m2.content == [ContentPart.text!("Not what you wanted")]
       assert m2.processed_content == "Not what you wanted"
 
       assert m3.role == :user
@@ -1472,7 +1475,7 @@ defmodule LangChain.Chains.LLMChainTest do
 
       # stopped after processing a successful assistant response
       assert updated_chain.last_message.role == :assistant
-      assert updated_chain.last_message.content == "fallback worked!"
+      assert updated_chain.last_message.content == [ContentPart.text!("fallback worked!")]
     end
 
     test "with_fallbacks: runs each LLM option and returns when all failed" do
@@ -1544,9 +1547,9 @@ defmodule LangChain.Chains.LLMChainTest do
 
       assert [system_msg | _rest] = updated_chain.messages
       assert system_msg.role == :system
-      assert system_msg.content == "Anthropic system prompt"
+      assert system_msg.content == [ContentPart.text!("Anthropic system prompt")]
       assert updated_chain.last_message.role == :assistant
-      assert updated_chain.last_message.content == "Claude says it's because it's not red."
+      assert updated_chain.last_message.content == [ContentPart.text!("Claude says it's because it's not red.")]
       assert_received :before_fallback_fired
     end
   end
