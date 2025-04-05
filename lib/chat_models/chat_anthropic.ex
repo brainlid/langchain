@@ -259,16 +259,17 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     |> validate_number(:receive_timeout, greater_than_or_equal_to: 0)
   end
 
-
   def get_system_text(nil) do
     get_system_text(Message.new_system!())
   end
 
-  def get_system_text(%Message{role: :system, content: content} = _message) when is_binary(content) do
+  def get_system_text(%Message{role: :system, content: content} = _message)
+      when is_binary(content) do
     [%{"type" => "text", "text" => content}]
   end
 
-  def get_system_text(%Message{role: :system, content: content} = _message) when is_list(content) do
+  def get_system_text(%Message{role: :system, content: content} = _message)
+      when is_list(content) do
     Enum.map(content, &content_part_for_api/1)
   end
 
@@ -1128,71 +1129,25 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   def for_api(%Message{content: content} = msg) when is_binary(content) do
     %{
       "role" => Atom.to_string(msg.role),
-      "content" => msg.content
+      "content" => [msg.content |> ContentPart.text!() |> content_part_for_api()]
     }
   end
 
   def for_api(%Message{role: :user, content: content}) when is_list(content) do
     %{
       "role" => "user",
-      "content" => Enum.map(content, &for_api(&1))
+      "content" => Enum.map(content, &content_part_for_api(&1))
     }
   end
 
-  def for_api(%Message{role: :system, content: content}) when is_list(content) do
-    Enum.map(content, &for_api(&1))
-  end
-
-  def for_api(%ContentPart{type: :text} = part) do
-    case Keyword.fetch(part.options || [], :cache_control) do
-      :error ->
-        %{"type" => "text", "text" => part.content}
-
-      {:ok, setting} ->
-        setting = if setting == true, do: @default_cache_control_block, else: setting
-        %{"type" => "text", "text" => part.content, "cache_control" => setting}
-    end
-  end
-
-  def for_api(%ContentPart{type: :image} = part) do
-    media =
-      case Keyword.fetch!(part.options || [], :media) do
-        :png ->
-          "image/png"
-
-        :gif ->
-          "image/gif"
-
-        :jpg ->
-          "image/jpeg"
-
-        :jpeg ->
-          "image/jpeg"
-
-        :webp ->
-          "image/webp"
-
-        value when is_binary(value) ->
-          value
-
-        other ->
-          message = "Received unsupported media type for ContentPart: #{inspect(other)}"
-          Logger.error(message)
-          raise LangChainError, message
-      end
-
+  def for_api(%Message{role: role, content: content}) when is_list(content) do
     %{
-      "type" => "image",
-      "source" => %{
-        "type" => "base64",
-        "data" => part.content,
-        "media_type" => media
-      }
+      "role" => role,
+      "content" =>
+        content
+        |> Enum.map(&content_part_for_api(&1))
+        |> Enum.reject(&is_nil/1)
     }
-  end
-
-  def for_api(%ContentPart{type: :image_url} = _part) do
-    raise LangChainError, "Anthropic does not support image_url"
   end
 
   # Function support
@@ -1236,6 +1191,116 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         }
     end
     |> Utils.conditionally_add_to_map("is_error", result.is_error)
+  end
+
+  @doc """
+  Converts a ContentPart to the format expected by the Anthropic API.
+
+  Handles different content types:
+  - `:text` - Converts to a text content part, optionally with cache control settings
+  - `:thinking` - Converts to a thinking content part with required signature
+  - `:unsupported` - Handles custom content types specified in options
+  - `:image` - Converts to an image content part with base64 data and media type
+  - `:image_url` - Raises an error as Anthropic doesn't support image URLs
+
+  ## Options
+
+  For `:text` type:
+  - `:cache_control` - When provided, adds cache control settings to the content
+
+  For `:thinking` type:
+  - `:signature` - Required signature for thinking content
+
+  For `:unsupported` type:
+  - `:type` - Required string specifying the custom content type
+
+  For `:image` type:
+  - `:media` - Required media type (`:png`, `:jpg`, `:jpeg`, `:gif`, `:webp`, or a string)
+
+  Returns `nil` for unsupported content without required options.
+  """
+  @spec content_part_for_api(ContentPart.t()) :: map() | nil | no_return()
+  def content_part_for_api(%ContentPart{type: :text} = part) do
+    case Keyword.fetch(part.options || [], :cache_control) do
+      :error ->
+        %{"type" => "text", "text" => part.content}
+
+      {:ok, setting} ->
+        setting = if setting == true, do: @default_cache_control_block, else: setting
+        %{"type" => "text", "text" => part.content, "cache_control" => setting}
+    end
+  end
+
+  def content_part_for_api(%ContentPart{type: :thinking} = part) do
+    # Handle thinking content with signature
+    case Keyword.fetch(part.options || [], :signature) do
+      :error ->
+        # Without a valid signature, we can't send thinking content
+        Logger.warning("Thinking ContentPart without signature will be omitted: #{inspect(part)}")
+        nil
+
+      {:ok, signature} ->
+        # Thinking content with signature
+        %{"type" => "thinking", "thinking" => part.content, "signature" => signature}
+    end
+  end
+
+  def content_part_for_api(%ContentPart{type: :unsupported} = part) do
+    # Handle unsupported content types by using the type provided in options
+    case Keyword.fetch(part.options || [], :type) do
+      :error ->
+        # If no type is provided, log a warning and return nil
+        Logger.warning(
+          "Unsupported ContentPart without type specification will be omitted: #{inspect(part)}"
+        )
+
+        nil
+
+      {:ok, type} when is_binary(type) ->
+        # Use the specified type from options and pass the content as data
+        %{"type" => type, "data" => part.content}
+    end
+  end
+
+  def content_part_for_api(%ContentPart{type: :image} = part) do
+    media =
+      case Keyword.fetch!(part.options || [], :media) do
+        :png ->
+          "image/png"
+
+        :gif ->
+          "image/gif"
+
+        :jpg ->
+          "image/jpeg"
+
+        :jpeg ->
+          "image/jpeg"
+
+        :webp ->
+          "image/webp"
+
+        value when is_binary(value) ->
+          value
+
+        other ->
+          message = "Received unsupported media type for ContentPart: #{inspect(other)}"
+          Logger.error(message)
+          raise LangChainError, message
+      end
+
+    %{
+      "type" => "image",
+      "source" => %{
+        "type" => "base64",
+        "data" => part.content,
+        "media_type" => media
+      }
+    }
+  end
+
+  def content_part_for_api(%ContentPart{type: :image_url} = _part) do
+    raise LangChainError, "Anthropic does not support image_url"
   end
 
   defp get_parameters(%Function{parameters: [], parameters_schema: nil} = _fun) do
