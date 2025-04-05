@@ -110,7 +110,7 @@ defmodule LangChain.Chains.LLMChainTest do
   end
 
   def fake_success_processor(%LLMChain{} = _chain, %Message{} = message) do
-    {:cont, %Message{message | content: message.content <> " *"}}
+    {:cont, %Message{message | processed_content: message.processed_content <> " *"}}
   end
 
   def fake_fail_processor(%LLMChain{} = _chain, %Message{} = _message) do
@@ -772,7 +772,7 @@ defmodule LangChain.Chains.LLMChainTest do
       message = Message.new_assistant!(%{content: "Initial"})
 
       final_message = LLMChain.run_message_processors(chain, message)
-      assert final_message.content == "Initial *"
+      assert final_message.processed_content == "Initial *"
     end
 
     test "applies successive processors", %{chain: chain} do
@@ -786,7 +786,7 @@ defmodule LangChain.Chains.LLMChainTest do
       message = Message.new_assistant!(%{content: "Initial"})
 
       final_message = LLMChain.run_message_processors(chain, message)
-      assert final_message.content == "Initial * * *"
+      assert final_message.processed_content == "Initial * * *"
     end
 
     test "returns :halted and a new message when :halt returned", %{
@@ -803,10 +803,10 @@ defmodule LangChain.Chains.LLMChainTest do
 
       {:halted, failed_message, new_message} = LLMChain.run_message_processors(chain, message)
       assert failed_message.role == :assistant
-      assert failed_message.content == "Initial * *"
+      assert failed_message.processed_content == "Initial * *"
 
       assert new_message.role == :user
-      assert new_message.content == "ERROR: I reject your message!"
+      assert new_message.content == [ContentPart.text!("ERROR: I reject your message!")]
     end
 
     test "handles an exception raised in processor", %{chain: chain} do
@@ -821,7 +821,7 @@ defmodule LangChain.Chains.LLMChainTest do
       {:halted, final_message} = LLMChain.run_message_processors(chain, message)
 
       assert final_message.content ==
-               "ERROR: An exception was raised! Exception: %RuntimeError{message: \"BOOM! Processor exploded\"}"
+               [ContentPart.text!("ERROR: An exception was raised! Exception: %RuntimeError{message: \"BOOM! Processor exploded\"}")]
     end
 
     test "does nothing on other message roles", %{chain: chain} do
@@ -859,7 +859,7 @@ defmodule LangChain.Chains.LLMChainTest do
 
       updated_chain = LLMChain.process_message(chain, message)
       [msg1] = updated_chain.messages
-      assert msg1.content == "Initial * *"
+      assert msg1.processed_content == "Initial * *"
 
       # Expect callback with the updated message
       assert_received {:processed_message_callback, ^msg1}
@@ -894,9 +894,9 @@ defmodule LangChain.Chains.LLMChainTest do
       assert updated_chain.current_failure_count == 1
       [msg1, msg2] = updated_chain.messages
       # includes the message that errored at the point it was before failure
-      assert msg1.content == "Initial *"
+      assert msg1.processed_content == "Initial *"
       # adds a new message with the processor response message
-      assert msg2.content == "ERROR: I reject your message!"
+      assert msg2.content == [ContentPart.text!("ERROR: I reject your message!")]
 
       # Expect callback with the original assistant message
       assert_received {:processing_error_callback, ^msg1}
@@ -904,7 +904,7 @@ defmodule LangChain.Chains.LLMChainTest do
       assert_received {:error_message_created_callback, ^msg2}
     end
 
-    test "on successful processing, clears resets the failure count", %{chain: chain} do
+    test "on successful processing, clears or resets the failure count", %{chain: chain} do
       chain =
         chain
         |> LLMChain.increment_current_failure_count()
@@ -920,7 +920,8 @@ defmodule LangChain.Chains.LLMChainTest do
       assert updated_chain.current_failure_count == 0
       [msg1] = updated_chain.messages
       # includes the message that errored at the point it was before failure
-      assert msg1.content == "Initial *"
+      assert msg1.content == [ContentPart.text!("Initial")]
+      assert msg1.processed_content == "Initial *"
     end
   end
 
