@@ -25,7 +25,7 @@ defmodule LangChain.Utils.ChainResult do
         ) ::
           {:ok, String.t()} | {:error, LLMChain.t(), LangChainError.t()}
   def to_string({:error, chain, %LangChainError{} = reason}) do
-    # if an error was passed in, forward it through.
+    # if an error was passed in, pass it through.
     {:error, chain, reason}
   end
 
@@ -33,21 +33,8 @@ defmodule LangChain.Utils.ChainResult do
     ChainResult.to_string(chain)
   end
 
-  # when received a single ContentPart
-  def to_string(
-        %LLMChain{
-          last_message: %Message{
-            role: :assistant,
-            status: :complete,
-            content: [%ContentPart{type: :text} = part]
-          }
-        } = _chain
-      ) do
-    {:ok, part.content}
-  end
-
   def to_string(%LLMChain{last_message: %Message{role: :assistant, status: :complete}} = chain) do
-    {:ok, chain.last_message.content}
+    {:ok, ContentPart.parts_to_string(chain.last_message.content)}
   end
 
   def to_string(%LLMChain{last_message: %Message{role: :assistant, status: _incomplete}} = chain) do
