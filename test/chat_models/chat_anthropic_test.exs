@@ -76,6 +76,44 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
     end
   end
 
+  describe "get_system_text/1" do
+    test "returns default system message for nil" do
+      result = ChatAnthropic.get_system_text(nil)
+      assert result == [%{"type" => "text", "text" => "You are a helpful assistant."}]
+    end
+
+    test "returns system message for a system message" do
+      result = ChatAnthropic.get_system_text(Message.new_system!("You are a custom helpful assistant."))
+      assert result == [%{"type" => "text", "text" => "You are a custom helpful assistant."}]
+    end
+
+    test "returns system message for a system message with multiple content parts" do
+      result = ChatAnthropic.get_system_text(Message.new_system!([
+        ContentPart.text!("You are helpful 1."),
+        ContentPart.text!("You are helpful 2.")
+      ]))
+      assert result == [
+        %{"type" => "text", "text" => "You are helpful 1."},
+        %{"type" => "text", "text" => "You are helpful 2."}
+      ]
+    end
+
+    test "includes prompt caching" do
+      msg = Message.new_system!([
+        ContentPart.text!(
+          "You are an AI assistant tasked with analyzing literary works. Your goal is to provide insightful commentary on themes, characters, and writing style.\n"
+        ),
+        ContentPart.text!("<the entire contents of Pride and Prejudice>",
+          cache_control: true
+        )
+      ])
+
+      result = ChatAnthropic.get_system_text(msg)
+      IO.inspect result
+      assert false
+    end
+  end
+
   describe "for_api/3" do
     test "generates a map for an API call" do
       {:ok, anthropic} =
