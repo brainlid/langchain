@@ -598,6 +598,8 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       result =
         ChatOpenAI.for_api(openai, Message.new_assistant!(%{content: "Hi.", tool_calls: []}))
 
+        # TODO: The for_api call is not correctly handling ContentParts and the idea that a message no longer has a string content.
+        # TODO: Need a content_parts_for_api. Call that in multiple places.
       assert result == expected
     end
 

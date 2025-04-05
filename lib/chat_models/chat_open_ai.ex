@@ -400,6 +400,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           | Function.t()
         ) ::
           %{String.t() => any()} | [%{String.t() => any()}]
+          # TODO: REmove this function or repurpose it to handle ContentParts. Combined with tool_calls? It can possibly work for both :user and :assistant messages.
   def for_api(%_{} = model, %Message{content: content} = msg) when is_binary(content) do
     role = get_message_role(model, msg.role)
 
