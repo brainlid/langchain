@@ -105,6 +105,9 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     # lengthy response, a longer time limit may be required. However, when it
     # goes on too long by itself, it tends to hallucinate more.
     field :receive_timeout, :integer, default: @receive_timeout
+    field :json_response, :boolean, default: false
+    field :json_schema, :map, default: nil
+    field :stream, :boolean, default: false
 
     # The safety settings for the model, specified as a list of maps. Each map
     # should contain a `category` and a `threshold` for that category.
@@ -112,8 +115,6 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     # see https://ai.google.dev/api/generate-content#v1beta.SafetySetting
     # for the list of categories and thresholds
     field :safety_settings, {:array, :map}, default: []
-
-    field :stream, :boolean, default: false
 
     # A list of maps for callback handlers (treat as private)
     field :callbacks, {:array, :map}, default: []
@@ -130,6 +131,8 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     :top_p,
     :top_k,
     :receive_timeout,
+    :json_response,
+    :json_schema,
     :stream,
     :safety_settings
   ]
@@ -194,17 +197,31 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
       |> List.flatten()
       |> List.wrap()
 
+    {response_mime_type, response_schema} =
+      case google_ai.json_response do
+        true ->
+          {"application/json", google_ai.json_schema}
+
+        false ->
+          {nil, nil}
+      end
+
+    generation_config_params =
+      %{
+        "temperature" => google_ai.temperature,
+        "topP" => google_ai.top_p,
+        "topK" => google_ai.top_k
+      }
+      |> Utils.conditionally_add_to_map("response_mime_type", response_mime_type)
+      |> Utils.conditionally_add_to_map("response_schema", response_schema)
+
     req =
       %{
         "contents" => messages_for_api,
-        "generationConfig" => %{
-          "temperature" => google_ai.temperature,
-          "topP" => google_ai.top_p,
-          "topK" => google_ai.top_k
-        }
+        "generationConfig" => generation_config_params
       }
-      |> LangChain.Utils.conditionally_add_to_map("system_instruction", system_instruction)
-      |> LangChain.Utils.conditionally_add_to_map("safetySettings", google_ai.safety_settings)
+      |> Utils.conditionally_add_to_map("system_instruction", system_instruction)
+      |> Utils.conditionally_add_to_map("safetySettings", google_ai.safety_settings)
 
     if functions && not Enum.empty?(functions) do
       native_tools = Enum.filter(functions, &match?(%NativeTool{}, &1))
@@ -785,6 +802,8 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
         :top_p,
         :top_k,
         :receive_timeout,
+        :json_response,
+        :json_schema,
         :stream,
         :safety_settings
       ],
