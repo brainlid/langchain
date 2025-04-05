@@ -1014,48 +1014,6 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
     processed = Enum.filter(to_process, &relevant_event?/1)
 
-    # # Combine the incoming data with the buffered incomplete data
-    # combined_data = buffer <> chunk
-    # # Split data by double newline to find complete messages
-    # entries = String.split(combined_data, "\n\n", trim: true)
-
-    # # The last part may be incomplete if it doesn't end with "\n\n"
-    # {to_process, incomplete} =
-    #   if String.ends_with?(combined_data, "\n\n") do
-    #     {entries, ""}
-    #   else
-    #     # process all but the last, keep the last as incomplete
-    #     {Enum.slice(entries, 0..-2//1), List.last(entries)}
-    #   end
-
-    # processed =
-    #   to_process
-    # # Trim whitespace from each line
-    # |> Stream.map(&String.trim/1)
-    # # Ignore empty lines
-    # |> Stream.reject(&(&1 == ""))
-    # Filter lines based on some condition
-    # |> Stream.filter(&relevant_event?/1)
-    # Split the event from the data into separate lines
-    # |> Stream.map(&extract_data(&1))
-    # |> Enum.reduce([], fn json, done ->
-    #   json
-    #   |> Jason.decode()
-    #   |> case do
-    #     {:ok, parsed} ->
-    #       # wrap each parsed response into an array of 1. This matches the
-    #       # return type of some LLMs where they return `n` number of responses.
-    #       # This is for compatibility.
-    #       # {done ++ Enum.map(parsed, &([&1])), ""}
-    #       done ++ [parsed]
-
-    #     {:error, reason} ->
-    #       Logger.error("Failed to JSON decode streamed data: #{inspect(reason)}")
-    #       done
-
-    #   end
-    # end)
-
     {processed, incomplete}
   end
 

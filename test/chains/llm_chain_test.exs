@@ -1169,28 +1169,28 @@ defmodule LangChain.Chains.LLMChainTest do
       [m1, m2, m3, m4, m5, m6, m7] = error_chain.messages
 
       assert m1.role == :user
-      assert m1.content == "Say what I want you to say."
+      assert m1.content == [ContentPart.text!("Say what I want you to say.")]
 
       assert m2.role == :assistant
-      assert m2.content == "Not what you wanted"
+      assert m2.content == [ContentPart.text!("Not what you wanted")]
       assert m2.processed_content == "Not what you wanted"
 
       assert m3.role == :user
-      assert m3.content == "ERROR: Invalid JSON data: unexpected byte at position 0: 0x4E (\"N\")"
+      assert m3.content == [ContentPart.text!("ERROR: Invalid JSON data: unexpected byte at position 0: 0x4E (\"N\")")]
 
       assert m4.role == :assistant
-      assert m4.content == "Not what you wanted"
+      assert m4.content == [ContentPart.text!("Not what you wanted")]
       assert m4.processed_content == "Not what you wanted"
 
       assert m5.role == :user
-      assert m5.content == "ERROR: Invalid JSON data: unexpected byte at position 0: 0x4E (\"N\")"
+      assert m5.content == [ContentPart.text!("ERROR: Invalid JSON data: unexpected byte at position 0: 0x4E (\"N\")")]
 
       assert m6.role == :assistant
-      assert m6.content == "Not what you wanted"
+      assert m6.content == [ContentPart.text!("Not what you wanted")]
       assert m6.processed_content == "Not what you wanted"
 
       assert m7.role == :user
-      assert m7.content == "ERROR: Invalid JSON data: unexpected byte at position 0: 0x4E (\"N\")"
+      assert m7.content == [ContentPart.text!("ERROR: Invalid JSON data: unexpected byte at position 0: 0x4E (\"N\")")]
     end
 
     test "mode: :while_needs_response - fires callbacks for failed messages correctly" do
@@ -1247,14 +1247,14 @@ defmodule LangChain.Chains.LLMChainTest do
       assert m2.processed_content == "Not what you wanted"
 
       assert m3.role == :user
-      assert m3.content == "ERROR: Invalid JSON data: unexpected byte at position 0: 0x4E (\"N\")"
+      assert m3.content == [ContentPart.text!("ERROR: Invalid JSON data: unexpected byte at position 0: 0x4E (\"N\")")]
 
       assert m4.role == :assistant
-      assert m4.content == "Not what you wanted"
+      assert m4.content == [ContentPart.text!("Not what you wanted")]
       assert m4.processed_content == "Not what you wanted"
 
       assert m5.role == :user
-      assert m5.content == "ERROR: Invalid JSON data: unexpected byte at position 0: 0x4E (\"N\")"
+      assert m5.content == [ContentPart.text!("ERROR: Invalid JSON data: unexpected byte at position 0: 0x4E (\"N\")")]
 
       assert_received {:processing_error_callback, ^m2}
       assert_received {:error_message_created_callback, ^m3}
