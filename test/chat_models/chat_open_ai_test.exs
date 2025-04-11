@@ -316,7 +316,6 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert %{"image_url" => %{"url" => ^expected}} = result
     end
 
-
     test "supports PDF file type" do
       content = "base64encodedcontent"
 
@@ -344,7 +343,9 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       ppt_result = ChatOpenAI.for_api(%ChatOpenAI{}, ppt_part)
       assert ppt_result["type"] == "file"
       assert ppt_result["file"]["filename"] == "presentation.ppt"
-      assert ppt_result["file"]["file_data"] == "data:application/vnd.ms-powerpoint;base64,base64encodedcontent"
+
+      assert ppt_result["file"]["file_data"] ==
+               "data:application/vnd.ms-powerpoint;base64,base64encodedcontent"
     end
 
     test "supports Word file type" do
@@ -359,7 +360,9 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       word_result = ChatOpenAI.for_api(%ChatOpenAI{}, word_part)
       assert word_result["type"] == "file"
       assert word_result["file"]["filename"] == "document.doc"
-      assert word_result["file"]["file_data"] == "data:application/msword;base64,base64encodedcontent"
+
+      assert word_result["file"]["file_data"] ==
+               "data:application/msword;base64,base64encodedcontent"
     end
 
     test "supports Excel file type" do
@@ -374,7 +377,9 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       xls_result = ChatOpenAI.for_api(%ChatOpenAI{}, xls_part)
       assert xls_result["type"] == "file"
       assert xls_result["file"]["filename"] == "spreadsheet.xls"
-      assert xls_result["file"]["file_data"] == "data:application/vnd.ms-excel;base64,base64encodedcontent"
+
+      assert xls_result["file"]["file_data"] ==
+               "data:application/vnd.ms-excel;base64,base64encodedcontent"
     end
 
     test "supports Excel 2007+ file type" do
@@ -389,7 +394,9 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       xlsx_result = ChatOpenAI.for_api(%ChatOpenAI{}, xlsx_part)
       assert xlsx_result["type"] == "file"
       assert xlsx_result["file"]["filename"] == "spreadsheet.xlsx"
-      assert xlsx_result["file"]["file_data"] == "data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,base64encodedcontent"
+
+      assert xlsx_result["file"]["file_data"] ==
+               "data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,base64encodedcontent"
     end
 
     test "supports custom media type" do
@@ -404,7 +411,9 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       custom_result = ChatOpenAI.for_api(%ChatOpenAI{}, custom_part)
       assert custom_result["type"] == "file"
       assert custom_result["file"]["filename"] == "custom.file"
-      assert custom_result["file"]["file_data"] == "data:application/custom;base64,base64encodedcontent"
+
+      assert custom_result["file"]["file_data"] ==
+               "data:application/custom;base64,base64encodedcontent"
     end
 
     test "turns an image_url ContentPart into the expected JSON format" do
