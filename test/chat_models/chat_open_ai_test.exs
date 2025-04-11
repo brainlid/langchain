@@ -253,67 +253,94 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert result == expected
     end
 
-    test "turns ContentPart's media type the expected JSON values" do
-      expected = "data:image/jpg;base64,image_base64_data"
+    test "supports PDF file type" do
+      content = "base64encodedcontent"
 
-      result =
-        ChatOpenAI.for_api(
-          ChatOpenAI.new!(),
-          ContentPart.image!("image_base64_data", media: :jpg)
-        )
+      pdf_part = %ContentPart{
+        type: :file,
+        content: content,
+        options: [media: :pdf, filename: "test.pdf"]
+      }
 
-      assert %{"image_url" => %{"url" => ^expected}} = result
+      pdf_result = ChatOpenAI.for_api(%ChatOpenAI{}, pdf_part)
+      assert pdf_result["type"] == "file"
+      assert pdf_result["file"]["filename"] == "test.pdf"
+      assert pdf_result["file"]["file_data"] == "data:application/pdf;base64,base64encodedcontent"
+    end
 
-      expected = "data:image/jpg;base64,image_base64_data"
+    test "supports PowerPoint file type" do
+      content = "base64encodedcontent"
 
-      result =
-        ChatOpenAI.for_api(
-          ChatOpenAI.new!(),
-          ContentPart.image!("image_base64_data", media: :jpeg)
-        )
+      ppt_part = %ContentPart{
+        type: :file,
+        content: content,
+        options: [media: :ppt, filename: "presentation.ppt"]
+      }
 
-      assert %{"image_url" => %{"url" => ^expected}} = result
+      ppt_result = ChatOpenAI.for_api(%ChatOpenAI{}, ppt_part)
+      assert ppt_result["type"] == "file"
+      assert ppt_result["file"]["filename"] == "presentation.ppt"
+      assert ppt_result["file"]["file_data"] == "data:application/vnd.ms-powerpoint;base64,base64encodedcontent"
+    end
 
-      expected = "data:image/gif;base64,image_base64_data"
+    test "supports Word file type" do
+      content = "base64encodedcontent"
 
-      result =
-        ChatOpenAI.for_api(
-          ChatOpenAI.new!(),
-          ContentPart.image!("image_base64_data", media: :gif)
-        )
+      word_part = %ContentPart{
+        type: :file,
+        content: content,
+        options: [media: :word, filename: "document.doc"]
+      }
 
-      assert %{"image_url" => %{"url" => ^expected}} = result
+      word_result = ChatOpenAI.for_api(%ChatOpenAI{}, word_part)
+      assert word_result["type"] == "file"
+      assert word_result["file"]["filename"] == "document.doc"
+      assert word_result["file"]["file_data"] == "data:application/msword;base64,base64encodedcontent"
+    end
 
-      expected = "data:image/webp;base64,image_base64_data"
+    test "supports Excel file type" do
+      content = "base64encodedcontent"
 
-      result =
-        ChatOpenAI.for_api(
-          ChatOpenAI.new!(),
-          ContentPart.image!("image_base64_data", media: :webp)
-        )
+      xls_part = %ContentPart{
+        type: :file,
+        content: content,
+        options: [media: :xls, filename: "spreadsheet.xls"]
+      }
 
-      assert %{"image_url" => %{"url" => ^expected}} = result
+      xls_result = ChatOpenAI.for_api(%ChatOpenAI{}, xls_part)
+      assert xls_result["type"] == "file"
+      assert xls_result["file"]["filename"] == "spreadsheet.xls"
+      assert xls_result["file"]["file_data"] == "data:application/vnd.ms-excel;base64,base64encodedcontent"
+    end
 
-      expected = "data:image/png;base64,image_base64_data"
+    test "supports Excel 2007+ file type" do
+      content = "base64encodedcontent"
 
-      result =
-        ChatOpenAI.for_api(
-          ChatOpenAI.new!(),
-          ContentPart.image!("image_base64_data", media: :png)
-        )
+      xlsx_part = %ContentPart{
+        type: :file,
+        content: content,
+        options: [media: :xlsx, filename: "spreadsheet.xlsx"]
+      }
 
-      assert %{"image_url" => %{"url" => ^expected}} = result
+      xlsx_result = ChatOpenAI.for_api(%ChatOpenAI{}, xlsx_part)
+      assert xlsx_result["type"] == "file"
+      assert xlsx_result["file"]["filename"] == "spreadsheet.xlsx"
+      assert xlsx_result["file"]["file_data"] == "data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,base64encodedcontent"
+    end
 
-      # an string value is passed through
-      expected = "data:file/pdf;base64,image_base64_data"
+    test "supports custom media type" do
+      content = "base64encodedcontent"
 
-      result =
-        ChatOpenAI.for_api(
-          ChatOpenAI.new!(),
-          ContentPart.image!("image_base64_data", media: "file/pdf")
-        )
+      custom_part = %ContentPart{
+        type: :file,
+        content: content,
+        options: [media: "application/custom", filename: "custom.file"]
+      }
 
-      assert %{"image_url" => %{"url" => ^expected}} = result
+      custom_result = ChatOpenAI.for_api(%ChatOpenAI{}, custom_part)
+      assert custom_result["type"] == "file"
+      assert custom_result["file"]["filename"] == "custom.file"
+      assert custom_result["file"]["file_data"] == "data:application/custom;base64,base64encodedcontent"
     end
 
     test "turns an image_url ContentPart into the expected JSON format" do
