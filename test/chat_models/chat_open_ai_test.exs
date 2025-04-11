@@ -253,6 +253,70 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert result == expected
     end
 
+    test "turns ContentPart's media type the expected JSON values" do
+      expected = "data:image/jpg;base64,image_base64_data"
+
+      result =
+        ChatOpenAI.for_api(
+          ChatOpenAI.new!(),
+          ContentPart.image!("image_base64_data", media: :jpg)
+        )
+
+      assert %{"image_url" => %{"url" => ^expected}} = result
+
+      expected = "data:image/jpg;base64,image_base64_data"
+
+      result =
+        ChatOpenAI.for_api(
+          ChatOpenAI.new!(),
+          ContentPart.image!("image_base64_data", media: :jpeg)
+        )
+
+      assert %{"image_url" => %{"url" => ^expected}} = result
+
+      expected = "data:image/gif;base64,image_base64_data"
+
+      result =
+        ChatOpenAI.for_api(
+          ChatOpenAI.new!(),
+          ContentPart.image!("image_base64_data", media: :gif)
+        )
+
+      assert %{"image_url" => %{"url" => ^expected}} = result
+
+      expected = "data:image/webp;base64,image_base64_data"
+
+      result =
+        ChatOpenAI.for_api(
+          ChatOpenAI.new!(),
+          ContentPart.image!("image_base64_data", media: :webp)
+        )
+
+      assert %{"image_url" => %{"url" => ^expected}} = result
+
+      expected = "data:image/png;base64,image_base64_data"
+
+      result =
+        ChatOpenAI.for_api(
+          ChatOpenAI.new!(),
+          ContentPart.image!("image_base64_data", media: :png)
+        )
+
+      assert %{"image_url" => %{"url" => ^expected}} = result
+
+      # an string value is passed through
+      expected = "data:file/pdf;base64,image_base64_data"
+
+      result =
+        ChatOpenAI.for_api(
+          ChatOpenAI.new!(),
+          ContentPart.image!("image_base64_data", media: "file/pdf")
+        )
+
+      assert %{"image_url" => %{"url" => ^expected}} = result
+    end
+
+
     test "supports PDF file type" do
       content = "base64encodedcontent"
 
