@@ -5,6 +5,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
   alias __MODULE__
   alias LangChain.Config
   alias LangChain.ChatModels.ChatModel
+  alias LangChain.ChatModels.ChatOpenAI
   alias LangChain.Function
   alias LangChain.Message
   alias LangChain.Message.ContentPart
@@ -249,18 +250,19 @@ defmodule LangChain.ChatModels.ChatMistralAI do
   prompt or a list of messages as the prompt. Optionally pass in a list of tools.
   """
   @impl ChatModel
-  def call(%__MODULE__{} = openai, prompt, tools) when is_binary(prompt) and is_list(tools) do
+  def call(%__MODULE__{} = mistralai, prompt, tools) when is_binary(prompt) and is_list(tools) do
     messages = [
       Message.new_system!(),
       Message.new_user!(prompt)
     ]
 
-    call(openai, messages, tools)
+    call(mistralai, messages, tools)
   end
 
-  def call(%__MODULE__{} = openai, messages, tools) when is_list(messages) and is_list(tools) do
+  def call(%__MODULE__{} = mistralai, messages, tools)
+      when is_list(messages) and is_list(tools) do
     metadata = %{
-      model: openai.model,
+      model: mistralai.model,
       message_count: length(messages),
       tools_count: length(tools)
     }
@@ -270,10 +272,10 @@ defmodule LangChain.ChatModels.ChatMistralAI do
         # Track the prompt being sent
         LangChain.Telemetry.llm_prompt(
           %{system_time: System.system_time()},
-          %{model: openai.model, messages: messages}
+          %{model: mistralai.model, messages: messages}
         )
 
-        case do_api_request(openai, messages, tools) do
+        case do_api_request(mistralai, messages, tools) do
           {:error, reason} ->
             {:error, reason}
 
@@ -281,7 +283,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
             # Track the response being received
             LangChain.Telemetry.llm_response(
               %{system_time: System.system_time()},
-              %{model: openai.model, response: parsed_data}
+              %{model: mistralai.model, response: parsed_data}
             )
 
             {:ok, parsed_data}
@@ -298,9 +300,9 @@ defmodule LangChain.ChatModels.ChatMistralAI do
   @doc false
   @spec do_api_request(t(), [Message.t()], ChatModel.tools(), integer()) ::
           list() | struct() | {:error, LangChainError.t()}
-  def do_api_request(openai, messages, tools, retry_count \\ 3)
+  def do_api_request(mistralai, messages, tools, retry_count \\ 3)
 
-  def do_api_request(_openai, _messages, _tools, 0) do
+  def do_api_request(_mistralai, _messages, _tools, 0) do
     raise LangChainError, "Retries exceeded. Connection failed."
   end
 
@@ -373,9 +375,6 @@ defmodule LangChain.ChatModels.ChatMistralAI do
         tools,
         retry_count
       ) do
-    # Implement streaming similarly to ChatOpenAI if/when Mistral supports it fully.
-    # The approach is the same, but actual streaming chunk formats might differ.
-    # For simplicity, we can skip or do a placeholder if streaming is not provided yet.
     raw_data = for_api(mistralai, messages, tools)
 
     req =
@@ -390,18 +389,19 @@ defmodule LangChain.ChatModels.ChatMistralAI do
       )
 
     req
-    |> Req.post()
+    |> Req.post(
+      into:
+        Utils.handle_stream_fn(
+          mistralai,
+          # Mistral's streaming API is mostly compatible with OpenAI's,
+          # so we can reuse the same decoder
+          &ChatOpenAI.decode_stream/1,
+          &do_process_response(mistralai, &1)
+        )
+    )
     |> case do
       {:ok, %Req.Response{body: data} = _response} ->
-        # If Mistral streaming is not truly chunk-based, treat logic the same as non-stream for now.
-        case do_process_response(mistralai, data) do
-          {:error, %LangChainError{} = reason} ->
-            {:error, reason}
-
-          result ->
-            Callbacks.fire(mistralai.callbacks, :on_llm_new_message, [result])
-            result
-        end
+        data
 
       {:error, %Req.TransportError{reason: :timeout} = err} ->
         {:error,
@@ -429,7 +429,9 @@ defmodule LangChain.ChatModels.ChatMistralAI do
           | MessageDelta.t()
           | [MessageDelta.t()]
           | {:error, String.t()}
-  def do_process_response(model, %{"choices" => [], "usage" => %{} = _usage} = data) do
+  # The last chunk of the response contains both the final delta in the "choices" key,
+  # and the token usage in the "usage" key
+  def do_process_response(model, %{"choices" => choices, "usage" => %{} = _usage} = data) do
     case get_token_usage(data) do
       %TokenUsage{} = token_usage ->
         Callbacks.fire(model.callbacks, :on_llm_token_usage, [token_usage])
@@ -439,8 +441,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
         :ok
     end
 
-    # this stand-alone TokenUsage message is skipped and not returned
-    :skip
+    Enum.map(choices, &do_process_response(model, &1))
   end
 
   def do_process_response(_model, %{"choices" => []}), do: :skip
@@ -459,11 +460,14 @@ defmodule LangChain.ChatModels.ChatMistralAI do
   end
 
   # Partial 'delta' format: look for any embedded "tool_calls"
-  def do_process_response(model, %{
-        "delta" => delta_body,
-        "finish_reason" => finish,
-        "index" => index
-      }) do
+  def do_process_response(
+        model,
+        %{
+          "delta" => delta_body,
+          "finish_reason" => finish,
+          "index" => index
+        }
+      ) do
     status =
       case finish do
         nil ->
@@ -477,6 +481,9 @@ defmodule LangChain.ChatModels.ChatMistralAI do
 
         "model_length" ->
           :length
+
+        "tool_calls" ->
+          :complete
 
         other ->
           Logger.warning("Unsupported finish_reason in delta message. Reason: #{inspect(other)}")
@@ -496,7 +503,9 @@ defmodule LangChain.ChatModels.ChatMistralAI do
     role =
       case delta_body do
         %{"role" => role} -> role
-        _ -> "unknown"
+        # Mistral doesn't include a `role` key in the delta.
+        # Defaulting to `:assistant`. seems like it makes sense.
+        _ -> "assistant"
       end
 
     data =

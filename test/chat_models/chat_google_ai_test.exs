@@ -14,6 +14,8 @@ defmodule ChatModels.ChatGoogleAITest do
   alias LangChain.LangChainError
   alias LangChain.ChatModels.ChatGoogleAI
 
+  @test_model "gemini-pro"
+
   setup do
     {:ok, hello_world} =
       Function.new(%{
@@ -29,8 +31,8 @@ defmodule ChatModels.ChatGoogleAITest do
 
   describe "new/1" do
     test "works with minimal attr" do
-      assert {:ok, %ChatGoogleAI{} = google_ai} = ChatGoogleAI.new(%{"model" => "gemini-pro"})
-      assert google_ai.model == "gemini-pro"
+      assert {:ok, %ChatGoogleAI{} = google_ai} = ChatGoogleAI.new(%{"model" => @test_model})
+      assert google_ai.model == @test_model
     end
 
     test "returns error when invalid" do
@@ -60,19 +62,40 @@ defmodule ChatModels.ChatGoogleAITest do
 
       assert model.api_version == api_version
     end
+
+    test "supports setting json_response and json_schema" do
+      json_schema = %{
+        "type" => "object",
+        "properties" => %{
+          "name" => %{"type" => "string"},
+          "age" => %{"type" => "integer"}
+        }
+      }
+
+      {:ok, google_ai} =
+        ChatGoogleAI.new(%{
+          "model" => @test_model,
+          "json_response" => true,
+          "json_schema" => json_schema
+        })
+
+      assert google_ai.json_response == true
+      assert google_ai.json_schema == json_schema
+    end
   end
 
   describe "for_api/3" do
     setup do
-      {:ok, google_ai} =
-        ChatGoogleAI.new(%{
-          "model" => "gemini-pro",
-          "temperature" => 1.0,
-          "top_p" => 1.0,
-          "top_k" => 1.0
-        })
+      params = %{
+        "model" => @test_model,
+        "temperature" => 1.0,
+        "top_p" => 1.0,
+        "top_k" => 1.0
+      }
 
-      %{google_ai: google_ai}
+      {:ok, google_ai} = ChatGoogleAI.new(params)
+
+      %{google_ai: google_ai, params: params}
     end
 
     test "generates a map for an API call", %{google_ai: google_ai} do
@@ -98,6 +121,23 @@ defmodule ChatModels.ChatGoogleAITest do
       assert %{"contents" => [msg1, msg2]} = data
       assert %{"role" => :user, "parts" => [%{"text" => ^user_message}]} = msg1
       assert %{"role" => :model, "parts" => [%{"text" => ^assistant_message}]} = msg2
+    end
+
+    test "generated a map containing response_mime_type and response_schema", %{params: params} do
+      google_ai =
+        ChatGoogleAI.new!(
+          params
+          |> Map.merge(%{"json_response" => true, "json_schema" => %{"type" => "object"}})
+        )
+
+      data = ChatGoogleAI.for_api(google_ai, [], [])
+
+      assert %{
+               "generationConfig" => %{
+                 "response_mime_type" => "application/json",
+                 "response_schema" => %{"type" => "object"}
+               }
+             } = data
     end
 
     test "generates a map containing function and function call messages", %{google_ai: google_ai} do
@@ -309,6 +349,33 @@ defmodule ChatModels.ChatGoogleAITest do
     test "does not add system instruction if not present", %{google_ai: google_ai} do
       data = ChatGoogleAI.for_api(google_ai, [Message.new_user!("Hello!")], [])
       refute Map.has_key?(data, "system_instruction")
+    end
+
+    test "support file_url", %{google_ai: google_ai} do
+      message =
+        Message.new_user!([
+          ContentPart.text!("User prompt"),
+          ContentPart.file_url!("example.com/test.pdf", media: "application/pdf")
+        ])
+
+      data = ChatGoogleAI.for_api(google_ai, [message], [])
+
+      assert %{
+               "contents" => [
+                 %{
+                   "parts" => [
+                     %{"text" => "User prompt"},
+                     %{
+                       "file_data" => %{
+                         "file_uri" => "example.com/test.pdf",
+                         "mime_type" => "application/pdf"
+                       }
+                     }
+                   ],
+                   "role" => :user
+                 }
+               ]
+             } = data
     end
 
     test "raises an error if more than one system message is present", %{google_ai: google_ai} do
@@ -661,7 +728,9 @@ defmodule ChatModels.ChatGoogleAITest do
                "api_version" => "v1beta",
                "top_k" => 1.0,
                "top_p" => 1.0,
-               "safety_settings" => []
+               "safety_settings" => [],
+               "json_response" => false,
+               "json_schema" => nil
              }
     end
   end
