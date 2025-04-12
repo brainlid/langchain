@@ -15,13 +15,19 @@ defmodule LangChain.ChatModels.TelemetryTest do
     setup do
       # Set up test models with explicit API keys to avoid env var issues
       openai = ChatOpenAI.new!(%{model: "gpt-4o-mini", api_key: "test-openai-key"})
-      vertex_ai = ChatVertexAI.new!(%{
-        model: "gemini-1.5-pro",
-        api_key: "test-google-key",
-        endpoint: "https://generativelanguage.googleapis.com/v1"
-      })
-      mistral_ai = ChatMistralAI.new!(%{model: "mistral-large-latest", api_key: "test-mistral-key"})
-      perplexity = ChatPerplexity.new!(%{model: "sonar-small-online", api_key: "test-perplexity-key"})
+
+      vertex_ai =
+        ChatVertexAI.new!(%{
+          model: "gemini-1.5-pro",
+          api_key: "test-google-key",
+          endpoint: "https://generativelanguage.googleapis.com/v1"
+        })
+
+      mistral_ai =
+        ChatMistralAI.new!(%{model: "mistral-large-latest", api_key: "test-mistral-key"})
+
+      perplexity =
+        ChatPerplexity.new!(%{model: "sonar-small-online", api_key: "test-perplexity-key"})
 
       # Create a test message
       test_message = Message.new_user!("Hello, world!")
@@ -92,7 +98,9 @@ defmodule LangChain.ChatModels.TelemetryTest do
       assert_received {:telemetry_event, [:langchain, :llm, :response], _, metadata}
       assert metadata.model == openai.model
 
-      assert_received {:telemetry_event, [:langchain, :llm, :response, :non_streaming], _, metadata}
+      assert_received {:telemetry_event, [:langchain, :llm, :response, :non_streaming], _,
+                       metadata}
+
       assert metadata.model == openai.model
       assert is_integer(metadata.response_size)
 
@@ -100,7 +108,10 @@ defmodule LangChain.ChatModels.TelemetryTest do
       :telemetry.detach("test-openai-telemetry-events")
     end
 
-    test "emits telemetry events for ChatVertexAI", %{vertex_ai: vertex_ai, test_messages: messages} do
+    test "emits telemetry events for ChatVertexAI", %{
+      vertex_ai: vertex_ai,
+      test_messages: messages
+    } do
       # Attach telemetry handlers
       test_pid = self()
 
@@ -154,7 +165,9 @@ defmodule LangChain.ChatModels.TelemetryTest do
       assert_received {:telemetry_event, [:langchain, :llm, :response], _, metadata}
       assert metadata.model == vertex_ai.model
 
-      assert_received {:telemetry_event, [:langchain, :llm, :response, :non_streaming], _, metadata}
+      assert_received {:telemetry_event, [:langchain, :llm, :response, :non_streaming], _,
+                       metadata}
+
       assert metadata.model == vertex_ai.model
       assert is_integer(metadata.response_size)
 
@@ -162,7 +175,10 @@ defmodule LangChain.ChatModels.TelemetryTest do
       :telemetry.detach("test-vertex-telemetry-events")
     end
 
-    test "emits telemetry events for ChatMistralAI", %{mistral_ai: mistral_ai, test_messages: messages} do
+    test "emits telemetry events for ChatMistralAI", %{
+      mistral_ai: mistral_ai,
+      test_messages: messages
+    } do
       # Attach telemetry handlers
       test_pid = self()
 
@@ -216,7 +232,9 @@ defmodule LangChain.ChatModels.TelemetryTest do
       assert_received {:telemetry_event, [:langchain, :llm, :response], _, metadata}
       assert metadata.model == mistral_ai.model
 
-      assert_received {:telemetry_event, [:langchain, :llm, :response, :non_streaming], _, metadata}
+      assert_received {:telemetry_event, [:langchain, :llm, :response, :non_streaming], _,
+                       metadata}
+
       assert metadata.model == mistral_ai.model
       assert is_integer(metadata.response_size)
 
@@ -224,7 +242,10 @@ defmodule LangChain.ChatModels.TelemetryTest do
       :telemetry.detach("test-mistral-telemetry-events")
     end
 
-    test "emits telemetry events for ChatPerplexity", %{perplexity: perplexity, test_messages: messages} do
+    test "emits telemetry events for ChatPerplexity", %{
+      perplexity: perplexity,
+      test_messages: messages
+    } do
       # Attach telemetry handlers
       test_pid = self()
 
@@ -278,7 +299,9 @@ defmodule LangChain.ChatModels.TelemetryTest do
       assert_received {:telemetry_event, [:langchain, :llm, :response], _, metadata}
       assert metadata.model == perplexity.model
 
-      assert_received {:telemetry_event, [:langchain, :llm, :response, :non_streaming], _, metadata}
+      assert_received {:telemetry_event, [:langchain, :llm, :response, :non_streaming], _,
+                       metadata}
+
       assert metadata.model == perplexity.model
       assert is_integer(metadata.response_size)
 
@@ -341,7 +364,9 @@ defmodule LangChain.ChatModels.TelemetryTest do
       assert is_map(measurements)
       assert Map.has_key?(measurements, :system_time)
 
-      assert_received {:telemetry_measurements, [:langchain, :llm, :response, :non_streaming], measurements}
+      assert_received {:telemetry_measurements, [:langchain, :llm, :response, :non_streaming],
+                       measurements}
+
       assert is_map(measurements)
       assert Map.has_key?(measurements, :system_time)
 

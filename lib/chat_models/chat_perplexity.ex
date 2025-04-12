@@ -652,14 +652,14 @@ defmodule LangChain.ChatModels.ChatPerplexity do
   end
 
   def do_process_response(_model, %{
-         "choices" => [
-           %{
-             "delta" => %{"role" => role, "content" => content},
-             "finish_reason" => finish,
-             "index" => index
-           } = _choice
-         ]
-       }) do
+        "choices" => [
+          %{
+            "delta" => %{"role" => role, "content" => content},
+            "finish_reason" => finish,
+            "index" => index
+          } = _choice
+        ]
+      }) do
     status = finish_reason_to_status(finish)
 
     data =
