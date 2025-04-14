@@ -618,8 +618,17 @@ defmodule LangChain.Chains.LLMChain do
     # clear the set of exchanged messages.
     chain = clear_exchanged_messages(chain)
 
-    # Preserve fallback options and max_runs count if set explicitly.
-    do_run_until_tool_used(chain, tool_name, Keyword.put_new(opts, :max_runs, 25))
+    # Check if the tool_name exists in the registered tools
+    if Map.has_key?(chain._tool_map, tool_name) do
+      # Preserve fallback options and max_runs count if set explicitly.
+      do_run_until_tool_used(chain, tool_name, Keyword.put_new(opts, :max_runs, 25))
+    else
+      {:error, chain,
+       LangChainError.exception(
+         type: "invalid_tool_name",
+         message: "Tool name '#{tool_name}' not found in available tools"
+       )}
+    end
   end
 
   defp do_run_until_tool_used(%LLMChain{} = chain, tool_name, opts) do

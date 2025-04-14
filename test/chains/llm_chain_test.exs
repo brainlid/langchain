@@ -1602,6 +1602,19 @@ defmodule LangChain.Chains.LLMChainTest do
       assert error.type == "exceeded_max_runs"
       assert error.message == "Exceeded maximum number of runs"
     end
+
+    test "returns error when tool_name does not exist in available tools", %{greet: greet} do
+      {:error, _updated_chain, error} =
+        %{llm: ChatOpenAI.new!(%{stream: false}), verbose: false}
+        |> LLMChain.new!()
+        |> LLMChain.add_tools([greet])
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Say hello to Tim."))
+        |> LLMChain.run_until_tool_used("non_existent_tool", max_runs: 1)
+
+      assert error.type == "invalid_tool_name"
+      assert error.message == "Tool name 'non_existent_tool' not found in available tools"
+    end
   end
 
   describe "increment_current_failure_count/1" do
