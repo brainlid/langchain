@@ -118,6 +118,53 @@ defmodule LangChain.Chains.LLMChain do
 
   See `LangChain.Chains.LLMChain.run/2` for more details.
 
+  ## Run Until Tool Used
+
+  The `run_until_tool_used/3` function makes it easy to instruct an LLM to use a
+  set of tools and then call a specific tool to present the results. This is
+  particularly useful for complex workflows where you want the LLM to perform
+  multiple operations and then finalize with a specific action.
+
+  This works well for receiving a final structured output after multiple tools
+  are used.
+
+  When the specified tool is successfully called, the chain stops processing and
+  returns the result. This prevents unnecessary additional LLM calls and
+  provides a clear termination point for your workflow.
+
+      {:ok, %LLMChain{} = updated_chain, %ToolResult{} = tool_result} =
+        %{llm: ChatOpenAI.new!(%{stream: false})}
+        |> LLMChain.new!()
+        |> LLMChain.add_tools([special_search, report_results])
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("..."))
+        |> LLMChain.run_until_tool_used("final_summary")
+
+  The function returns a tuple with three elements:
+  - `:ok` - Indicating success
+  - The updated chain with all messages and tool calls
+  - The specific tool result that matched the requested tool name
+
+  To prevent runaway function calls, a default `max_runs` value of 25 is set.
+  You can adjust this as needed:
+
+      # Allow up to 50 runs before timing out
+      LLMChain.run_until_tool_used(chain, "final_summary", max_runs: 50)
+
+  The function also supports fallbacks, allowing you to gracefully handle LLM
+  failures:
+
+      LLMChain.run_until_tool_used(chain, "final_summary",
+        max_runs: 10,
+        with_fallbacks: [fallback_llm],
+        before_fallback: fn chain ->
+          # Modify chain before using fallback LLM
+          chain
+        end
+      )
+
+  See `LangChain.Chains.LLMChain.run_until_tool_used/3` for more details.
+
   """
   use Ecto.Schema
   import Ecto.Changeset
@@ -172,7 +219,7 @@ defmodule LangChain.Chains.LLMChain do
     # Internally managed. The list of exchanged messages during a `run` function
     # execution. A single run can result in a number of newly created messages.
     # It generates an Assistant message with one or more ToolCalls, the message
-    # with tool results where some of them may have failed requiring the LLM to
+    # with tool results where some of them may have failed, requiring the LLM to
     # try again. This list tracks the full set of exchanged messages during a
     # single run.
     field :exchanged_messages, {:array, :any}, default: [], virtual: true
@@ -362,14 +409,7 @@ defmodule LangChain.Chains.LLMChain do
     try do
       raise_on_obsolete_run_opts(opts)
       raise_when_no_messages(chain)
-
-      # set the callback function on the chain
-      if chain.verbose, do: IO.inspect(chain.llm, label: "LLM")
-
-      if chain.verbose, do: IO.inspect(chain.messages, label: "MESSAGES")
-
-      tools = chain.tools
-      if chain.verbose, do: IO.inspect(tools, label: "TOOLS")
+      initial_run_logging(chain)
 
       # clear the set of exchanged messages.
       chain = clear_exchanged_messages(chain)
@@ -402,6 +442,19 @@ defmodule LangChain.Chains.LLMChain do
       err in LangChainError ->
         {:error, chain, err}
     end
+  end
+
+  defp initial_run_logging(%LLMChain{verbose: false} = _chain), do: :ok
+
+  defp initial_run_logging(%LLMChain{verbose: true} = chain) do
+    # set the callback function on the chain
+    if chain.verbose, do: IO.inspect(chain.llm, label: "LLM")
+
+    if chain.verbose, do: IO.inspect(chain.messages, label: "MESSAGES")
+
+    if chain.verbose, do: IO.inspect(chain.tools, label: "TOOLS")
+
+    :ok
   end
 
   defp with_fallbacks(%LLMChain{} = chain, opts, run_fn) do
@@ -461,12 +514,18 @@ defmodule LangChain.Chains.LLMChain do
   end
 
   # Repeatedly run the chain until we get a successful ToolResponse or processed
-  # assistant message. Once we've reached success, it is not submitted back to the LLM,
-  # the process ends there.
+  # assistant message. Once we've reached a successful response, it is not
+  # submitted back to the LLM, the process ends there.
   @spec run_until_success(t()) :: {:ok, t()} | {:error, t(), LangChainError.t()}
-  defp run_until_success(%LLMChain{last_message: %Message{} = last_message} = chain) do
+  defp run_until_success(
+         %LLMChain{last_message: %Message{} = last_message} = chain,
+         force_recurse \\ false
+       ) do
     stop_or_recurse =
       cond do
+        force_recurse ->
+          :recurse
+
         chain.current_failure_count >= chain.max_retry_count ->
           {:error, chain,
            LangChainError.exception(
@@ -525,6 +584,102 @@ defmodule LangChain.Chains.LLMChain do
 
       {:error, updated_chain, reason} ->
         {:error, updated_chain, reason}
+    end
+  end
+
+  @doc """
+  Run the chain until a specific tool call is made. This makes it easy for an
+  LLM to make multiple tool calls and call a specific tool to return a result,
+  signaling the end of the operation.
+
+  ## Options
+
+  - `max_runs`: The maximum number of times to run the chain. To prevent runaway
+    calls, it defaults to 25. When exceeded, a `%LangChainError{type: "exceeded_max_runs"}`
+    is returned in the error response.
+
+  - `with_fallbacks: [...]` - Provide a list of chat models to use as a fallback
+    when one fails. This helps a production system remain operational when an
+    API limit is reached, an LLM service is overloaded or down, or something
+    else new an exciting goes wrong.
+
+    When all fallbacks fail, a `%LangChainError{type: "all_fallbacks_failed"}`
+    is returned in the error response.
+
+  - `before_fallback: fn chain -> modified_chain end` - A `before_fallback`
+    function is called before the LLM call is made. **NOTE: When provided, it
+    also fires for the first attempt.** This allows a chain to be modified or
+    replaced before running against the configured LLM. This is helpful, for
+    example, when a different system prompt is needed for Anthropic vs OpenAI.
+  """
+  @spec run_until_tool_used(t(), String.t()) ::
+          {:ok, t(), Message.t()} | {:error, t(), LangChainError.t()}
+  def run_until_tool_used(%LLMChain{} = chain, tool_name, opts \\ []) do
+    # clear the set of exchanged messages.
+    chain = clear_exchanged_messages(chain)
+
+    # Preserve fallback options and max_runs count if set explicitly.
+    do_run_until_tool_used(chain, tool_name, Keyword.put_new(opts, :max_runs, 25))
+  end
+
+  defp do_run_until_tool_used(%LLMChain{} = chain, tool_name, opts) do
+    max_runs = Keyword.get(opts, :max_runs)
+
+    if max_runs <= 0 do
+      {:error, chain,
+       LangChainError.exception(
+         type: "exceeded_max_runs",
+         message: "Exceeded maximum number of runs"
+       )}
+    else
+      # Decrement max_runs for next recursion
+      next_opts = Keyword.put(opts, :max_runs, max_runs - 1)
+
+      run_result =
+        try do
+          # Run the chain and return the success or error results. NOTE: We do
+          # not add the current LLM to the list and process everything through a
+          # single codepath because failing after attempted fallbacks returns a
+          # different error.
+          #
+          # The run_until_success passes in a `true` force it to recuse and call
+          # even if a ToolResult was successfully run. We check _which_ tool
+          # result was returned here and make a separate decision.
+          if Keyword.has_key?(opts, :with_fallbacks) do
+            # run function and using fallbacks as needed.
+            with_fallbacks(chain, opts, &run_until_success(&1, true))
+          else
+            # run it directly right now and return the success or error
+            run_until_success(chain, true)
+          end
+        rescue
+          err in LangChainError ->
+            {:error, chain, err}
+        end
+
+      case run_result do
+        {:ok, updated_chain} ->
+          # Check if the last message contains a tool call matching the
+          # specified name
+          case updated_chain.last_message do
+            %Message{role: :tool, tool_results: tool_results} when is_list(tool_results) ->
+              matching_call = Enum.find(tool_results, &(&1.name == tool_name))
+
+              if matching_call do
+                {:ok, updated_chain, matching_call}
+              else
+                # If no matching tool result found, continue running.
+                do_run_until_tool_used(updated_chain, tool_name, next_opts)
+              end
+
+            _ ->
+              # If no tool results in last message, continue running
+              do_run_until_tool_used(updated_chain, tool_name, next_opts)
+          end
+
+        {:error, updated_chain, reason} ->
+          {:error, updated_chain, reason}
+      end
     end
   end
 
