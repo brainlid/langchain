@@ -466,9 +466,14 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           }
 
         :base64 ->
+          mime_type =
+            opts
+            |> Keyword.get(:media, :pdf)
+            |> media_type()
+
           %{
             "filename" => Keyword.get(opts, :filename, "file.pdf"),
-            "file_data" => "data:application/pdf;base64," <> part.content
+            "file_data" => "data:#{mime_type};base64," <> part.content
           }
       end
 
@@ -540,6 +545,14 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   def for_api(%_{} = _model, %PromptTemplate{} = _template) do
     raise LangChain.LangChainError, "PromptTemplates must be converted to messages."
   end
+
+  defp media_type(string) when is_binary(string), do: string
+  defp media_type(:pdf), do: "application/pdf"
+  defp media_type(:ppt), do: "application/vnd.ms-powerpoint"
+  defp media_type(:word), do: "application/msword"
+  defp media_type(:xls), do: "application/vnd.ms-excel"
+  defp media_type(:xlsx), do: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  defp media_type(_any), do: "application/pdf"
 
   @doc false
   def get_parameters(%Function{parameters: [], parameters_schema: nil} = _fun) do
