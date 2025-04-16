@@ -868,7 +868,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           | MessageDelta.t()
           | [MessageDelta.t()]
           | {:error, String.t()}
-  def do_process_response(model, %{"choices" => [], "usage" => %{} = _usage} = data) do
+  def do_process_response(model, %{"choices" => _choices, "usage" => %{} = _usage} = data) do
     case get_token_usage(data) do
       %TokenUsage{} = token_usage ->
         Callbacks.fire(model.callbacks, :on_llm_token_usage, [token_usage])
@@ -878,8 +878,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         :ok
     end
 
-    # this stand-alone TokenUsage message is skipped and not returned
-    :skip
+    do_process_response(model, %{data | "usage" => nil})
   end
 
   def do_process_response(_model, %{"choices" => []}), do: :skip
