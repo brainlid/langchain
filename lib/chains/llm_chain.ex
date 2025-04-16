@@ -427,17 +427,27 @@ defmodule LangChain.Chains.LLMChain do
             &run_until_success/1
         end
 
-      # Run the chain and return the success or error results. NOTE: We do not add
-      # the current LLM to the list and process everything through a single
-      # codepath because failing after attempted fallbacks returns a different
-      # error.
-      if Keyword.has_key?(opts, :with_fallbacks) do
-        # run function and using fallbacks as needed.
-        with_fallbacks(chain, opts, function_to_run)
-      else
-        # run it directly right now and return the success or error
-        function_to_run.(chain)
-      end
+      # Add telemetry for chain execution
+      metadata = %{
+        chain_type: "llm_chain",
+        mode: Keyword.get(opts, :mode, "default"),
+        message_count: length(chain.messages),
+        tool_count: length(chain.tools)
+      }
+
+      LangChain.Telemetry.span([:langchain, :chain, :execute], metadata, fn ->
+        # Run the chain and return the success or error results. NOTE: We do not add
+        # the current LLM to the list and process everything through a single
+        # codepath because failing after attempted fallbacks returns a different
+        # error.
+        if Keyword.has_key?(opts, :with_fallbacks) do
+          # run function and using fallbacks as needed.
+          with_fallbacks(chain, opts, function_to_run)
+        else
+          # run it directly right now and return the success or error
+          function_to_run.(chain)
+        end
+      end)
     rescue
       err in LangChainError ->
         {:error, chain, err}
@@ -1107,54 +1117,62 @@ defmodule LangChain.Chains.LLMChain do
     verbose = Keyword.get(opts, :verbose, false)
     context = Keyword.get(opts, :context, nil)
 
-    try do
-      if verbose, do: IO.inspect(function.name, label: "EXECUTING FUNCTION")
+    metadata = %{
+      tool_name: function.name,
+      tool_call_id: call.call_id,
+      async: function.async
+    }
 
-      case Function.execute(function, call.arguments, context) do
-        {:ok, llm_result, processed_result} ->
-          if verbose, do: IO.inspect(processed_result, label: "FUNCTION PROCESSED RESULT")
-          # successful execution and storage of processed_content.
+    LangChain.Telemetry.span([:langchain, :tool, :call], metadata, fn ->
+      try do
+        if verbose, do: IO.inspect(function.name, label: "EXECUTING FUNCTION")
+
+        case Function.execute(function, call.arguments, context) do
+          {:ok, llm_result, processed_result} ->
+            if verbose, do: IO.inspect(processed_result, label: "FUNCTION PROCESSED RESULT")
+            # successful execution and storage of processed_content.
+            ToolResult.new!(%{
+              tool_call_id: call.call_id,
+              content: llm_result,
+              processed_content: processed_result,
+              name: function.name,
+              display_text: function.display_text
+            })
+
+          {:ok, result} ->
+            if verbose, do: IO.inspect(result, label: "FUNCTION RESULT")
+            # successful execution.
+            ToolResult.new!(%{
+              tool_call_id: call.call_id,
+              content: result,
+              name: function.name,
+              display_text: function.display_text
+            })
+
+          {:error, reason} when is_binary(reason) ->
+            if verbose, do: IO.inspect(reason, label: "FUNCTION ERROR")
+
+            ToolResult.new!(%{
+              tool_call_id: call.call_id,
+              content: reason,
+              name: function.name,
+              display_text: function.display_text,
+              is_error: true
+            })
+        end
+      rescue
+        err ->
+          Logger.error(
+            "Function #{function.name} failed in execution. Exception: #{LangChainError.format_exception(err, __STACKTRACE__)}"
+          )
+
           ToolResult.new!(%{
             tool_call_id: call.call_id,
-            content: llm_result,
-            processed_content: processed_result,
-            name: function.name,
-            display_text: function.display_text
-          })
-
-        {:ok, result} ->
-          if verbose, do: IO.inspect(result, label: "FUNCTION RESULT")
-          # successful execution.
-          ToolResult.new!(%{
-            tool_call_id: call.call_id,
-            content: result,
-            name: function.name,
-            display_text: function.display_text
-          })
-
-        {:error, reason} when is_binary(reason) ->
-          if verbose, do: IO.inspect(reason, label: "FUNCTION ERROR")
-
-          ToolResult.new!(%{
-            tool_call_id: call.call_id,
-            content: reason,
-            name: function.name,
-            display_text: function.display_text,
+            content: "ERROR executing tool: #{inspect(err)}",
             is_error: true
           })
       end
-    rescue
-      err ->
-        Logger.error(
-          "Function #{function.name} failed in execution. Exception: #{LangChainError.format_exception(err, __STACKTRACE__)}"
-        )
-
-        ToolResult.new!(%{
-          tool_call_id: call.call_id,
-          content: "ERROR executing tool: #{inspect(err)}",
-          is_error: true
-        })
-    end
+    end)
   end
 
   @doc """

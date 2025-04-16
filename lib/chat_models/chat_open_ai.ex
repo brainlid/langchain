@@ -598,19 +598,39 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   end
 
   def call(%ChatOpenAI{} = openai, messages, tools) when is_list(messages) do
-    try do
-      # make base api request and perform high-level success/failure checks
-      case do_api_request(openai, messages, tools) do
-        {:error, reason} ->
-          {:error, reason}
+    metadata = %{
+      model: openai.model,
+      message_count: length(messages),
+      tools_count: length(tools)
+    }
 
-        parsed_data ->
-          {:ok, parsed_data}
+    LangChain.Telemetry.span([:langchain, :llm, :call], metadata, fn ->
+      try do
+        # Track the prompt being sent
+        LangChain.Telemetry.llm_prompt(
+          %{system_time: System.system_time()},
+          %{model: openai.model, messages: messages}
+        )
+
+        # make base api request and perform high-level success/failure checks
+        case do_api_request(openai, messages, tools) do
+          {:error, reason} ->
+            {:error, reason}
+
+          parsed_data ->
+            # Track the response being received
+            LangChain.Telemetry.llm_response(
+              %{system_time: System.system_time()},
+              %{model: openai.model, response: parsed_data}
+            )
+
+            {:ok, parsed_data}
+        end
+      rescue
+        err in LangChainError ->
+          {:error, err}
       end
-    rescue
-      err in LangChainError ->
-        {:error, err}
-    end
+    end)
   end
 
   # Make the API request from the OpenAI server.
@@ -693,6 +713,17 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
           result ->
             Callbacks.fire(openai.callbacks, :on_llm_new_message, [result])
+
+            # Track non-streaming response completion
+            LangChain.Telemetry.emit_event(
+              [:langchain, :llm, :response, :non_streaming],
+              %{system_time: System.system_time()},
+              %{
+                model: openai.model,
+                response_size: byte_size(inspect(result))
+              }
+            )
+
             result
         end
 
