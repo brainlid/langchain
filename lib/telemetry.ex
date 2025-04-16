@@ -138,6 +138,7 @@ defmodule LangChain.Telemetry do
     rescue
       exception ->
         stacktrace = __STACKTRACE__
+
         emit_event(
           event_prefix ++ [:exception],
           %{system_time: System.system_time()},
@@ -147,6 +148,7 @@ defmodule LangChain.Telemetry do
             stacktrace: stacktrace
           })
         )
+
         reraise exception, stacktrace
     end
   end

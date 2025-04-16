@@ -441,7 +441,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
                 response_size: byte_size(inspect(result))
               }
             )
-            
+
             result
         end
 

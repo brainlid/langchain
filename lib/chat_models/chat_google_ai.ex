@@ -497,7 +497,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
                 response_size: byte_size(inspect(result))
               }
             )
-            
+
             Callbacks.fire(google_ai.callbacks, :on_llm_new_message, [result])
             result
         end
