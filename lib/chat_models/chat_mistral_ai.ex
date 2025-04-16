@@ -283,7 +283,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
             # Track the response being received
             LangChain.Telemetry.llm_response(
               %{system_time: System.system_time()},
-              %{model: openai.model, response: parsed_data}
+              %{model: mistralai.model, response: parsed_data}
             )
 
             {:ok, parsed_data}
