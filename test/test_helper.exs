@@ -5,6 +5,7 @@ Application.put_env(:langchain, :google_ai_key, System.fetch_env!("GOOGLE_API_KE
 Application.put_env(:langchain, :aws_access_key_id, System.fetch_env!("AWS_ACCESS_KEY_ID"))
 Application.put_env(:langchain, :perplexity_key, System.fetch_env!("PERPLEXITY_API_KEY"))
 Application.put_env(:langchain, :mistral_api_key, System.fetch_env!("MISTRAL_API_KEY"))
+Application.put_env(:langchain, :groq_api_key, System.get_env("GROQ_API_KEY"))
 
 Application.put_env(
   :langchain,
@@ -32,6 +33,7 @@ Mimic.copy(LangChain.ChatModels.ChatPerplexity)
 Mimic.copy(LangChain.Config)
 Mimic.copy(LangChain.ChatModels.ChatVertexAI)
 Mimic.copy(LangChain.ChatModels.ChatGoogleAI)
+Mimic.copy(LangChain.ChatModels.ChatGroq)
 ExUnit.configure(capture_log: true, exclude: [live_call: true])
 
 ExUnit.start()
