@@ -442,7 +442,7 @@ defmodule LangChain.ChatModels.ChatGroqTest do
   end
 
   # The following live tests require a GROQ_API_KEY in the environment
-  # Run them with: GROQ_API_KEY=your-api-key mix test --only groq,live_call
+  # Run them with: GROQ_API_KEY=your-api-key mix test --only live_groq
 
   @tag :groq
   @tag :live_call
@@ -521,7 +521,6 @@ defmodule LangChain.ChatModels.ChatGroqTest do
   @tag :groq
   @tag :live_call
   @tag :live_groq
-  @tag :skip
   test "streamed response with tool calls work", %{model: model} do
     model = %ChatGroq{model | stream: true}
 

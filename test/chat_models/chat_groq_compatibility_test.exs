@@ -166,11 +166,9 @@ defmodule LangChain.ChatModels.ChatGroqCompatibilityTest do
   end
 
   describe "API Integration" do
-    @tag :skip
-    @tag :real_api
+    @tag :live_call
+    @tag :live_groq
     test "real API integration with complete response", %{model: _model} do
-      if System.get_env("TEST_GROQ_API") == "true" && 
-          System.get_env("GROQ_API_KEY") != nil do
         
         # Use a real model with the API key
         real_model = ChatGroq.new!(%{
@@ -192,17 +190,11 @@ defmodule LangChain.ChatModels.ChatGroqCompatibilityTest do
         assert message.role == :assistant
         assert is_binary(message.content)
         assert message.status == :complete
-      else
-        # Skip the test if environment isn't configured
-        :skip
-      end
     end
     
-    @tag :skip
-    @tag :real_api
+    @tag :live_call
+    @tag :live_groq
     test "real API integration with length-limited response", %{model: _model} do
-      if System.get_env("TEST_GROQ_API") == "true" && 
-          System.get_env("GROQ_API_KEY") != nil do
         
         # Use a real model with very limited tokens to trigger :length status
         real_model = ChatGroq.new!(%{
@@ -224,10 +216,6 @@ defmodule LangChain.ChatModels.ChatGroqCompatibilityTest do
         assert message.role == :assistant
         assert is_binary(message.content)
         assert message.status == :length
-      else
-        # Skip the test if environment isn't configured
-        :skip
-      end
     end
   end
 end
