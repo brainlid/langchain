@@ -30,10 +30,22 @@ defmodule LangChain.ChatModels.ChatGroq do
   
   ## Supported Models
   
-  - `llama3-70b-8192`
-  - `llama3-8b-8192`
-  - `mixtral-8x7b-32768`
-  - `gemma-7b-it`
+  ### Production Models
+  
+  - `gemma2-9b-it` (Google)
+  - `llama-3.3-70b-versatile` (Meta)
+  - `llama-3.1-8b-instant` (Meta)
+  - `llama-guard-3-8b` (Meta)
+  - `llama3-70b-8192` (Meta)
+  - `llama3-8b-8192` (Meta)
+  
+  ### Preview Models (evaluation only)
+  
+  - `meta-llama/llama-4-maverick-17b-128e-instruct` (Meta)
+  - `meta-llama/llama-4-scout-17b-16e-instruct` (Meta)
+  - `mistral-saba-24b` (Mistral)
+  - `deepseek-r1-distill-llama-70b` (DeepSeek)
+  - `qwen-qwq-32b` (Alibaba Cloud)
   
   ## Example Usage
   
