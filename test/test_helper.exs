@@ -29,7 +29,9 @@ Mimic.copy(LangChain.ChatModels.ChatBumblebee)
 Mimic.copy(LangChain.ChatModels.ChatOllamaAI)
 Mimic.copy(LangChain.Images.OpenAIImage)
 Mimic.copy(LangChain.ChatModels.ChatPerplexity)
-
+Mimic.copy(LangChain.Config)
+Mimic.copy(LangChain.ChatModels.ChatVertexAI)
+Mimic.copy(LangChain.ChatModels.ChatGoogleAI)
 ExUnit.configure(capture_log: true, exclude: [live_call: true])
 
 ExUnit.start()
