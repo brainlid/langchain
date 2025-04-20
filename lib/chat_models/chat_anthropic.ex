@@ -287,7 +287,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
     messages =
       messages
-      |> Enum.map(&for_api/1)
+      |> Enum.map(&message_for_api/1)
       |> post_process_and_combine_messages()
 
     %{
@@ -440,16 +440,14 @@ defmodule LangChain.ChatModels.ChatAnthropic do
           get_ratelimit_info(response.headers)
         ])
 
-        Callbacks.fire(anthropic.callbacks, :on_llm_token_usage, [
-          get_token_usage(data)
-        ])
-
         case do_process_response(anthropic, data) do
           {:error, reason} ->
             {:error, reason}
 
           result ->
             Callbacks.fire(anthropic.callbacks, :on_llm_new_message, [result])
+            Callbacks.fire(anthropic.callbacks, :on_llm_token_usage, [result.metadata.usage])
+
             result
         end
 
@@ -673,7 +671,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         ContentPart.new!(%{
           type: :unsupported,
           content: content,
-          options: [redacted_thinking: true]
+          options: [type: "redacted_thinking"]
         }),
       status: :incomplete,
       index: index
@@ -1049,64 +1047,64 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   """
   @spec for_api(Message.t() | ContentPart.t() | Function.t()) ::
           %{String.t() => any()} | no_return()
-  def for_api(%Message{role: :assistant, tool_calls: calls} = msg)
-      when is_list(calls) and calls != [] do
-    text_content =
-      if is_binary(msg.content) do
-        [
-          %{
-            "type" => "text",
-            "text" => msg.content
-          }
-        ]
-      else
-        []
-      end
+  # def for_api(%Message{role: :assistant, tool_calls: calls} = msg)
+  #     when is_list(calls) and calls != [] do
+  #   text_content =
+  #     if is_binary(msg.content) do
+  #       [
+  #         %{
+  #           "type" => "text",
+  #           "text" => msg.content
+  #         }
+  #       ]
+  #     else
+  #       []
+  #     end
 
-    tool_calls = Enum.map(calls, &for_api(&1))
+  #   tool_calls = Enum.map(calls, &for_api(&1))
 
-    %{
-      "role" => "assistant",
-      "content" => text_content ++ tool_calls
-    }
-  end
+  #   %{
+  #     "role" => "assistant",
+  #     "content" => text_content ++ tool_calls
+  #   }
+  # end
 
-  def for_api(%Message{role: :tool, tool_results: results}) when is_list(results) do
-    # convert ToolResult into the expected format for Anthropic.
-    #
-    # A tool result is returned as a list within the content of a user message.
-    tool_results = Enum.map(results, &for_api(&1))
+  # def for_api(%Message{role: :tool, tool_results: results}) when is_list(results) do
+  #   # convert ToolResult into the expected format for Anthropic.
+  #   #
+  #   # A tool result is returned as a list within the content of a user message.
+  #   tool_results = Enum.map(results, &for_api(&1))
 
-    %{
-      "role" => "user",
-      "content" => tool_results
-    }
-  end
+  #   %{
+  #     "role" => "user",
+  #     "content" => tool_results
+  #   }
+  # end
 
-  # when content is plain text
-  def for_api(%Message{content: content} = msg) when is_binary(content) do
-    %{
-      "role" => Atom.to_string(msg.role),
-      "content" => [msg.content |> ContentPart.text!() |> content_part_for_api()]
-    }
-  end
+  # # when content is plain text
+  # def for_api(%Message{content: content} = msg) when is_binary(content) do
+  #   %{
+  #     "role" => Atom.to_string(msg.role),
+  #     "content" => [msg.content |> ContentPart.text!() |> content_part_for_api()]
+  #   }
+  # end
 
-  def for_api(%Message{role: :user, content: content}) when is_list(content) do
-    %{
-      "role" => "user",
-      "content" => Enum.map(content, &content_part_for_api(&1))
-    }
-  end
+  # def for_api(%Message{role: :user, content: content}) when is_list(content) do
+  #   %{
+  #     "role" => "user",
+  #     "content" => Enum.map(content, &content_part_for_api(&1))
+  #   }
+  # end
 
-  def for_api(%Message{role: role, content: content}) when is_list(content) do
-    %{
-      "role" => Atom.to_string(role),
-      "content" =>
-        content
-        |> Enum.map(&content_part_for_api(&1))
-        |> Enum.reject(&is_nil/1)
-    }
-  end
+  # def for_api(%Message{role: role, content: content}) when is_list(content) do
+  #   %{
+  #     "role" => Atom.to_string(role),
+  #     "content" =>
+  #       content
+  #       |> Enum.map(&content_part_for_api(&1))
+  #       |> Enum.reject(&is_nil/1)
+  #   }
+  # end
 
   # Function support
   def for_api(%Function{} = fun) do
@@ -1149,6 +1147,77 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         }
     end
     |> Utils.conditionally_add_to_map("is_error", result.is_error)
+  end
+
+  @doc """
+  Converts a Message to the format expected by the Anthropic API.
+  """
+  def message_for_api(%Message{role: :assistant, tool_calls: calls} = msg)
+      when is_list(calls) and calls != [] do
+    text_content = content_parts_for_api(msg.content)
+
+    tool_calls = Enum.map(calls, &for_api(&1))
+
+    %{
+      "role" => "assistant",
+      "content" => text_content ++ tool_calls
+    }
+  end
+
+  def message_for_api(%Message{role: :tool, tool_results: results}) when is_list(results) do
+    # convert ToolResult into the expected format for Anthropic.
+    #
+    # A tool result is returned as a list within the content of a user message.
+    tool_results = Enum.map(results, &for_api(&1))
+
+    %{
+      "role" => "user",
+      "content" => tool_results
+    }
+  end
+
+  # when content is plain text
+  def message_for_api(%Message{content: content} = msg) when is_binary(content) do
+    %{
+      "role" => Atom.to_string(msg.role),
+      "content" => [msg.content |> ContentPart.text!() |> content_part_for_api()]
+    }
+  end
+
+  def message_for_api(%Message{role: :user, content: content}) when is_list(content) do
+    %{
+      "role" => "user",
+      "content" => Enum.map(content, &content_part_for_api(&1))
+    }
+  end
+
+  def message_for_api(%Message{role: role, content: content}) when is_list(content) do
+    %{
+      "role" => Atom.to_string(role),
+      "content" =>
+        content
+        |> Enum.map(&content_part_for_api(&1))
+        |> Enum.reject(&is_nil/1)
+    }
+  end
+
+  @doc """
+  Converts a list of ContentParts to the format expected by the Anthropic API.
+  """
+  def content_parts_for_api(contents)
+  def content_parts_for_api(nil), do: []
+
+  def content_parts_for_api(contents) when is_list(contents) do
+    Enum.map(contents, &content_part_for_api/1)
+  end
+
+  def content_parts_for_api(content) when is_binary(content) do
+    [
+      %{
+        "type" => "text",
+        "text" => content
+      }
+    ]
   end
 
   @doc """
