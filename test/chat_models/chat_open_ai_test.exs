@@ -567,14 +567,23 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       expected = %{"type" => "text", "text" => "Tell me about this image:"}
 
       result =
-        ChatOpenAI.content_part_for_api(ChatOpenAI.new!(), ContentPart.text!("Tell me about this image:"))
+        ChatOpenAI.content_part_for_api(
+          ChatOpenAI.new!(),
+          ContentPart.text!("Tell me about this image:")
+        )
 
       assert result == expected
     end
 
     test "turns an image ContentPart into the expected JSON format" do
       expected = %{"type" => "image_url", "image_url" => %{"url" => "image_base64_data"}}
-      result = ChatOpenAI.content_part_for_api(ChatOpenAI.new!(), ContentPart.image!("image_base64_data"))
+
+      result =
+        ChatOpenAI.content_part_for_api(
+          ChatOpenAI.new!(),
+          ContentPart.image!("image_base64_data")
+        )
+
       assert result == expected
     end
 
@@ -658,7 +667,10 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
     test "turns an image_url ContentPart into the expected JSON format" do
       expected = %{"type" => "image_url", "image_url" => %{"url" => "url-to-image"}}
-      result = ChatOpenAI.content_part_for_api(ChatOpenAI.new!(), ContentPart.image_url!("url-to-image"))
+
+      result =
+        ChatOpenAI.content_part_for_api(ChatOpenAI.new!(), ContentPart.image_url!("url-to-image"))
+
       assert result == expected
     end
 
@@ -722,7 +734,8 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
           Message.new_user!("Return the response 'Colorful Threads'.")
         ])
 
-      assert response =~ "Colorful Threads"
+      assert [%ContentPart{}] = response
+      assert ContentPart.parts_to_string(response) =~ "Colorful Threads"
 
       assert_received {:fired_ratelimit_info, info}
 
@@ -899,7 +912,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
              ]
 
       assert_received {:fired_token_usage, usage}
-      assert %TokenUsage{input: 15, output: 3} = usage
+      assert %TokenUsage{input: 15, output: 4} = usage
     end
 
     @tag live_call: true, live_open_ai: true
@@ -1039,7 +1052,8 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
         |> MessageDelta.merge_delta(delta_3)
 
       assert merged.role == :assistant
-      assert merged.content =~ "Hi"
+      assert [%ContentPart{}] = merged.merged_content
+      assert ContentPart.parts_to_string(merged.merged_content) =~ "Hi"
       assert merged.status == :complete
     end
 
@@ -1067,12 +1081,14 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
           []
         )
 
-      assert message.content =~ "Hi"
+      assert [%ContentPart{}] = message.content
+      assert ContentPart.parts_to_string(message.content) =~ "Hi"
       assert message.index == 0
       assert_receive {:message_received, received_item}, 500
       assert %Message{} = received_item
       assert received_item.role == :assistant
-      assert received_item.content =~ "Hi"
+      assert [%ContentPart{}] = received_item.content
+      assert ContentPart.parts_to_string(received_item.content) =~ "Hi"
       assert received_item.index == 0
     end
 
@@ -1111,7 +1127,8 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
           []
         )
 
-      assert message.content =~ "Hi"
+      assert [%ContentPart{}] = message.content
+      assert ContentPart.parts_to_string(message.content) =~ "Hi"
       assert message.role == :assistant
       assert message.index == 0
     end
@@ -1682,8 +1699,8 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       {:ok, [response]} = ChatOpenAI.call(chat, [message], [])
 
       assert %Message{role: :assistant} = response
-      assert String.contains?(response.content, "boardwalk")
-      assert String.contains?(response.content, "grass")
+      assert String.contains?(ContentPart.parts_to_string(response.content), "boardwalk")
+      assert String.contains?(ContentPart.parts_to_string(response.content), "grass")
     end
   end
 
