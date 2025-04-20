@@ -83,44 +83,52 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
     end
 
     test "returns system message for a system message" do
-      result = ChatAnthropic.get_system_text(Message.new_system!("You are a custom helpful assistant."))
+      result =
+        ChatAnthropic.get_system_text(Message.new_system!("You are a custom helpful assistant."))
+
       assert result == [%{"type" => "text", "text" => "You are a custom helpful assistant."}]
     end
 
     test "returns system message for a system message with multiple content parts" do
-      result = ChatAnthropic.get_system_text(Message.new_system!([
-        ContentPart.text!("You are helpful 1."),
-        ContentPart.text!("You are helpful 2.")
-      ]))
+      result =
+        ChatAnthropic.get_system_text(
+          Message.new_system!([
+            ContentPart.text!("You are helpful 1."),
+            ContentPart.text!("You are helpful 2.")
+          ])
+        )
+
       assert result == [
-        %{"type" => "text", "text" => "You are helpful 1."},
-        %{"type" => "text", "text" => "You are helpful 2."}
-      ]
+               %{"type" => "text", "text" => "You are helpful 1."},
+               %{"type" => "text", "text" => "You are helpful 2."}
+             ]
     end
 
     test "includes prompt caching" do
-      msg = Message.new_system!([
-        ContentPart.text!(
-          "You are an AI assistant tasked with analyzing literary works. Your goal is to provide insightful commentary on themes, characters, and writing style.\n"
-        ),
-        ContentPart.text!("<the entire contents of Pride and Prejudice>",
-          cache_control: true
-        )
-      ])
+      msg =
+        Message.new_system!([
+          ContentPart.text!(
+            "You are an AI assistant tasked with analyzing literary works. Your goal is to provide insightful commentary on themes, characters, and writing style.\n"
+          ),
+          ContentPart.text!("<the entire contents of Pride and Prejudice>",
+            cache_control: true
+          )
+        ])
 
       result = ChatAnthropic.get_system_text(msg)
 
       assert result == [
-        %{
-          "text" => "You are an AI assistant tasked with analyzing literary works. Your goal is to provide insightful commentary on themes, characters, and writing style.\n",
-          "type" => "text"
-        },
-        %{
-          "cache_control" => %{"type" => "ephemeral"},
-          "text" => "<the entire contents of Pride and Prejudice>",
-          "type" => "text"
-        }
-      ]
+               %{
+                 "text" =>
+                   "You are an AI assistant tasked with analyzing literary works. Your goal is to provide insightful commentary on themes, characters, and writing style.\n",
+                 "type" => "text"
+               },
+               %{
+                 "cache_control" => %{"type" => "ephemeral"},
+                 "text" => "<the entire contents of Pride and Prejudice>",
+                 "type" => "text"
+               }
+             ]
     end
   end
 
@@ -152,7 +160,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
           []
         )
 
-      assert "You are my helpful hero." == data[:system]
+      assert [%{"text" => "You are my helpful hero.", "type" => "text"}] == data[:system]
     end
 
     test "supports prompt caching in the system message" do
@@ -297,7 +305,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
 
       assert output[:messages] ==
                [
-                 %{"content" => "Hi.", "role" => "user"},
+                 %{"content" => [%{"text" => "Hi.", "type" => "text"}], "role" => "user"},
                  #  tool calls
                  %{
                    "role" => "assistant",
@@ -347,7 +355,10 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
                      }
                    ]
                  },
-                 %{"content" => "No, \"sudo hi\"", "role" => "assistant"}
+                 %{
+                   "content" => [%{"text" => "No, \"sudo hi\"", "type" => "text"}],
+                   "role" => "assistant"
+                 }
                ]
     end
   end

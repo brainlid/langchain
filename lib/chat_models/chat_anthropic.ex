@@ -1100,7 +1100,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
   def for_api(%Message{role: role, content: content}) when is_list(content) do
     %{
-      "role" => role,
+      "role" => Atom.to_string(role),
       "content" =>
         content
         |> Enum.map(&content_part_for_api(&1))
