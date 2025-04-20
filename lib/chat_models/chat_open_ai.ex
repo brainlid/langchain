@@ -401,12 +401,12 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         ) ::
           %{String.t() => any()} | [%{String.t() => any()}]
           # TODO: REmove this function or repurpose it to handle ContentParts. Combined with tool_calls? It can possibly work for both :user and :assistant messages.
-  def for_api(%_{} = model, %Message{content: content} = msg) when is_binary(content) do
+  def for_api(%_{} = model, %Message{content: content} = msg) when is_list(content) do
     role = get_message_role(model, msg.role)
 
     %{
       "role" => role,
-      "content" => msg.content
+      "content" => content_parts_for_api(model, content)
     }
     |> Utils.conditionally_add_to_map("name", msg.name)
     |> Utils.conditionally_add_to_map(
@@ -454,11 +454,46 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     end)
   end
 
-  def for_api(%_{} = _model, %ContentPart{type: :text} = part) do
+  # ToolCall support
+  def for_api(%_{} = _model, %ToolCall{type: :function} = fun) do
+    %{
+      "id" => fun.call_id,
+      "type" => "function",
+      "function" => %{
+        "name" => fun.name,
+        "arguments" => Jason.encode!(fun.arguments)
+      }
+    }
+  end
+
+  # Function support
+  def for_api(%_{} = _model, %Function{} = fun) do
+    %{
+      "name" => fun.name,
+      "parameters" => get_parameters(fun)
+    }
+    |> Utils.conditionally_add_to_map("description", fun.description)
+  end
+
+  def for_api(%_{} = _model, %PromptTemplate{} = _template) do
+    raise LangChainError, "PromptTemplates must be converted to messages."
+  end
+
+  @doc """
+  Convert a list of ContentParts to the expected map of data for the OpenAI API.
+  """
+  def content_parts_for_api(%_{} = model, content_parts) when is_list(content_parts) do
+    Enum.map(content_parts, &content_part_for_api(model, &1))
+  end
+
+  @doc """
+  Convert a ContentPart to the expected map of data for the OpenAI API.
+  """
+  def content_part_for_api(%_{} = _model, %ContentPart{type: :text} = part) do
     %{"type" => "text", "text" => part.content}
   end
 
-  def for_api(%_{} = _model, %ContentPart{type: :file, options: opts} = part) do
+  def content_part_for_api(%_{} = _model, %ContentPart{type: :file, options: opts} = part) do
     %{
       "type" => "file",
       "file" => %{
@@ -468,7 +503,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     }
   end
 
-  def for_api(%_{} = _model, %ContentPart{type: image} = part)
+  def content_part_for_api(%_{} = _model, %ContentPart{type: image} = part)
       when image in [:image, :image_url] do
     media_prefix =
       case Keyword.get(part.options || [], :media, nil) do
@@ -504,31 +539,6 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         %{"url" => media_prefix <> part.content}
         |> Utils.conditionally_add_to_map("detail", detail_option)
     }
-  end
-
-  # ToolCall support
-  def for_api(%_{} = _model, %ToolCall{type: :function} = fun) do
-    %{
-      "id" => fun.call_id,
-      "type" => "function",
-      "function" => %{
-        "name" => fun.name,
-        "arguments" => Jason.encode!(fun.arguments)
-      }
-    }
-  end
-
-  # Function support
-  def for_api(%_{} = _model, %Function{} = fun) do
-    %{
-      "name" => fun.name,
-      "parameters" => get_parameters(fun)
-    }
-    |> Utils.conditionally_add_to_map("description", fun.description)
-  end
-
-  def for_api(%_{} = _model, %PromptTemplate{} = _template) do
-    raise LangChain.LangChainError, "PromptTemplates must be converted to messages."
   end
 
   @doc false

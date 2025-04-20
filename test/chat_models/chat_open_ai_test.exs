@@ -223,141 +223,6 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
   end
 
   describe "for_api/1" do
-    test "turns a text ContentPart into the expected JSON format" do
-      expected = %{"type" => "text", "text" => "Tell me about this image:"}
-
-      result =
-        ChatOpenAI.for_api(ChatOpenAI.new!(), ContentPart.text!("Tell me about this image:"))
-
-      assert result == expected
-    end
-
-    test "turns an image ContentPart into the expected JSON format" do
-      expected = %{"type" => "image_url", "image_url" => %{"url" => "image_base64_data"}}
-      result = ChatOpenAI.for_api(ChatOpenAI.new!(), ContentPart.image!("image_base64_data"))
-      assert result == expected
-    end
-
-    test "turns an image ContentPart into the expected JSON format with detail option" do
-      expected = %{
-        "type" => "image_url",
-        "image_url" => %{"url" => "image_base64_data", "detail" => "low"}
-      }
-
-      result =
-        ChatOpenAI.for_api(
-          ChatOpenAI.new!(),
-          ContentPart.image!("image_base64_data", detail: "low")
-        )
-
-      assert result == expected
-    end
-
-    test "turns ContentPart's media type the expected JSON values" do
-      expected = "data:image/jpg;base64,image_base64_data"
-
-      result =
-        ChatOpenAI.for_api(
-          ChatOpenAI.new!(),
-          ContentPart.image!("image_base64_data", media: :jpg)
-        )
-
-      assert %{"image_url" => %{"url" => ^expected}} = result
-
-      expected = "data:image/jpg;base64,image_base64_data"
-
-      result =
-        ChatOpenAI.for_api(
-          ChatOpenAI.new!(),
-          ContentPart.image!("image_base64_data", media: :jpeg)
-        )
-
-      assert %{"image_url" => %{"url" => ^expected}} = result
-
-      expected = "data:image/gif;base64,image_base64_data"
-
-      result =
-        ChatOpenAI.for_api(
-          ChatOpenAI.new!(),
-          ContentPart.image!("image_base64_data", media: :gif)
-        )
-
-      assert %{"image_url" => %{"url" => ^expected}} = result
-
-      expected = "data:image/webp;base64,image_base64_data"
-
-      result =
-        ChatOpenAI.for_api(
-          ChatOpenAI.new!(),
-          ContentPart.image!("image_base64_data", media: :webp)
-        )
-
-      assert %{"image_url" => %{"url" => ^expected}} = result
-
-      expected = "data:image/png;base64,image_base64_data"
-
-      result =
-        ChatOpenAI.for_api(
-          ChatOpenAI.new!(),
-          ContentPart.image!("image_base64_data", media: :png)
-        )
-
-      assert %{"image_url" => %{"url" => ^expected}} = result
-
-      # an string value is passed through
-      expected = "data:file/pdf;base64,image_base64_data"
-
-      result =
-        ChatOpenAI.for_api(
-          ChatOpenAI.new!(),
-          ContentPart.image!("image_base64_data", media: "file/pdf")
-        )
-
-      assert %{"image_url" => %{"url" => ^expected}} = result
-    end
-
-    test "turns an image_url ContentPart into the expected JSON format" do
-      expected = %{"type" => "image_url", "image_url" => %{"url" => "url-to-image"}}
-      result = ChatOpenAI.for_api(ChatOpenAI.new!(), ContentPart.image_url!("url-to-image"))
-      assert result == expected
-    end
-
-    test "turns an image_url ContentPart into the expected JSON format with detail option" do
-      expected = %{
-        "type" => "image_url",
-        "image_url" => %{"url" => "url-to-image", "detail" => "low"}
-      }
-
-      result =
-        ChatOpenAI.for_api(
-          ChatOpenAI.new!(),
-          ContentPart.image_url!("url-to-image", detail: "low")
-        )
-
-      assert result == expected
-    end
-
-    test "turns a file ContentPart into the expected JSON format" do
-      file_base64_data = "some_file_base64_data"
-      filename = "my_file.pdf"
-
-      expected = %{
-        "type" => "file",
-        "file" => %{
-          "filename" => filename,
-          "file_data" => "data:application/pdf;base64," <> file_base64_data
-        }
-      }
-
-      result =
-        ChatOpenAI.for_api(
-          ChatOpenAI.new!(),
-          ContentPart.file!(file_base64_data, media: :pdf, filename: filename)
-        )
-
-      assert result == expected
-    end
-
     test "turns a tool_call into expected JSON format" do
       tool_call =
         ToolCall.new!(%{call_id: "call_abc123", name: "hello_world", arguments: "{}"})
@@ -581,7 +446,11 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     test "includes 'name' when set" do
       openai = ChatOpenAI.new!()
 
-      expected = %{"role" => :user, "content" => [%{"type" => "text", "text" => "Hi."}], "name" => "Harold"}
+      expected = %{
+        "role" => :user,
+        "content" => [%{"type" => "text", "text" => "Hi."}],
+        "name" => "Harold"
+      }
 
       result =
         ChatOpenAI.for_api(openai, Message.new!(%{role: :user, content: "Hi.", name: "Harold"}))
@@ -598,8 +467,8 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       result =
         ChatOpenAI.for_api(openai, Message.new_assistant!(%{content: "Hi.", tool_calls: []}))
 
-        # TODO: The for_api call is not correctly handling ContentParts and the idea that a message no longer has a string content.
-        # TODO: Need a content_parts_for_api. Call that in multiple places.
+      # TODO: The for_api call is not correctly handling ContentParts and the idea that a message no longer has a string content.
+      # TODO: Need a content_parts_for_api. Call that in multiple places.
       assert result == expected
     end
 
@@ -690,6 +559,143 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
       assert %{"role" => :developer} =
                ChatOpenAI.for_api(openai_dev, Message.new_system!("System prompt!"))
+    end
+  end
+
+  describe "content_part_for_api/2" do
+    test "turns a text ContentPart into the expected JSON format" do
+      expected = %{"type" => "text", "text" => "Tell me about this image:"}
+
+      result =
+        ChatOpenAI.content_part_for_api(ChatOpenAI.new!(), ContentPart.text!("Tell me about this image:"))
+
+      assert result == expected
+    end
+
+    test "turns an image ContentPart into the expected JSON format" do
+      expected = %{"type" => "image_url", "image_url" => %{"url" => "image_base64_data"}}
+      result = ChatOpenAI.content_part_for_api(ChatOpenAI.new!(), ContentPart.image!("image_base64_data"))
+      assert result == expected
+    end
+
+    test "turns an image ContentPart into the expected JSON format with detail option" do
+      expected = %{
+        "type" => "image_url",
+        "image_url" => %{"url" => "image_base64_data", "detail" => "low"}
+      }
+
+      result =
+        ChatOpenAI.content_part_for_api(
+          ChatOpenAI.new!(),
+          ContentPart.image!("image_base64_data", detail: "low")
+        )
+
+      assert result == expected
+    end
+
+    test "turns ContentPart's media type the expected JSON values" do
+      expected = "data:image/jpg;base64,image_base64_data"
+
+      result =
+        ChatOpenAI.content_part_for_api(
+          ChatOpenAI.new!(),
+          ContentPart.image!("image_base64_data", media: :jpg)
+        )
+
+      assert %{"image_url" => %{"url" => ^expected}} = result
+
+      expected = "data:image/jpg;base64,image_base64_data"
+
+      result =
+        ChatOpenAI.content_part_for_api(
+          ChatOpenAI.new!(),
+          ContentPart.image!("image_base64_data", media: :jpeg)
+        )
+
+      assert %{"image_url" => %{"url" => ^expected}} = result
+
+      expected = "data:image/gif;base64,image_base64_data"
+
+      result =
+        ChatOpenAI.content_part_for_api(
+          ChatOpenAI.new!(),
+          ContentPart.image!("image_base64_data", media: :gif)
+        )
+
+      assert %{"image_url" => %{"url" => ^expected}} = result
+
+      expected = "data:image/webp;base64,image_base64_data"
+
+      result =
+        ChatOpenAI.content_part_for_api(
+          ChatOpenAI.new!(),
+          ContentPart.image!("image_base64_data", media: :webp)
+        )
+
+      assert %{"image_url" => %{"url" => ^expected}} = result
+
+      expected = "data:image/png;base64,image_base64_data"
+
+      result =
+        ChatOpenAI.content_part_for_api(
+          ChatOpenAI.new!(),
+          ContentPart.image!("image_base64_data", media: :png)
+        )
+
+      assert %{"image_url" => %{"url" => ^expected}} = result
+
+      # an string value is passed through
+      expected = "data:file/pdf;base64,image_base64_data"
+
+      result =
+        ChatOpenAI.content_part_for_api(
+          ChatOpenAI.new!(),
+          ContentPart.image!("image_base64_data", media: "file/pdf")
+        )
+
+      assert %{"image_url" => %{"url" => ^expected}} = result
+    end
+
+    test "turns an image_url ContentPart into the expected JSON format" do
+      expected = %{"type" => "image_url", "image_url" => %{"url" => "url-to-image"}}
+      result = ChatOpenAI.content_part_for_api(ChatOpenAI.new!(), ContentPart.image_url!("url-to-image"))
+      assert result == expected
+    end
+
+    test "turns an image_url ContentPart into the expected JSON format with detail option" do
+      expected = %{
+        "type" => "image_url",
+        "image_url" => %{"url" => "url-to-image", "detail" => "low"}
+      }
+
+      result =
+        ChatOpenAI.content_part_for_api(
+          ChatOpenAI.new!(),
+          ContentPart.image_url!("url-to-image", detail: "low")
+        )
+
+      assert result == expected
+    end
+
+    test "turns a file ContentPart into the expected JSON format" do
+      file_base64_data = "some_file_base64_data"
+      filename = "my_file.pdf"
+
+      expected = %{
+        "type" => "file",
+        "file" => %{
+          "filename" => filename,
+          "file_data" => "data:application/pdf;base64," <> file_base64_data
+        }
+      }
+
+      result =
+        ChatOpenAI.content_part_for_api(
+          ChatOpenAI.new!(),
+          ContentPart.file!(file_base64_data, media: :pdf, filename: filename)
+        )
+
+      assert result == expected
     end
   end
 
@@ -1130,7 +1136,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
       assert %Message{} = struct = ChatOpenAI.do_process_response(model, response)
       assert struct.role == :assistant
-      assert struct.content == "Greetings!"
+      assert struct.content == [ContentPart.text!("Greetings!")]
       assert struct.index == 1
     end
 
@@ -1364,7 +1370,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert %Message{} = struct = ChatOpenAI.do_process_response(model, response)
 
       assert struct.role == :assistant
-      assert struct.content == "Some of the response that was abruptly"
+      assert struct.content == [ContentPart.text!("Some of the response that was abruptly")]
       assert struct.index == 0
       assert struct.status == :length
     end
@@ -1445,8 +1451,8 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       [msg1, msg2] = ChatOpenAI.do_process_response(model, response)
       assert %Message{role: :assistant, index: 0} = msg1
       assert %Message{role: :assistant, index: 1} = msg2
-      assert msg1.content == "Greetings!"
-      assert msg2.content == "Howdy!"
+      assert msg1.content == [ContentPart.text!("Greetings!")]
+      assert msg2.content == [ContentPart.text!("Howdy!")]
     end
   end
 
