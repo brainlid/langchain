@@ -13,6 +13,7 @@ Currently supported AI services:
 - Anthropic Claude
 - Google Gemini
 - Google Vertex AI (Google's enterprise offering)
+- Groq
 - Ollama
 - Mistral
 - Bumblebee self-hosted models - including Llama, Mistral and Zephyr
@@ -99,6 +100,7 @@ config :langchain, openai_key: "YOUR SECRET KEY"
 config :langchain, openai_org_id: "YOUR_OPENAI_ORG_ID"
 
 config :langchain, :anthropic_key, System.fetch_env!("ANTHROPIC_API_KEY")
+config :langchain, :groq_api_key, System.fetch_env!("GROQ_API_KEY")
 ```
 
 It's possible to use a function or a tuple to resolve the secret:
@@ -118,6 +120,7 @@ For [fly.io](https://fly.io), adding the secrets looks like this:
 ```
 fly secrets set OPENAI_API_KEY=MyOpenAIApiKey
 fly secrets set ANTHROPIC_API_KEY=MyAnthropicApiKey
+fly secrets set GROQ_API_KEY=MyGroqApiKey
 ```
 
 A list of models to use:
@@ -127,6 +130,7 @@ A list of models to use:
 - [OpenAI models](https://platform.openai.com/docs/models)
 - [OpenAI models on Azure](https://learn.microsoft.com/en-us/azure/ai-services/openai/concepts/models)
 - [Gemini AI models](https://ai.google.dev/gemini-api/docs/models/gemini)
+- [Groq models](https://console.groq.com/docs/models)
 
 ## Prompt caching
 
@@ -258,6 +262,7 @@ mix test --include live_open_ai
 mix test --include live_ollama_ai
 mix test --include live_anthropic
 mix test --include live_mistral_ai
+mix test --include live_groq
 mix test test/tools/calculator_test.exs --include live_call
 ```
 
