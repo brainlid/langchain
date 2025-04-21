@@ -81,7 +81,7 @@ defmodule LangChain.MessageTest do
     test "does not migrate content when it's already a list of ContentPart objects" do
       content_parts = [ContentPart.text!("Hello"), ContentPart.text!(" world")]
       assert {:ok, %Message{} = msg} = Message.new(%{role: :user, content: content_parts})
-      assert content_parts = msg.content
+      assert content_parts == msg.content
     end
 
     test "does not migrate content when it's nil" do
