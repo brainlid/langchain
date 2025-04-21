@@ -6,6 +6,7 @@ defmodule LangChain.Utils.ChatTemplatesTest do
   alias LangChain.Utils.ChatTemplates
   alias LangChain.Message
   alias LangChain.LangChainError
+  alias LangChain.Message.ContentPart
 
   describe "prep_and_validate_messages/1" do
     test "returns 3 item tuple with expected parts" do
@@ -490,7 +491,7 @@ defmodule LangChain.Utils.ChatTemplatesTest do
       ]
 
       format =
-        "<|start_of_template|><%= for message <- @messages do %><%= message.role %>\n<%= message.content %>\n\n<% end %><|end_of_template|>"
+        "<% import LangChain.Message.ContentPart, only: [parts_to_string: 1] %><|start_of_template|><%= for message <- @messages do %><%= message.role %>\n<%= parts_to_string(message.content) %>\n\n<% end %><|end_of_template|>"
 
       template_callback = fn messages, _opts ->
         EEx.eval_string(format,
@@ -935,7 +936,7 @@ defmodule LangChain.Utils.ChatTemplatesTest do
 
       messages = [
         %LangChain.Message{
-          content: "Where is the hairbrush located?",
+          content: [ContentPart.text!("Where is the hairbrush located?")],
           processed_content: nil,
           index: nil,
           status: :complete,
@@ -945,7 +946,7 @@ defmodule LangChain.Utils.ChatTemplatesTest do
           tool_results: nil
         },
         %LangChain.Message{
-          content: "[get_location(thing=\"hairbrush\")]",
+          content: [ContentPart.text!("[get_location(thing=\"hairbrush\")]")],
           processed_content: nil,
           index: nil,
           status: :complete,
