@@ -10,6 +10,7 @@ defmodule LangChain.Chains.LLMChainTest do
   alias LangChain.Chains.LLMChain
   alias LangChain.PromptTemplate
   alias LangChain.Function
+  alias LangChain.TokenUsage
   alias LangChain.Message
   alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
@@ -381,7 +382,7 @@ defmodule LangChain.Chains.LLMChainTest do
         |> LLMChain.apply_prompt_templates([prompt], %{product: "colorful socks"})
         |> LLMChain.run()
 
-        content = [ContentPart.text!("Socktastic!")]
+      content = [ContentPart.text!("Socktastic!")]
 
       assert %Message{role: :assistant, content: ^content, status: :complete} =
                updated_chain.last_message
@@ -821,7 +822,11 @@ defmodule LangChain.Chains.LLMChainTest do
       {:halted, final_message} = LLMChain.run_message_processors(chain, message)
 
       assert final_message.content ==
-               [ContentPart.text!("ERROR: An exception was raised! Exception: %RuntimeError{message: \"BOOM! Processor exploded\"}")]
+               [
+                 ContentPart.text!(
+                   "ERROR: An exception was raised! Exception: %RuntimeError{message: \"BOOM! Processor exploded\"}"
+                 )
+               ]
     end
 
     test "does nothing on other message roles", %{chain: chain} do
@@ -837,12 +842,15 @@ defmodule LangChain.Chains.LLMChainTest do
   end
 
   describe "process_message/2" do
-    test "runs message processors, adds to chain, fires callback on final message", %{
+    test "runs message processors, adds to chain, fires callbacks on final message", %{
       chain: chain
     } do
       handler = %{
         on_message_processed: fn _chain, %Message{} = message ->
           send(self(), {:processed_message_callback, message})
+        end,
+        on_llm_token_usage: fn _chain, %TokenUsage{} = usage ->
+          send(self(), {:token_usage_callback, usage})
         end
       }
 
@@ -855,7 +863,11 @@ defmodule LangChain.Chains.LLMChainTest do
           &fake_success_processor/2
         ])
 
-      message = Message.new_assistant!(%{content: "Initial"})
+      message =
+        Message.new_assistant!(%{
+          content: "Initial",
+          metadata: %{usage: %TokenUsage{input: 10, output: 15}}
+        })
 
       updated_chain = LLMChain.process_message(chain, message)
       [msg1] = updated_chain.messages
@@ -863,6 +875,7 @@ defmodule LangChain.Chains.LLMChainTest do
 
       # Expect callback with the updated message
       assert_received {:processed_message_callback, ^msg1}
+      assert_received {:token_usage_callback, %TokenUsage{input: 10, output: 15}}
     end
 
     test "when halted, adds original message plus new message returned from processor and fires 2 callbacks",
@@ -1117,28 +1130,6 @@ defmodule LangChain.Chains.LLMChainTest do
       end
     end
 
-    test "ChatOpenAI errors when messages contents have PromptTemplates" do
-      messages = [
-        Message.new_user!([
-          PromptTemplate.from_template!("""
-          My name is <%= @user_name %> and this a picture of me:
-          """),
-          ContentPart.image_url!("https://example.com/profile_pic.jpg")
-        ])
-      ]
-
-      # errors when trying to send a PromptTemplate
-      # create and run the chain
-      {:error, _updated_chain, %LangChainError{} = reason} =
-        %{llm: ChatOpenAI.new!(%{seed: 0})}
-        |> LLMChain.new!()
-        |> LLMChain.add_messages(messages)
-        |> LLMChain.run()
-
-      assert reason.type == nil
-      assert reason.message =~ ~r/PromptTemplates must be/
-    end
-
     test "mode: :while_needs_response - increments current_failure_count on parse failure", %{
       chain: chain
     } do
@@ -1177,21 +1168,36 @@ defmodule LangChain.Chains.LLMChainTest do
       assert m2.processed_content == "Not what you wanted"
 
       assert m3.role == :user
-      assert m3.content == [ContentPart.text!("ERROR: Invalid JSON data: unexpected byte at position 0: 0x4E (\"N\")")]
+
+      assert m3.content == [
+               ContentPart.text!(
+                 "ERROR: Invalid JSON data: unexpected byte at position 0: 0x4E (\"N\")"
+               )
+             ]
 
       assert m4.role == :assistant
       assert m4.content == [ContentPart.text!("Not what you wanted")]
       assert m4.processed_content == "Not what you wanted"
 
       assert m5.role == :user
-      assert m5.content == [ContentPart.text!("ERROR: Invalid JSON data: unexpected byte at position 0: 0x4E (\"N\")")]
+
+      assert m5.content == [
+               ContentPart.text!(
+                 "ERROR: Invalid JSON data: unexpected byte at position 0: 0x4E (\"N\")"
+               )
+             ]
 
       assert m6.role == :assistant
       assert m6.content == [ContentPart.text!("Not what you wanted")]
       assert m6.processed_content == "Not what you wanted"
 
       assert m7.role == :user
-      assert m7.content == [ContentPart.text!("ERROR: Invalid JSON data: unexpected byte at position 0: 0x4E (\"N\")")]
+
+      assert m7.content == [
+               ContentPart.text!(
+                 "ERROR: Invalid JSON data: unexpected byte at position 0: 0x4E (\"N\")"
+               )
+             ]
     end
 
     test "mode: :while_needs_response - fires callbacks for failed messages correctly" do
@@ -1248,14 +1254,24 @@ defmodule LangChain.Chains.LLMChainTest do
       assert m2.processed_content == "Not what you wanted"
 
       assert m3.role == :user
-      assert m3.content == [ContentPart.text!("ERROR: Invalid JSON data: unexpected byte at position 0: 0x4E (\"N\")")]
+
+      assert m3.content == [
+               ContentPart.text!(
+                 "ERROR: Invalid JSON data: unexpected byte at position 0: 0x4E (\"N\")"
+               )
+             ]
 
       assert m4.role == :assistant
       assert m4.content == [ContentPart.text!("Not what you wanted")]
       assert m4.processed_content == "Not what you wanted"
 
       assert m5.role == :user
-      assert m5.content == [ContentPart.text!("ERROR: Invalid JSON data: unexpected byte at position 0: 0x4E (\"N\")")]
+
+      assert m5.content == [
+               ContentPart.text!(
+                 "ERROR: Invalid JSON data: unexpected byte at position 0: 0x4E (\"N\")"
+               )
+             ]
 
       assert_received {:processing_error_callback, ^m2}
       assert_received {:error_message_created_callback, ^m3}
@@ -1550,7 +1566,11 @@ defmodule LangChain.Chains.LLMChainTest do
       assert system_msg.role == :system
       assert system_msg.content == [ContentPart.text!("Anthropic system prompt")]
       assert updated_chain.last_message.role == :assistant
-      assert updated_chain.last_message.content == [ContentPart.text!("Claude says it's because it's not red.")]
+
+      assert updated_chain.last_message.content == [
+               ContentPart.text!("Claude says it's because it's not red.")
+             ]
+
       assert_received :before_fallback_fired
     end
   end

@@ -101,6 +101,7 @@ defmodule LangChain.TokenUsage do
   def add(nil, nil), do: nil
   def add(nil, usage), do: usage
   def add(usage, nil), do: usage
+
   def add(%TokenUsage{} = usage1, %TokenUsage{} = usage2) do
     new!(%{
       input: (usage1.input || 0) + (usage2.input || 0),
@@ -134,4 +135,40 @@ defmodule LangChain.TokenUsage do
   @spec get(%{metadata: %{usage: t()}} | %{metadata: map() | nil}) :: t() | nil
   def get(%{metadata: %{usage: %TokenUsage{} = usage}}), do: usage
   def get(_), do: nil
+
+  @doc """
+  Sets the token usage information on a `LangChain.Message` or
+  `LangChain.MessageDelta` struct in the `metadata` under the `:usage` key.
+
+  ## Example
+
+      iex> message = %LangChain.Message{metadata: %{}}
+      iex> token_usage = %LangChain.TokenUsage{input: 10, output: 20}
+      iex> LangChain.TokenUsage.set(message, token_usage)
+      %LangChain.Message{metadata: %{usage: %LangChain.TokenUsage{input: 10, output: 20}}}
+  """
+  @spec set(t() | %{metadata: %{usage: t()}}, nil | t()) :: t() | %{metadata: %{usage: t()}}
+  def set(%{metadata: metadata} = message, %TokenUsage{} = usage) do
+    new_metadata =
+      if metadata == nil do
+        %{usage: usage}
+      else
+        Map.put(metadata, :usage, usage)
+      end
+
+    %{message | metadata: new_metadata}
+  end
+
+  def set(message, _), do: message
+
+  @doc """
+  Sets the token usage information on a `LangChain.Message` or
+  `LangChain.MessageDelta` struct when wrapped in an :ok,:error tuple in the `metadata` under the `:usage` key.
+  """
+  @spec set_wrapped({:ok, %{metadata: nil | map()}}, nil | t()) :: {:ok, %{metadata: %{usage: t()}} | {:error, any()}}
+  def set_wrapped({:ok, message}, usage) do
+    {:ok, set(message, usage)}
+  end
+
+  def set_wrapped(message, _), do: message
 end

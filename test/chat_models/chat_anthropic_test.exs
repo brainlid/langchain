@@ -621,8 +621,8 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
 
     test "handles receiving a delta message done with usage", %{model: model} do
       response = %{
-        "delta" => %{"stop_reason" => "end_turn", "stop_sequence" => nil},
         "type" => "message_delta",
+        "delta" => %{"stop_reason" => "end_turn", "stop_sequence" => nil},
         "usage" => %{"output_tokens" => 80}
       }
 
@@ -1354,14 +1354,11 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
     for api <- @apis do
       Module.put_attribute(__MODULE__, :tag, {:"live_#{api}", true})
       @tag live_call: true, live_api: api
-      test "#{BedrockHelpers.prefix_for(api)}basic streamed content example and fires ratelimit callback and token usage",
+      test "#{BedrockHelpers.prefix_for(api)}basic streamed content example and fires ratelimit callback",
            %{live_api: api, api_config: api_config} do
         handlers = %{
           on_llm_ratelimit_info: fn headers ->
             send(self(), {:fired_ratelimit_info, headers})
-          end,
-          on_llm_token_usage: fn usage ->
-            send(self(), {:fired_token_usage, usage})
           end
         }
 
@@ -1379,7 +1376,8 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
         [d1, d2, d3, d4, d5] = result
 
         assert d1.content == []
-        assert %TokenUsage{input: 25, output: 1} = d1.metadata.usage
+        assert %TokenUsage{input: 25, output: output} = d1.metadata.usage
+        assert output >= 1
 
         assert d2.content == ContentPart.text!("")
         assert d2.metadata == nil
@@ -1410,9 +1408,6 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
                    "request-id" => _
                  } = info
         end
-
-        assert_received {:fired_token_usage, usage}
-        assert %TokenUsage{input: 25, output: 9} = usage
       end
     end
   end

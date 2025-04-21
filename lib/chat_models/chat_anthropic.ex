@@ -40,6 +40,37 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         "request-id" => ["req_1234"]
       }
 
+  ### Token Usage
+
+  Anthropic returns token usage information as part of the response body. The
+  `LangChain.TokenUsage` is added to the `metadata` of the `LangChain.Message`
+  and `LangChain.MessageDelta` structs that are processed under the `:usage`
+  key.
+
+  ```elixir
+  %LangChain.MessageDelta{
+    content: [],
+    status: :incomplete,
+    index: nil,
+    role: :assistant,
+    tool_calls: nil,
+    metadata: %{
+            usage: %LangChain.TokenUsage{
+              input: 55,
+              output: 4,
+              raw: %{
+                "cache_creation_input_tokens" => 0,
+                "cache_read_input_tokens" => 0,
+                "input_tokens" => 55,
+                "output_tokens" => 4
+              }
+            }
+    }
+  }
+  ```
+
+  The `TokenUsage` data is accumulated for `MessageDelta` structs and the final usage information will be on the `LangChain.Message`.
+
   ## Tool Choice
 
   Anthropic supports forcing a tool to be used.
@@ -446,7 +477,6 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
           result ->
             Callbacks.fire(anthropic.callbacks, :on_llm_new_message, [result])
-            Callbacks.fire(anthropic.callbacks, :on_llm_token_usage, [result.metadata.usage])
 
             result
         end
@@ -594,10 +624,10 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       %{
         role: :assistant,
         content: [],
-        status: stop_reason_to_status(stop_reason),
-        metadata: %{usage: get_token_usage(usage)}
+        status: stop_reason_to_status(stop_reason)
       }
       |> Message.new()
+      |> TokenUsage.set_wrapped(get_token_usage(usage))
       |> to_response()
 
     # reduce over the contents and accumulate to the message
@@ -618,10 +648,10 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     %{
       role: role,
       content: content,
-      status: :incomplete,
-      metadata: %{usage: get_token_usage(usage)}
+      status: :incomplete
     }
     |> MessageDelta.new()
+    |> TokenUsage.set_wrapped(get_token_usage(usage))
     |> to_response()
   end
 
@@ -782,23 +812,20 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   # end
 
   def do_process_response(
-        model,
+        _model,
         %{
           "type" => "message_delta",
           "delta" => %{"stop_reason" => stop_reason},
           "usage" => usage
         } = _data
       ) do
-    # if we received usage data, fire any callbacks for it.
-    Callbacks.fire(model.callbacks, :on_llm_token_usage, [get_token_usage(usage)])
-
     %{
       role: :assistant,
       content: nil,
-      status: stop_reason_to_status(stop_reason),
-      metadata: %{usage: get_token_usage(usage)}
+      status: stop_reason_to_status(stop_reason)
     }
     |> MessageDelta.new()
+    |> TokenUsage.set_wrapped(get_token_usage(usage))
     |> to_response()
   end
 

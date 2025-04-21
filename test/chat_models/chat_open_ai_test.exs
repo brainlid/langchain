@@ -717,22 +717,26 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       handlers = %{
         on_llm_ratelimit_info: fn headers ->
           send(self(), {:fired_ratelimit_info, headers})
-        end,
-        on_llm_token_usage: fn usage ->
-          send(self(), {:fired_token_usage, usage})
         end
       }
 
       # https://js.langchain.com/docs/modules/models/chat/
       {:ok, chat} =
-        ChatOpenAI.new(%{temperature: 1, seed: 0, stream: false})
+        ChatOpenAI.new(%{
+          temperature: 1,
+          seed: 0,
+          stream: false,
+          verbose_api: true
+        })
 
       chat = %ChatOpenAI{chat | callbacks: [handlers]}
 
-      {:ok, [%Message{role: :assistant, content: response}]} =
+      {:ok, [%Message{role: :assistant, content: response} = message]} =
         ChatOpenAI.call(chat, [
           Message.new_user!("Return the response 'Colorful Threads'.")
         ])
+
+      IO.inspect(message, label: "MESSAGE")
 
       assert [%ContentPart{}] = response
       assert ContentPart.parts_to_string(response) =~ "Colorful Threads"
@@ -748,9 +752,6 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
                "x-ratelimit-reset-tokens" => _,
                "x-request-id" => _
              } = info
-
-      assert_received {:fired_token_usage, usage}
-      assert %TokenUsage{} = usage
     end
 
     @tag live_call: true, live_open_ai: true
@@ -1155,6 +1156,65 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert struct.role == :assistant
       assert struct.content == [ContentPart.text!("Greetings!")]
       assert struct.index == 1
+      assert struct.metadata == nil
+    end
+
+    test "handles receiving a message with token usage information", %{model: model} do
+      response = %{
+        "choices" => [
+          %{
+            "finish_reason" => "stop",
+            "index" => 0,
+            "logprobs" => nil,
+            "message" => %{
+              "annotations" => [],
+              "content" => "Colorful Threads",
+              "refusal" => nil,
+              "role" => "assistant"
+            }
+          }
+        ],
+        "created" => 1_745_192_205,
+        "id" => "chatcmpl-BOYVJArISYBhZWbEoLVBNu0DOamHi",
+        "model" => "gpt-3.5-turbo-0125",
+        "object" => "chat.completion",
+        "service_tier" => "default",
+        "system_fingerprint" => nil,
+        "usage" => %{
+          "completion_tokens" => 4,
+          "completion_tokens_details" => %{
+            "accepted_prediction_tokens" => 0,
+            "audio_tokens" => 0,
+            "reasoning_tokens" => 0,
+            "rejected_prediction_tokens" => 0
+          },
+          "prompt_tokens" => 15,
+          "prompt_tokens_details" => %{"audio_tokens" => 0, "cached_tokens" => 0},
+          "total_tokens" => 19
+        }
+      }
+
+      assert [%Message{} = struct] = ChatOpenAI.do_process_response(model, response)
+      assert struct.role == :assistant
+      assert struct.content == [ContentPart.text!("Colorful Threads")]
+      assert struct.index == 0
+      # token usage attached to metadata
+      %TokenUsage{} = usage = struct.metadata.usage
+      assert usage.input == 15
+      assert usage.output == 4
+
+      assert usage.raw == %{
+               "completion_tokens" => 4,
+               "completion_tokens_details" => %{
+                 "accepted_prediction_tokens" => 0,
+                 "audio_tokens" => 0,
+                 "reasoning_tokens" => 0,
+                 "rejected_prediction_tokens" => 0
+               },
+               "prompt_tokens" => 15,
+               "prompt_tokens_details" => %{"audio_tokens" => 0, "cached_tokens" => 0},
+               "total_tokens" => 19
+             }
     end
 
     test "handles receiving a single tool_calls message", %{model: model} do

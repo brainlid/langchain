@@ -42,37 +42,32 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
   ### Token Usage
 
-  OpenAI returns token usage information as part of the response body. That data
-  can be accessed using the LLM callback `on_llm_token_usage` like this:
-
-      handlers = %{
-        on_llm_token_usage: fn _model, usage ->
-          IO.inspect(usage)
-        end
-      }
-
-      {:ok, chat} = ChatOpenAI.new(%{
-        callbacks: [handlers],
-        stream: true,
-        stream_options: %{include_usage: true}
-      })
-
-  When a request is received, something similar to the following will be output
-  to the console.
-
-      %LangChain.TokenUsage{input: 15, output: 3}
+  OpenAI returns token usage information as part of the response body. The
+  `LangChain.TokenUsage` is added to the `metadata` of the `LangChain.Message`
+  and `LangChain.MessageDelta` structs that are processed under the `:usage`
+  key.
 
   The OpenAI documentation instructs to provide the `stream_options` with the
   `include_usage: true` for the information to be provided.
+
+  The `TokenUsage` data is accumulated for `MessageDelta` structs and the final usage information will be on the `LangChain.Message`.
+
+  NOTE: Of special note is that the `TokenUsage` information is returned once
+  for all "choices" in the response. The `LangChain.TokenUsage` data is added to
+  each message, but if your usage requests multiple choices, you will see the
+  same usage information for each choice but it is duplicated and only one
+  response is meaningful.
 
   ## Tool Choice
 
   OpenAI's ChatGPT API supports forcing a tool to be used.
   - https://platform.openai.com/docs/api-reference/chat/create#chat-create-tool_choice
 
-  This is supported through the `tool_choice` options. It takes a plain Elixir map to provide the configuration.
+  This is supported through the `tool_choice` options. It takes a plain Elixir
+  map to provide the configuration.
 
-  By default, the LLM will choose a tool call if a tool is available and it determines it is needed. That's the "auto" mode.
+  By default, the LLM will choose a tool call if a tool is available and it
+  determines it is needed. That's the "auto" mode.
 
   ### Example
   For the LLM's response to make a tool call of the "get_weather" function.
@@ -84,11 +79,19 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
   ## Azure OpenAI Support
 
-  To use `ChatOpenAI` with Microsoft's Azure hosted OpenAI models, the `endpoint` must be overridden and the API key needs to be provided in some way. The [MS Quickstart guide for REST access](https://learn.microsoft.com/en-us/azure/ai-services/openai/chatgpt-quickstart?tabs=command-line%2Cjavascript-keyless%2Ctypescript-keyless%2Cpython-new&pivots=rest-api) may be helpful.
+  To use `ChatOpenAI` with Microsoft's Azure hosted OpenAI models, the
+  `endpoint` must be overridden and the API key needs to be provided in some
+  way. The [MS Quickstart guide for REST
+  access](https://learn.microsoft.com/en-us/azure/ai-services/openai/chatgpt-quickstart?tabs=command-line%2Cjavascript-keyless%2Ctypescript-keyless%2Cpython-new&pivots=rest-api)
+  may be helpful.
 
-  In order to use it, you must have an Azure account and from the console, a model must be deployed for your account. Use the Azure AI Foundry and Azure OpenAI Service to deploy the model you want to use. The entire URL is used as the `endpoint` and the provided `key` is used as the `api_key`.
+  In order to use it, you must have an Azure account and from the console, a
+  model must be deployed for your account. Use the Azure AI Foundry and Azure
+  OpenAI Service to deploy the model you want to use. The entire URL is used as
+  the `endpoint` and the provided `key` is used as the `api_key`.
 
-  The following is an example of setting up `ChatOpenAI` for use with an Azure hosted model.
+  The following is an example of setting up `ChatOpenAI` for use with an Azure
+  hosted model.
 
       endpoint = System.fetch_env!("AZURE_OPENAI_ENDPOINT")
       api_key = System.fetch_env!("AZURE_OPENAI_KEY")
@@ -102,7 +105,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           stream: false
         })
 
-  The URL itself specifies the model to use and the `model` attribute is disregarded.
+  The URL itself specifies the model to use and the `model` attribute is
+  disregarded.
 
   A fake example URL for the endpoint value:
 
@@ -110,7 +114,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
   ## Reasoning Model Support
 
-  OpenAI made some significant API changes with the introduction of their "reasoning" models. This includes the `o1` and `o1-mini` models.
+  OpenAI made some significant API changes with the introduction of their
+  "reasoning" models. This includes the `o1` and `o1-mini` models.
 
   To enable this mode, set `:reasoning_mode` to `true`:
 
@@ -118,8 +123,15 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
   Setting `reasoning_mode` to `true` does at least the two following things:
 
-  - Set `:developer` as the `role` for system messages. The OpenAI documentation says API calls to `o1` and newer models must use the `role: :developer` instead of `role: :system` and errors if not set correctly.
-  - The `:reasoning_effort` option included in LLM requests. This setting is only permitted on a reasoning model. The `:reasoning_effort` values support the "low", "medium" (default), and "high" options specified in the OpenAI documentation. This instructs the LLM on how much time, and tokens, should be spent on thinking through and reasoning about the request and the response.
+  - Set `:developer` as the `role` for system messages. The OpenAI documentation
+    says API calls to `o1` and newer models must use the `role: :developer`
+    instead of `role: :system` and errors if not set correctly.
+  - The `:reasoning_effort` option included in LLM requests. This setting is
+    only permitted on a reasoning model. The `:reasoning_effort` values support
+    the "low", "medium" (default), and "high" options specified in the OpenAI
+    documentation. This instructs the LLM on how much time, and tokens, should
+    be spent on thinking through and reasoning about the request and the
+    response.
   """
   use Ecto.Schema
   require Logger
@@ -400,7 +412,6 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           | Function.t()
         ) ::
           %{String.t() => any()} | [%{String.t() => any()}]
-          # TODO: REmove this function or repurpose it to handle ContentParts. Combined with tool_calls? It can possibly work for both :user and :assistant messages.
   def for_api(%_{} = model, %Message{content: content} = msg) when is_list(content) do
     role = get_message_role(model, msg.role)
 
@@ -683,10 +694,6 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           get_ratelimit_info(response.headers)
         ])
 
-        Callbacks.fire(openai.callbacks, :on_llm_token_usage, [
-          get_token_usage(data)
-        ])
-
         case do_process_response(openai, data) do
           {:error, %LangChainError{} = reason} ->
             {:error, reason}
@@ -837,27 +844,13 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           | MessageDelta.t()
           | [MessageDelta.t()]
           | {:error, String.t()}
-  def do_process_response(model, %{"choices" => [], "usage" => %{} = _usage} = data) do
-    case get_token_usage(data) do
-      %TokenUsage{} = token_usage ->
-        Callbacks.fire(model.callbacks, :on_llm_token_usage, [token_usage])
-        :ok
-
-      nil ->
-        :ok
-    end
-
-    # this stand-alone TokenUsage message is skipped and not returned
-    :skip
-  end
-
   def do_process_response(_model, %{"choices" => []}), do: :skip
 
-  def do_process_response(model, %{"choices" => choices} = _data) when is_list(choices) do
+  def do_process_response(model, %{"choices" => choices} = data) when is_list(choices) do
     # process each response individually. Return a list of all processed choices
-    for choice <- choices do
-      do_process_response(model, choice)
-    end
+    choices
+    |> Enum.map(&do_process_response(model, &1))
+    |> Enum.map(&TokenUsage.set(&1, get_token_usage(data)))
   end
 
   # Full message with tool call

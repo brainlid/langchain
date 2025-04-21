@@ -3,6 +3,8 @@ defmodule LangChain.TokenUsageTest do
   doctest LangChain.TokenUsage, import: true
 
   alias LangChain.TokenUsage
+  alias LangChain.Message
+  alias LangChain.MessageDelta
 
   describe "new/1" do
     test "accepts valid data" do
@@ -64,26 +66,29 @@ defmodule LangChain.TokenUsageTest do
     end
 
     test "merges raw values correctly" do
-      usage1 = TokenUsage.new!(%{
-        input: 55,
-        output: 4,
-        raw: %{
-          "cache_creation_input_tokens" => 0,
-          "cache_read_input_tokens" => 0,
-          "input_tokens" => 55,
-          "output_tokens" => 4
-        }
-      })
-      usage2 = TokenUsage.new!(%{
-        input: 30,
-        output: 2,
-        raw: %{
-          "cache_creation_input_tokens" => 10,
-          "cache_read_input_tokens" => 5,
-          "input_tokens" => 30,
-          "output_tokens" => 2
-        }
-      })
+      usage1 =
+        TokenUsage.new!(%{
+          input: 55,
+          output: 4,
+          raw: %{
+            "cache_creation_input_tokens" => 0,
+            "cache_read_input_tokens" => 0,
+            "input_tokens" => 55,
+            "output_tokens" => 4
+          }
+        })
+
+      usage2 =
+        TokenUsage.new!(%{
+          input: 30,
+          output: 2,
+          raw: %{
+            "cache_creation_input_tokens" => 10,
+            "cache_read_input_tokens" => 5,
+            "input_tokens" => 30,
+            "output_tokens" => 2
+          }
+        })
 
       combined = TokenUsage.add(usage1, usage2)
 
@@ -114,7 +119,7 @@ defmodule LangChain.TokenUsageTest do
 
     test "extracts token usage from message delta metadata" do
       usage = TokenUsage.new!(%{input: 10, output: 20})
-      delta = %LangChain.MessageDelta{metadata: %{usage: usage}}
+      delta = %MessageDelta{metadata: %{usage: usage}}
 
       assert TokenUsage.get(delta) == usage
     end
@@ -133,6 +138,71 @@ defmodule LangChain.TokenUsageTest do
       assert TokenUsage.get(%{}) == nil
       assert TokenUsage.get(%{metadata: %{}}) == nil
       assert TokenUsage.get(%{metadata: %{usage: "not a token usage"}}) == nil
+    end
+  end
+
+  describe "set/2" do
+    test "sets the token usage on a message" do
+      message = %Message{metadata: %{}}
+      token_usage = %TokenUsage{input: 10, output: 20}
+
+      assert TokenUsage.set(message, token_usage) == %Message{
+               metadata: %{usage: token_usage}
+             }
+    end
+
+    test "sets the token usage on a message delta" do
+      delta = %MessageDelta{metadata: %{}}
+      token_usage = %TokenUsage{input: 10, output: 20}
+
+      assert TokenUsage.set(delta, token_usage) == %MessageDelta{
+               metadata: %{usage: token_usage}
+             }
+    end
+
+    test "handles when metadata is nil" do
+      message = %Message{metadata: nil}
+      token_usage = %TokenUsage{input: 10, output: 20}
+
+      assert TokenUsage.set(message, token_usage) == %Message{
+               metadata: %{usage: token_usage}
+             }
+
+      #  works on message delta too
+      message = %MessageDelta{metadata: nil}
+      token_usage = %TokenUsage{input: 10, output: 20}
+
+      assert TokenUsage.set(message, token_usage) == %MessageDelta{
+               metadata: %{usage: token_usage}
+             }
+    end
+
+    test "when no TokenUsage information, returns the original struct" do
+      message = %Message{metadata: %{}}
+      assert TokenUsage.set(message, nil) == message
+    end
+
+    test "doesn't alter any other existing metadata when setting token usage" do
+      message = %Message{metadata: %{other: "metadata"}}
+
+      assert TokenUsage.set(message, %TokenUsage{input: 10, output: 20}) == %Message{
+               metadata: %{other: "metadata", usage: %TokenUsage{input: 10, output: 20}}
+             }
+    end
+  end
+
+  describe "set_wrapped/2" do
+    test "works on :ok wrapped structs when setting token usage" do
+      message = {:ok, %Message{metadata: %{}}}
+
+      assert TokenUsage.set_wrapped(message, %TokenUsage{input: 10, output: 20}) == {:ok, %Message{
+               metadata: %{usage: %TokenUsage{input: 10, output: 20}}
+             }}
+    end
+
+    test "works on :error wrapped structs when setting token usage" do
+      message = {:error, %{}}
+      assert TokenUsage.set_wrapped(message, %TokenUsage{input: 10, output: 20}) == {:error, %{}}
     end
   end
 end

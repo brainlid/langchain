@@ -132,6 +132,7 @@ defmodule LangChain.Chains.LLMChain do
   alias LangChain.Message.ToolResult
   alias LangChain.MessageDelta
   alias LangChain.Function
+  alias LangChain.TokenUsage
   alias LangChain.LangChainError
   alias LangChain.Utils
   alias LangChain.NativeTool
@@ -779,6 +780,7 @@ defmodule LangChain.Chains.LLMChain do
         |> add_message(updated_message)
         |> reset_current_failure_count_if(fn -> !Message.is_tool_related?(updated_message) end)
         |> fire_callback_and_return(:on_message_processed, [updated_message])
+        |> fire_usage_callback_and_return(:on_llm_token_usage, [updated_message])
     end
   end
 
@@ -1068,6 +1070,19 @@ defmodule LangChain.Chains.LLMChain do
     Callbacks.fire(chain.callbacks, callback_name, [chain] ++ additional_arguments)
     chain
   end
+
+  # fire token usage callback in a pipe-friendly function
+  defp fire_usage_callback_and_return(
+         %LLMChain{} = chain,
+         callback_name,
+         [%{metadata: %{usage: %TokenUsage{} = usage}}]
+       ) do
+    Callbacks.fire(chain.callbacks, callback_name, [chain, usage])
+    chain
+  end
+
+  defp fire_usage_callback_and_return(%LLMChain{} = chain, _callback_name, _additional_arguments),
+    do: chain
 
   defp clear_exchanged_messages(%LLMChain{} = chain) do
     %LLMChain{chain | exchanged_messages: []}
