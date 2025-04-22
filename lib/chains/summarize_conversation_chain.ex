@@ -81,6 +81,7 @@ defmodule LangChain.Chains.SummarizeConversationChain do
   alias LangChain.LangChainError
   alias LangChain.Utils
   alias LangChain.Utils.ChainResult
+  alias LangChain.Message.ContentPart
 
   @primary_key false
   embedded_schema do
@@ -359,10 +360,12 @@ defmodule LangChain.Chains.SummarizeConversationChain do
     "<tool>Tool results\n#{text_results}</tool>"
   end
 
-  def for_summary_text(%Message{content: content, tool_calls: []} = message)
-      when is_binary(content) do
+  # Handle ContentPart messages
+  def for_summary_text(%Message{role: role, content: content_parts} = _message)
+      when is_list(content_parts) do
+
     tag =
-      case message.role do
+      case role do
         :user ->
           "user"
 
@@ -370,12 +373,6 @@ defmodule LangChain.Chains.SummarizeConversationChain do
           "AI"
       end
 
-    "<#{tag}>#{remove_xml_tags(content)}</#{tag}>"
-  end
-
-  # Handle ContentPart messages
-  def for_summary_text(%Message{role: :user, content: content_parts} = _message)
-      when is_list(content_parts) do
     parts_text =
       content_parts
       |> Enum.map(fn %ContentPart{} = part ->
@@ -388,12 +385,15 @@ defmodule LangChain.Chains.SummarizeConversationChain do
 
           :image ->
             "(Omitted image data)"
+
+          _other ->
+            ""
         end
       end)
       |> Enum.join("\n")
       |> remove_xml_tags()
 
-    "<user>#{parts_text}</user>"
+    "<#{tag}>#{parts_text}</#{tag}>"
   end
 
   def for_summary_text(%Message{role: :assistant, tool_calls: calls} = _message)
