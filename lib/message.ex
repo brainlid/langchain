@@ -387,7 +387,11 @@ defmodule LangChain.Message do
   Create a new assistant message which represents a response from the AI or LLM.
   """
   @spec new_assistant(attrs :: map()) :: {:ok, t()} | {:error, Ecto.Changeset.t()}
-  def new_assistant(attrs \\ %{}) do
+  def new_assistant(attrs) when is_list(attrs) do
+    new(%{role: :assistant, content: attrs})
+  end
+
+  def new_assistant(attrs) when is_map(attrs) do
     attrs
     |> Map.put(:role, :assistant)
     |> new()
@@ -395,14 +399,45 @@ defmodule LangChain.Message do
 
   @doc """
   Create a new assistant message which represents a response from the AI or LLM.
+
+  ## Examples
+
+      # Create a simple text message
+      iex> new_assistant!("I'll help you with that.")
+      %LangChain.Message{role: :assistant, content: [LangChain.Message.ContentPart.text!("I'll help you with that.")], tool_calls: []}
+
+      # Create with content parts
+      iex> new_assistant!([
+      ...>   LangChain.Message.ContentPart.text!("Here's my response"),
+      ...>   LangChain.Message.ContentPart.text!("And some additional thoughts")
+      ...> ])
+      %LangChain.Message{role: :assistant, content: [%LangChain.Message.ContentPart{content: "Here's my response"}, %LangChain.Message.ContentPart{content: "And some additional thoughts"}], tool_calls: []}
+
+      # Create with tool calls
+      iex> new_assistant!(%{
+      ...>   tool_calls: [
+      ...>     LangChain.Message.ToolCall.new!(%{call_id: "1", name: "calculator", arguments: %{x: 2, y: 3}})
+      ...>   ]
+      ...> })
+      %LangChain.Message{role: :assistant, tool_calls: [%LangChain.Message.ToolCall{call_id: "1", name: "calculator", arguments: %{x: 2, y: 3}, status: :complete}]}
   """
-  @spec new_assistant!(String.t() | map()) :: t() | no_return()
+  @spec new_assistant!(String.t() | map() | [ContentPart.t()]) :: t() | no_return()
   def new_assistant!(content) when is_binary(content) do
-    new_assistant!(%{content: content})
+    new_assistant!(%{content: [ContentPart.text!(content)]})
   end
 
   def new_assistant!(attrs) when is_map(attrs) do
     case new_assistant(attrs) do
+      {:ok, msg} ->
+        msg
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        raise LangChainError, changeset
+    end
+  end
+
+  def new_assistant!(content) when is_list(content) do
+    case new_assistant(%{content: content}) do
       {:ok, msg} ->
         msg
 
