@@ -1130,7 +1130,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
   describe "do_process_response/2" do
     setup do
-      model = ChatOpenAI.new(%{"model" => @test_model})
+      {:ok, model} = ChatOpenAI.new(%{"model" => @test_model})
       %{model: model}
     end
 
@@ -1464,6 +1464,47 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert %Message{role: :assistant, index: 1} = msg2
       assert msg1.content == "Greetings!"
       assert msg2.content == "Howdy!"
+    end
+
+    test "handles choices and usage data in the same chunk (DeepSeek's format)", %{model: model} do
+      handlers = %{
+        on_llm_token_usage: fn usage ->
+          send(self(), {:fired_token_usage, usage})
+        end
+      }
+
+      model = %{model | callbacks: [handlers]}
+
+      response = %{
+        "choices" => [
+          %{
+            "index" => 0,
+            "delta" => %{
+              "content" => ""
+            },
+            "logprobs" => nil,
+            "finish_reason" => "stop"
+          }
+        ],
+        "usage" => %{
+          "prompt_tokens" => 11,
+          "completion_tokens" => 12,
+          "total_tokens" => 22,
+          "prompt_tokens_details" => %{
+            "cached_tokens" => 0
+          },
+          "prompt_cache_hit_tokens" => 0,
+          "prompt_cache_miss_tokens" => 11
+        }
+      }
+
+      [msg_delta] = ChatOpenAI.do_process_response(model, response)
+      assert %MessageDelta{} = msg_delta
+      assert msg_delta.role == :unknown
+      assert msg_delta.index == 0
+
+      assert_received {:fired_token_usage, usage}
+      assert %TokenUsage{input: 11, output: 12} = usage
     end
   end
 
