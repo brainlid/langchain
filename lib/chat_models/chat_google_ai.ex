@@ -101,6 +101,16 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     # selected using temperature sampling.
     field :top_k, :float, default: 1.0
 
+    # Used when working with a hybrid thinking model like `gemini-2.5-flash` and newer.
+    # This setting is required when working with those models as the API behavior needs to
+    # change.
+    field :thinking_mode, :boolean, default: false
+
+    # thinking models only
+    #
+    # The number of thinking tokens it can use when generating a response
+    field :thinking_budget, :integer, default: 0
+
     # Duration in seconds for the response to be received. When streaming a very
     # lengthy response, a longer time limit may be required. However, when it
     # goes on too long by itself, it tends to hallucinate more.
@@ -130,6 +140,8 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     :temperature,
     :top_p,
     :top_k,
+    :thinking_mode,
+    :thinking_budget,
     :receive_timeout,
     :json_response,
     :json_schema,
@@ -214,6 +226,10 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
       }
       |> Utils.conditionally_add_to_map("response_mime_type", response_mime_type)
       |> Utils.conditionally_add_to_map("response_schema", response_schema)
+      |> Utils.conditionally_add_to_map(
+        "thinkingConfig",
+        if(google_ai.thinking_mode, do: %{"thinkingBudget" => google_ai.thinking_budget})
+      )
 
     req =
       %{
