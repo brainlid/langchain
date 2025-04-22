@@ -115,6 +115,33 @@ defmodule ChatModels.ChatVertexAITest do
              } = msg1
     end
 
+    test "support file_url", %{vertex_ai: google_ai} do
+      message =
+        Message.new_user!([
+          ContentPart.text!("User prompt"),
+          ContentPart.file_url!("example.com/test.pdf", media: "application/pdf")
+        ])
+
+      data = ChatVertexAI.for_api(google_ai, [message], [])
+
+      assert %{
+               "contents" => [
+                 %{
+                   "parts" => [
+                     %{"text" => "User prompt"},
+                     %{
+                       "file_data" => %{
+                         "file_uri" => "example.com/test.pdf",
+                         "mime_type" => "application/pdf"
+                       }
+                     }
+                   ],
+                   "role" => :user
+                 }
+               ]
+             } = data
+    end
+
     test "generates a map containing user and assistant messages", %{vertex_ai: vertex_ai} do
       user_message = "Hello Assistant!"
       assistant_message = "Hello User!"
