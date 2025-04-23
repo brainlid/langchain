@@ -9,6 +9,52 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
   - https://github.com/openai/openai-cookbook/blob/main/examples/How_to_call_functions_with_chat_models.ipynb
 
+  ## ContentPart Types
+
+  OpenAI supports several types of content parts that can be combined in a single message:
+
+  ### Text Content
+  Basic text content is the default and most common type:
+
+      Message.new_user!("Hello, how are you?")
+
+  ### Image Content
+  OpenAI supports both base64-encoded images and image URLs:
+
+      # Using a base64 encoded image
+      Message.new_user!([
+        ContentPart.text!("What's in this image?"),
+        ContentPart.image!("base64_encoded_image_data", media: :jpg)
+      ])
+
+      # Using an image URL
+      Message.new_user!([
+        ContentPart.text!("Describe this image:"),
+        ContentPart.image_url!("https://example.com/image.jpg")
+      ])
+
+  For images, you can specify the detail level which affects token usage:
+  - `detail: "low"` - Lower resolution, fewer tokens
+  - `detail: "high"` - Higher resolution, more tokens
+  - `detail: "auto"` - Let the model decide
+
+  ### File Content
+  OpenAI supports both base64-encoded files and file IDs:
+
+      # Using a base64 encoded file
+      Message.new_user!([
+        ContentPart.text!("Process this file:"),
+        ContentPart.file!("base64_encoded_file_data",
+          type: :base64,
+          filename: "document.pdf"
+        )
+      ])
+
+      # Using a file ID (after uploading to OpenAI)
+      Message.new_user!([
+        ContentPart.text!("Process this file:"),
+        ContentPart.file!("file-1234", type: :file_id)
+      ])
 
   ## Callbacks
 
