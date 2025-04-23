@@ -174,10 +174,12 @@ defmodule LangChain.Chains.LLMChain do
   alias LangChain.PromptTemplate
   alias __MODULE__
   alias LangChain.Message
+  alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult
   alias LangChain.MessageDelta
   alias LangChain.Function
+  alias LangChain.TokenUsage
   alias LangChain.LangChainError
   alias LangChain.Utils
   alias LangChain.NativeTool
@@ -239,16 +241,28 @@ defmodule LangChain.Chains.LLMChain do
 
   @typedoc """
   The expected return types for a Message processor function. When successful,
-  it returns a `:continue` with an Message to use as a replacement. When it
+  it returns a `:cont` with an Message to use as a replacement. When it
   fails, a `:halt` is returned along with an updated `LLMChain.t()` and a new
   user message to be returned to the LLM reporting the error.
   """
-  @type processor_return :: {:continue, Message.t()} | {:halt, t(), Message.t()}
+  @type processor_return :: {:cont, Message.t()} | {:halt, t(), Message.t()}
 
   @typedoc """
-  A message processor is an arity 2 function that takes an LLMChain and a
-  Message. It is used to "pre-process" the received message from the LLM.
-  Processors can be chained together to perform a sequence of transformations.
+  A message processor is an arity 2 function that takes an
+  `LangChain.Chains.LLMChain` and a `LangChain.Message`. It is used to
+  "pre-process" the received message from the LLM. Processors can be chained
+  together to perform a sequence of transformations.
+
+  The return of the processor is a tuple with a keyword and a message. The
+  keyword is either `:cont` or `:halt`. If `:cont` is returned, the
+  message is used as the next message in the chain. If `:halt` is returned, the
+  halting message is returned to the LLM as an error and no further processors
+  will handle the message.
+
+  An example of this is the `LangChain.MessageProcessors.JsonProcessor` which
+  parses the message content as JSON and returns the parsed data as a map. If
+  the content is not valid JSON, the processor returns a halting message with an
+  error message for the LLM to respond to.
   """
   @type message_processor :: (t(), Message.t() -> processor_return())
 
@@ -333,7 +347,7 @@ defmodule LangChain.Chains.LLMChain do
   end
 
   @doc """
-  Register a set of processors to on received assistant messages.
+  Register a set of processors to be applied to received assistant messages.
   """
   @spec message_processors(t(), [message_processor()]) :: t()
   def message_processors(%LLMChain{} = chain, processors) do
@@ -820,12 +834,8 @@ defmodule LangChain.Chains.LLMChain do
   `last_message` and list of messages are updated.
   """
   @spec apply_delta(t(), MessageDelta.t() | {:error, LangChainError.t()}) :: t()
-  def apply_delta(%LLMChain{delta: nil} = chain, %MessageDelta{} = new_delta) do
-    %LLMChain{chain | delta: new_delta}
-  end
-
-  def apply_delta(%LLMChain{delta: %MessageDelta{} = delta} = chain, %MessageDelta{} = new_delta) do
-    merged = MessageDelta.merge_delta(delta, new_delta)
+  def apply_delta(%LLMChain{} = chain, %MessageDelta{} = new_delta) do
+    merged = MessageDelta.merge_delta(chain.delta, new_delta)
     delta_to_message_when_complete(%LLMChain{chain | delta: merged})
   end
 
@@ -881,8 +891,8 @@ defmodule LangChain.Chains.LLMChain do
         %Message{role: :assistant} = message
       )
       when is_list(processors) and processors != [] do
-    # start `processed_content` with the message's content
-    message = %Message{message | processed_content: message.content}
+    # start `processed_content` with the message's content as a string
+    message = %Message{message | processed_content: ContentPart.parts_to_string(message.content)}
 
     processors
     |> Enum.reduce_while(message, fn proc, m = _acc ->
@@ -944,6 +954,7 @@ defmodule LangChain.Chains.LLMChain do
         |> add_message(updated_message)
         |> reset_current_failure_count_if(fn -> !Message.is_tool_related?(updated_message) end)
         |> fire_callback_and_return(:on_message_processed, [updated_message])
+        |> fire_usage_callback_and_return(:on_llm_token_usage, [updated_message])
     end
   end
 
@@ -1241,6 +1252,19 @@ defmodule LangChain.Chains.LLMChain do
     Callbacks.fire(chain.callbacks, callback_name, [chain] ++ additional_arguments)
     chain
   end
+
+  # fire token usage callback in a pipe-friendly function
+  defp fire_usage_callback_and_return(
+         %LLMChain{} = chain,
+         callback_name,
+         [%{metadata: %{usage: %TokenUsage{} = usage}}]
+       ) do
+    Callbacks.fire(chain.callbacks, callback_name, [chain, usage])
+    chain
+  end
+
+  defp fire_usage_callback_and_return(%LLMChain{} = chain, _callback_name, _additional_arguments),
+    do: chain
 
   defp clear_exchanged_messages(%LLMChain{} = chain) do
     %LLMChain{chain | exchanged_messages: []}

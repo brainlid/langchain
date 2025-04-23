@@ -2,6 +2,7 @@ defmodule LangChain.MessageProcessors.JsonProcessorTest do
   use LangChain.BaseCase
   alias LangChain.Chains.LLMChain
   alias LangChain.Message
+  alias LangChain.Message.ContentPart
   alias LangChain.ChatModels.ChatOpenAI
   alias LangChain.MessageProcessors.JsonProcessor
 
@@ -73,7 +74,11 @@ defmodule LangChain.MessageProcessors.JsonProcessorTest do
       assert returned_message.role == :user
 
       assert returned_message.content ==
-               "ERROR: Invalid JSON data: unexpected end of input at position 33"
+               [
+                 ContentPart.text!(
+                   "ERROR: Invalid JSON data: unexpected end of input at position 33"
+                 )
+               ]
     end
   end
 
@@ -163,7 +168,7 @@ defmodule LangChain.MessageProcessors.JsonProcessorTest do
 
       # json is extracted and converted to a map
       assert returned_message.role == :user
-      assert returned_message.content == "ERROR: No JSON found"
+      assert returned_message.content == [ContentPart.text!("ERROR: No JSON found")]
     end
 
     test "halts when JSON content does not parse", %{chain: chain} do
@@ -177,7 +182,11 @@ defmodule LangChain.MessageProcessors.JsonProcessorTest do
       assert returned_message.role == :user
 
       assert returned_message.content ==
-               "ERROR: Invalid JSON data: unexpected end of input at position 9"
+               [
+                 ContentPart.text!(
+                   "ERROR: Invalid JSON data: unexpected end of input at position 9"
+                 )
+               ]
     end
   end
 end

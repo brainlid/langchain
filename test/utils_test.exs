@@ -3,6 +3,7 @@ defmodule LangChain.UtilsTest do
 
   doctest LangChain.Utils
   alias LangChain.Message
+  alias LangChain.Message.ContentPart
   alias LangChain.ChatModels.ChatOpenAI
   alias LangChain.Utils
   alias LangChain.Chains.LLMChain
@@ -221,7 +222,7 @@ defmodule LangChain.UtilsTest do
 
       assert rest == non_system
       assert new_system.role == :system
-      assert new_system.content == "System B"
+      assert new_system.content == [ContentPart.text!("System B")]
     end
 
     test "handles when no existing system message" do
@@ -235,7 +236,7 @@ defmodule LangChain.UtilsTest do
 
       assert rest == non_system
       assert new_system.role == :system
-      assert new_system.content == "System B"
+      assert new_system.content == [ContentPart.text!("System B")]
     end
   end
 

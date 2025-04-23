@@ -40,6 +40,37 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         "request-id" => ["req_1234"]
       }
 
+  ### Token Usage
+
+  Anthropic returns token usage information as part of the response body. The
+  `LangChain.TokenUsage` is added to the `metadata` of the `LangChain.Message`
+  and `LangChain.MessageDelta` structs that are processed under the `:usage`
+  key.
+
+  ```elixir
+  %LangChain.MessageDelta{
+    content: [],
+    status: :incomplete,
+    index: nil,
+    role: :assistant,
+    tool_calls: nil,
+    metadata: %{
+            usage: %LangChain.TokenUsage{
+              input: 55,
+              output: 4,
+              raw: %{
+                "cache_creation_input_tokens" => 0,
+                "cache_read_input_tokens" => 0,
+                "input_tokens" => 55,
+                "output_tokens" => 4
+              }
+            }
+    }
+  }
+  ```
+
+  The `TokenUsage` data is accumulated for `MessageDelta` structs and the final usage information will be on the `LangChain.Message`.
+
   ## Tool Choice
 
   Anthropic supports forcing a tool to be used.
@@ -77,6 +108,32 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         bedrock: BedrockConfig.from_application_env!()
       })
 
+  ## Thinking
+
+  Models like Claude 3.7 Sonnet introduced a hybrid approach which allows for "thinking" and reasoning.
+  See the [Anthropic thinking documentation](https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking)
+  for up-to-date instructions on the usage.
+
+  For instance, enabling thinking may require the `temperature` to be set to `1` and other settings like `topP` may not be allowed.
+
+  The model supports a `:thinking` attribute where the data is a map that matches the structure in the
+  [Anthropic documentation](https://docs.anthropic.com/en/api/messages#body-thinking). It is passed along as-is.
+
+  **Example:**
+
+      # Enable thinking and budget 2,000 tokens for the thinking space.
+      model = ChatAnthropic.new!(%{
+        model: "claude-3-7-sonnet-latest",
+        thinking: %{type: "enabled", budget_tokens: 2000}
+      })
+
+      # Disable thinking
+      model = ChatAnthropic.new!(%{
+        model: "claude-3-7-sonnet-latest",
+        thinking: %{type: "disabled"}
+      })
+
+  As of the documentation for Claude 3.7 Sonnet, the minimum budget for thinking is 1024 tokens.
   """
   use Ecto.Schema
   require Logger
@@ -103,6 +160,11 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   @current_config_version 1
 
   @default_cache_control_block %{"type" => "ephemeral"}
+
+  # Added "thinking" support - https://docs.anthropic.com/en/api/messages#body-thinking
+
+  # TODO: https://docs.anthropic.com/en/api/messages#body-messages - Messages support for images:
+  # > We currently support the base64 source type for images, and the image/jpeg, image/png, image/gif, and image/webp media types.
 
   # allow up to 1 minute for response.
   @receive_timeout 60_000
@@ -161,12 +223,18 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     # A list of maps for callback handlers (treat as private)
     field :callbacks, {:array, :map}, default: []
 
+    # Supported on "thinking" models like Claude 3.7 and later.
+    field :thinking, :map
+
     # Tool choice option
     field :tool_choice, :map
 
     # Beta headers
     # https://docs.anthropic.com/claude/docs/tool-use - requires tools-2024-04-04 header during beta
     field :beta_headers, {:array, :string}, default: ["tools-2024-04-04"]
+
+    # Additional level of raw api request and response data
+    field :verbose_api, :boolean, default: false
   end
 
   @type t :: %ChatAnthropic{}
@@ -182,8 +250,10 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     :top_p,
     :top_k,
     :stream,
+    :thinking,
     :tool_choice,
-    :beta_headers
+    :beta_headers,
+    :verbose_api
   ]
   @required_fields [:endpoint, :model]
 
@@ -220,6 +290,20 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     |> validate_number(:receive_timeout, greater_than_or_equal_to: 0)
   end
 
+  def get_system_text(nil) do
+    get_system_text(Message.new_system!())
+  end
+
+  def get_system_text(%Message{role: :system, content: content} = _message)
+      when is_binary(content) do
+    [%{"type" => "text", "text" => content}]
+  end
+
+  def get_system_text(%Message{role: :system, content: content} = _message)
+      when is_list(content) do
+    Enum.map(content, &content_part_for_api/1)
+  end
+
   @doc """
   Return the params formatted for an API request.
   """
@@ -232,36 +316,26 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         "Anthropic only supports a single System message, however, you may use multiple ContentParts for the System message to indicate where prompt caching should be used."
       )
 
-    system_text =
-      case system do
-        nil ->
-          nil
-
-        %Message{role: :system, content: [_ | _]} = message ->
-          for_api(message)
-
-        %Message{role: :system, content: content} ->
-          content
-      end
-
     messages =
       messages
-      |> Enum.map(&for_api/1)
+      |> Enum.map(&message_for_api/1)
       |> post_process_and_combine_messages()
 
     %{
       model: anthropic.model,
       temperature: anthropic.temperature,
       stream: anthropic.stream,
-      messages: messages
+      messages: messages,
+      # Anthropic sets the `system` message on the request body, not as part of
+      # the messages list.
+      system: get_system_text(system)
     }
-    # Anthropic sets the `system` message on the request body, not as part of the messages list.
-    |> Utils.conditionally_add_to_map(:system, system_text)
     |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(tools))
     |> Utils.conditionally_add_to_map(:tool_choice, get_tool_choice(anthropic))
     |> Utils.conditionally_add_to_map(:max_tokens, anthropic.max_tokens)
     |> Utils.conditionally_add_to_map(:top_p, anthropic.top_p)
     |> Utils.conditionally_add_to_map(:top_k, anthropic.top_k)
+    |> Utils.conditionally_add_to_map(:thinking, anthropic.thinking)
     |> maybe_transform_for_bedrock(anthropic.bedrock)
   end
 
@@ -386,10 +460,16 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         tools,
         retry_count
       ) do
+    raw_data = for_api(anthropic, messages, tools)
+
+    if anthropic.verbose_api do
+      IO.inspect(raw_data, label: "RAW DATA BEING SUBMITTED")
+    end
+
     req =
       Req.new(
         url: url(anthropic),
-        json: for_api(anthropic, messages, tools),
+        json: raw_data,
         headers: headers(anthropic),
         receive_timeout: anthropic.receive_timeout,
         retry: :transient,
@@ -403,12 +483,12 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     # parse the body and return it as parsed structs
     |> case do
       {:ok, %Req.Response{status: 200, body: data} = response} ->
+        if anthropic.verbose_api do
+          IO.inspect(response, label: "RAW REQ RESPONSE")
+        end
+
         Callbacks.fire(anthropic.callbacks, :on_llm_ratelimit_info, [
           get_ratelimit_info(response.headers)
-        ])
-
-        Callbacks.fire(anthropic.callbacks, :on_llm_token_usage, [
-          get_token_usage(data)
         ])
 
         case do_process_response(anthropic, data) do
@@ -417,6 +497,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
           result ->
             Callbacks.fire(anthropic.callbacks, :on_llm_new_message, [result])
+
             result
         end
 
@@ -449,6 +530,12 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         tools,
         retry_count
       ) do
+    raw_data = for_api(anthropic, messages, tools)
+
+    if anthropic.verbose_api do
+      IO.inspect(raw_data, label: "RAW DATA BEING SUBMITTED")
+    end
+
     # Track the prompt being sent for streaming
     LangChain.Telemetry.llm_prompt(
       %{system_time: System.system_time(), streaming: true},
@@ -457,7 +544,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
     Req.new(
       url: url(anthropic),
-      json: for_api(anthropic, messages, tools),
+      json: raw_data,
       headers: headers(anthropic),
       receive_timeout: anthropic.receive_timeout,
       aws_sigv4: aws_sigv4_opts(anthropic.bedrock)
@@ -562,14 +649,18 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   def do_process_response(_model, %{
         "role" => "assistant",
         "content" => contents,
-        "stop_reason" => stop_reason
+        "stop_reason" => stop_reason,
+        "type" => "message",
+        "usage" => usage
       }) do
     new_message =
       %{
         role: :assistant,
+        content: [],
         status: stop_reason_to_status(stop_reason)
       }
       |> Message.new()
+      |> TokenUsage.set_wrapped(get_token_usage(usage))
       |> to_response()
 
     # reduce over the contents and accumulate to the message
@@ -579,13 +670,74 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   end
 
   def do_process_response(_model, %{
+        "type" => "message_start",
+        "message" => %{
+          "type" => "message",
+          "role" => role,
+          "content" => content,
+          "usage" => usage
+        }
+      }) do
+    %{
+      role: role,
+      content: content,
+      status: :incomplete
+    }
+    |> MessageDelta.new()
+    |> TokenUsage.set_wrapped(get_token_usage(usage))
+    |> to_response()
+  end
+
+  def do_process_response(_model, %{
         "type" => "content_block_start",
+        "index" => index,
+        "content_block" => %{
+          "type" => "thinking",
+          "thinking" => content,
+          "signature" => signature
+        }
+      }) do
+    %{
+      role: :assistant,
+      content:
+        ContentPart.new!(%{type: :thinking, content: content, options: [signature: signature]}),
+      status: :incomplete,
+      index: index
+    }
+    |> MessageDelta.new()
+    |> to_response()
+  end
+
+  def do_process_response(_model, %{
+        "type" => "content_block_start",
+        "index" => index,
         "content_block" => %{"type" => "text", "text" => content}
       }) do
     %{
       role: :assistant,
-      content: content,
-      status: :incomplete
+      content: ContentPart.text!(content),
+      status: :incomplete,
+      index: index
+    }
+    |> MessageDelta.new()
+    |> to_response()
+  end
+
+  def do_process_response(_model, %{
+        "type" => "content_block_start",
+        "index" => index,
+        "content_block" => %{"type" => "redacted_thinking", "data" => content}
+      }) do
+    %{
+      role: :assistant,
+      content:
+        ContentPart.new!(%{
+          type: :unsupported,
+          content: content,
+          options: [type: "redacted_thinking"]
+        }),
+      status: :incomplete,
+      index: index
     }
     |> MessageDelta.new()
     |> to_response()
@@ -593,12 +745,14 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
   def do_process_response(_model, %{
         "type" => "content_block_delta",
+        "index" => index,
         "delta" => %{"type" => "text_delta", "text" => content}
       }) do
     %{
       role: :assistant,
-      content: content,
-      status: :incomplete
+      content: ContentPart.text!(content),
+      status: :incomplete,
+      index: index
     }
     |> MessageDelta.new()
     |> to_response()
@@ -644,23 +798,51 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     |> to_response()
   end
 
+  def do_process_response(_model, %{
+        "type" => "content_block_delta",
+        "index" => content_index,
+        "delta" => %{"type" => "thinking_delta", "thinking" => thinking}
+      }) do
+    %{
+      role: :assistant,
+      status: :incomplete,
+      index: content_index,
+      content: ContentPart.new!(%{type: :thinking, content: thinking})
+    }
+    |> MessageDelta.new()
+    |> to_response()
+  end
+
+  def do_process_response(_model, %{
+        "type" => "content_block_delta",
+        "index" => content_index,
+        "delta" => %{"type" => "signature_delta", "signature" => signature}
+      }) do
+    %{
+      role: :assistant,
+      status: :incomplete,
+      index: content_index,
+      content: ContentPart.new!(%{type: :thinking, options: [signature: signature]})
+    }
+    |> MessageDelta.new()
+    |> to_response()
+  end
+
   def do_process_response(
-        model,
+        _model,
         %{
           "type" => "message_delta",
           "delta" => %{"stop_reason" => stop_reason},
-          "usage" => _usage
-        } = data
+          "usage" => usage
+        } = _data
       ) do
-    # if we received usage data, fire any callbacks for it.
-    Callbacks.fire(model.callbacks, :on_llm_token_usage, [get_token_usage(data)])
-
     %{
       role: :assistant,
-      content: "",
+      content: nil,
       status: stop_reason_to_status(stop_reason)
     }
     |> MessageDelta.new()
+    |> TokenUsage.set_wrapped(get_token_usage(usage))
     |> to_response()
   end
 
@@ -704,7 +886,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   end
 
   def do_process_response(_model, other) do
-    Logger.error("Trying to process an unexpected response. #{inspect(other)}")
+    Logger.error("Failed to process an unexpected response. #{inspect(other)}")
 
     {:error,
      LangChainError.exception(type: "unexpected_response", message: "Unexpected response")}
@@ -715,7 +897,48 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     do: message
 
   defp do_process_content_response(%Message{} = message, %{"type" => "text", "text" => text}) do
-    %Message{message | content: text}
+    %Message{message | content: message.content ++ [ContentPart.text!(text)]}
+  end
+
+  defp do_process_content_response(%Message{} = message, %{
+         "type" => "redacted_thinking",
+         "data" => data
+       }) do
+    parts = message.content || []
+
+    %Message{
+      message
+      | content:
+          parts ++
+            [
+              ContentPart.new!(%{
+                type: :unsupported,
+                content: data,
+                options: [type: "redacted_thinking"]
+              })
+            ]
+    }
+  end
+
+  defp do_process_content_response(%Message{} = message, %{
+         "type" => "thinking",
+         "thinking" => thinking,
+         "signature" => signature
+       }) do
+    parts = message.content || []
+
+    %Message{
+      message
+      | content:
+          parts ++
+            [
+              ContentPart.new!(%{
+                type: :thinking,
+                content: thinking,
+                options: [signature: signature]
+              })
+            ]
+    }
   end
 
   defp do_process_content_response(
@@ -777,9 +1000,10 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   end
 
   @doc false
-  def decode_stream(%ChatAnthropic{bedrock: nil}, {chunk, buffer}) do
-    # Combine the incoming data with the buffered incomplete data
+  def parse_stream_events(%ChatAnthropic{bedrock: nil}, {chunk, buffer}) do
+    # Combine the incoming data with any buffered incomplete data
     combined_data = buffer <> chunk
+
     # Split data by double newline to find complete messages
     entries = String.split(combined_data, "\n\n", trim: true)
 
@@ -794,57 +1018,61 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
     processed =
       to_process
-      # Trim whitespace from each line
-      |> Stream.map(&String.trim/1)
-      # Ignore empty lines
-      |> Stream.reject(&(&1 == ""))
-      # Filter lines based on some condition
-      |> Stream.filter(&relevant_event?/1)
-      # Split the event from the data into separate lines
-      |> Stream.map(&extract_data(&1))
-      |> Enum.reduce([], fn json, done ->
-        json
-        |> Jason.decode()
-        |> case do
-          {:ok, parsed} ->
-            # wrap each parsed response into an array of 1. This matches the
-            # return type of some LLMs where they return `n` number of responses.
-            # This is for compatibility.
-            # {done ++ Enum.map(parsed, &([&1])), ""}
-            done ++ [parsed]
+      |> Enum.reduce([], fn chunk, acc ->
+        # Split chunk into lines
+        lines = String.split(chunk, "\n", trim: true)
 
-          {:error, reason} ->
-            Logger.error("Failed to JSON decode streamed data: #{inspect(reason)}")
-            done
+        # Find the data line that contains the JSON. The data contains all the
+        # information we need so we skip the "event: " lines.
+        case Enum.find(lines, &String.starts_with?(&1, "data: ")) do
+          nil ->
+            acc
+
+          data_line ->
+            # Extract and parse the JSON data
+            json = String.replace_prefix(data_line, "data: ", "")
+
+            case Jason.decode(json) do
+              {:ok, parsed} -> acc ++ [parsed]
+              {:error, _} -> acc
+            end
         end
       end)
 
     {processed, incomplete}
   end
 
-  defp relevant_event?("event: content_block_delta\n" <> _rest), do: true
-  defp relevant_event?("event: content_block_start\n" <> _rest), do: true
-  defp relevant_event?("event: message_delta\n" <> _rest), do: true
-  defp relevant_event?("event: error\n" <> _rest), do: true
+  @doc false
+  def decode_stream(%ChatAnthropic{bedrock: nil} = model, {chunk, buffer}) do
+    if model.verbose_api do
+      IO.inspect(chunk, label: "RCVD RAW CHUNK")
+    end
+
+    {to_process, incomplete} = parse_stream_events(model, {chunk, buffer})
+
+    if model.verbose_api do
+      IO.inspect(to_process, label: "RAW TO PROCESS")
+    end
+
+    processed = Enum.filter(to_process, &relevant_event?/1)
+
+    {processed, incomplete}
+  end
+
+  def relevant_event?(%{"type" => "message_start"}), do: true
+  def relevant_event?(%{"type" => "content_block_delta"}), do: true
+  def relevant_event?(%{"type" => "content_block_start"}), do: true
+  def relevant_event?(%{"type" => "message_delta"}), do: true
+  def relevant_event?(%{"type" => "error"}), do: true
   # ignoring
-  defp relevant_event?("event: message_start\n" <> _rest), do: false
-  defp relevant_event?("event: ping\n" <> _rest), do: false
-  defp relevant_event?("event: content_block_stop\n" <> _rest), do: false
-  defp relevant_event?("event: message_stop\n" <> _rest), do: false
+  def relevant_event?(%{"type" => "ping"}), do: false
+  def relevant_event?(%{"type" => "content_block_stop"}), do: false
+  def relevant_event?(%{"type" => "message_stop"}), do: false
   # catch-all for when we miss something
-  defp relevant_event?(event) do
+  def relevant_event?(event) do
     Logger.error("Unsupported event received when parsing Anthropic response: #{inspect(event)}")
     false
   end
-
-  # process data for an event
-  defp extract_data("event: " <> line) do
-    [_prefix, json] = String.split(line, "data: ", trim: true)
-    json
-  end
-
-  # assumed the response is JSON. Return as-is
-  defp extract_data(json), do: json
 
   @doc false
   def decode_stream(%ChatAnthropic{bedrock: %BedrockConfig{}}, {chunk, buffer}, chunks \\ []) do
@@ -852,7 +1080,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
     chunks =
       Enum.filter(chunks, fn chunk ->
-        Map.has_key?(chunk, :bedrock_exception) || relevant_event?("event: #{chunk["type"]}\n")
+        Map.has_key?(chunk, :bedrock_exception) || relevant_event?(chunk)
       end)
 
     {chunks, remaining}
@@ -863,110 +1091,64 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   """
   @spec for_api(Message.t() | ContentPart.t() | Function.t()) ::
           %{String.t() => any()} | no_return()
-  def for_api(%Message{role: :assistant, tool_calls: calls} = msg)
-      when is_list(calls) and calls != [] do
-    text_content =
-      if is_binary(msg.content) do
-        [
-          %{
-            "type" => "text",
-            "text" => msg.content
-          }
-        ]
-      else
-        []
-      end
+  # def for_api(%Message{role: :assistant, tool_calls: calls} = msg)
+  #     when is_list(calls) and calls != [] do
+  #   text_content =
+  #     if is_binary(msg.content) do
+  #       [
+  #         %{
+  #           "type" => "text",
+  #           "text" => msg.content
+  #         }
+  #       ]
+  #     else
+  #       []
+  #     end
 
-    tool_calls = Enum.map(calls, &for_api(&1))
+  #   tool_calls = Enum.map(calls, &for_api(&1))
 
-    %{
-      "role" => "assistant",
-      "content" => text_content ++ tool_calls
-    }
-  end
+  #   %{
+  #     "role" => "assistant",
+  #     "content" => text_content ++ tool_calls
+  #   }
+  # end
 
-  def for_api(%Message{role: :tool, tool_results: results}) when is_list(results) do
-    # convert ToolResult into the expected format for Anthropic.
-    #
-    # A tool result is returned as a list within the content of a user message.
-    tool_results = Enum.map(results, &for_api(&1))
+  # def for_api(%Message{role: :tool, tool_results: results}) when is_list(results) do
+  #   # convert ToolResult into the expected format for Anthropic.
+  #   #
+  #   # A tool result is returned as a list within the content of a user message.
+  #   tool_results = Enum.map(results, &for_api(&1))
 
-    %{
-      "role" => "user",
-      "content" => tool_results
-    }
-  end
+  #   %{
+  #     "role" => "user",
+  #     "content" => tool_results
+  #   }
+  # end
 
-  # when content is plain text
-  def for_api(%Message{content: content} = msg) when is_binary(content) do
-    %{
-      "role" => Atom.to_string(msg.role),
-      "content" => msg.content
-    }
-  end
+  # # when content is plain text
+  # def for_api(%Message{content: content} = msg) when is_binary(content) do
+  #   %{
+  #     "role" => Atom.to_string(msg.role),
+  #     "content" => [msg.content |> ContentPart.text!() |> content_part_for_api()]
+  #   }
+  # end
 
-  def for_api(%Message{role: :user, content: content}) when is_list(content) do
-    %{
-      "role" => "user",
-      "content" => Enum.map(content, &for_api(&1))
-    }
-  end
+  # def for_api(%Message{role: :user, content: content}) when is_list(content) do
+  #   %{
+  #     "role" => "user",
+  #     "content" => Enum.map(content, &content_part_for_api(&1))
+  #   }
+  # end
 
-  def for_api(%Message{role: :system, content: content}) when is_list(content) do
-    Enum.map(content, &for_api(&1))
-  end
-
-  def for_api(%ContentPart{type: :text} = part) do
-    case Keyword.fetch(part.options || [], :cache_control) do
-      :error ->
-        %{"type" => "text", "text" => part.content}
-
-      {:ok, setting} ->
-        setting = if setting == true, do: @default_cache_control_block, else: setting
-        %{"type" => "text", "text" => part.content, "cache_control" => setting}
-    end
-  end
-
-  def for_api(%ContentPart{type: :image} = part) do
-    media =
-      case Keyword.fetch!(part.options || [], :media) do
-        :png ->
-          "image/png"
-
-        :gif ->
-          "image/gif"
-
-        :jpg ->
-          "image/jpeg"
-
-        :jpeg ->
-          "image/jpeg"
-
-        :webp ->
-          "image/webp"
-
-        value when is_binary(value) ->
-          value
-
-        other ->
-          message = "Received unsupported media type for ContentPart: #{inspect(other)}"
-          Logger.error(message)
-          raise LangChainError, message
-      end
-
-    %{
-      "type" => "image",
-      "source" => %{
-        "type" => "base64",
-        "data" => part.content,
-        "media_type" => media
-      }
-    }
-  end
-
-  def for_api(%ContentPart{type: :image_url} = _part) do
-    raise LangChainError, "Anthropic does not support image_url"
-  end
+  # def for_api(%Message{role: role, content: content}) when is_list(content) do
+  #   %{
+  #     "role" => Atom.to_string(role),
+  #     "content" =>
+  #       content
+  #       |> Enum.map(&content_part_for_api(&1))
+  #       |> Enum.reject(&is_nil/1)
+  #   }
+  # end
 
   # Function support
   def for_api(%Function{} = fun) do
@@ -1009,6 +1191,187 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         }
     end
     |> Utils.conditionally_add_to_map("is_error", result.is_error)
+  end
+
+  @doc """
+  Converts a Message to the format expected by the Anthropic API.
+  """
+  def message_for_api(%Message{role: :assistant, tool_calls: calls} = msg)
+      when is_list(calls) and calls != [] do
+    text_content = content_parts_for_api(msg.content)
+
+    tool_calls = Enum.map(calls, &for_api(&1))
+
+    %{
+      "role" => "assistant",
+      "content" => text_content ++ tool_calls
+    }
+  end
+
+  def message_for_api(%Message{role: :tool, tool_results: results}) when is_list(results) do
+    # convert ToolResult into the expected format for Anthropic.
+    #
+    # A tool result is returned as a list within the content of a user message.
+    tool_results = Enum.map(results, &for_api(&1))
+
+    %{
+      "role" => "user",
+      "content" => tool_results
+    }
+  end
+
+  # when content is plain text
+  def message_for_api(%Message{content: content} = msg) when is_binary(content) do
+    %{
+      "role" => Atom.to_string(msg.role),
+      "content" => [msg.content |> ContentPart.text!() |> content_part_for_api()]
+    }
+  end
+
+  def message_for_api(%Message{role: :user, content: content}) when is_list(content) do
+    %{
+      "role" => "user",
+      "content" => Enum.map(content, &content_part_for_api(&1))
+    }
+  end
+
+  def message_for_api(%Message{role: role, content: content}) when is_list(content) do
+    %{
+      "role" => Atom.to_string(role),
+      "content" =>
+        content
+        |> Enum.map(&content_part_for_api(&1))
+        |> Enum.reject(&is_nil/1)
+    }
+  end
+
+  @doc """
+  Converts a list of ContentParts to the format expected by the Anthropic API.
+  """
+  def content_parts_for_api(contents)
+  def content_parts_for_api(nil), do: []
+
+  def content_parts_for_api(contents) when is_list(contents) do
+    Enum.map(contents, &content_part_for_api/1)
+  end
+
+  def content_parts_for_api(content) when is_binary(content) do
+    [
+      %{
+        "type" => "text",
+        "text" => content
+      }
+    ]
+  end
+
+  @doc """
+  Converts a ContentPart to the format expected by the Anthropic API.
+
+  Handles different content types:
+  - `:text` - Converts to a text content part, optionally with cache control settings
+  - `:thinking` - Converts to a thinking content part with required signature
+  - `:unsupported` - Handles custom content types specified in options
+  - `:image` - Converts to an image content part with base64 data and media type
+  - `:image_url` - Raises an error as Anthropic doesn't support image URLs
+
+  ## Options
+
+  For `:text` type:
+  - `:cache_control` - When provided, adds cache control settings to the content
+
+  For `:thinking` type:
+  - `:signature` - Required signature for thinking content
+
+  For `:unsupported` type:
+  - `:type` - Required string specifying the custom content type
+
+  For `:image` type:
+  - `:media` - Required media type (`:png`, `:jpg`, `:jpeg`, `:gif`, `:webp`, or a string)
+
+  Returns `nil` for unsupported content without required options.
+  """
+  @spec content_part_for_api(ContentPart.t()) :: map() | nil | no_return()
+  def content_part_for_api(%ContentPart{type: :text} = part) do
+    case Keyword.fetch(part.options || [], :cache_control) do
+      :error ->
+        %{"type" => "text", "text" => part.content}
+
+      {:ok, setting} ->
+        setting = if setting == true, do: @default_cache_control_block, else: setting
+        %{"type" => "text", "text" => part.content, "cache_control" => setting}
+    end
+  end
+
+  def content_part_for_api(%ContentPart{type: :thinking} = part) do
+    # Handle thinking content with signature
+    case Keyword.fetch(part.options || [], :signature) do
+      :error ->
+        # Without a valid signature, we can't send thinking content
+        Logger.warning("Thinking ContentPart without signature will be omitted: #{inspect(part)}")
+        nil
+
+      {:ok, signature} ->
+        # Thinking content with signature
+        %{"type" => "thinking", "thinking" => part.content, "signature" => signature}
+    end
+  end
+
+  def content_part_for_api(%ContentPart{type: :unsupported} = part) do
+    # Handle unsupported content types by using the type provided in options
+    case Keyword.fetch(part.options || [], :type) do
+      :error ->
+        # If no type is provided, log a warning and return nil
+        Logger.warning(
+          "Unsupported ContentPart without type specification will be omitted: #{inspect(part)}"
+        )
+
+        nil
+
+      {:ok, type} when is_binary(type) ->
+        # Use the specified type from options and pass the content as data
+        %{"type" => type, "data" => part.content}
+    end
+  end
+
+  def content_part_for_api(%ContentPart{type: :image} = part) do
+    media =
+      case Keyword.fetch!(part.options || [], :media) do
+        :png ->
+          "image/png"
+
+        :gif ->
+          "image/gif"
+
+        :jpg ->
+          "image/jpeg"
+
+        :jpeg ->
+          "image/jpeg"
+
+        :webp ->
+          "image/webp"
+
+        value when is_binary(value) ->
+          value
+
+        other ->
+          message = "Received unsupported media type for ContentPart: #{inspect(other)}"
+          Logger.error(message)
+          raise LangChainError, message
+      end
+
+    %{
+      "type" => "image",
+      "source" => %{
+        "type" => "base64",
+        "data" => part.content,
+        "media_type" => media
+      }
+    }
+  end
+
+  def content_part_for_api(%ContentPart{type: :image_url} = _part) do
+    raise LangChainError, "Anthropic does not support image_url"
   end
 
   defp get_parameters(%Function{parameters: [], parameters_schema: nil} = _fun) do
@@ -1089,17 +1452,17 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     return
   end
 
-  defp get_token_usage(%{"usage" => usage} = _response_body) do
+  defp get_token_usage(usage_data) do
     # if prompt caching has been used the response will also contain
     # "cache_creation_input_tokens" and "cache_read_input_tokens"
     TokenUsage.new!(%{
-      input: Map.get(usage, "input_tokens"),
-      output: Map.get(usage, "output_tokens"),
-      raw: usage
+      input: Map.get(usage_data, "input_tokens"),
+      output: Map.get(usage_data, "output_tokens"),
+      raw: usage_data
     })
   end
 
-  defp get_token_usage(_response_body), do: %{}
+  defp get_token_usage(_usage_data), do: nil
 
   @doc """
   Generate a config map that can later restore the model's configuration.

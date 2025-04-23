@@ -1,0 +1,46 @@
+---
+description:
+globs:
+alwaysApply: true
+---
+
+# Project Overview
+
+This is a published Elixir packaged called Elixir LangChain. It is inspired by the Python and TypeScript LangChain libraries, however this library is not as large or sprawling. This library maintains a functional programming design as well.
+
+The purpose of the library is to provide an application with an abstraction layer that can support numerous different LLMs like Anthropic Claude, OpenAI ChatGPT, Perplexity AI, Google Gemini, Mistral, Llama, etc. without significant changes to the project's code.
+
+The AI-specific modules are:
+- [chat_anthropic.ex](mdc:lib/chat_models/chat_anthropic.ex)
+- [chat_open_ai.ex](mdc:lib/chat_models/chat_open_ai.ex)
+- [chat_google_ai.ex](mdc:lib/chat_models/chat_google_ai.ex)
+- [chat_mistral_ai.ex](mdc:lib/chat_models/chat_mistral_ai.ex)
+- etc
+
+The module handles converting to and from the library's data structures like a LangChain.Message into the structure expected by the LLM/service. This includes tool support using a LangChain.Function.
+
+## Tests
+
+Use TDD when working with tests and code.
+
+Tests tagged with `@tag live_call: true` make live API calls to an LLM and are not run by default. These tests can fail sometimes when the behavior of the LLM varies the output significantly. In general, avoid running live calls.
+
+```elixir
+@tag live_call: true, live_anthropic: true
+test "decodes a live thinking event" do
+  llm =
+    ChatAnthropic.new!(%{
+      stream: true,
+      model: "claude-3-7-sonnet-20250219",
+      thinking: %{type: "enabled", budget_tokens: 1024}
+    })
+
+  # ...
+end
+```
+
+Test fixtures are functions located in [fixtures.ex](mdc:test/support/fixtures.ex).
+
+## Writing Code
+
+Don't remove large blocks of commented out code when generating new code unless explicitly instructed to do so.

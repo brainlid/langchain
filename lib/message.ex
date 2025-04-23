@@ -36,6 +36,21 @@ defmodule LangChain.Message do
   support it, and they may require using specific models trained for it. See the
   documentation for the LLM or service for details on their level of support.
 
+  ## Assistant Content Parts
+
+  Assistant Content Parts are implemented through
+  `LangChain.Message.ContentPart`. A list of them can be supplied as the
+  "content" for a message. Only a few LLMs support it, and they may require
+  using specific models trained for it. See the documentation for the LLM or
+  service for details on their level of support.
+
+  An example of this is Anthropic's Claude 3.7 Sonnet and it's "thinking"
+  content parts. The service may also return redacted_thinking content parts
+  that can be sent back to maintain continuity of the conversation.
+
+  This also supports the idea of an assistant returning an image along with
+  text.
+
   ## Processed Content
 
   The `processed_content` field is a handy place to store the results of
@@ -133,6 +148,7 @@ defmodule LangChain.Message do
   def new(attrs \\ %{}) do
     %Message{}
     |> cast(attrs, @create_fields)
+    |> migrate_to_content_parts()
     |> common_validations()
     |> apply_action(:insert)
   end
@@ -371,7 +387,11 @@ defmodule LangChain.Message do
   Create a new assistant message which represents a response from the AI or LLM.
   """
   @spec new_assistant(attrs :: map()) :: {:ok, t()} | {:error, Ecto.Changeset.t()}
-  def new_assistant(attrs \\ %{}) do
+  def new_assistant(attrs) when is_list(attrs) do
+    new(%{role: :assistant, content: attrs})
+  end
+
+  def new_assistant(attrs) when is_map(attrs) do
     attrs
     |> Map.put(:role, :assistant)
     |> new()
@@ -379,14 +399,45 @@ defmodule LangChain.Message do
 
   @doc """
   Create a new assistant message which represents a response from the AI or LLM.
+
+  ## Examples
+
+      # Create a simple text message
+      iex> new_assistant!("I'll help you with that.")
+      %LangChain.Message{role: :assistant, content: [LangChain.Message.ContentPart.text!("I'll help you with that.")], tool_calls: []}
+
+      # Create with content parts
+      iex> new_assistant!([
+      ...>   LangChain.Message.ContentPart.text!("Here's my response"),
+      ...>   LangChain.Message.ContentPart.text!("And some additional thoughts")
+      ...> ])
+      %LangChain.Message{role: :assistant, content: [%LangChain.Message.ContentPart{content: "Here's my response"}, %LangChain.Message.ContentPart{content: "And some additional thoughts"}], tool_calls: []}
+
+      # Create with tool calls
+      iex> new_assistant!(%{
+      ...>   tool_calls: [
+      ...>     LangChain.Message.ToolCall.new!(%{call_id: "1", name: "calculator", arguments: %{x: 2, y: 3}})
+      ...>   ]
+      ...> })
+      %LangChain.Message{role: :assistant, tool_calls: [%LangChain.Message.ToolCall{call_id: "1", name: "calculator", arguments: %{x: 2, y: 3}, status: :complete}]}
   """
-  @spec new_assistant!(String.t() | map()) :: t() | no_return()
+  @spec new_assistant!(String.t() | map() | [ContentPart.t()]) :: t() | no_return()
   def new_assistant!(content) when is_binary(content) do
-    new_assistant!(%{content: content})
+    new_assistant!(%{content: [ContentPart.text!(content)]})
   end
 
   def new_assistant!(attrs) when is_map(attrs) do
     case new_assistant(attrs) do
+      {:ok, msg} ->
+        msg
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        raise LangChainError, changeset
+    end
+  end
+
+  def new_assistant!(content) when is_list(content) do
+    case new_assistant(%{content: content}) do
       {:ok, msg} ->
         msg
 
@@ -472,4 +523,24 @@ defmodule LangChain.Message do
   end
 
   def tool_had_errors?(%Message{} = _message), do: false
+
+  # Migrates a Message's string content to use `LangChain.Message.ContentPart`.
+  # This is for backward compatibility with models that don't yet support ContentPart.
+  @spec migrate_to_content_parts(Ecto.Changeset.t()) :: Ecto.Changeset.t()
+  defp migrate_to_content_parts(%Ecto.Changeset{} = changeset) do
+    case fetch_change(changeset, :content) do
+      {:ok, content} when is_binary(content) ->
+        put_change(changeset, :content, [ContentPart.text!(content)])
+
+      # Don't modify if it's already a ContentPart or a list of ContentParts
+      {:ok, %ContentPart{}} ->
+        changeset
+
+      {:ok, content} when is_list(content) ->
+        changeset
+
+      _ ->
+        changeset
+    end
+  end
 end

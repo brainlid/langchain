@@ -165,10 +165,14 @@ defmodule LangChain.Chains.SummarizeConversationChainTest do
       assert user_message.role == :user
 
       assert user_message.content ==
-               "Summarize our entire conversation up to this point for future reference."
+               [
+                 ContentPart.text!(
+                   "Summarize our entire conversation up to this point for future reference."
+                 )
+               ]
 
       assert assistant_message.role == :assistant
-      assert assistant_message.content == summary_text
+      assert assistant_message.content == [ContentPart.text!(summary_text)]
     end
   end
 
@@ -202,16 +206,20 @@ defmodule LangChain.Chains.SummarizeConversationChainTest do
         )
 
       [system, summary_1, summary_2, user_2, ai_2] = updated_chain.messages
-      assert system.content == "System"
+      assert system.content == [ContentPart.text!("System")]
       assert summary_1.role == :user
 
       assert summary_1.content ==
-               "Summarize our entire conversation up to this point for future reference."
+               [
+                 ContentPart.text!(
+                   "Summarize our entire conversation up to this point for future reference."
+                 )
+               ]
 
       assert summary_2.role == :assistant
-      assert summary_2.content == "fake summary text"
-      assert user_2.content == "Question 2"
-      assert ai_2.content == "Answer 2"
+      assert summary_2.content == [ContentPart.text!("fake summary text")]
+      assert user_2.content == [ContentPart.text!("Question 2")]
+      assert ai_2.content == [ContentPart.text!("Answer 2")]
     end
 
     test "correctly handles when keeping 0 messages", %{
@@ -230,14 +238,18 @@ defmodule LangChain.Chains.SummarizeConversationChainTest do
         )
 
       [system, summary_1, summary_2] = updated_chain.messages
-      assert system.content == "System"
+      assert system.content == [ContentPart.text!("System")]
       assert summary_1.role == :user
 
       assert summary_1.content ==
-               "Summarize our entire conversation up to this point for future reference."
+               [
+                 ContentPart.text!(
+                   "Summarize our entire conversation up to this point for future reference."
+                 )
+               ]
 
       assert summary_2.role == :assistant
-      assert summary_2.content == "fake summary text"
+      assert summary_2.content == [ContentPart.text!("fake summary text")]
     end
 
     test "correctly handles when no system message",
@@ -260,12 +272,16 @@ defmodule LangChain.Chains.SummarizeConversationChainTest do
       assert summary_1.role == :user
 
       assert summary_1.content ==
-               "Summarize our entire conversation up to this point for future reference."
+               [
+                 ContentPart.text!(
+                   "Summarize our entire conversation up to this point for future reference."
+                 )
+               ]
 
       assert summary_2.role == :assistant
-      assert summary_2.content == "fake summary text"
-      assert user_2.content == "Question 2"
-      assert ai_2.content == "Answer 2"
+      assert summary_2.content == [ContentPart.text!("fake summary text")]
+      assert user_2.content == [ContentPart.text!("Question 2")]
+      assert ai_2.content == [ContentPart.text!("Answer 2")]
     end
   end
 
@@ -311,10 +327,10 @@ defmodule LangChain.Chains.SummarizeConversationChainTest do
       {:ok, used_chain} = SummarizeConversationChain.run(summarizer, original_chain)
 
       [system, user, assistant, returned] = used_chain.messages
-      assert %Message{role: :system, content: "Custom system message"} = system
-      assert %Message{role: :user, content: "Custom user message"} = user
-      assert %Message{role: :assistant, content: "Custom assistant message"} = assistant
-      assert %Message{role: :assistant, content: "- Fake OpenAI summary"} = returned
+      assert system == Message.new_system!([ContentPart.text!("Custom system message")])
+      assert user == Message.new_user!([ContentPart.text!("Custom user message")])
+      assert assistant == Message.new_assistant!([ContentPart.text!("Custom assistant message")])
+      assert returned == Message.new_assistant!([ContentPart.text!("- Fake OpenAI summary")])
     end
   end
 
@@ -353,7 +369,7 @@ defmodule LangChain.Chains.SummarizeConversationChainTest do
 
       [_system, _summary_1, summary_2] = summarized_chain.messages
       assert summary_2.role == :assistant
-      assert summary_2.content == "- Fake OpenAI summary"
+      assert summary_2.content == [ContentPart.text!("- Fake OpenAI summary")]
 
       assert summarized_chain.last_message == summary_2
     end
@@ -396,14 +412,18 @@ defmodule LangChain.Chains.SummarizeConversationChainTest do
 
       [system, summary_1, summary_2, _keep_1, _keep_2] = summarized_chain.messages
       assert system.role == :system
-      assert String.starts_with?(system.content, "You are a helpful travel assistant.")
+      assert system.content == [ContentPart.text!("You are a helpful travel assistant.")]
       assert summary_1.role == :user
 
       assert summary_1.content ==
-               "Summarize our entire conversation up to this point for future reference."
+               [
+                 ContentPart.text!(
+                   "Summarize our entire conversation up to this point for future reference."
+                 )
+               ]
 
       assert summary_2.role == :assistant
-      assert summary_2.content == "- Fake OpenAI summary"
+      assert summary_2.content == [ContentPart.text!("- Fake OpenAI summary")]
     end
 
     test "returns unmodified chain when threshold not yet reached", %{
