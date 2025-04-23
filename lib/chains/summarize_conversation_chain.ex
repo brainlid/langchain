@@ -363,7 +363,6 @@ defmodule LangChain.Chains.SummarizeConversationChain do
   # Handle ContentPart messages
   def for_summary_text(%Message{role: role, content: content_parts} = _message)
       when is_list(content_parts) do
-
     tag =
       case role do
         :user ->

@@ -165,7 +165,8 @@ defmodule LangChain.TokenUsage do
   Sets the token usage information on a `LangChain.Message` or
   `LangChain.MessageDelta` struct when wrapped in an :ok,:error tuple in the `metadata` under the `:usage` key.
   """
-  @spec set_wrapped({:ok, %{metadata: nil | map()}}, nil | t()) :: {:ok, %{metadata: %{usage: t()}} | {:error, any()}}
+  @spec set_wrapped({:ok, %{metadata: nil | map()}}, nil | t()) ::
+          {:ok, %{metadata: %{usage: t()}} | {:error, any()}}
   def set_wrapped({:ok, message}, usage) do
     {:ok, set(message, usage)}
   end

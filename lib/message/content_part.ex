@@ -229,10 +229,12 @@ defmodule LangChain.Message.ContentPart do
        when is_list(primary_opts) and is_list(new_opts) do
     # Concatenate any string values with the same key, otherwise use the new
     # value
-    merged_opts = Keyword.merge(primary_opts, new_opts, fn
-      _k, v1, v2 when is_binary(v1) and is_binary(v2) -> v1 <> v2
-      _k, _v1, v2 -> v2
-    end)
+    merged_opts =
+      Keyword.merge(primary_opts, new_opts, fn
+        _k, v1, v2 when is_binary(v1) and is_binary(v2) -> v1 <> v2
+        _k, _v1, v2 -> v2
+      end)
+
     %ContentPart{primary | options: merged_opts}
   end
 

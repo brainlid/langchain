@@ -351,7 +351,6 @@ defmodule LangChain.Utils do
     [new_system_message | rest]
   end
 
-
   @doc """
   Changeset helper function for processing streamed text from an LLM.
 

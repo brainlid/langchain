@@ -165,7 +165,11 @@ defmodule LangChain.Chains.SummarizeConversationChainTest do
       assert user_message.role == :user
 
       assert user_message.content ==
-               [ContentPart.text!("Summarize our entire conversation up to this point for future reference.")]
+               [
+                 ContentPart.text!(
+                   "Summarize our entire conversation up to this point for future reference."
+                 )
+               ]
 
       assert assistant_message.role == :assistant
       assert assistant_message.content == [ContentPart.text!(summary_text)]
@@ -206,7 +210,11 @@ defmodule LangChain.Chains.SummarizeConversationChainTest do
       assert summary_1.role == :user
 
       assert summary_1.content ==
-               [ContentPart.text!("Summarize our entire conversation up to this point for future reference.")]
+               [
+                 ContentPart.text!(
+                   "Summarize our entire conversation up to this point for future reference."
+                 )
+               ]
 
       assert summary_2.role == :assistant
       assert summary_2.content == [ContentPart.text!("fake summary text")]
@@ -234,7 +242,11 @@ defmodule LangChain.Chains.SummarizeConversationChainTest do
       assert summary_1.role == :user
 
       assert summary_1.content ==
-               [ContentPart.text!("Summarize our entire conversation up to this point for future reference.")]
+               [
+                 ContentPart.text!(
+                   "Summarize our entire conversation up to this point for future reference."
+                 )
+               ]
 
       assert summary_2.role == :assistant
       assert summary_2.content == [ContentPart.text!("fake summary text")]
@@ -260,7 +272,11 @@ defmodule LangChain.Chains.SummarizeConversationChainTest do
       assert summary_1.role == :user
 
       assert summary_1.content ==
-               [ContentPart.text!("Summarize our entire conversation up to this point for future reference.")]
+               [
+                 ContentPart.text!(
+                   "Summarize our entire conversation up to this point for future reference."
+                 )
+               ]
 
       assert summary_2.role == :assistant
       assert summary_2.content == [ContentPart.text!("fake summary text")]
@@ -400,7 +416,11 @@ defmodule LangChain.Chains.SummarizeConversationChainTest do
       assert summary_1.role == :user
 
       assert summary_1.content ==
-               [ContentPart.text!("Summarize our entire conversation up to this point for future reference.")]
+               [
+                 ContentPart.text!(
+                   "Summarize our entire conversation up to this point for future reference."
+                 )
+               ]
 
       assert summary_2.role == :assistant
       assert summary_2.content == [ContentPart.text!("- Fake OpenAI summary")]

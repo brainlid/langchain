@@ -197,7 +197,7 @@ defmodule LangChain.MessageDelta do
   def merge_deltas(deltas) when is_list(deltas) do
     # we accumulate the deltas into the first argument which we call the
     # "primary". Then each successive delta is merged into the primary.
-    Enum.reduce(deltas, nil, &(merge_delta(&2, &1)))
+    Enum.reduce(deltas, nil, &merge_delta(&2, &1))
   end
 
   # Clear the content field after merging into merged_content

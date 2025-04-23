@@ -74,7 +74,11 @@ defmodule LangChain.MessageProcessors.JsonProcessorTest do
       assert returned_message.role == :user
 
       assert returned_message.content ==
-               [ContentPart.text!("ERROR: Invalid JSON data: unexpected end of input at position 33")]
+               [
+                 ContentPart.text!(
+                   "ERROR: Invalid JSON data: unexpected end of input at position 33"
+                 )
+               ]
     end
   end
 
@@ -178,7 +182,11 @@ defmodule LangChain.MessageProcessors.JsonProcessorTest do
       assert returned_message.role == :user
 
       assert returned_message.content ==
-               [ContentPart.text!("ERROR: Invalid JSON data: unexpected end of input at position 9")]
+               [
+                 ContentPart.text!(
+                   "ERROR: Invalid JSON data: unexpected end of input at position 9"
+                 )
+               ]
     end
   end
 end

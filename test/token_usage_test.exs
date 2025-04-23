@@ -195,9 +195,11 @@ defmodule LangChain.TokenUsageTest do
     test "works on :ok wrapped structs when setting token usage" do
       message = {:ok, %Message{metadata: %{}}}
 
-      assert TokenUsage.set_wrapped(message, %TokenUsage{input: 10, output: 20}) == {:ok, %Message{
-               metadata: %{usage: %TokenUsage{input: 10, output: 20}}
-             }}
+      assert TokenUsage.set_wrapped(message, %TokenUsage{input: 10, output: 20}) ==
+               {:ok,
+                %Message{
+                  metadata: %{usage: %TokenUsage{input: 10, output: 20}}
+                }}
     end
 
     test "works on :error wrapped structs when setting token usage" do

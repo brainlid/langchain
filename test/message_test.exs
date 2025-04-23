@@ -249,7 +249,10 @@ defmodule LangChain.MessageTest do
                  ContentPart.text!("How are you?")
                ])
 
-      assert msg.content == [ContentPart.text!("Greetings non-AI!"), ContentPart.text!("How are you?")]
+      assert msg.content == [
+               ContentPart.text!("Greetings non-AI!"),
+               ContentPart.text!("How are you?")
+             ]
     end
 
     test "creates a cancelled assistant message" do
@@ -295,12 +298,17 @@ defmodule LangChain.MessageTest do
     end
 
     test "creates assistant message using multiple content parts" do
-      assert %Message{role: :assistant} = msg = Message.new_assistant!([
+      assert %Message{role: :assistant} =
+               msg =
+               Message.new_assistant!([
                  ContentPart.text!("Greetings non-AI!"),
                  ContentPart.text!("How are you?")
                ])
 
-      assert msg.content == [ContentPart.text!("Greetings non-AI!"), ContentPart.text!("How are you?")]
+      assert msg.content == [
+               ContentPart.text!("Greetings non-AI!"),
+               ContentPart.text!("How are you?")
+             ]
     end
   end
 
