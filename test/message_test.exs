@@ -224,6 +224,10 @@ defmodule LangChain.MessageTest do
       assert %Message{role: :user} = msg = Message.new_user!("Hello!")
       assert msg.content == [ContentPart.text!("Hello!")]
       assert msg.status == :complete
+
+      assert %Message{role: :user} = msg = Message.new_user!([ContentPart.text!("Hello!")])
+      assert msg.content == [ContentPart.text!("Hello!")]
+      assert msg.status == :complete
     end
 
     test "requires content" do
