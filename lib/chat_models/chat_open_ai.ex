@@ -9,6 +9,52 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
   - https://github.com/openai/openai-cookbook/blob/main/examples/How_to_call_functions_with_chat_models.ipynb
 
+  ## ContentPart Types
+
+  OpenAI supports several types of content parts that can be combined in a single message:
+
+  ### Text Content
+  Basic text content is the default and most common type:
+
+      Message.new_user!("Hello, how are you?")
+
+  ### Image Content
+  OpenAI supports both base64-encoded images and image URLs:
+
+      # Using a base64 encoded image
+      Message.new_user!([
+        ContentPart.text!("What's in this image?"),
+        ContentPart.image!("base64_encoded_image_data", media: :jpg)
+      ])
+
+      # Using an image URL
+      Message.new_user!([
+        ContentPart.text!("Describe this image:"),
+        ContentPart.image_url!("https://example.com/image.jpg")
+      ])
+
+  For images, you can specify the detail level which affects token usage:
+  - `detail: "low"` - Lower resolution, fewer tokens
+  - `detail: "high"` - Higher resolution, more tokens
+  - `detail: "auto"` - Let the model decide
+
+  ### File Content
+  OpenAI supports both base64-encoded files and file IDs:
+
+      # Using a base64 encoded file
+      Message.new_user!([
+        ContentPart.text!("Process this file:"),
+        ContentPart.file!("base64_encoded_file_data",
+          type: :base64,
+          filename: "document.pdf"
+        )
+      ])
+
+      # Using a file ID (after uploading to OpenAI)
+      Message.new_user!([
+        ContentPart.text!("Process this file:"),
+        ContentPart.file!("file-1234", type: :file_id)
+      ])
 
   ## Callbacks
 
@@ -505,12 +551,23 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   end
 
   def content_part_for_api(%_{} = _model, %ContentPart{type: :file, options: opts} = part) do
+    file_params =
+      case Keyword.get(opts, :type, :base64) do
+        :file_id ->
+          %{
+            "file_id" => part.content
+          }
+
+        :base64 ->
+          %{
+            "filename" => Keyword.get(opts, :filename, "file.pdf"),
+            "file_data" => "data:application/pdf;base64," <> part.content
+          }
+      end
+
     %{
       "type" => "file",
-      "file" => %{
-        "filename" => Keyword.get(opts, :filename, "file.pdf"),
-        "file_data" => "data:application/pdf;base64," <> part.content
-      }
+      "file" => file_params
     }
   end
 
@@ -609,19 +666,39 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   end
 
   def call(%ChatOpenAI{} = openai, messages, tools) when is_list(messages) do
-    try do
-      # make base api request and perform high-level success/failure checks
-      case do_api_request(openai, messages, tools) do
-        {:error, reason} ->
-          {:error, reason}
+    metadata = %{
+      model: openai.model,
+      message_count: length(messages),
+      tools_count: length(tools)
+    }
 
-        parsed_data ->
-          {:ok, parsed_data}
+    LangChain.Telemetry.span([:langchain, :llm, :call], metadata, fn ->
+      try do
+        # Track the prompt being sent
+        LangChain.Telemetry.llm_prompt(
+          %{system_time: System.system_time()},
+          %{model: openai.model, messages: messages}
+        )
+
+        # make base api request and perform high-level success/failure checks
+        case do_api_request(openai, messages, tools) do
+          {:error, reason} ->
+            {:error, reason}
+
+          parsed_data ->
+            # Track the response being received
+            LangChain.Telemetry.llm_response(
+              %{system_time: System.system_time()},
+              %{model: openai.model, response: parsed_data}
+            )
+
+            {:ok, parsed_data}
+        end
+      rescue
+        err in LangChainError ->
+          {:error, err}
       end
-    rescue
-      err in LangChainError ->
-        {:error, err}
-    end
+    end)
   end
 
   # Make the API request from the OpenAI server.
@@ -700,6 +777,17 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
           result ->
             Callbacks.fire(openai.callbacks, :on_llm_new_message, [result])
+
+            # Track non-streaming response completion
+            LangChain.Telemetry.emit_event(
+              [:langchain, :llm, :response, :non_streaming],
+              %{system_time: System.system_time()},
+              %{
+                model: openai.model,
+                response_size: byte_size(inspect(result))
+              }
+            )
+
             result
         end
 

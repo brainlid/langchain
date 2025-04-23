@@ -4,6 +4,32 @@
 
 
 
+## v0.3.3 (2025-03-17)
+
+This is a milestone release before staring v0.4.0 which introduces breaking changes, but importantly adds support for "thinking" models.
+
+### Added
+- Added telemetry support https://github.com/brainlid/langchain/pull/284
+- Added `LLMChain.run_until_tool_used/3` function https://github.com/brainlid/langchain/pull/292
+- Support for file uploads with file_id in ChatOpenAI https://github.com/brainlid/langchain/pull/283
+- Support for json_response in ChatGoogleAI https://github.com/brainlid/langchain/pull/277
+- Support for streaming responses from Mistral https://github.com/brainlid/langchain/pull/287
+- Support for file URLs in Google AI https://github.com/brainlid/langchain/pull/286
+- Support for PDF content with OpenAI model https://github.com/brainlid/langchain/pull/275
+- Support for caching tool results in Anthropic calls https://github.com/brainlid/langchain/pull/269
+- Support for choosing Anthropic beta headers https://github.com/brainlid/langchain/pull/273
+
+### Changed
+- Fixed options being passed to the Ollama chat API https://github.com/brainlid/langchain/pull/179
+- Fixed media URIs for Google Vertex https://github.com/brainlid/langchain/pull/242
+- Fixed OpenAI verbose_api https://github.com/brainlid/langchain/pull/274
+- Improved documentation for callbacks and content parts
+- Upgraded gettext and migrated https://github.com/brainlid/langchain/pull/271
+
+### Fixed
+- Added validation to check if requested tool_name exists in chain
+- Fixed various documentation issues and typos
+- Fixed callback links in documentation
 
 ## v0.3.2 (2025-03-17)
 

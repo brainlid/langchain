@@ -215,26 +215,27 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   def for_api(%ChatOllamaAI{} = model, messages, tools) do
     %{
       model: model.model,
-      temperature: model.temperature,
       messages: messages_for_api(messages),
       stream: model.stream,
-      seed: model.seed,
-      num_ctx: model.num_ctx,
-      num_predict: model.num_predict,
-      repeat_last_n: model.repeat_last_n,
-      repeat_penalty: model.repeat_penalty,
-      keep_alive: model.keep_alive,
-      mirostat: model.mirostat,
-      mirostat_eta: model.mirostat_eta,
-      mirostat_tau: model.mirostat_tau,
-      num_gqa: model.num_gqa,
-      num_gpu: model.num_gpu,
-      num_thread: model.num_thread,
-      receive_timeout: model.receive_timeout,
-      stop: model.stop,
-      tfs_z: model.tfs_z,
-      top_k: model.top_k,
-      top_p: model.top_p
+      options: %{
+        temperature: model.temperature,
+        seed: model.seed,
+        num_ctx: model.num_ctx,
+        num_predict: model.num_predict,
+        repeat_last_n: model.repeat_last_n,
+        repeat_penalty: model.repeat_penalty,
+        mirostat: model.mirostat,
+        mirostat_eta: model.mirostat_eta,
+        mirostat_tau: model.mirostat_tau,
+        num_gqa: model.num_gqa,
+        num_gpu: model.num_gpu,
+        num_thread: model.num_thread,
+        stop: model.stop,
+        tfs_z: model.tfs_z,
+        top_k: model.top_k,
+        top_p: model.top_p
+      },
+      receive_timeout: model.receive_timeout
     }
     |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(tools))
   end
@@ -348,18 +349,38 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   end
 
   def call(%ChatOllamaAI{} = ollama_ai, messages, tools) when is_list(messages) do
-    try do
-      case __MODULE__.do_api_request(ollama_ai, messages, tools) do
-        {:error, reason} ->
-          {:error, reason}
+    metadata = %{
+      model: ollama_ai.model,
+      message_count: length(messages),
+      tools_count: length(tools)
+    }
 
-        parsed_data ->
-          {:ok, parsed_data}
+    LangChain.Telemetry.span([:langchain, :llm, :call], metadata, fn ->
+      try do
+        # Track the prompt being sent
+        LangChain.Telemetry.llm_prompt(
+          %{system_time: System.system_time()},
+          %{model: ollama_ai.model, messages: messages}
+        )
+
+        case __MODULE__.do_api_request(ollama_ai, messages, tools) do
+          {:error, reason} ->
+            {:error, reason}
+
+          parsed_data ->
+            # Track the response being received
+            LangChain.Telemetry.llm_response(
+              %{system_time: System.system_time()},
+              %{model: ollama_ai.model, response: parsed_data}
+            )
+
+            {:ok, parsed_data}
+        end
+      rescue
+        err in LangChainError ->
+          {:error, err.message}
       end
-    rescue
-      err in LangChainError ->
-        {:error, err.message}
-    end
+    end)
   end
 
   # Make the API request from the Ollama server.
@@ -411,6 +432,16 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
             {:error, reason}
 
           result ->
+            # Track non-streaming response completion
+            LangChain.Telemetry.emit_event(
+              [:langchain, :llm, :response, :non_streaming],
+              %{system_time: System.system_time()},
+              %{
+                model: ollama_ai.model,
+                response_size: byte_size(inspect(result))
+              }
+            )
+
             result
         end
 

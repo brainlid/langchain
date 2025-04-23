@@ -11,6 +11,7 @@ defmodule LangChain.Message.ContentPart do
   - `:image_url` - The message part is a URL to an image.
   - `:image` - The message part is image data that is base64 encoded text.
   - `:file` - The message part is file data that is base64 encoded text.
+  - `:file_url` - The message part is a URL to a file.
   - `:thinking` - A thinking block from a reasoning model like Anthropic.
   - `:unsupported` - A part that is not supported but may need to be present.
     This includes Anthropic's `redacted_thinking` block which has no value in
@@ -59,7 +60,7 @@ defmodule LangChain.Message.ContentPart do
   @primary_key false
   embedded_schema do
     field :type, Ecto.Enum,
-      values: [:text, :image_url, :image, :file, :thinking, :unsupported],
+      values: [:text, :image_url, :image, :file, :file_url, :thinking, :unsupported],
       default: :text
 
     field :content, :string
@@ -157,6 +158,14 @@ defmodule LangChain.Message.ContentPart do
   @spec image_url!(String.t(), Keyword.t()) :: t() | no_return()
   def image_url!(content, opts \\ []) do
     new!(%{type: :image_url, content: content, options: opts})
+  end
+
+  @doc """
+  Create a new ContentPart that contains a URL to an file. Raises an exception if not valid.
+  """
+  @spec file_url!(String.t(), Keyword.t()) :: t() | no_return()
+  def file_url!(content, opts \\ []) do
+    new!(%{type: :file_url, content: content, options: opts})
   end
 
   @doc false

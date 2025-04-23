@@ -1575,6 +1575,80 @@ defmodule LangChain.Chains.LLMChainTest do
     end
   end
 
+  describe "run_until_tool_used/3" do
+    test "supports multiple tool calls being made and stopping when the specific tool is called",
+         %{greet: greet, sync: do_thing} do
+      # Made NOT LIVE here
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:ok,
+         new_function_calls!([
+           ToolCall.new!(%{
+             call_id: "call_fakeGreet",
+             name: "greet",
+             arguments: %{"name" => "Tim"}
+           })
+         ])}
+      end)
+
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:ok,
+         new_function_calls!([
+           ToolCall.new!(%{call_id: "call_fakeDoThing", name: "do_thing", arguments: nil})
+         ])}
+      end)
+
+      {:ok, updated_chain, tool_result} =
+        %{llm: ChatOpenAI.new!(%{stream: false}), verbose: false}
+        |> LLMChain.new!()
+        |> LLMChain.add_tools([greet, do_thing])
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Say hello and then call do_thing."))
+        |> LLMChain.run_until_tool_used("do_thing")
+
+      assert updated_chain.last_message.role == :tool
+
+      assert %ToolResult{is_error: false} = tool_result
+      assert tool_result.name == "do_thing"
+
+      assert updated_chain.current_failure_count == 0
+    end
+
+    test "supports stopping after max_runs attempts", %{greet: greet, sync: do_thing} do
+      # Made NOT LIVE here
+      expect(ChatOpenAI, :call, 3, fn _model, _messages, _tools ->
+        {:ok,
+         new_function_calls!([
+           ToolCall.new!(%{call_id: "call_fake123", name: "greet", arguments: %{"name" => "Tim"}})
+         ])}
+      end)
+
+      {:error, _updated_chain, error} =
+        %{llm: ChatOpenAI.new!(%{stream: false}), verbose: false}
+        |> LLMChain.new!()
+        |> LLMChain.add_tools([greet, do_thing])
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Say hello and then call do_thing."))
+        # will not be called. Tool call is not made.
+        |> LLMChain.run_until_tool_used("do_thing", max_runs: 3)
+
+      assert error.type == "exceeded_max_runs"
+      assert error.message == "Exceeded maximum number of runs"
+    end
+
+    test "returns error when tool_name does not exist in available tools", %{greet: greet} do
+      {:error, _updated_chain, error} =
+        %{llm: ChatOpenAI.new!(%{stream: false}), verbose: false}
+        |> LLMChain.new!()
+        |> LLMChain.add_tools([greet])
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Say hello to Tim."))
+        |> LLMChain.run_until_tool_used("non_existent_tool", max_runs: 1)
+
+      assert error.type == "invalid_tool_name"
+      assert error.message == "Tool name 'non_existent_tool' not found in available tools"
+    end
+  end
+
   describe "increment_current_failure_count/1" do
     test "increments the current_failure_count", %{chain: chain} do
       updated_chain_1 =
