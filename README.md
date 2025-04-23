@@ -68,7 +68,7 @@ in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:langchain, "0.2.0"}
+    {:langchain, "0.3.0"}
   ]
 end
 ```
@@ -78,7 +78,7 @@ The Release Candidate includes many additional features and some breaking change
 ```elixir
 def deps do
   [
-    {:langchain, "0.3.0-rc.0"}
+    {:langchain, "0.4.0-rc.0"}
   ]
 end
 ```
