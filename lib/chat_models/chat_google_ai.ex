@@ -184,11 +184,8 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
 
     system_instruction =
       case system do
-        nil ->
-          nil
-
-        %Message{role: :system, content: content} ->
-          %{"parts" => [%{"text" => content}]}
+        nil -> nil
+        system -> for_api(system)
       end
 
     messages_for_api =
