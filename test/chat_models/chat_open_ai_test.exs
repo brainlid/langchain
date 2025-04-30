@@ -702,7 +702,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       }
 
       result =
-        ChatOpenAI.for_api(
+        ChatOpenAI.content_part_for_api(
           ChatOpenAI.new!(),
           ContentPart.file!(file_base64_data, media: :pdf, type: :base64, filename: filename)
         )
@@ -721,7 +721,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       }
 
       result =
-        ChatOpenAI.for_api(
+        ChatOpenAI.content_part_for_api(
           ChatOpenAI.new!(),
           ContentPart.file!(file_id, media: :pdf, type: :file_id)
         )
