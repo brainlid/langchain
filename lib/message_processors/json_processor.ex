@@ -154,7 +154,6 @@ defmodule LangChain.MessageProcessors.JsonProcessor do
           run(chain, %Message{message | processed_content: json})
 
         _ ->
-          IO.puts("failed to find json, message.process_content=#{message.processed_content}")
           {:halt, Message.new_user!("ERROR: No JSON found")}
       end
     end)
