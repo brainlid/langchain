@@ -4,14 +4,14 @@ defmodule LangChain.ChatModels.ChatVertexAI do
 
   Converts response into more specialized `LangChain` data structures.
 
-Example Usage:
+  Example Usage:
 
   ```elixir
   alias LangChain.Chains.LLMChain
   alias LangChain.Message
   alias LangChain.Message.ContentPart
   alias LangChain.ChatModels.ChatVertexAI
- 
+
 
   config = %{
         model: "gemini-2.0-flash",
@@ -21,7 +21,7 @@ Example Usage:
         receive_timeout: ...
       }
    model = ChatVertexAI.new!(config)
-  
+
       %{llm: model, verbose: false, stream: false}
       |> LLMChain.new!()
       |> LLMChain.add_message(
@@ -36,7 +36,7 @@ Example Usage:
       )
       |> LLMChain.run()
   The above call will return summary of the media content.
- ```
+  ```
   """
   use Ecto.Schema
   require Logger
