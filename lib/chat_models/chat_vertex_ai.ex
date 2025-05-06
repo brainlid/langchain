@@ -3,6 +3,40 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   Parses and validates inputs for making a request for the Google AI  Chat API.
 
   Converts response into more specialized `LangChain` data structures.
+
+  Example Usage:
+
+  ```elixir
+  alias LangChain.Chains.LLMChain
+  alias LangChain.Message
+  alias LangChain.Message.ContentPart
+  alias LangChain.ChatModels.ChatVertexAI
+
+
+  config = %{
+        model: "gemini-2.0-flash",
+        api_key: ..., # vertex requires gcloud auth token https://cloud.google.com/vertex-ai/generative-ai/docs/start/quickstarts/quickstart-multimodal#rest
+        temperature: 1.0,
+        top_p: 0.8,
+        receive_timeout: ...
+      }
+   model = ChatVertexAI.new!(config)
+
+      %{llm: model, verbose: false, stream: false}
+      |> LLMChain.new!()
+      |> LLMChain.add_message(
+        Message.new_user!([
+          ContentPart.new!(%{type: :text, content: "Analyse the provided file and share a summary"}),
+          ContentPart.new!(%{
+            type: :file_url,
+            content: ...,
+            options: [media: ...]
+          })
+        ])
+      )
+      |> LLMChain.run()
+  The above call will return summary of the media content.
+  ```
   """
   use Ecto.Schema
   require Logger
