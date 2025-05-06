@@ -10,6 +10,7 @@ defmodule LangChain.Chains.LLMChainTest do
   alias LangChain.Chains.LLMChain
   alias LangChain.PromptTemplate
   alias LangChain.Function
+  alias LangChain.TokenUsage
   alias LangChain.Message
   alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
@@ -110,7 +111,7 @@ defmodule LangChain.Chains.LLMChainTest do
   end
 
   def fake_success_processor(%LLMChain{} = _chain, %Message{} = message) do
-    {:cont, %Message{message | content: message.content <> " *"}}
+    {:cont, %Message{message | processed_content: message.processed_content <> " *"}}
   end
 
   def fake_fail_processor(%LLMChain{} = _chain, %Message{} = _message) do
@@ -238,7 +239,13 @@ defmodule LangChain.Chains.LLMChainTest do
       new_chain = LLMChain.cancel_delta(updated_chain, :cancelled)
       assert new_chain.delta == nil
 
-      assert %Message{role: :assistant, content: "Sock", status: :cancelled} =
+      content = [ContentPart.text!("Sock")]
+
+      assert %Message{
+               role: :assistant,
+               content: ^content,
+               status: :cancelled
+             } =
                new_chain.last_message
     end
   end
@@ -375,12 +382,14 @@ defmodule LangChain.Chains.LLMChainTest do
         |> LLMChain.apply_prompt_templates([prompt], %{product: "colorful socks"})
         |> LLMChain.run()
 
-      assert %Message{role: :assistant, content: "Socktastic!", status: :complete} =
+      content = [ContentPart.text!("Socktastic!")]
+
+      assert %Message{role: :assistant, content: ^content, status: :complete} =
                updated_chain.last_message
 
       # we should have received a message for the completed, combined message
       assert_received {:fake_full_message, message}
-      assert %Message{role: :assistant, content: "Socktastic!"} = message
+      assert %Message{role: :assistant, content: ^content} = message
     end
   end
 
@@ -394,22 +403,25 @@ defmodule LangChain.Chains.LLMChainTest do
     end
 
     test "when the first delta, assigns it to `delta`", %{chain: chain} do
-      delta = MessageDelta.new!(%{role: :assistant, content: "Greetings from"})
+      delta = MessageDelta.new!(%{role: :assistant, content: ContentPart.text!("Greetings from")})
 
       assert chain.delta == nil
       updated_chain = LLMChain.apply_delta(chain, delta)
-      assert updated_chain.delta == delta
+      assert updated_chain.delta.merged_content == [ContentPart.text!("Greetings from")]
+      assert updated_chain.delta.content == nil
+      assert updated_chain.delta.role == :assistant
+      assert updated_chain.delta.status == :incomplete
     end
 
     test "merges to existing delta and returns merged on struct", %{chain: chain} do
       updated_chain =
         chain
         |> LLMChain.apply_delta(
-          MessageDelta.new!(%{role: :assistant, content: "Greetings from "})
+          MessageDelta.new!(%{role: :assistant, content: ContentPart.text!("Greetings from ")})
         )
-        |> LLMChain.apply_delta(MessageDelta.new!(%{content: "your "}))
+        |> LLMChain.apply_delta(MessageDelta.new!(%{content: ContentPart.text!("your ")}))
 
-      assert updated_chain.delta.content == "Greetings from your "
+      assert updated_chain.delta.merged_content == [ContentPart.text!("Greetings from your ")]
     end
 
     test "when final delta received, transforms to a message and applies it", %{chain: chain} do
@@ -429,7 +441,7 @@ defmodule LangChain.Chains.LLMChainTest do
       # the delta is converted to a message and applied to the messages
       assert [%Message{} = new_message] = updated_chain.messages
       assert new_message.role == :assistant
-      assert new_message.content == "Greetings from your favorite assistant."
+      assert new_message.content == [ContentPart.text!("Greetings from your favorite assistant.")]
       assert new_message.status == :complete
     end
 
@@ -452,7 +464,7 @@ defmodule LangChain.Chains.LLMChainTest do
       # the delta is converted to a message and applied to the messages
       assert [%Message{} = new_message] = updated_chain.messages
       assert new_message.role == :assistant
-      assert new_message.content == "Greetings from your favorite assistant."
+      assert new_message.content == [ContentPart.text!("Greetings from your favorite assistant.")]
       assert new_message.status == :length
     end
 
@@ -493,7 +505,7 @@ defmodule LangChain.Chains.LLMChainTest do
       # the delta is converted to a message and applied to the messages
       assert [%Message{} = new_message] = updated_chain.messages
       assert new_message.role == :assistant
-      assert new_message.content == "Greetings from your favorite "
+      assert new_message.content == [ContentPart.text!("Greetings from your favorite ")]
       assert new_message.status == :cancelled
     end
   end
@@ -724,7 +736,7 @@ defmodule LangChain.Chains.LLMChainTest do
       updated = LLMChain.apply_prompt_templates(chain, templates, %{subject: "Pomeranians"})
       assert length(updated.messages) == 2
       assert [%Message{role: :system}, %Message{role: :user} = user_msg] = updated.messages
-      assert user_msg.content == "Give a brief description of Pomeranians."
+      assert user_msg.content == [ContentPart.text!("Give a brief description of Pomeranians.")]
       assert updated.last_message == user_msg
       assert updated.needs_response
     end
@@ -737,7 +749,7 @@ defmodule LangChain.Chains.LLMChainTest do
       updated = LLMChain.quick_prompt(chain, "Hello!")
       assert length(updated.messages) == 2
       assert [%Message{role: :system}, %Message{role: :user} = user_msg] = updated.messages
-      assert user_msg.content == "Hello!"
+      assert user_msg.content == [ContentPart.text!("Hello!")]
       assert updated.last_message == user_msg
       assert updated.needs_response
     end
@@ -761,7 +773,7 @@ defmodule LangChain.Chains.LLMChainTest do
       message = Message.new_assistant!(%{content: "Initial"})
 
       final_message = LLMChain.run_message_processors(chain, message)
-      assert final_message.content == "Initial *"
+      assert final_message.processed_content == "Initial *"
     end
 
     test "applies successive processors", %{chain: chain} do
@@ -775,7 +787,7 @@ defmodule LangChain.Chains.LLMChainTest do
       message = Message.new_assistant!(%{content: "Initial"})
 
       final_message = LLMChain.run_message_processors(chain, message)
-      assert final_message.content == "Initial * * *"
+      assert final_message.processed_content == "Initial * * *"
     end
 
     test "returns :halted and a new message when :halt returned", %{
@@ -792,10 +804,10 @@ defmodule LangChain.Chains.LLMChainTest do
 
       {:halted, failed_message, new_message} = LLMChain.run_message_processors(chain, message)
       assert failed_message.role == :assistant
-      assert failed_message.content == "Initial * *"
+      assert failed_message.processed_content == "Initial * *"
 
       assert new_message.role == :user
-      assert new_message.content == "ERROR: I reject your message!"
+      assert new_message.content == [ContentPart.text!("ERROR: I reject your message!")]
     end
 
     test "handles an exception raised in processor", %{chain: chain} do
@@ -810,7 +822,11 @@ defmodule LangChain.Chains.LLMChainTest do
       {:halted, final_message} = LLMChain.run_message_processors(chain, message)
 
       assert final_message.content ==
-               "ERROR: An exception was raised! Exception: %RuntimeError{message: \"BOOM! Processor exploded\"}"
+               [
+                 ContentPart.text!(
+                   "ERROR: An exception was raised! Exception: %RuntimeError{message: \"BOOM! Processor exploded\"}"
+                 )
+               ]
     end
 
     test "does nothing on other message roles", %{chain: chain} do
@@ -826,12 +842,15 @@ defmodule LangChain.Chains.LLMChainTest do
   end
 
   describe "process_message/2" do
-    test "runs message processors, adds to chain, fires callback on final message", %{
+    test "runs message processors, adds to chain, fires callbacks on final message", %{
       chain: chain
     } do
       handler = %{
         on_message_processed: fn _chain, %Message{} = message ->
           send(self(), {:processed_message_callback, message})
+        end,
+        on_llm_token_usage: fn _chain, %TokenUsage{} = usage ->
+          send(self(), {:token_usage_callback, usage})
         end
       }
 
@@ -844,14 +863,19 @@ defmodule LangChain.Chains.LLMChainTest do
           &fake_success_processor/2
         ])
 
-      message = Message.new_assistant!(%{content: "Initial"})
+      message =
+        Message.new_assistant!(%{
+          content: "Initial",
+          metadata: %{usage: %TokenUsage{input: 10, output: 15}}
+        })
 
       updated_chain = LLMChain.process_message(chain, message)
       [msg1] = updated_chain.messages
-      assert msg1.content == "Initial * *"
+      assert msg1.processed_content == "Initial * *"
 
       # Expect callback with the updated message
       assert_received {:processed_message_callback, ^msg1}
+      assert_received {:token_usage_callback, %TokenUsage{input: 10, output: 15}}
     end
 
     test "when halted, adds original message plus new message returned from processor and fires 2 callbacks",
@@ -883,9 +907,9 @@ defmodule LangChain.Chains.LLMChainTest do
       assert updated_chain.current_failure_count == 1
       [msg1, msg2] = updated_chain.messages
       # includes the message that errored at the point it was before failure
-      assert msg1.content == "Initial *"
+      assert msg1.processed_content == "Initial *"
       # adds a new message with the processor response message
-      assert msg2.content == "ERROR: I reject your message!"
+      assert msg2.content == [ContentPart.text!("ERROR: I reject your message!")]
 
       # Expect callback with the original assistant message
       assert_received {:processing_error_callback, ^msg1}
@@ -893,7 +917,7 @@ defmodule LangChain.Chains.LLMChainTest do
       assert_received {:error_message_created_callback, ^msg2}
     end
 
-    test "on successful processing, clears resets the failure count", %{chain: chain} do
+    test "on successful processing, clears or resets the failure count", %{chain: chain} do
       chain =
         chain
         |> LLMChain.increment_current_failure_count()
@@ -909,7 +933,8 @@ defmodule LangChain.Chains.LLMChainTest do
       assert updated_chain.current_failure_count == 0
       [msg1] = updated_chain.messages
       # includes the message that errored at the point it was before failure
-      assert msg1.content == "Initial *"
+      assert msg1.content == [ContentPart.text!("Initial")]
+      assert msg1.processed_content == "Initial *"
     end
   end
 
@@ -1105,28 +1130,6 @@ defmodule LangChain.Chains.LLMChainTest do
       end
     end
 
-    test "ChatOpenAI errors when messages contents have PromptTemplates" do
-      messages = [
-        Message.new_user!([
-          PromptTemplate.from_template!("""
-          My name is <%= @user_name %> and this a picture of me:
-          """),
-          ContentPart.image_url!("https://example.com/profile_pic.jpg")
-        ])
-      ]
-
-      # errors when trying to send a PromptTemplate
-      # create and run the chain
-      {:error, _updated_chain, %LangChainError{} = reason} =
-        %{llm: ChatOpenAI.new!(%{seed: 0})}
-        |> LLMChain.new!()
-        |> LLMChain.add_messages(messages)
-        |> LLMChain.run()
-
-      assert reason.type == nil
-      assert reason.message =~ ~r/PromptTemplates must be/
-    end
-
     test "mode: :while_needs_response - increments current_failure_count on parse failure", %{
       chain: chain
     } do
@@ -1158,28 +1161,43 @@ defmodule LangChain.Chains.LLMChainTest do
       [m1, m2, m3, m4, m5, m6, m7] = error_chain.messages
 
       assert m1.role == :user
-      assert m1.content == "Say what I want you to say."
+      assert m1.content == [ContentPart.text!("Say what I want you to say.")]
 
       assert m2.role == :assistant
-      assert m2.content == "Not what you wanted"
+      assert m2.content == [ContentPart.text!("Not what you wanted")]
       assert m2.processed_content == "Not what you wanted"
 
       assert m3.role == :user
-      assert m3.content == "ERROR: Invalid JSON data: unexpected byte at position 0: 0x4E (\"N\")"
+
+      assert m3.content == [
+               ContentPart.text!(
+                 "ERROR: Invalid JSON data: unexpected byte at position 0: 0x4E (\"N\")"
+               )
+             ]
 
       assert m4.role == :assistant
-      assert m4.content == "Not what you wanted"
+      assert m4.content == [ContentPart.text!("Not what you wanted")]
       assert m4.processed_content == "Not what you wanted"
 
       assert m5.role == :user
-      assert m5.content == "ERROR: Invalid JSON data: unexpected byte at position 0: 0x4E (\"N\")"
+
+      assert m5.content == [
+               ContentPart.text!(
+                 "ERROR: Invalid JSON data: unexpected byte at position 0: 0x4E (\"N\")"
+               )
+             ]
 
       assert m6.role == :assistant
-      assert m6.content == "Not what you wanted"
+      assert m6.content == [ContentPart.text!("Not what you wanted")]
       assert m6.processed_content == "Not what you wanted"
 
       assert m7.role == :user
-      assert m7.content == "ERROR: Invalid JSON data: unexpected byte at position 0: 0x4E (\"N\")"
+
+      assert m7.content == [
+               ContentPart.text!(
+                 "ERROR: Invalid JSON data: unexpected byte at position 0: 0x4E (\"N\")"
+               )
+             ]
     end
 
     test "mode: :while_needs_response - fires callbacks for failed messages correctly" do
@@ -1229,21 +1247,31 @@ defmodule LangChain.Chains.LLMChainTest do
       [m1, m2, m3, m4, m5] = error_chain.messages
 
       assert m1.role == :user
-      assert m1.content == "Say what I want you to say."
+      assert m1.content == [ContentPart.text!("Say what I want you to say.")]
 
       assert m2.role == :assistant
-      assert m2.content == "Not what you wanted"
+      assert m2.content == [ContentPart.text!("Not what you wanted")]
       assert m2.processed_content == "Not what you wanted"
 
       assert m3.role == :user
-      assert m3.content == "ERROR: Invalid JSON data: unexpected byte at position 0: 0x4E (\"N\")"
+
+      assert m3.content == [
+               ContentPart.text!(
+                 "ERROR: Invalid JSON data: unexpected byte at position 0: 0x4E (\"N\")"
+               )
+             ]
 
       assert m4.role == :assistant
-      assert m4.content == "Not what you wanted"
+      assert m4.content == [ContentPart.text!("Not what you wanted")]
       assert m4.processed_content == "Not what you wanted"
 
       assert m5.role == :user
-      assert m5.content == "ERROR: Invalid JSON data: unexpected byte at position 0: 0x4E (\"N\")"
+
+      assert m5.content == [
+               ContentPart.text!(
+                 "ERROR: Invalid JSON data: unexpected byte at position 0: 0x4E (\"N\")"
+               )
+             ]
 
       assert_received {:processing_error_callback, ^m2}
       assert_received {:error_message_created_callback, ^m3}
@@ -1464,7 +1492,7 @@ defmodule LangChain.Chains.LLMChainTest do
 
       # stopped after processing a successful assistant response
       assert updated_chain.last_message.role == :assistant
-      assert updated_chain.last_message.content == "fallback worked!"
+      assert updated_chain.last_message.content == [ContentPart.text!("fallback worked!")]
     end
 
     test "with_fallbacks: runs each LLM option and returns when all failed" do
@@ -1536,9 +1564,13 @@ defmodule LangChain.Chains.LLMChainTest do
 
       assert [system_msg | _rest] = updated_chain.messages
       assert system_msg.role == :system
-      assert system_msg.content == "Anthropic system prompt"
+      assert system_msg.content == [ContentPart.text!("Anthropic system prompt")]
       assert updated_chain.last_message.role == :assistant
-      assert updated_chain.last_message.content == "Claude says it's because it's not red."
+
+      assert updated_chain.last_message.content == [
+               ContentPart.text!("Claude says it's because it's not red.")
+             ]
+
       assert_received :before_fallback_fired
     end
   end

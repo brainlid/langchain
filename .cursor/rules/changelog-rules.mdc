@@ -1,0 +1,33 @@
+---
+description: CHANGELOG release authoring rules
+globs:
+alwaysApply: false
+---
+Write a changelog entry in the [CHANGELOG.md](mdc:CHANGELOG.md) file for the requested new version. Search the git history for the previous verion's tagged release but omit any immediately following commits that updated the CHANGELOG, as those are essentially part of the previous release.
+
+Break out all the changes in the groups of Added, Changed or breaking changes. Particularly pay attention to larger and more official changes that happen through a PR being merged. Any important changes that were NOT part of a PR but were included should also be called out.
+
+A PR_LINK uses the PR number and the base project URL:
+
+Example: https://github.com/brainlid/langchain/pull/261
+
+# Changelog creation
+
+A changelog entry for a specific version follows this format:
+
+---
+
+Callout any breaking changes.
+
+### Upgrading from vPreviousVersion - vNewVersion
+
+If there are breaking changes and migration or upgrade instructions are needed, those are included here. These typically come from PR descriptions.
+
+### Added
+- Bullet list of new features or additions PR_LINK
+
+### Changed
+- Bullet list of notable changes PR_LINK
+
+### Fixed
+- Bullet list of bugs that were fixed PR_LINK

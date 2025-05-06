@@ -7,6 +7,7 @@ defmodule LangChain.Chains.TextToTitleChainTest do
   alias LangChain.Chains.TextToTitleChain
   alias LangChain.Chains.LLMChain
   alias LangChain.Message
+  alias LangChain.Message.ContentPart
   alias LangChain.ChatModels.ChatOpenAI
   alias LangChain.LangChainError
   alias LangChain.Utils
@@ -92,7 +93,7 @@ defmodule LangChain.Chains.TextToTitleChainTest do
 
       assert %LLMChain{} = updated_chain
       {system, _rest} = Utils.split_system_message(updated_chain.messages)
-      assert system.content == "Custom system prompt"
+      assert system.content == [ContentPart.text!("Custom system prompt")]
     end
   end
 

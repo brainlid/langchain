@@ -1,5 +1,134 @@
 # Changelog
 
+## v0.4.0-rc.0
+
+This includes several breaking changes:
+
+- Not all chat models are supported and updated yet. Currently only **OpenAI** and **Claude**
+- Assistant messages are all assumed to be a list of `ContentPart` structs, supporting text, thinking, and more in the future like images
+- A Message includes the TokenUsage in `Message.metadata.usage` after received.
+- To display a MessageDelta as it is being streamed back, use `MessageDelta.merged_content`.
+
+Use the v0.3.x releases for models that are not yet supported.
+
+| Model | v0.3.x | v0.4.x |
+|-------|---------|---------|
+| OpenAI ChatGPT | ✓ | ✓ |
+| OpenAI DALL-e 2 (image generation) | ✓ | ? |
+| Anthropic Claude | ✓ | ✓ |
+| Anthropic Claude (thinking) | X | ✓ |
+| Google Gemini | ✓ | X |
+| Google Vertex AI | ✓ | X |
+| Ollama | ✓ | ? |
+| Mistral | ✓ | X |
+| Bumblebee self-hosted models | ✓ | ? |
+| LMStudio | ✓ | ? |
+| Perplexity | ✓ | ? |
+
+### Upgrade from v0.3.3 to v0.4.x
+
+As LLM services get more advanced, they have begun returning multi-modal responses. For some time, they have been accepting multi-modal requests, meaning an image and text could be submitted at the same time.
+
+Now, LLMs have changed to return multi-modal responses. This means they may return text along with an image. This is currently most common with receiving a "thinking" response separate from their text response.
+
+In an effort to provide a consistent interface to many different LLMs, now **all** message responses with content (text, image, thinking, etc.) will be represented as a list of `ContentPart` structs.
+
+This is a breaking change and may require application updates to adapt.
+
+### Message Changes
+
+Where this was received before:
+
+```elixir
+%Message{content: "this is a string"}
+```
+
+This is received now:
+
+```elixir
+%Message{content: [%ContentPart{type: :text, content: "this is a string"}]}
+```
+
+This can be quickly turned back into plain text using `LangChain.Message.ContentPart.parts_to_string/1`.
+
+It looks like this:
+```elixir
+message = %Message{content: [%ContentPart{type: :text, content: "this is a string"}]}
+ContentPart.parts_to_string(message.content)
+#=> "this is a string"
+```
+
+This also handles if multiple text content parts are received:
+```elixir
+message = %Message{content: [
+  %ContentPart{type: :text, content: "this is a string"},
+  %ContentPart{type: :text, content: "this is another string"},
+]}
+ContentPart.parts_to_string(message.content)
+#=> "this is a string\n\nthisis another string"
+```
+
+For constructing your own messages, this is auto-converted for you:
+
+```elixir
+Message.new_user!("Howdy!")
+#=> %Message{role: :user, content: [%ContentPart{type: :text, content: "Howdy!"}]}
+```
+
+This can also be constructed like this:
+
+```elixir
+Message.new_user!([ContentPart.text!("Howdy!")])
+#=> %Message{role: :user, content: [%ContentPart{type: :text, content: "Howdy!"}]}
+```
+
+The change is more significant when handling an assistant response message.
+
+### MessageDelta Changes
+
+When streaming a response and getting back `MessageDelta`s, these now have a `merged_content` field that combines the different streamed back content types into their complete pieces. These pieces can represent different indexes in the list of received ContentParts.
+
+See the MessageDelta module docs for more information on `merged_content`.
+
+This is important because when needing to display the deltas as they are being received, it is now the `merged_content` field that should be used.
+
+### TokenUsage
+
+Another significant change is the moving of TokenUsage from a separated callback to being directly attached to a Message's `metadata`. Token usage is accumulated, as it is split out typically on the first and last delta's received.
+
+After an LLMChain.run, the `updated_chain.last_message.metadata.usage` will contain the %TokenUsage{} information.
+
+A related change was to move the TokenUsage callback from the OpenAI and Anthropic chat models to the LLMChain. This means the same event will fire, but it will fire when it's fully received and assembled.
+
+
+
+## v0.3.3 (2025-03-17)
+
+This is a milestone release before staring v0.4.0 which introduces breaking changes, but importantly adds support for "thinking" models.
+
+### Added
+- Added telemetry support https://github.com/brainlid/langchain/pull/284
+- Added `LLMChain.run_until_tool_used/3` function https://github.com/brainlid/langchain/pull/292
+- Support for file uploads with file_id in ChatOpenAI https://github.com/brainlid/langchain/pull/283
+- Support for json_response in ChatGoogleAI https://github.com/brainlid/langchain/pull/277
+- Support for streaming responses from Mistral https://github.com/brainlid/langchain/pull/287
+- Support for file URLs in Google AI https://github.com/brainlid/langchain/pull/286
+- Support for PDF content with OpenAI model https://github.com/brainlid/langchain/pull/275
+- Support for caching tool results in Anthropic calls https://github.com/brainlid/langchain/pull/269
+- Support for choosing Anthropic beta headers https://github.com/brainlid/langchain/pull/273
+
+### Changed
+- Fixed options being passed to the Ollama chat API https://github.com/brainlid/langchain/pull/179
+- Fixed media URIs for Google Vertex https://github.com/brainlid/langchain/pull/242
+- Fixed OpenAI verbose_api https://github.com/brainlid/langchain/pull/274
+- Improved documentation for callbacks and content parts
+- Upgraded gettext and migrated https://github.com/brainlid/langchain/pull/271
+
+### Fixed
+- Added validation to check if requested tool_name exists in chain
+- Fixed various documentation issues and typos
+- Fixed callback links in documentation
+
 ## v0.3.2 (2025-03-17)
 
 ### Added

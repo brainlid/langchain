@@ -35,7 +35,7 @@ defmodule LangChain.TokenUsage do
 
   @create_fields [:input, :output, :raw]
   # Anthropic returns only the output token count when streaming deltas
-  @required_fields [:output]
+  @required_fields []
 
   @doc """
   Build a new TokenUsage and return an `:ok`/`:error` tuple with the result.
@@ -76,4 +76,100 @@ defmodule LangChain.TokenUsage do
   def total(%TokenUsage{} = usage) do
     usage.input + usage.output
   end
+
+  @doc """
+  Combines two TokenUsage structs by adding their respective input and output values.
+  The raw maps are merged, with values being added if they are numeric.
+
+  If both arguments are nil, returns nil.
+  If one argument is nil, returns the non-nil argument.
+
+  ## Example
+
+      iex> usage1 = LangChain.TokenUsage.new!(%{input: 10, output: 20, raw: %{"total_tokens" => 30}})
+      iex> usage2 = LangChain.TokenUsage.new!(%{input: 5, output: 15, raw: %{"total_tokens" => 20}})
+      iex> combined = LangChain.TokenUsage.add(usage1, usage2)
+      iex> combined.input
+      15
+      iex> combined.output
+      35
+      iex> combined.raw["total_tokens"]
+      50
+
+  """
+  @spec add(t() | nil, t() | nil) :: t() | nil
+  def add(nil, nil), do: nil
+  def add(nil, usage), do: usage
+  def add(usage, nil), do: usage
+
+  def add(%TokenUsage{} = usage1, %TokenUsage{} = usage2) do
+    new!(%{
+      input: (usage1.input || 0) + (usage2.input || 0),
+      output: (usage1.output || 0) + (usage2.output || 0),
+      raw: merge_raw_values(usage1.raw, usage2.raw)
+    })
+  end
+
+  defp merge_raw_values(raw1, raw2) do
+    Map.merge(raw1, raw2, fn _k, v1, v2 ->
+      if is_number(v1) and is_number(v2), do: v1 + v2, else: v2
+    end)
+  end
+
+  @doc """
+  Extracts token usage information from a `LangChain.Message` or
+  `LangChain.MessageDelta` struct's metadata. Returns nil if no token usage
+  information is found.
+
+  ## Example
+
+      iex> message = %LangChain.Message{metadata: %{usage: %LangChain.TokenUsage{input: 10, output: 20}}}
+      iex> LangChain.TokenUsage.get(message)
+      %LangChain.TokenUsage{input: 10, output: 20}
+
+      iex> message = %LangChain.Message{metadata: %{}}
+      iex> LangChain.TokenUsage.get(message)
+      nil
+
+  """
+  @spec get(%{metadata: %{usage: t()}} | %{metadata: map() | nil}) :: t() | nil
+  def get(%{metadata: %{usage: %TokenUsage{} = usage}}), do: usage
+  def get(_), do: nil
+
+  @doc """
+  Sets the token usage information on a `LangChain.Message` or
+  `LangChain.MessageDelta` struct in the `metadata` under the `:usage` key.
+
+  ## Example
+
+      iex> message = %LangChain.Message{metadata: %{}}
+      iex> token_usage = %LangChain.TokenUsage{input: 10, output: 20}
+      iex> LangChain.TokenUsage.set(message, token_usage)
+      %LangChain.Message{metadata: %{usage: %LangChain.TokenUsage{input: 10, output: 20}}}
+  """
+  @spec set(t() | %{metadata: %{usage: t()}}, nil | t()) :: t() | %{metadata: %{usage: t()}}
+  def set(%{metadata: metadata} = message, %TokenUsage{} = usage) do
+    new_metadata =
+      if metadata == nil do
+        %{usage: usage}
+      else
+        Map.put(metadata, :usage, usage)
+      end
+
+    %{message | metadata: new_metadata}
+  end
+
+  def set(message, _), do: message
+
+  @doc """
+  Sets the token usage information on a `LangChain.Message` or
+  `LangChain.MessageDelta` struct when wrapped in an :ok,:error tuple in the `metadata` under the `:usage` key.
+  """
+  @spec set_wrapped({:ok, %{metadata: nil | map()}}, nil | t()) ::
+          {:ok, %{metadata: %{usage: t()}} | {:error, any()}}
+  def set_wrapped({:ok, message}, usage) do
+    {:ok, set(message, usage)}
+  end
+
+  def set_wrapped(message, _), do: message
 end

@@ -9,6 +9,52 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
   - https://github.com/openai/openai-cookbook/blob/main/examples/How_to_call_functions_with_chat_models.ipynb
 
+  ## ContentPart Types
+
+  OpenAI supports several types of content parts that can be combined in a single message:
+
+  ### Text Content
+  Basic text content is the default and most common type:
+
+      Message.new_user!("Hello, how are you?")
+
+  ### Image Content
+  OpenAI supports both base64-encoded images and image URLs:
+
+      # Using a base64 encoded image
+      Message.new_user!([
+        ContentPart.text!("What's in this image?"),
+        ContentPart.image!("base64_encoded_image_data", media: :jpg)
+      ])
+
+      # Using an image URL
+      Message.new_user!([
+        ContentPart.text!("Describe this image:"),
+        ContentPart.image_url!("https://example.com/image.jpg")
+      ])
+
+  For images, you can specify the detail level which affects token usage:
+  - `detail: "low"` - Lower resolution, fewer tokens
+  - `detail: "high"` - Higher resolution, more tokens
+  - `detail: "auto"` - Let the model decide
+
+  ### File Content
+  OpenAI supports both base64-encoded files and file IDs:
+
+      # Using a base64 encoded file
+      Message.new_user!([
+        ContentPart.text!("Process this file:"),
+        ContentPart.file!("base64_encoded_file_data",
+          type: :base64,
+          filename: "document.pdf"
+        )
+      ])
+
+      # Using a file ID (after uploading to OpenAI)
+      Message.new_user!([
+        ContentPart.text!("Process this file:"),
+        ContentPart.file!("file-1234", type: :file_id)
+      ])
 
   ## Callbacks
 
@@ -42,37 +88,32 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
   ### Token Usage
 
-  OpenAI returns token usage information as part of the response body. That data
-  can be accessed using the LLM callback `on_llm_token_usage` like this:
-
-      handlers = %{
-        on_llm_token_usage: fn _model, usage ->
-          IO.inspect(usage)
-        end
-      }
-
-      {:ok, chat} = ChatOpenAI.new(%{
-        callbacks: [handlers],
-        stream: true,
-        stream_options: %{include_usage: true}
-      })
-
-  When a request is received, something similar to the following will be output
-  to the console.
-
-      %LangChain.TokenUsage{input: 15, output: 3}
+  OpenAI returns token usage information as part of the response body. The
+  `LangChain.TokenUsage` is added to the `metadata` of the `LangChain.Message`
+  and `LangChain.MessageDelta` structs that are processed under the `:usage`
+  key.
 
   The OpenAI documentation instructs to provide the `stream_options` with the
   `include_usage: true` for the information to be provided.
+
+  The `TokenUsage` data is accumulated for `MessageDelta` structs and the final usage information will be on the `LangChain.Message`.
+
+  NOTE: Of special note is that the `TokenUsage` information is returned once
+  for all "choices" in the response. The `LangChain.TokenUsage` data is added to
+  each message, but if your usage requests multiple choices, you will see the
+  same usage information for each choice but it is duplicated and only one
+  response is meaningful.
 
   ## Tool Choice
 
   OpenAI's ChatGPT API supports forcing a tool to be used.
   - https://platform.openai.com/docs/api-reference/chat/create#chat-create-tool_choice
 
-  This is supported through the `tool_choice` options. It takes a plain Elixir map to provide the configuration.
+  This is supported through the `tool_choice` options. It takes a plain Elixir
+  map to provide the configuration.
 
-  By default, the LLM will choose a tool call if a tool is available and it determines it is needed. That's the "auto" mode.
+  By default, the LLM will choose a tool call if a tool is available and it
+  determines it is needed. That's the "auto" mode.
 
   ### Example
   For the LLM's response to make a tool call of the "get_weather" function.
@@ -84,11 +125,19 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
   ## Azure OpenAI Support
 
-  To use `ChatOpenAI` with Microsoft's Azure hosted OpenAI models, the `endpoint` must be overridden and the API key needs to be provided in some way. The [MS Quickstart guide for REST access](https://learn.microsoft.com/en-us/azure/ai-services/openai/chatgpt-quickstart?tabs=command-line%2Cjavascript-keyless%2Ctypescript-keyless%2Cpython-new&pivots=rest-api) may be helpful.
+  To use `ChatOpenAI` with Microsoft's Azure hosted OpenAI models, the
+  `endpoint` must be overridden and the API key needs to be provided in some
+  way. The [MS Quickstart guide for REST
+  access](https://learn.microsoft.com/en-us/azure/ai-services/openai/chatgpt-quickstart?tabs=command-line%2Cjavascript-keyless%2Ctypescript-keyless%2Cpython-new&pivots=rest-api)
+  may be helpful.
 
-  In order to use it, you must have an Azure account and from the console, a model must be deployed for your account. Use the Azure AI Foundry and Azure OpenAI Service to deploy the model you want to use. The entire URL is used as the `endpoint` and the provided `key` is used as the `api_key`.
+  In order to use it, you must have an Azure account and from the console, a
+  model must be deployed for your account. Use the Azure AI Foundry and Azure
+  OpenAI Service to deploy the model you want to use. The entire URL is used as
+  the `endpoint` and the provided `key` is used as the `api_key`.
 
-  The following is an example of setting up `ChatOpenAI` for use with an Azure hosted model.
+  The following is an example of setting up `ChatOpenAI` for use with an Azure
+  hosted model.
 
       endpoint = System.fetch_env!("AZURE_OPENAI_ENDPOINT")
       api_key = System.fetch_env!("AZURE_OPENAI_KEY")
@@ -102,7 +151,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           stream: false
         })
 
-  The URL itself specifies the model to use and the `model` attribute is disregarded.
+  The URL itself specifies the model to use and the `model` attribute is
+  disregarded.
 
   A fake example URL for the endpoint value:
 
@@ -110,7 +160,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
   ## Reasoning Model Support
 
-  OpenAI made some significant API changes with the introduction of their "reasoning" models. This includes the `o1` and `o1-mini` models.
+  OpenAI made some significant API changes with the introduction of their
+  "reasoning" models. This includes the `o1` and `o1-mini` models.
 
   To enable this mode, set `:reasoning_mode` to `true`:
 
@@ -118,8 +169,15 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
   Setting `reasoning_mode` to `true` does at least the two following things:
 
-  - Set `:developer` as the `role` for system messages. The OpenAI documentation says API calls to `o1` and newer models must use the `role: :developer` instead of `role: :system` and errors if not set correctly.
-  - The `:reasoning_effort` option included in LLM requests. This setting is only permitted on a reasoning model. The `:reasoning_effort` values support the "low", "medium" (default), and "high" options specified in the OpenAI documentation. This instructs the LLM on how much time, and tokens, should be spent on thinking through and reasoning about the request and the response.
+  - Set `:developer` as the `role` for system messages. The OpenAI documentation
+    says API calls to `o1` and newer models must use the `role: :developer`
+    instead of `role: :system` and errors if not set correctly.
+  - The `:reasoning_effort` option included in LLM requests. This setting is
+    only permitted on a reasoning model. The `:reasoning_effort` values support
+    the "low", "medium" (default), and "high" options specified in the OpenAI
+    documentation. This instructs the LLM on how much time, and tokens, should
+    be spent on thinking through and reasoning about the request and the
+    response.
   """
   use Ecto.Schema
   require Logger
@@ -400,12 +458,12 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           | Function.t()
         ) ::
           %{String.t() => any()} | [%{String.t() => any()}]
-  def for_api(%_{} = model, %Message{content: content} = msg) when is_binary(content) do
+  def for_api(%_{} = model, %Message{content: content} = msg) when is_list(content) do
     role = get_message_role(model, msg.role)
 
     %{
       "role" => role,
-      "content" => msg.content
+      "content" => content_parts_for_api(model, content)
     }
     |> Utils.conditionally_add_to_map("name", msg.name)
     |> Utils.conditionally_add_to_map(
@@ -453,11 +511,46 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     end)
   end
 
-  def for_api(%_{} = _model, %ContentPart{type: :text} = part) do
+  # ToolCall support
+  def for_api(%_{} = _model, %ToolCall{type: :function} = fun) do
+    %{
+      "id" => fun.call_id,
+      "type" => "function",
+      "function" => %{
+        "name" => fun.name,
+        "arguments" => Jason.encode!(fun.arguments)
+      }
+    }
+  end
+
+  # Function support
+  def for_api(%_{} = _model, %Function{} = fun) do
+    %{
+      "name" => fun.name,
+      "parameters" => get_parameters(fun)
+    }
+    |> Utils.conditionally_add_to_map("description", fun.description)
+  end
+
+  def for_api(%_{} = _model, %PromptTemplate{} = _template) do
+    raise LangChainError, "PromptTemplates must be converted to messages."
+  end
+
+  @doc """
+  Convert a list of ContentParts to the expected map of data for the OpenAI API.
+  """
+  def content_parts_for_api(%_{} = model, content_parts) when is_list(content_parts) do
+    Enum.map(content_parts, &content_part_for_api(model, &1))
+  end
+
+  @doc """
+  Convert a ContentPart to the expected map of data for the OpenAI API.
+  """
+  def content_part_for_api(%_{} = _model, %ContentPart{type: :text} = part) do
     %{"type" => "text", "text" => part.content}
   end
 
-  def for_api(%_{} = _model, %ContentPart{type: :file, options: opts} = part) do
+  def content_part_for_api(%_{} = _model, %ContentPart{type: :file, options: opts} = part) do
     file_params =
       case Keyword.get(opts, :type, :base64) do
         :file_id ->
@@ -478,7 +571,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     }
   end
 
-  def for_api(%_{} = _model, %ContentPart{type: image} = part)
+  def content_part_for_api(%_{} = _model, %ContentPart{type: image} = part)
       when image in [:image, :image_url] do
     media_prefix =
       case Keyword.get(part.options || [], :media, nil) do
@@ -514,31 +607,6 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         %{"url" => media_prefix <> part.content}
         |> Utils.conditionally_add_to_map("detail", detail_option)
     }
-  end
-
-  # ToolCall support
-  def for_api(%_{} = _model, %ToolCall{type: :function} = fun) do
-    %{
-      "id" => fun.call_id,
-      "type" => "function",
-      "function" => %{
-        "name" => fun.name,
-        "arguments" => Jason.encode!(fun.arguments)
-      }
-    }
-  end
-
-  # Function support
-  def for_api(%_{} = _model, %Function{} = fun) do
-    %{
-      "name" => fun.name,
-      "parameters" => get_parameters(fun)
-    }
-    |> Utils.conditionally_add_to_map("description", fun.description)
-  end
-
-  def for_api(%_{} = _model, %PromptTemplate{} = _template) do
-    raise LangChain.LangChainError, "PromptTemplates must be converted to messages."
   end
 
   @doc false
@@ -703,10 +771,6 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           get_ratelimit_info(response.headers)
         ])
 
-        Callbacks.fire(openai.callbacks, :on_llm_token_usage, [
-          get_token_usage(data)
-        ])
-
         case do_process_response(openai, data) do
           {:error, %LangChainError{} = reason} ->
             {:error, reason}
@@ -868,27 +932,13 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           | MessageDelta.t()
           | [MessageDelta.t()]
           | {:error, String.t()}
-  def do_process_response(model, %{"choices" => [], "usage" => %{} = _usage} = data) do
-    case get_token_usage(data) do
-      %TokenUsage{} = token_usage ->
-        Callbacks.fire(model.callbacks, :on_llm_token_usage, [token_usage])
-        :ok
-
-      nil ->
-        :ok
-    end
-
-    # this stand-alone TokenUsage message is skipped and not returned
-    :skip
-  end
-
   def do_process_response(_model, %{"choices" => []}), do: :skip
 
-  def do_process_response(model, %{"choices" => choices} = _data) when is_list(choices) do
+  def do_process_response(model, %{"choices" => choices} = data) when is_list(choices) do
     # process each response individually. Return a list of all processed choices
-    for choice <- choices do
-      do_process_response(model, choice)
-    end
+    choices
+    |> Enum.map(&do_process_response(model, &1))
+    |> Enum.map(&TokenUsage.set(&1, get_token_usage(data)))
   end
 
   # Full message with tool call

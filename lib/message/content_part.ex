@@ -22,11 +22,15 @@ defmodule LangChain.Message.ContentPart do
   ## Fields
 
   - `:content` - Text content.
-  - `:options` - Options that may be specific to the LLM for a particular
-    message type. For example, multi-modal message (ones that include image
-    data) use the `:media` option to specify the mimetype information. Options
-    may also contain key-value settings like `cache_control: true` for models
-    like Anthropic that support caching.
+  - `:options` - Options are a keyword list of values that may be specific to
+    the LLM for a particular message type. For example, multi-modal message
+    (ones that include image data) use the `:media` option to specify the
+    mimetype information. Options may also contain key-value settings like
+    `cache_control: true` for models like Anthropic that support caching.
+
+    When receiving content parts like with Anthropic Claude's thinking model,
+    the options may contain LLM specific data that is recommended to be
+    preserved like a `signature` or `redacted_thinking` data used by the LLM.
 
   ## Image mime types
 
@@ -51,6 +55,7 @@ defmodule LangChain.Message.ContentPart do
   require Logger
   alias __MODULE__
   alias LangChain.LangChainError
+  alias LangChain.Utils
 
   @primary_key false
   embedded_schema do
@@ -59,14 +64,14 @@ defmodule LangChain.Message.ContentPart do
       default: :text
 
     field :content, :string
-    field :options, :any, virtual: true
+    field :options, :any, virtual: true, default: []
   end
 
   @type t :: %ContentPart{}
 
   @update_fields [:type, :content, :options]
   @create_fields @update_fields
-  @required_fields [:type, :content]
+  @required_fields [:type]
 
   @doc """
   Build a new message and return an `:ok`/`:error` tuple with the result.
@@ -75,6 +80,7 @@ defmodule LangChain.Message.ContentPart do
   def new(attrs \\ %{}) do
     %ContentPart{}
     |> cast(attrs, @create_fields)
+    |> Utils.assign_string_value(:content, attrs)
     |> common_validations()
     |> apply_action(:insert)
   end
@@ -87,6 +93,10 @@ defmodule LangChain.Message.ContentPart do
       ContentPart.new!(%{type: :text, content: "Greetings!"})
 
       ContentPart.new!(%{type: :image_url, content: "https://example.com/images/house.jpg"})
+
+      ContentPart.new!(%{type: :thinking, content: "I've been asked...", options: [signature: "SIGNATURE_DATA"]}
+
+      ContentPart.new!(%{type: :unsupported, content: "redacted_data", options: [type: "redacted_thinking"]}
   """
   @spec new!(attrs :: map()) :: t() | no_return()
   def new!(attrs \\ %{}) do
@@ -168,5 +178,97 @@ defmodule LangChain.Message.ContentPart do
   defp common_validations(changeset) do
     changeset
     |> validate_required(@required_fields)
+  end
+
+  @doc """
+  Merge two `ContentPart` structs for the same index in a MessageDelta. The
+  first `ContentPart` is the `primary` one that smaller deltas are merged into.
+  The primary is what is being accumulated.
+
+  A set of ContentParts can be merged like this:
+
+      Enum.reduce(list_of_content_parts, nil, fn new_part, acc ->
+        ContentPart.merge_part(acc, new_part)
+      end)
+
+  """
+  @spec merge_part(nil | t(), t()) :: t()
+  def merge_part(nil, %ContentPart{} = new_part), do: new_part
+
+  def merge_part(%ContentPart{} = primary, %ContentPart{} = content_part) do
+    primary
+    |> append_content(content_part)
+    |> update_options(content_part)
+  end
+
+  # text content being merged
+  defp append_content(
+         %ContentPart{type: primary_type, content: primary_content} = primary,
+         %ContentPart{
+           type: new_type,
+           content: new_content
+         }
+       )
+       when is_binary(primary_content) and is_binary(new_content) and primary_type == new_type do
+    %ContentPart{primary | content: (primary.content || "") <> new_content}
+  end
+
+  defp append_content(%ContentPart{} = primary, %ContentPart{content: nil}), do: primary
+
+  # Merge options from content_part into primary. When text, combine the options
+  # and merge in newly encountered keys.
+  defp update_options(%ContentPart{} = primary, %ContentPart{options: nil}), do: primary
+
+  defp update_options(%ContentPart{options: nil} = primary, %ContentPart{options: new_opts}) do
+    %ContentPart{primary | options: new_opts}
+  end
+
+  defp update_options(%ContentPart{options: primary_opts} = primary, %ContentPart{
+         options: new_opts
+       })
+       when is_list(primary_opts) and is_list(new_opts) do
+    # Concatenate any string values with the same key, otherwise use the new
+    # value
+    merged_opts =
+      Keyword.merge(primary_opts, new_opts, fn
+        _k, v1, v2 when is_binary(v1) and is_binary(v2) -> v1 <> v2
+        _k, _v1, v2 -> v2
+      end)
+
+    %ContentPart{primary | options: merged_opts}
+  end
+
+  defp update_options(%ContentPart{} = primary, %ContentPart{}), do: primary
+
+  @doc """
+  Helper function for easily getting plain text from a list of ContentParts.
+
+  This function processes a list of ContentParts and joins the text parts together
+  using "\n\n" characters. Only parts where `type: :text` are used. All other parts
+  are ignored.
+
+  ## Examples
+
+      iex> parts = [
+      ...>   text!("Hello"),
+      ...>   image!("base64data"),
+      ...>   text!("world")
+      ...> ]
+      iex> parts_to_string(parts)
+      "Hello\\n\\nworld"
+
+      iex> parts_to_string([])
+      nil
+  """
+  @spec parts_to_string([t()]) :: nil | String.t()
+  def parts_to_string(parts) when is_list(parts) do
+    parts
+    |> Enum.filter(fn part -> part.type == :text end)
+    |> Enum.map(fn part -> part.content end)
+    |> Enum.join("\n\n")
+    |> case do
+      "" -> nil
+      content -> content
+    end
   end
 end

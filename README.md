@@ -6,18 +6,25 @@
 
 Elixir LangChain enables Elixir applications to integrate AI services and self-hosted models into an application.
 
-Currently supported AI services:
+**Currently supported AI services:**
 
-- OpenAI ChatGPT
-- OpenAI DALL-e 2 - image generation
-- Anthropic Claude
-- Google Gemini
-- Google Vertex AI (Google's enterprise offering)
-- Ollama
-- Mistral
-- Bumblebee self-hosted models - including Llama, Mistral and Zephyr
-- [LMStudio](https://lmstudio.ai/docs/api/endpoints/openai) via their OpenAI compatibility API
-- Perplexity
+| Model | v0.3.x | v0.4.x |
+|-------|---------|---------|
+| OpenAI ChatGPT | ✓ | ✓ |
+| OpenAI DALL-e 2 (image generation) | ✓ | ? |
+| Anthropic Claude | ✓ | ✓ |
+| Anthropic Claude (thinking) | X | ✓ |
+| Google Gemini | ✓ | X |
+| Google Vertex AI* | ✓ | X |
+| Ollama | ✓ | ? |
+| Mistral | ✓ | X |
+| Bumblebee self-hosted models** | ✓ | ? |
+| LMStudio*** | ✓ | ? |
+| Perplexity | ✓ | ? |
+
+- *Google Vertex AI is Google's enterprise offering
+- **Bumblebee self-hosted models - including Llama, Mistral and Zephyr
+- ***[LMStudio](https://lmstudio.ai/docs/api/endpoints/openai) via their OpenAI compatibility API
 
 **LangChain** is short for Language Chain. An LLM, or Large Language Model, is the "Language" part. This library makes it easier for Elixir applications to "chain" or connect different processes, integrations, libraries, services, or functionality together with an LLM.
 
@@ -68,7 +75,7 @@ in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:langchain, "0.2.0"}
+    {:langchain, "0.3.3"}
   ]
 end
 ```
@@ -78,7 +85,7 @@ The Release Candidate includes many additional features and some breaking change
 ```elixir
 def deps do
   [
-    {:langchain, "0.3.0-rc.0"}
+    {:langchain, "0.4.0-rc.0"}
   ]
 end
 ```

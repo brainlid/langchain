@@ -19,6 +19,35 @@ defmodule LangChain.MessageDelta do
   across many message deltas and must be fully assembled before it can be
   executed.
 
+  ## Metadata
+
+  The `metadata` field is a map that can contain any additional information
+  about the message delta. It is used to store token usage, model, and other
+  LLM-specific information.
+
+  ## Content Fields
+
+  The `content` field may contain:
+  - A string (for backward compatibility)
+  - A `LangChain.Message.ContentPart` struct
+  - An empty list `[]` that is received from some services like Anthropic, which
+    is a signal that the content will be a list of content parts
+
+  The module uses two content-related fields:
+
+  * `content` - The raw content received from the LLM. This can be either a
+    string (for backward compatibility), a `LangChain.Message.ContentPart`
+    struct, or a `[]` indicating it will be a list of content parts. This field
+    is cleared (set to `nil`) after merging into `merged_content`.
+
+  * `merged_content` - The accumulated list of `ContentPart`s after merging
+    deltas. This is the source of truth for the message content and is used when
+    converting to a `LangChain.Message`. When merging deltas:
+    - For string content, it's converted to a `ContentPart` of type `:text`
+    - For `ContentPart` content, it's merged based on the `index` field
+    - Multiple content parts can be maintained in the list to support
+      multi-modal responses (text, images, audio) or separate thinking content
+      from final text
   """
   use Ecto.Schema
   import Ecto.Changeset
@@ -26,12 +55,16 @@ defmodule LangChain.MessageDelta do
   alias __MODULE__
   alias LangChain.LangChainError
   alias LangChain.Message
+  alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
   alias LangChain.Utils
+  alias LangChain.TokenUsage
 
   @primary_key false
   embedded_schema do
     field :content, :any, virtual: true
+    # The accumulated list of ContentParts after merging deltas
+    field :merged_content, :any, virtual: true, default: []
     # Marks if the delta completes the message.
     field :status, Ecto.Enum, values: [:incomplete, :complete, :length], default: :incomplete
     # When requesting multiple choices for a response, the `index` represents
@@ -41,11 +74,14 @@ defmodule LangChain.MessageDelta do
     field :role, Ecto.Enum, values: [:unknown, :assistant], default: :unknown
 
     field :tool_calls, :any, virtual: true
+
+    # Additional metadata about the message.
+    field :metadata, :map
   end
 
   @type t :: %MessageDelta{}
 
-  @create_fields [:role, :content, :index, :status, :tool_calls]
+  @create_fields [:role, :content, :index, :status, :tool_calls, :metadata, :merged_content]
   @required_fields []
 
   @doc """
@@ -55,7 +91,7 @@ defmodule LangChain.MessageDelta do
   def new(attrs \\ %{}) do
     %MessageDelta{}
     |> cast(attrs, @create_fields)
-    |> assign_string_value(:content, attrs)
+    |> Utils.assign_string_value(:content, attrs)
     |> validate_required(@required_fields)
     |> apply_action(:insert)
   end
@@ -79,6 +115,14 @@ defmodule LangChain.MessageDelta do
   Merge two `MessageDelta` structs. The first `MessageDelta` is the `primary`
   one that smaller deltas are merged into.
 
+  The merging process:
+  1. Migrates any string content to `ContentPart`s for backward compatibility
+  2. Merges the content into `merged_content` based on the `index` field
+  3. Clears the `content` field (sets to `nil`) after merging
+  4. Updates other fields (tool_calls, status, etc.)
+
+  ## Examples
+
       iex> delta_1 =
       ...>   %LangChain.MessageDelta{
       ...>     content: nil,
@@ -96,38 +140,163 @@ defmodule LangChain.MessageDelta do
       ...>     status: :incomplete
       ...>   }
       iex> LangChain.MessageDelta.merge_delta(delta_1, delta_2)
-      %LangChain.MessageDelta{content: "Hello", status: :incomplete, index: 0, role: :assistant, tool_calls: []}
+      %LangChain.MessageDelta{
+        content: nil,
+        merged_content: [%LangChain.Message.ContentPart{type: :text, content: "Hello"}],
+        status: :incomplete,
+        index: 0,
+        role: :assistant,
+        tool_calls: []
+      }
 
   A set of deltas can be easily merged like this:
 
-      [first | rest] = list_of_delta_message
-
-      Enum.reduce(rest, first, fn new_delta, acc ->
-        MessageDelta.merge_delta(acc, new_delta)
-      end)
+        MessageDelta.merge_deltas(list_of_delta_messages)
 
   """
   @spec merge_delta(nil | t(), t()) :: t()
-  def merge_delta(nil, %MessageDelta{} = delta_part), do: delta_part
+  def merge_delta(nil, %MessageDelta{} = delta_part) do
+    merge_delta(%MessageDelta{role: :assistant}, delta_part)
+  end
 
   def merge_delta(%MessageDelta{role: :assistant} = primary, %MessageDelta{} = delta_part) do
+    new_delta = migrate_to_content_parts(delta_part)
+
     primary
-    |> append_content(delta_part)
-    |> merge_tool_calls(delta_part)
-    |> update_index(delta_part)
-    |> update_status(delta_part)
+    |> migrate_to_content_parts()
+    |> append_to_merged_content(new_delta)
+    |> merge_tool_calls(new_delta)
+    |> update_index(new_delta)
+    |> update_status(new_delta)
+    |> accumulate_token_usage(new_delta)
+    |> clear_content()
   end
 
-  defp append_content(%MessageDelta{role: :assistant} = primary, %MessageDelta{
-         content: new_content
-       })
-       when is_binary(new_content) do
-    %MessageDelta{primary | content: (primary.content || "") <> new_content}
+  @doc """
+  Merges a list of `MessageDelta`s into a single `MessageDelta`. The deltas
+  are merged in order, with each delta being merged into the result of the
+  previous merge.
+
+  ## Examples
+
+      iex> deltas = [
+      ...>   %LangChain.MessageDelta{content: "Hello", role: :assistant},
+      ...>   %LangChain.MessageDelta{content: " world", role: :assistant},
+      ...>   %LangChain.MessageDelta{content: "!", role: :assistant, status: :complete}
+      ...> ]
+      iex> LangChain.MessageDelta.merge_deltas(deltas)
+      %LangChain.MessageDelta{
+        content: nil,
+        merged_content: [%LangChain.Message.ContentPart{type: :text, content: "Hello world!"}],
+        status: :complete,
+        role: :assistant
+      }
+
+  """
+  @spec merge_deltas([t()]) :: t()
+  def merge_deltas(deltas) when is_list(deltas) do
+    # we accumulate the deltas into the first argument which we call the
+    # "primary". Then each successive delta is merged into the primary.
+    Enum.reduce(deltas, nil, &merge_delta(&2, &1))
   end
 
-  defp append_content(%MessageDelta{} = primary, %MessageDelta{} = _delta_part) do
-    # no content to merge
-    primary
+  # Clear the content field after merging into merged_content
+  defp clear_content(%MessageDelta{} = delta) do
+    %MessageDelta{delta | content: nil}
+  end
+
+  # ContentPart being merged
+  defp append_to_merged_content(
+         %MessageDelta{role: :assistant, merged_content: %ContentPart{} = primary_part} = primary,
+         %MessageDelta{content: %ContentPart{} = new_content_part}
+       ) do
+    merged_part = ContentPart.merge_part(primary_part, new_content_part)
+    %MessageDelta{primary | merged_content: [merged_part]}
+  end
+
+  defp append_to_merged_content(
+         %MessageDelta{role: :assistant, merged_content: []} = primary,
+         %MessageDelta{content: %ContentPart{} = new_content_part}
+       ) do
+    %MessageDelta{primary | merged_content: [new_content_part]}
+  end
+
+  defp append_to_merged_content(
+         %MessageDelta{role: :assistant, merged_content: parts_list} = primary,
+         %MessageDelta{
+           content: new_delta_content,
+           index: index
+         }
+       )
+       when is_list(parts_list) and not is_nil(new_delta_content) do
+    # Incoming delta has a single ContentPart, not a list
+    case new_delta_content do
+      [] ->
+        # Incoming delta will be a list of ContentParts
+        primary
+
+      %ContentPart{} = part ->
+        merge_content_part_at_index(primary, part, index)
+    end
+  end
+
+  defp append_to_merged_content(%MessageDelta{} = primary, %MessageDelta{} = delta_part) do
+    # Handle case where primary has no content and delta has string content
+    case {primary.merged_content, delta_part.content} do
+      {nil, content} when is_binary(content) ->
+        %MessageDelta{primary | merged_content: [ContentPart.text!(content)]}
+
+      {[], content} when is_binary(content) ->
+        %MessageDelta{primary | merged_content: [ContentPart.text!(content)]}
+
+      {%ContentPart{} = part, content} when is_binary(content) ->
+        new_part = ContentPart.text!(content)
+        merged_part = ContentPart.merge_part(part, new_part)
+        %MessageDelta{primary | merged_content: [merged_part]}
+
+      _ ->
+        # no content to merge
+        primary
+    end
+  end
+
+  # Helper function to merge a content part at a specific index
+  defp merge_content_part_at_index(
+         %MessageDelta{} = primary,
+         %ContentPart{} = new_content_part,
+         index
+       ) do
+    parts_list = primary.merged_content
+
+    # If index is nil, assume position 0 for backward compatibility with some chat models
+    position = index || 0
+
+    # Compute the length once to avoid multiple calculations
+    list_length = length(parts_list)
+
+    # If the index is beyond the current list length, pad with nil values
+    padded_list =
+      if position >= list_length do
+        parts_list ++ List.duplicate(nil, position - list_length + 1)
+      else
+        parts_list
+      end
+
+    # Get the content part at the specified index from the primary's content list
+    primary_part = Enum.at(padded_list, position)
+
+    # Merge the parts if we have an existing part, otherwise use the new part
+    merged_part =
+      if primary_part do
+        ContentPart.merge_part(primary_part, new_content_part)
+      else
+        new_content_part
+      end
+
+    # Replace the part at the specified index
+    updated_list = List.replace_at(padded_list, position, merged_part)
+
+    %MessageDelta{primary | merged_content: updated_list}
   end
 
   defp merge_tool_calls(
@@ -186,22 +355,6 @@ defmodule LangChain.MessageDelta do
     primary
   end
 
-  # The contents and arguments get streamed as a string. A delta of " " a single empty space
-  # is expected. The "cast" process of the changeset turns this into `nil`
-  # causing us to lose data.
-  #
-  # We want to take whatever we are given here.
-  defp assign_string_value(changeset, field, attrs) do
-    # get both possible versions of the arguments.
-    val = Map.get(attrs, field) || Map.get(attrs, to_string(field))
-    # if we got a string, use it as-is without casting
-    if is_binary(val) do
-      put_change(changeset, field, val)
-    else
-      changeset
-    end
-  end
-
   # given the list of tool calls, insert or update the item into the list based
   # on the tool_call's index value.
   defp insert_or_update_tool_call(tool_calls, call) when is_list(tool_calls) do
@@ -250,6 +403,7 @@ defmodule LangChain.MessageDelta do
       delta
       |> Map.from_struct()
       |> Map.put(:status, msg_status)
+      |> Map.put(:content, delta.merged_content)
 
     case Message.new(attrs) do
       {:ok, message} ->
@@ -258,5 +412,71 @@ defmodule LangChain.MessageDelta do
       {:error, changeset} ->
         {:error, Utils.changeset_error_to_string(changeset)}
     end
+  end
+
+  @doc """
+  Accumulates token usage from delta messages. Uses `LangChain.TokenUsage.add/2` to combine
+  the usage data from both deltas.
+
+  ## Example
+
+      iex> alias LangChain.TokenUsage
+      iex> alias LangChain.MessageDelta
+      iex> delta1 = %MessageDelta{
+      ...>   metadata: %{
+      ...>     usage: %TokenUsage{input: 10, output: 5}
+      ...>   }
+      ...> }
+      iex> delta2 = %MessageDelta{
+      ...>   metadata: %{
+      ...>     usage: %TokenUsage{input: 5, output: 15}
+      ...>   }
+      ...> }
+      iex> result = MessageDelta.accumulate_token_usage(delta1, delta2)
+      iex> result.metadata.usage.input
+      15
+      iex> result.metadata.usage.output
+      20
+
+  """
+  @spec accumulate_token_usage(t(), t()) :: t()
+  def accumulate_token_usage(
+        %MessageDelta{} = primary,
+        %MessageDelta{metadata: %{usage: new_usage}} = _delta_part
+      )
+      when not is_nil(new_usage) do
+    current_usage = TokenUsage.get(primary)
+    combined_usage = TokenUsage.add(current_usage, new_usage)
+
+    %MessageDelta{primary | metadata: Map.put(primary.metadata || %{}, :usage, combined_usage)}
+  end
+
+  def accumulate_token_usage(%MessageDelta{} = primary, %MessageDelta{} = _delta_part) do
+    # No usage data to accumulate
+    primary
+  end
+
+  @doc """
+  Migrates a MessageDelta's string content to use `LangChain.Message.ContentPart`.
+  This is for backward compatibility with models that don't yet support ContentPart streaming.
+
+  ## Examples
+
+      iex> delta = %LangChain.MessageDelta{content: "Hello world"}
+      iex> upgraded = migrate_to_content_parts(delta)
+      iex> upgraded.content
+      %LangChain.Message.ContentPart{type: :text, content: "Hello world"}
+
+  """
+  @spec migrate_to_content_parts(t()) :: t()
+  def migrate_to_content_parts(%MessageDelta{content: ""} = delta),
+    do: %MessageDelta{delta | content: nil}
+
+  def migrate_to_content_parts(%MessageDelta{content: content} = delta) when is_binary(content) do
+    %MessageDelta{delta | content: ContentPart.text!(content)}
+  end
+
+  def migrate_to_content_parts(%MessageDelta{} = delta) do
+    delta
   end
 end

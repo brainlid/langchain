@@ -1,6 +1,6 @@
 defmodule LangChain.MessageTest do
   use ExUnit.Case
-  doctest LangChain.Message
+  doctest LangChain.Message, import: true
   alias LangChain.Message
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult
@@ -14,14 +14,14 @@ defmodule LangChain.MessageTest do
                Message.new(%{"role" => "system", "content" => "hello!", "index" => 0})
 
       assert msg.role == :system
-      assert msg.content == "hello!"
+      assert msg.content == [ContentPart.text!("hello!")]
       assert msg.index == 0
     end
 
     test "accepts atom keys and role enum" do
       assert {:ok, %Message{} = msg} = Message.new(%{role: :system, content: "hello!"})
       assert msg.role == :system
-      assert msg.content == "hello!"
+      assert msg.content == [ContentPart.text!("hello!")]
     end
 
     test "returns error when invalid" do
@@ -67,6 +67,27 @@ defmodule LangChain.MessageTest do
       refute changeset.valid?
       assert {"arguments: invalid json", _} = changeset.errors[:tool_calls]
     end
+
+    test "migrates string content to a list of ContentPart objects for system messages" do
+      assert {:ok, %Message{} = msg} = Message.new(%{role: :system, content: "Hello world"})
+      assert [%ContentPart{type: :text, content: "Hello world"}] = msg.content
+    end
+
+    test "migrates string content to a list of ContentPart objects for user messages" do
+      assert {:ok, %Message{} = msg} = Message.new(%{role: :user, content: "Hello world"})
+      assert [%ContentPart{type: :text, content: "Hello world"}] = msg.content
+    end
+
+    test "does not migrate content when it's already a list of ContentPart objects" do
+      content_parts = [ContentPart.text!("Hello"), ContentPart.text!(" world")]
+      assert {:ok, %Message{} = msg} = Message.new(%{role: :user, content: content_parts})
+      assert content_parts == msg.content
+    end
+
+    test "does not migrate content when it's nil" do
+      assert {:ok, %Message{} = msg} = Message.new(%{role: :assistant, content: nil})
+      assert msg.content == nil
+    end
   end
 
   describe "validations" do
@@ -92,7 +113,7 @@ defmodule LangChain.MessageTest do
 
       # can be a string
       {:ok, message} = Message.new_user("Hi")
-      assert message.content == "Hi"
+      assert message.content == [ContentPart.text!("Hi")]
 
       {:error, changeset} =
         Message.new(%{
@@ -117,17 +138,23 @@ defmodule LangChain.MessageTest do
       # the tool call gets completed
       assert message.tool_calls == [Map.put(tool_call, :status, :complete)]
     end
+
+    test "fails to accept a single ContentPart as content" do
+      content_part = ContentPart.text!("Hello world")
+      assert {:error, changeset} = Message.new(%{role: :user, content: content_part})
+      assert {"must be text or a list of ContentParts", _} = changeset.errors[:content]
+    end
   end
 
   describe "new_system/1" do
     test "creates a system message" do
       assert {:ok, %Message{role: :system} = msg} = Message.new_system("You are an AI.")
-      assert msg.content == "You are an AI."
+      assert msg.content == [ContentPart.text!("You are an AI.")]
     end
 
     test "provides default content" do
       assert {:ok, msg} = Message.new_system()
-      assert msg.content == "You are a helpful assistant."
+      assert msg.content == [ContentPart.text!("You are a helpful assistant.")]
     end
 
     test "requires content" do
@@ -140,7 +167,7 @@ defmodule LangChain.MessageTest do
   describe "new_user/1" do
     test "creates a user message" do
       assert {:ok, %Message{role: :user} = msg} = Message.new_user("Hello!")
-      assert msg.content == "Hello!"
+      assert msg.content == [ContentPart.text!("Hello!")]
     end
 
     test "requires content" do
@@ -195,7 +222,11 @@ defmodule LangChain.MessageTest do
   describe "new_user!/1" do
     test "creates a user message" do
       assert %Message{role: :user} = msg = Message.new_user!("Hello!")
-      assert msg.content == "Hello!"
+      assert msg.content == [ContentPart.text!("Hello!")]
+      assert msg.status == :complete
+
+      assert %Message{role: :user} = msg = Message.new_user!([ContentPart.text!("Hello!")])
+      assert msg.content == [ContentPart.text!("Hello!")]
       assert msg.status == :complete
     end
 
@@ -211,15 +242,28 @@ defmodule LangChain.MessageTest do
       assert {:ok, %Message{role: :assistant} = msg} =
                Message.new_assistant(%{content: "Greetings non-AI!", status: "complete"})
 
-      assert msg.content == "Greetings non-AI!"
+      assert msg.content == [ContentPart.text!("Greetings non-AI!")]
       assert msg.status == :complete
+    end
+
+    test "creates assistant message using multiple content parts" do
+      assert {:ok, %Message{role: :assistant} = msg} =
+               Message.new_assistant([
+                 ContentPart.text!("Greetings non-AI!"),
+                 ContentPart.text!("How are you?")
+               ])
+
+      assert msg.content == [
+               ContentPart.text!("Greetings non-AI!"),
+               ContentPart.text!("How are you?")
+             ]
     end
 
     test "creates a cancelled assistant message" do
       assert {:ok, %Message{role: :assistant} = msg} =
                Message.new_assistant(%{content: "Greetings ", status: :cancelled})
 
-      assert msg.content == "Greetings "
+      assert msg.content == [ContentPart.text!("Greetings ")]
       assert msg.status == :cancelled
     end
 
@@ -254,7 +298,21 @@ defmodule LangChain.MessageTest do
   describe "new_assistant!/1" do
     test "creates a assistant message" do
       assert %Message{role: :assistant} = msg = Message.new_assistant!(%{content: "Hello!"})
-      assert msg.content == "Hello!"
+      assert msg.content == [ContentPart.text!("Hello!")]
+    end
+
+    test "creates assistant message using multiple content parts" do
+      assert %Message{role: :assistant} =
+               msg =
+               Message.new_assistant!([
+                 ContentPart.text!("Greetings non-AI!"),
+                 ContentPart.text!("How are you?")
+               ])
+
+      assert msg.content == [
+               ContentPart.text!("Greetings non-AI!"),
+               ContentPart.text!("How are you?")
+             ]
     end
   end
 

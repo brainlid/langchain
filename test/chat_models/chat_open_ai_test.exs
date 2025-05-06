@@ -223,160 +223,6 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
   end
 
   describe "for_api/1" do
-    test "turns a text ContentPart into the expected JSON format" do
-      expected = %{"type" => "text", "text" => "Tell me about this image:"}
-
-      result =
-        ChatOpenAI.for_api(ChatOpenAI.new!(), ContentPart.text!("Tell me about this image:"))
-
-      assert result == expected
-    end
-
-    test "turns an image ContentPart into the expected JSON format" do
-      expected = %{"type" => "image_url", "image_url" => %{"url" => "image_base64_data"}}
-      result = ChatOpenAI.for_api(ChatOpenAI.new!(), ContentPart.image!("image_base64_data"))
-      assert result == expected
-    end
-
-    test "turns an image ContentPart into the expected JSON format with detail option" do
-      expected = %{
-        "type" => "image_url",
-        "image_url" => %{"url" => "image_base64_data", "detail" => "low"}
-      }
-
-      result =
-        ChatOpenAI.for_api(
-          ChatOpenAI.new!(),
-          ContentPart.image!("image_base64_data", detail: "low")
-        )
-
-      assert result == expected
-    end
-
-    test "turns ContentPart's media type the expected JSON values" do
-      expected = "data:image/jpg;base64,image_base64_data"
-
-      result =
-        ChatOpenAI.for_api(
-          ChatOpenAI.new!(),
-          ContentPart.image!("image_base64_data", media: :jpg)
-        )
-
-      assert %{"image_url" => %{"url" => ^expected}} = result
-
-      expected = "data:image/jpg;base64,image_base64_data"
-
-      result =
-        ChatOpenAI.for_api(
-          ChatOpenAI.new!(),
-          ContentPart.image!("image_base64_data", media: :jpeg)
-        )
-
-      assert %{"image_url" => %{"url" => ^expected}} = result
-
-      expected = "data:image/gif;base64,image_base64_data"
-
-      result =
-        ChatOpenAI.for_api(
-          ChatOpenAI.new!(),
-          ContentPart.image!("image_base64_data", media: :gif)
-        )
-
-      assert %{"image_url" => %{"url" => ^expected}} = result
-
-      expected = "data:image/webp;base64,image_base64_data"
-
-      result =
-        ChatOpenAI.for_api(
-          ChatOpenAI.new!(),
-          ContentPart.image!("image_base64_data", media: :webp)
-        )
-
-      assert %{"image_url" => %{"url" => ^expected}} = result
-
-      expected = "data:image/png;base64,image_base64_data"
-
-      result =
-        ChatOpenAI.for_api(
-          ChatOpenAI.new!(),
-          ContentPart.image!("image_base64_data", media: :png)
-        )
-
-      assert %{"image_url" => %{"url" => ^expected}} = result
-
-      # an string value is passed through
-      expected = "data:file/pdf;base64,image_base64_data"
-
-      result =
-        ChatOpenAI.for_api(
-          ChatOpenAI.new!(),
-          ContentPart.image!("image_base64_data", media: "file/pdf")
-        )
-
-      assert %{"image_url" => %{"url" => ^expected}} = result
-    end
-
-    test "turns an image_url ContentPart into the expected JSON format" do
-      expected = %{"type" => "image_url", "image_url" => %{"url" => "url-to-image"}}
-      result = ChatOpenAI.for_api(ChatOpenAI.new!(), ContentPart.image_url!("url-to-image"))
-      assert result == expected
-    end
-
-    test "turns an image_url ContentPart into the expected JSON format with detail option" do
-      expected = %{
-        "type" => "image_url",
-        "image_url" => %{"url" => "url-to-image", "detail" => "low"}
-      }
-
-      result =
-        ChatOpenAI.for_api(
-          ChatOpenAI.new!(),
-          ContentPart.image_url!("url-to-image", detail: "low")
-        )
-
-      assert result == expected
-    end
-
-    test "turns a base64 file ContentPart into the expected JSON format" do
-      file_base64_data = "some_file_base64_data"
-      filename = "my_file.pdf"
-
-      expected = %{
-        "type" => "file",
-        "file" => %{
-          "filename" => filename,
-          "file_data" => "data:application/pdf;base64," <> file_base64_data
-        }
-      }
-
-      result =
-        ChatOpenAI.for_api(
-          ChatOpenAI.new!(),
-          ContentPart.file!(file_base64_data, media: :pdf, type: :base64, filename: filename)
-        )
-
-      assert result == expected
-    end
-
-    test "turns a file_id file ContentPart into the expected JSON format" do
-      file_id = "file-1234"
-
-      expected = %{
-        "type" => "file",
-        "file" => %{
-          "file_id" => file_id
-        }
-      }
-
-      result =
-        ChatOpenAI.for_api(
-          ChatOpenAI.new!(),
-          ContentPart.file!(file_id, media: :pdf, type: :file_id)
-        )
-
-      assert result == expected
-    end
-
     test "turns a tool_call into expected JSON format" do
       tool_call =
         ToolCall.new!(%{call_id: "call_abc123", name: "hello_world", arguments: "{}"})
@@ -592,7 +438,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     test "turns a basic user message into the expected JSON format" do
       openai = ChatOpenAI.new!()
 
-      expected = %{"role" => :user, "content" => "Hi."}
+      expected = %{"role" => :user, "content" => [%{"type" => "text", "text" => "Hi."}]}
       result = ChatOpenAI.for_api(openai, Message.new_user!("Hi."))
       assert result == expected
     end
@@ -600,7 +446,11 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     test "includes 'name' when set" do
       openai = ChatOpenAI.new!()
 
-      expected = %{"role" => :user, "content" => "Hi.", "name" => "Harold"}
+      expected = %{
+        "role" => :user,
+        "content" => [%{"type" => "text", "text" => "Hi."}],
+        "name" => "Harold"
+      }
 
       result =
         ChatOpenAI.for_api(openai, Message.new!(%{role: :user, content: "Hi.", name: "Harold"}))
@@ -612,11 +462,13 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       openai = ChatOpenAI.new!()
 
       # NOTE: Does not include tool_calls if empty
-      expected = %{"role" => :assistant, "content" => "Hi."}
+      expected = %{"role" => :assistant, "content" => [%{"type" => "text", "text" => "Hi."}]}
 
       result =
         ChatOpenAI.for_api(openai, Message.new_assistant!(%{content: "Hi.", tool_calls: []}))
 
+      # TODO: The for_api call is not correctly handling ContentParts and the idea that a message no longer has a string content.
+      # TODO: Need a content_parts_for_api. Call that in multiple places.
       assert result == expected
     end
 
@@ -710,30 +562,203 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     end
   end
 
+  describe "content_part_for_api/2" do
+    test "turns a text ContentPart into the expected JSON format" do
+      expected = %{"type" => "text", "text" => "Tell me about this image:"}
+
+      result =
+        ChatOpenAI.content_part_for_api(
+          ChatOpenAI.new!(),
+          ContentPart.text!("Tell me about this image:")
+        )
+
+      assert result == expected
+    end
+
+    test "turns an image ContentPart into the expected JSON format" do
+      expected = %{"type" => "image_url", "image_url" => %{"url" => "image_base64_data"}}
+
+      result =
+        ChatOpenAI.content_part_for_api(
+          ChatOpenAI.new!(),
+          ContentPart.image!("image_base64_data")
+        )
+
+      assert result == expected
+    end
+
+    test "turns an image ContentPart into the expected JSON format with detail option" do
+      expected = %{
+        "type" => "image_url",
+        "image_url" => %{"url" => "image_base64_data", "detail" => "low"}
+      }
+
+      result =
+        ChatOpenAI.content_part_for_api(
+          ChatOpenAI.new!(),
+          ContentPart.image!("image_base64_data", detail: "low")
+        )
+
+      assert result == expected
+    end
+
+    test "turns ContentPart's media type the expected JSON values" do
+      expected = "data:image/jpg;base64,image_base64_data"
+
+      result =
+        ChatOpenAI.content_part_for_api(
+          ChatOpenAI.new!(),
+          ContentPart.image!("image_base64_data", media: :jpg)
+        )
+
+      assert %{"image_url" => %{"url" => ^expected}} = result
+
+      expected = "data:image/jpg;base64,image_base64_data"
+
+      result =
+        ChatOpenAI.content_part_for_api(
+          ChatOpenAI.new!(),
+          ContentPart.image!("image_base64_data", media: :jpeg)
+        )
+
+      assert %{"image_url" => %{"url" => ^expected}} = result
+
+      expected = "data:image/gif;base64,image_base64_data"
+
+      result =
+        ChatOpenAI.content_part_for_api(
+          ChatOpenAI.new!(),
+          ContentPart.image!("image_base64_data", media: :gif)
+        )
+
+      assert %{"image_url" => %{"url" => ^expected}} = result
+
+      expected = "data:image/webp;base64,image_base64_data"
+
+      result =
+        ChatOpenAI.content_part_for_api(
+          ChatOpenAI.new!(),
+          ContentPart.image!("image_base64_data", media: :webp)
+        )
+
+      assert %{"image_url" => %{"url" => ^expected}} = result
+
+      expected = "data:image/png;base64,image_base64_data"
+
+      result =
+        ChatOpenAI.content_part_for_api(
+          ChatOpenAI.new!(),
+          ContentPart.image!("image_base64_data", media: :png)
+        )
+
+      assert %{"image_url" => %{"url" => ^expected}} = result
+
+      # an string value is passed through
+      expected = "data:file/pdf;base64,image_base64_data"
+
+      result =
+        ChatOpenAI.content_part_for_api(
+          ChatOpenAI.new!(),
+          ContentPart.image!("image_base64_data", media: "file/pdf")
+        )
+
+      assert %{"image_url" => %{"url" => ^expected}} = result
+    end
+
+    test "turns an image_url ContentPart into the expected JSON format" do
+      expected = %{"type" => "image_url", "image_url" => %{"url" => "url-to-image"}}
+
+      result =
+        ChatOpenAI.content_part_for_api(ChatOpenAI.new!(), ContentPart.image_url!("url-to-image"))
+
+      assert result == expected
+    end
+
+    test "turns an image_url ContentPart into the expected JSON format with detail option" do
+      expected = %{
+        "type" => "image_url",
+        "image_url" => %{"url" => "url-to-image", "detail" => "low"}
+      }
+
+      result =
+        ChatOpenAI.content_part_for_api(
+          ChatOpenAI.new!(),
+          ContentPart.image_url!("url-to-image", detail: "low")
+        )
+
+      assert result == expected
+    end
+
+    test "turns a base64 file ContentPart into the expected JSON format" do
+      file_base64_data = "some_file_base64_data"
+      filename = "my_file.pdf"
+
+      expected = %{
+        "type" => "file",
+        "file" => %{
+          "filename" => filename,
+          "file_data" => "data:application/pdf;base64," <> file_base64_data
+        }
+      }
+
+      result =
+        ChatOpenAI.for_api(
+          ChatOpenAI.new!(),
+          ContentPart.file!(file_base64_data, media: :pdf, type: :base64, filename: filename)
+        )
+
+      assert result == expected
+    end
+
+    test "turns a file_id file ContentPart into the expected JSON format" do
+      file_id = "file-1234"
+
+      expected = %{
+        "type" => "file",
+        "file" => %{
+          "file_id" => file_id
+        }
+      }
+
+      result =
+        ChatOpenAI.for_api(
+          ChatOpenAI.new!(),
+          ContentPart.file!(file_id, media: :pdf, type: :file_id)
+        )
+
+      assert result == expected
+    end
+  end
+
   describe "call/2" do
     @tag live_call: true, live_open_ai: true
     test "basic content example and fires ratelimit callback" do
       handlers = %{
         on_llm_ratelimit_info: fn headers ->
           send(self(), {:fired_ratelimit_info, headers})
-        end,
-        on_llm_token_usage: fn usage ->
-          send(self(), {:fired_token_usage, usage})
         end
       }
 
       # https://js.langchain.com/docs/modules/models/chat/
       {:ok, chat} =
-        ChatOpenAI.new(%{temperature: 1, seed: 0, stream: false})
+        ChatOpenAI.new(%{
+          temperature: 1,
+          seed: 0,
+          stream: false,
+          verbose_api: true
+        })
 
       chat = %ChatOpenAI{chat | callbacks: [handlers]}
 
-      {:ok, [%Message{role: :assistant, content: response}]} =
+      {:ok, [%Message{role: :assistant, content: response} = message]} =
         ChatOpenAI.call(chat, [
           Message.new_user!("Return the response 'Colorful Threads'.")
         ])
 
-      assert response =~ "Colorful Threads"
+      IO.inspect(message, label: "MESSAGE")
+
+      assert [%ContentPart{}] = response
+      assert ContentPart.parts_to_string(response) =~ "Colorful Threads"
 
       assert_received {:fired_ratelimit_info, info}
 
@@ -746,9 +771,6 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
                "x-ratelimit-reset-tokens" => _,
                "x-request-id" => _
              } = info
-
-      assert_received {:fired_token_usage, usage}
-      assert %TokenUsage{} = usage
     end
 
     @tag live_call: true, live_open_ai: true
@@ -910,7 +932,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
              ]
 
       assert_received {:fired_token_usage, usage}
-      assert %TokenUsage{input: 15, output: 3} = usage
+      assert %TokenUsage{input: 15, output: 4} = usage
     end
 
     @tag live_call: true, live_open_ai: true
@@ -1050,7 +1072,8 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
         |> MessageDelta.merge_delta(delta_3)
 
       assert merged.role == :assistant
-      assert merged.content =~ "Hi"
+      assert [%ContentPart{}] = merged.merged_content
+      assert ContentPart.parts_to_string(merged.merged_content) =~ "Hi"
       assert merged.status == :complete
     end
 
@@ -1078,12 +1101,14 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
           []
         )
 
-      assert message.content =~ "Hi"
+      assert [%ContentPart{}] = message.content
+      assert ContentPart.parts_to_string(message.content) =~ "Hi"
       assert message.index == 0
       assert_receive {:message_received, received_item}, 500
       assert %Message{} = received_item
       assert received_item.role == :assistant
-      assert received_item.content =~ "Hi"
+      assert [%ContentPart{}] = received_item.content
+      assert ContentPart.parts_to_string(received_item.content) =~ "Hi"
       assert received_item.index == 0
     end
 
@@ -1122,7 +1147,8 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
           []
         )
 
-      assert message.content =~ "Hi"
+      assert [%ContentPart{}] = message.content
+      assert ContentPart.parts_to_string(message.content) =~ "Hi"
       assert message.role == :assistant
       assert message.index == 0
     end
@@ -1147,8 +1173,67 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
       assert %Message{} = struct = ChatOpenAI.do_process_response(model, response)
       assert struct.role == :assistant
-      assert struct.content == "Greetings!"
+      assert struct.content == [ContentPart.text!("Greetings!")]
       assert struct.index == 1
+      assert struct.metadata == nil
+    end
+
+    test "handles receiving a message with token usage information", %{model: model} do
+      response = %{
+        "choices" => [
+          %{
+            "finish_reason" => "stop",
+            "index" => 0,
+            "logprobs" => nil,
+            "message" => %{
+              "annotations" => [],
+              "content" => "Colorful Threads",
+              "refusal" => nil,
+              "role" => "assistant"
+            }
+          }
+        ],
+        "created" => 1_745_192_205,
+        "id" => "chatcmpl-BOYVJArISYBhZWbEoLVBNu0DOamHi",
+        "model" => "gpt-3.5-turbo-0125",
+        "object" => "chat.completion",
+        "service_tier" => "default",
+        "system_fingerprint" => nil,
+        "usage" => %{
+          "completion_tokens" => 4,
+          "completion_tokens_details" => %{
+            "accepted_prediction_tokens" => 0,
+            "audio_tokens" => 0,
+            "reasoning_tokens" => 0,
+            "rejected_prediction_tokens" => 0
+          },
+          "prompt_tokens" => 15,
+          "prompt_tokens_details" => %{"audio_tokens" => 0, "cached_tokens" => 0},
+          "total_tokens" => 19
+        }
+      }
+
+      assert [%Message{} = struct] = ChatOpenAI.do_process_response(model, response)
+      assert struct.role == :assistant
+      assert struct.content == [ContentPart.text!("Colorful Threads")]
+      assert struct.index == 0
+      # token usage attached to metadata
+      %TokenUsage{} = usage = struct.metadata.usage
+      assert usage.input == 15
+      assert usage.output == 4
+
+      assert usage.raw == %{
+               "completion_tokens" => 4,
+               "completion_tokens_details" => %{
+                 "accepted_prediction_tokens" => 0,
+                 "audio_tokens" => 0,
+                 "reasoning_tokens" => 0,
+                 "rejected_prediction_tokens" => 0
+               },
+               "prompt_tokens" => 15,
+               "prompt_tokens_details" => %{"audio_tokens" => 0, "cached_tokens" => 0},
+               "total_tokens" => 19
+             }
     end
 
     test "handles receiving a single tool_calls message", %{model: model} do
@@ -1381,7 +1466,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert %Message{} = struct = ChatOpenAI.do_process_response(model, response)
 
       assert struct.role == :assistant
-      assert struct.content == "Some of the response that was abruptly"
+      assert struct.content == [ContentPart.text!("Some of the response that was abruptly")]
       assert struct.index == 0
       assert struct.status == :length
     end
@@ -1462,8 +1547,8 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       [msg1, msg2] = ChatOpenAI.do_process_response(model, response)
       assert %Message{role: :assistant, index: 0} = msg1
       assert %Message{role: :assistant, index: 1} = msg2
-      assert msg1.content == "Greetings!"
-      assert msg2.content == "Howdy!"
+      assert msg1.content == [ContentPart.text!("Greetings!")]
+      assert msg2.content == [ContentPart.text!("Howdy!")]
     end
   end
 
@@ -1693,8 +1778,8 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       {:ok, [response]} = ChatOpenAI.call(chat, [message], [])
 
       assert %Message{role: :assistant} = response
-      assert String.contains?(response.content, "boardwalk")
-      assert String.contains?(response.content, "grass")
+      assert String.contains?(ContentPart.parts_to_string(response.content), "boardwalk")
+      assert String.contains?(ContentPart.parts_to_string(response.content), "grass")
     end
   end
 

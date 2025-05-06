@@ -1,6 +1,6 @@
 defmodule LangChain.Message.ContentPartTest do
   use ExUnit.Case
-  doctest LangChain.Message.ContentPart
+  doctest LangChain.Message.ContentPart, import: true
   alias LangChain.Message.ContentPart
 
   describe "new/1" do
@@ -11,10 +11,19 @@ defmodule LangChain.Message.ContentPartTest do
     end
 
     test "returns error when invalid" do
-      assert {:error, changeset} = ContentPart.new(%{"type" => nil, "content" => nil})
+      assert {:error, changeset} = ContentPart.new(%{"type" => nil})
       refute changeset.valid?
       assert {"can't be blank", _} = changeset.errors[:type]
-      assert {"can't be blank", _} = changeset.errors[:content]
+    end
+
+    test "accepts an empty string content as-is" do
+      {:ok, %ContentPart{} = part} = ContentPart.new(%{type: :text, content: ""})
+      assert part.type == :text
+      assert part.content == ""
+
+      {:ok, %ContentPart{} = part} = ContentPart.new(%{type: :text, content: " "})
+      assert part.type == :text
+      assert part.content == " "
     end
   end
 
@@ -26,8 +35,8 @@ defmodule LangChain.Message.ContentPartTest do
     end
 
     test "returns error when invalid" do
-      assert_raise LangChain.LangChainError, "content: can't be blank", fn ->
-        ContentPart.text!(nil)
+      assert_raise LangChain.LangChainError, "type: can't be blank", fn ->
+        ContentPart.new!(%{type: nil})
       end
     end
   end
@@ -109,6 +118,90 @@ defmodule LangChain.Message.ContentPartTest do
       assert part.type == :image_url
       assert part.content == url
       assert part.options == [detail: "low"]
+    end
+  end
+
+  describe "merge_part/2" do
+    test "merges two text content parts" do
+      part_1 = ContentPart.text!("Hello")
+      part_2 = ContentPart.text!(" world")
+      merged = ContentPart.merge_part(part_1, part_2)
+      assert merged.content == "Hello world"
+    end
+
+    test "merges two thinking content parts" do
+      part_1 = ContentPart.new!(%{type: :thinking, content: "I'm thinking"})
+      part_2 = ContentPart.new!(%{type: :thinking, content: " about how lovely"})
+      merged = ContentPart.merge_part(part_1, part_2)
+      assert merged.type == :thinking
+      assert merged.content == "I'm thinking about how lovely"
+    end
+
+    test "merges a thinking signature" do
+      part_1 = ContentPart.new!(%{type: :thinking, content: "I'm thinking about how lovely"})
+      part_2 = ContentPart.new!(%{type: :thinking, options: [signature: "woofwoofwoof"]})
+      merged = ContentPart.merge_part(part_1, part_2)
+      assert merged.type == :thinking
+      assert merged.content == "I'm thinking about how lovely"
+      assert merged.options == [signature: "woofwoofwoof"]
+
+      # assert that the signature can be added to.
+      part_3 = ContentPart.new!(%{type: :thinking, options: [signature: "bowwowwow"]})
+      merged = ContentPart.merge_part(merged, part_3)
+      assert merged.type == :thinking
+      assert merged.content == "I'm thinking about how lovely"
+      assert merged.options == [signature: "woofwoofwoofbowwowwow"]
+    end
+
+    test "merges a redacted thinking content" do
+      part_1 =
+        ContentPart.new!(%{
+          type: :unsupported,
+          options: [redacted: "redactedREDACTEDredacted"]
+        })
+
+      part_2 = ContentPart.new!(%{type: :unsupported, options: [redacted: "MOREmoreMORE"]})
+      merged = ContentPart.merge_part(part_1, part_2)
+      assert merged.type == :unsupported
+      assert merged.content == nil
+      assert merged.options == [redacted: "redactedREDACTEDredactedMOREmoreMORE"]
+    end
+  end
+
+  describe "parts_to_string/1" do
+    test "joins text content parts with double newlines" do
+      parts = [
+        ContentPart.text!("Hello"),
+        ContentPart.text!("world"),
+        ContentPart.text!("how are you")
+      ]
+
+      assert ContentPart.parts_to_string(parts) == "Hello\n\nworld\n\nhow are you"
+    end
+
+    test "ignores non-text content parts" do
+      parts = [
+        ContentPart.text!("Hello"),
+        ContentPart.image!("base64data"),
+        ContentPart.text!("world"),
+        ContentPart.image_url!("https://example.com/image.jpg"),
+        ContentPart.text!("how are you")
+      ]
+
+      assert ContentPart.parts_to_string(parts) == "Hello\n\nworld\n\nhow are you"
+    end
+
+    test "returns nil for empty list" do
+      assert ContentPart.parts_to_string([]) == nil
+    end
+
+    test "returns nil for list with no text parts" do
+      parts = [
+        ContentPart.image!("base64data"),
+        ContentPart.image_url!("https://example.com/image.jpg")
+      ]
+
+      assert ContentPart.parts_to_string(parts) == nil
     end
   end
 end

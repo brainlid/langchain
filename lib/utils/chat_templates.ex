@@ -91,6 +91,7 @@ defmodule LangChain.Utils.ChatTemplates do
   """
   alias LangChain.LangChainError
   alias LangChain.Message
+  alias LangChain.Message.ContentPart
 
   @type template_callback :: ([Message.t()], Keyword.t() -> String.t())
   @type chat_format ::
@@ -211,9 +212,11 @@ defmodule LangChain.Utils.ChatTemplates do
 
     # intentionally as a single line for explicit control of newlines and spaces.
     text =
-      "<s>[INST] <%= if @system do %><%= @system.content %> <% end %><%= @first_user.content %> [/INST]<%= for m <- @rest do %><%= if m.role == :user do %>[INST] <%= m.content %> [/INST]<% else %><%= m.content %></s> <% end %><% end %>"
+      "<% import LangChain.Message.ContentPart, only: [parts_to_string: 1] %><s>[INST] <%= if @system do %><%= parts_to_string(@system.content) %> <% end %><%= parts_to_string(@first_user.content) %> [/INST]<%= for m <- @rest do %><%= if m.role == :user do %>[INST] <%= parts_to_string(m.content) %> [/INST]<% else %><%= parts_to_string(m.content) %></s> <% end %><% end %>"
 
-    EEx.eval_string(text, assigns: [system: system, first_user: first_user, rest: rest])
+    EEx.eval_string(text,
+      assigns: [system: system, first_user: first_user, rest: rest]
+    )
   end
 
   # Does Zephyr formatted text
@@ -239,7 +242,7 @@ defmodule LangChain.Utils.ChatTemplates do
 
     # intentionally as a single line for explicit control of newlines and spaces.
     text =
-      "<%= for message <- @messages do %><%= if message.role == :user do %><|user|>\n<%= message.content %></s>\n<% end %><%= if message.role == :system do %><|system|>\n<%= message.content %></s>\n<% end %><%= if message.role == :assistant do %><|assistant|>\n<%= message.content %></s>\n<% end %><% end %><%= if @add_generation_prompt do %><|assistant|>\n<% end %>"
+      "<% import LangChain.Message.ContentPart, only: [parts_to_string: 1] %><%= for message <- @messages do %><%= if message.role == :user do %><|user|>\n<%= parts_to_string(message.content) %></s>\n<% end %><%= if message.role == :system do %><|system|>\n<%= parts_to_string(message.content) %></s>\n<% end %><%= if message.role == :assistant do %><|assistant|>\n<%= parts_to_string(message.content) %></s>\n<% end %><% end %><%= if @add_generation_prompt do %><|assistant|>\n<% end %>"
 
     EEx.eval_string(text,
       assigns: [
@@ -265,7 +268,7 @@ defmodule LangChain.Utils.ChatTemplates do
 
     # intentionally as a single line for explicit control of newlines and spaces.
     text =
-      "<%= for message <- @messages do %><|im_start|><%= message.role %>\n<%= message.content %><|im_end|>\n<% end %><%= if @add_generation_prompt do %><|im_start|>assistant\n<% end %>"
+      "<% import LangChain.Message.ContentPart, only: [parts_to_string: 1] %><%= for message <- @messages do %><|im_start|><%= message.role %>\n<%= parts_to_string(message.content) %><|im_end|>\n<% end %><%= if @add_generation_prompt do %><|im_start|>assistant\n<% end %>"
 
     EEx.eval_string(text,
       assigns: [
@@ -281,11 +284,11 @@ defmodule LangChain.Utils.ChatTemplates do
     {system, first_user, rest} = prep_and_validate_messages(messages)
 
     text = """
-    <%= if @system != nil do %><|im_start|>system<|im_sep|><%= @system.content %><|im_end|><% end %>\
-    <%= if @first_user != nil do %><|im_start|>user<|im_sep|><%= @first_user.content %><|im_end|><|im_start|>assistant<|im_sep|><% end %>\
+    <% import LangChain.Message.ContentPart, only: [parts_to_string: 1] %><%= if @system != nil do %><|im_start|>system<|im_sep|><%= parts_to_string(@system.content) %><|im_end|><% end %>\
+    <%= if @first_user != nil do %><|im_start|>user<|im_sep|><%= parts_to_string(@first_user.content) %><|im_end|><|im_start|>assistant<|im_sep|><% end %>\
     <%= for m <- @rest do %>\
-    <%= if m.role == :user do %><|im_start|>user<|im_sep|><%= m.content %><|im_end|><|im_start|>assistant<|im_sep|>\
-    <% else %><%= m.content %><|im_end|><% end %>\
+    <%= if m.role == :user do %><|im_start|>user<|im_sep|><%= parts_to_string(m.content) %><|im_end|><|im_start|>assistant<|im_sep|>\
+    <% else %><%= parts_to_string(m.content) %><|im_end|><% end %>\
     <% end %>
     """
 
@@ -312,14 +315,14 @@ defmodule LangChain.Utils.ChatTemplates do
 
     system_text =
       if system do
-        "<<SYS>>\n#{system.content}\n<</SYS>>\n\n"
+        "<<SYS>>\n#{ContentPart.parts_to_string(system.content)}\n<</SYS>>\n\n"
       else
         ""
       end
 
     # intentionally as a single line for explicit control of newlines and spaces.
     text =
-      "<s>[INST] <%= @system_text %><%= @first_user.content %> [/INST] <%= for m <- @rest do %><%= if m.role == :user do %><s>[INST] <%= m.content %> [/INST] <% else %><%= m.content %> </s><% end %><% end %>"
+      "<% import LangChain.Message.ContentPart, only: [parts_to_string: 1] %><s>[INST] <%= @system_text %><%= parts_to_string(@first_user.content) %> [/INST] <%= for m <- @rest do %><%= if m.role == :user do %><s>[INST] <%= parts_to_string(m.content) %> [/INST] <% else %><%= parts_to_string(m.content) %> </s><% end %><% end %>"
 
     EEx.eval_string(text, assigns: [system_text: system_text, first_user: first_user, rest: rest])
   end
@@ -342,7 +345,7 @@ defmodule LangChain.Utils.ChatTemplates do
 
     # intentionally as a single line for explicit control of newlines and spaces.
     text =
-      "<|begin_of_text|>\n<%= for message <- @messages do %><|start_header_id|><%= message.role %><|end_header_id|>\n\n<%= message.content %><|eot_id|>\n<% end %><%= if @add_generation_prompt do %><|start_header_id|>assistant<|end_header_id|>\n\n<% end %>"
+      "<% import LangChain.Message.ContentPart, only: [parts_to_string: 1] %><|begin_of_text|>\n<%= for message <- @messages do %><|start_header_id|><%= message.role %><|end_header_id|>\n\n<%= parts_to_string(message.content) %><|eot_id|>\n<% end %><%= if @add_generation_prompt do %><|start_header_id|>assistant<|end_header_id|>\n\n<% end %>"
 
     EEx.eval_string(text,
       assigns: [
@@ -422,7 +425,7 @@ defmodule LangChain.Utils.ChatTemplates do
     # intentionally indentation and newlines!!! for explicit control of newlines and spaces.
     text =
       """
-      <|begin_of_text|>
+      <% import LangChain.Message.ContentPart, only: [parts_to_string: 1] %><|begin_of_text|>
       <|start_header_id|>system<|end_header_id|>
 
       <%= @system_content %>
@@ -440,10 +443,10 @@ defmodule LangChain.Utils.ChatTemplates do
       Respond in the format {"name": function name, "parameters": dictionary of argument name and its value}. Do not use variables.
       <%= @tools_json_schema_string %>
 
-      <%= @first_user.content %><|eot_id|>
+      <%= parts_to_string(@first_user.content) %><|eot_id|>
       <%= for message <- @rest do %><|start_header_id|><%= message.role %><|end_header_id|>
 
-      <%= message.content %><|eot_id|>
+      <%= parts_to_string(message.content) %><|eot_id|>
       <% end %><%= if @add_generation_prompt do %><|start_header_id|>assistant<|end_header_id|>
 
       <% end %>
@@ -457,7 +460,7 @@ defmodule LangChain.Utils.ChatTemplates do
         system_content:
           case system do
             nil -> ""
-            system -> system.content
+            system -> ContentPart.parts_to_string(system.content)
           end,
         first_user: first_user,
         rest: rest |> Enum.drop_while(&(&1 == nil)),
@@ -493,7 +496,7 @@ defmodule LangChain.Utils.ChatTemplates do
 
     text =
       """
-      <|begin_of_text|>
+      <% import LangChain.Message.ContentPart, only: [parts_to_string: 1] %><|begin_of_text|>
       <|start_header_id|>system<|end_header_id|>
 
       Environment: ipython
@@ -535,11 +538,11 @@ defmodule LangChain.Utils.ChatTemplates do
       You are a helpful assistant.<%= @system_content %><|eot_id|>
       <|start_header_id|>user<|end_header_id|>
 
-      <%= @first_user.content %><|eot_id|>
+      <%= parts_to_string(@first_user.content) %><|eot_id|>
       <%= for message <- @rest do %>
       <|start_header_id|><%= message.role %><|end_header_id|>
 
-      <%= message.content %><|eot_id|>
+      <%= parts_to_string(message.content) %><|eot_id|>
       <% end %>
       <%= if @add_generation_prompt do %>
       <|start_header_id|>assistant<|end_header_id|>
@@ -557,7 +560,7 @@ defmodule LangChain.Utils.ChatTemplates do
         system_content:
           case system do
             nil -> ""
-            system -> system.content
+            system -> ContentPart.parts_to_string(system.content)
           end,
         rest: rest |> Enum.drop_while(&(&1 == nil)),
         add_generation_prompt: add_generation_prompt
@@ -579,7 +582,7 @@ defmodule LangChain.Utils.ChatTemplates do
           :tool ->
             tool_result = Enum.at(message.tool_results, 0)
             content = Jason.encode!([%{output: tool_result.content}])
-            %{message | content: content, role: "ipython"}
+            %{message | content: [ContentPart.text!(content)], role: "ipython"}
 
           _ ->
             message
@@ -592,7 +595,7 @@ defmodule LangChain.Utils.ChatTemplates do
 
     text =
       """
-      <|start_header_id|>system<|end_header_id|>
+      <% import LangChain.Message.ContentPart, only: [parts_to_string: 1] %><|start_header_id|>system<|end_header_id|>
       You are an expert in composing functions. You are given a question and a set of possible functions.
       Based on the question, you will need to make one or more function/tool calls to achieve the purpose.
       If none of the functions can be used, point it out. If the given question lacks the parameters required by the function,also point it out. You should only return the function call in tools call sections.
@@ -601,9 +604,9 @@ defmodule LangChain.Utils.ChatTemplates do
       Here is a list of functions in JSON format that you can invoke.<%= @tools_json_schema_string |> Jason.encode!() |> Jason.Formatter.pretty_print() %><%= @system_content %>
       <|eot_id|><|start_header_id|>user<|end_header_id|>
 
-      <%= @first_user.content %><|eot_id|><%= for message <- @rest do %><|start_header_id|><%= message.role %><|end_header_id|>
+      <%= parts_to_string(@first_user.content) %><|eot_id|><%= for message <- @rest do %><|start_header_id|><%= message.role %><|end_header_id|>
 
-      <%= message.content %><|eot_id|><% end %><%= if @add_generation_prompt do %>
+      <%= parts_to_string(message.content) %><|eot_id|><% end %><%= if @add_generation_prompt do %>
       <|start_header_id|>assistant<|end_header_id|>
 
       <% end %>
@@ -619,7 +622,7 @@ defmodule LangChain.Utils.ChatTemplates do
         system_content:
           case system do
             nil -> ""
-            system -> system.content
+            system -> ContentPart.parts_to_string(system.content)
           end,
         rest: rest |> Enum.drop_while(&(&1 == nil)),
         add_generation_prompt: add_generation_prompt
