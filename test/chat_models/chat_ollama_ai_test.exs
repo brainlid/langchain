@@ -600,7 +600,11 @@ defmodule ChatModels.ChatOllamaAITest do
 
       assert %Message{} = struct = ChatOllamaAI.do_process_response(model, response)
       assert struct.role == :assistant
-      assert struct.content == "Greetings!"
+
+      assert struct.content == [
+               %LangChain.Message.ContentPart{type: :text, content: "Greetings!", options: []}
+             ]
+
       assert struct.index == nil
     end
 
