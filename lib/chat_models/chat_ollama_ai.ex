@@ -240,6 +240,12 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
     |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(tools))
   end
 
+  def for_api(%Message{content: content} = msg) when is_list(content) do
+    msg
+    |> Map.put(:content, Enum.map(content, &for_api/1) |> Enum.join(""))
+    |> for_api()
+  end
+
   def for_api(%Message{role: :assistant, tool_calls: tool_calls} = msg)
       when is_list(tool_calls) do
     %{
@@ -295,6 +301,13 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
       "content" => Enum.map(content, &for_api(&1))
     }
     |> Utils.conditionally_add_to_map("name", msg.name)
+  end
+
+  def for_api(%Message.ContentPart{type: :text, content: content}), do: content
+
+  def for_api(%Message.ContentPart{type: type}) do
+    Logger.warning("Type #{type} is not supported by #{__MODULE__}…")
+    ""
   end
 
   defp get_tools_for_api(nil), do: []
