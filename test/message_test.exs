@@ -329,6 +329,7 @@ defmodule LangChain.MessageTest do
 
       assert msg.role == :tool
       assert [result] == msg.tool_results
+      assert result.content == "STUFF_BROKE!"
     end
   end
 
