@@ -528,9 +528,9 @@ defmodule LangChain.Chains.LLMChain do
       end
     rescue
       err ->
-        # Log the error and try again.
+        # Log the error and stack trace, then try again.
         Logger.error(
-          "Rescued from exception during with_fallback processing. Error: #{inspect(err)}"
+          "Rescued from exception during with_fallback processing. Error: #{inspect(err)}\nStack trace:\n#{Exception.format(:error, err, __STACKTRACE__)}"
         )
 
         try_chain_with_llm(use_chain, tail, before_fallback_fn, run_fn)
