@@ -97,6 +97,25 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
       assert openai.json_schema == json_schema
     end
 
-    #
+    test "supports overriding temperature" do
+      {:ok, openai} = ChatOpenAIResponses.new(%{"model" => @test_model, "temperature" => 0.7})
+      assert openai.temperature == 0.7
+    end
+
+    test "returns error for out-of-bounds temperature" do
+      assert {:error, changeset} =
+               ChatOpenAIResponses.new(%{"model" => @test_model, "temperature" => 2.5})
+
+      refute changeset.valid?
+      assert {"must be less than or equal to %{number}", _} = changeset.errors[:temperature]
+
+      assert {:error, changeset} =
+               ChatOpenAIResponses.new(%{"model" => @test_model, "temperature" => -0.1})
+
+      refute changeset.valid?
+      assert {"must be greater than or equal to %{number}", _} = changeset.errors[:temperature]
+    end
+
+    # Support
   end
 end
