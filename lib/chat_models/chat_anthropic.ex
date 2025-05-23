@@ -193,9 +193,10 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     # field :model, :string, default: "claude-3-haiku-20240307"
     field :model, :string, default: "claude-3-haiku-20240307"
 
-    # The maximum tokens allowed
-    # This field is required to be present in the API request.
-    # For now, all Claude models support max of 4096, which makes this default easy.
+    # The maximum tokens allowed for generating a response. This field is
+    # required to be present in the API request. The default is a max of 4096
+    # tokens, which was the max most Claude models could generate for a long
+    # time.
     field :max_tokens, :integer, default: 4096
 
     # Amount of randomness injected into the response. Ranges from 0.0 to 1.0. Defaults to 1.0.
