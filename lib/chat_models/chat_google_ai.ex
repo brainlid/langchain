@@ -194,7 +194,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
           # Extract text from ContentPart structures
           text_content =
             content
-            |> Enum.filter(&match?(%LangChain.Message.ContentPart{type: :text}, &1))
+            |> Enum.filter(&match?(%ContentPart{type: :text}, &1))
             |> Enum.map(& &1.content)
             |> Enum.join(" ")
           %{"parts" => [%{"text" => text_content}]}
