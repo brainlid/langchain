@@ -4,6 +4,7 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
   alias LangChain.ChatModels.ChatMistralAI
   alias LangChain.Message
   alias LangChain.MessageDelta
+  alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
   alias LangChain.LangChainError
   alias LangChain.TokenUsage
@@ -113,7 +114,7 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
 
       assert [%Message{} = msg] = ChatMistralAI.do_process_response(model, response)
       assert msg.role == :assistant
-      assert msg.content == "Hello User!"
+      assert msg.content == [ContentPart.text!("Hello User!")]
       assert msg.index == 0
       assert msg.status == :complete
     end
@@ -315,8 +316,8 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
 
       result = ChatMistralAI.do_process_response(model, response)
 
-      assert [%Message{role: :assistant, content: "Hello from Mistral!", status: :complete}] =
-               result
+      assert [%Message{role: :assistant, status: :complete} = message] = result
+      assert message.content == [ContentPart.text!("Hello from Mistral!")]
     end
   end
 

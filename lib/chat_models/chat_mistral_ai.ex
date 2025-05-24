@@ -181,7 +181,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
       when is_list(tool_calls) do
     %{
       "role" => :assistant,
-      "content" => msg.content
+      "content" => extract_content_text(msg.content)
     }
     |> Utils.conditionally_add_to_map("tool_calls", Enum.map(tool_calls, &for_api(model, &1)))
   end
@@ -191,9 +191,42 @@ defmodule LangChain.ChatModels.ChatMistralAI do
     # A user message can hold an array of ContentParts
     %{
       "role" => msg.role,
-      "content" => Enum.map(content, &for_api(model, &1))
+      "content" => extract_content_text(content)
     }
     |> Utils.conditionally_add_to_map("name", msg.name)
+  end
+
+  # Handle messages with ContentPart content for non-user roles
+  def for_api(%_{} = model, %Message{content: content} = msg) when is_list(content) do
+    role = get_message_role(model, msg.role)
+
+    %{
+      "role" => role,
+      "content" => extract_content_text(content)
+    }
+    |> Utils.conditionally_add_to_map("name", msg.name)
+    |> Utils.conditionally_add_to_map(
+      "tool_calls",
+      Enum.map(msg.tool_calls || [], &for_api(model, &1))
+    )
+  end
+
+  # Handle ContentPart structures
+  def for_api(%_{} = _model, %ContentPart{type: :text, content: content}) do
+    content
+  end
+
+  # Helper function to extract text content from various content formats
+  defp extract_content_text(content) when is_binary(content), do: content
+  defp extract_content_text(nil), do: nil
+  defp extract_content_text([%ContentPart{type: :text, content: text}]), do: text
+  defp extract_content_text([%ContentPart{type: :text, content: text} | _rest]), do: text
+  defp extract_content_text(content) when is_list(content) do
+    # For multi-part content, concatenate all text parts
+    content
+    |> Enum.filter(&match?(%ContentPart{type: :text}, &1))
+    |> Enum.map(& &1.content)
+    |> Enum.join(" ")
   end
 
   # ToolResult => stand-alone message with "role: :tool"
