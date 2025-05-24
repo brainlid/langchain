@@ -6,6 +6,7 @@ defmodule LangChain.ChatModels.ChatPerplexityTest do
   alias LangChain.ChatModels.ChatPerplexity
   alias LangChain.Message
   alias LangChain.MessageDelta
+  alias LangChain.Message.ContentPart
   alias LangChain.TokenUsage
   alias LangChain.LangChainError
   alias LangChain.Function
@@ -430,7 +431,7 @@ defmodule LangChain.ChatModels.ChatPerplexityTest do
 
       assert %Message{} = message = ChatPerplexity.do_process_response(model, response)
       assert message.role == :assistant
-      assert message.content == "Hello!"
+      assert message.content == [ContentPart.text!("Hello!")]
       assert message.index == 1
       assert message.status == :complete
     end
@@ -451,7 +452,7 @@ defmodule LangChain.ChatModels.ChatPerplexityTest do
 
       assert %Message{} = struct = ChatPerplexity.do_process_response(model, response)
       assert struct.role == :assistant
-      assert struct.content == "Some of the response that was abruptly"
+      assert struct.content == [ContentPart.text!("Some of the response that was abruptly")]
       assert struct.index == 0
       assert struct.status == :length
     end

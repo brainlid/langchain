@@ -45,6 +45,7 @@ defmodule LangChain.ChatModels.ChatPerplexity do
   alias LangChain.ChatModels.ChatModel
   alias LangChain.Message
   alias LangChain.MessageDelta
+  alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
   alias LangChain.TokenUsage
   alias LangChain.LangChainError
@@ -285,8 +286,21 @@ defmodule LangChain.ChatModels.ChatPerplexity do
   def for_api(%ChatPerplexity{}, %Message{} = msg) do
     %{
       "role" => msg.role,
-      "content" => msg.content
+      "content" => extract_content_text(msg.content)
     }
+  end
+
+  # Helper function to extract text content from various content formats
+  defp extract_content_text(content) when is_binary(content), do: content
+  defp extract_content_text(nil), do: nil
+  defp extract_content_text([%ContentPart{type: :text, content: text}]), do: text
+  defp extract_content_text([%ContentPart{type: :text, content: text} | _rest]), do: text
+  defp extract_content_text(content) when is_list(content) do
+    # For multi-part content, concatenate all text parts
+    content
+    |> Enum.filter(&match?(%ContentPart{type: :text}, &1))
+    |> Enum.map(& &1.content)
+    |> Enum.join(" ")
   end
 
   @impl ChatModel
