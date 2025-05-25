@@ -262,9 +262,9 @@ defmodule LangChain.ChatModels.ChatVertexAI do
 
   defp for_api(%ContentPart{type: :file_url} = part) do
     %{
-      "file_data" => %{
-        "mime_type" => Keyword.fetch!(part.options, :media),
-        "file_uri" => part.content
+      "fileData" => %{
+        "mimeType" => Keyword.fetch!(part.options, :media),
+        "fileUri" => part.content
       }
     }
   end
