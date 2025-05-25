@@ -245,7 +245,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
       when is_list(tool_calls) do
     %{
       "role" => :assistant,
-      "content" => extract_content_text(msg.content)
+      "content" => safe_parts_to_string(msg.content)
     }
     |> Utils.conditionally_add_to_map("tool_calls", Enum.map(tool_calls, &for_api(&1)))
   end
@@ -293,7 +293,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   def for_api(%Message{role: :user, content: content} = msg) when is_list(content) do
     %{
       "role" => msg.role,
-      "content" => extract_content_text(content)
+      "content" => safe_parts_to_string(content)
     }
     |> Utils.conditionally_add_to_map("name", msg.name)
   end
@@ -302,7 +302,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   def for_api(%Message{content: content} = msg) when is_list(content) do
     %{
       "role" => msg.role,
-      "content" => extract_content_text(content)
+      "content" => safe_parts_to_string(content)
     }
     |> Utils.conditionally_add_to_map("name", msg.name)
   end
@@ -312,18 +312,10 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
     content
   end
 
-  # Helper function to extract text content from various content formats
-  defp extract_content_text(content) when is_binary(content), do: content
-  defp extract_content_text(nil), do: nil
-  defp extract_content_text([%ContentPart{type: :text, content: text}]), do: text
-  defp extract_content_text([%ContentPart{type: :text, content: text} | _rest]), do: text
-  defp extract_content_text(content) when is_list(content) do
-    # For multi-part content, concatenate all text parts
-    content
-    |> Enum.filter(&match?(%ContentPart{type: :text}, &1))
-    |> Enum.map(& &1.content)
-    |> Enum.join(" ")
-  end
+  # Helper function to safely extract text content, handling nil values
+  defp safe_parts_to_string(nil), do: nil
+  defp safe_parts_to_string(content) when is_binary(content), do: content
+  defp safe_parts_to_string(content) when is_list(content), do: ContentPart.parts_to_string(content)
 
   defp get_tools_for_api(nil), do: []
 
