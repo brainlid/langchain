@@ -179,9 +179,15 @@ defmodule LangChain.ChatModels.ChatMistralAI do
 
   def for_api(%_{} = model, %Message{role: :assistant, tool_calls: tool_calls} = msg)
       when is_list(tool_calls) do
+    content = case msg.content do
+      content when is_binary(content) -> content
+      content when is_list(content) -> ContentPart.parts_to_string(content)
+      nil -> nil
+    end
+
     %{
       "role" => :assistant,
-      "content" => safe_parts_to_string(msg.content)
+      "content" => content
     }
     |> Utils.conditionally_add_to_map("tool_calls", Enum.map(tool_calls, &for_api(model, &1)))
   end
@@ -191,7 +197,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
     # A user message can hold an array of ContentParts
     %{
       "role" => msg.role,
-      "content" => safe_parts_to_string(content)
+      "content" => ContentPart.parts_to_string(content)
     }
     |> Utils.conditionally_add_to_map("name", msg.name)
   end
@@ -202,7 +208,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
 
     %{
       "role" => role,
-      "content" => safe_parts_to_string(content)
+      "content" => ContentPart.parts_to_string(content)
     }
     |> Utils.conditionally_add_to_map("name", msg.name)
     |> Utils.conditionally_add_to_map(
@@ -261,11 +267,6 @@ defmodule LangChain.ChatModels.ChatMistralAI do
       "parameters" => fun.parameters_schema || %{}
     }
   end
-
-  # Helper function to safely extract text content, handling nil values
-  defp safe_parts_to_string(nil), do: nil
-  defp safe_parts_to_string(content) when is_binary(content), do: content
-  defp safe_parts_to_string(content) when is_list(content), do: ContentPart.parts_to_string(content)
 
   # Implementation only: more straightforward approach for Mistral
   defp get_message_role(%ChatMistralAI{}, role), do: role
