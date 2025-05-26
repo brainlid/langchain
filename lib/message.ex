@@ -78,7 +78,9 @@ defmodule LangChain.Message do
 
       Message.new_user!("Who is Prime Minister of the moon?")
 
-  A multi-part user message: alias LangChain.Message.ContentPart
+  A multi-part user message: 
+      
+      alias LangChain.Message.ContentPart
 
       Message.new_user!([
         ContentPart.text!("What is in this picture?"),
