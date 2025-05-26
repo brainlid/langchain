@@ -179,21 +179,47 @@ defmodule LangChain.ChatModels.ChatMistralAI do
 
   def for_api(%_{} = model, %Message{role: :assistant, tool_calls: tool_calls} = msg)
       when is_list(tool_calls) do
+    content = case msg.content do
+      content when is_binary(content) -> content
+      content when is_list(content) -> ContentPart.parts_to_string(content)
+      nil -> nil
+    end
+
     %{
       "role" => :assistant,
-      "content" => msg.content
+      "content" => content
     }
     |> Utils.conditionally_add_to_map("tool_calls", Enum.map(tool_calls, &for_api(model, &1)))
   end
 
-  def for_api(%_{} = model, %Message{role: :user, content: content} = msg)
+  def for_api(%_{} = _model, %Message{role: :user, content: content} = msg)
       when is_list(content) do
     # A user message can hold an array of ContentParts
     %{
       "role" => msg.role,
-      "content" => Enum.map(content, &for_api(model, &1))
+      "content" => ContentPart.parts_to_string(content)
     }
     |> Utils.conditionally_add_to_map("name", msg.name)
+  end
+
+  # Handle messages with ContentPart content for non-user roles
+  def for_api(%_{} = model, %Message{content: content} = msg) when is_list(content) do
+    role = get_message_role(model, msg.role)
+
+    %{
+      "role" => role,
+      "content" => ContentPart.parts_to_string(content)
+    }
+    |> Utils.conditionally_add_to_map("name", msg.name)
+    |> Utils.conditionally_add_to_map(
+      "tool_calls",
+      Enum.map(msg.tool_calls || [], &for_api(model, &1))
+    )
+  end
+
+  # Handle ContentPart structures
+  def for_api(%_{} = _model, %ContentPart{type: :text, content: content}) do
+    content
   end
 
   # ToolResult => stand-alone message with "role: :tool"

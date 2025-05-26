@@ -187,8 +187,17 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
         nil ->
           nil
 
-        %Message{role: :system, content: content} ->
+        %Message{role: :system, content: content} when is_binary(content) ->
           %{"parts" => [%{"text" => content}]}
+
+        %Message{role: :system, content: content} when is_list(content) ->
+          # Extract text from ContentPart structures
+          text_content =
+            content
+            |> Enum.filter(&match?(%ContentPart{type: :text}, &1))
+            |> Enum.map(& &1.content)
+            |> Enum.join(" ")
+          %{"parts" => [%{"text" => text_content}]}
       end
 
     messages_for_api =

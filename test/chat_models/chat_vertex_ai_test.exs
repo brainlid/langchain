@@ -130,9 +130,9 @@ defmodule ChatModels.ChatVertexAITest do
                    "parts" => [
                      %{"text" => "User prompt"},
                      %{
-                       "file_data" => %{
-                         "file_uri" => "example.com/test.pdf",
-                         "mime_type" => "application/pdf"
+                       "fileData" => %{
+                         "fileUri" => "example.com/test.pdf",
+                         "mimeType" => "application/pdf"
                        }
                      }
                    ],
