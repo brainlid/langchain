@@ -568,7 +568,8 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
 
       assert_received {:fired_token_usage, usage}
       assert %TokenUsage{input: 18} = usage
-      assert usage.output in [4, 5]  # Allow for slight variation in token count
+      # Allow for slight variation in token count
+      assert usage.output in [4, 5]
     end
 
     @tag live_call: true, live_mistral_ai: true
@@ -611,7 +612,8 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
 
       assert_received {:fired_token_usage, usage}
       assert %TokenUsage{input: 18} = usage
-      assert usage.output in [4, 5]  # Allow for slight variation in token count
+      # Allow for slight variation in token count
+      assert usage.output in [4, 5]
     end
 
     @tag live_call: true, live_mistral_ai: true
