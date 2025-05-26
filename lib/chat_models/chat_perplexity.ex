@@ -284,11 +284,12 @@ defmodule LangChain.ChatModels.ChatPerplexity do
   """
   @spec for_api(t(), Message.t()) :: %{String.t() => any()}
   def for_api(%ChatPerplexity{}, %Message{} = msg) do
-    content = case msg.content do
-      content when is_binary(content) -> content
-      content when is_list(content) -> ContentPart.parts_to_string(content)
-      nil -> nil
-    end
+    content =
+      case msg.content do
+        content when is_binary(content) -> content
+        content when is_list(content) -> ContentPart.parts_to_string(content)
+        nil -> nil
+      end
 
     %{
       "role" => msg.role,

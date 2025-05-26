@@ -232,6 +232,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
 
   defp for_api(%Message{} = message) do
     content_parts = get_message_contents(message) || []
+
     %{
       "role" => map_role(message.role),
       "parts" => content_parts

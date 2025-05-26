@@ -197,6 +197,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
             |> Enum.filter(&match?(%ContentPart{type: :text}, &1))
             |> Enum.map(& &1.content)
             |> Enum.join(" ")
+
           %{"parts" => [%{"text" => text_content}]}
       end
 
