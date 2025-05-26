@@ -56,6 +56,12 @@ defmodule LangChain.ChatModels.ChatMistralAI do
     # For choosing a specific tool call (like forcing a function execution).
     field :tool_choice, :map
 
+    # JSON Schema to validate the output format (for structured JSON output)
+    field :json_schema, :map
+
+    # Whether to force a JSON response format
+    field :json_response, :boolean, default: false
+
     # A list of callback handlers
     field :callbacks, {:array, :map}, default: []
   end
@@ -73,7 +79,9 @@ defmodule LangChain.ChatModels.ChatMistralAI do
     :safe_prompt,
     :random_seed,
     :stream,
-    :tool_choice
+    :tool_choice,
+    :json_schema,
+    :json_response
   ]
   @required_fields [
     :model
@@ -126,6 +134,38 @@ defmodule LangChain.ChatModels.ChatMistralAI do
     |> Utils.conditionally_add_to_map(:max_tokens, mistral.max_tokens)
     |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(mistral, tools))
     |> Utils.conditionally_add_to_map(:tool_choice, get_tool_choice(mistral))
+    |> Utils.conditionally_add_to_map(:response_format, set_response_format(mistral))
+  end
+
+  # Creates the response_format field for JSON output when json_response is true.
+  # If json_schema is provided, it will be included in the response format.
+  #
+  # For Mistral, the format is as follows:
+  # https://docs.mistral.ai/capabilities/structured-output/custom_structured_output/
+  # {
+  #   "type": "json_schema",
+  #   "json_schema": {
+  #     "schema": { ... },
+  #     "name": "output",
+  #     "strict": true
+  #   }
+  # }
+  @spec set_response_format(t()) :: map() | nil
+  defp set_response_format(%ChatMistralAI{json_response: true, json_schema: schema})
+       when is_map(schema) and map_size(schema) > 0 do
+    # The schema should already be in the correct format
+    schema
+  end
+
+  defp set_response_format(%ChatMistralAI{json_response: true}) do
+    # For Mistral, when no schema is provided, we use json_object type
+    %{
+      "type" => "json_object"
+    }
+  end
+
+  defp set_response_format(%ChatMistralAI{}) do
+    nil
   end
 
   # Add a more complete function to map tools. This mirrors ChatOpenAI approach.
@@ -676,7 +716,9 @@ defmodule LangChain.ChatModels.ChatMistralAI do
         :max_tokens,
         :safe_prompt,
         :random_seed,
-        :stream
+        :stream,
+        :json_schema,
+        :json_response
       ],
       @current_config_version
     )
