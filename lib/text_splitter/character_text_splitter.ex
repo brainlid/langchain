@@ -5,8 +5,8 @@ defmodule LangChain.TextSplitter.CharacterTextSplitter do
   This splitter provides consistent chunk sizes.
   It operates as follows:
 
-  - It splits the text at specified `separator` characters.  
-  - It takes a `chunk_size` parameter that determines the maximum number of characters
+  - It splits the text at specified `separator` characters.
+  - It takes a `chunk_size` parameter that determines the maximum number of tokens
     in each chunk.
   - If no separator is found within the `chunk_size`,
     it will create a chunk larger than the specified size.
@@ -17,10 +17,11 @@ defmodule LangChain.TextSplitter.CharacterTextSplitter do
 
   A `CharacterTextSplitter` is defined using a schema.
   * `separator` - String that splits a given text.
-  * `chunk_size` - Integer number of characters that a chunk should have.
-  * `chunk_overlap` - Integer number of characters that two consecutive chunks should share.
+  * `chunk_size` - Integer number of tokens that a chunk should have.
+  * `chunk_overlap` - Integer number of tokens that two consecutive chunks should share.
   * `keep_separator` - Either `:discard_separator`, `:start` or `:end`. If `:discard_separator`, the separator is discarded from the output chunks. `:start` and `:end` keep the separator at the start or end of the output chunks. Defaults to `:discard_separator`.
   * `is_separator_regex` - Boolean defaulting to `false`. If `true`, the `separator` string is not escaped. Defaults to `false`
+  * `tokenizer` - Function that takes a string and returns the number of tokens. Defaults to `&String.length/1`.
   """
   use Ecto.Schema
   import Ecto.Changeset
@@ -39,6 +40,7 @@ defmodule LangChain.TextSplitter.CharacterTextSplitter do
       default: :discard_separator
 
     field :is_separator_regex, :boolean, default: false
+    field :tokenizer, :any, virtual: true, default: &String.length/1
   end
 
   @type t :: %CharacterTextSplitter{}
@@ -48,7 +50,8 @@ defmodule LangChain.TextSplitter.CharacterTextSplitter do
     :chunk_size,
     :chunk_overlap,
     :keep_separator,
-    :is_separator_regex
+    :is_separator_regex,
+    :tokenizer
   ]
   @create_fields @update_fields
 

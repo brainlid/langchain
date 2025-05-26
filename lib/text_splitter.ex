@@ -11,8 +11,8 @@ defmodule LangChain.TextSplitter do
   end
 
   defp merge_split_helper(d, acc, text_splitter, separator) do
-    separator_len = String.length(separator)
-    len = String.length(d)
+    separator_len = text_splitter.tokenizer.(separator)
+    len = text_splitter.tokenizer.(d)
 
     test_separator_length =
       if Enum.count(acc.current_doc) > 0, do: separator_len, else: 0
@@ -30,7 +30,7 @@ defmodule LangChain.TextSplitter do
         acc.total -
           (acc.current_doc
            |> Enum.at(0, "")
-           |> String.length()) - separator_length
+           |> text_splitter.tokenizer.()) - separator_length
 
       new_current_doc = acc.current_doc |> Enum.drop(1)
 
@@ -59,11 +59,11 @@ defmodule LangChain.TextSplitter do
       |> Enum.reduce(
         acc,
         fn d, acc ->
-          len = String.length(d)
+          len = text_splitter.tokenizer.(d)
 
           separator_length =
             if Enum.count(acc.current_doc) > 0,
-              do: String.length(plain_separator),
+              do: text_splitter.tokenizer.(plain_separator),
               else: 0
 
           acc =
@@ -84,7 +84,7 @@ defmodule LangChain.TextSplitter do
 
           separator_length =
             if Enum.count(acc.current_doc) > 1,
-              do: String.length(plain_separator),
+              do: text_splitter.tokenizer.(plain_separator),
               else: 0
 
           %{acc | total: acc.total + separator_length + len}
