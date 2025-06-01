@@ -968,7 +968,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     %Message{
       message
       | tool_calls:
-          message.tool_calls ++
+          (message.tool_calls || []) ++
             [
               ToolCall.new!(%{
                 type: :function,
