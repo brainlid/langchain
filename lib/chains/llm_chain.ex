@@ -230,12 +230,16 @@ defmodule LangChain.Chains.LLMChain do
     # when we've provided a tool response and the LLM needs to respond.
     field :needs_response, :boolean, default: false
 
+    # The timeout for async tool execution. An async Task execution is used when
+    # running a tool that has `async: true` set. Time is in milliseconds.
+    field :async_tool_timeout, :integer
+
     # A list of maps for callback handlers
     field :callbacks, {:array, :map}, default: []
   end
 
   # default to 2 minutes
-  @task_await_timeout 2 * 60 * 1000
+  @default_task_await_timeout 2 * 60 * 1000
 
   @type t :: %LLMChain{}
 
@@ -273,7 +277,8 @@ defmodule LangChain.Chains.LLMChain do
     :max_retry_count,
     :callbacks,
     :verbose,
-    :verbose_deltas
+    :verbose_deltas,
+    :async_tool_timeout
   ]
   @required_fields [:llm]
 
@@ -639,6 +644,10 @@ defmodule LangChain.Chains.LLMChain do
   @spec run_until_tool_used(t(), String.t()) ::
           {:ok, t(), Message.t()} | {:error, t(), LangChainError.t()}
   def run_until_tool_used(%LLMChain{} = chain, tool_name, opts \\ []) do
+    chain
+    |> raise_when_no_messages()
+    |> initial_run_logging()
+
     # clear the set of exchanged messages.
     chain = clear_exchanged_messages(chain)
 
@@ -1073,7 +1082,7 @@ defmodule LangChain.Chains.LLMChain do
             execute_tool_call(call, func, verbose: verbose, context: use_context)
           end)
         end)
-        |> Task.await_many(@task_await_timeout)
+        |> Task.await_many(chain.async_tool_timeout || @default_task_await_timeout)
 
       sync_results =
         Enum.map(grouped[:sync], fn {call, func} ->
