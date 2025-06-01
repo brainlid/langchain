@@ -958,7 +958,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
            "content" => message["content"],
            "complete" => true,
            "index" => data["index"],
-           "tool_calls" => Enum.map(calls, &do_process_response(model, &1))
+           "tool_calls" => Enum.map(calls || [], &do_process_response(model, &1))
          }) do
       {:ok, message} ->
         message
