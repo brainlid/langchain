@@ -1269,6 +1269,25 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert struct.index == 0
     end
 
+    test "handles receiving a nil tool_calls message", %{model: model} do
+      response = %{
+        "finish_reason" => "tool_calls",
+        "index" => 0,
+        "logprobs" => nil,
+        "message" => %{
+          "content" => nil,
+          "role" => "assistant",
+          "tool_calls" => nil
+        }
+      }
+
+      assert %Message{} = struct = ChatOpenAI.do_process_response(model, response)
+
+      assert struct.role == :assistant
+
+      assert [] = struct.tool_calls
+    end
+
     test "handles receiving multiple tool_calls messages", %{model: model} do
       response = %{
         "finish_reason" => "tool_calls",
