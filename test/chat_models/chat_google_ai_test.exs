@@ -646,11 +646,12 @@ defmodule ChatModels.ChatGoogleAITest do
       assert %TokenUsage{} = struct.metadata.usage
       assert struct.metadata.usage.input == 10
       assert struct.metadata.usage.output == 5
+
       assert struct.metadata.usage.raw == %{
-        "promptTokenCount" => 10,
-        "candidatesTokenCount" => 5,
-        "totalTokenCount" => 15
-      }
+               "promptTokenCount" => 10,
+               "candidatesTokenCount" => 5,
+               "totalTokenCount" => 15
+             }
     end
 
     test "handles receiving MessageDelta with token usage", %{model: model} do
@@ -684,11 +685,12 @@ defmodule ChatModels.ChatGoogleAITest do
       assert %TokenUsage{} = struct.metadata.usage
       assert struct.metadata.usage.input == 8
       assert struct.metadata.usage.output == 3
+
       assert struct.metadata.usage.raw == %{
-        "promptTokenCount" => 8,
-        "candidatesTokenCount" => 3,
-        "totalTokenCount" => 11
-      }
+               "promptTokenCount" => 8,
+               "candidatesTokenCount" => 3,
+               "totalTokenCount" => 11
+             }
     end
   end
 
