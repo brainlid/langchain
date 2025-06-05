@@ -797,29 +797,34 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     end
   end
 
+  # The Responses API streams events in the form:
+  # event: <event_type>\ndata: { ...json... }
+  # We want to extract each pair and parse the JSON from the `data:` line.
+
+  # A list of all events can be found here: https://platform.openai.com/docs/api-reference/responses-streaming
+
+  # Unlike the Chat Completions API, we do not get a [DONE] token at the end of the stream.
+
   @spec decode_stream({String.t(), String.t()}) :: {%{String.t() => any()}}
   def decode_stream({raw_data, buffer}, done \\ []) do
-    # Data comes back like this:
-    #
-    # "data: {\"id\":\"chatcmpl-7e8yp1xBhriNXiqqZ0xJkgNrmMuGS\",\"object\":\"chat.completion.chunk\",\"created\":1689801995,\"model\":\"gpt-4-0613\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":null,\"function_call\":{\"name\":\"calculator\",\"arguments\":\"\"}},\"finish_reason\":null}]}\n\n
-    #  data: {\"id\":\"chatcmpl-7e8yp1xBhriNXiqqZ0xJkgNrmMuGS\",\"object\":\"chat.completion.chunk\",\"created\":1689801995,\"model\":\"gpt-4-0613\",\"choices\":[{\"index\":0,\"delta\":{\"function_call\":{\"arguments\":\"{\\n\"}},\"finish_reason\":null}]}\n\n"
-    #
-    # In that form, the data is not ready to be interpreted as JSON. Let's clean
-    # it up first.
-
-    # as we start, the initial accumulator is an empty set of parsed results and
-    # any left-over buffer from a previous processing.
     raw_data
-    |> String.split("data: ")
+    |> String.split(~r/event: /)
+    |> Enum.map(fn
+      <<"event: ", rest::binary>> -> rest
+      other -> other
+    end)
+    |> Enum.flat_map(fn chunk ->
+      case String.split(chunk, ~r/\ndata: /, parts: 2) do
+        [_event, json] -> [json]
+        [json_only] -> [json_only]
+        _ -> []
+      end
+    end)
     |> Enum.reduce({done, buffer}, fn str, {done, incomplete} = acc ->
-      # auto filter out "" and "[DONE]" by not including the accumulator
       str
       |> String.trim()
       |> case do
         "" ->
-          acc
-
-        "[DONE]" ->
           acc
 
         json ->
@@ -874,6 +879,135 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
       role: :assistant,
       tool_calls: tool_calls
     })
+  end
+
+  # Handle streaming events
+
+  # Streamed events are returned as a raw list of events
+  # Even if there is only one event, it is returned within a list.
+  # Open to feedback this should get moved up and down the pattern-matching
+  # priority here.
+
+  def do_process_response(model, list) when is_list(list) do
+    Enum.map(list, &do_process_response(model, &1))
+  end
+
+  # Deltas arrive in the following shape:
+  # %{
+  #   "content_index" => 0,
+  #   "delta" => "Hello",
+  #   "item_id" => "msg_1234567890",
+  #   "output_index" => 0,
+  #   "sequence_number" => 4,
+  #   "type" => "response.output_text.delta"
+  # }
+  def do_process_response(_model, %{"type" => "response.output_text.delta", "delta" => delta_text}) do
+    data = %{
+      content: delta_text,
+      # Will need to be updated to :complete when the response is complete
+      status: :incomplete,
+      role: :assistant
+    }
+
+    case MessageDelta.new(data) do
+      {:ok, message} ->
+        message
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:error, LangChainError.exception(changeset)}
+    end
+  end
+
+  # Open question: is it possible we get multiples of `response.output_text.done`?
+  # It precedes `response.content_part.done` and `response.output_item.done`
+  # and theoretically we could get multiple text content_parts and output_items.
+
+  # I believe, semantically, these deltas are "outside" the output item and content part
+  # and can be treated as a "global" stream of deltas -- meaning "done" is truly
+  # "done" -- but that remains unconfirmed.
+  def do_process_response(_model, %{"type" => "response.output_text.done"}) do
+    data = %{
+      content: "",
+      status: :complete,
+      role: :assistant
+    }
+
+    case MessageDelta.new(data) do
+      {:ok, message} ->
+        message
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:error, LangChainError.exception(changeset)}
+    end
+  end
+
+  # Streaming events explicitly skipped
+
+  # Items we should come back and implement:
+  # - refusals
+  # - function_calls
+  # - error
+
+  @skippable_streaming_events [
+    "response.completed",
+    "response.created",
+    "response.in_progress",
+    "response.incomplete",
+    "response.output_item.added",
+    "response.output_item.done",
+    "response.content_part.added",
+    "response.content_part.done",
+    "response.refusal.delta",
+    "response.refusal.done",
+    "response.function_call_argument.delta",
+    "response.function_call_argument.done",
+    "response.file_search_call.in_progress",
+    "response.file_search_call.searching",
+    "response.file_search_call.completed",
+    "response.web_search_call.in_progress",
+    "response.web_search_call.searching",
+    "response.web_search_call.completed",
+    "response.reasoning_summary_part.added",
+    "response.reasoning_summary_part.done",
+    "response.reasoning_summary_text.delta",
+    "response.reasoning_summary_text.done",
+    "response.image_generation_call.completed",
+    "response.image_generation_call.generating",
+    "response.image_generation_call.in_progress",
+    "response.image_generation_call.partial_image",
+    "response.mcp_call.arguments.delta",
+    "response.mcp_call.arguments.done",
+    "response.mcp_call.completed",
+    "response.mcp_call.failed",
+    "response.mcp_call.in_progress",
+    "response.output_text_annotation.added",
+    "response.queued",
+    "response.reasoning.delta",
+    "response.reasoning_summary.delta",
+    "response.reasoning_summary.done",
+    "error"
+  ]
+
+  def do_process_response(_model, %{"type" => event})
+      when event in @skippable_streaming_events,
+      do: :skip
+
+  def do_process_response(_model, %{"error" => %{"message" => reason}}) do
+    Logger.error("Received error from API: #{inspect(reason)}")
+    {:error, LangChainError.exception(message: reason)}
+  end
+
+  def do_process_response(_model, {:error, %Jason.DecodeError{} = response}) do
+    error_message = "Received invalid JSON: #{inspect(response)}"
+    Logger.error(error_message)
+
+    {:error,
+     LangChainError.exception(type: "invalid_json", message: error_message, original: response)}
+  end
+
+  def do_process_response(_model, other) do
+    Logger.error("Trying to process an unexpected response. #{inspect(other)}")
+    {:error, LangChainError.exception(message: "Unexpected response")}
   end
 
   defp content_items_to_content_parts_and_tool_calls(content_items) do
@@ -960,151 +1094,6 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         {:error, LangChainError.exception(changeset)}
     end
   end
-
-  # # Full message with tool call
-  # def do_process_response(
-  #       model,
-  #       %{"finish_reason" => finish_reason, "message" => %{"tool_calls" => calls} = message} =
-  #         data
-  #     )
-  #     when finish_reason in ["tool_calls", "stop"] do
-  #   case Message.new(%{
-  #          "role" => "assistant",
-  #          "content" => message["content"],
-  #          "complete" => true,
-  #          "index" => data["index"],
-  #          "tool_calls" => Enum.map(calls, &do_process_response(model, &1))
-  #        }) do
-  #     {:ok, message} ->
-  #       message
-
-  #     {:error, %Ecto.Changeset{} = changeset} ->
-  #       {:error, LangChainError.exception(changeset)}
-  #   end
-  # end
-
-  # # Delta message tool call
-  # def do_process_response(
-  #       model,
-  #       %{"delta" => delta_body, "finish_reason" => finish, "index" => index} = _msg
-  #     ) do
-  #   status = finish_reason_to_status(finish)
-
-  #   tool_calls =
-  #     case delta_body do
-  #       %{"tool_calls" => tools_data} when is_list(tools_data) ->
-  #         Enum.map(tools_data, &do_process_response(model, &1))
-
-  #       _other ->
-  #         nil
-  #     end
-
-  #   # more explicitly interpret the role. We treat a "function_call" as a a role
-  #   # while OpenAI addresses it as an "assistant". Technically, they are correct
-  #   # that the assistant is issuing the function_call.
-  #   role =
-  #     case delta_body do
-  #       %{"role" => role} -> role
-  #       _other -> "unknown"
-  #     end
-
-  #   data =
-  #     delta_body
-  #     |> Map.put("role", role)
-  #     |> Map.put("index", index)
-  #     |> Map.put("status", status)
-  #     |> Map.put("tool_calls", tool_calls)
-
-  #   case MessageDelta.new(data) do
-  #     {:ok, message} ->
-  #       message
-
-  #     {:error, %Ecto.Changeset{} = changeset} ->
-  #       {:error, LangChainError.exception(changeset)}
-  #   end
-  # end
-
-  # # Tool call as part of a delta message
-  # def do_process_response(_model, %{"function" => func_body, "index" => index} = tool_call) do
-  #   # function parts may or may not be present on any given delta chunk
-  #   case ToolCall.new(%{
-  #          status: :incomplete,
-  #          type: :function,
-  #          call_id: tool_call["id"],
-  #          name: Map.get(func_body, "name", nil),
-  #          arguments: Map.get(func_body, "arguments", nil),
-  #          index: index
-  #        }) do
-  #     {:ok, %ToolCall{} = call} ->
-  #       call
-
-  #     {:error, %Ecto.Changeset{} = changeset} ->
-  #       reason = Utils.changeset_error_to_string(changeset)
-  #       Logger.error("Failed to process ToolCall for a function. Reason: #{reason}")
-  #       {:error, LangChainError.exception(changeset)}
-  #   end
-  # end
-
-  # # Tool call from a complete message
-  # def do_process_response(_model, %{
-  #       "function" => %{
-  #         "arguments" => args,
-  #         "name" => name
-  #       },
-  #       "id" => call_id,
-  #       "type" => "function"
-  #     }) do
-  #   # No "index". It is a complete message.
-  #   case ToolCall.new(%{
-  #          type: :function,
-  #          status: :complete,
-  #          name: name,
-  #          arguments: args,
-  #          call_id: call_id
-  #        }) do
-  #     {:ok, %ToolCall{} = call} ->
-  #       call
-
-  #     {:error, %Ecto.Changeset{} = changeset} ->
-  #       reason = Utils.changeset_error_to_string(changeset)
-  #       Logger.error("Failed to process ToolCall for a function. Reason: #{reason}")
-  #       {:error, LangChainError.exception(changeset)}
-  #   end
-  # end
-
-  # def do_process_response(_model, %{
-  #       "finish_reason" => finish_reason,
-  #       "message" => message,
-  #       "index" => index
-  #     }) do
-  #   status = finish_reason_to_status(finish_reason)
-
-  #   case Message.new(Map.merge(message, %{"status" => status, "index" => index})) do
-  #     {:ok, message} ->
-  #       message
-
-  #     {:error, %Ecto.Changeset{} = changeset} ->
-  #       {:error, LangChainError.exception(changeset)}
-  #   end
-  # end
-
-  # def do_process_response(_model, %{"error" => %{"message" => reason}}) do
-  #   Logger.error("Received error from API: #{inspect(reason)}")
-  #   {:error, LangChainError.exception(message: reason)}
-  # end
-
-  # def do_process_response(_model, {:error, %Jason.DecodeError{} = response}) do
-  #   error_message = "Received invalid JSON: #{inspect(response)}"
-  #   Logger.error(error_message)
-
-  #   {:error,
-  #    LangChainError.exception(type: "invalid_json", message: error_message, original: response)}
-  # end
-
-  # def do_process_response(_model, other) do
-  #   Logger.error("Trying to process an unexpected response. #{inspect(other)}")
-  #   {:error, LangChainError.exception(message: "Unexpected response")}
-  # end
 
   defp finish_reason_to_status(nil), do: :incomplete
   defp finish_reason_to_status("stop"), do: :complete
