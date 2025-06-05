@@ -603,9 +603,11 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     # Google is odd in that it returns token usage for each MessageDelta as it
     # goes, incrementing the number of generated tokens. I haven't seen anyone
     # else do this. For now, we fire each and every TokenUsage we receive.
-    case get_token_usage(data) do
-      %TokenUsage{} = token_usage ->
-        Callbacks.fire(model.callbacks, :on_llm_token_usage, [token_usage])
+    token_usage = get_token_usage(data)
+
+    case token_usage do
+      %TokenUsage{} = usage ->
+        Callbacks.fire(model.callbacks, :on_llm_token_usage, [usage])
         :ok
 
       nil ->
@@ -614,6 +616,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
 
     candidates
     |> Enum.map(&do_process_response(model, &1, message_type))
+    |> Enum.map(&TokenUsage.set(&1, token_usage))
   end
 
   # Function Call in a Message
