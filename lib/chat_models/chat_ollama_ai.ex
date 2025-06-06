@@ -551,9 +551,9 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
     create_message(message, :incomplete, MessageDelta)
   end
 
-  def do_process_response(_model, %{"error" => reason}) do
+  def do_process_response(_model, %{"error" => reason} = response) do
     Logger.error("Received error from API: #{inspect(reason)}")
-    {:error, LangChainError.exception(message: reason)}
+    {:error, LangChainError.exception(message: reason, original: response)}
   end
 
   def do_process_response(_model, %{
