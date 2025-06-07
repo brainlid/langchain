@@ -980,7 +980,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     "response.mcp_call.completed",
     "response.mcp_call.failed",
     "response.mcp_call.in_progress",
-    "response.output_text_annotation.added",
+    "response.output_text.annotation.added",
     "response.queued",
     "response.reasoning.delta",
     "response.reasoning_summary.delta",
