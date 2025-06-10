@@ -5,7 +5,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   Converts response into more specialized `LangChain` data structures.
 
 
-**Google Search Integration**
+  **Google Search Integration**
 
   Starting with Gemini 2.0, this module supports Google Search as a native tool,
   allowing the model to automatically search the web for recent information to ground
@@ -46,8 +46,11 @@ defmodule LangChain.ChatModels.ChatVertexAI do
       )
       |> LLMChain.add_tools(NativeTool.new!(%{name: "google_search", configuration: %{}}))
       |> LLMChain.run()
+      
   The above call will return summary of the media content.
-  ```
+
+  When `google_search` is used, the model will also return grounding information in the metadata attribute of the assistant message.
+  ````
   """
   use Ecto.Schema
   require Logger
@@ -61,6 +64,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult
+  alias LangChain.Function
   alias LangChain.LangChainError
   alias LangChain.Utils
   alias LangChain.Callbacks
@@ -314,7 +318,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     }
   end
 
-  def for_api(%Function{} = function) do
+  defp for_api(%Function{} = function) do
     encoded =
       %{
         "name" => function.name,
@@ -331,14 +335,13 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     end
   end
 
-  def for_api(%NativeTool{name: name, configuration: %{} = config}) do
+  defp for_api(%NativeTool{name: name, configuration: %{} = config}) do
     %{name => config}
   end
 
-  def for_api(%NativeTool{name: name, configuration: nil}) do
+  defp for_api(%NativeTool{name: name, configuration: nil}) do
     name
   end
-
 
   defp for_api(nil), do: nil
 

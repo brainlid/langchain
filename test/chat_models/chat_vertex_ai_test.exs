@@ -51,15 +51,16 @@ defmodule ChatModels.ChatVertexAITest do
         }
       }
 
-      {:ok, google_ai} =
+      {:ok, vertex_ai} =
         ChatVertexAI.new(%{
           "model" => @test_model,
+          "endpoint" => "http://localhost:1234/",
           "json_response" => true,
           "json_schema" => json_schema
         })
 
-      assert google_ai.json_response == true
-      assert google_ai.json_schema == json_schema
+      assert vertex_ai.json_response == true
+      assert vertex_ai.json_schema == json_schema
     end
   end
 
@@ -257,8 +258,7 @@ defmodule ChatModels.ChatVertexAITest do
                "functionDeclarations" => [
                  %{
                    "name" => "hello_world",
-                   "description" => "Give a hello world greeting.",
-                   "parameters" => %{"properties" => %{}, "type" => "object"}
+                   "description" => "Give a hello world greeting."
                  }
                ]
              } = tool_call
@@ -461,7 +461,8 @@ defmodule ChatModels.ChatVertexAITest do
                "top_k" => 1.0,
                "top_p" => 1.0,
                "version" => 1,
-               "json_response" => false
+               "json_response" => false,
+               "json_schema" => nil
              }
     end
   end
