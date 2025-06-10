@@ -108,7 +108,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     field :receive_timeout, :integer, default: @receive_timeout
 
     field :stream, :boolean, default: false
-    field :json_response, :boolean, default:
+    field :json_response, :boolean, default: false
     field :json_schema, :map, default: nil
 
     # A list of maps for callback handlers (treated as internal)

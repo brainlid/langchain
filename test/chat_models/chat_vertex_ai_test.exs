@@ -12,6 +12,8 @@ defmodule ChatModels.ChatVertexAITest do
   alias LangChain.Function
   alias LangChain.LangChainError
 
+  @test_model "gemini-pro"
+
   setup do
     {:ok, hello_world} =
       Function.new(%{
@@ -27,11 +29,11 @@ defmodule ChatModels.ChatVertexAITest do
     test "works with minimal attr" do
       assert {:ok, %ChatVertexAI{} = vertex_ai} =
                ChatVertexAI.new(%{
-                 "model" => "gemini-pro",
+                 "model" => @test_model,
                  "endpoint" => "http://localhost:1234/"
                })
 
-      assert vertex_ai.model == "gemini-pro"
+      assert vertex_ai.model == @test_model
     end
 
     test "returns error when invalid" do
@@ -39,13 +41,33 @@ defmodule ChatModels.ChatVertexAITest do
       refute changeset.valid?
       assert {"can't be blank", _} = changeset.errors[:model]
     end
+
+    test "supports setting json_response and json_schema" do
+      json_schema = %{
+        "type" => "object",
+        "properties" => %{
+          "name" => %{"type" => "string"},
+          "age" => %{"type" => "integer"}
+        }
+      }
+
+      {:ok, google_ai} =
+        ChatVertexAI.new(%{
+          "model" => @test_model,
+          "json_response" => true,
+          "json_schema" => json_schema
+        })
+
+      assert google_ai.json_response == true
+      assert google_ai.json_schema == json_schema
+    end
   end
 
   describe "for_api/3" do
     setup do
       {:ok, vertex_ai} =
         ChatVertexAI.new(%{
-          "model" => "gemini-pro",
+          "model" => @test_model,
           "endpoint" => "http://localhost:1234/",
           "temperature" => 1.0,
           "top_p" => 1.0,
@@ -413,7 +435,7 @@ defmodule ChatModels.ChatVertexAITest do
 
   describe "serialize_config/2" do
     test "does not include the API key or callbacks" do
-      model = ChatVertexAI.new!(%{model: "gemini-pro", endpoint: "http://localhost:1234/"})
+      model = ChatVertexAI.new!(%{model: @test_model, endpoint: "http://localhost:1234/"})
       result = ChatVertexAI.serialize_config(model)
       assert result["version"] == 1
       refute Map.has_key?(result, "api_key")
@@ -423,7 +445,7 @@ defmodule ChatModels.ChatVertexAITest do
     test "creates expected map" do
       model =
         ChatVertexAI.new!(%{
-          model: "gemini-pro",
+          model: @test_model,
           endpoint: "http://localhost:1234/"
         })
 
@@ -431,7 +453,7 @@ defmodule ChatModels.ChatVertexAITest do
 
       assert result == %{
                "endpoint" => "http://localhost:1234/",
-               "model" => "gemini-pro",
+               "model" => @test_model,
                "module" => "Elixir.LangChain.ChatModels.ChatVertexAI",
                "receive_timeout" => 60000,
                "stream" => false,
@@ -446,12 +468,34 @@ defmodule ChatModels.ChatVertexAITest do
 
   describe "inspect" do
     test "redacts the API key" do
-      chain = ChatVertexAI.new!(%{"model" => "gemini-pro", "endpoint" => "http://localhost:1000"})
+      chain = ChatVertexAI.new!(%{"model" => @test_model, "endpoint" => "http://localhost:1000"})
 
       changeset = Ecto.Changeset.cast(chain, %{api_key: "1234567890"}, [:api_key])
 
       refute inspect(changeset) =~ "1234567890"
       assert inspect(changeset) =~ "**redacted**"
+    end
+  end
+
+  describe "google_search native tool" do
+    @tag live_call: true, live_google_ai: true
+    test "should include grounding metadata in response" do
+      alias LangChain.Chains.LLMChain
+      alias LangChain.Message
+      alias LangChain.NativeTool
+
+      model = ChatVertexAI.new!(%{temperature: 0, stream: false, model: "gemini-2.0-flash"})
+
+      {:ok, updated_chain} =
+        %{llm: model, verbose: false, stream: false}
+        |> LLMChain.new!()
+        |> LLMChain.add_message(Message.new_user!("What is the current Google stock price?"))
+        |> LLMChain.add_tools(NativeTool.new!(%{name: "google_search", configuration: %{}}))
+        |> LLMChain.run()
+
+      assert %Message{} = updated_chain.last_message
+      assert updated_chain.last_message.role == :assistant
+      assert Map.has_key?(updated_chain.last_message.metadata, "groundingChunks")
     end
   end
 end
