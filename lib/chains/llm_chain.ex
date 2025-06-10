@@ -677,23 +677,33 @@ defmodule LangChain.Chains.LLMChain do
       # Decrement max_runs for next recursion
       next_opts = Keyword.put(opts, :max_runs, max_runs - 1)
 
+      # Add telemetry for run_until_tool_used chain execution
+      metadata = %{
+        chain_type: "llm_chain",
+        mode: "run_until_tool_used",
+        message_count: length(chain.messages),
+        tool_count: length(chain.tools)
+      }
+
       run_result =
         try do
-          # Run the chain and return the success or error results. NOTE: We do
-          # not add the current LLM to the list and process everything through a
-          # single codepath because failing after attempted fallbacks returns a
-          # different error.
-          #
-          # The run_until_success passes in a `true` force it to recuse and call
-          # even if a ToolResult was successfully run. We check _which_ tool
-          # result was returned here and make a separate decision.
-          if Keyword.has_key?(opts, :with_fallbacks) do
-            # run function and using fallbacks as needed.
-            with_fallbacks(chain, opts, &run_until_success(&1, true))
-          else
-            # run it directly right now and return the success or error
-            run_until_success(chain, true)
-          end
+          LangChain.Telemetry.span([:langchain, :chain, :execute], metadata, fn ->
+            # Run the chain and return the success or error results. NOTE: We do
+            # not add the current LLM to the list and process everything through a
+            # single codepath because failing after attempted fallbacks returns a
+            # different error.
+            #
+            # The run_until_success passes in a `true` force it to recuse and call
+            # even if a ToolResult was successfully run. We check _which_ tool
+            # result was returned here and make a separate decision.
+            if Keyword.has_key?(opts, :with_fallbacks) do
+              # run function and using fallbacks as needed.
+              with_fallbacks(chain, opts, &run_until_success(&1, true))
+            else
+              # run it directly right now and return the success or error
+              run_until_success(chain, true)
+            end
+          end)
         rescue
           err in LangChainError ->
             {:error, chain, err}
