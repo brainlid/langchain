@@ -536,6 +536,11 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     raise LangChainError, "PromptTemplates must be converted to messages."
   end
 
+  # Handle ContentPart structures directly
+  def for_api(%_{} = model, %ContentPart{} = part) do
+    content_part_for_api(model, part)
+  end
+
   @doc """
   Convert a list of ContentParts to the expected map of data for the OpenAI API.
   """
@@ -953,7 +958,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
            "content" => message["content"],
            "complete" => true,
            "index" => data["index"],
-           "tool_calls" => Enum.map(calls, &do_process_response(model, &1))
+           "tool_calls" => Enum.map(calls || [], &do_process_response(model, &1))
          }) do
       {:ok, message} ->
         message

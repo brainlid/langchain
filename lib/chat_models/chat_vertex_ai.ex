@@ -216,20 +216,26 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   end
 
   defp for_api(%Message{role: :system} = message) do
-    %{"parts" => %{"text" => message.content}}
+    # System messages should return a single text part, not a list
+    case get_message_contents(message) do
+      [%{"text" => text}] -> %{"parts" => %{"text" => text}}
+      _ -> %{"parts" => %{"text" => message.content}}
+    end
   end
 
   defp for_api(%Message{role: :user, content: content}) when is_list(content) do
     %{
-      "role" => "user",
+      "role" => map_role(:user),
       "parts" => Enum.map(content, &for_api(&1))
     }
   end
 
   defp for_api(%Message{} = message) do
+    content_parts = get_message_contents(message) || []
+
     %{
       "role" => map_role(message.role),
-      "parts" => [%{"text" => message.content}]
+      "parts" => content_parts
     }
   end
 
@@ -257,9 +263,9 @@ defmodule LangChain.ChatModels.ChatVertexAI do
 
   defp for_api(%ContentPart{type: :file_url} = part) do
     %{
-      "file_data" => %{
+      "fileData" => %{
         "mimeType" => Keyword.fetch!(part.options, :media),
-        "file_uri" => part.content
+        "fileUri" => part.content
       }
     }
   end

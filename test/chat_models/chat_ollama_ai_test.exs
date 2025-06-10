@@ -6,6 +6,7 @@ defmodule ChatModels.ChatOllamaAITest do
   alias LangChain.ChatModels.ChatOllamaAI
   alias LangChain.Function
   alias LangChain.FunctionParam
+  alias LangChain.Message.ContentPart
 
   use Mimic
 
@@ -600,7 +601,7 @@ defmodule ChatModels.ChatOllamaAITest do
 
       assert %Message{} = struct = ChatOllamaAI.do_process_response(model, response)
       assert struct.role == :assistant
-      assert struct.content == "Greetings!"
+      assert struct.content == [ContentPart.text!("Greetings!")]
       assert struct.index == nil
     end
 

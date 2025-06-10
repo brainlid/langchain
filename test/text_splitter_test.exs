@@ -201,6 +201,28 @@ defmodule TextSplitterTest do
         assert output == expected_output
       end
     end
+
+    test "Custom tokenizer function" do
+      text = "foo bar baz"
+      # Custom tokenizer that counts words instead of characters
+      word_tokenizer = fn text -> text |> String.split() |> length() end
+
+      expected_output = ["foo bar", "baz"]
+
+      character_splitter =
+        CharacterTextSplitter.new!(%{
+          separator: " ",
+          chunk_size: 2,
+          chunk_overlap: 0,
+          tokenizer: word_tokenizer
+        })
+
+      output =
+        character_splitter
+        |> CharacterTextSplitter.split_text(text)
+
+      assert output == expected_output
+    end
   end
 
   describe "RecursiveCharacterTextSplitter" do
@@ -299,6 +321,27 @@ Bye!\n\n-I."
           keep_separator: :start,
           chunk_size: 10,
           chunk_overlap: 1
+        })
+
+      output = splitter |> RecursiveCharacterTextSplitter.split_text(text)
+      assert output == expected_output
+    end
+  end
+
+  describe "Custom tokenizer functionality" do
+    test "RecursiveCharacterTextSplitter with word tokenizer" do
+      text = "Hello world. This is a test. Another sentence here."
+      # Custom tokenizer that counts words instead of characters
+      word_tokenizer = fn text -> text |> String.split() |> length() end
+
+      expected_output = ["Hello world", ". This is", "a test", ". Another sentence", "here."]
+
+      splitter =
+        RecursiveCharacterTextSplitter.new!(%{
+          separators: [". ", " "],
+          chunk_size: 3,
+          chunk_overlap: 0,
+          tokenizer: word_tokenizer
         })
 
       output = splitter |> RecursiveCharacterTextSplitter.split_text(text)
@@ -497,7 +540,7 @@ message Person {
     string name = 1;
     int32 age = 2;
     repeated string hobbies = 3;
-}      
+}
     "
 
       expected_splits = [
@@ -539,7 +582,7 @@ function helloWorld() {
 }
 
 // Call the function
-helloWorld();      
+helloWorld();
     "
 
       expected_splits = [
@@ -1264,7 +1307,7 @@ end
 
         -- Some sample functions
         add :: Int -> Int -> Int
-        add x y = x + y      
+        add x y = x + y
     "
 
       expected_splits = [

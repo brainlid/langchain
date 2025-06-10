@@ -4,6 +4,7 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
   alias LangChain.ChatModels.ChatMistralAI
   alias LangChain.Message
   alias LangChain.MessageDelta
+  alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
   alias LangChain.LangChainError
   alias LangChain.TokenUsage
@@ -113,7 +114,7 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
 
       assert [%Message{} = msg] = ChatMistralAI.do_process_response(model, response)
       assert msg.role == :assistant
-      assert msg.content == "Hello User!"
+      assert msg.content == [ContentPart.text!("Hello User!")]
       assert msg.index == 0
       assert msg.status == :complete
     end
@@ -315,8 +316,8 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
 
       result = ChatMistralAI.do_process_response(model, response)
 
-      assert [%Message{role: :assistant, content: "Hello from Mistral!", status: :complete}] =
-               result
+      assert [%Message{role: :assistant, status: :complete} = message] = result
+      assert message.content == [ContentPart.text!("Hello from Mistral!")]
     end
   end
 
@@ -353,7 +354,9 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
                "random_seed" => 42,
                "safe_prompt" => true,
                "top_p" => 1.0,
-               "version" => 1
+               "version" => 1,
+               "json_response" => false,
+               "json_schema" => nil
              }
     end
   end
@@ -366,6 +369,160 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
 
       refute inspect(changeset) =~ "1234567890"
       assert inspect(changeset) =~ "**redacted**"
+    end
+  end
+
+  describe "structured output support" do
+    test "new/1 accepts json_response and json_schema fields" do
+      schema = %{
+        "type" => "json_schema",
+        "json_schema" => %{
+          "schema" => %{
+            "properties" => %{
+              "name" => %{"title" => "Name", "type" => "string"},
+              "authors" => %{
+                "items" => %{"type" => "string"},
+                "title" => "Authors",
+                "type" => "array"
+              }
+            },
+            "required" => ["name", "authors"],
+            "title" => "Book",
+            "type" => "object",
+            "additionalProperties" => false
+          },
+          "name" => "book",
+          "strict" => true
+        }
+      }
+
+      assert {:ok, %ChatMistralAI{} = mistral_ai} =
+               ChatMistralAI.new(%{
+                 "model" => "ministral-8b-latest",
+                 "json_response" => true,
+                 "json_schema" => schema
+               })
+
+      assert mistral_ai.json_response == true
+      assert mistral_ai.json_schema == schema
+    end
+
+    test "for_api/3 includes response_format when json_response is true with schema" do
+      schema = %{
+        "type" => "json_schema",
+        "json_schema" => %{
+          "schema" => %{
+            "properties" => %{
+              "name" => %{"title" => "Name", "type" => "string"},
+              "authors" => %{
+                "items" => %{"type" => "string"},
+                "title" => "Authors",
+                "type" => "array"
+              }
+            },
+            "required" => ["name", "authors"],
+            "title" => "Book",
+            "type" => "object",
+            "additionalProperties" => false
+          },
+          "name" => "book",
+          "strict" => true
+        }
+      }
+
+      mistral_ai =
+        ChatMistralAI.new!(%{
+          "model" => "ministral-8b-latest",
+          "json_response" => true,
+          "json_schema" => schema
+        })
+
+      data = ChatMistralAI.for_api(mistral_ai, [], [])
+
+      assert data.response_format == schema
+    end
+
+    test "for_api/3 includes response_format when json_response is true without schema" do
+      mistral_ai =
+        ChatMistralAI.new!(%{
+          "model" => "ministral-8b-latest",
+          "json_response" => true
+        })
+
+      data = ChatMistralAI.for_api(mistral_ai, [], [])
+
+      assert data.response_format == %{"type" => "json_object"}
+    end
+
+    test "for_api/3 does not include response_format when json_response is false" do
+      mistral_ai =
+        ChatMistralAI.new!(%{
+          "model" => "ministral-8b-latest",
+          "json_response" => false
+        })
+
+      data = ChatMistralAI.for_api(mistral_ai, [], [])
+
+      refute Map.has_key?(data, :response_format)
+    end
+
+    test "serialize_config/1 includes json_response and json_schema fields" do
+      schema = %{
+        "type" => "json_schema",
+        "json_schema" => %{
+          "schema" => %{
+            "properties" => %{
+              "name" => %{"title" => "Name", "type" => "string"}
+            },
+            "required" => ["name"],
+            "title" => "Book",
+            "type" => "object"
+          },
+          "name" => "book",
+          "strict" => true
+        }
+      }
+
+      model =
+        ChatMistralAI.new!(%{
+          "model" => "ministral-8b-latest",
+          "json_response" => true,
+          "json_schema" => schema
+        })
+
+      result = ChatMistralAI.serialize_config(model)
+
+      assert result["json_response"] == true
+      assert result["json_schema"] == schema
+    end
+
+    test "restore_from_map/1 restores json_response and json_schema fields" do
+      schema = %{
+        "type" => "json_schema",
+        "json_schema" => %{
+          "schema" => %{
+            "properties" => %{
+              "name" => %{"title" => "Name", "type" => "string"}
+            },
+            "required" => ["name"],
+            "title" => "Book",
+            "type" => "object"
+          },
+          "name" => "book",
+          "strict" => true
+        }
+      }
+
+      config = %{
+        "version" => 1,
+        "model" => "ministral-8b-latest",
+        "json_response" => true,
+        "json_schema" => schema
+      }
+
+      assert {:ok, %ChatMistralAI{} = restored} = ChatMistralAI.restore_from_map(config)
+      assert restored.json_response == true
+      assert restored.json_schema == schema
     end
   end
 
@@ -401,7 +558,7 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
       # returns a list of MessageDeltas. A list of a list because it's "n" choices.
       assert result == [
                %Message{
-                 content: "Colorful Threads",
+                 content: [ContentPart.text!("Colorful Threads")],
                  status: :complete,
                  role: :assistant,
                  index: 0,
@@ -410,7 +567,9 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
              ]
 
       assert_received {:fired_token_usage, usage}
-      assert %TokenUsage{input: 18, output: 4} = usage
+      assert %TokenUsage{input: 18} = usage
+      # Allow for slight variation in token count
+      assert usage.output in [4, 5]
     end
 
     @tag live_call: true, live_mistral_ai: true
@@ -452,7 +611,9 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
       assert result_string == "Colorful Threads"
 
       assert_received {:fired_token_usage, usage}
-      assert %TokenUsage{input: 18, output: 4} = usage
+      assert %TokenUsage{input: 18} = usage
+      # Allow for slight variation in token count
+      assert usage.output in [4, 5]
     end
 
     @tag live_call: true, live_mistral_ai: true
@@ -482,6 +643,93 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
 
       tool_call_msg = Enum.find(result, fn [msg] -> msg.tool_calls != nil end)
       assert [%MessageDelta{tool_calls: [%ToolCall{name: "current_time"}]}] = tool_call_msg
+    end
+
+    @tag live_call: true, live_mistral_ai: true
+    test "structured output with JSON schema works" do
+      schema = %{
+        "type" => "json_schema",
+        "json_schema" => %{
+          "schema" => %{
+            "properties" => %{
+              "name" => %{"title" => "Name", "type" => "string"},
+              "authors" => %{
+                "items" => %{"type" => "string"},
+                "title" => "Authors",
+                "type" => "array"
+              }
+            },
+            "required" => ["name", "authors"],
+            "title" => "Book",
+            "type" => "object",
+            "additionalProperties" => false
+          },
+          "name" => "book",
+          "strict" => true
+        }
+      }
+
+      chat =
+        ChatMistralAI.new!(%{
+          temperature: 0,
+          model: "ministral-8b-latest",
+          stream: false,
+          json_response: true,
+          json_schema: schema
+        })
+
+      {:ok, result} =
+        ChatMistralAI.call(
+          chat,
+          [
+            Message.new_system!("Extract the books information."),
+            Message.new_user!("I recently read To Kill a Mockingbird by Harper Lee.")
+          ],
+          []
+        )
+
+      assert [%Message{content: content, status: :complete, role: :assistant}] = result
+
+      # The content should be a valid JSON string that matches our schema
+      assert is_list(content)
+      assert [%ContentPart{type: :text, content: json_content}] = content
+      assert is_binary(json_content)
+      {:ok, parsed_json} = Jason.decode(json_content)
+
+      # Verify the structure matches our schema
+      assert %{"name" => name, "authors" => authors} = parsed_json
+      assert is_binary(name)
+      assert is_list(authors)
+      assert Enum.all?(authors, &is_binary/1)
+    end
+
+    @tag live_call: true, live_mistral_ai: true
+    test "structured output with json_object type works" do
+      chat =
+        ChatMistralAI.new!(%{
+          temperature: 0,
+          model: "ministral-8b-latest",
+          stream: false,
+          json_response: true
+        })
+
+      {:ok, result} =
+        ChatMistralAI.call(
+          chat,
+          [
+            Message.new_system!("Extract the books information and return as JSON."),
+            Message.new_user!("I recently read To Kill a Mockingbird by Harper Lee.")
+          ],
+          []
+        )
+
+      assert [%Message{content: content, status: :complete, role: :assistant}] = result
+
+      # The content should be a valid JSON string
+      assert is_list(content)
+      assert [%ContentPart{type: :text, content: json_content}] = content
+      assert is_binary(json_content)
+      assert {:ok, _parsed_json} = Jason.decode(json_content)
     end
   end
 end

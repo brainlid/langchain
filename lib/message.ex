@@ -78,7 +78,9 @@ defmodule LangChain.Message do
 
       Message.new_user!("Who is Prime Minister of the moon?")
 
-  A multi-part user message: alias LangChain.Message.ContentPart
+  A multi-part user message: 
+      
+      alias LangChain.Message.ContentPart
 
       Message.new_user!([
         ContentPart.text!("What is in this picture?"),
@@ -337,7 +339,8 @@ defmodule LangChain.Message do
   Create a new system message which can prime the AI/Assistant for how to
   respond.
   """
-  @spec new_system(content :: String.t()) :: {:ok, t()} | {:error, Ecto.Changeset.t()}
+  @spec new_system(content :: String.t() | ContentPart.t() | [ContentPart.t()]) ::
+          {:ok, t()} | {:error, Ecto.Changeset.t()}
   def new_system(content \\ "You are a helpful assistant.") do
     new(%{role: :system, content: content, status: :complete})
   end
@@ -346,7 +349,8 @@ defmodule LangChain.Message do
   Create a new system message which can prime the AI/Assistant for how to
   respond.
   """
-  @spec new_system!(content :: String.t()) :: t() | no_return()
+  @spec new_system!(content :: String.t() | ContentPart.t() | [ContentPart.t()]) ::
+          t() | no_return()
   def new_system!(content \\ "You are a helpful assistant.") do
     case new_system(content) do
       {:ok, msg} ->

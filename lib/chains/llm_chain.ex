@@ -230,12 +230,16 @@ defmodule LangChain.Chains.LLMChain do
     # when we've provided a tool response and the LLM needs to respond.
     field :needs_response, :boolean, default: false
 
+    # The timeout for async tool execution. An async Task execution is used when
+    # running a tool that has `async: true` set. Time is in milliseconds.
+    field :async_tool_timeout, :integer
+
     # A list of maps for callback handlers
     field :callbacks, {:array, :map}, default: []
   end
 
   # default to 2 minutes
-  @task_await_timeout 2 * 60 * 1000
+  @default_task_await_timeout 2 * 60 * 1000
 
   @type t :: %LLMChain{}
 
@@ -273,7 +277,8 @@ defmodule LangChain.Chains.LLMChain do
     :max_retry_count,
     :callbacks,
     :verbose,
-    :verbose_deltas
+    :verbose_deltas,
+    :async_tool_timeout
   ]
   @required_fields [:llm]
 
@@ -528,9 +533,9 @@ defmodule LangChain.Chains.LLMChain do
       end
     rescue
       err ->
-        # Log the error and try again.
+        # Log the error and stack trace, then try again.
         Logger.error(
-          "Rescued from exception during with_fallback processing. Error: #{inspect(err)}"
+          "Rescued from exception during with_fallback processing. Error: #{inspect(err)}\nStack trace:\n#{Exception.format(:error, err, __STACKTRACE__)}"
         )
 
         try_chain_with_llm(use_chain, tail, before_fallback_fn, run_fn)
@@ -639,6 +644,10 @@ defmodule LangChain.Chains.LLMChain do
   @spec run_until_tool_used(t(), String.t()) ::
           {:ok, t(), Message.t()} | {:error, t(), LangChainError.t()}
   def run_until_tool_used(%LLMChain{} = chain, tool_name, opts \\ []) do
+    chain
+    |> raise_when_no_messages()
+    |> initial_run_logging()
+
     # clear the set of exchanged messages.
     chain = clear_exchanged_messages(chain)
 
@@ -668,23 +677,33 @@ defmodule LangChain.Chains.LLMChain do
       # Decrement max_runs for next recursion
       next_opts = Keyword.put(opts, :max_runs, max_runs - 1)
 
+      # Add telemetry for run_until_tool_used chain execution
+      metadata = %{
+        chain_type: "llm_chain",
+        mode: "run_until_tool_used",
+        message_count: length(chain.messages),
+        tool_count: length(chain.tools)
+      }
+
       run_result =
         try do
-          # Run the chain and return the success or error results. NOTE: We do
-          # not add the current LLM to the list and process everything through a
-          # single codepath because failing after attempted fallbacks returns a
-          # different error.
-          #
-          # The run_until_success passes in a `true` force it to recuse and call
-          # even if a ToolResult was successfully run. We check _which_ tool
-          # result was returned here and make a separate decision.
-          if Keyword.has_key?(opts, :with_fallbacks) do
-            # run function and using fallbacks as needed.
-            with_fallbacks(chain, opts, &run_until_success(&1, true))
-          else
-            # run it directly right now and return the success or error
-            run_until_success(chain, true)
-          end
+          LangChain.Telemetry.span([:langchain, :chain, :execute], metadata, fn ->
+            # Run the chain and return the success or error results. NOTE: We do
+            # not add the current LLM to the list and process everything through a
+            # single codepath because failing after attempted fallbacks returns a
+            # different error.
+            #
+            # The run_until_success passes in a `true` force it to recuse and call
+            # even if a ToolResult was successfully run. We check _which_ tool
+            # result was returned here and make a separate decision.
+            if Keyword.has_key?(opts, :with_fallbacks) do
+              # run function and using fallbacks as needed.
+              with_fallbacks(chain, opts, &run_until_success(&1, true))
+            else
+              # run it directly right now and return the success or error
+              run_until_success(chain, true)
+            end
+          end)
         rescue
           err in LangChainError ->
             {:error, chain, err}
@@ -1073,7 +1092,7 @@ defmodule LangChain.Chains.LLMChain do
             execute_tool_call(call, func, verbose: verbose, context: use_context)
           end)
         end)
-        |> Task.await_many(@task_await_timeout)
+        |> Task.await_many(chain.async_tool_timeout || @default_task_await_timeout)
 
       sync_results =
         Enum.map(grouped[:sync], fn {call, func} ->

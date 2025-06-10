@@ -25,10 +25,11 @@ defmodule LangChain.TextSplitter.RecursiveCharacterTextSplitter do
   A `RecursiveCharacterTextSplitter` is defined using a schema.
   * `separators` - List of string that split a given text.
     The default list is `["\n\n", "\n", " ", ""]`.
-  * `chunk_size` - Integer number of characters that a chunk should have.
-  * `chunk_overlap` - Integer number of characters that two consecutive chunks should share.
+  * `chunk_size` - Integer number of tokens that a chunk should have.
+  * `chunk_overlap` - Integer number of tokens that two consecutive chunks should share.
   * `keep_separator` - Either `:discard_separator`, `:start` or `:end`. If `nil`, the separator is discarded from the output chunks. `:start` and `:end` keep the separator at the start or end of the output chunks. Defaults to `start`.
   * `is_separator_regex` - Boolean defaulting to `false`. If `true`, the `separator` string is not escaped. Defaults to `false`
+  * `tokenizer` - Function that takes a string and returns the number of tokens. Defaults to `&String.length/1`.
   """
   use Ecto.Schema
   import Ecto.Changeset
@@ -48,6 +49,7 @@ defmodule LangChain.TextSplitter.RecursiveCharacterTextSplitter do
       default: :start
 
     field :is_separator_regex, :boolean, default: false
+    field :tokenizer, :any, virtual: true, default: &String.length/1
   end
 
   @type t :: %RecursiveCharacterTextSplitter{}
@@ -57,7 +59,8 @@ defmodule LangChain.TextSplitter.RecursiveCharacterTextSplitter do
     :chunk_size,
     :chunk_overlap,
     :keep_separator,
-    :is_separator_regex
+    :is_separator_regex,
+    :tokenizer
   ]
   @create_fields @update_fields
 
@@ -89,7 +92,7 @@ defmodule LangChain.TextSplitter.RecursiveCharacterTextSplitter do
       iex> split_tags = [",", "."]
       iex> base_params = %{chunk_size: 10, chunk_overlap: 0, separators: split_tags}
       iex> query = "Apple,banana,orange and tomato."
-      iex> splitter = RecursiveCharacterTextSplitter.new!(base_params)    
+      iex> splitter = RecursiveCharacterTextSplitter.new!(base_params)
       iex> splitter |> RecursiveCharacterTextSplitter.split_text(query)
       ["Apple", ",banana", ",orange and tomato", "."]
 
@@ -98,7 +101,7 @@ defmodule LangChain.TextSplitter.RecursiveCharacterTextSplitter do
       iex> split_tags = [",", "."]
       iex> base_params = %{chunk_size: 10, chunk_overlap: 0, separators: split_tags, keep_separator: :end}
       iex> query = "Apple,banana,orange and tomato."
-      iex> splitter = RecursiveCharacterTextSplitter.new!(base_params)    
+      iex> splitter = RecursiveCharacterTextSplitter.new!(base_params)
       iex> splitter |> RecursiveCharacterTextSplitter.split_text(query)
       ["Apple,", "banana,", "orange and tomato."]
 
@@ -112,7 +115,7 @@ defmodule LangChain.TextSplitter.RecursiveCharacterTextSplitter do
       ...>def hello_world():
       ...>  print('Hello, World')
       ...>
-      ...>            
+      ...>
       ...># Call the function
       ...>hello_world()"
       iex> splitter =
@@ -166,7 +169,7 @@ defmodule LangChain.TextSplitter.RecursiveCharacterTextSplitter do
     recursive_splits =
       splits
       |> Enum.reduce(acc, fn split, acc ->
-        if String.length(split) < text_splitter.chunk_size do
+        if text_splitter.tokenizer.(split) < text_splitter.chunk_size do
           %{acc | good_splits: acc.good_splits ++ [split]}
         else
           acc =
@@ -187,12 +190,10 @@ defmodule LangChain.TextSplitter.RecursiveCharacterTextSplitter do
             %{acc | final_chunks: acc.final_chunks ++ [split]}
           else
             new_recursive_splitter =
-              %{
-                (text_splitter
-                 |> Map.from_struct())
-                | separators: new_separators |> Enum.drop(1),
-                  is_separator_regex: true
-              }
+              text_splitter
+              |> Map.from_struct()
+              |> Map.put(:separators, new_separators |> Enum.drop(1))
+              |> Map.put(:is_separator_regex, true)
               |> RecursiveCharacterTextSplitter.new!()
 
             other_info =

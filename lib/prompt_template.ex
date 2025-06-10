@@ -144,6 +144,7 @@ defmodule LangChain.PromptTemplate do
   """
   @spec format_text(text :: String.t(), inputs :: %{atom() => any()}) :: String.t()
   def format_text(text, %{} = inputs) do
+    # https://hexdocs.pm/eex/1.18.3/EEx.html
     EEx.eval_string(text, assigns: Map.to_list(inputs), emit_warnings: true)
   end
 

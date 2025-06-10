@@ -702,7 +702,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       }
 
       result =
-        ChatOpenAI.for_api(
+        ChatOpenAI.content_part_for_api(
           ChatOpenAI.new!(),
           ContentPart.file!(file_base64_data, media: :pdf, type: :base64, filename: filename)
         )
@@ -721,7 +721,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       }
 
       result =
-        ChatOpenAI.for_api(
+        ChatOpenAI.content_part_for_api(
           ChatOpenAI.new!(),
           ContentPart.file!(file_id, media: :pdf, type: :file_id)
         )
@@ -1267,6 +1267,25 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert call.name == "get_weather"
       assert call.arguments == %{"city" => "Moab", "state" => "UT"}
       assert struct.index == 0
+    end
+
+    test "handles receiving a nil tool_calls message", %{model: model} do
+      response = %{
+        "finish_reason" => "tool_calls",
+        "index" => 0,
+        "logprobs" => nil,
+        "message" => %{
+          "content" => nil,
+          "role" => "assistant",
+          "tool_calls" => nil
+        }
+      }
+
+      assert %Message{} = struct = ChatOpenAI.do_process_response(model, response)
+
+      assert struct.role == :assistant
+
+      assert [] = struct.tool_calls
     end
 
     test "handles receiving multiple tool_calls messages", %{model: model} do
