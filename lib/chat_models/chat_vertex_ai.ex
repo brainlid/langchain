@@ -4,6 +4,15 @@ defmodule LangChain.ChatModels.ChatVertexAI do
 
   Converts response into more specialized `LangChain` data structures.
 
+
+  **Google Search Integration**
+
+  Starting with Gemini 2.0, this module supports Google Search as a native tool,
+  allowing the model to automatically search the web for recent information to ground
+  its responses and improve factuality. Check out the [Google AI Documentation](https://ai.google.dev/gemini-api/docs/grounding?lang=rest)
+  for more information.
+
+
   Example Usage:
 
   ```elixir
@@ -11,6 +20,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   alias LangChain.Message
   alias LangChain.Message.ContentPart
   alias LangChain.ChatModels.ChatVertexAI
+  alias LangChain.NativeTool
 
 
   config = %{
@@ -34,9 +44,13 @@ defmodule LangChain.ChatModels.ChatVertexAI do
           })
         ])
       )
+      |> LLMChain.add_tools(NativeTool.new!(%{name: "google_search", configuration: %{}}))
       |> LLMChain.run()
+      
   The above call will return summary of the media content.
-  ```
+
+  When `google_search` is used, the model will also return grounding information in the metadata attribute of the assistant message.
+  ````
   """
   use Ecto.Schema
   require Logger
@@ -50,9 +64,11 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult
+  alias LangChain.Function
   alias LangChain.LangChainError
   alias LangChain.Utils
   alias LangChain.Callbacks
+  alias LangChain.NativeTool
 
   @behaviour ChatModel
 
@@ -97,6 +113,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
 
     field :stream, :boolean, default: false
     field :json_response, :boolean, default: false
+    field :json_schema, :map, default: nil
 
     # A list of maps for callback handlers (treated as internal)
     field :callbacks, {:array, :map}, default: []
@@ -113,7 +130,8 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     :top_k,
     :receive_timeout,
     :stream,
-    :json_response
+    :json_response,
+    :json_schema
   ]
   @required_fields [
     :endpoint,
@@ -185,14 +203,26 @@ defmodule LangChain.ChatModels.ChatVertexAI do
       end
 
     if functions && not Enum.empty?(functions) do
-      req
-      |> Map.put("tools", [
-        %{
-          # Google AI functions use an OpenAI compatible format.
-          # See: https://ai.google.dev/docs/function_calling#how_it_works
-          "functionDeclarations" => Enum.map(functions, &ChatOpenAI.for_api(vertex_ai, &1))
-        }
-      ])
+      native_tools = Enum.filter(functions, &match?(%NativeTool{}, &1))
+      function_tools = Enum.filter(functions, &match?(%Function{}, &1))
+
+      tools_array = []
+
+      tools_array =
+        if function_tools != [] do
+          tools_array ++ [%{"functionDeclarations" => Enum.map(function_tools, &for_api/1)}]
+        else
+          tools_array
+        end
+
+      tools_array =
+        if native_tools != [] do
+          tools_array ++ Enum.map(native_tools, &for_api/1)
+        else
+          tools_array
+        end
+
+      Map.put(req, "tools", tools_array)
     else
       req
     end
@@ -286,6 +316,31 @@ defmodule LangChain.ChatModels.ChatVertexAI do
         "response" => Jason.decode!(result.content)
       }
     }
+  end
+
+  defp for_api(%Function{} = function) do
+    encoded =
+      %{
+        "name" => function.name,
+        "parameters" => ChatOpenAI.get_parameters(function)
+      }
+      |> Utils.conditionally_add_to_map("description", function.description)
+
+    # For functions with no parameters, Google AI needs the parameters field removing, otherwise it will error
+    # with "* GenerateContentRequest.tools[0].function_declarations[0].parameters.properties: should be non-empty for OBJECT type\n"
+    if encoded["parameters"] == %{"properties" => %{}, "type" => "object"} do
+      Map.delete(encoded, "parameters")
+    else
+      encoded
+    end
+  end
+
+  defp for_api(%NativeTool{name: name, configuration: %{} = config}) do
+    %{name => config}
+  end
+
+  defp for_api(%NativeTool{name: name, configuration: nil}) do
+    name
   end
 
   defp for_api(nil), do: nil
@@ -685,6 +740,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
         :top_k,
         :receive_timeout,
         :json_response,
+        :json_schema,
         :stream
       ],
       @current_config_version
