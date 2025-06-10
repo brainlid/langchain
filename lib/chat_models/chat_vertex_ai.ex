@@ -199,14 +199,6 @@ defmodule LangChain.ChatModels.ChatVertexAI do
       end
 
     if functions && not Enum.empty?(functions) do
-      #req
-      #|> Map.put("tools", [
-      #  %{
-      #    # Google AI functions use an OpenAI compatible format.
-      #    # See: https://ai.google.dev/docs/function_calling#how_it_works
-      #    "functionDeclarations" => Enum.map(functions, &ChatOpenAI.for_api(vertex_ai, &1))
-      #  }
-      #])
       native_tools = Enum.filter(functions, &match?(%NativeTool{}, &1))
       function_tools = Enum.filter(functions, &match?(%Function{}, &1))
 
