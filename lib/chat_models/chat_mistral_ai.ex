@@ -666,9 +666,9 @@ defmodule LangChain.ChatModels.ChatMistralAI do
     end
   end
 
-  def do_process_response(_model, %{"error" => %{"message" => reason}}) do
+  def do_process_response(_model, %{"error" => %{"message" => reason}} = response) do
     Logger.error("Received error from Mistral API: #{inspect(reason)}")
-    {:error, LangChainError.exception(message: reason)}
+    {:error, LangChainError.exception(message: reason, original: response)}
   end
 
   def do_process_response(_model, {:error, %Jason.DecodeError{} = response}) do
@@ -683,7 +683,11 @@ defmodule LangChain.ChatModels.ChatMistralAI do
     Logger.error("Trying to process an unexpected response from Mistral: #{inspect(other)}")
 
     {:error,
-     LangChainError.exception(type: "unexpected_response", message: "Unexpected response")}
+     LangChainError.exception(
+       type: "unexpected_response",
+       message: "Unexpected response",
+       original: other
+     )}
   end
 
   defp get_token_usage(%{"usage" => usage} = _response_body) do

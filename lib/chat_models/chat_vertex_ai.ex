@@ -612,9 +612,9 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     end
   end
 
-  def do_process_response(%{"error" => %{"message" => reason}}, _) do
+  def do_process_response(%{"error" => %{"message" => reason}} = response, _) do
     Logger.error("Received error from API: #{inspect(reason)}")
-    {:error, reason}
+    {:error, LangChainError.exception(message: reason, original: response)}
   end
 
   def do_process_response({:error, %Jason.DecodeError{} = response}, _) do
@@ -629,7 +629,11 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     Logger.error("Trying to process an unexpected response. #{inspect(other)}")
 
     {:error,
-     LangChainError.exception(type: "unexpected_response", message: "Unexpected response")}
+     LangChainError.exception(
+       type: "unexpected_response",
+       message: "Unexpected response",
+       original: other
+     )}
   end
 
   @doc false

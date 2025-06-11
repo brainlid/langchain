@@ -847,17 +847,20 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     |> to_response()
   end
 
-  def do_process_response(_model, %{
-        "type" => "error",
-        "error" => %{"type" => type, "message" => reason}
-      }) do
+  def do_process_response(
+        _model,
+        %{
+          "type" => "error",
+          "error" => %{"type" => type, "message" => reason}
+        } = response
+      ) do
     Logger.error("Received error from API: #{inspect(reason)}")
-    {:error, LangChainError.exception(type: type, message: reason)}
+    {:error, LangChainError.exception(type: type, message: reason, original: response)}
   end
 
-  def do_process_response(_model, %{"error" => %{"message" => reason} = error}) do
+  def do_process_response(_model, %{"error" => %{"message" => reason} = error} = response) do
     Logger.error("Received error from API: #{inspect(reason)}")
-    {:error, LangChainError.exception(type: error["type"], message: reason)}
+    {:error, LangChainError.exception(type: error["type"], message: reason, original: response)}
   end
 
   def do_process_response(_model, {:error, %Jason.DecodeError{} = response}) do
@@ -868,29 +871,47 @@ defmodule LangChain.ChatModels.ChatAnthropic do
      LangChainError.exception(type: "invalid_json", message: error_message, original: response)}
   end
 
-  def do_process_response(%ChatAnthropic{bedrock: %BedrockConfig{}}, %{
-        "message" => "Too many requests" <> _rest = message
-      }) do
+  def do_process_response(
+        %ChatAnthropic{bedrock: %BedrockConfig{}},
+        %{
+          "message" => "Too many requests" <> _rest = message
+        } = response
+      ) do
     # the error isn't wrapped in an error JSON object. tsk, tsk
-    {:error, LangChainError.exception(type: "too_many_requests", message: message)}
-  end
-
-  def do_process_response(%ChatAnthropic{bedrock: %BedrockConfig{}}, %{"message" => message}) do
-    {:error, LangChainError.exception(message: "Received error from API: #{message}")}
-  end
-
-  def do_process_response(%ChatAnthropic{bedrock: %BedrockConfig{}}, %{
-        bedrock_exception: exceptions
-      }) do
     {:error,
-     LangChainError.exception(message: "Stream exception received: #{inspect(exceptions)}")}
+     LangChainError.exception(type: "too_many_requests", message: message, original: response)}
+  end
+
+  def do_process_response(
+        %ChatAnthropic{bedrock: %BedrockConfig{}},
+        %{"message" => message} = response
+      ) do
+    {:error,
+     LangChainError.exception(message: "Received error from API: #{message}", original: response)}
+  end
+
+  def do_process_response(
+        %ChatAnthropic{bedrock: %BedrockConfig{}},
+        %{
+          bedrock_exception: exceptions
+        } = response
+      ) do
+    {:error,
+     LangChainError.exception(
+       message: "Stream exception received: #{inspect(exceptions)}",
+       original: response
+     )}
   end
 
   def do_process_response(_model, other) do
     Logger.error("Failed to process an unexpected response. #{inspect(other)}")
 
     {:error,
-     LangChainError.exception(type: "unexpected_response", message: "Unexpected response")}
+     LangChainError.exception(
+       type: "unexpected_response",
+       message: "Unexpected response",
+       original: other
+     )}
   end
 
   # for parsing a list of received content JSON objects
