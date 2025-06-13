@@ -106,6 +106,12 @@ defmodule LangChain.ChatModels.ChatPerplexity do
     # Response format for structured outputs
     field :response_format, :map
 
+    # Whether to force a JSON response format
+    field :json_response, :boolean, default: false
+
+    # JSON Schema to validate the output format
+    field :json_schema, :map
+
     # Duration in seconds for response timeout
     field :receive_timeout, :integer, default: @receive_timeout
 
@@ -131,6 +137,8 @@ defmodule LangChain.ChatModels.ChatPerplexity do
     :return_related_questions,
     :search_recency_filter,
     :response_format,
+    :json_response,
+    :json_schema,
     :receive_timeout
   ]
 
@@ -183,34 +191,55 @@ defmodule LangChain.ChatModels.ChatPerplexity do
   @spec for_api(t(), [Message.t()], ChatModel.tools()) :: %{atom() => any()}
   def for_api(%ChatPerplexity{} = perplexity, messages, tools) do
     response_format =
-      if tools && !Enum.empty?(tools) do
-        %{
-          "type" => "json_schema",
-          "json_schema" => %{
-            "schema" => %{
-              "type" => "object",
-              "required" => ["tool_calls"],
-              "properties" => %{
-                "tool_calls" => %{
-                  "type" => "array",
-                  "items" => %{
-                    "type" => "object",
-                    "required" => ["name", "arguments"],
-                    "properties" => %{
-                      "name" => %{
-                        "type" => "string",
-                        "enum" => Enum.map(tools, & &1.name)
-                      },
-                      "arguments" => build_arguments_schema(tools)
+      cond do
+        # If tools are provided, create a JSON schema for tool calls
+        tools && !Enum.empty?(tools) ->
+          %{
+            "type" => "json_schema",
+            "json_schema" => %{
+              "schema" => %{
+                "type" => "object",
+                "required" => ["tool_calls"],
+                "properties" => %{
+                  "tool_calls" => %{
+                    "type" => "array",
+                    "items" => %{
+                      "type" => "object",
+                      "required" => ["name", "arguments"],
+                      "properties" => %{
+                        "name" => %{
+                          "type" => "string",
+                          "enum" => Enum.map(tools, & &1.name)
+                        },
+                        "arguments" => build_arguments_schema(tools)
+                      }
                     }
                   }
                 }
               }
             }
           }
-        }
-      else
-        perplexity.response_format
+
+        # If json_response is true and json_schema is provided
+        perplexity.json_response && perplexity.json_schema ->
+          %{
+            "type" => "json_schema",
+            "json_schema" => perplexity.json_schema
+          }
+
+        # If json_response is true but no schema
+        perplexity.json_response ->
+          %{
+            "type" => "json_object"
+          }
+
+        # Use the explicitly provided response_format if any
+        perplexity.response_format ->
+          perplexity.response_format
+
+        # Default case: no response format
+        true ->
+          nil
       end
 
     %{
@@ -776,6 +805,8 @@ defmodule LangChain.ChatModels.ChatPerplexity do
         :return_related_questions,
         :search_recency_filter,
         :response_format,
+        :json_response,
+        :json_schema,
         :receive_timeout
       ],
       @current_config_version
