@@ -679,6 +679,28 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     BedrockConfig.url(bedrock, model: anthropic.model, stream: stream)
   end
 
+  # Check if the message has a structured_output tool call
+  defp has_structured_output_tool_call?(%Message{tool_calls: tool_calls}) do
+    is_list(tool_calls) && Enum.any?(tool_calls, &(&1.name == "structured_output"))
+  end
+
+  defp has_structured_output_tool_call?(_), do: false
+
+  # Extracts structured output from a message that contains a structured_output tool call.
+  # Returns the tool call arguments as a JSON string in a ContentPart.
+  defp extract_structured_output(%Message{tool_calls: tool_calls}) when is_list(tool_calls) do
+    case Enum.find(tool_calls, &(&1.name == "structured_output")) do
+      %ToolCall{arguments: arguments} when not is_nil(arguments) ->
+        json_string = Jason.encode!(arguments)
+        {:ok, [ContentPart.text!(json_string)]}
+
+      _ ->
+        :not_structured_output
+    end
+  end
+
+  defp extract_structured_output(_), do: :not_structured_output
+
   # Parse a new message response
   @doc false
   @spec do_process_response(t(), data :: %{String.t() => any()} | {:error, any()}) ::
@@ -722,28 +744,6 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       processed_message
     end
   end
-
-  # Check if the message has a structured_output tool call
-  defp has_structured_output_tool_call?(%Message{tool_calls: tool_calls}) do
-    is_list(tool_calls) && Enum.any?(tool_calls, &(&1.name == "structured_output"))
-  end
-
-  defp has_structured_output_tool_call?(_), do: false
-
-  # Extracts structured output from a message that contains a structured_output tool call.
-  # Returns the tool call arguments as a JSON string in a ContentPart.
-  defp extract_structured_output(%Message{tool_calls: tool_calls}) when is_list(tool_calls) do
-    case Enum.find(tool_calls, &(&1.name == "structured_output")) do
-      %ToolCall{arguments: arguments} when not is_nil(arguments) ->
-        json_string = Jason.encode!(arguments)
-        {:ok, [ContentPart.text!(json_string)]}
-
-      _ ->
-        :not_structured_output
-    end
-  end
-
-  defp extract_structured_output(_), do: :not_structured_output
 
   def do_process_response(_model, %{
         "type" => "message_start",
