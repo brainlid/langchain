@@ -155,42 +155,50 @@ defmodule LangChain.ChatModels.ChatPerplexityTest do
         }
       }
 
-      {:ok, perplexity} = ChatPerplexity.new(%{
-        model: @test_model,
-        json_response: true,
-        json_schema: custom_schema
-      })
+      {:ok, perplexity} =
+        ChatPerplexity.new(%{
+          model: @test_model,
+          json_response: true,
+          json_schema: custom_schema
+        })
 
       data = ChatPerplexity.for_api(perplexity, [], [])
       assert data.response_format["type"] == "json_schema"
       assert data.response_format["json_schema"] == custom_schema
 
       # Test with json_response true but no schema
-      {:ok, perplexity} = ChatPerplexity.new(%{
-        model: @test_model,
-        json_response: true
-      })
+      {:ok, perplexity} =
+        ChatPerplexity.new(%{
+          model: @test_model,
+          json_response: true
+        })
 
       data = ChatPerplexity.for_api(perplexity, [], [])
       assert data.response_format["type"] == "json_object"
 
       # Test that tools take precedence over json_response
-      {:ok, perplexity} = ChatPerplexity.new(%{
-        model: @test_model,
-        json_response: true,
-        json_schema: custom_schema
-      })
+      {:ok, perplexity} =
+        ChatPerplexity.new(%{
+          model: @test_model,
+          json_response: true,
+          json_schema: custom_schema
+        })
 
-      calculator = Function.new!(%{
-        name: "calculator",
-        description: "A calculator",
-        function: fn _args, _context -> {:ok, "result"} end
-      })
+      calculator =
+        Function.new!(%{
+          name: "calculator",
+          description: "A calculator",
+          function: fn _args, _context -> {:ok, "result"} end
+        })
+
       data = ChatPerplexity.for_api(perplexity, [], [calculator])
 
       # Tools schema should be used instead of the json_schema
       assert data.response_format["type"] == "json_schema"
-      assert data.response_format["json_schema"]["schema"]["properties"]["tool_calls"]["items"]["properties"]["name"]["enum"] == ["calculator"]
+
+      assert data.response_format["json_schema"]["schema"]["properties"]["tool_calls"]["items"][
+               "properties"
+             ]["name"]["enum"] == ["calculator"]
     end
 
     test "includes optional parameters when set" do
