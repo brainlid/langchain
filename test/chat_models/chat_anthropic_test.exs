@@ -360,6 +360,35 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
                  }
                ]
     end
+
+    test "supports setting json_response and json_schema" do
+      json_schema = %{
+        "type" => "object",
+        "properties" => %{
+          "name" => %{"type" => "string"},
+          "age" => %{"type" => "integer"}
+        },
+        "required" => ["name", "age"]
+      }
+
+      {:ok, anthropic} =
+        ChatAnthropic.new(%{
+          model: @test_model,
+          json_response: true,
+          json_schema: json_schema
+        })
+
+      data = ChatAnthropic.for_api(anthropic, [], [])
+      # Verify that a structured_output tool is created
+      assert Enum.any?(data[:tools], fn tool ->
+               tool["name"] == "structured_output" &&
+                 tool["description"] ==
+                   "Provide structured output following the specified schema."
+             end)
+
+      # Verify that tool_choice is set to use structured_output
+      assert data[:tool_choice] == %{"type" => "tool", "name" => "structured_output"}
+    end
   end
 
   describe "do_process_response/2 with Bedrock" do
@@ -2776,7 +2805,9 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
                "top_p" => nil,
                "beta_headers" => ["tools-2024-04-04"],
                "module" => "Elixir.LangChain.ChatModels.ChatAnthropic",
-               "version" => 1
+               "version" => 1,
+               "json_response" => false,
+               "json_schema" => nil
              }
     end
 
