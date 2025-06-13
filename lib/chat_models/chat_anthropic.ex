@@ -230,6 +230,10 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     # Tool choice option
     field :tool_choice, :map
 
+    # JSON response format fields for structured output
+    field :json_response, :boolean, default: false
+    field :json_schema, :map, default: nil
+
     # Beta headers
     # https://docs.anthropic.com/claude/docs/tool-use - requires tools-2024-04-04 header during beta
     field :beta_headers, {:array, :string}, default: ["tools-2024-04-04"]
@@ -253,6 +257,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     :stream,
     :thinking,
     :tool_choice,
+    :json_response,
+    :json_schema,
     :beta_headers,
     :verbose_api
   ]
@@ -322,6 +328,26 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       |> Enum.map(&message_for_api/1)
       |> post_process_and_combine_messages()
 
+    # Handle structured output by creating a tool when json_response is enabled
+    {api_tools, api_tool_choice} =
+      case {get_structured_output_tool(anthropic), tools} do
+        {nil, tools} ->
+          # No structured output, use regular tools and tool_choice
+          {get_tools_for_api(tools), get_tool_choice(anthropic)}
+
+        {structured_tool, []} ->
+          # Structured output only, no regular tools
+          {[structured_tool], %{"type" => "tool", "name" => "structured_output"}}
+
+        {structured_tool, _tools} ->
+          # Both structured output and regular tools - prioritize structured output
+          Logger.warning(
+            "Both json_response and tools provided. Structured output will take precedence."
+          )
+
+          {[structured_tool], %{"type" => "tool", "name" => "structured_output"}}
+      end
+
     %{
       model: anthropic.model,
       temperature: anthropic.temperature,
@@ -331,8 +357,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       # the messages list.
       system: get_system_text(system)
     }
-    |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(tools))
-    |> Utils.conditionally_add_to_map(:tool_choice, get_tool_choice(anthropic))
+    |> Utils.conditionally_add_to_map(:tools, api_tools)
+    |> Utils.conditionally_add_to_map(:tool_choice, api_tool_choice)
     |> Utils.conditionally_add_to_map(:max_tokens, anthropic.max_tokens)
     |> Utils.conditionally_add_to_map(:top_p, anthropic.top_p)
     |> Utils.conditionally_add_to_map(:top_k, anthropic.top_k)
@@ -368,6 +394,16 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         for_api(function)
     end)
   end
+
+  # Creates a structured output tool when json_response is enabled.
+  # This follows Anthropic's approach of using tools for structured JSON output.
+  # Schema is the JSON schema for the structured output.
+  defp get_structured_output_tool(%ChatAnthropic{json_response: true, json_schema: schema})
+       when is_map(schema) do
+    schema
+  end
+
+  defp get_structured_output_tool(_), do: nil
 
   @doc """
   Calls the Anthropic API passing the ChatAnthropic struct with configuration, plus
@@ -647,7 +683,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
           | MessageDelta.t()
           | [MessageDelta.t()]
           | {:error, LangChainError.t()}
-  def do_process_response(_model, %{
+  def do_process_response(model, %{
         "role" => "assistant",
         "content" => contents,
         "stop_reason" => stop_reason,
@@ -664,11 +700,44 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       |> TokenUsage.set_wrapped(get_token_usage(usage))
       |> to_response()
 
-    # reduce over the contents and accumulate to the message
-    Enum.reduce(contents, new_message, fn content, acc ->
-      do_process_content_response(acc, content)
-    end)
+    processed_message =
+      Enum.reduce(contents, new_message, fn content, acc ->
+        do_process_content_response(acc, content)
+      end)
+
+    # Handle structured output for json_response: true
+    if model.json_response && has_structured_output_tool_call?(processed_message) do
+      case extract_structured_output(processed_message) do
+        {:ok, json_string} ->
+          %{processed_message | content: json_string}
+        :not_structured_output ->
+          processed_message
+      end
+    else
+      processed_message
+    end
   end
+
+  # Check if the message has a structured_output tool call
+  defp has_structured_output_tool_call?(%Message{tool_calls: tool_calls}) do
+    is_list(tool_calls) && Enum.any?(tool_calls, &(&1.name == "structured_output"))
+  end
+
+  defp has_structured_output_tool_call?(_), do: false
+
+  # Extracts structured output from a message that contains a structured_output tool call.
+  # Returns the tool call arguments as a JSON string in a ContentPart.
+  defp extract_structured_output(%Message{tool_calls: tool_calls}) when is_list(tool_calls) do
+    case Enum.find(tool_calls, &(&1.name == "structured_output")) do
+      %ToolCall{arguments: arguments} when not is_nil(arguments) ->
+        json_string = Jason.encode!(arguments)
+        {:ok, [ContentPart.text!(json_string)]}
+      _ ->
+        :not_structured_output
+    end
+  end
+
+  defp extract_structured_output(_), do: :not_structured_output
 
   def do_process_response(_model, %{
         "type" => "message_start",
@@ -1481,6 +1550,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         :top_p,
         :top_k,
         :stream,
+        :json_response,
+        :json_schema,
         :beta_headers
       ],
       @current_config_version

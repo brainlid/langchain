@@ -2776,7 +2776,9 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
                "top_p" => nil,
                "beta_headers" => ["tools-2024-04-04"],
                "module" => "Elixir.LangChain.ChatModels.ChatAnthropic",
-               "version" => 1
+               "version" => 1,
+               "json_response" => false,
+               "json_schema" => nil
              }
     end
 
