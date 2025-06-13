@@ -142,6 +142,57 @@ defmodule LangChain.ChatModels.ChatPerplexityTest do
       assert tool_item["properties"]["arguments"]["type"] == "object"
     end
 
+    test "handles json_response and json_schema fields" do
+      # Test with json_response true and json_schema provided
+      custom_schema = %{
+        "schema" => %{
+          "type" => "object",
+          "properties" => %{
+            "name" => %{"type" => "string"},
+            "age" => %{"type" => "integer"}
+          },
+          "required" => ["name", "age"]
+        }
+      }
+
+      {:ok, perplexity} = ChatPerplexity.new(%{
+        model: @test_model,
+        json_response: true,
+        json_schema: custom_schema
+      })
+
+      data = ChatPerplexity.for_api(perplexity, [], [])
+      assert data.response_format["type"] == "json_schema"
+      assert data.response_format["json_schema"] == custom_schema
+
+      # Test with json_response true but no schema
+      {:ok, perplexity} = ChatPerplexity.new(%{
+        model: @test_model,
+        json_response: true
+      })
+
+      data = ChatPerplexity.for_api(perplexity, [], [])
+      assert data.response_format["type"] == "json_object"
+
+      # Test that tools take precedence over json_response
+      {:ok, perplexity} = ChatPerplexity.new(%{
+        model: @test_model,
+        json_response: true,
+        json_schema: custom_schema
+      })
+
+      calculator = Function.new!(%{
+        name: "calculator",
+        description: "A calculator",
+        function: fn _args, _context -> {:ok, "result"} end
+      })
+      data = ChatPerplexity.for_api(perplexity, [], [calculator])
+
+      # Tools schema should be used instead of the json_schema
+      assert data.response_format["type"] == "json_schema"
+      assert data.response_format["json_schema"]["schema"]["properties"]["tool_calls"]["items"]["properties"]["name"]["enum"] == ["calculator"]
+    end
+
     test "includes optional parameters when set" do
       {:ok, perplexity} =
         ChatPerplexity.new(%{
@@ -540,7 +591,9 @@ defmodule LangChain.ChatModels.ChatPerplexityTest do
                "search_recency_filter" => "1d",
                "response_format" => nil,
                "receive_timeout" => 60000,
-               "version" => 1
+               "version" => 1,
+               "json_response" => false,
+               "json_schema" => nil
              }
     end
 
