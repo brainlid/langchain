@@ -400,7 +400,11 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   # Schema is the JSON schema for the structured output.
   defp get_structured_output_tool(%ChatAnthropic{json_response: true, json_schema: schema})
        when is_map(schema) do
-    schema
+    %{
+      "name" => "structured_output",
+      "description" => "Provide structured output following the specified schema.",
+      "input_schema" => schema
+    }
   end
 
   defp get_structured_output_tool(_), do: nil
@@ -710,6 +714,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       case extract_structured_output(processed_message) do
         {:ok, json_string} ->
           %{processed_message | content: json_string}
+
         :not_structured_output ->
           processed_message
       end
@@ -732,6 +737,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       %ToolCall{arguments: arguments} when not is_nil(arguments) ->
         json_string = Jason.encode!(arguments)
         {:ok, [ContentPart.text!(json_string)]}
+
       _ ->
         :not_structured_output
     end

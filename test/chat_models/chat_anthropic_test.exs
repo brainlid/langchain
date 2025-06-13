@@ -147,6 +147,35 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
       assert data.top_p == 0.5
     end
 
+    test "supports setting json_response and json_schema" do
+      json_schema = %{
+        "type" => "object",
+        "properties" => %{
+          "name" => %{"type" => "string"},
+          "age" => %{"type" => "integer"}
+        },
+        "required" => ["name", "age"]
+      }
+
+      {:ok, anthropic} =
+        ChatAnthropic.new(%{
+          model: @test_model,
+          json_response: true,
+          json_schema: json_schema
+        })
+
+      data = ChatAnthropic.for_api(anthropic, [], [])
+
+      # Verify that a structured_output tool is created
+      assert Enum.any?(data[:tools], fn tool ->
+        tool["name"] == "structured_output" &&
+        tool["description"] == "Provide structured output following the specified schema."
+      end)
+
+      # Verify that tool_choice is set to use structured_output
+      assert data[:tool_choice] == %{"type" => "tool", "name" => "structured_output"}
+    end
+
     test "correctly applies the system message" do
       {:ok, anthropic} = ChatAnthropic.new()
 
@@ -417,11 +446,46 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
 
   describe "do_process_response/2" do
     setup do
-      model = ChatAnthropic.new!(%{stream: false})
+      {:ok, model} = ChatAnthropic.new(%{model: @test_model})
       %{model: model}
     end
 
-    test "handles receiving a message", %{model: model} do
+    test "processes structured output from json_response", %{model: model} do
+      # Create a model with json_response enabled
+      model = %{model | json_response: true}
+
+      # Mock response with a structured_output tool call
+      response = %{
+        "role" => "assistant",
+        "content" => [],
+        "stop_reason" => "tool_use",
+        "type" => "message",
+        "usage" => %{"input_tokens" => 430, "output_tokens" => 54},
+        "tool_calls" => [
+          %{
+            "name" => "structured_output",
+            "call_id" => "toolu_01U2NjmRRb7MniDsLMd2Bmpw",
+            "arguments" => %{"name" => "Tokyo", "population_count" => 37435191}
+          }
+        ]
+      }
+
+      # Process the response
+      result = ChatAnthropic.do_process_response(model, response)
+
+      # Verify that the structured output was extracted and converted to JSON in the content
+      assert %Message{} = result
+      assert length(result.content) == 1
+
+      [content_part] = result.content
+      assert content_part.type == :text
+
+      # The content should be a JSON string containing the tool call arguments
+      assert content_part.content =~ "\"name\":\"Tokyo\""
+      assert content_part.content =~ "\"population_count\":37435191"
+    end
+
+    test "handles receiving a complete message", %{model: model} do
       response = %{
         "id" => "id-123",
         "type" => "message",
@@ -552,660 +616,6 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
                    options: [type: "redacted_thinking"]
                  },
                  %LangChain.Message.ContentPart{
-                   type: :text,
-                   content:
-                     "I notice you've sent what appears to be some kind of test string or prompt. I don't have any special \"magic strings\" or hidden commands that would change my behavior. I'm Claude, an AI assistant made by Anthropic to be helpful, harmless, and honest.\n\nIs there something specific I can help you with today? I'm happy to answer questions, provide information, or assist with various tasks within my capabilities.",
-                   options: []
-                 }
-               ],
-               processed_content: nil,
-               index: nil,
-               status: :complete,
-               role: :assistant,
-               name: nil,
-               tool_calls: [],
-               tool_results: nil,
-               metadata: %{
-                 usage: %LangChain.TokenUsage{
-                   input: 99,
-                   output: 248,
-                   raw: %{
-                     "cache_creation_input_tokens" => 0,
-                     "cache_read_input_tokens" => 0,
-                     "input_tokens" => 99,
-                     "output_tokens" => 248
-                   }
-                 }
-               }
-             }
-    end
-
-    test "handles receiving a message_start event and parses usage to metadata", %{model: model} do
-      response = %{
-        "message" => %{
-          "content" => [],
-          "id" => "msg_017vYxGobHipWyoZT5uDbGnJ",
-          "model" => @claude_3_7,
-          "role" => "assistant",
-          "stop_reason" => nil,
-          "stop_sequence" => nil,
-          "type" => "message",
-          "usage" => %{
-            "cache_creation_input_tokens" => 0,
-            "cache_read_input_tokens" => 0,
-            "input_tokens" => 55,
-            "output_tokens" => 4
-          }
-        },
-        "type" => "message_start"
-      }
-
-      assert %MessageDelta{} = struct = ChatAnthropic.do_process_response(model, response)
-      assert struct.role == :assistant
-      assert struct.content == []
-
-      assert struct.metadata[:usage] ==
-               TokenUsage.new!(%{
-                 input: 55,
-                 output: 4,
-                 raw: %{
-                   "cache_creation_input_tokens" => 0,
-                   "cache_read_input_tokens" => 0,
-                   "input_tokens" => 55,
-                   "output_tokens" => 4
-                 }
-               })
-
-      assert is_nil(struct.index)
-    end
-
-    test "handles receiving a delta message done with usage", %{model: model} do
-      response = %{
-        "type" => "message_delta",
-        "delta" => %{"stop_reason" => "end_turn", "stop_sequence" => nil},
-        "usage" => %{"output_tokens" => 80}
-      }
-
-      assert %MessageDelta{} = struct = ChatAnthropic.do_process_response(model, response)
-      assert struct.role == :assistant
-      assert struct.content == nil
-      assert struct.status == :complete
-      assert struct.index == nil
-
-      assert struct.metadata[:usage] ==
-               TokenUsage.new!(%{
-                 input: nil,
-                 output: 80,
-                 raw: %{"output_tokens" => 80}
-               })
-    end
-
-    test "handles receiving a content_block_start event for text", %{model: model} do
-      response = %{
-        "type" => "content_block_start",
-        "index" => 0,
-        "content_block" => %{"type" => "text", "text" => ""}
-      }
-
-      assert %MessageDelta{} = struct = ChatAnthropic.do_process_response(model, response)
-      assert struct.role == :assistant
-      assert struct.content == %ContentPart{type: :text, options: [], content: ""}
-      assert struct.index == 0
-    end
-
-    test "handles receiving a content_block_delta event for text", %{model: model} do
-      response = %{
-        "type" => "content_block_delta",
-        "index" => 0,
-        "delta" => %{"type" => "text_delta", "text" => "Hello"}
-      }
-
-      assert %MessageDelta{} = struct = ChatAnthropic.do_process_response(model, response)
-      assert struct.role == :assistant
-      assert struct.content == ContentPart.text!("Hello")
-      assert struct.index == 0
-    end
-
-    test "handles receiving a content_block_start event for tool call", %{model: model} do
-      response = %{
-        "type" => "content_block_start",
-        "index" => 0,
-        "content_block" => %{
-          "type" => "tool_use",
-          "id" => "toolu_01T1x1fJ34qAmk2tNTrN7Up6",
-          "name" => "do_something"
-        }
-      }
-
-      assert %MessageDelta{} = struct = ChatAnthropic.do_process_response(model, response)
-      assert struct.role == :assistant
-      assert struct.content == nil
-      assert is_nil(struct.index)
-
-      assert [
-               %LangChain.Message.ToolCall{
-                 status: :incomplete,
-                 type: :function,
-                 call_id: "toolu_01T1x1fJ34qAmk2tNTrN7Up6",
-                 name: "do_something",
-                 arguments: nil,
-                 index: 0
-               }
-             ] == struct.tool_calls
-    end
-
-    test "handles receiving a content_block_delta event for tool call", %{model: model} do
-      response = %{
-        "type" => "content_block_delta",
-        "index" => 0,
-        "delta" => %{"type" => "input_json_delta", "partial_json" => "{\"pr"}
-      }
-
-      assert %MessageDelta{} = struct = ChatAnthropic.do_process_response(model, response)
-      assert struct.role == :assistant
-      [tool_call] = struct.tool_calls
-      assert tool_call.type == :function
-      assert tool_call.arguments == "{\"pr"
-      assert tool_call.index == 0
-    end
-
-    test "handles receiving a message_delta event", %{model: model} do
-      response = %{
-        "type" => "message_delta",
-        "delta" => %{"stop_reason" => "end_turn", "stop_sequence" => nil},
-        "usage" => %{"output_tokens" => 47}
-      }
-
-      assert %MessageDelta{} = struct = ChatAnthropic.do_process_response(model, response)
-      assert struct.role == :assistant
-      assert struct.content == nil
-      assert struct.status == :complete
-      assert struct.index == nil
-    end
-
-    test "handles receiving a tool call with no parameters", %{model: model} do
-      response = %{
-        "content" => [
-          %{"id" => "toolu_0123", "input" => %{}, "name" => "hello_world", "type" => "tool_use"}
-        ],
-        "id" => "msg_0123",
-        "model" => "claude-3-haiku-20240307",
-        "role" => "assistant",
-        "stop_reason" => "tool_use",
-        "stop_sequence" => nil,
-        "type" => "message",
-        "usage" => %{"input_tokens" => 324, "output_tokens" => 36}
-      }
-
-      assert %Message{} = struct = ChatAnthropic.do_process_response(model, response)
-
-      assert struct.role == :assistant
-      [%ToolCall{} = call] = struct.tool_calls
-      assert call.type == :function
-      assert call.status == :complete
-      assert call.call_id == "toolu_0123"
-      assert call.name == "hello_world"
-      # detects empty and returns nil
-      assert call.arguments == nil
-    end
-
-    test "handles receiving a tool call with nested empty properties supplied", %{model: model} do
-      response = %{
-        "content" => [
-          %{
-            "id" => "toolu_0123",
-            "input" => %{"properties" => %{}},
-            "name" => "hello_world",
-            "type" => "tool_use"
-          }
-        ],
-        "role" => "assistant",
-        "stop_reason" => "tool_use",
-        "stop_sequence" => nil,
-        "type" => "message",
-        "usage" => %{"input_tokens" => 324, "output_tokens" => 36}
-      }
-
-      assert %Message{} = struct = ChatAnthropic.do_process_response(model, response)
-
-      assert struct.role == :assistant
-      [%ToolCall{} = call] = struct.tool_calls
-      assert call.type == :function
-      assert call.status == :complete
-      assert call.call_id == "toolu_0123"
-      assert call.name == "hello_world"
-      # detects empty and returns as nil
-      assert call.arguments == nil
-    end
-
-    test "handles receiving text and a tool_use in same message", %{model: model} do
-      response = %{
-        "id" => "msg_01Aq9w938a90dw8q",
-        "model" => @test_model,
-        "stop_reason" => "tool_use",
-        "role" => "assistant",
-        "content" => [
-          %{
-            "type" => "text",
-            "text" =>
-              "<thinking>I need to use the get_weather, and the user wants SF, which is likely San Francisco, CA.</thinking>"
-          },
-          %{
-            "type" => "tool_use",
-            "id" => "toolu_0123",
-            "name" => "get_weather",
-            "input" => %{"location" => "San Francisco, CA", "unit" => "celsius"}
-          }
-        ],
-        "type" => "message",
-        "usage" => %{"input_tokens" => 324, "output_tokens" => 36}
-      }
-
-      assert %Message{} = struct = ChatAnthropic.do_process_response(model, response)
-
-      assert struct.role == :assistant
-      assert struct.status == :complete
-
-      assert struct.content == [
-               ContentPart.text!(
-                 "<thinking>I need to use the get_weather, and the user wants SF, which is likely San Francisco, CA.</thinking>"
-               )
-             ]
-
-      [%ToolCall{} = call] = struct.tool_calls
-      assert call.type == :function
-      assert call.status == :complete
-      assert call.call_id == "toolu_0123"
-      assert call.name == "get_weather"
-      assert call.arguments == %{"location" => "San Francisco, CA", "unit" => "celsius"}
-    end
-
-    test "handles receiving overloaded error", %{model: model} do
-      response = %{
-        "type" => "error",
-        "error" => %{
-          "details" => nil,
-          "type" => "overloaded_error",
-          "message" => "Overloaded"
-        }
-      }
-
-      assert {:error, exception} = ChatAnthropic.do_process_response(model, response)
-
-      assert exception.type == "overloaded_error"
-      assert exception.message == "Overloaded"
-    end
-
-    test "handles received thinking content blocks", %{model: model} do
-      response = %{
-        "delta" => %{"thinking" => "Let's ad", "type" => "thinking_delta"},
-        "index" => 0,
-        "type" => "content_block_delta"
-      }
-
-      assert %MessageDelta{} = struct = ChatAnthropic.do_process_response(model, response)
-
-      assert struct.role == :assistant
-      assert struct.content == ContentPart.new!(%{type: :thinking, content: "Let's ad"})
-      assert struct.index == 0
-    end
-
-    test "handles received thinking signature", %{model: model} do
-      response = %{
-        "delta" => %{
-          "signature" =>
-            "ErUBCkYIARgCIkCspHHl1+BPuvAExtRMzy6e6DGYV4vI7D8dgqnzLm7RbQ5e4j+aAopCyq29fZqUNNdZbOLleuq/DYIyXjX4HIyIEgwE4N3Vb+9hzkFk/NwaDOy3fw0f0zqRZhAk4CIwp18hR9UsOWYC+pkvt1SnIOGCXBcLdwUxIoUeG3z6WfNwWJV7fulSvz7EVCN5ypzwKh2m/EY9LS1DK1EdUc770O8XdI/j4i0ibc8zRNIjvA==",
-          "type" => "signature_delta"
-        },
-        "index" => 0,
-        "type" => "content_block_delta"
-      }
-
-      assert %MessageDelta{} = struct = ChatAnthropic.do_process_response(model, response)
-
-      assert struct.role == :assistant
-
-      assert struct.content ==
-               ContentPart.new!(%{
-                 type: :thinking,
-                 options: [
-                   signature:
-                     "ErUBCkYIARgCIkCspHHl1+BPuvAExtRMzy6e6DGYV4vI7D8dgqnzLm7RbQ5e4j+aAopCyq29fZqUNNdZbOLleuq/DYIyXjX4HIyIEgwE4N3Vb+9hzkFk/NwaDOy3fw0f0zqRZhAk4CIwp18hR9UsOWYC+pkvt1SnIOGCXBcLdwUxIoUeG3z6WfNwWJV7fulSvz7EVCN5ypzwKh2m/EY9LS1DK1EdUc770O8XdI/j4i0ibc8zRNIjvA=="
-                 ]
-               })
-
-      assert struct.index == 0
-    end
-
-    test "handles a streamed thinking response", %{model: model} do
-      processed =
-        [
-          %{
-            "message" => %{
-              "content" => [],
-              "id" => "msg_017vYxGobHipWyoZT5uDbGnJ",
-              "model" => @claude_3_7,
-              "role" => "assistant",
-              "stop_reason" => nil,
-              "stop_sequence" => nil,
-              "type" => "message",
-              "usage" => %{
-                "cache_creation_input_tokens" => 0,
-                "cache_read_input_tokens" => 0,
-                "input_tokens" => 55,
-                "output_tokens" => 4
-              }
-            },
-            "type" => "message_start"
-          },
-          %{
-            "content_block" => %{"signature" => "", "thinking" => "", "type" => "thinking"},
-            "index" => 0,
-            "type" => "content_block_start"
-          },
-          %{"type" => "ping"},
-          %{
-            "delta" => %{"thinking" => "Let's ad", "type" => "thinking_delta"},
-            "index" => 0,
-            "type" => "content_block_delta"
-          },
-          %{
-            "delta" => %{
-              "thinking" => "d these numbers.\n400 + 50 = 450\n450 ",
-              "type" => "thinking_delta"
-            },
-            "index" => 0,
-            "type" => "content_block_delta"
-          },
-          %{
-            "delta" => %{"thinking" => "+ 3 = 453\n\nSo 400 + 50", "type" => "thinking_delta"},
-            "index" => 0,
-            "type" => "content_block_delta"
-          },
-          %{
-            "delta" => %{"thinking" => " + 3 = 453", "type" => "thinking_delta"},
-            "index" => 0,
-            "type" => "content_block_delta"
-          },
-          %{
-            "delta" => %{
-              "signature" =>
-                "ErUBCkYIARgCIkCspHHl1+BPuvAExtRMzy6e6DGYV4vI7D8dgqnzLm7RbQ5e4j+aAopCyq29fZqUNNdZbOLleuq/DYIyXjX4HIyIEgwE4N3Vb+9hzkFk/NwaDOy3fw0f0zqRZhAk4CIwp18hR9UsOWYC+pkvt1SnIOGCXBcLdwUxIoUeG3z6WfNwWJV7fulSvz7EVCN5ypzwKh2m/EY9LS1DK1EdUc770O8XdI/j4i0ibc8zRNIjvA==",
-              "type" => "signature_delta"
-            },
-            "index" => 0,
-            "type" => "content_block_delta"
-          },
-          %{"index" => 0, "type" => "content_block_stop"},
-          %{
-            "content_block" => %{"text" => "", "type" => "text"},
-            "index" => 1,
-            "type" => "content_block_start"
-          },
-          %{
-            "delta" => %{
-              "text" => "The answer is 453.\n\n400 + 50 = 450\n450 + 3 =",
-              "type" => "text_delta"
-            },
-            "index" => 1,
-            "type" => "content_block_delta"
-          },
-          %{
-            "delta" => %{"text" => " 453", "type" => "text_delta"},
-            "index" => 1,
-            "type" => "content_block_delta"
-          },
-          %{"index" => 1, "type" => "content_block_stop"},
-          %{
-            "delta" => %{"stop_reason" => "end_turn", "stop_sequence" => nil},
-            "type" => "message_delta",
-            "usage" => %{"output_tokens" => 80}
-          },
-          %{"type" => "message_stop"}
-        ]
-        |> Enum.filter(&ChatAnthropic.relevant_event?/1)
-        |> Enum.map(&ChatAnthropic.do_process_response(model, &1))
-
-      expected = [
-        %LangChain.MessageDelta{
-          content: [],
-          status: :incomplete,
-          index: nil,
-          role: :assistant,
-          tool_calls: nil,
-          metadata: %{
-            usage: %LangChain.TokenUsage{
-              input: 55,
-              output: 4,
-              raw: %{
-                "cache_creation_input_tokens" => 0,
-                "cache_read_input_tokens" => 0,
-                "input_tokens" => 55,
-                "output_tokens" => 4
-              }
-            }
-          }
-        },
-        %LangChain.MessageDelta{
-          content:
-            ContentPart.new!(%{
-              type: :thinking,
-              content: "",
-              options: [signature: ""]
-            }),
-          status: :incomplete,
-          index: 0,
-          role: :assistant,
-          tool_calls: nil,
-          metadata: nil
-        },
-        %LangChain.MessageDelta{
-          content:
-            ContentPart.new!(%{
-              type: :thinking,
-              content: "Let's ad"
-            }),
-          status: :incomplete,
-          index: 0,
-          role: :assistant,
-          tool_calls: nil,
-          metadata: nil
-        },
-        %LangChain.MessageDelta{
-          content:
-            ContentPart.new!(%{
-              type: :thinking,
-              content: "d these numbers.\n400 + 50 = 450\n450 "
-            }),
-          status: :incomplete,
-          index: 0,
-          role: :assistant,
-          tool_calls: nil,
-          metadata: nil
-        },
-        %LangChain.MessageDelta{
-          content:
-            ContentPart.new!(%{
-              type: :thinking,
-              content: "+ 3 = 453\n\nSo 400 + 50"
-            }),
-          status: :incomplete,
-          index: 0,
-          role: :assistant,
-          tool_calls: nil,
-          metadata: nil
-        },
-        %LangChain.MessageDelta{
-          content:
-            ContentPart.new!(%{
-              type: :thinking,
-              content: " + 3 = 453"
-            }),
-          status: :incomplete,
-          index: 0,
-          role: :assistant,
-          tool_calls: nil,
-          metadata: nil
-        },
-        %LangChain.MessageDelta{
-          content:
-            ContentPart.new!(%{
-              type: :thinking,
-              content: nil,
-              options: [
-                signature:
-                  "ErUBCkYIARgCIkCspHHl1+BPuvAExtRMzy6e6DGYV4vI7D8dgqnzLm7RbQ5e4j+aAopCyq29fZqUNNdZbOLleuq/DYIyXjX4HIyIEgwE4N3Vb+9hzkFk/NwaDOy3fw0f0zqRZhAk4CIwp18hR9UsOWYC+pkvt1SnIOGCXBcLdwUxIoUeG3z6WfNwWJV7fulSvz7EVCN5ypzwKh2m/EY9LS1DK1EdUc770O8XdI/j4i0ibc8zRNIjvA=="
-              ]
-            }),
-          status: :incomplete,
-          index: 0,
-          role: :assistant,
-          tool_calls: nil,
-          metadata: nil
-        },
-        %LangChain.MessageDelta{
-          content:
-            ContentPart.new!(%{
-              type: :text,
-              content: ""
-            }),
-          status: :incomplete,
-          index: 1,
-          role: :assistant,
-          tool_calls: nil,
-          metadata: nil
-        },
-        %LangChain.MessageDelta{
-          content:
-            ContentPart.new!(%{
-              type: :text,
-              content: "The answer is 453.\n\n400 + 50 = 450\n450 + 3 ="
-            }),
-          status: :incomplete,
-          index: 1,
-          role: :assistant,
-          tool_calls: nil,
-          metadata: nil
-        },
-        %LangChain.MessageDelta{
-          content:
-            ContentPart.new!(%{
-              type: :text,
-              content: " 453"
-            }),
-          status: :incomplete,
-          index: 1,
-          role: :assistant,
-          tool_calls: nil,
-          metadata: nil
-        },
-        %LangChain.MessageDelta{
-          content: nil,
-          status: :complete,
-          index: nil,
-          role: :assistant,
-          tool_calls: nil,
-          metadata: %{
-            usage: %LangChain.TokenUsage{
-              input: nil,
-              output: 80,
-              raw: %{"output_tokens" => 80}
-            }
-          }
-        }
-      ]
-
-      assert processed == expected
-    end
-
-    test "handles a streamed thinking response with redacted_thinking data", %{model: model} do
-      # NOTE: Modified to compress some of the deltas for length
-      processed =
-        [
-          %{
-            "message" => %{
-              "content" => [],
-              "id" => "msg_01RsGSfsGLQb6yhuzWMBQSg1",
-              "model" => "claude-3-7-sonnet-20250219",
-              "role" => "assistant",
-              "stop_reason" => nil,
-              "stop_sequence" => nil,
-              "type" => "message",
-              "usage" => %{
-                "cache_creation_input_tokens" => 0,
-                "cache_read_input_tokens" => 0,
-                "input_tokens" => 99,
-                "output_tokens" => 128
-              }
-            },
-            "type" => "message_start"
-          },
-          %{
-            "content_block" => %{
-              "data" =>
-                "EvQECkYIAhgCKkDvEa/WZMw1F/dtvM39wAkA/15hBdsvURBke1dUppZjaXioL+jyNrIyDrh3dWAo89tXAxfh0Q/dUW47okn3GKF3EgwaAHR6sf2mjOXvnKQaDFn6KLce6N0KixDL7yIwW0Sc4Niv2Smpa2ORkILXaxruojR4GbyljCyre9xxvciM35PnDNvT5jVAYS1peE4oKtsDKogDdVs4tobPY1LPCfduO/EZM16fvK2rmPV9BNB+S0/kvjMBwnk7pNfosLkqB/ZFyqyJIkqAHKH+AW+Xoa+P17AkINS41qIIAM0U784Xee6hCSHQ2Cb9s8oGvbksLLONSwMi7IWJmXyTslMRSBX4VfOIDzkoWVtXH1/Vq1UQCAFgKc5TZM0FtycCsFycZtTDhgcc/1+jwgWndNBB8LDQfTdfvgdxHbbj8/7pyqYWUsGPT/7HYksbkcVBoKLBYvGB0pFrSZiK6ypgXuJyNLJ7jjA4DXyvHe4EWxnZgyFwECmWDan5gGlH+LkG0NfZuEOEWw8XJGKjDIp1EgIw8jGqZ2uzPNpQlIOoJ3XiV9qPxHjN2wKu9u1UDUpk58p5LxkDPV+nY/lAiP0usJyekBEoTZTuQvXmJRt7i9KRrT9xitA3qAl1vAMwSnRQu4LhLeMZWcNKdsVPaWmQcAVrhxvXHBy4cEzb2C3wkCFPjN/98vAHmhXrTbuI2Jx3/VLD23T9XYai56aABEYDeFvstaRYAos1Aa0qknoOmHKPdeNuE+SRGw59BDdTgYQKlWEjU/EHchyGLbjAu3KOCbWK2l5LbSv9upDsp701Xyf9oQByMwTVyytgZwCFexq/bBgB",
-              "type" => "redacted_thinking"
-            },
-            "index" => 0,
-            "type" => "content_block_start"
-          },
-          %{"type" => "ping"},
-          %{"index" => 0, "type" => "content_block_stop"},
-          %{
-            "content_block" => %{
-              "data" =>
-                "EuYCCkYIAhgCKkBSkyxhK6POgXTXPAclNtjp78AAASV2HS2ZAzZR2lv0Okejxi0rgTIgr9ClXtxQdar10138sgdmjM7wbCgkb3dSEgw2scaN2MhglBVrItgaDASQ2DnWN3hUfTcgoSIwgWHGG0VsLZ5LMZRO0FLhjCTnUE3SZBhNwsf0jDdsTgsyhyHbR1Pv7DFuJ4ZgKZ6GKs0B8cML342Jo3TOR4ZH1VeYuXPjeLzdEIH5y/oDje6YRoNc0ms9haqifiVYwvQaVFdFwl3H/Cca1/Bg57zdtyrUl6PyYRTM7XIwRkbGWc7nSnAF8Jr0YslZRMThjM1Fw/Ygrp/X6o3Wth9YNU9dSNirIois0fAdgxUaik0tNVqXOeoLGiKk8UfNrY8y5lGhqah6OCk7dzhU0azns6OmflRIpvqMqXGlPZIxxxTHwZCVD02Sri+LHNl87dIr2k6rOQq7KOwG0ViNIGxt3KCiIRgB",
-              "type" => "redacted_thinking"
-            },
-            "index" => 1,
-            "type" => "content_block_start"
-          },
-          %{"index" => 1, "type" => "content_block_stop"},
-          %{
-            "content_block" => %{"text" => "", "type" => "text"},
-            "index" => 2,
-            "type" => "content_block_start"
-          },
-          %{
-            "delta" => %{
-              "text" => "I notice you've sent what appears to be some",
-              "type" => "text_delta"
-            },
-            "index" => 2,
-            "type" => "content_block_delta"
-          },
-          %{
-            "delta" => %{
-              "text" => " kind of test string or trigger phrase.",
-              "type" => "text_delta"
-            },
-            "index" => 2,
-            "type" => "content_block_delta"
-          },
-          %{
-            "delta" => %{"stop_reason" => "end_turn", "stop_sequence" => nil},
-            "type" => "message_delta",
-            "usage" => %{"output_tokens" => 234}
-          },
-          %{"type" => "message_stop"}
-        ]
-        |> Enum.filter(&ChatAnthropic.relevant_event?/1)
-        |> Enum.map(&ChatAnthropic.do_process_response(model, &1))
-
-      # merge the deltas and convert to a message
-      {:ok, %Message{} = merged} =
-        MessageDelta.merge_deltas(processed) |> MessageDelta.to_message()
-
-      # IO.inspect(merged, label: "PROCESSED")
-      assert merged == %LangChain.Message{
-               content: [
-                 %LangChain.Message.ContentPart{
-                   type: :unsupported,
-                   content:
-                     "EvQECkYIAhgCKkDvEa/WZMw1F/dtvM39wAkA/15hBdsvURBke1dUppZjaXioL+jyNrIyDrh3dWAo89tXAxfh0Q/dUW47okn3GKF3EgwaAHR6sf2mjOXvnKQaDFn6KLce6N0KixDL7yIwW0Sc4Niv2Smpa2ORkILXaxruojR4GbyljCyre9xxvciM35PnDNvT5jVAYS1peE4oKtsDKogDdVs4tobPY1LPCfduO/EZM16fvK2rmPV9BNB+S0/kvjMBwnk7pNfosLkqB/ZFyqyJIkqAHKH+AW+Xoa+P17AkINS41qIIAM0U784Xee6hCSHQ2Cb9s8oGvbksLLONSwMi7IWJmXyTslMRSBX4VfOIDzkoWVtXH1/Vq1UQCAFgKc5TZM0FtycCsFycZtTDhgcc/1+jwgWndNBB8LDQfTdfvgdxHbbj8/7pyqYWUsGPT/7HYksbkcVBoKLBYvGB0pFrSZiK6ypgXuJyNLJ7jjA4DXyvHe4EWxnZgyFwECmWDan5gGlH+LkG0NfZuEOEWw8XJGKjDIp1EgIw8jGqZ2uzPNpQlIOoJ3XiV9qPxHjN2wKu9u1UDUpk58p5LxkDPV+nY/lAiP0usJyekBEoTZTuQvXmJRt7i9KRrT9xitA3qAl1vAMwSnRQu4LhLeMZWcNKdsVPaWmQcAVrhxvXHBy4cEzb2C3wkCFPjN/98vAHmhXrTbuI2Jx3/VLD23T9XYai56aABEYDeFvstaRYAos1Aa0qknoOmHKPdeNuE+SRGw59BDdTgYQKlWEjU/EHchyGLbjAu3KOCbWK2l5LbSv9upDsp701Xyf9oQByMwTVyytgZwCFexq/bBgB",
-                   options: [type: "redacted_thinking"]
-                 },
-                 %LangChain.Message.ContentPart{
                    type: :unsupported,
                    content:
                      "EuYCCkYIAhgCKkBSkyxhK6POgXTXPAclNtjp78AAASV2HS2ZAzZR2lv0Okejxi0rgTIgr9ClXtxQdar10138sgdmjM7wbCgkb3dSEgw2scaN2MhglBVrItgaDASQ2DnWN3hUfTcgoSIwgWHGG0VsLZ5LMZRO0FLhjCTnUE3SZBhNwsf0jDdsTgsyhyHbR1Pv7DFuJ4ZgKZ6GKs0B8cML342Jo3TOR4ZH1VeYuXPjeLzdEIH5y/oDje6YRoNc0ms9haqifiVYwvQaVFdFwl3H/Cca1/Bg57zdtyrUl6PyYRTM7XIwRkbGWc7nSnAF8Jr0YslZRMThjM1Fw/Ygrp/X6o3Wth9YNU9dSNirIois0fAdgxUaik0tNVqXOeoLGiKk8UfNrY8y5lGhqah6OCk7dzhU0azns6OmflRIpvqMqXGlPZIxxxTHwZCVD02Sri+LHNl87dIr2k6rOQq7KOwG0ViNIGxt3KCiIRgB",
@@ -1240,7 +650,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
              }
 
       # going back to the server should keep the redacted_thinking data
-      data = ChatAnthropic.message_for_api(merged)
+      data = ChatAnthropic.message_for_api(struct)
       # IO.inspect(data, label: "DATA")
       assert data == %{
                "content" => [
