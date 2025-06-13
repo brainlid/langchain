@@ -710,6 +710,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       case extract_structured_output(processed_message) do
         {:ok, json_string} ->
           %{processed_message | content: json_string}
+
         :not_structured_output ->
           processed_message
       end
@@ -732,6 +733,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       %ToolCall{arguments: arguments} when not is_nil(arguments) ->
         json_string = Jason.encode!(arguments)
         {:ok, [ContentPart.text!(json_string)]}
+
       _ ->
         :not_structured_output
     end
