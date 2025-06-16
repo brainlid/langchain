@@ -384,7 +384,7 @@ defmodule LangChain.ChatModels.ChatPerplexityTest do
       response_data = %{
         "id" => "cmpl-123",
         "model" => "sonar-pro",
-        "created" => 1234567890,
+        "created" => 1_234_567_890,
         "usage" => %{
           "prompt_tokens" => 10,
           "completion_tokens" => 15,
@@ -426,13 +426,19 @@ defmodule LangChain.ChatModels.ChatPerplexityTest do
       # Verify the full response data is captured in processed_content
       assert result.processed_content.id == "cmpl-123"
       assert result.processed_content.model == "sonar-pro"
-      assert result.processed_content.created == 1234567890
+      assert result.processed_content.created == 1_234_567_890
+
       assert result.processed_content.usage == %{
-        "prompt_tokens" => 10,
-        "completion_tokens" => 15,
-        "total_tokens" => 25
-      }
-      assert result.processed_content.citations == ["https://example.com/article1", "https://example.com/article2"]
+               "prompt_tokens" => 10,
+               "completion_tokens" => 15,
+               "total_tokens" => 25
+             }
+
+      assert result.processed_content.citations == [
+               "https://example.com/article1",
+               "https://example.com/article2"
+             ]
+
       assert length(result.processed_content.search_results) == 2
       assert List.first(result.processed_content.search_results)["title"] == "Article 1"
     end
@@ -448,7 +454,7 @@ defmodule LangChain.ChatModels.ChatPerplexityTest do
       response_data = %{
         "id" => "cmpl-tool-123",
         "model" => "sonar-pro",
-        "created" => 1234567890,
+        "created" => 1_234_567_890,
         "usage" => %{"prompt_tokens" => 10, "completion_tokens" => 15, "total_tokens" => 25},
         "object" => "chat.completion",
         "citations" => [],
@@ -503,7 +509,7 @@ defmodule LangChain.ChatModels.ChatPerplexityTest do
       response_data = %{
         "id" => "cmpl-regular-123",
         "model" => "sonar-pro",
-        "created" => 1234567890,
+        "created" => 1_234_567_890,
         "usage" => %{"prompt_tokens" => 5, "completion_tokens" => 3, "total_tokens" => 8},
         "object" => "chat.completion",
         "citations" => [],
@@ -536,7 +542,7 @@ defmodule LangChain.ChatModels.ChatPerplexityTest do
       response_data = %{
         "id" => "cmpl-length-123",
         "model" => "sonar-pro",
-        "created" => 1234567890,
+        "created" => 1_234_567_890,
         "usage" => %{"prompt_tokens" => 100, "completion_tokens" => 50, "total_tokens" => 150},
         "object" => "chat.completion",
         "citations" => [],

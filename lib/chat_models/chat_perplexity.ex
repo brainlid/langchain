@@ -721,15 +721,19 @@ defmodule LangChain.ChatModels.ChatPerplexity do
     end
   end
 
-  def do_process_response(_model, %{
-        "choices" => [
-          %{
-            "delta" => %{"role" => role, "content" => content},
-            "finish_reason" => finish,
-            "index" => index
-          } = _choice
-        ]
-      }, _tools) do
+  def do_process_response(
+        _model,
+        %{
+          "choices" => [
+            %{
+              "delta" => %{"role" => role, "content" => content},
+              "finish_reason" => finish,
+              "index" => index
+            } = _choice
+          ]
+        },
+        _tools
+      ) do
     status = finish_reason_to_status(finish)
 
     data =
