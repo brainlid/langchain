@@ -2173,6 +2173,30 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
                )
     end
 
+    test "cache_control: true uses default settings" do
+      part = ContentPart.text!("content", cache_control: true)
+
+      result = ChatAnthropic.content_part_for_api(part)
+
+      assert result == %{
+               "type" => "text",
+               "text" => "content",
+               "cache_control" => %{"type" => "ephemeral"}
+             }
+    end
+
+    test "cache_control supports explicit settings" do
+      part = ContentPart.text!("content", cache_control: %{"type" => "ephemeral", "ttl" => "1h"})
+
+      result = ChatAnthropic.content_part_for_api(part)
+
+      assert result == %{
+               "type" => "text",
+               "text" => "content",
+               "cache_control" => %{"type" => "ephemeral", "ttl" => "1h"}
+             }
+    end
+
     test "errors on ContentPart type image_url" do
       assert_raise LangChain.LangChainError, "Anthropic does not support image_url", fn ->
         ChatAnthropic.content_part_for_api(ContentPart.image_url!("url-to-image"))
