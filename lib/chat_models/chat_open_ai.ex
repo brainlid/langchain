@@ -1076,9 +1076,12 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   # MS Azure returns numeric error codes. Interpret them when possible to give a computer-friendly reason
   #
   # https://learn.microsoft.com/en-us/troubleshoot/azure/azure-kubernetes/create-upgrade-delete/429-too-many-requests-errors
-  def do_process_response(_model, %{
-        "error" => %{"code" => code, "message" => reason} = error_data
-      }) do
+  def do_process_response(
+        _model,
+        %{
+          "error" => %{"code" => code, "message" => reason} = error_data
+        } = response
+      ) do
     type =
       case code do
         "429" ->
@@ -1099,12 +1102,12 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       end
 
     Logger.error("Received error from API: #{inspect(reason)}")
-    {:error, LangChainError.exception(type: type, message: reason)}
+    {:error, LangChainError.exception(type: type, message: reason, original: response)}
   end
 
-  def do_process_response(_model, %{"error" => %{"message" => reason}}) do
+  def do_process_response(_model, %{"error" => %{"message" => reason}} = response) do
     Logger.error("Received error from API: #{inspect(reason)}")
-    {:error, LangChainError.exception(message: reason)}
+    {:error, LangChainError.exception(message: reason, original: response)}
   end
 
   def do_process_response(_model, {:error, %Jason.DecodeError{} = response}) do
@@ -1117,7 +1120,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
   def do_process_response(_model, other) do
     Logger.error("Trying to process an unexpected response. #{inspect(other)}")
-    {:error, LangChainError.exception(message: "Unexpected response")}
+    {:error, LangChainError.exception(message: "Unexpected response", original: other)}
   end
 
   defp finish_reason_to_status(nil), do: :incomplete
