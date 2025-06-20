@@ -134,6 +134,55 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       })
 
   As of the documentation for Claude 3.7 Sonnet, the minimum budget for thinking is 1024 tokens.
+
+  ## Prompt Caching
+
+  Anthropic supports [prompt caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching) to
+  reduce costs and latency for frequently repeated content. Prompt caching works by caching large blocks of
+  content that are likely to be reused across multiple requests.
+
+  Prompt caching is configured through the `cache_control` option in `ContentPart` options. It can be applied
+  to both system messages and regular user messages.
+
+  Anthropic limits a conversation to max of 4 cache_control blocks and will refuse to service requests with more.
+
+  ### Basic Usage
+
+  Setting `cache_control: true` is a shortcut for the default ephemeral cache control:
+
+      # System message with caching
+      Message.new_system!([
+        ContentPart.text!("You are an AI assistant analyzing literary works."),
+        ContentPart.text!("<large document content>", cache_control: true)
+      ])
+
+      # User message with caching
+      Message.new_user!([
+        ContentPart.text!("Please analyze this document:"),
+        ContentPart.text!("<large document content>", cache_control: true)
+      ])
+
+  ### Advanced Cache Control
+
+  For more explicit control over caching parameters, you can provide a map instead of `true`:
+
+      ContentPart.text!("content", cache_control: %{"type" => "ephemeral", "ttl" => "1h"})
+
+  When `cache_control: true` is used, it automatically expands to `%{"type" => "ephemeral"}` in the API request.
+  If you need specific cache control settings like TTL, providing them explicitly preserves the exact values
+  sent to the API.
+
+  The default is "5m" for 5 minutes but supports "1h" for 1 hour depending on your account.
+
+
+  ### Supported Content Types
+
+  Prompt caching can be applied to:
+  - Text content in system messages
+  - Text content in user messages
+  - Tool results (when using `options: [cache_control: true]` in `ToolResult`)
+
+  For more information, see the [Anthropic prompt caching documentation](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching).
   """
   use Ecto.Schema
   require Logger
