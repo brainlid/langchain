@@ -332,8 +332,10 @@ defmodule ChatModels.ChatVertexAITest do
         }
       }
 
-      assert {:error, error_string} = ChatVertexAI.do_process_response(response)
+      assert {:error, error_received} = ChatVertexAI.do_process_response(response)
+      assert %LangChainError{message: error_string} = error_received
       assert error_string == "Invalid request"
+      assert error_received.original == response
     end
 
     test "handles Jason.DecodeError" do
