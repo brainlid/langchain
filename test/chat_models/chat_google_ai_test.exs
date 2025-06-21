@@ -236,6 +236,39 @@ defmodule ChatModels.ChatGoogleAITest do
              } = msg1
     end
 
+    test "turns a file ContentPart into the expected JSON format" do
+      file_base64_data = "some_file_base64_data"
+      mime_type = "application/pdf"
+
+      expected = %{
+        "inline_data" => %{
+          "mime_type" => mime_type,
+          "data" => file_base64_data
+        }
+      }
+
+      result =
+        ChatGoogleAI.for_api(
+          ChatGoogleAI.new!(),
+          ContentPart.file!(file_base64_data, media: "application/pdf")
+        )
+
+      assert result == expected
+    end
+
+    test "throws an exception when no media type supplied" do
+      file_base64_data = "some_file_base64_data"
+
+      assert_raise(
+        LangChainError,
+        "Received no media type for ContentPart",
+        ChatGoogleAI.for_api(
+          ChatGoogleAI.new!(),
+          ContentPart.file!(file_base64_data)
+        )
+      )
+    end
+
     test "translates a Message with function results to the expected structure" do
       expected =
         %{
