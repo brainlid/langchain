@@ -491,7 +491,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
       "name" => fun.name,
       "type" => "function_call"
     }
-    |> Utils.conditionally_add_to_map("status", fun.status)
+    |> Utils.conditionally_add_to_map("status", "completed")
   end
 
   def for_api(%ChatOpenAIResponses{} = _model, %PromptTemplate{} = _template) do
@@ -715,6 +715,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
             {:error, reason}
 
           result ->
+            dbg(result)
             Callbacks.fire(openai.callbacks, :on_llm_new_message, [result])
 
             # Track non-streaming response completion
