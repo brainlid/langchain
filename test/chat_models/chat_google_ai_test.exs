@@ -14,7 +14,7 @@ defmodule ChatModels.ChatGoogleAITest do
   alias LangChain.LangChainError
   alias LangChain.ChatModels.ChatGoogleAI
 
-  @test_model "gemini-pro"
+  @test_model "gemini-2.0-flash"
 
   setup do
     {:ok, hello_world} =
