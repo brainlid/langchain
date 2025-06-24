@@ -11,7 +11,7 @@ defmodule LangChain.Utils.BedrockStreamDecoder do
         finish_or_decode_remaining(chunks, remaining)
 
       {:incomplete_message, _} ->
-        {chunks, combined_data}
+        finish(chunks, combined_data)
 
       {:exception_response, response, remaining} ->
         chunks = [response | chunks]
@@ -19,7 +19,7 @@ defmodule LangChain.Utils.BedrockStreamDecoder do
 
       {:error, error} ->
         Logger.error("Failed to decode Bedrock chunk: #{inspect(error)}")
-        {chunks, combined_data}
+        finish(chunks, combined_data)
     end
   end
 
@@ -28,7 +28,11 @@ defmodule LangChain.Utils.BedrockStreamDecoder do
   end
 
   defp finish_or_decode_remaining(chunks, remaining) do
-    {chunks, remaining}
+    finish(chunks, remaining)
+  end
+
+  defp finish(chunks, remaining) do
+    {Enum.reverse(chunks), remaining}
   end
 
   defp decode_chunk(chunk) do
