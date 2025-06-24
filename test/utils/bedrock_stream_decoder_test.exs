@@ -51,12 +51,19 @@ defmodule LangChain.Utils.BedrockStreamDecoderTest do
   end
 
   describe "unit" do
-    @success_message_base64 %{
-                              "type" => "content_block_start"
-                            }
-                            |> Jason.encode!()
-                            |> Base.encode64()
-    @success_message %{"bytes" => @success_message_base64} |> Jason.encode!()
+    defp wrap_message(message) do
+      %{"bytes" => message |> Jason.encode!() |> Base.encode64()} |> Jason.encode!()
+    end
+
+    defp text_delta_message(text) do
+      wrap_message(%{
+        "delta" => %{"text" => text, "type" => "text_delta"},
+        "index" => 0,
+        "type" => "content_block_delta"
+      })
+    end
+
+    defp success_message, do: wrap_message(%{"type" => "content_block_start"})
 
     @exception_message %{
                          "internalServerError" => %{}
@@ -64,7 +71,7 @@ defmodule LangChain.Utils.BedrockStreamDecoderTest do
                        |> Jason.encode!()
 
     test "it passes through successfully decoded messages" do
-      stub(AwsEventstreamDecoder, :decode, fn _ -> {:ok, @success_message, ""} end)
+      stub(AwsEventstreamDecoder, :decode, fn _ -> {:ok, success_message(), ""} end)
       assert decode_stream({"", ""}) == {[%{"type" => "content_block_start"}], ""}
     end
 
@@ -72,6 +79,62 @@ defmodule LangChain.Utils.BedrockStreamDecoderTest do
       stub(AwsEventstreamDecoder, :decode, fn _ -> {:ok, @exception_message, ""} end)
       message = %{"internalServerError" => %{}, bedrock_exception: "internalServerError"}
       assert decode_stream({"", ""}) == {[message], ""}
+    end
+
+    test "it decodes multiple messages and returns chunks in the correct order" do
+      AwsEventstreamDecoder
+      |> expect(:decode, fn _ -> {:ok, text_delta_message("Color"), "remaining"} end)
+      |> expect(:decode, fn _ -> {:ok, text_delta_message("ful Thr"), "remaining"} end)
+      |> expect(:decode, fn _ -> {:ok, text_delta_message("eads"), ""} end)
+
+      {chunks, buffer} = decode_stream({"", ""})
+      assert chunks |> Enum.map(& &1["delta"]["text"]) == ["Color", "ful Thr", "eads"]
+
+      assert chunks |> Enum.map(& &1["type"]) == [
+               "content_block_delta",
+               "content_block_delta",
+               "content_block_delta"
+             ]
+
+      assert buffer == ""
+    end
+
+    test "it decodes multiple messages and returns chunks in the correct order when an error is returned" do
+      AwsEventstreamDecoder
+      |> expect(:decode, fn _ -> {:ok, text_delta_message("Color"), "remaining"} end)
+      |> expect(:decode, fn _ -> {:ok, text_delta_message("ful Thr"), "remaining"} end)
+      |> expect(:decode, fn _ -> {:ok, text_delta_message("eads"), "last remaining"} end)
+      |> expect(:decode, fn _ -> {:error, "error"} end)
+
+      {chunks, buffer} = decode_stream({"", ""})
+      assert chunks |> Enum.map(& &1["delta"]["text"]) == ["Color", "ful Thr", "eads"]
+
+      assert chunks |> Enum.map(& &1["type"]) == [
+               "content_block_delta",
+               "content_block_delta",
+               "content_block_delta"
+             ]
+
+      assert buffer == "last remaining"
+    end
+
+    test "it decodes multiple messages and returns chunks in the correct order when an incomplete message is returned" do
+      AwsEventstreamDecoder
+      |> expect(:decode, fn _ -> {:ok, text_delta_message("Color"), "remaining"} end)
+      |> expect(:decode, fn _ -> {:ok, text_delta_message("ful Thr"), "remaining"} end)
+      |> expect(:decode, fn _ -> {:ok, text_delta_message("eads"), "last remaining"} end)
+      |> expect(:decode, fn _ -> {:incomplete_message, "incomplete"} end)
+
+      {chunks, buffer} = decode_stream({"", ""})
+      assert chunks |> Enum.map(& &1["delta"]["text"]) == ["Color", "ful Thr", "eads"]
+
+      assert chunks |> Enum.map(& &1["type"]) == [
+               "content_block_delta",
+               "content_block_delta",
+               "content_block_delta"
+             ]
+
+      assert buffer == "last remaining"
     end
   end
 
