@@ -23,7 +23,7 @@ defmodule LangChain.Function do
     error"}` or just plain `"text response"`, which is returned to the LLM.
   * `async` - Boolean value that flags if this can function can be executed
     asynchronously, potentially concurrently with other calls to the same
-    function. Defaults to `true`.
+    function. Defaults to `false`.
   * `options` - A Keyword list of options that can be passed to the LLM. For
     example, this can be used for passing caching config to Anthropic.
 
