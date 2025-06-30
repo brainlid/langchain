@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.4.0-rc.1
+
+- ChatAnthropic - `cache_control` is more fully implemented
+- ChatOpen - token usage on streamed deltas is supported. They don't send the usage metadata until _after_ last delta. This is why the `apply_delta/2` change was made. If we "apply" and process the finished delta as soon as completed, then we lose the ability to associate the token usage with it.
+
+- `LangChain.Chains.LLMChain.apply_delta/2` was renamed to `merge_delta/2` and does not "apply" the finished delta to the chain. The `apply_deltas/2` (plural), takes a list of deltas and applies them to the chain, finishing as a message when complete.
+
+- `LangChain.Function` can now return a `ToolResult` directly. This allows for maximum control and enables the ability to use `cache_control` on the results as well.
+
+- Added `LLMChain.drop_delta/1`
+
+- Recommend approach of dropping deltas once the fully completed message is received. At least, if you care about tracking the token usage with it and you're using OpenAI.
+
+- `Function.async` was changed to be `false` by default. Previously it was true. Being true by default can create difficult to diagnose bugs and the async option wasn't a choice and isn't visible in the options. Where it is desired, set it to `true`.
+
 ## v0.4.0-rc.0
 
 This includes several breaking changes:

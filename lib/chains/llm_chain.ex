@@ -847,20 +847,49 @@ defmodule LangChain.Chains.LLMChain do
   end
 
   @doc """
-  Apply a received MessageDelta struct to the chain. The LLMChain tracks the
-  current merged MessageDelta state. When the final delta is received that
+  Apply a list of deltas to the chain. When the final delta is received that
   completes the message, the LLMChain is updated to clear the `delta` and the
   `last_message` and list of messages are updated.
   """
-  @spec apply_delta(t(), MessageDelta.t() | {:error, LangChainError.t()}) :: t()
-  def apply_delta(%LLMChain{} = chain, %MessageDelta{} = new_delta) do
+  @spec apply_deltas(t(), list()) :: t()
+  def apply_deltas(%LLMChain{} = chain, deltas) when is_list(deltas) do
+    deltas
+    |> List.flatten()
+    |> Enum.reduce(chain, fn d, acc -> merge_delta(acc, d) end)
+    |> delta_to_message_when_complete()
+  end
+
+  @doc """
+  Merge a received MessageDelta struct into the chain's current delta. The
+  LLMChain tracks the current merged MessageDelta state. This is able to merge
+  in TokenUsage received after the final delta.
+  """
+  @spec merge_delta(t(), MessageDelta.t() | TokenUsage.t() | {:error, LangChainError.t()}) :: t()
+  def merge_delta(%LLMChain{} = chain, %MessageDelta{} = new_delta) do
     merged = MessageDelta.merge_delta(chain.delta, new_delta)
-    delta_to_message_when_complete(%LLMChain{chain | delta: merged})
+    %LLMChain{chain | delta: merged}
+  end
+
+  def merge_delta(%LLMChain{} = chain, %TokenUsage{} = usage) do
+    # OpenAI returns the token usage in a separate chunk after the last delta. We want to merge it into the final delta.
+    fake_delta = MessageDelta.new!(%{role: :assistant, metadata: %{usage: usage}})
+
+    merged = MessageDelta.merge_delta(chain.delta, fake_delta)
+    %LLMChain{chain | delta: merged}
   end
 
   # Handle when the server is overloaded and cancelled the stream on the server side.
-  def apply_delta(%LLMChain{} = chain, {:error, %LangChainError{type: "overloaded"}}) do
+  def merge_delta(%LLMChain{} = chain, {:error, %LangChainError{type: "overloaded"}}) do
     cancel_delta(chain, :cancelled)
+  end
+
+  @doc """
+  Drop the current delta. This is useful when needing to ignore a partial or
+  complete delta because the message may be handled in a different way.
+  """
+  @spec drop_delta(t()) :: t()
+  def drop_delta(%LLMChain{} = chain) do
+    %LLMChain{chain | delta: nil}
   end
 
   @doc """
@@ -889,16 +918,6 @@ defmodule LangChain.Chains.LLMChain do
   def delta_to_message_when_complete(%LLMChain{} = chain) do
     # either no delta or incomplete
     chain
-  end
-
-  @doc """
-  Apply a list of deltas to the chain.
-  """
-  @spec apply_deltas(t(), list()) :: t()
-  def apply_deltas(%LLMChain{} = chain, deltas) when is_list(deltas) do
-    deltas
-    |> List.flatten()
-    |> Enum.reduce(chain, fn d, acc -> apply_delta(acc, d) end)
   end
 
   # Process an assistant message sequentially through each message processor.
@@ -1158,6 +1177,17 @@ defmodule LangChain.Chains.LLMChain do
         if verbose, do: IO.inspect(function.name, label: "EXECUTING FUNCTION")
 
         case Function.execute(function, call.arguments, context) do
+          {:ok, %ToolResult{} = result} ->
+            # allow the tool execution to return a ToolResult. Just set the
+            # tool_call_id and fallback settings for name and display_text. This
+            # allows the tool to explicitly set the options for the ToolResult.
+            %{
+              result
+              | tool_call_id: call.call_id,
+                name: result.name || function.name,
+                display_text: result.display_text || function.display_text
+            }
+
           {:ok, llm_result, processed_result} ->
             if verbose, do: IO.inspect(processed_result, label: "FUNCTION PROCESSED RESULT")
             # successful execution and storage of processed_content.
@@ -1264,6 +1294,121 @@ defmodule LangChain.Chains.LLMChain do
   def add_callback(%LLMChain{callbacks: callbacks} = chain, additional_callback) do
     %LLMChain{chain | callbacks: callbacks ++ [additional_callback]}
   end
+
+  # @doc """
+  # Run the chain until a specific tool is called, with built-in safety mechanisms.
+
+  # This function repeatedly executes the chain until:
+  # 1. The specified tool is successfully called (success case)
+  # 2. Maximum iterations are reached (safety limit)
+  # 3. Too many consecutive empty responses are detected (failure detection)
+  # 4. An error occurs (error case)
+
+  # The function includes sophisticated failure detection using `Message.is_empty?/1`
+  # to identify when the LLM gets "stuck" and starts returning empty responses,
+  # which is a common failure pattern with some models (particularly Anthropic).
+
+  # ## Parameters
+
+  # - `chain` - The LLMChain to run
+  # - `tool_name` - The name of the tool to wait for
+  # - `opts` - Keyword options:
+  #   - `max_runs` - Maximum iterations before giving up (default: 25)
+  #   - `max_consecutive_empty` - Maximum consecutive empty responses before failing (default: 3)
+  #   - `with_fallbacks` - List of fallback models to try on error
+  #   - `before_fallback` - Function to modify chain before using fallback
+
+  # ## Returns
+
+  # - `{:ok, updated_chain, tool_result}` - Success, tool was called
+  # - `{:error, updated_chain, reason}` - Failure with reason
+
+  # ## Examples
+
+  #     # Basic usage
+  #     {:ok, chain, result} =
+  #       LLMChain.run_until_tool_used(chain, "final_summary")
+
+  #     # With custom limits and fallbacks
+  #     {:ok, chain, result} =
+  #       LLMChain.run_until_tool_used(chain, "final_summary",
+  #         max_runs: 50,
+  #         max_consecutive_empty: 5,
+  #         with_fallbacks: [fallback_model]
+  #       )
+
+  # """
+  # @spec run_until_tool_used(t(), String.t(), Keyword.t()) ::
+  #         {:ok, t(), ToolResult.t()} | {:error, t(), String.t()}
+  # def run_until_tool_used(chain, tool_name, opts \\ [])
+
+  # def run_until_tool_used(%LLMChain{} = chain, tool_name, opts) when is_binary(tool_name) do
+  #   max_runs = Keyword.get(opts, :max_runs, 25)
+  #   max_consecutive_empty = Keyword.get(opts, :max_consecutive_empty, 3)
+
+  #   # Extract fallback options for run/2
+  #   run_opts = Keyword.take(opts, [:with_fallbacks, :before_fallback])
+
+  #   run_until_tool_used_loop(chain, tool_name, max_runs, max_consecutive_empty, 0, 0, run_opts)
+  # end
+
+  # # Private function implementing the run loop with safety checks
+  # defp run_until_tool_used_loop(chain, tool_name, max_runs, max_consecutive_empty, iteration, consecutive_empty_count, run_opts) do
+  #   # Check iteration limit
+  #   if iteration >= max_runs do
+  #     {:error, chain, "Exceeded maximum iterations (#{max_runs}). The task may be stuck in a loop or unable to complete."}
+  #   else
+  #     # Check consecutive empty responses
+  #     if consecutive_empty_count >= max_consecutive_empty do
+  #       {:error, chain, "Detected #{max_consecutive_empty} consecutive empty responses. The task appears to be stuck."}
+  #     else
+  #       # Run one iteration
+  #       case run(chain, Keyword.put(run_opts, :mode, :while_needs_response)) do
+  #         {:ok, updated_chain} ->
+  #           # Check if we got the target tool result
+  #           case find_tool_result_by_name(updated_chain, tool_name) do
+  #             %ToolResult{} = tool_result ->
+  #               # Success! Found the target tool
+  #               {:ok, updated_chain, tool_result}
+
+  #             nil ->
+  #               # Target tool not found, check if last message is empty
+  #               new_consecutive_empty_count =
+  #                 if updated_chain.last_message && Message.is_empty?(updated_chain.last_message) do
+  #                   consecutive_empty_count + 1
+  #                 else
+  #                   0  # Reset counter on non-empty message
+  #                 end
+
+  #               # Continue the loop
+  #               run_until_tool_used_loop(
+  #                 updated_chain,
+  #                 tool_name,
+  #                 max_runs,
+  #                 max_consecutive_empty,
+  #                 iteration + 1,
+  #                 new_consecutive_empty_count,
+  #                 run_opts
+  #               )
+  #           end
+
+  #         {:error, updated_chain, %LangChainError{} = error} ->
+  #           {:error, updated_chain, error.message}
+
+  #         {:error, updated_chain, error} ->
+  #           {:error, updated_chain, "Execution failed: #{inspect(error)}"}
+  #       end
+  #     end
+  #   end
+  # end
+
+  # # Helper function to find a tool result by name in the chain's last message
+  # defp find_tool_result_by_name(%LLMChain{last_message: %Message{role: :tool, tool_results: tool_results}}, tool_name)
+  #      when is_list(tool_results) do
+  #   Enum.find(tool_results, fn %ToolResult{name: name} -> name == tool_name end)
+  # end
+
+  # defp find_tool_result_by_name(_chain, _tool_name), do: nil
 
   # a pipe-friendly execution of callbacks that returns the chain
   defp fire_callback_and_return(%LLMChain{} = chain, callback_name, additional_arguments)

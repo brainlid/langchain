@@ -21,6 +21,7 @@ defmodule LangChain.Message.ToolResult do
   require Logger
   alias __MODULE__
   alias LangChain.LangChainError
+  alias LangChain.Utils
 
   @primary_key false
   embedded_schema do
@@ -31,7 +32,7 @@ defmodule LangChain.Message.ToolResult do
     # the name of the tool that was run.
     field :name, :string
     # the content returned to the LLM/AI.
-    field :content, :string
+    field :content, :any, virtual: true
     # optional stored results of tool result
     field :processed_content, :any, virtual: true
     # Text to display in a UI for the result. Optional.
@@ -64,6 +65,7 @@ defmodule LangChain.Message.ToolResult do
   def new(attrs \\ %{}) do
     %ToolResult{}
     |> cast(attrs, @create_fields)
+    |> Utils.migrate_to_content_parts()
     |> common_validations()
     |> apply_action(:insert)
   end

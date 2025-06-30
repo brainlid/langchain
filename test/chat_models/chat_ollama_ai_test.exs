@@ -327,7 +327,7 @@ defmodule ChatModels.ChatOllamaAITest do
           type: :function,
           tool_call_id: "call_123",
           name: "give_greeting",
-          content: "Hello, world!",
+          content: [ContentPart.text!("Hello, world!")],
           display_text: nil,
           is_error: false
         })
@@ -351,7 +351,7 @@ defmodule ChatModels.ChatOllamaAITest do
     test "for nested messages, handle them all", %{ollama_ai: ollama_ai} do
       messages = [
         %LangChain.Message{
-          content: "Where is the hairbrush located?",
+          content: [ContentPart.text!("Where is the hairbrush located?")],
           processed_content: nil,
           index: nil,
           status: :complete,
@@ -392,14 +392,14 @@ defmodule ChatModels.ChatOllamaAITest do
               type: :function,
               tool_call_id: "54836033-8394-4a97-abc5-34c2d4b9fdbf",
               name: "custom",
-              content: "drawer",
+              content: [ContentPart.text!("drawer")],
               display_text: nil,
               is_error: false
             }
           ]
         },
         %LangChain.Message{
-          content: "The hairbrush is located in the drawer.",
+          content: [ContentPart.text!("The hairbrush is located in the drawer.")],
           processed_content: nil,
           index: nil,
           status: :complete,

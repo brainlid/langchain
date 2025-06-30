@@ -6,6 +6,7 @@ defmodule LangChain.Utils do
   alias Ecto.Changeset
   alias LangChain.Callbacks
   alias LangChain.Message
+  alias LangChain.Message.ContentPart
   alias LangChain.MessageDelta
   alias LangChain.TokenUsage
   require Logger
@@ -133,15 +134,17 @@ defmodule LangChain.Utils do
           data :: callback_data() | [callback_data()]
         ) :: :ok | no_return()
 
-  # fire a set of callbacks when receiving a list
-  def fire_streamed_callback(model, data) when is_list(data) do
-    # Execute callback handler for each received data element
-    data
-    |> List.flatten()
-    |> Enum.each(fn item ->
-      fire_streamed_callback(model, item)
-    end)
-  end
+  # # fire a set of callbacks when receiving a list
+  # def fire_streamed_callback(model, data) when is_list(data) do
+  #   # Execute callback handler for each received data element
+  #   merged_data =
+  #     data
+  #     |> List.flatten()
+  #     |> MessageDelta.merge_deltas()
+  #     |> IO.inspect(label: "MERGED DATA TO SEND VIA CALLBACK")
+
+  #   fire_streamed_callback(model, merged_data)
+  # end
 
   def fire_streamed_callback(model, %MessageDelta{} = delta) do
     # Execute callback handler for single received delta element
@@ -150,6 +153,32 @@ defmodule LangChain.Utils do
 
   # received unexpected data in the callback, do nothing.
   def fire_streamed_callback(_model, _other), do: :ok
+
+  # # Process a list of data items, optimizing MessageDeltas by merging them
+  # # within a single chunk while processing other data types individually
+  # defp process_chunked_data(data_list, model) do
+  #   # Separate MessageDeltas from other data types
+  #   {message_deltas, other_items} =
+  #     Enum.split_with(data_list, &match?(%MessageDelta{}, &1))
+
+  #   # Process non-MessageDelta items individually (TokenUsage, errors, etc.)
+  #   Enum.each(other_items, fn item ->
+  #     fire_streamed_callback(model, item)
+  #   end)
+
+  #   # Merge and process MessageDeltas if we have any
+  #   case message_deltas do
+  #     [] ->
+  #       :ok
+  #     [single_delta] ->
+  #       # Single delta, fire callback directly
+  #       Callbacks.fire(model.callbacks, :on_llm_new_delta, [single_delta])
+  #     multiple_deltas when is_list(multiple_deltas) ->
+  #       # Multiple deltas, merge them first then fire single callback
+  #       merged_delta = MessageDelta.merge_deltas(multiple_deltas)
+  #       Callbacks.fire(model.callbacks, :on_llm_new_delta, [merged_delta])
+  #   end
+  # end
 
   @doc """
   Creates and returns an anonymous function to handle the streaming response
@@ -183,40 +212,53 @@ defmodule LangChain.Utils do
         # response struct and pass that in with the data for decode.
         buffered = Req.Response.get_private(response, :lang_incomplete, "")
 
+        if model.verbose_api do
+          IO.inspect(raw_data, label: "RCVD RAW CHUNK")
+        end
+
         # decode the received stream data
         {parsed_data, incomplete} =
           decode_stream_fn.({raw_data, buffered})
 
-        # transform what was fully received into structs
+        if model.verbose_api do
+          IO.inspect(parsed_data, label: "READY TO PROCESS")
+        end
+
+        # transform what was fully received into MessageDelta structs, that are
+        # filtered, then merged together to be processed
         parsed_data =
           parsed_data
           |> Enum.map(transform_data_fn)
           |> Enum.reject(&(&1 == :skip))
+          |> List.flatten()
+          |> MessageDelta.merge_deltas()
 
-        # execute the callback function for each MessageDelta and an optional
+
+
+          #TODO: This is merging them for the callback, but leaving them unmerged for the body result, which will have to be merged later anyway. Merge parsed_data BEFORE calling the callback and return the merged for the body?
+
+        # execute the callback function for the MessageDeltas and an optional
         # TokenUsage
         fire_streamed_callback(model, parsed_data)
         old_body = if response.body == "", do: [], else: response.body
 
         # Returns %Req.Response{} where the body contains ALL the stream delta
-        # chunks converted to MessageDelta structs. The body is a list of lists like this...
+        # chunks converted to MessageDelta structs. The body is a list of deltas like this...
         #
         # body: [
-        #         [
-        #           %LangChain.MessageDelta{
-        #             content: nil,
-        #             index: 0,
-        #             function_name: nil,
-        #             role: :assistant,
-        #             arguments: nil,
-        #             complete: false
-        #           }
-        #         ],
+        #         %LangChain.MessageDelta{
+        #           content: nil,
+        #           index: 0,
+        #           function_name: nil,
+        #           role: :assistant,
+        #           arguments: nil,
+        #           complete: false
+        #         },
         #         ...
         #       ]
         #
         # The reason for the inner list is for each entry in the "n" choices. By default only 1.
-        updated_response = %{response | body: old_body ++ parsed_data}
+        updated_response = %{response | body: old_body ++ [parsed_data]}
         # write any incomplete portion to the response's private data for when
         # more data is received.
         updated_response =
@@ -367,6 +409,32 @@ defmodule LangChain.Utils do
       Ecto.Changeset.put_change(changeset, field, val)
     else
       changeset
+    end
+  end
+
+  @doc """
+  Migrate a string content to use `LangChain.Message.ContentPart`. This is for
+  backward compatibility with models that don't yet support ContentPart while
+  providing a more consistent API.
+
+  This can be used with Message contents and ToolResult contents.
+  """
+  @spec migrate_to_content_parts(Ecto.Changeset.t()) :: Ecto.Changeset.t()
+  def migrate_to_content_parts(%Ecto.Changeset{} = changeset) do
+    case Changeset.fetch_change(changeset, :content) do
+      {:ok, content} when is_binary(content) ->
+        Changeset.put_change(changeset, :content, [ContentPart.text!(content)])
+
+      # If a single ContentPart, wrap it in a list
+      {:ok, %ContentPart{} = part} ->
+        Changeset.put_change(changeset, :content, [part])
+
+      # Don't modify if it's already a list
+      {:ok, content} when is_list(content) ->
+        changeset
+
+      _ ->
+        changeset
     end
   end
 end

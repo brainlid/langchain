@@ -263,6 +263,15 @@ defmodule LangChain.MessageDelta do
   # Helper function to merge a content part at a specific index
   defp merge_content_part_at_index(
          %MessageDelta{} = primary,
+         %ContentPart{type: :text, content: ""} = _new_content_part,
+         _index
+       ) do
+    # Skip merging empty text content parts to avoid type conflicts
+    primary
+  end
+
+  defp merge_content_part_at_index(
+         %MessageDelta{} = primary,
          %ContentPart{} = new_content_part,
          index
        ) do

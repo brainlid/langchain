@@ -215,6 +215,15 @@ defmodule LangChain.Message.ContentPart do
 
   defp append_content(%ContentPart{} = primary, %ContentPart{content: nil}), do: primary
 
+  # When types don't match or content cannot be merged, return the primary part unchanged
+  defp append_content(%ContentPart{} = primary, %ContentPart{} = new_part) do
+    # TODO: Detect an attempted merge between incompatible content parts
+    # and log an error. Raise an exception? "Trying to merge_deltas? You may need to reset_delta after receiving the completed message."
+
+    Logger.warning("Cannot merge content parts of different types: #{inspect(primary)} and #{inspect(new_part)}")
+    primary
+  end
+
   # Merge options from content_part into primary. When text, combine the options
   # and merge in newly encountered keys.
   defp update_options(%ContentPart{} = primary, %ContentPart{options: nil}), do: primary
@@ -239,6 +248,26 @@ defmodule LangChain.Message.ContentPart do
   end
 
   defp update_options(%ContentPart{} = primary, %ContentPart{}), do: primary
+
+  @doc """
+  Sets an option on the last text part in a list of ContentParts. Returns the updated content parts.
+  """
+  @spec set_option_on_last_part([t()], atom(), any()) :: [t()]
+  def set_option_on_last_part(content_parts, option_key, option_value) do
+    content_parts
+    |> Enum.reverse()
+    |> then(fn [first | rest] ->
+      case first do
+        %ContentPart{} = part ->
+          updated_first = %{part | options: Keyword.put(part.options, option_key, option_value)}
+          [updated_first | rest]
+
+        _ ->
+          [first | rest]
+      end
+    end)
+    |> Enum.reverse()
+  end
 
   @doc """
   Helper function for easily getting plain text from a list of ContentParts.
@@ -270,5 +299,16 @@ defmodule LangChain.Message.ContentPart do
       "" -> nil
       content -> content
     end
+  end
+
+  @doc """
+  Convert "content" to a string. Content may be `nil`, a string, or a list of ContentParts.
+  """
+  @spec content_to_string(content :: String.t() | [t()] | nil) :: nil | String.t()
+  def content_to_string(nil), do: nil
+  def content_to_string(content) when is_binary(content), do: content
+
+  def content_to_string(content) when is_list(content) do
+    parts_to_string(content)
   end
 end

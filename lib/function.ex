@@ -24,6 +24,8 @@ defmodule LangChain.Function do
   * `async` - Boolean value that flags if this can function can be executed
     asynchronously, potentially concurrently with other calls to the same
     function. Defaults to `true`.
+  * `options` - A Keyword list of options that can be passed to the LLM. For
+    example, this can be used for passing caching config to Anthropic.
 
   When passing arguments from an LLM to a function, they go through a single
   `map` argument. This allows for multiple keys or named parameters.
@@ -163,6 +165,53 @@ defmodule LangChain.Function do
   Note: The LLM may issue one or more `ToolCall`s in a single assistant message.
   Each Elixir function's `ToolResult` may contain a `processed_content`.
 
+  ## Explicit ToolResult Control
+
+  For advanced use cases where you need explicit control over the `ToolResult`
+  structure or want to set LLM-specific options, your Elixir function can return
+  a fully constructed `%ToolResult{}` struct:
+
+      alias LangChain.Message.ToolResult
+
+      Function.new!(%{name: "cache_enabled_search",
+        parameters: [
+          FunctionParam.new!(%{name: "query", type: :string, required: true})
+        ],
+        function: &execute_cached_search/2
+      })
+
+      # ...
+
+      def execute_cached_search(args, _context) do
+        # Perform search operation...
+        search_results = perform_search(args["query"])
+
+        # Return an explicit ToolResult with options
+        {:ok, %ToolResult{
+          content: [
+            ContentPart.text!(%{"Found \#{length(search_results)} results", options: [cache_control: true]})
+          ],
+          processed_content: search_results
+        }}
+      end
+
+  When returning `{:ok, %ToolResult{}}`, the system will automatically merge in
+  the required `tool_call_id` from the LLM's request and provide fallback values
+  for `name` and `display_text` from the function definition if they are not
+  explicitly set on the ToolResult. All other fields like `content`,
+  `processed_content`, `options`, and `is_error` are preserved exactly as
+  specified.
+
+  This approach is particularly useful when you need to:
+
+  * Set LLM-specific options (like Anthropic's `cache_control`)
+  * Set custom error states beyond simple string responses
+  * Customize the `display_text` for the ToolResult
+  * Provide detailed metadata in the `options` field
+
+  The `options` field can contain any LLM-specific configuration that gets
+  passed through to the chat model's API conversion layer. If an LLM does not
+  support it, it will be ignored.
   """
   use Ecto.Schema
   import Ecto.Changeset
@@ -184,13 +233,15 @@ defmodule LangChain.Function do
     # field :auto_evaluate, :boolean, default: false
     field :function, :any, virtual: true
 
-    # Track if the function can be executed async. Defaults to `true`.
-    field :async, :boolean, default: true
+    # Track if the function can be executed async. Defaults to `false`.
+    field :async, :boolean, default: false
 
     # parameters_schema is a map used to express a JSONSchema structure of inputs and what's required
     field :parameters_schema, :map
     # parameters is a list of `LangChain.FunctionParam` structs.
     field :parameters, {:array, :any}, default: []
+
+    field :options, :any, virtual: true, default: []
   end
 
   @type t :: %Function{}
@@ -205,7 +256,8 @@ defmodule LangChain.Function do
     :parameters_schema,
     :parameters,
     :function,
-    :async
+    :async,
+    :options
   ]
   @required_fields [:name]
 

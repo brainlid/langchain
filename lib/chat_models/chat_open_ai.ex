@@ -96,6 +96,10 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   The OpenAI documentation instructs to provide the `stream_options` with the
   `include_usage: true` for the information to be provided.
 
+  ```elixir
+  chat = ChatOpenAI.new!(%{stream: true, stream_options: %{include_usage: true}})
+  ```
+
   The `TokenUsage` data is accumulated for `MessageDelta` structs and the final usage information will be on the `LangChain.Message`.
 
   NOTE: Of special note is that the `TokenUsage` information is returned once
@@ -817,9 +821,15 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         tools,
         retry_count
       ) do
+    raw_data = for_api(openai, messages, tools)
+
+    if openai.verbose_api do
+      IO.inspect(raw_data, label: "RAW DATA BEING SUBMITTED")
+    end
+
     Req.new(
       url: openai.endpoint,
-      json: for_api(openai, messages, tools),
+      json: raw_data,
       # required for OpenAI API
       auth: {:bearer, get_api_key(openai)},
       # required for Azure OpenAI version
@@ -831,7 +841,12 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     |> maybe_add_org_id_header()
     |> maybe_add_proj_id_header()
     |> Req.post(
-      into: Utils.handle_stream_fn(openai, &decode_stream/1, &do_process_response(openai, &1))
+      into:
+        Utils.handle_stream_fn(
+          openai,
+          &decode_stream/1,
+          &do_process_response(openai, &1)
+        )
     )
     |> case do
       {:ok, %Req.Response{body: data} = response} ->
@@ -872,7 +887,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   buffer. The function will be successively called, receiving the incomplete
   buffer data from a previous call, and assembling it to parse.
   """
-  @spec decode_stream({String.t(), String.t()}) :: {%{String.t() => any()}}
+  @spec decode_stream({String.t(), String.t()}, list()) ::
+          {%{String.t() => any()}}
   def decode_stream({raw_data, buffer}, done \\ []) do
     # Data comes back like this:
     #
@@ -937,13 +953,26 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           | MessageDelta.t()
           | [MessageDelta.t()]
           | {:error, String.t()}
-  def do_process_response(_model, %{"choices" => []}), do: :skip
+  def do_process_response(model, %{"choices" => _choices} = data) do
+    token_usage = get_token_usage(data)
 
-  def do_process_response(model, %{"choices" => choices} = data) when is_list(choices) do
-    # process each response individually. Return a list of all processed choices
-    choices
-    |> Enum.map(&do_process_response(model, &1))
-    |> Enum.map(&TokenUsage.set(&1, get_token_usage(data)))
+    case data do
+      # no choices data but got token usage.
+      %{"choices" => [], "usage" => _usage} ->
+        token_usage
+
+      # no data and no token usage. Skip.
+      %{"choices" => []} ->
+        :skip
+
+      %{"choices" => choices} ->
+        # process each response individually. Return a list of all processed
+        # choices. If we received TokenUsage, attach it to each returned item.
+        # Merging will work out later.
+        choices
+        |> Enum.map(&do_process_response(model, &1))
+        |> Enum.map(&TokenUsage.set(&1, token_usage))
+    end
   end
 
   # Full message with tool call
@@ -1173,7 +1202,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     return
   end
 
-  defp get_token_usage(%{"usage" => usage} = _response_body) do
+  defp get_token_usage(%{"usage" => usage} = _response_body) when is_map(usage) do
     # extract out the reported response token usage
     #
     #  https://platform.openai.com/docs/api-reference/chat/object#chat/object-usage

@@ -1010,6 +1010,59 @@ defmodule LangChain.MessageDeltaTest do
                }
              }
     end
+
+    test "merges previously merged deltas and includes token usage" do
+      deltas = [
+        %LangChain.MessageDelta{
+          content: nil,
+          merged_content: [
+            %LangChain.Message.ContentPart{type: :text, content: " tasks", options: []}
+          ],
+          status: :incomplete,
+          index: 1,
+          role: :assistant,
+          tool_calls: nil,
+          metadata: nil
+        },
+        %LangChain.MessageDelta{
+          content: nil,
+          merged_content: [
+            %LangChain.Message.ContentPart{
+              type: :text,
+              content: " I mentioned?",
+              options: []
+            }
+          ],
+          status: :incomplete,
+          index: 1,
+          role: :assistant,
+          tool_calls: nil,
+          metadata: nil
+        },
+        %LangChain.MessageDelta{
+          content: nil,
+          merged_content: [],
+          status: :complete,
+          index: nil,
+          role: :assistant,
+          tool_calls: nil,
+          metadata: %{
+            usage: %LangChain.TokenUsage{
+              input: nil,
+              output: 234,
+              raw: %{"output_tokens" => 234}
+            }
+          }
+        }
+
+      ]
+
+      combined = MessageDelta.merge_deltas(deltas)
+
+      #TODO: The problem must be the delta that is on the chain. Wrap the merge call in a try..catch and figure out what the condition is.
+
+      assert combined == "YEAY!!"
+    end
   end
 
   describe "to_message/1" do

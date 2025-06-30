@@ -335,19 +335,19 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
                    "content" => [
                      %{"text" => "That was a lot of stuff.", "type" => "text"},
                      %{
-                       "content" => "sudo hi 1",
+                       "content" => [%{"text" => "sudo hi 1", "type" => "text"}],
                        "is_error" => false,
                        "tool_use_id" => "call_123",
                        "type" => "tool_result"
                      },
                      %{
-                       "content" => "sudo hi 2",
+                       "content" => [%{"text" => "sudo hi 2", "type" => "text"}],
                        "is_error" => false,
                        "tool_use_id" => "call_234",
                        "type" => "tool_result"
                      },
                      %{
-                       "content" => "sudo hi 3",
+                       "content" => [%{"text" => "sudo hi 3", "type" => "text"}],
                        "is_error" => false,
                        "tool_use_id" => "call_345",
                        "type" => "tool_result"
@@ -2042,7 +2042,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
           %{
             "type" => "tool_result",
             "tool_use_id" => "toolu_123",
-            "content" => "tool answer",
+            "content" => [%{"text" => "tool answer", "type" => "text"}],
             "is_error" => false
           }
         ]
@@ -2063,7 +2063,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
           %{
             "type" => "tool_result",
             "tool_use_id" => "toolu_234",
-            "content" => "stuff failed",
+            "content" => [%{"text" => "stuff failed", "type" => "text"}],
             "is_error" => true
           }
         ]
@@ -2072,12 +2072,14 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       assert expected == ChatAnthropic.message_for_api(tool_error_result)
     end
 
-    test "tool results support prompt caching" do
+    test "tool result supports prompt caching in the result options" do
+      # NOTE: This is legacy support isn't listed in the current API docs.
       tool_success_result =
         Message.new_tool_result!(%{
           tool_results: [
             ToolResult.new!(%{
               tool_call_id: "toolu_123",
+              # content is a plain string
               content: "tool answer",
               options: [cache_control: true]
             })
@@ -2090,7 +2092,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
           %{
             "type" => "tool_result",
             "tool_use_id" => "toolu_123",
-            "content" => "tool answer",
+            "content" => [%{"text" => "tool answer", "type" => "text"}],
             "is_error" => false,
             "cache_control" => %{"type" => "ephemeral"}
           }
@@ -2098,15 +2100,15 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       }
 
       assert expected == ChatAnthropic.message_for_api(tool_success_result)
+    end
 
-      tool_error_result =
+    test "tool result supports prompt caching in content parts" do
+      tool_success_result =
         Message.new_tool_result!(%{
           tool_results: [
             ToolResult.new!(%{
-              tool_call_id: "toolu_234",
-              content: "stuff failed",
-              is_error: true,
-              options: [cache_control: true]
+              tool_call_id: "toolu_123",
+              content: [ContentPart.text!("tool answer", cache_control: true)]
             })
           ]
         })
@@ -2116,15 +2118,20 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
         "content" => [
           %{
             "type" => "tool_result",
-            "tool_use_id" => "toolu_234",
-            "content" => "stuff failed",
-            "is_error" => true,
-            "cache_control" => %{"type" => "ephemeral"}
+            "tool_use_id" => "toolu_123",
+            "content" => [
+              %{
+                "text" => "tool answer",
+                "type" => "text",
+                "cache_control" => %{"type" => "ephemeral"}
+              }
+            ],
+            "is_error" => false
           }
         ]
       }
 
-      assert expected == ChatAnthropic.message_for_api(tool_error_result)
+      assert expected == ChatAnthropic.message_for_api(tool_success_result)
     end
   end
 
@@ -2204,7 +2211,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
     end
   end
 
-  describe "for_api/1" do
+  describe "function_for_api/1" do
     test "turns a function definition into the expected JSON format" do
       # with no description
       tool =
@@ -2214,7 +2221,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
           function: fn _args, _context -> :ok end
         })
 
-      output = ChatAnthropic.for_api(tool)
+      output = ChatAnthropic.function_for_api(tool)
 
       assert output == %{
                "name" => "do_something",
@@ -2230,7 +2237,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
           function: fn _args, _context -> :ok end
         })
 
-      output = ChatAnthropic.for_api(tool)
+      output = ChatAnthropic.function_for_api(tool)
 
       assert output == %{
                "name" => "do_something",
@@ -2257,7 +2264,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
           function: fn _args, _context -> :ok end
         })
 
-      output = ChatAnthropic.for_api(tool)
+      output = ChatAnthropic.function_for_api(tool)
 
       assert output == %{
                "name" => "do_something",
@@ -2279,55 +2286,29 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
              }
     end
 
-    test "turns a tool_call into expected JSON format" do
-      call = ToolCall.new!(%{call_id: "toolu_123", name: "greet", arguments: %{"name" => "John"}})
+    test "supports cache_control on the function options" do
+      tool =
+        Function.new!(%{
+          name: "do_something",
+          parameters: [],
+          function: fn _args, _context -> :ok end,
+          options: [cache_control: true]
+        })
 
-      json = ChatAnthropic.for_api(call)
+      output = ChatAnthropic.function_for_api(tool)
 
-      expected = %{
-        "type" => "tool_use",
-        "id" => "toolu_123",
-        "name" => "greet",
-        "input" => %{"name" => "John"}
-      }
-
-      assert json == expected
-    end
-
-    test "turns a tool result into expected JSON format" do
-      tool_success_result = ToolResult.new!(%{tool_call_id: "toolu_123", content: "tool answer"})
-
-      json = ChatAnthropic.for_api(tool_success_result)
-
-      expected = %{
-        "type" => "tool_result",
-        "tool_use_id" => "toolu_123",
-        "content" => "tool answer",
-        "is_error" => false
-      }
-
-      assert json == expected
-
-      tool_error_result =
-        ToolResult.new!(%{tool_call_id: "toolu_234", content: "stuff failed", is_error: true})
-
-      json = ChatAnthropic.for_api(tool_error_result)
-
-      expected = %{
-        "type" => "tool_result",
-        "tool_use_id" => "toolu_234",
-        "content" => "stuff failed",
-        "is_error" => true
-      }
-
-      assert json == expected
+      assert output == %{
+               "name" => "do_something",
+               "input_schema" => %{"properties" => %{}, "type" => "object"},
+               "cache_control" => %{"type" => "ephemeral"}
+             }
     end
 
     test "tools work with minimal definition and no parameters" do
       {:ok, fun} =
         Function.new(%{name: "hello_world", function: &hello_world/2})
 
-      result = ChatAnthropic.for_api(fun)
+      result = ChatAnthropic.function_for_api(fun)
 
       assert result == %{
                "name" => "hello_world",
@@ -2359,13 +2340,59 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
           function: fn _args, _context -> "Hi" end
         })
 
-      result = ChatAnthropic.for_api(fun)
+      result = ChatAnthropic.function_for_api(fun)
 
       assert result == %{
                "name" => "say_hi",
                "description" => "Provide a friendly greeting.",
                "input_schema" => params_def
              }
+    end
+  end
+
+  describe "for_api/1" do
+    test "turns a tool_call into expected JSON format" do
+      call = ToolCall.new!(%{call_id: "toolu_123", name: "greet", arguments: %{"name" => "John"}})
+
+      json = ChatAnthropic.for_api(call)
+
+      expected = %{
+        "type" => "tool_use",
+        "id" => "toolu_123",
+        "name" => "greet",
+        "input" => %{"name" => "John"}
+      }
+
+      assert json == expected
+    end
+
+    test "turns a tool result into expected JSON format" do
+      tool_success_result = ToolResult.new!(%{tool_call_id: "toolu_123", content: "tool answer"})
+
+      json = ChatAnthropic.for_api(tool_success_result)
+
+      expected = %{
+        "type" => "tool_result",
+        "tool_use_id" => "toolu_123",
+        "content" => [%{"text" => "tool answer", "type" => "text"}],
+        "is_error" => false
+      }
+
+      assert json == expected
+
+      tool_error_result =
+        ToolResult.new!(%{tool_call_id: "toolu_234", content: "stuff failed", is_error: true})
+
+      json = ChatAnthropic.for_api(tool_error_result)
+
+      expected = %{
+        "type" => "tool_result",
+        "tool_use_id" => "toolu_234",
+        "content" => [%{"text" => "stuff failed", "type" => "text"}],
+        "is_error" => true
+      }
+
+      assert json == expected
     end
   end
 
@@ -2598,7 +2625,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 
       # has the result from the function execution
       [tool_result] = updated_chain.last_message.tool_results
-      assert tool_result.content == "SUCCESS"
+      assert tool_result.content == [ContentPart.text!("SUCCESS")]
     end
 
     describe "#{BedrockHelpers.prefix_for(api)} works within a chain" do
