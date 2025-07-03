@@ -371,7 +371,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
 
         {:error, %Jason.DecodeError{}} ->
           # assume the result is intended to be a string and return it as-is
-          %{result: result.content}
+          %{"result" => result.content}
       end
 
     # There is no explanation for why they want it nested like this. Odd.
