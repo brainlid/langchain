@@ -2,7 +2,7 @@
 
 ```elixir
 Mix.install([
-  {:langchain, "~> 0.3.0"},
+  {:langchain, "~> 0.4.0-rc.1"},
   {:kino, "~> 0.12.0"}
 ])
 ```
@@ -17,7 +17,7 @@ This is interactively available as a Livebook notebook named [`notebooks/getting
 
 Let's build the simplest full LLMChain example so we can see how to make a call to ChatGPT from our Elixir application.
 
-**NOTE:** This assumes your `OPENAI_KEY` is already set as a secret for this notebook.
+**NOTE:** This assumes your `OPENAI_API_KEY` is already set as a secret for this notebook.
 
 ```elixir
 Application.put_env(:langchain, :openai_key, System.fetch_env!("LB_OPENAI_API_KEY"))
@@ -27,6 +27,7 @@ Application.put_env(:langchain, :openai_key, System.fetch_env!("LB_OPENAI_API_KE
 alias LangChain.Chains.LLMChain
 alias LangChain.ChatModels.ChatOpenAI
 alias LangChain.Message
+alias LangChain.Message.ContentPart
 
 {:ok, updated_chain} =
   %{llm: ChatOpenAI.new!(%{model: "gpt-4o"})}
@@ -34,7 +35,7 @@ alias LangChain.Message
   |> LLMChain.add_message(Message.new_user!("Testing, testing!"))
   |> LLMChain.run()
 
-updated_chain.last_message.content
+ContentPart.content_to_string(updated_chain.last_message.content)
 ```
 
 Nice! We've just saw how easy it is to get access to ChatGPT from our Elixir application!
@@ -59,7 +60,7 @@ Let's create a system message followed by a user message.
   ])
   |> LLMChain.run()
 
-updated_chain.last_message.content
+ContentPart.content_to_string(updated_chain.last_message.content)
 ```
 
 Here's the answer it gave me when I ran it:
@@ -82,9 +83,12 @@ The `stream: true` setting belongs to the `%ChatOpenAI{}` struct that setups up 
 alias LangChain.MessageDelta
 
 handler = %{
-  on_llm_new_delta: fn _model, %MessageDelta{} = data ->
-    # we received a piece of data
-    IO.write(data.content)
+  on_llm_new_delta: fn _model, deltas ->
+    # we received one or more deltas
+    Enum.each(deltas, fn delta ->
+      delta_text = ContentPart.content_to_string(delta.content)
+      IO.write(delta_text)
+    end)
   end,
   on_message_processed: fn _chain, %Message{} = data ->
     # the message was assembled and is processed
@@ -108,7 +112,7 @@ handler = %{
   |> LLMChain.add_callback(handler)
   |> LLMChain.run()
 
-updated_chain.last_message.content
+ContentPart.content_to_string(updated_chain.last_message.content)
 # streamed
 # ==> Washington D.C. stands,
 # ... Monuments reflect history,
@@ -125,4 +129,4 @@ Finally, once the full message is received, the chain's `on_message_processed` c
 
 With the basics covered, you're ready to start integrating an LLM into your Elixir application! Check out other notebooks for more specific examples and other ways to use it.
 
-<!-- livebook:{"offset":4654,"stamp":{"token":"XCP.i78jbBuPatFHM44quDBAU4hgc6ay4m6vFYa2oeCvONoMt0BoNyGTfJYcVJQVQuY1rU0KY3XceHNz07WamDRWUW60TxM82sMwVt99AzMKnXbiI-GAzL4fJhKlGsVBAX0NB0zACWWvoFi4eVu2RsMi","version":2}} -->
+<!-- livebook:{"offset":4886,"stamp":{"token":"XCP.nYx_4NnltReCdvU3g0iFlGj1lVssnKapir5t4YKvk9FUfj98urewBX82o5POksR6Hd8iLg7fjl_ehXv5EOeRlH74egWVnaJbJuG9WRdnTQ5OUUvSz6fWQZ8","version":2}} -->
