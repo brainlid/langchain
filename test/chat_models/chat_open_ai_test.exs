@@ -1,6 +1,7 @@
 defmodule LangChain.ChatModels.ChatOpenAITest do
   use LangChain.BaseCase
   import LangChain.Fixtures
+  import LangChain.TestingHelpers
 
   doctest LangChain.ChatModels.ChatOpenAI
   alias LangChain.ChatModels.ChatOpenAI
@@ -12,6 +13,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
   alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult
+  alias LangChain.Chains.LLMChain
 
   @test_model "gpt-4o-mini-2024-07-18"
   @gpt4 "gpt-4-1106-preview"
@@ -1060,47 +1062,6 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     end
 
     @tag live_call: true, live_open_ai: true
-    test "executes callback function when data is streamed" do
-      handler = %{
-        on_llm_new_delta: fn %MessageDelta{} = delta ->
-          send(self(), {:message_delta, delta})
-        end
-      }
-
-      # https://js.langchain.com/docs/modules/models/chat/
-      chat = ChatOpenAI.new!(%{seed: 0, temperature: 1, stream: true})
-      chat = %ChatOpenAI{chat | callbacks: [handler]}
-
-      {:ok, _post_results} =
-        ChatOpenAI.call(
-          chat,
-          [
-            Message.new_user!("Return the exact response 'Hi'.")
-          ],
-          []
-        )
-
-      # we expect to receive the response over 3 delta messages
-      assert_receive {:message_delta, delta_1}, 500
-      assert_receive {:message_delta, delta_2}, 500
-      assert_receive {:message_delta, delta_3}, 500
-
-      # IO.inspect(delta_1)
-      # IO.inspect(delta_2)
-      # IO.inspect(delta_3)
-
-      merged =
-        delta_1
-        |> MessageDelta.merge_delta(delta_2)
-        |> MessageDelta.merge_delta(delta_3)
-
-      assert merged.role == :assistant
-      assert [%ContentPart{}] = merged.merged_content
-      assert ContentPart.parts_to_string(merged.merged_content) =~ "Hi"
-      assert merged.status == :complete
-    end
-
-    @tag live_call: true, live_open_ai: true
     test "executes callback function when data is NOT streamed" do
       handler = %{
         on_llm_new_message: fn %Message{} = new_message ->
@@ -1174,6 +1135,92 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert ContentPart.parts_to_string(message.content) =~ "Hi"
       assert message.role == :assistant
       assert message.index == 0
+    end
+  end
+
+  describe "use in LLMChain" do
+    @tag live_call: true, live_open_ai: true
+    test "NOT STREAMED with callbacks and token usage" do
+      handler = %{
+        on_llm_new_delta: fn %LLMChain{} = _chain, deltas ->
+          send(self(), {:test_stream_deltas, deltas})
+        end,
+        on_message_processed: fn _chain, message ->
+          send(self(), {:test_message_processed, message})
+        end
+      }
+
+      # We can construct an LLMChain from a PromptTemplate and an LLM.
+      model = ChatOpenAI.new!(%{temperature: 1, seed: 0, stream: false})
+
+      {:ok, updated_chain} =
+        %{llm: model}
+        |> LLMChain.new!()
+        |> LLMChain.add_callback(handler)
+        |> LLMChain.add_messages([
+          Message.new_user!("Suggest one good name for a company that makes colorful socks?")
+        ])
+        |> LLMChain.run()
+
+      assert %Message{role: :assistant, status: :complete} = updated_chain.last_message
+      assert %TokenUsage{input: 20} = updated_chain.last_message.metadata.usage
+
+      assert_received {:test_message_processed, message}
+      assert %Message{role: :assistant} = message
+      # the final returned message should match the callback message
+      assert message == updated_chain.last_message
+      # we should have received the final combined message
+      refute_received {:test_stream_deltas, _delta}
+    end
+
+    @tag live_call: true, live_open_ai: true
+    test "STREAMED with callbacks and token usage" do
+      handler = %{
+        on_llm_new_delta: fn %LLMChain{} = _chain, deltas ->
+          send(self(), deltas)
+        end,
+        on_message_processed: fn _chain, message ->
+          send(self(), {:test_message_processed, message})
+        end
+      }
+
+      # We can construct an LLMChain from a PromptTemplate and an LLM.
+      model =
+        ChatOpenAI.new!(%{
+          temperature: 1,
+          seed: 0,
+          stream: true,
+          stream_options: %{include_usage: true}
+        })
+
+      original_chain =
+        %{llm: model}
+        |> LLMChain.new!()
+        |> LLMChain.add_callback(handler)
+        |> LLMChain.add_messages([
+          Message.new_user!("Suggest one good name for a company that makes colorful socks?")
+        ])
+
+      {:ok, updated_chain} = original_chain |> LLMChain.run()
+
+      assert %Message{role: :assistant} = updated_chain.last_message
+      assert %TokenUsage{input: 20} = updated_chain.last_message.metadata.usage
+
+      assert_received {:test_message_processed, message}
+      assert %Message{role: :assistant} = message
+      # the final returned message should match the callback message
+      assert message == updated_chain.last_message
+
+      # get all the deltas sent to the test process
+      deltas = collect_messages() |> List.flatten()
+
+      # apply the deltas to the original chain
+      delta_merged_chain = LLMChain.apply_deltas(original_chain, deltas)
+
+      # the received merged deltas should match the ones assembled by the chain.
+      # This is also verifying that we're receiving the token usage via sent
+      # deltas.
+      assert delta_merged_chain.last_message == updated_chain.last_message
     end
   end
 

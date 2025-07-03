@@ -4,6 +4,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
 
   doctest LangChain.ChatModels.ChatAnthropic
 
+  import LangChain.TestingHelpers
   alias LangChain.ChatModels.ChatAnthropic
   alias LangChain.Chains.LLMChain
   alias LangChain.Message
@@ -2794,6 +2795,91 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 
     #   assert false
     # end
+  end
+
+  describe "use in LLMChain" do
+    @tag live_call: true, live_open_ai: true
+    test "NOT STREAMED with callbacks and token usage" do
+      handler = %{
+        on_llm_new_delta: fn %LLMChain{} = _chain, deltas ->
+          send(self(), {:test_stream_deltas, deltas})
+        end,
+        on_message_processed: fn _chain, message ->
+          send(self(), {:test_message_processed, message})
+        end
+      }
+
+      # We can construct an LLMChain from a PromptTemplate and an LLM.
+      model = ChatAnthropic.new!(%{temperature: 1, seed: 0, stream: false})
+
+      {:ok, updated_chain} =
+        %{llm: model}
+        |> LLMChain.new!()
+        |> LLMChain.add_callback(handler)
+        |> LLMChain.add_messages([
+          Message.new_user!("Suggest one good name for a company that makes colorful socks?")
+        ])
+        |> LLMChain.run()
+
+      assert %Message{role: :assistant} = updated_chain.last_message
+      assert %TokenUsage{input: 28} = updated_chain.last_message.metadata.usage
+
+      assert_received {:test_message_processed, message}
+      assert %Message{role: :assistant} = message
+      # the final returned message should match the callback message
+      assert message == updated_chain.last_message
+      # we should have received the final combined message
+      refute_received {:test_stream_deltas, _delta}
+    end
+
+    @tag live_call: true, live_open_ai: true
+    test "STREAMED with callbacks and token usage" do
+      handler = %{
+        on_llm_new_delta: fn %LLMChain{} = _chain, deltas ->
+          send(self(), deltas)
+        end,
+        on_message_processed: fn _chain, message ->
+          send(self(), {:test_message_processed, message})
+        end
+      }
+
+      # We can construct an LLMChain from a PromptTemplate and an LLM.
+      model =
+        ChatAnthropic.new!(%{
+          temperature: 1,
+          seed: 0,
+          stream: true
+        })
+
+      original_chain =
+        %{llm: model}
+        |> LLMChain.new!()
+        |> LLMChain.add_callback(handler)
+        |> LLMChain.add_messages([
+          Message.new_user!("Suggest one good name for a company that makes colorful socks?")
+        ])
+
+      {:ok, updated_chain} = original_chain |> LLMChain.run()
+
+      assert %Message{role: :assistant, status: :complete} = updated_chain.last_message
+      assert %TokenUsage{input: 28} = updated_chain.last_message.metadata.usage
+
+      assert_received {:test_message_processed, message}
+      assert %Message{role: :assistant} = message
+      # the final returned message should match the callback message
+      assert message == updated_chain.last_message
+
+      # get all the deltas sent to the test process
+      deltas = collect_messages() |> List.flatten()
+
+      # apply the deltas to the original chain
+      delta_merged_chain = LLMChain.apply_deltas(original_chain, deltas)
+
+      # the received merged deltas should match the ones assembled by the chain.
+      # This is also verifying that we're receiving the token usage via sent
+      # deltas.
+      assert delta_merged_chain.last_message == updated_chain.last_message
+    end
   end
 
   describe "serialize_config/2" do
