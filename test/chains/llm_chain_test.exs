@@ -255,19 +255,38 @@ defmodule LangChain.Chains.LLMChainTest do
     test "live POST usage with LLM" do
       # https://js.langchain.com/docs/modules/chains/llm_chain
 
+      handler = %{
+        on_llm_new_delta: fn %LLMChain{} = _chain, deltas ->
+          send(self(), {:test_stream_deltas, deltas})
+        end,
+        on_message_processed: fn _chain, message ->
+          send(self(), {:test_stream_message, message})
+        end
+      }
+
       prompt =
         PromptTemplate.from_template!(
           "Suggest one good name for a company that makes <%= @product %>?"
         )
 
       # We can construct an LLMChain from a PromptTemplate and an LLM.
+      model = ChatOpenAI.new!(%{temperature: 1, seed: 0, stream: false})
+
       {:ok, updated_chain} =
-        %{llm: ChatOpenAI.new!(%{temperature: 1, seed: 0, stream: false}), verbose: true}
+        %{llm: model}
         |> LLMChain.new!()
+        |> LLMChain.add_callback(handler)
         |> LLMChain.apply_prompt_templates([prompt], %{product: "colorful socks"})
         |> LLMChain.run()
 
       assert %Message{role: :assistant} = updated_chain.last_message
+
+      assert_received {:on_message_processed, message}
+      assert %Message{role: :assistant} = message
+      # the final returned message should match the callback message
+      assert message == updated_chain.last_message
+      # we should have received the final combined message
+      refute_received {:test_stream_message, _delta}
     end
 
     @tag live_call: true, live_open_ai: true
@@ -280,30 +299,30 @@ defmodule LangChain.Chains.LLMChainTest do
         )
 
       handler = %{
-        on_llm_new_delta: fn %LLMChain{} = _chain, delta ->
-          send(self(), {:test_stream_deltas, delta})
+        on_llm_new_delta: fn %LLMChain{} = _chain, deltas ->
+          send(self(), {:test_stream_deltas, deltas})
         end,
         on_message_processed: fn _chain, message ->
           send(self(), {:test_stream_message, message})
         end
       }
 
-      model = ChatOpenAI.new!(%{temperature: 1, seed: 0, stream: true})
+      model = ChatOpenAI.new!(%{temperature: 1, seed: 0, stream: true, stream_options: %{include_usage: true}})
+      # model = ChatAnthropic.new!(%{temperature: 1, seed: 0, stream: true, verbose_api: true})
 
       # We can construct an LLMChain from a PromptTemplate and an LLM.
       {:ok, updated_chain} =
-        %{llm: model, verbose: true}
+        %{llm: model, verbose: false}
         |> LLMChain.new!()
         |> LLMChain.add_callback(handler)
         |> LLMChain.apply_prompt_templates([prompt], %{product: "colorful socks"})
         |> LLMChain.run()
 
       assert %Message{role: :assistant} = updated_chain.last_message
-      IO.inspect(updated_chain.last_message, label: "RECEIVED MESSAGE")
 
       # we should have received at least one callback message delta
-      assert_received {:test_stream_deltas, delta_1}
-      assert %MessageDelta{role: :assistant, status: :incomplete} = delta_1
+      assert_received {:test_stream_deltas, deltas}
+      assert %MessageDelta{role: :assistant, status: :incomplete} = List.first(deltas)
 
       # we should have received the final combined message
       assert_received {:test_stream_message, message}
@@ -990,7 +1009,7 @@ defmodule LangChain.Chains.LLMChainTest do
           function: fn %{"thing" => thing} = arguments, context ->
             send(test_pid, {:function_run, arguments, context})
             # our context is a pretend item/location location map
-            context[thing]
+            {:ok, context[thing]}
           end
         })
 
@@ -1009,7 +1028,7 @@ defmodule LangChain.Chains.LLMChainTest do
 
       assert updated_chain.last_message == final_message
       assert final_message.role == :assistant
-      assert final_message.content == "The hairbrush is located in the drawer."
+      assert "The hairbrush is located in the drawer." == ContentPart.content_to_string(final_message.content)
 
       # assert our custom function was executed with custom_context supplied
       assert_received {:function_run, arguments, context}
@@ -1028,9 +1047,7 @@ defmodule LangChain.Chains.LLMChainTest do
         |> LLMChain.run()
 
       assert reason.type == nil
-
-      assert reason.message ==
-               "Invalid 'messages': empty array. Expected an array with minimum length 1, but got an empty array instead."
+      assert reason.message == "LLMChain cannot be run without messages"
     end
 
     @tag live_call: true, live_open_ai: true
@@ -1044,9 +1061,7 @@ defmodule LangChain.Chains.LLMChainTest do
         |> LLMChain.run()
 
       assert reason.type == nil
-
-      assert reason.message ==
-               "Invalid 'messages': empty array. Expected an array with minimum length 1, but got an empty array instead."
+      assert reason.message == "LLMChain cannot be run without messages"
     end
 
     # runs until tools are evaluated
@@ -1100,8 +1115,8 @@ defmodule LangChain.Chains.LLMChainTest do
 
       # the final_response should contain data returned from the function
       assert final_response == updated_chain.last_message
-      assert final_response.content =~ "Germany"
-      assert final_response.content =~ "fra"
+      assert ContentPart.content_to_string(final_response.content) =~ "Germany"
+      assert ContentPart.content_to_string(final_response.content) =~ "fra"
       assert final_response.role == :assistant
       assert_received {:function_called, "fly_regions"}
     end
