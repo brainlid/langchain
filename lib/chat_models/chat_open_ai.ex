@@ -494,23 +494,23 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     |> Utils.conditionally_add_to_map("name", msg.name)
   end
 
-  def for_api(%_{} = _model, %ToolResult{type: :function} = result) do
+  def for_api(%_{} = model, %ToolResult{type: :function} = result) do
     # a ToolResult becomes a stand-alone %Message{role: :tool} response.
     %{
       "role" => :tool,
       "tool_call_id" => result.tool_call_id,
-      "content" => result.content
+      "content" => content_parts_for_api(model, result.content)
     }
   end
 
-  def for_api(%_{} = _model, %Message{role: :tool, tool_results: tool_results} = _msg)
+  def for_api(%_{} = model, %Message{role: :tool, tool_results: tool_results} = _msg)
       when is_list(tool_results) do
     # ToolResults turn into a list of tool messages for OpenAI
     Enum.map(tool_results, fn result ->
       %{
         "role" => :tool,
         "tool_call_id" => result.tool_call_id,
-        "content" => result.content
+        "content" => content_parts_for_api(model, result.content)
       }
     end)
   end
