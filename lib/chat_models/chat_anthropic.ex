@@ -552,6 +552,18 @@ defmodule LangChain.ChatModels.ChatAnthropic do
             result
         end
 
+      {:ok, %Req.Response{status: 429}} ->
+        Callbacks.fire(anthropic.callbacks, :on_llm_ratelimit_info, [
+          get_ratelimit_info(response.headers)
+        ])
+
+        {:error,
+         LangChainError.exception(
+           type: "rate_limit_exceeded",
+           message: "Rate limit exceeded",
+           original: err
+         )}
+
       {:ok, %Req.Response{status: 529}} ->
         {:error, LangChainError.exception(type: "overloaded", message: "Overloaded")}
 
