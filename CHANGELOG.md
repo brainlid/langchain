@@ -11,9 +11,9 @@
 - `LangChain.Function` changed the default for `async` to `false`. If you want async execution, set `async: true` explicitly when defining your function.
 - The `on_llm_new_delta` callback now receives a list of `MessageDelta` structs instead of a single one. To merge the received deltas into your chain for display, use:
 
-  ```elixir
-  updated_chain = LLMChain.merge_deltas(current_llm_chain, deltas)
-  ```
+```elixir
+updated_chain = LLMChain.merge_deltas(current_llm_chain, deltas)
+```
 
 ### Upgrading from v0.4.0-rc.0 - v0.4.0-rc.1
 - If you return a ToolResult from a function, you can now use ContentParts for richer responses. See module docs for details.
