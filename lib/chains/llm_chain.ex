@@ -849,14 +849,24 @@ defmodule LangChain.Chains.LLMChain do
   @doc """
   Apply a list of deltas to the chain. When the final delta is received that
   completes the message, the LLMChain is updated to clear the `delta` and the
-  `last_message` and list of messages are updated.
+  `last_message` and list of messages are updated. The message is processed and
+  fires any registered callbacks.
   """
   @spec apply_deltas(t(), list()) :: t()
   def apply_deltas(%LLMChain{} = chain, deltas) when is_list(deltas) do
+    chain
+    |> merge_deltas(deltas)
+    |> delta_to_message_when_complete()
+  end
+
+  @doc """
+  Merge a list of deltas into the chain.
+  """
+  @spec merge_deltas(t(), list()) :: t()
+  def merge_deltas(%LLMChain{} = chain, deltas) do
     deltas
     |> List.flatten()
     |> Enum.reduce(chain, fn d, acc -> merge_delta(acc, d) end)
-    |> delta_to_message_when_complete()
   end
 
   @doc """

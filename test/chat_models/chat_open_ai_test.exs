@@ -285,7 +285,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       [json] = ChatOpenAI.for_api(ChatOpenAI.new!(), msg)
 
       assert json == %{
-               "content" => [ContentPart.text!("Hello World!")],
+               "content" => [%{"text" => "Hello World!", "type" => "text"}],
                "tool_call_id" => "tool_abc123",
                "role" => :tool
              }
@@ -315,19 +315,19 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       [r1, r2, r3] = list
 
       assert r1 == %{
-               "content" => [ContentPart.text!("Hello World!")],
+               "content" => [%{"text" => "Hello World!", "type" => "text"}],
                "tool_call_id" => "tool_abc123",
                "role" => :tool
              }
 
       assert r2 == %{
-               "content" => [ContentPart.text!("Hello")],
+               "content" => [%{"text" => "Hello", "type" => "text"}],
                "tool_call_id" => "tool_abc234",
                "role" => :tool
              }
 
       assert r3 == %{
-               "content" => [ContentPart.text!("World!")],
+               "content" => [%{"text" => "World!", "type" => "text"}],
                "tool_call_id" => "tool_abc345",
                "role" => :tool
              }
@@ -523,7 +523,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       json = ChatOpenAI.for_api(openai, result)
 
       assert json == %{
-               "content" => [ContentPart.text!("Hello World!")],
+               "content" => [%{"text" => "Hello World!", "type" => "text"}],
                "tool_call_id" => "tool_abc123",
                "role" => :tool
              }

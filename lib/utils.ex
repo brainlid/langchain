@@ -124,7 +124,7 @@ defmodule LangChain.Utils do
     end
   end
 
-  @type callback_data :: Message.t() | MessageDelta.t() | TokenUsage.t() | {:error, String.t()}
+  @type callback_data :: Message.t() | [MessageDelta.t()] | TokenUsage.t() | {:error, String.t()}
 
   @doc """
   Fire a streaming callback if present.
@@ -134,51 +134,17 @@ defmodule LangChain.Utils do
           data :: callback_data() | [callback_data()]
         ) :: :ok | no_return()
 
-  # # fire a set of callbacks when receiving a list
-  # def fire_streamed_callback(model, data) when is_list(data) do
-  #   # Execute callback handler for each received data element
-  #   merged_data =
-  #     data
-  #     |> List.flatten()
-  #     |> MessageDelta.merge_deltas()
-  #     |> IO.inspect(label: "MERGED DATA TO SEND VIA CALLBACK")
-
-  #   fire_streamed_callback(model, merged_data)
-  # end
-
-  def fire_streamed_callback(model, %MessageDelta{} = delta) do
-    # Execute callback handler for single received delta element
-    Callbacks.fire(model.callbacks, :on_llm_new_delta, [delta])
+  def fire_streamed_callback(model, deltas) when is_list(deltas) do
+    #
+    # Wrap in a another list for being sent as "args" in an MFA call
+    Callbacks.fire(model.callbacks, :on_llm_new_delta, [deltas])
   end
 
   # received unexpected data in the callback, do nothing.
-  def fire_streamed_callback(_model, _other), do: :ok
-
-  # # Process a list of data items, optimizing MessageDeltas by merging them
-  # # within a single chunk while processing other data types individually
-  # defp process_chunked_data(data_list, model) do
-  #   # Separate MessageDeltas from other data types
-  #   {message_deltas, other_items} =
-  #     Enum.split_with(data_list, &match?(%MessageDelta{}, &1))
-
-  #   # Process non-MessageDelta items individually (TokenUsage, errors, etc.)
-  #   Enum.each(other_items, fn item ->
-  #     fire_streamed_callback(model, item)
-  #   end)
-
-  #   # Merge and process MessageDeltas if we have any
-  #   case message_deltas do
-  #     [] ->
-  #       :ok
-  #     [single_delta] ->
-  #       # Single delta, fire callback directly
-  #       Callbacks.fire(model.callbacks, :on_llm_new_delta, [single_delta])
-  #     multiple_deltas when is_list(multiple_deltas) ->
-  #       # Multiple deltas, merge them first then fire single callback
-  #       merged_delta = MessageDelta.merge_deltas(multiple_deltas)
-  #       Callbacks.fire(model.callbacks, :on_llm_new_delta, [merged_delta])
-  #   end
-  # end
+  def fire_streamed_callback(_model, other) do
+    Logger.warning("Received unexpected data in the streamed callback: #{inspect(other)}")
+    :ok
+  end
 
   @doc """
   Creates and returns an anonymous function to handle the streaming response
@@ -231,11 +197,6 @@ defmodule LangChain.Utils do
           |> Enum.map(transform_data_fn)
           |> Enum.reject(&(&1 == :skip))
           |> List.flatten()
-          |> MessageDelta.merge_deltas()
-
-
-
-          #TODO: This is merging them for the callback, but leaving them unmerged for the body result, which will have to be merged later anyway. Merge parsed_data BEFORE calling the callback and return the merged for the body?
 
         # execute the callback function for the MessageDeltas and an optional
         # TokenUsage

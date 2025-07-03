@@ -289,12 +289,11 @@ defmodule LangChain.Message.ContentPart do
       iex> parts_to_string([])
       nil
   """
-  @spec parts_to_string([t()]) :: nil | String.t()
-  def parts_to_string(parts) when is_list(parts) do
+  @spec parts_to_string([t()], type :: atom()) :: nil | String.t()
+  def parts_to_string(parts, type \\ :text) when is_list(parts) do
     parts
-    |> Enum.filter(fn part -> part.type == :text end)
-    |> Enum.map(fn part -> part.content end)
-    |> Enum.join("\n\n")
+    |> Enum.filter(fn part -> part.type == type end)
+    |> Enum.map_join("\n\n", fn part -> part.content end)
     |> case do
       "" -> nil
       content -> content
@@ -304,11 +303,12 @@ defmodule LangChain.Message.ContentPart do
   @doc """
   Convert "content" to a string. Content may be `nil`, a string, or a list of ContentParts.
   """
-  @spec content_to_string(content :: String.t() | [t()] | nil) :: nil | String.t()
-  def content_to_string(nil), do: nil
-  def content_to_string(content) when is_binary(content), do: content
+  @spec content_to_string(content :: String.t() | [t()] | nil, type :: atom()) :: nil | String.t()
+  def content_to_string(content, type \\ :text)
+  def content_to_string(nil, _type), do: nil
+  def content_to_string(content, _type) when is_binary(content), do: content
 
-  def content_to_string(content) when is_list(content) do
-    parts_to_string(content)
+  def content_to_string(content, type) when is_list(content) do
+    parts_to_string(content, type)
   end
 end

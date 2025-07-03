@@ -22,12 +22,6 @@ defmodule LangChain.Callbacks do
     end)
   end
 
-  def fire(callbacks, :on_llm_new_delta, [deltas]) when is_list(deltas) do
-    Enum.each(deltas, fn d ->
-      fire(callbacks, :on_llm_new_delta, [d])
-    end)
-  end
-
   def fire(callbacks, callback_name, arguments) when is_list(callbacks) do
     # A model may contain multiple callback handler maps. Cycle through them to
     # execute the named callback with the arguments if assigned.

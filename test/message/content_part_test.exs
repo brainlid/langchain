@@ -168,7 +168,7 @@ defmodule LangChain.Message.ContentPartTest do
     end
   end
 
-  describe "parts_to_string/1" do
+  describe "parts_to_string/2" do
     test "joins text content parts with double newlines" do
       parts = [
         ContentPart.text!("Hello"),
@@ -189,6 +189,17 @@ defmodule LangChain.Message.ContentPartTest do
       ]
 
       assert ContentPart.parts_to_string(parts) == "Hello\n\nworld\n\nhow are you"
+    end
+
+    test "matches on content type and can return thinking blocks" do
+      parts = [
+        ContentPart.new!(%{type: :thinking, content: "Let's think about this..."}),
+        ContentPart.text!("regular text"),
+        ContentPart.new!(%{type: :thinking, content: "I think this is a good idea"})
+      ]
+
+      assert ContentPart.parts_to_string(parts, :thinking) ==
+               "Let's think about this...\n\nI think this is a good idea"
     end
 
     test "returns nil for empty list" do
