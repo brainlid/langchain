@@ -307,7 +307,14 @@ defmodule LangChain.Chains.LLMChainTest do
         end
       }
 
-      model = ChatOpenAI.new!(%{temperature: 1, seed: 0, stream: true, stream_options: %{include_usage: true}})
+      model =
+        ChatOpenAI.new!(%{
+          temperature: 1,
+          seed: 0,
+          stream: true,
+          stream_options: %{include_usage: true}
+        })
+
       # model = ChatAnthropic.new!(%{temperature: 1, seed: 0, stream: true, verbose_api: true})
 
       # We can construct an LLMChain from a PromptTemplate and an LLM.
@@ -1028,7 +1035,9 @@ defmodule LangChain.Chains.LLMChainTest do
 
       assert updated_chain.last_message == final_message
       assert final_message.role == :assistant
-      assert "The hairbrush is located in the drawer." == ContentPart.content_to_string(final_message.content)
+
+      assert "The hairbrush is located in the drawer." ==
+               ContentPart.content_to_string(final_message.content)
 
       # assert our custom function was executed with custom_context supplied
       assert_received {:function_run, arguments, context}

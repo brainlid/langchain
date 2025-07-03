@@ -70,7 +70,11 @@ defmodule LangChain.Message.ToolResultTest do
 
       assert msg.type == :function
       assert msg.name == "hello_world"
-      assert msg.content == [ContentPart.text!("The world was destroyed before we could say hello")]
+
+      assert msg.content == [
+               ContentPart.text!("The world was destroyed before we could say hello")
+             ]
+
       assert msg.tool_call_id == "call_123asdf"
       assert msg.display_text == "Failed to run hello_world"
       assert msg.is_error == true

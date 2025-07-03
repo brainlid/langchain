@@ -506,6 +506,7 @@ defmodule LangChain.MessageTest do
         content: [],
         tool_calls: []
       }
+
       assert Message.is_empty?(message)
     end
 
@@ -516,6 +517,7 @@ defmodule LangChain.MessageTest do
         content: nil,
         tool_calls: []
       }
+
       assert Message.is_empty?(message)
     end
 
@@ -526,28 +528,33 @@ defmodule LangChain.MessageTest do
         content: nil,
         tool_calls: nil
       }
+
       assert Message.is_empty?(message)
     end
 
     test "returns false when there are tool calls even with empty content" do
       tool_call = ToolCall.new!(%{call_id: "1", name: "calculator", arguments: %{}})
+
       message = %Message{
         role: :assistant,
         status: :complete,
         content: [],
         tool_calls: [tool_call]
       }
+
       refute Message.is_empty?(message)
     end
 
     test "returns false when there are tool calls even with nil content" do
       tool_call = ToolCall.new!(%{call_id: "1", name: "calculator", arguments: %{}})
+
       message = %Message{
         role: :assistant,
         status: :complete,
         content: nil,
         tool_calls: [tool_call]
       }
+
       refute Message.is_empty?(message)
     end
 
@@ -558,6 +565,7 @@ defmodule LangChain.MessageTest do
         content: [ContentPart.text!("Hello")],
         tool_calls: []
       }
+
       refute Message.is_empty?(message)
     end
 
@@ -568,6 +576,7 @@ defmodule LangChain.MessageTest do
         content: [ContentPart.text!("   \n  ")],
         tool_calls: []
       }
+
       refute Message.is_empty?(message)
     end
 
@@ -578,6 +587,7 @@ defmodule LangChain.MessageTest do
         content: [ContentPart.text!("")],
         tool_calls: []
       }
+
       refute Message.is_empty?(message)
     end
 
@@ -588,6 +598,7 @@ defmodule LangChain.MessageTest do
         content: [ContentPart.image!("base64data")],
         tool_calls: []
       }
+
       refute Message.is_empty?(message)
     end
 
@@ -609,6 +620,7 @@ defmodule LangChain.MessageTest do
         content: [],
         tool_calls: []
       }
+
       refute Message.is_empty?(cancelled_msg)
 
       length_msg = %Message{
@@ -617,6 +629,7 @@ defmodule LangChain.MessageTest do
         content: [],
         tool_calls: []
       }
+
       refute Message.is_empty?(length_msg)
     end
 
@@ -627,6 +640,7 @@ defmodule LangChain.MessageTest do
         content: "",
         tool_calls: []
       }
+
       refute Message.is_empty?(message)
     end
   end

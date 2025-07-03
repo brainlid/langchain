@@ -326,8 +326,9 @@ defmodule LangChain.UtilsTest do
       result = Utils.migrate_to_content_parts(changeset)
 
       assert result.valid?
+
       assert [%ContentPart{type: :text, content: "Hello world"}] =
-        Ecto.Changeset.get_change(result, :content)
+               Ecto.Changeset.get_change(result, :content)
     end
 
     test "wraps single ContentPart in a list" do
@@ -345,6 +346,7 @@ defmodule LangChain.UtilsTest do
         ContentPart.text!("Hello"),
         ContentPart.text!("world")
       ]
+
       changeset = FakeContentSchema.changeset(%FakeContentSchema{}, %{content: content_parts})
 
       result = Utils.migrate_to_content_parts(changeset)

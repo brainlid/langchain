@@ -549,7 +549,12 @@ defmodule LangChain.Message do
       false
   """
   @spec is_empty?(t()) :: boolean()
-  def is_empty?(%Message{role: :assistant, status: :complete, content: content, tool_calls: tool_calls}) do
+  def is_empty?(%Message{
+        role: :assistant,
+        status: :complete,
+        content: content,
+        tool_calls: tool_calls
+      }) do
     empty_content = content == nil or content == []
     empty_tool_calls = tool_calls == nil or tool_calls == []
 

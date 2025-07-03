@@ -220,7 +220,10 @@ defmodule LangChain.Message.ContentPart do
     # TODO: Detect an attempted merge between incompatible content parts
     # and log an error. Raise an exception? "Trying to merge_deltas? You may need to reset_delta after receiving the completed message."
 
-    Logger.warning("Cannot merge content parts of different types: #{inspect(primary)} and #{inspect(new_part)}")
+    Logger.warning(
+      "Cannot merge content parts of different types: #{inspect(primary)} and #{inspect(new_part)}"
+    )
+
     primary
   end
 
