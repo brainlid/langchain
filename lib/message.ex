@@ -78,8 +78,8 @@ defmodule LangChain.Message do
 
       Message.new_user!("Who is Prime Minister of the moon?")
 
-  A multi-part user message: 
-      
+  A multi-part user message:
+
       alias LangChain.Message.ContentPart
 
       Message.new_user!([
@@ -150,7 +150,7 @@ defmodule LangChain.Message do
   def new(attrs \\ %{}) do
     %Message{}
     |> cast(attrs, @create_fields)
-    |> migrate_to_content_parts()
+    |> Utils.migrate_to_content_parts()
     |> common_validations()
     |> apply_action(:insert)
   end
@@ -528,23 +528,38 @@ defmodule LangChain.Message do
 
   def tool_had_errors?(%Message{} = _message), do: false
 
-  # Migrates a Message's string content to use `LangChain.Message.ContentPart`.
-  # This is for backward compatibility with models that don't yet support ContentPart.
-  @spec migrate_to_content_parts(Ecto.Changeset.t()) :: Ecto.Changeset.t()
-  defp migrate_to_content_parts(%Ecto.Changeset{} = changeset) do
-    case fetch_change(changeset, :content) do
-      {:ok, content} when is_binary(content) ->
-        put_change(changeset, :content, [ContentPart.text!(content)])
+  @doc """
+  Determines if a message is considered "empty" and likely indicates a failure.
 
-      # Don't modify if it's already a ContentPart or a list of ContentParts
-      {:ok, %ContentPart{}} ->
-        changeset
+  This is particularly useful for detecting failure patterns with Anthropic models
+  where the LLM may return empty responses when it encounters issues.
 
-      {:ok, content} when is_list(content) ->
-        changeset
+  ## Examples
 
-      _ ->
-        changeset
-    end
+      iex> alias LangChain.Message
+      iex> Message.is_empty?(%Message{role: :assistant, content: [], tool_calls: [], status: :complete})
+      true
+
+      iex> alias LangChain.Message
+      iex> Message.is_empty?(%Message{role: :assistant, content: "Hello", tool_calls: [], status: :complete})
+      false
+
+      iex> alias LangChain.Message
+      iex> Message.is_empty?(%Message{role: :user, content: [], status: :complete})
+      false
+  """
+  @spec is_empty?(t()) :: boolean()
+  def is_empty?(%Message{
+        role: :assistant,
+        status: :complete,
+        content: content,
+        tool_calls: tool_calls
+      }) do
+    empty_content = content == nil or content == []
+    empty_tool_calls = tool_calls == nil or tool_calls == []
+
+    empty_content and empty_tool_calls
   end
+
+  def is_empty?(_message), do: false
 end

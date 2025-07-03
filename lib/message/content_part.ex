@@ -1,9 +1,9 @@
 defmodule LangChain.Message.ContentPart do
   @moduledoc """
-  Models a `ContentPart`. Some LLMs support combining text, images, and possibly
-  other content as part of a single user message or other content parts like
-  "thinking" may be part of an assistant's response message. A `ContentPart`
-  represents a block, or part, of a message's content that is all of one type.
+  Models a `ContentPart`. ContentParts are now used for multi-modal support in
+  both messages and tool results. This enables richer responses, allowing text,
+  images, files, and thinking blocks to be combined in a single message or tool
+  result.
 
   ## Types
 
@@ -215,6 +215,18 @@ defmodule LangChain.Message.ContentPart do
 
   defp append_content(%ContentPart{} = primary, %ContentPart{content: nil}), do: primary
 
+  # When types don't match or content cannot be merged, return the primary part unchanged
+  defp append_content(%ContentPart{} = primary, %ContentPart{} = new_part) do
+    # TODO: Detect an attempted merge between incompatible content parts
+    # and log an error. Raise an exception? "Trying to merge_deltas? You may need to reset_delta after receiving the completed message."
+
+    Logger.warning(
+      "Cannot merge content parts of different types: #{inspect(primary)} and #{inspect(new_part)}"
+    )
+
+    primary
+  end
+
   # Merge options from content_part into primary. When text, combine the options
   # and merge in newly encountered keys.
   defp update_options(%ContentPart{} = primary, %ContentPart{options: nil}), do: primary
@@ -241,6 +253,26 @@ defmodule LangChain.Message.ContentPart do
   defp update_options(%ContentPart{} = primary, %ContentPart{}), do: primary
 
   @doc """
+  Sets an option on the last text part in a list of ContentParts. Returns the updated content parts.
+  """
+  @spec set_option_on_last_part([t()], atom(), any()) :: [t()]
+  def set_option_on_last_part(content_parts, option_key, option_value) do
+    content_parts
+    |> Enum.reverse()
+    |> then(fn [first | rest] ->
+      case first do
+        %ContentPart{} = part ->
+          updated_first = %{part | options: Keyword.put(part.options, option_key, option_value)}
+          [updated_first | rest]
+
+        _ ->
+          [first | rest]
+      end
+    end)
+    |> Enum.reverse()
+  end
+
+  @doc """
   Helper function for easily getting plain text from a list of ContentParts.
 
   This function processes a list of ContentParts and joins the text parts together
@@ -260,15 +292,26 @@ defmodule LangChain.Message.ContentPart do
       iex> parts_to_string([])
       nil
   """
-  @spec parts_to_string([t()]) :: nil | String.t()
-  def parts_to_string(parts) when is_list(parts) do
+  @spec parts_to_string([t()], type :: atom()) :: nil | String.t()
+  def parts_to_string(parts, type \\ :text) when is_list(parts) do
     parts
-    |> Enum.filter(fn part -> part.type == :text end)
-    |> Enum.map(fn part -> part.content end)
-    |> Enum.join("\n\n")
+    |> Enum.filter(fn part -> part.type == type end)
+    |> Enum.map_join("\n\n", fn part -> part.content end)
     |> case do
       "" -> nil
       content -> content
     end
+  end
+
+  @doc """
+  Convert "content" to a string. Content may be `nil`, a string, or a list of ContentParts.
+  """
+  @spec content_to_string(content :: String.t() | [t()] | nil, type :: atom()) :: nil | String.t()
+  def content_to_string(content, type \\ :text)
+  def content_to_string(nil, _type), do: nil
+  def content_to_string(content, _type) when is_binary(content), do: content
+
+  def content_to_string(content, type) when is_list(content) do
+    parts_to_string(content, type)
   end
 end

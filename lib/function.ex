@@ -18,12 +18,15 @@ defmodule LangChain.Function do
     passed to the function. (Use if greater control or unsupported features are
     needed.)
   * `function` - An Elixir function to execute when an LLM requests to execute
-    the function. The function should return `{:ok, "text for LLM"}`, `{:ok,
-    "text for LLM", processed_content}`, `{:error, "and text explanation of the
-    error"}` or just plain `"text response"`, which is returned to the LLM.
+    the function. The function can return a string, a tuple, or a
+    `%ToolResult{}` struct for advanced control. Returning a ToolResult allows
+    for multi-modal responses (list of ContentParts), cache control, and
+    processed_content.
   * `async` - Boolean value that flags if this can function can be executed
     asynchronously, potentially concurrently with other calls to the same
-    function. Defaults to `true`.
+    function. Defaults to `false`.
+  * `options` - A Keyword list of options that can be passed to the LLM. For
+    example, this can be used for passing caching config to Anthropic.
 
   When passing arguments from an LLM to a function, they go through a single
   `map` argument. This allows for multiple keys or named parameters.
@@ -163,6 +166,23 @@ defmodule LangChain.Function do
   Note: The LLM may issue one or more `ToolCall`s in a single assistant message.
   Each Elixir function's `ToolResult` may contain a `processed_content`.
 
+  ## Explicit ToolResult Control
+
+  For advanced use cases where you need explicit control over the `ToolResult`
+  structure or want to set LLM-specific options, your Elixir function can return
+  a fully constructed `%ToolResult{}` struct. The `content` field can be a list
+  of ContentParts for multi-modal responses.
+
+  This approach is particularly useful when you need to:
+
+  * Set LLM-specific options (like Anthropic's `cache_control`)
+  * Set custom error states beyond simple string responses
+  * Customize the `display_text` for the ToolResult
+  * Provide detailed metadata in the `options` field
+
+  The `options` field can contain any LLM-specific configuration that gets
+  passed through to the chat model's API conversion layer. If an LLM does not
+  support it, it will be ignored.
   """
   use Ecto.Schema
   import Ecto.Changeset
@@ -184,13 +204,15 @@ defmodule LangChain.Function do
     # field :auto_evaluate, :boolean, default: false
     field :function, :any, virtual: true
 
-    # Track if the function can be executed async. Defaults to `true`.
-    field :async, :boolean, default: true
+    # Track if the function can be executed async. Defaults to `false`.
+    field :async, :boolean, default: false
 
     # parameters_schema is a map used to express a JSONSchema structure of inputs and what's required
     field :parameters_schema, :map
     # parameters is a list of `LangChain.FunctionParam` structs.
     field :parameters, {:array, :any}, default: []
+
+    field :options, :any, virtual: true, default: []
   end
 
   @type t :: %Function{}
@@ -205,7 +227,8 @@ defmodule LangChain.Function do
     :parameters_schema,
     :parameters,
     :function,
-    :async
+    :async,
+    :options
   ]
   @required_fields [:name]
 

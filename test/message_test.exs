@@ -139,10 +139,10 @@ defmodule LangChain.MessageTest do
       assert message.tool_calls == [Map.put(tool_call, :status, :complete)]
     end
 
-    test "fails to accept a single ContentPart as content" do
+    test "upgrades a single ContentPart to a list" do
       content_part = ContentPart.text!("Hello world")
-      assert {:error, changeset} = Message.new(%{role: :user, content: content_part})
-      assert {"must be text or a list of ContentParts", _} = changeset.errors[:content]
+      assert {:ok, result} = Message.new(%{role: :user, content: content_part})
+      assert result.content == [content_part]
     end
   end
 
@@ -329,7 +329,7 @@ defmodule LangChain.MessageTest do
 
       assert msg.role == :tool
       assert [result] == msg.tool_results
-      assert result.content == "STUFF_BROKE!"
+      assert result.content == [ContentPart.text!("STUFF_BROKE!")]
     end
   end
 
@@ -495,6 +495,153 @@ defmodule LangChain.MessageTest do
 
     test "returns false when not a tool response" do
       refute Message.tool_had_errors?(Message.new_assistant!(%{content: "Howdy"}))
+    end
+  end
+
+  describe "is_empty?/1" do
+    test "returns true for assistant message with empty content list and no tool calls" do
+      message = %Message{
+        role: :assistant,
+        status: :complete,
+        content: [],
+        tool_calls: []
+      }
+
+      assert Message.is_empty?(message)
+    end
+
+    test "returns true for assistant message with nil content and no tool calls" do
+      message = %Message{
+        role: :assistant,
+        status: :complete,
+        content: nil,
+        tool_calls: []
+      }
+
+      assert Message.is_empty?(message)
+    end
+
+    test "returns true for assistant message with nil content and nil tool calls" do
+      message = %Message{
+        role: :assistant,
+        status: :complete,
+        content: nil,
+        tool_calls: nil
+      }
+
+      assert Message.is_empty?(message)
+    end
+
+    test "returns false when there are tool calls even with empty content" do
+      tool_call = ToolCall.new!(%{call_id: "1", name: "calculator", arguments: %{}})
+
+      message = %Message{
+        role: :assistant,
+        status: :complete,
+        content: [],
+        tool_calls: [tool_call]
+      }
+
+      refute Message.is_empty?(message)
+    end
+
+    test "returns false when there are tool calls even with nil content" do
+      tool_call = ToolCall.new!(%{call_id: "1", name: "calculator", arguments: %{}})
+
+      message = %Message{
+        role: :assistant,
+        status: :complete,
+        content: nil,
+        tool_calls: [tool_call]
+      }
+
+      refute Message.is_empty?(message)
+    end
+
+    test "returns false for assistant message with text content" do
+      message = %Message{
+        role: :assistant,
+        status: :complete,
+        content: [ContentPart.text!("Hello")],
+        tool_calls: []
+      }
+
+      refute Message.is_empty?(message)
+    end
+
+    test "returns false for assistant message with whitespace-only content" do
+      message = %Message{
+        role: :assistant,
+        status: :complete,
+        content: [ContentPart.text!("   \n  ")],
+        tool_calls: []
+      }
+
+      refute Message.is_empty?(message)
+    end
+
+    test "returns false for assistant message with empty string content part" do
+      message = %Message{
+        role: :assistant,
+        status: :complete,
+        content: [ContentPart.text!("")],
+        tool_calls: []
+      }
+
+      refute Message.is_empty?(message)
+    end
+
+    test "returns false for assistant message with non-text content parts" do
+      message = %Message{
+        role: :assistant,
+        status: :complete,
+        content: [ContentPart.image!("base64data")],
+        tool_calls: []
+      }
+
+      refute Message.is_empty?(message)
+    end
+
+    test "returns false for non-assistant roles" do
+      user_msg = %Message{role: :user, status: :complete, content: [], tool_calls: []}
+      refute Message.is_empty?(user_msg)
+
+      system_msg = %Message{role: :system, status: :complete, content: [], tool_calls: []}
+      refute Message.is_empty?(system_msg)
+
+      tool_msg = %Message{role: :tool, status: :complete, content: [], tool_calls: []}
+      refute Message.is_empty?(tool_msg)
+    end
+
+    test "returns false for non-complete status" do
+      cancelled_msg = %Message{
+        role: :assistant,
+        status: :incomplete,
+        content: [],
+        tool_calls: []
+      }
+
+      refute Message.is_empty?(cancelled_msg)
+
+      length_msg = %Message{
+        role: :assistant,
+        status: :length,
+        content: [],
+        tool_calls: []
+      }
+
+      refute Message.is_empty?(length_msg)
+    end
+
+    test "returns false for binary content even if empty string" do
+      message = %Message{
+        role: :assistant,
+        status: :complete,
+        content: "",
+        tool_calls: []
+      }
+
+      refute Message.is_empty?(message)
     end
   end
 end

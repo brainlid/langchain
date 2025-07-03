@@ -14,7 +14,7 @@ defmodule ChatModels.ChatGoogleAITest do
   alias LangChain.LangChainError
   alias LangChain.ChatModels.ChatGoogleAI
 
-  @test_model "gemini-2.0-flash"
+  @test_model "gemini-2.5-flash"
 
   setup do
     {:ok, hello_world} =
@@ -841,21 +841,27 @@ defmodule ChatModels.ChatGoogleAITest do
         ])
 
       # returns a list of MessageDeltas. A list of a list because it's "n" choices.
-      assert result == [
+      assert [
                %Message{
                  content: [
                    %Message.ContentPart{
                      type: :text,
                      content: "Colorful Threads",
-                     options: nil
+                     options: []
                    }
                  ],
                  status: :complete,
                  role: :assistant,
                  index: 0,
-                 tool_calls: []
+                 tool_calls: [],
+                 metadata: %{
+                   usage: %TokenUsage{
+                     input: 8,
+                     output: 2
+                   }
+                 }
                }
-             ]
+             ] = result
 
       assert_received {:fired_token_usage, usage}
       assert %TokenUsage{input: 8, output: 2} = usage
@@ -886,17 +892,23 @@ defmodule ChatModels.ChatGoogleAITest do
           Message.new_user!("Return the response 'Colorful Threads'.")
         ])
 
-      assert result == [
+      assert [
                [
                  %MessageDelta{
                    content: "Colorful Threads",
                    status: :complete,
                    index: 0,
                    role: :assistant,
-                   tool_calls: nil
+                   tool_calls: nil,
+                   metadata: %{
+                     usage: %TokenUsage{
+                       input: 8,
+                       output: 2
+                     }
+                   }
                  }
                ]
-             ]
+             ] = result
 
       assert_received {:fired_token_usage, usage}
       assert %TokenUsage{input: 8, output: 2} = usage
@@ -973,7 +985,8 @@ defmodule ChatModels.ChatGoogleAITest do
       # the function result message
       assert_received {:callback_tool_msg, message}
       assert message.role == :tool
-      assert [%ToolResult{content: "200"}] = message.tool_results
+      assert [%ToolResult{content: answer}] = message.tool_results
+      assert ContentPart.content_to_string(answer) == "200"
 
       assert_received {:callback_msg, message}
       assert message.role == :assistant

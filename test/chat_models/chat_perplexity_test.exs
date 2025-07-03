@@ -222,8 +222,8 @@ defmodule LangChain.ChatModels.ChatPerplexityTest do
     @tag live_call: true, live_perplexity_ai: true
     test "call/2 basic streamed content example" do
       handlers = %{
-        on_llm_new_delta: fn %MessageDelta{} = delta ->
-          send(self(), {:message_delta, delta})
+        on_llm_new_delta: fn deltas ->
+          send(self(), {:message_delta, deltas})
         end
       }
 

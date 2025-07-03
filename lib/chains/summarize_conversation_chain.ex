@@ -349,9 +349,9 @@ defmodule LangChain.Chains.SummarizeConversationChain do
       tool_results
       |> Enum.map(fn %ToolResult{} = result ->
         if result.is_error do
-          "- Tool '#{result.name}' ERRORED: " <> result.content
+          "- Tool '#{result.name}' ERRORED: " <> ContentPart.content_to_string(result.content)
         else
-          "- Tool '#{result.name}' SUCCEEDED: " <> result.content
+          "- Tool '#{result.name}' SUCCEEDED: " <> ContentPart.content_to_string(result.content)
         end
       end)
       |> Enum.join("\n")

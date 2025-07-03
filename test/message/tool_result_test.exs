@@ -3,6 +3,7 @@ defmodule LangChain.Message.ToolResultTest do
   doctest LangChain.Message.ToolResult
   alias LangChain.Message.ToolResult
   alias LangChain.LangChainError
+  alias LangChain.Message.ContentPart
 
   describe "new/1" do
     test "works with minimal attrs" do
@@ -11,7 +12,7 @@ defmodule LangChain.Message.ToolResultTest do
 
       assert msg.type == :function
       assert msg.tool_call_id == "call_123"
-      assert msg.content == "OK"
+      assert msg.content == [ContentPart.text!("OK")]
       assert msg.name == nil
       assert msg.display_text == nil
       assert msg.is_error == false
@@ -29,7 +30,29 @@ defmodule LangChain.Message.ToolResultTest do
 
       assert msg.type == :function
       assert msg.name == "hello_world"
-      assert msg.content == "Hello World!"
+      assert msg.content == [ContentPart.text!("Hello World!")]
+      assert msg.tool_call_id == "call_123asdf"
+      assert msg.display_text == "Ran hello_world function"
+    end
+
+    test "accepts multiple content parts" do
+      content_list = [
+        ContentPart.text!("Hello World!"),
+        ContentPart.text!("Hello World! 2", cache_control: true)
+      ]
+
+      {:ok, %ToolResult{} = msg} =
+        ToolResult.new(%{
+          type: :function,
+          tool_call_id: "call_123asdf",
+          name: "hello_world",
+          content: content_list,
+          display_text: "Ran hello_world function"
+        })
+
+      assert msg.type == :function
+      assert msg.name == "hello_world"
+      assert msg.content == content_list
       assert msg.tool_call_id == "call_123asdf"
       assert msg.display_text == "Ran hello_world function"
     end
@@ -47,7 +70,11 @@ defmodule LangChain.Message.ToolResultTest do
 
       assert msg.type == :function
       assert msg.name == "hello_world"
-      assert msg.content == "The world was destroyed before we could say hello"
+
+      assert msg.content == [
+               ContentPart.text!("The world was destroyed before we could say hello")
+             ]
+
       assert msg.tool_call_id == "call_123asdf"
       assert msg.display_text == "Failed to run hello_world"
       assert msg.is_error == true
@@ -66,7 +93,7 @@ defmodule LangChain.Message.ToolResultTest do
     test "accepts valid input" do
       %ToolResult{} = result = ToolResult.new!(%{tool_call_id: "call_123", content: "SUCCESS"})
       assert result.tool_call_id == "call_123"
-      assert result.content == "SUCCESS"
+      assert result.content == [ContentPart.text!("SUCCESS")]
     end
 
     test "raises error when invalid" do

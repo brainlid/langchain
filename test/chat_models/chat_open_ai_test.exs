@@ -1,6 +1,7 @@
 defmodule LangChain.ChatModels.ChatOpenAITest do
   use LangChain.BaseCase
   import LangChain.Fixtures
+  import LangChain.TestingHelpers
 
   doctest LangChain.ChatModels.ChatOpenAI
   alias LangChain.ChatModels.ChatOpenAI
@@ -12,6 +13,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
   alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult
+  alias LangChain.Chains.LLMChain
 
   @test_model "gpt-4o-mini-2024-07-18"
   @gpt4 "gpt-4-1106-preview"
@@ -283,7 +285,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       [json] = ChatOpenAI.for_api(ChatOpenAI.new!(), msg)
 
       assert json == %{
-               "content" => "Hello World!",
+               "content" => [%{"text" => "Hello World!", "type" => "text"}],
                "tool_call_id" => "tool_abc123",
                "role" => :tool
              }
@@ -313,19 +315,19 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       [r1, r2, r3] = list
 
       assert r1 == %{
-               "content" => "Hello World!",
+               "content" => [%{"text" => "Hello World!", "type" => "text"}],
                "tool_call_id" => "tool_abc123",
                "role" => :tool
              }
 
       assert r2 == %{
-               "content" => "Hello",
+               "content" => [%{"text" => "Hello", "type" => "text"}],
                "tool_call_id" => "tool_abc234",
                "role" => :tool
              }
 
       assert r3 == %{
-               "content" => "World!",
+               "content" => [%{"text" => "World!", "type" => "text"}],
                "tool_call_id" => "tool_abc345",
                "role" => :tool
              }
@@ -521,7 +523,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       json = ChatOpenAI.for_api(openai, result)
 
       assert json == %{
-               "content" => "Hello World!",
+               "content" => [%{"text" => "Hello World!", "type" => "text"}],
                "tool_call_id" => "tool_abc123",
                "role" => :tool
              }
@@ -850,89 +852,25 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     end
 
     @tag live_call: true, live_open_ai: true
-    test "basic streamed content fires token usage callback" do
-      handlers = %{
-        on_llm_token_usage: fn usage ->
-          send(self(), {:fired_token_usage, usage})
-        end
-      }
-
+    test "non-streamed response returns token usage" do
       # https://js.langchain.com/docs/modules/models/chat/
       {:ok, chat} =
         ChatOpenAI.new(%{
           temperature: 1,
           seed: 0,
-          stream: true,
-          stream_options: %{include_usage: true}
+          stream: false
         })
 
-      chat = %ChatOpenAI{chat | callbacks: [handlers]}
-
-      # %{
-      #   "choices" => [],
-      #   "created" => 1717878896,
-      #   "id" => "chatcmpl-9Xx444vHYqsCHl0JpLHBzXDIzcfP0",
-      #   "model" => "gpt-3.5-turbo-0125",
-      #   "object" => "chat.completion.chunk",
-      #   "system_fingerprint" => nil,
-      #   "usage" => %{
-      #     "completion_tokens" => 3,
-      #     "prompt_tokens" => 15,
-      #     "total_tokens" => 18
-      #   }
-      # }
-
-      {:ok, result} =
+      {:ok, [result]} =
         ChatOpenAI.call(chat, [
           Message.new_user!("Return the response 'Colorful Threads'.")
         ])
 
-      # returns a list of MessageDeltas. A list of a list because it's "n" choices.
-      assert result == [
-               [
-                 %LangChain.MessageDelta{
-                   content: "",
-                   status: :incomplete,
-                   index: 0,
-                   role: :assistant
-                 }
-               ],
-               [
-                 %LangChain.MessageDelta{
-                   content: "Color",
-                   status: :incomplete,
-                   index: 0,
-                   role: :unknown
-                 }
-               ],
-               [
-                 %LangChain.MessageDelta{
-                   content: "ful",
-                   status: :incomplete,
-                   index: 0,
-                   role: :unknown
-                 }
-               ],
-               [
-                 %LangChain.MessageDelta{
-                   content: " Threads",
-                   status: :incomplete,
-                   index: 0,
-                   role: :unknown
-                 }
-               ],
-               [
-                 %LangChain.MessageDelta{
-                   content: nil,
-                   status: :complete,
-                   index: 0,
-                   role: :unknown
-                 }
-               ]
-             ]
+      assert result.content == [ContentPart.text!("Colorful Threads")]
 
-      assert_received {:fired_token_usage, usage}
-      assert %TokenUsage{input: 15, output: 4} = usage
+      assert %TokenUsage{} = usage = result.metadata.usage
+      assert usage.input == 15
+      assert usage.output == 3
     end
 
     @tag live_call: true, live_open_ai: true
@@ -1037,47 +975,6 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     end
 
     @tag live_call: true, live_open_ai: true
-    test "executes callback function when data is streamed" do
-      handler = %{
-        on_llm_new_delta: fn %MessageDelta{} = delta ->
-          send(self(), {:message_delta, delta})
-        end
-      }
-
-      # https://js.langchain.com/docs/modules/models/chat/
-      chat = ChatOpenAI.new!(%{seed: 0, temperature: 1, stream: true})
-      chat = %ChatOpenAI{chat | callbacks: [handler]}
-
-      {:ok, _post_results} =
-        ChatOpenAI.call(
-          chat,
-          [
-            Message.new_user!("Return the exact response 'Hi'.")
-          ],
-          []
-        )
-
-      # we expect to receive the response over 3 delta messages
-      assert_receive {:message_delta, delta_1}, 500
-      assert_receive {:message_delta, delta_2}, 500
-      assert_receive {:message_delta, delta_3}, 500
-
-      # IO.inspect(delta_1)
-      # IO.inspect(delta_2)
-      # IO.inspect(delta_3)
-
-      merged =
-        delta_1
-        |> MessageDelta.merge_delta(delta_2)
-        |> MessageDelta.merge_delta(delta_3)
-
-      assert merged.role == :assistant
-      assert [%ContentPart{}] = merged.merged_content
-      assert ContentPart.parts_to_string(merged.merged_content) =~ "Hi"
-      assert merged.status == :complete
-    end
-
-    @tag live_call: true, live_open_ai: true
     test "executes callback function when data is NOT streamed" do
       handler = %{
         on_llm_new_message: fn %Message{} = new_message ->
@@ -1154,9 +1051,95 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     end
   end
 
+  describe "use in LLMChain" do
+    @tag live_call: true, live_open_ai: true
+    test "NOT STREAMED with callbacks and token usage" do
+      handler = %{
+        on_llm_new_delta: fn %LLMChain{} = _chain, deltas ->
+          send(self(), {:test_stream_deltas, deltas})
+        end,
+        on_message_processed: fn _chain, message ->
+          send(self(), {:test_message_processed, message})
+        end
+      }
+
+      # We can construct an LLMChain from a PromptTemplate and an LLM.
+      model = ChatOpenAI.new!(%{temperature: 1, seed: 0, stream: false})
+
+      {:ok, updated_chain} =
+        %{llm: model}
+        |> LLMChain.new!()
+        |> LLMChain.add_callback(handler)
+        |> LLMChain.add_messages([
+          Message.new_user!("Suggest one good name for a company that makes colorful socks?")
+        ])
+        |> LLMChain.run()
+
+      assert %Message{role: :assistant, status: :complete} = updated_chain.last_message
+      assert %TokenUsage{input: 20} = updated_chain.last_message.metadata.usage
+
+      assert_received {:test_message_processed, message}
+      assert %Message{role: :assistant} = message
+      # the final returned message should match the callback message
+      assert message == updated_chain.last_message
+      # we should have received the final combined message
+      refute_received {:test_stream_deltas, _delta}
+    end
+
+    @tag live_call: true, live_open_ai: true
+    test "STREAMED with callbacks and token usage" do
+      handler = %{
+        on_llm_new_delta: fn %LLMChain{} = _chain, deltas ->
+          send(self(), deltas)
+        end,
+        on_message_processed: fn _chain, message ->
+          send(self(), {:test_message_processed, message})
+        end
+      }
+
+      # We can construct an LLMChain from a PromptTemplate and an LLM.
+      model =
+        ChatOpenAI.new!(%{
+          temperature: 1,
+          seed: 0,
+          stream: true,
+          stream_options: %{include_usage: true}
+        })
+
+      original_chain =
+        %{llm: model}
+        |> LLMChain.new!()
+        |> LLMChain.add_callback(handler)
+        |> LLMChain.add_messages([
+          Message.new_user!("Suggest one good name for a company that makes colorful socks?")
+        ])
+
+      {:ok, updated_chain} = original_chain |> LLMChain.run()
+
+      assert %Message{role: :assistant} = updated_chain.last_message
+      assert %TokenUsage{input: 20} = updated_chain.last_message.metadata.usage
+
+      assert_received {:test_message_processed, message}
+      assert %Message{role: :assistant} = message
+      # the final returned message should match the callback message
+      assert message == updated_chain.last_message
+
+      # get all the deltas sent to the test process
+      deltas = collect_messages() |> List.flatten()
+
+      # apply the deltas to the original chain
+      delta_merged_chain = LLMChain.apply_deltas(original_chain, deltas)
+
+      # the received merged deltas should match the ones assembled by the chain.
+      # This is also verifying that we're receiving the token usage via sent
+      # deltas.
+      assert delta_merged_chain.last_message == updated_chain.last_message
+    end
+  end
+
   describe "do_process_response/2" do
     setup do
-      model = ChatOpenAI.new(%{"model" => @test_model})
+      model = ChatOpenAI.new!(%{"model" => @test_model})
       %{model: model}
     end
 
@@ -1234,6 +1217,51 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
                "prompt_tokens_details" => %{"audio_tokens" => 0, "cached_tokens" => 0},
                "total_tokens" => 19
              }
+    end
+
+    test "handles receiving the final empty streamed delta with token usage information", %{
+      model: model
+    } do
+      response = %{
+        "choices" => [],
+        "created" => 1_750_622_279,
+        "id" => "chatcmpl-BlL79wvCX5gewO44UgZN1ul0wwU5j",
+        "model" => "gpt-3.5-turbo-0125",
+        "object" => "chat.completion.chunk",
+        "service_tier" => "default",
+        "system_fingerprint" => nil,
+        "usage" => %{
+          "completion_tokens" => 3,
+          "completion_tokens_details" => %{
+            "accepted_prediction_tokens" => 0,
+            "audio_tokens" => 0,
+            "reasoning_tokens" => 0,
+            "rejected_prediction_tokens" => 0
+          },
+          "prompt_tokens" => 15,
+          "prompt_tokens_details" => %{"audio_tokens" => 0, "cached_tokens" => 0},
+          "total_tokens" => 18
+        }
+      }
+
+      assert result = ChatOpenAI.do_process_response(model, response)
+
+      assert %TokenUsage{
+               input: 15,
+               output: 3,
+               raw: %{
+                 "completion_tokens" => 3,
+                 "completion_tokens_details" => %{
+                   "accepted_prediction_tokens" => 0,
+                   "audio_tokens" => 0,
+                   "reasoning_tokens" => 0,
+                   "rejected_prediction_tokens" => 0
+                 },
+                 "prompt_tokens" => 15,
+                 "prompt_tokens_details" => %{"audio_tokens" => 0, "cached_tokens" => 0},
+                 "total_tokens" => 18
+               }
+             } == result
     end
 
     test "handles receiving a single tool_calls message", %{model: model} do
@@ -1668,7 +1696,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     %{json_1: json_1, json_2: json_2}
   end
 
-  describe "decode_stream/1" do
+  describe "decode_stream/2" do
     setup :setup_expected_json
 
     test "correctly handles fully formed chat completion chunks", %{
@@ -1962,58 +1990,6 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert delta4.tool_calls == nil
     end
   end
-
-  # describe "works within a chain" do
-  #   alias LangChain.Chains.LLMChain
-  #   @tag live_call: true, live_open_ai: true
-  #   test "LLM callbacks pass pass the chain context" do
-  #     test_pid = self()
-
-  #     handler = %{
-  #       on_llm_new_delta: fn %LLMChain{} = _chain, %MessageDelta{} = data ->
-  #         send(test_pid, {:streamed_fn, data})
-  #       end,
-  #       on_llm_new_message: fn %LLMChain{} = _chain, %Message{} = data ->
-  #         send(test_pid, {:msg_fn, data})
-  #       end
-  #     }
-
-  #     {:ok, result_chain} =
-  #       LLMChain.new!(%{llm: %ChatOpenAI{model: @gpt4, stream: true}})
-  #       |> LLMChain.add_message(Message.new_system!("You are a helpful and concise assistant."))
-  #       |> LLMChain.add_message(
-  #         Message.new_user!(
-  #           "What's the capitol of Norway? Please respond with the answer <answer>{{ANSWER}}</answer>"
-  #         )
-  #       )
-  #       |> LLMChain.add_callback(handler)
-  #       |> LLMChain.run()
-
-  #     # %LangChain.Message{
-  #     #   content: "<answer>Oslo</answer>",
-  #     #   index: 0,
-  #     #   status: :complete,
-  #     #   role: :assistant,
-  #     #   name: nil,
-  #     #   tool_calls: [],
-  #     #   tool_call_id: nil,
-  #     # },
-
-  #     last_message = result_chain.last_message
-  #     IO.inspect(result_chain.messages)
-  #     IO.inspect(last_message)
-  #     # TODO: The received message is not appended to the sent assistant message
-  #     # TODO: OpenAI returns a full replacement message.
-  #     # Others only send appended text.
-
-  #     assert last_message.content =~ "Oslo"
-  #     assert last_message.status == :complete
-  #     assert last_message.role == :assistant
-
-  #     assert_received {:streamed_fn, data}
-  #     assert %MessageDelta{role: :assistant} = data
-  #   end
-  # end
 
   def get_streamed_deltas_basic_text do
     [

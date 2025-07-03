@@ -142,7 +142,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   content that are likely to be reused across multiple requests.
 
   Prompt caching is configured through the `cache_control` option in `ContentPart` options. It can be applied
-  to both system messages and regular user messages.
+  to both system messages, regular user messages, tool results, and tool definitions.
 
   Anthropic limits a conversation to max of 4 cache_control blocks and will refuse to service requests with more.
 
@@ -180,7 +180,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   Prompt caching can be applied to:
   - Text content in system messages
   - Text content in user messages
-  - Tool results (when using `options: [cache_control: true]` in `ToolResult`)
+  - Tool results in the `content` field when returning a list of `ContentPart` structs.
+  - Tool definitions in the `options` field when creating a `Function` struct.
 
   For more information, see the [Anthropic prompt caching documentation](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching).
   """
@@ -414,7 +415,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   defp get_tools_for_api(tools) do
     Enum.map(tools, fn
       %Function{} = function ->
-        for_api(function)
+        function_for_api(function)
     end)
   end
 
@@ -550,6 +551,21 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
             result
         end
+
+      {:ok, %Req.Response{status: 429} = response} ->
+        rate_limit_info = get_ratelimit_info(response.headers)
+
+        Callbacks.fire(anthropic.callbacks, :on_llm_ratelimit_info, [
+          rate_limit_info
+        ])
+
+        # Rate limit exceeded
+        {:error,
+         LangChainError.exception(
+           type: "rate_limit_exceeded",
+           message: "Rate limit exceeded",
+           original: rate_limit_info
+         )}
 
       {:ok, %Req.Response{status: 529}} ->
         {:error, LangChainError.exception(type: "overloaded", message: "Overloaded")}
@@ -1127,6 +1143,10 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
     processed = Enum.filter(to_process, &relevant_event?/1)
 
+    if model.verbose_api do
+      IO.inspect(processed, label: "READY TO PROCESS")
+    end
+
     {processed, incomplete}
   end
 
@@ -1221,16 +1241,6 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   #   }
   # end
 
-  # Function support
-  def for_api(%Function{} = fun) do
-    # I'm here
-    %{
-      "name" => fun.name,
-      "input_schema" => get_parameters(fun)
-    }
-    |> Utils.conditionally_add_to_map("description", fun.description)
-  end
-
   # ToolCall support
   def for_api(%ToolCall{} = call) do
     %{
@@ -1243,25 +1253,27 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
   # ToolResult support
   def for_api(%ToolResult{} = result) do
-    case Keyword.fetch(result.options || [], :cache_control) do
-      :error ->
-        %{
-          "type" => "tool_result",
-          "tool_use_id" => result.tool_call_id,
-          "content" => result.content
-        }
-
-      {:ok, setting} ->
-        setting = if setting == true, do: @default_cache_control_block, else: setting
-
-        %{
-          "type" => "tool_result",
-          "tool_use_id" => result.tool_call_id,
-          "content" => result.content,
-          "cache_control" => setting
-        }
-    end
+    %{
+      "type" => "tool_result",
+      "tool_use_id" => result.tool_call_id,
+      "content" => content_parts_for_api(result.content)
+    }
     |> Utils.conditionally_add_to_map("is_error", result.is_error)
+    |> Utils.conditionally_add_to_map("cache_control", get_cache_control_setting(result.options))
+  end
+
+  @doc """
+  Convert a Function to the format expected by the Anthropic API.
+  """
+  @spec function_for_api(Function.t()) :: map() | no_return()
+  def function_for_api(%Function{} = fun) do
+    # I'm here
+    %{
+      "name" => fun.name,
+      "input_schema" => get_parameters(fun)
+    }
+    |> Utils.conditionally_add_to_map("description", fun.description)
+    |> Utils.conditionally_add_to_map("cache_control", get_cache_control_setting(fun.options))
   end
 
   @doc """
@@ -1335,6 +1347,27 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     ]
   end
 
+  # Get the cache control setting from the options.
+  #
+  # If the setting is true, return the default cache control block.
+  # If the setting is false, return nil.
+  # If the setting is a map, return the map.
+  #
+  # If the setting is not provided, return nil.
+  defp get_cache_control_setting(options) do
+    case Keyword.fetch(options || [], :cache_control) do
+      :error ->
+        nil
+
+      {:ok, setting} ->
+        if setting == true do
+          @default_cache_control_block
+        else
+          setting
+        end
+    end
+  end
+
   @doc """
   Converts a ContentPart to the format expected by the Anthropic API.
 
@@ -1363,14 +1396,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   """
   @spec content_part_for_api(ContentPart.t()) :: map() | nil | no_return()
   def content_part_for_api(%ContentPart{type: :text} = part) do
-    case Keyword.fetch(part.options || [], :cache_control) do
-      :error ->
-        %{"type" => "text", "text" => part.content}
-
-      {:ok, setting} ->
-        setting = if setting == true, do: @default_cache_control_block, else: setting
-        %{"type" => "text", "text" => part.content, "cache_control" => setting}
-    end
+    %{"type" => "text", "text" => part.content}
+    |> Utils.conditionally_add_to_map("cache_control", get_cache_control_setting(part.options))
   end
 
   def content_part_for_api(%ContentPart{type: :thinking} = part) do

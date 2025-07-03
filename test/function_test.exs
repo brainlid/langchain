@@ -23,7 +23,7 @@ defmodule LangChain.FunctionTest do
                Function.new(%{"name" => "hello_world", "function" => &hello_world/2})
 
       assert fun.name == "hello_world"
-      assert fun.async == true
+      assert fun.async == false
     end
 
     test "allows for tracking async setting" do

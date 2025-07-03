@@ -14,7 +14,7 @@ defmodule LangChain.Chains.ChainCallbacks do
 
       my_handlers = %{
         on_llm_new_message: fn _chain, new_message -> send(live_view_pid, {:received_message, new_message}) end,
-        on_llm_new_delta: fn _chain, new_delta -> send(live_view_pid, {:received_delta, new_delta}) end,
+        on_llm_new_delta: fn _chain, new_deltas -> send(live_view_pid, {:received_delta, new_deltas}) end,
         on_error_message_created: fn _chain, new_message -> send(live_view_pid, {:received_message, new_message}) end
       }
 
@@ -49,7 +49,7 @@ defmodule LangChain.Chains.ChainCallbacks do
         IO.write(delta)
       end
   """
-  @type llm_new_delta :: (LLMChain.t(), MessageDelta.t() -> any())
+  @type llm_new_delta :: (LLMChain.t(), [MessageDelta.t()] -> any())
 
   @typedoc """
   Executed when an LLM is not streaming and a full message was received.

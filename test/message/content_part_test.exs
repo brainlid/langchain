@@ -168,7 +168,7 @@ defmodule LangChain.Message.ContentPartTest do
     end
   end
 
-  describe "parts_to_string/1" do
+  describe "parts_to_string/2" do
     test "joins text content parts with double newlines" do
       parts = [
         ContentPart.text!("Hello"),
@@ -191,6 +191,17 @@ defmodule LangChain.Message.ContentPartTest do
       assert ContentPart.parts_to_string(parts) == "Hello\n\nworld\n\nhow are you"
     end
 
+    test "matches on content type and can return thinking blocks" do
+      parts = [
+        ContentPart.new!(%{type: :thinking, content: "Let's think about this..."}),
+        ContentPart.text!("regular text"),
+        ContentPart.new!(%{type: :thinking, content: "I think this is a good idea"})
+      ]
+
+      assert ContentPart.parts_to_string(parts, :thinking) ==
+               "Let's think about this...\n\nI think this is a good idea"
+    end
+
     test "returns nil for empty list" do
       assert ContentPart.parts_to_string([]) == nil
     end
@@ -202,6 +213,122 @@ defmodule LangChain.Message.ContentPartTest do
       ]
 
       assert ContentPart.parts_to_string(parts) == nil
+    end
+  end
+
+  describe "content_to_string/1" do
+    test "returns nil when content is nil" do
+      assert ContentPart.content_to_string(nil) == nil
+    end
+
+    test "returns string when content is binary" do
+      assert ContentPart.content_to_string("Hello world") == "Hello world"
+      assert ContentPart.content_to_string("") == ""
+      assert ContentPart.content_to_string(" ") == " "
+    end
+
+    test "processes list of content parts" do
+      parts = [
+        ContentPart.text!("Hello"),
+        ContentPart.text!("world")
+      ]
+
+      assert ContentPart.content_to_string(parts) == "Hello\n\nworld"
+    end
+
+    test "processes list with mixed content part types" do
+      parts = [
+        ContentPart.text!("Hello"),
+        ContentPart.image!("base64data"),
+        ContentPart.text!("world"),
+        ContentPart.image_url!("https://example.com/image.jpg")
+      ]
+
+      assert ContentPart.content_to_string(parts) == "Hello\n\nworld"
+    end
+
+    test "returns nil for empty list of content parts" do
+      assert ContentPart.content_to_string([]) == nil
+    end
+
+    test "returns nil for list with no text content parts" do
+      parts = [
+        ContentPart.image!("base64data"),
+        ContentPart.image_url!("https://example.com/image.jpg")
+      ]
+
+      assert ContentPart.content_to_string(parts) == nil
+    end
+  end
+
+  describe "set_option_on_last_part/3" do
+    test "adds cache_control option to the last content part" do
+      parts = [
+        ContentPart.text!("First part"),
+        ContentPart.text!("Second part"),
+        ContentPart.text!("Last part")
+      ]
+
+      updated_parts = ContentPart.set_option_on_last_part(parts, :cache_control, true)
+
+      # First two parts should be unchanged
+      assert Enum.at(updated_parts, 0).options == []
+      assert Enum.at(updated_parts, 1).options == []
+
+      # Last part should have the new option
+      last_part = List.last(updated_parts)
+      assert last_part.options == [cache_control: true]
+      assert last_part.content == "Last part"
+    end
+
+    test "adds option to single content part" do
+      parts = [ContentPart.text!("Only part")]
+
+      updated_parts = ContentPart.set_option_on_last_part(parts, :cache_control, true)
+
+      assert length(updated_parts) == 1
+      assert List.first(updated_parts).options == [cache_control: true]
+    end
+
+    test "preserves existing options and adds new one" do
+      parts = [
+        ContentPart.text!("First part"),
+        ContentPart.text!("Last part", existing_option: "value")
+      ]
+
+      updated_parts = ContentPart.set_option_on_last_part(parts, :cache_control, true)
+
+      last_part = List.last(updated_parts)
+      assert last_part.options == [cache_control: true, existing_option: "value"]
+    end
+
+    test "works with different content part types" do
+      parts = [
+        ContentPart.text!("Text part"),
+        ContentPart.image!("base64data")
+      ]
+
+      updated_parts = ContentPart.set_option_on_last_part(parts, :cache_control, true)
+
+      # Text part should be unchanged
+      assert Enum.at(updated_parts, 0).options == []
+
+      # Image part should have the new option
+      last_part = List.last(updated_parts)
+      assert last_part.options == [cache_control: true]
+      assert last_part.type == :image
+    end
+
+    test "adds different option types" do
+      parts = [ContentPart.text!("Test part")]
+
+      # Test with atom value
+      updated_parts = ContentPart.set_option_on_last_part(parts, :detail, :high)
+      assert List.first(updated_parts).options == [detail: :high]
+
+      # Test with string value
+      updated_parts = ContentPart.set_option_on_last_part(parts, :filename, "test.pdf")
+      assert List.first(updated_parts).options == [filename: "test.pdf"]
     end
   end
 end

@@ -4,6 +4,7 @@ defmodule LangChain.UtilsTest do
   doctest LangChain.Utils
   alias LangChain.Message
   alias LangChain.Message.ContentPart
+  alias LangChain.MessageDelta
   alias LangChain.ChatModels.ChatOpenAI
   alias LangChain.Utils
   alias LangChain.Chains.LLMChain
@@ -66,26 +67,26 @@ defmodule LangChain.UtilsTest do
     end
 
     test "handles ecto enum type errors" do
-      {:error, changeset} = LangChain.MessageDelta.new(%{role: "invalid"})
+      {:error, changeset} = MessageDelta.new(%{role: "invalid"})
       result = Utils.changeset_error_to_string(changeset)
       assert result == "role: is invalid"
     end
 
     test "handles multiple errors on a field" do
-      {:error, changeset} = LangChain.MessageDelta.new(%{role: "invalid"})
+      {:error, changeset} = MessageDelta.new(%{role: "invalid"})
       changeset = Ecto.Changeset.add_error(changeset, :role, "is required")
       result = Utils.changeset_error_to_string(changeset)
       assert result == "role: is required, is invalid"
     end
 
     test "handles errors on multiple fields" do
-      {:error, changeset} = LangChain.MessageDelta.new(%{role: "invalid", index: "abc"})
+      {:error, changeset} = MessageDelta.new(%{role: "invalid", index: "abc"})
       result = Utils.changeset_error_to_string(changeset)
       assert result == "role: is invalid; index: is invalid"
     end
 
     test "handles multiple errors on multiple fields" do
-      {:error, changeset} = LangChain.MessageDelta.new(%{role: "invalid", index: "abc"})
+      {:error, changeset} = MessageDelta.new(%{role: "invalid", index: "abc"})
 
       changeset =
         changeset
@@ -300,6 +301,94 @@ defmodule LangChain.UtilsTest do
 
       # not an LLM event. Not included
       assert group_2[:on_message_processed] == nil
+    end
+  end
+
+  describe "migrate_to_content_parts/1" do
+    defmodule FakeContentSchema do
+      use Ecto.Schema
+      import Ecto.Changeset
+
+      embedded_schema do
+        field :content, :any, virtual: true
+        field :other_field, :string
+      end
+
+      def changeset(struct, attrs) do
+        struct
+        |> cast(attrs, [:content, :other_field])
+      end
+    end
+
+    test "converts binary content to list of ContentParts" do
+      changeset = FakeContentSchema.changeset(%FakeContentSchema{}, %{content: "Hello world"})
+
+      result = Utils.migrate_to_content_parts(changeset)
+
+      assert result.valid?
+
+      assert [%ContentPart{type: :text, content: "Hello world"}] =
+               Ecto.Changeset.get_change(result, :content)
+    end
+
+    test "wraps single ContentPart in a list" do
+      content_part = ContentPart.text!("Hello world")
+      changeset = FakeContentSchema.changeset(%FakeContentSchema{}, %{content: content_part})
+
+      result = Utils.migrate_to_content_parts(changeset)
+
+      assert result.valid?
+      assert [^content_part] = Ecto.Changeset.get_change(result, :content)
+    end
+
+    test "leaves list of ContentParts unchanged" do
+      content_parts = [
+        ContentPart.text!("Hello"),
+        ContentPart.text!("world")
+      ]
+
+      changeset = FakeContentSchema.changeset(%FakeContentSchema{}, %{content: content_parts})
+
+      result = Utils.migrate_to_content_parts(changeset)
+
+      assert result.valid?
+      assert ^content_parts = Ecto.Changeset.get_change(result, :content)
+    end
+
+    test "leaves empty list unchanged" do
+      changeset = FakeContentSchema.changeset(%FakeContentSchema{}, %{content: []})
+
+      result = Utils.migrate_to_content_parts(changeset)
+
+      assert result.valid?
+      assert [] = Ecto.Changeset.get_change(result, :content)
+    end
+
+    test "leaves changeset unchanged when no content change" do
+      changeset = FakeContentSchema.changeset(%FakeContentSchema{}, %{other_field: "value"})
+
+      result = Utils.migrate_to_content_parts(changeset)
+
+      assert result.valid?
+      assert Ecto.Changeset.get_change(result, :content) == nil
+    end
+
+    test "leaves changeset unchanged when content is nil" do
+      changeset = FakeContentSchema.changeset(%FakeContentSchema{}, %{content: nil})
+
+      result = Utils.migrate_to_content_parts(changeset)
+
+      assert result.valid?
+      assert Ecto.Changeset.get_change(result, :content) == nil
+    end
+
+    test "handles whitespace content" do
+      changeset = FakeContentSchema.changeset(%FakeContentSchema{}, %{content: "   "})
+
+      result = Utils.migrate_to_content_parts(changeset)
+
+      assert result.valid?
+      assert nil == Ecto.Changeset.get_change(result, :content)
     end
   end
 end

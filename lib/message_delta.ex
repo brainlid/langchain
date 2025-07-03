@@ -208,6 +208,15 @@ defmodule LangChain.MessageDelta do
   # ContentPart being merged
   defp append_to_merged_content(
          %MessageDelta{role: :assistant, merged_content: %ContentPart{} = primary_part} = primary,
+         %MessageDelta{content: nil, merged_content: %ContentPart{} = new_content_part}
+       ) do
+    # merging two deltas that have already been merged from smaller chunks.
+    merged_part = ContentPart.merge_part(primary_part, new_content_part)
+    %MessageDelta{primary | merged_content: [merged_part]}
+  end
+
+  defp append_to_merged_content(
+         %MessageDelta{role: :assistant, merged_content: %ContentPart{} = primary_part} = primary,
          %MessageDelta{content: %ContentPart{} = new_content_part}
        ) do
     merged_part = ContentPart.merge_part(primary_part, new_content_part)
@@ -261,6 +270,15 @@ defmodule LangChain.MessageDelta do
   end
 
   # Helper function to merge a content part at a specific index
+  defp merge_content_part_at_index(
+         %MessageDelta{} = primary,
+         %ContentPart{type: :text, content: ""} = _new_content_part,
+         _index
+       ) do
+    # Skip merging empty text content parts to avoid type conflicts
+    primary
+  end
+
   defp merge_content_part_at_index(
          %MessageDelta{} = primary,
          %ContentPart{} = new_content_part,
@@ -369,6 +387,19 @@ defmodule LangChain.MessageDelta do
       position ->
         List.replace_at(tool_calls, position, call)
     end
+  end
+
+  @doc """
+  Convert the MessageDelta's merged content to a string. Specify the type of
+  content to convert so it can return just the text parts or thinking parts,
+  etc. Defaults to `:text`.
+  """
+  @spec content_to_string(t(), type :: atom()) :: nil | String.t()
+  def content_to_string(delta, type \\ :text)
+  def content_to_string(nil, _type), do: nil
+
+  def content_to_string(%MessageDelta{merged_content: merged_content}, type) do
+    ContentPart.content_to_string(merged_content, type)
   end
 
   @doc """

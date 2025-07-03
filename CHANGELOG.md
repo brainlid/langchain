@@ -1,5 +1,53 @@
 # Changelog
 
+## v0.4.0-rc.1
+
+---
+
+### Breaking Changes
+- ToolResult `content` now supports a list of ContentParts, not just strings. Functions can return a ToolResult directly for advanced control (e.g., cache control, processed_content).
+- Expanded multi-modal support: messages and tool results can now include text, images, files, and thinking blocks as ContentParts.
+- LLMChain: Added `async_tool_timeout` config; improved fallback and error handling.
+- `LangChain.Function` changed the default for `async` to `false`. If you want async execution, set `async: true` explicitly when defining your function.
+- The `on_llm_new_delta` callback now receives a list of `MessageDelta` structs instead of a single one. To merge the received deltas into your chain for display, use:
+
+```elixir
+updated_chain = LLMChain.merge_deltas(current_llm_chain, deltas)
+```
+
+### Upgrading from v0.4.0-rc.0 - v0.4.0-rc.1
+- If you return a ToolResult from a function, you can now use ContentParts for richer responses. See module docs for details.
+- If you use custom chunking logic, see the new tokenizer support in TextSplitter.
+- If you are displaying streamed MessageDelta results using the `on_llm_new_delta` callback, you will need to update your callback function to expect a list of MessageDeltas and you can use the new `LLMChain.merge_deltas` function for merging them into your chain. The resulting merged delta can be used for display.
+
+#### Model Compatibility
+- The following models have been verified with this version:
+  - ChatOpenAI
+  - ChatAnthropic
+  - ChatGoogleAI
+- There are known broken live tests with Perplexity and likely others. Not all models are currently verified or supported in this release.
+
+**Assistance is requested** for verifying/updating other models and their tests.
+
+### Added
+- Telemetry to `LLMChain.run_until_tool_used` for better observability.
+- Google Gemini 2.0+ supports native Google Search as a tool.
+- MistralAI: Structured output support.
+- ChatGoogleAI: `verbose_api` option; updated default model to `gemini-2.5-pro`.
+- TextSplitter: Added configurable tokenizer support for chunking by tokens, not just characters.
+
+### Changed
+- ChatOpenAI: Improved handling of ContentParts in ToolResults; better support for reasoning models and robust API options.
+- ChatGoogleAI: Improved ToolResult handling for ContentParts; better error and token usage reporting.
+- ChatAnthropic: Expanded prompt caching support and documentation; improved error and token usage handling.
+- LLMChain: Improved fallback and error handling; added async tool timeout config.
+- TextSplitter: Now supports custom tokenizers for chunking.
+
+### Fixed
+- ToolCalls: Fixed issues with nil tool_calls and tool call processing.
+- Token Usage: Fixed token usage reporting for GoogleAI.
+- Bedrock Stream Decoder: Fixed chunk order issue.
+
 ## v0.4.0-rc.0
 
 This includes several breaking changes:
@@ -17,8 +65,8 @@ Use the v0.3.x releases for models that are not yet supported.
 | OpenAI DALL-e 2 (image generation) | ✓ | ? |
 | Anthropic Claude | ✓ | ✓ |
 | Anthropic Claude (thinking) | X | ✓ |
-| Google Gemini | ✓ | X |
-| Google Vertex AI | ✓ | X |
+| Google Gemini | ✓ | ✓ |
+| Google Vertex AI | ✓ | ✓ |
 | Ollama | ✓ | ? |
 | Mistral | ✓ | X |
 | Bumblebee self-hosted models | ✓ | ? |

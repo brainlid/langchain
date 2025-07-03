@@ -100,6 +100,9 @@ defmodule LangChain.ChatModels.ChatVertexAI do
 
     # A list of maps for callback handlers (treated as internal)
     field :callbacks, {:array, :map}, default: []
+
+    # Additional level of raw api request and response data
+    field :verbose_api, :boolean, default: false
   end
 
   @type t :: %ChatVertexAI{}
@@ -280,10 +283,24 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   end
 
   defp for_api(%ToolResult{} = result) do
+    content =
+      result.content
+      |> ContentPart.parts_to_string()
+      |> Jason.decode()
+      |> case do
+        {:ok, data} ->
+          # content was converted through JSON
+          data
+
+        {:error, %Jason.DecodeError{}} ->
+          # assume the result is intended to be a string and return it as-is
+          %{"result" => result.content}
+      end
+
     %{
       "functionResponse" => %{
         "name" => result.name,
-        "response" => Jason.decode!(result.content)
+        "response" => content
       }
     }
   end

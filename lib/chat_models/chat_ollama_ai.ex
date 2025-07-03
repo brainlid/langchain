@@ -285,14 +285,14 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   def for_api(%ToolResult{content: content}) do
     %{
       "role" => :tool,
-      "content" => content
+      "content" => ContentPart.parts_to_string(content)
     }
   end
 
   def for_api(%Message{content: content} = msg) when is_binary(content) do
     %{
       "role" => msg.role,
-      "content" => msg.content
+      "content" => ContentPart.content_to_string(msg.content)
     }
     |> Utils.conditionally_add_to_map("name", msg.name)
   end
@@ -300,7 +300,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   def for_api(%Message{role: :user, content: content} = msg) when is_list(content) do
     %{
       "role" => msg.role,
-      "content" => ContentPart.parts_to_string(content)
+      "content" => ContentPart.content_to_string(content)
     }
     |> Utils.conditionally_add_to_map("name", msg.name)
   end
