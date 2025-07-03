@@ -75,17 +75,7 @@ in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:langchain, "0.3.3"}
-  ]
-end
-```
-
-The Release Candidate includes many additional features and some breaking changes.
-
-```elixir
-def deps do
-  [
-    {:langchain, "0.4.0-rc.0"}
+    {:langchain, "0.4.0-rc.1"}
   ]
 end
 ```
@@ -281,3 +271,7 @@ Executing a specific test, whether it is a `live_call` or not, will execute it c
 When doing local development on the `LangChain` library itself, rename the `.envrc_template` to `.envrc` and populate it with your private API values. This is only used when running live test when explicitly requested.
 
 Use a tool like [Direnv](https://direnv.net/) or [Dotenv](https://github.com/motdotla/dotenv) to load the API values into the ENV when using the library locally.
+
+**Multi-modal support:**
+
+LangChain now supports multi-modal messages and tool results. This means you can include text, images, files, and even "thinking" blocks in a single message using ContentParts. See module docs for details. Support for this depends on the LLM and service. Not all models may yet support all modalities.

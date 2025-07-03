@@ -4,9 +4,10 @@ defmodule LangChain.Chains.LLMChain do
 
   The chain deals with tools, a tool map, delta tracking, tracking the messages
   exchanged during a run, the last_message tracking, conversation messages, and
-  verbose logging. This helps by separating these responsibilities from the LLM
-  making it easier to support additional LLMs because the focus is on
-  communication and formats instead of all the extra logic.
+  verbose logging. Messages and tool results support multi-modal ContentParts,
+  enabling richer responses (text, images, files, thinking, etc.). ToolResult
+  content can be a list of ContentParts. The chain also supports
+  `async_tool_timeout` and improved fallback handling.
 
   ## Callbacks
 

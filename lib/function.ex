@@ -18,9 +18,10 @@ defmodule LangChain.Function do
     passed to the function. (Use if greater control or unsupported features are
     needed.)
   * `function` - An Elixir function to execute when an LLM requests to execute
-    the function. The function should return `{:ok, "text for LLM"}`, `{:ok,
-    "text for LLM", processed_content}`, `{:error, "and text explanation of the
-    error"}` or just plain `"text response"`, which is returned to the LLM.
+    the function. The function can return a string, a tuple, or a
+    `%ToolResult{}` struct for advanced control. Returning a ToolResult allows
+    for multi-modal responses (list of ContentParts), cache control, and
+    processed_content.
   * `async` - Boolean value that flags if this can function can be executed
     asynchronously, potentially concurrently with other calls to the same
     function. Defaults to `false`.
@@ -169,38 +170,8 @@ defmodule LangChain.Function do
 
   For advanced use cases where you need explicit control over the `ToolResult`
   structure or want to set LLM-specific options, your Elixir function can return
-  a fully constructed `%ToolResult{}` struct:
-
-      alias LangChain.Message.ToolResult
-
-      Function.new!(%{name: "cache_enabled_search",
-        parameters: [
-          FunctionParam.new!(%{name: "query", type: :string, required: true})
-        ],
-        function: &execute_cached_search/2
-      })
-
-      # ...
-
-      def execute_cached_search(args, _context) do
-        # Perform search operation...
-        search_results = perform_search(args["query"])
-
-        # Return an explicit ToolResult with options
-        {:ok, %ToolResult{
-          content: [
-            ContentPart.text!(%{"Found \#{length(search_results)} results", options: [cache_control: true]})
-          ],
-          processed_content: search_results
-        }}
-      end
-
-  When returning `{:ok, %ToolResult{}}`, the system will automatically merge in
-  the required `tool_call_id` from the LLM's request and provide fallback values
-  for `name` and `display_text` from the function definition if they are not
-  explicitly set on the ToolResult. All other fields like `content`,
-  `processed_content`, `options`, and `is_error` are preserved exactly as
-  specified.
+  a fully constructed `%ToolResult{}` struct. The `content` field can be a list
+  of ContentParts for multi-modal responses.
 
   This approach is particularly useful when you need to:
 

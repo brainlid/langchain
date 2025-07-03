@@ -5,12 +5,16 @@ defmodule LangChain.Message.ToolResult do
   application back to the AI.
 
   ## Content
-  The `content` is a string that gets returned to the LLM as the result.
+  The `content` can be a string or a list of ContentParts for multi-modal
+  responses (text, images, etc.) that gets returned to the LLM as the result.
 
   ## Processed Content
   The `processed_content` field is optional. When you want to keep the results
   of the Elixir function call as a native Elixir data structure,
   `processed_content` can hold it.
+
+  Advanced use: You can use the `options` field for LLM-specific features like
+  cache control.
 
   To do this, the Elixir function's result should be a `{:ok, "String response
   for LLM", native_elixir_data}`. See `LangChain.Function` for details and

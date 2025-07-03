@@ -1,9 +1,9 @@
 defmodule LangChain.Message.ContentPart do
   @moduledoc """
-  Models a `ContentPart`. Some LLMs support combining text, images, and possibly
-  other content as part of a single user message or other content parts like
-  "thinking" may be part of an assistant's response message. A `ContentPart`
-  represents a block, or part, of a message's content that is all of one type.
+  Models a `ContentPart`. ContentParts are now used for multi-modal support in
+  both messages and tool results. This enables richer responses, allowing text,
+  images, files, and thinking blocks to be combined in a single message or tool
+  result.
 
   ## Types
 

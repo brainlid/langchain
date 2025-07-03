@@ -2,30 +2,51 @@
 
 ## v0.4.0-rc.1
 
-- ChatAnthropic - `cache_control` is more fully implemented
-- ChatOpen - token usage on streamed deltas is supported. They don't send the usage metadata until _after_ last delta. This is why the `apply_delta/2` change was made. If we "apply" and process the finished delta as soon as completed, then we lose the ability to associate the token usage with it.
+---
 
-- `LangChain.Chains.LLMChain.apply_delta/2` was renamed to `merge_delta/2` and does not "apply" the finished delta to the chain. The `apply_deltas/2` (plural), takes a list of deltas and applies them to the chain, finishing as a message when complete and firing any callbacks.
+### Breaking Changes
+- ToolResult `content` now supports a list of ContentParts, not just strings. Functions can return a ToolResult directly for advanced control (e.g., cache control, processed_content).
+- Expanded multi-modal support: messages and tool results can now include text, images, files, and thinking blocks as ContentParts.
+- LLMChain: Added `async_tool_timeout` config; improved fallback and error handling.
+- `LangChain.Function` changed the default for `async` to `false`. If you want async execution, set `async: true` explicitly when defining your function.
+- The `on_llm_new_delta` callback now receives a list of `MessageDelta` structs instead of a single one. To merge the received deltas into your chain for display, use:
 
-- `LangChain.Chains.LLMChain.merge_deltas/2` merges received deltas to the chain's `delta`. No callbacks are fired.
+  ```elixir
+  updated_chain = LLMChain.merge_deltas(current_llm_chain, deltas)
+  ```
 
-- `LangChain.Function` can now return a `ToolResult` directly. This allows for maximum control and enables the ability to use `cache_control` on the results as well.
+### Upgrading from v0.4.0-rc.0 - v0.4.0-rc.1
+- If you return a ToolResult from a function, you can now use ContentParts for richer responses. See module docs for details.
+- If you use custom chunking logic, see the new tokenizer support in TextSplitter.
+- If you are displaying streamed MessageDelta results using the `on_llm_new_delta` callback, you will need to update your callback function to expect a list of MessageDeltas and you can use the new `LLMChain.merge_deltas` function for merging them into your chain. The resulting merged delta can be used for display.
 
-- Added `LLMChain.drop_delta/1`
+#### Model Compatibility
+- The following models have been verified with this version:
+  - ChatOpenAI
+  - ChatAnthropic
+  - ChatGoogleAI
+- There are known broken live tests with Perplexity and likely others. Not all models are currently verified or supported in this release.
 
-- Recommend approach of dropping deltas once the fully completed message is received. At least, if you care about tracking the token usage with it and you're using OpenAI.
+**Assistance is requested** for verifying/updating other models and their tests.
 
-- `Function.async` was changed to be `false` by default. Previously it was true. Being true by default can create difficult to diagnose bugs and the async option wasn't a choice and isn't visible in the options. Where it is desired, set it to `true`.
+### Added
+- Telemetry to `LLMChain.run_until_tool_used` for better observability.
+- Google Gemini 2.0+ supports native Google Search as a tool.
+- MistralAI: Structured output support.
+- ChatGoogleAI: `verbose_api` option; updated default model to `gemini-2.5-pro`.
+- TextSplitter: Added configurable tokenizer support for chunking by tokens, not just characters.
 
-- Changed callback `on_llm_new_delta` to include a list of deltas instead of each individual delta. The LLM may send back a list of deltas in one response. Previously, these were broken apart and sent through the callbacks one at a time. Now, it mirrors more of the behavior of the LLM by sending one or more deltas at a time. The purpose for this change was to connect the token usage result with the final delta.
+### Changed
+- ChatOpenAI: Improved handling of ContentParts in ToolResults; better support for reasoning models and robust API options.
+- ChatGoogleAI: Improved ToolResult handling for ContentParts; better error and token usage reporting.
+- ChatAnthropic: Expanded prompt caching support and documentation; improved error and token usage handling.
+- LLMChain: Improved fallback and error handling; added async tool timeout config.
+- TextSplitter: Now supports custom tokenizers for chunking.
 
-- `LangChain.MessageDelta.content_to_string/2` function was added. Makes it easier to get the contents of the streaming delta response as text. It also makes it easier to access the streaming thinking response as well since the caller can specify the type of content to return.
-
-- `LangChain.Message.ContentPart.parts_to_string/2` Now takes an optional second argument to return a specific type of ContentPart. Defaults to `:text`.
-
-- `LangChain.ChatModels.ChatGoogleAI`
-  - Added `verbose_api` option to the model
-  - Updated default model to "gemini-2.5-pro". Previous model was retired.
+### Fixed
+- ToolCalls: Fixed issues with nil tool_calls and tool call processing.
+- Token Usage: Fixed token usage reporting for GoogleAI.
+- Bedrock Stream Decoder: Fixed chunk order issue.
 
 ## v0.4.0-rc.0
 
