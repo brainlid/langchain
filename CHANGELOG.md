@@ -5,7 +5,9 @@
 - ChatAnthropic - `cache_control` is more fully implemented
 - ChatOpen - token usage on streamed deltas is supported. They don't send the usage metadata until _after_ last delta. This is why the `apply_delta/2` change was made. If we "apply" and process the finished delta as soon as completed, then we lose the ability to associate the token usage with it.
 
-- `LangChain.Chains.LLMChain.apply_delta/2` was renamed to `merge_delta/2` and does not "apply" the finished delta to the chain. The `apply_deltas/2` (plural), takes a list of deltas and applies them to the chain, finishing as a message when complete.
+- `LangChain.Chains.LLMChain.apply_delta/2` was renamed to `merge_delta/2` and does not "apply" the finished delta to the chain. The `apply_deltas/2` (plural), takes a list of deltas and applies them to the chain, finishing as a message when complete and firing any callbacks.
+
+- `LangChain.Chains.LLMChain.merge_deltas/2` merges received deltas to the chain's `delta`. No callbacks are fired.
 
 - `LangChain.Function` can now return a `ToolResult` directly. This allows for maximum control and enables the ability to use `cache_control` on the results as well.
 
@@ -14,6 +16,16 @@
 - Recommend approach of dropping deltas once the fully completed message is received. At least, if you care about tracking the token usage with it and you're using OpenAI.
 
 - `Function.async` was changed to be `false` by default. Previously it was true. Being true by default can create difficult to diagnose bugs and the async option wasn't a choice and isn't visible in the options. Where it is desired, set it to `true`.
+
+- Changed callback `on_llm_new_delta` to include a list of deltas instead of each individual delta. The LLM may send back a list of deltas in one response. Previously, these were broken apart and sent through the callbacks one at a time. Now, it mirrors more of the behavior of the LLM by sending one or more deltas at a time. The purpose for this change was to connect the token usage result with the final delta.
+
+- `LangChain.MessageDelta.content_to_string/2` function was added. Makes it easier to get the contents of the streaming delta response as text. It also makes it easier to access the streaming thinking response as well since the caller can specify the type of content to return.
+
+- `LangChain.Message.ContentPart.parts_to_string/2` Now takes an optional second argument to return a specific type of ContentPart. Defaults to `:text`.
+
+- `LangChain.ChatModels.ChatGoogleAI`
+  - Added `verbose_api` option to the model
+  - Updated default model to "gemini-2.5-pro". Previous model was retired.
 
 ## v0.4.0-rc.0
 
@@ -32,8 +44,8 @@ Use the v0.3.x releases for models that are not yet supported.
 | OpenAI DALL-e 2 (image generation) | ✓ | ? |
 | Anthropic Claude | ✓ | ✓ |
 | Anthropic Claude (thinking) | X | ✓ |
-| Google Gemini | ✓ | X |
-| Google Vertex AI | ✓ | X |
+| Google Gemini | ✓ | ✓ |
+| Google Vertex AI | ✓ | ✓ |
 | Ollama | ✓ | ? |
 | Mistral | ✓ | X |
 | Bumblebee self-hosted models | ✓ | ? |
