@@ -760,11 +760,11 @@ defmodule LangChain.Chains.LLMChain do
     message_response =
       module.call(use_llm, chain.messages, chain.tools)
       |> then(fn
-        {:ok, messages} ->
+        {:ok, messages} when is_list(messages) ->
           {:ok, Enum.reject(messages, &(&1 == []))}
 
-        error ->
-          error
+        non_list_or_error ->
+          non_list_or_error
       end)
 
     # handle and output response
