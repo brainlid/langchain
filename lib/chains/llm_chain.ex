@@ -757,8 +757,18 @@ defmodule LangChain.Chains.LLMChain do
     # wrap and link the model's callbacks.
     use_llm = Utils.rewrap_callbacks_for_model(chain.llm, chain.callbacks, chain)
 
+    message_response =
+      module.call(use_llm, chain.messages, chain.tools)
+      |> then(fn
+        {:ok, messages} ->
+          {:ok, Enum.reject(messages, &(&1 == []))}
+
+        error ->
+          error
+      end)
+
     # handle and output response
-    case module.call(use_llm, chain.messages, chain.tools) do
+    case message_response do
       {:ok, [%Message{} = message]} ->
         if chain.verbose, do: IO.inspect(message, label: "SINGLE MESSAGE RESPONSE")
         {:ok, process_message(chain, message)}
