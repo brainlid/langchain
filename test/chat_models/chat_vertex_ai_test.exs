@@ -11,6 +11,7 @@ defmodule ChatModels.ChatVertexAITest do
   alias LangChain.MessageDelta
   alias LangChain.Function
   alias LangChain.LangChainError
+  alias LangChain.TokenUsage
 
   setup do
     {:ok, hello_world} =
@@ -352,6 +353,40 @@ defmodule ChatModels.ChatVertexAITest do
       assert {:error, %LangChainError{} = error} = ChatVertexAI.do_process_response(response)
       assert error.type == "unexpected_response"
       assert error.message == "Unexpected response"
+    end
+
+    test "handles receiving a message with token usage" do
+      response = %{
+        "candidates" => [
+          %{
+            "content" => %{"role" => "model", "parts" => [%{"text" => "Hello User!"}]},
+            "finishReason" => "STOP",
+            "index" => 0
+          }
+        ],
+        "usageMetadata" => %{
+          "promptTokenCount" => 10,
+          "candidatesTokenCount" => 5,
+          "totalTokenCount" => 15
+        }
+      }
+
+      assert [%Message{} = struct] = ChatVertexAI.do_process_response(response)
+      assert struct.role == :assistant
+      [%ContentPart{type: :text, content: "Hello User!"}] = struct.content
+      assert struct.index == 0
+      assert struct.status == :complete
+
+      # Verify that token usage is properly included in metadata
+      assert %TokenUsage{} = struct.metadata.usage
+      assert struct.metadata.usage.input == 10
+      assert struct.metadata.usage.output == 5
+
+      assert struct.metadata.usage.raw == %{
+        "promptTokenCount" => 10,
+        "candidatesTokenCount" => 5,
+        "totalTokenCount" => 15
+      }
     end
   end
 

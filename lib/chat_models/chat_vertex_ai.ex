@@ -12,7 +12,6 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   alias LangChain.Message.ContentPart
   alias LangChain.ChatModels.ChatVertexAI
 
-
   config = %{
         model: "gemini-2.0-flash",
         api_key: ..., # vertex requires gcloud auth token https://cloud.google.com/vertex-ai/generative-ai/docs/start/quickstarts/quickstart-multimodal#rest
@@ -53,6 +52,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   alias LangChain.LangChainError
   alias LangChain.Utils
   alias LangChain.Callbacks
+  alias LangChain.TokenUsage
 
   @behaviour ChatModel
 
@@ -482,9 +482,12 @@ defmodule LangChain.ChatModels.ChatVertexAI do
 
   def do_process_response(response, message_type \\ Message)
 
-  def do_process_response(%{"candidates" => candidates}, message_type) when is_list(candidates) do
+  def do_process_response(%{"candidates" => candidates} = data, message_type) when is_list(candidates) do
+    token_usage = get_token_usage(data)
+
     candidates
     |> Enum.map(&do_process_response(&1, message_type))
+    |> Enum.map(&TokenUsage.set(&1, token_usage))
   end
 
   def do_process_response(%{"content" => %{"parts" => parts} = content_data} = data, Message) do
@@ -685,6 +688,17 @@ defmodule LangChain.ChatModels.ChatVertexAI do
       role -> role
     end
   end
+
+  defp get_token_usage(%{"usageMetadata" => usage} = _response_body) do
+    # extract out the reported response token usage
+    TokenUsage.new!(%{
+      input: Map.get(usage, "promptTokenCount", 0),
+      output: Map.get(usage, "candidatesTokenCount", 0),
+      raw: usage
+    })
+  end
+
+  defp get_token_usage(_response_body), do: nil
 
   defp unmap_role("model"), do: "assistant"
   defp unmap_role("function"), do: "tool"
