@@ -1130,6 +1130,41 @@ defmodule LangChain.Chains.LLMChainTest do
       assert_received {:function_called, "fly_regions"}
     end
 
+    test "ignores empty lists in the list of messages" do
+      # Made NOT LIVE here
+      expect(ChatOpenAI, :call, fn _model, _prompt, _tools ->
+        {:ok,
+         [
+           [],
+           [
+             MessageDelta.new!(%{content: "Hello ", role: :assistant}),
+             [],
+             MessageDelta.new!(%{content: "World", role: :assistant})
+           ]
+         ]}
+      end)
+
+      model = ChatOpenAI.new!(%{stream: true, model: "gpt-4o-mini"})
+
+      assert {:ok, updated_chain} =
+               LLMChain.new!(%{llm: model})
+               |> LLMChain.add_messages([Message.new_user!("Hi")])
+               |> LLMChain.run()
+
+      assert %MessageDelta{
+               merged_content: [
+                 %ContentPart{
+                   type: :text,
+                   content: "Hello World",
+                   options: []
+                 }
+               ],
+               status: :incomplete,
+               role: :assistant
+             } =
+               updated_chain.delta
+    end
+
     test "returns error when receives overloaded from Anthropic" do
       # Made NOT LIVE here
       expect(ChatAnthropic, :call, fn _model, _prompt, _tools ->
