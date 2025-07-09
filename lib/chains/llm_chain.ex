@@ -773,7 +773,7 @@ defmodule LangChain.Chains.LLMChain do
         if chain.verbose, do: IO.inspect(message, label: "SINGLE MESSAGE RESPONSE")
         {:ok, process_message(chain, message)}
 
-      {:ok, [%Message{} = message, _others] = messages} ->
+      {:ok, [%Message{} = message | _others] = messages} ->
         if chain.verbose, do: IO.inspect(messages, label: "MULTIPLE MESSAGE RESPONSE")
         # return the list of message responses. Happens when multiple
         # "choices" are returned from LLM by request.
