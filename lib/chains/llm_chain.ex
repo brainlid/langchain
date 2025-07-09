@@ -757,8 +757,18 @@ defmodule LangChain.Chains.LLMChain do
     # wrap and link the model's callbacks.
     use_llm = Utils.rewrap_callbacks_for_model(chain.llm, chain.callbacks, chain)
 
+    # filter out any empty lists in the list of messages.
+    message_response =
+      case module.call(use_llm, chain.messages, chain.tools) do
+        {:ok, messages} when is_list(messages) ->
+          {:ok, Enum.reject(messages, &(&1 == []))}
+
+        non_list_or_error ->
+          non_list_or_error
+      end
+
     # handle and output response
-    case module.call(use_llm, chain.messages, chain.tools) do
+    case message_response do
       {:ok, [%Message{} = message]} ->
         if chain.verbose, do: IO.inspect(message, label: "SINGLE MESSAGE RESPONSE")
         {:ok, process_message(chain, message)}
