@@ -164,7 +164,7 @@ defmodule LangChain.Tools.DeepResearch.ResearchResultTest do
 
       assert {:error, changeset} = ResearchResult.from_api_response(api_response)
       refute changeset.valid?
-      
+
       # Check that the required fields are missing
       errors = changeset.errors
       assert Keyword.has_key?(errors, :id)
