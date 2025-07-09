@@ -17,7 +17,7 @@ defmodule LangChain.Tools.DeepResearch.ResearchResultTest do
     test "requires id and output_text" do
       changeset = ResearchResult.changeset(%ResearchResult{}, %{})
       refute changeset.valid?
-      
+
       # Check that the required fields are in the errors
       errors = changeset.errors
       assert Keyword.has_key?(errors, :id)
@@ -36,7 +36,7 @@ defmodule LangChain.Tools.DeepResearch.ResearchResultTest do
 
       changeset = ResearchResult.changeset(%ResearchResult{}, attrs)
       assert changeset.valid?
-      
+
       result = Ecto.Changeset.apply_changes(changeset)
       assert length(result.sources) == 2
       assert hd(result.sources).title == "Source 1"
@@ -56,7 +56,7 @@ defmodule LangChain.Tools.DeepResearch.ResearchResultTest do
 
       changeset = ResearchResult.changeset(%ResearchResult{}, attrs)
       assert changeset.valid?
-      
+
       result = Ecto.Changeset.apply_changes(changeset)
       assert result.usage.input_tokens == 100
       assert result.usage.total_tokens == 600
@@ -74,7 +74,7 @@ defmodule LangChain.Tools.DeepResearch.ResearchResultTest do
 
       changeset = ResearchResult.changeset(%ResearchResult{}, attrs)
       refute changeset.valid?
-      
+
       # Check that validation fails for negative numbers
       assert changeset.changes.usage.errors != []
     end
@@ -85,7 +85,7 @@ defmodule LangChain.Tools.DeepResearch.ResearchResultTest do
       api_response = %{
         "id" => "req_12345",
         "model" => "o3-deep-research-2025-06-26",
-        "created_at" => 1234567890,
+        "created_at" => 1_234_567_890,
         "output" => [
           %{
             "type" => "message",
@@ -118,20 +118,20 @@ defmodule LangChain.Tools.DeepResearch.ResearchResultTest do
       }
 
       assert {:ok, result} = ResearchResult.from_api_response(api_response)
-      
+
       assert result.id == "req_12345"
       assert result.model == "o3-deep-research-2025-06-26"
       assert result.output_text == "Comprehensive research findings on renewable energy."
-      assert result.created_at == 1234567890
-      
+      assert result.created_at == 1_234_567_890
+
       assert length(result.sources) == 1
       source = hd(result.sources)
       assert source.title == "Solar Power Study"
       assert source.url == "https://example.com/solar"
-      
+
       assert result.usage.input_tokens == 150
       assert result.usage.total_tokens == 950
-      
+
       assert length(result.tool_calls) == 1
       tool_call = hd(result.tool_calls)
       assert tool_call.type == "web_search_call"
@@ -152,7 +152,7 @@ defmodule LangChain.Tools.DeepResearch.ResearchResultTest do
       }
 
       assert {:ok, result} = ResearchResult.from_api_response(api_response)
-      
+
       assert result.id == "req_minimal"
       assert result.output_text == "Basic findings"
       assert result.sources == []
@@ -162,8 +162,12 @@ defmodule LangChain.Tools.DeepResearch.ResearchResultTest do
     test "handles malformed API response" do
       api_response = %{"invalid" => "response"}
 
-      assert {:ok, result} = ResearchResult.from_api_response(api_response)
-      assert result.output_text == "No output available"
+      assert {:error, changeset} = ResearchResult.from_api_response(api_response)
+      refute changeset.valid?
+      
+      # Check that the required fields are missing
+      errors = changeset.errors
+      assert Keyword.has_key?(errors, :id)
     end
   end
 
@@ -175,7 +179,7 @@ defmodule LangChain.Tools.DeepResearch.ResearchResultTest do
           %ResearchResult.Source{url: "https://example.com/2"}
         ]
       }
-      
+
       assert ResearchResult.source_count(result) == 2
     end
 
@@ -193,7 +197,7 @@ defmodule LangChain.Tools.DeepResearch.ResearchResultTest do
           %ResearchResult.ToolCall{type: "code_interpreter_call"}
         ]
       }
-      
+
       assert ResearchResult.tool_call_count(result) == 2
     end
   end
@@ -207,9 +211,9 @@ defmodule LangChain.Tools.DeepResearch.ResearchResultTest do
           %ResearchResult.Source{title: "Source 2", url: "https://example.com/2"}
         ]
       }
-      
+
       formatted = ResearchResult.format_for_display(result)
-      
+
       assert formatted =~ "## Research Findings"
       assert formatted =~ "This is the research content."
       assert formatted =~ "## Sources"
@@ -222,9 +226,9 @@ defmodule LangChain.Tools.DeepResearch.ResearchResultTest do
         output_text: "Research without sources.",
         sources: []
       }
-      
+
       formatted = ResearchResult.format_for_display(result)
-      
+
       assert formatted =~ "## Research Findings"
       assert formatted =~ "Research without sources."
       refute formatted =~ "## Sources"
@@ -239,7 +243,7 @@ defmodule LangChain.Tools.DeepResearch.ResearchResultTest do
           %ResearchResult.Source{url: "https://example.com/2"}
         ]
       }
-      
+
       urls = ResearchResult.source_urls(result)
       assert urls == ["https://example.com/1", "https://example.com/2"]
     end

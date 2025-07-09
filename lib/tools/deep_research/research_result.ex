@@ -1,7 +1,7 @@
 defmodule LangChain.Tools.DeepResearch.ResearchResult do
   @moduledoc """
   Represents the final result of a completed Deep Research request.
-  
+
   This schema captures the research findings, citations, usage statistics,
   and other metadata from a successful research operation.
   """
@@ -9,15 +9,15 @@ defmodule LangChain.Tools.DeepResearch.ResearchResult do
   import Ecto.Changeset
 
   @type t() :: %__MODULE__{
-    id: String.t(),
-    output_text: String.t(),
-    model: String.t() | nil,
-    created_at: integer() | nil,
-    completion_time: integer() | nil,
-    sources: [any()],
-    usage: any() | nil,
-    tool_calls: [any()]
-  }
+          id: String.t(),
+          output_text: String.t(),
+          model: String.t() | nil,
+          created_at: integer() | nil,
+          completion_time: integer() | nil,
+          sources: [any()],
+          usage: any() | nil,
+          tool_calls: [any()]
+        }
 
   @primary_key false
   embedded_schema do
@@ -26,6 +26,7 @@ defmodule LangChain.Tools.DeepResearch.ResearchResult do
     field :model, :string
     field :created_at, :integer
     field :completion_time, :integer
+
     embeds_many :sources, Source do
       field :title, :string
       field :url, :string
@@ -33,12 +34,14 @@ defmodule LangChain.Tools.DeepResearch.ResearchResult do
       field :end_index, :integer
       field :snippet, :string
     end
+
     embeds_one :usage, Usage do
       field :input_tokens, :integer
       field :output_tokens, :integer
       field :total_tokens, :integer
       field :reasoning_tokens, :integer
     end
+
     embeds_many :tool_calls, ToolCall do
       field :type, :string
       field :status, :string
@@ -103,7 +106,7 @@ defmodule LangChain.Tools.DeepResearch.ResearchResult do
   @spec format_for_display(__MODULE__.t()) :: String.t()
   def format_for_display(%__MODULE__{} = result) do
     source_summary = format_sources(result.sources)
-    
+
     output = """
     ## Research Findings
 
@@ -161,7 +164,9 @@ defmodule LangChain.Tools.DeepResearch.ResearchResult do
         output
         |> Enum.find(&(Map.get(&1, "type") == "message"))
         |> case do
-          nil -> "No message output found"
+          nil ->
+            "No message output found"
+
           message ->
             message
             |> get_in(["content"])
@@ -173,10 +178,14 @@ defmodule LangChain.Tools.DeepResearch.ResearchResult do
                   nil -> "No text content found"
                   text_content -> Map.get(text_content, "text", "No text available")
                 end
-              _ -> "Invalid content format"
+
+              _ ->
+                "Invalid content format"
             end
         end
-      _ -> "No output available"
+
+      _ ->
+        "No output available"
     end
   end
 
@@ -197,11 +206,15 @@ defmodule LangChain.Tools.DeepResearch.ResearchResult do
               |> Enum.flat_map(fn content_item ->
                 Map.get(content_item, "annotations", [])
               end)
-            _ -> []
+
+            _ ->
+              []
           end
         end)
         |> Enum.map(&normalize_source/1)
-      _ -> []
+
+      _ ->
+        []
     end
   end
 
@@ -223,9 +236,13 @@ defmodule LangChain.Tools.DeepResearch.ResearchResult do
     |> case do
       output when is_list(output) ->
         output
-        |> Enum.filter(&(Map.get(&1, "type") in ["web_search_call", "code_interpreter_call", "mcp_tool_call"]))
+        |> Enum.filter(
+          &(Map.get(&1, "type") in ["web_search_call", "code_interpreter_call", "mcp_tool_call"])
+        )
         |> Enum.map(&normalize_tool_call/1)
-      _ -> []
+
+      _ ->
+        []
     end
   end
 

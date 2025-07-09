@@ -1,7 +1,7 @@
 defmodule LangChain.Tools.DeepResearch.ResearchRequest do
   @moduledoc """
   Represents a Deep Research request sent to the OpenAI API.
-  
+
   This schema defines the structure of a research request including the query,
   model selection, and various configuration options.
   """
@@ -9,14 +9,14 @@ defmodule LangChain.Tools.DeepResearch.ResearchRequest do
   import Ecto.Changeset
 
   @type t() :: %__MODULE__{
-    query: String.t(),
-    model: String.t(),
-    system_message: String.t() | nil,
-    max_tool_calls: integer() | nil,
-    background: boolean(),
-    temperature: float(),
-    max_output_tokens: integer() | nil
-  }
+          query: String.t(),
+          model: String.t(),
+          system_message: String.t() | nil,
+          max_tool_calls: integer() | nil,
+          background: boolean(),
+          temperature: float(),
+          max_output_tokens: integer() | nil
+        }
 
   @primary_key false
   embedded_schema do
@@ -35,10 +35,21 @@ defmodule LangChain.Tools.DeepResearch.ResearchRequest do
   @spec changeset(__MODULE__.t(), map()) :: Ecto.Changeset.t()
   def changeset(request \\ %__MODULE__{}, attrs) do
     request
-    |> cast(attrs, [:query, :model, :system_message, :max_tool_calls, :background, :temperature, :max_output_tokens])
+    |> cast(attrs, [
+      :query,
+      :model,
+      :system_message,
+      :max_tool_calls,
+      :background,
+      :temperature,
+      :max_output_tokens
+    ])
     |> validate_required([:query])
     |> validate_length(:query, min: 1, max: 10_000)
-    |> validate_inclusion(:model, ["o3-deep-research-2025-06-26", "o4-mini-deep-research-2025-06-26"])
+    |> validate_inclusion(:model, [
+      "o3-deep-research-2025-06-26",
+      "o4-mini-deep-research-2025-06-26"
+    ])
     |> validate_number(:max_tool_calls, greater_than: 0, less_than_or_equal_to: 100)
     |> validate_number(:temperature, greater_than_or_equal_to: 0.0, less_than_or_equal_to: 2.0)
     |> validate_number(:max_output_tokens, greater_than: 0)

@@ -1,7 +1,7 @@
 defmodule LangChain.Tools.DeepResearch.ResearchStatus do
   @moduledoc """
   Represents the status of a Deep Research request.
-  
+
   This schema captures the current state of a research request, including
   progress information and any errors that may have occurred.
   """
@@ -9,13 +9,13 @@ defmodule LangChain.Tools.DeepResearch.ResearchStatus do
   import Ecto.Changeset
 
   @type t() :: %__MODULE__{
-    id: String.t(),
-    status: String.t(),
-    created_at: integer() | nil,
-    error_message: String.t() | nil,
-    error_code: String.t() | nil,
-    progress_info: map() | nil
-  }
+          id: String.t(),
+          status: String.t(),
+          created_at: integer() | nil,
+          error_message: String.t() | nil,
+          error_code: String.t() | nil,
+          progress_info: map() | nil
+        }
 
   @primary_key false
   embedded_schema do
@@ -67,7 +67,8 @@ defmodule LangChain.Tools.DeepResearch.ResearchStatus do
   Checks if the research is complete (either successfully or with failure).
   """
   @spec complete?(__MODULE__.t()) :: boolean()
-  def complete?(%__MODULE__{status: status}) when status in ["completed", "failed", "cancelled"] do
+  def complete?(%__MODULE__{status: status})
+      when status in ["completed", "failed", "cancelled"] do
     true
   end
 
@@ -94,13 +95,23 @@ defmodule LangChain.Tools.DeepResearch.ResearchStatus do
   Gets a human-readable description of the current status.
   """
   @spec status_description(__MODULE__.t()) :: String.t()
-  def status_description(%__MODULE__{status: "queued"}), do: "Research request is queued for processing"
-  def status_description(%__MODULE__{status: "in_progress"}), do: "Research is currently in progress"
+  def status_description(%__MODULE__{status: "queued"}),
+    do: "Research request is queued for processing"
+
+  def status_description(%__MODULE__{status: "in_progress"}),
+    do: "Research is currently in progress"
+
   def status_description(%__MODULE__{status: "completed"}), do: "Research completed successfully"
-  def status_description(%__MODULE__{status: "failed", error_message: msg}) when is_binary(msg), do: "Research failed: #{msg}"
+
+  def status_description(%__MODULE__{status: "failed", error_message: msg}) when is_binary(msg),
+    do: "Research failed: #{msg}"
+
   def status_description(%__MODULE__{status: "failed"}), do: "Research failed"
   def status_description(%__MODULE__{status: "cancelled"}), do: "Research was cancelled"
-  def status_description(%__MODULE__{status: "incomplete"}), do: "Research completed but may be incomplete"
+
+  def status_description(%__MODULE__{status: "incomplete"}),
+    do: "Research completed but may be incomplete"
+
   def status_description(%__MODULE__{status: status}), do: "Unknown status: #{status}"
 
   @spec extract_progress_info(map()) :: map() | nil
@@ -109,13 +120,20 @@ defmodule LangChain.Tools.DeepResearch.ResearchStatus do
     # This could include tool call counts, current step, etc.
     case response do
       %{"output" => output} when is_list(output) ->
-        tool_calls = Enum.count(output, &(Map.get(&1, "type") in ["web_search_call", "code_interpreter_call", "mcp_tool_call"]))
+        tool_calls =
+          Enum.count(
+            output,
+            &(Map.get(&1, "type") in ["web_search_call", "code_interpreter_call", "mcp_tool_call"])
+          )
+
         if tool_calls > 0 do
           %{tool_calls_made: tool_calls}
         else
           nil
         end
-      _ -> nil
+
+      _ ->
+        nil
     end
   end
 end

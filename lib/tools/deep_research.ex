@@ -45,33 +45,39 @@ defmodule LangChain.Tools.DeepResearch do
   def new() do
     Function.new(%{
       name: "deep_research",
-      description: "Perform comprehensive research on complex topics using OpenAI Deep Research models. This is a long-running operation (5-30 minutes) that provides detailed analysis with citations.",
+      description:
+        "Perform comprehensive research on complex topics using OpenAI Deep Research models. This is a long-running operation (5-30 minutes) that provides detailed analysis with citations.",
       parameters_schema: %{
         type: "object",
         properties: %{
           query: %{
             type: "string",
-            description: "The research question or topic to investigate. Be specific and detailed for best results."
+            description:
+              "The research question or topic to investigate. Be specific and detailed for best results."
           },
           model: %{
             type: "string",
             enum: ["o3-deep-research-2025-06-26", "o4-mini-deep-research-2025-06-26"],
-            description: "The deep research model to use. o3-deep-research provides highest quality (5-30 min), o4-mini-deep-research is faster (shorter time).",
+            description:
+              "The deep research model to use. o3-deep-research provides highest quality (5-30 min), o4-mini-deep-research is faster (shorter time).",
             default: "o3-deep-research-2025-06-26"
           },
           system_message: %{
             type: "string",
-            description: "Optional guidance for the research approach, methodology, or specific requirements."
+            description:
+              "Optional guidance for the research approach, methodology, or specific requirements."
           },
           max_tool_calls: %{
             type: "integer",
-            description: "Maximum number of tool calls (web searches, etc.) to make. Controls cost and latency.",
+            description:
+              "Maximum number of tool calls (web searches, etc.) to make. Controls cost and latency.",
             minimum: 1,
             maximum: 100
           },
           background: %{
             type: "boolean",
-            description: "Whether to run in background mode (recommended for long research tasks).",
+            description:
+              "Whether to run in background mode (recommended for long research tasks).",
             default: true
           }
         },
@@ -116,11 +122,11 @@ defmodule LangChain.Tools.DeepResearch do
 
       # Create the research request
       case DeepResearchClient.create_research(query, %{
-        model: model,
-        system_message: system_message,
-        max_tool_calls: max_tool_calls,
-        background: background
-      }) do
+             model: model,
+             system_message: system_message,
+             max_tool_calls: max_tool_calls,
+             background: background
+           }) do
         {:ok, request_id} ->
           Logger.info("Deep research request created with ID: #{request_id}")
 
@@ -159,7 +165,8 @@ defmodule LangChain.Tools.DeepResearch do
     poll_with_backoff(request_id, 10_000, 60_000, 0)
   end
 
-  @spec poll_with_backoff(String.t(), integer(), integer(), integer()) :: {:ok, map()} | {:error, String.t()}
+  @spec poll_with_backoff(String.t(), integer(), integer(), integer()) ::
+          {:ok, map()} | {:error, String.t()}
   defp poll_with_backoff(request_id, interval, max_interval, attempts) do
     case DeepResearchClient.check_status(request_id) do
       {:ok, %{status: "completed"}} ->
@@ -174,7 +181,7 @@ defmodule LangChain.Tools.DeepResearch do
       {:ok, %{status: status}} when status in ["in_progress", "queued"] ->
         Logger.info("Deep research #{request_id} still #{status}, waiting #{interval}ms...")
         Process.sleep(interval)
-        
+
         # Exponential backoff with jitter, but cap at max_interval
         next_interval = min(trunc(interval * 1.5 + :rand.uniform(5000)), max_interval)
         poll_with_backoff(request_id, next_interval, max_interval, attempts + 1)
@@ -184,7 +191,10 @@ defmodule LangChain.Tools.DeepResearch do
 
       {:error, reason} ->
         if attempts < 3 do
-          Logger.warning("Status check failed (attempt #{attempts + 1}), retrying: #{inspect(reason)}")
+          Logger.warning(
+            "Status check failed (attempt #{attempts + 1}), retrying: #{inspect(reason)}"
+          )
+
           Process.sleep(5000)
           poll_with_backoff(request_id, interval, max_interval, attempts + 1)
         else
@@ -198,7 +208,7 @@ defmodule LangChain.Tools.DeepResearch do
   @spec format_research_result(map()) :: String.t()
   defp format_research_result(%{output_text: text, sources: sources}) when is_list(sources) do
     source_summary = format_sources(sources)
-    
+
     """
     ## Research Findings
 

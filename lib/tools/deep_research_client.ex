@@ -75,6 +75,7 @@ defmodule LangChain.Tools.DeepResearchClient do
           status: Map.get(response, "status"),
           error: get_in(response, ["error", "message"])
         }
+
         {:ok, status_map}
 
       {:error, reason} ->
@@ -114,7 +115,8 @@ defmodule LangChain.Tools.DeepResearchClient do
 
   # Private functions
 
-  @spec build_request_body(String.t(), String.t(), String.t() | nil, integer() | nil, boolean()) :: map()
+  @spec build_request_body(String.t(), String.t(), String.t() | nil, integer() | nil, boolean()) ::
+          map()
   defp build_request_body(query, model, system_message, max_tool_calls, background) do
     base_body = %{
       model: model,
@@ -139,7 +141,7 @@ defmodule LangChain.Tools.DeepResearchClient do
   defp extract_research_result(response) do
     # Extract the main research text from the output array
     output_text = extract_output_text(response)
-    
+
     # Extract source information from annotations or web search calls
     sources = extract_sources(response)
 
@@ -156,17 +158,23 @@ defmodule LangChain.Tools.DeepResearchClient do
     response
     |> get_in(["output"])
     |> case do
-      nil -> "No output available"
+      nil ->
+        "No output available"
+
       output when is_list(output) ->
         output
         |> Enum.find(&(Map.get(&1, "type") == "message"))
         |> case do
-          nil -> "No message output found"
+          nil ->
+            "No message output found"
+
           message ->
             message
             |> get_in(["content"])
             |> case do
-              nil -> "No content found"
+              nil ->
+                "No content found"
+
               content when is_list(content) ->
                 content
                 |> Enum.find(&(Map.get(&1, "type") == "output_text"))
@@ -174,10 +182,14 @@ defmodule LangChain.Tools.DeepResearchClient do
                   nil -> "No text content found"
                   text_content -> Map.get(text_content, "text", "No text available")
                 end
-              _ -> "Invalid content format"
+
+              _ ->
+                "Invalid content format"
             end
         end
-      _ -> "Invalid output format"
+
+      _ ->
+        "Invalid output format"
     end
   end
 
@@ -186,7 +198,7 @@ defmodule LangChain.Tools.DeepResearchClient do
     # Look for sources in multiple places: annotations and web search calls
     annotation_sources = extract_annotation_sources(response)
     web_search_sources = extract_web_search_sources(response)
-    
+
     (annotation_sources ++ web_search_sources)
     |> Enum.uniq_by(&Map.get(&1, "url"))
   end
@@ -207,10 +219,14 @@ defmodule LangChain.Tools.DeepResearchClient do
               |> Enum.flat_map(fn content_item ->
                 Map.get(content_item, "annotations", [])
               end)
-            _ -> []
+
+            _ ->
+              []
           end
         end)
-      _ -> []
+
+      _ ->
+        []
     end
   end
 
@@ -223,7 +239,9 @@ defmodule LangChain.Tools.DeepResearchClient do
         output
         |> Enum.filter(&(Map.get(&1, "type") == "web_search_call"))
         |> Enum.flat_map(&extract_sources_from_search_call/1)
-      _ -> []
+
+      _ ->
+        []
     end
   end
 
@@ -237,20 +255,22 @@ defmodule LangChain.Tools.DeepResearchClient do
   @spec make_request(atom(), String.t(), map() | nil) :: {:ok, map()} | {:error, String.t()}
   defp make_request(method, url, body \\ nil) do
     headers = build_headers()
-    
+
     request_options = [
       method: method,
       url: url,
       headers: headers,
-      receive_timeout: 30_000,  # 30 seconds for API calls
+      # 30 seconds for API calls
+      receive_timeout: 30_000,
       retry: :transient
     ]
 
-    request_options = if body do
-      Keyword.put(request_options, :json, body)
-    else
-      request_options
-    end
+    request_options =
+      if body do
+        Keyword.put(request_options, :json, body)
+      else
+        request_options
+      end
 
     Logger.debug("Making #{method} request to #{url}")
 
@@ -276,7 +296,7 @@ defmodule LangChain.Tools.DeepResearchClient do
   @spec build_headers() :: list()
   defp build_headers() do
     api_key = get_api_key()
-    
+
     [
       {"authorization", "Bearer #{api_key}"},
       {"content-type", "application/json"},
