@@ -482,7 +482,8 @@ defmodule LangChain.ChatModels.ChatVertexAI do
 
   def do_process_response(response, message_type \\ Message)
 
-  def do_process_response(%{"candidates" => candidates} = data, message_type) when is_list(candidates) do
+  def do_process_response(%{"candidates" => candidates} = data, message_type)
+      when is_list(candidates) do
     token_usage = get_token_usage(data)
 
     candidates

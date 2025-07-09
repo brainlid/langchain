@@ -383,10 +383,10 @@ defmodule ChatModels.ChatVertexAITest do
       assert struct.metadata.usage.output == 5
 
       assert struct.metadata.usage.raw == %{
-        "promptTokenCount" => 10,
-        "candidatesTokenCount" => 5,
-        "totalTokenCount" => 15
-      }
+               "promptTokenCount" => 10,
+               "candidatesTokenCount" => 5,
+               "totalTokenCount" => 15
+             }
     end
   end
 
