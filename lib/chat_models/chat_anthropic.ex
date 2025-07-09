@@ -613,7 +613,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       json: raw_data,
       headers: headers(anthropic),
       receive_timeout: anthropic.receive_timeout,
-      aws_sigv4: aws_sigv4_opts(anthropic.bedrock)
+      aws_sigv4: aws_sigv4_opts(anthropic.bedrock),
+      retry: :transient
     )
     |> Req.post(
       into:
