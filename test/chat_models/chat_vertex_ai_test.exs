@@ -21,7 +21,13 @@ defmodule ChatModels.ChatVertexAITest do
         function: fn _args, _context -> {:ok, "Hello world!"} end
       })
 
-    %{hello_world: hello_world}
+    model =
+      ChatVertexAI.new!(%{
+        "model" => "gemini-pro",
+        "endpoint" => "http://localhost:1234/"
+      })
+
+    %{model: model, hello_world: hello_world}
   end
 
   describe "new/1" do
@@ -245,7 +251,7 @@ defmodule ChatModels.ChatVertexAITest do
   end
 
   describe "do_process_response/2" do
-    test "handles receiving a message" do
+    test "handles receiving a message", %{model: model} do
       response = %{
         "candidates" => [
           %{
@@ -256,14 +262,14 @@ defmodule ChatModels.ChatVertexAITest do
         ]
       }
 
-      assert [%Message{} = struct] = ChatVertexAI.do_process_response(response)
+      assert [%Message{} = struct] = ChatVertexAI.do_process_response(model, response)
       assert struct.role == :assistant
       [%ContentPart{type: :text, content: "Hello User!"}] = struct.content
       assert struct.index == 0
       assert struct.status == :complete
     end
 
-    test "error if receiving non-text content" do
+    test "error if receiving non-text content", %{model: model} do
       response = %{
         "candidates" => [
           %{
@@ -274,12 +280,14 @@ defmodule ChatModels.ChatVertexAITest do
         ]
       }
 
-      assert [{:error, %LangChainError{} = error}] = ChatVertexAI.do_process_response(response)
+      assert [{:error, %LangChainError{} = error}] =
+               ChatVertexAI.do_process_response(model, response)
+
       assert error.type == "changeset"
       assert error.message == "role: is invalid"
     end
 
-    test "handles receiving function calls" do
+    test "handles receiving function calls", %{model: model} do
       args = %{"args" => "data"}
 
       response = %{
@@ -295,7 +303,7 @@ defmodule ChatModels.ChatVertexAITest do
         ]
       }
 
-      assert [%Message{} = struct] = ChatVertexAI.do_process_response(response)
+      assert [%Message{} = struct] = ChatVertexAI.do_process_response(model, response)
       assert struct.role == :assistant
       assert struct.index == 0
       [call] = struct.tool_calls
@@ -303,7 +311,7 @@ defmodule ChatModels.ChatVertexAITest do
       assert call.arguments == args
     end
 
-    test "handles receiving MessageDeltas as well" do
+    test "handles receiving MessageDeltas as well", %{model: model} do
       response = %{
         "candidates" => [
           %{
@@ -317,14 +325,16 @@ defmodule ChatModels.ChatVertexAITest do
         ]
       }
 
-      assert [%MessageDelta{} = struct] = ChatVertexAI.do_process_response(response, MessageDelta)
+      assert [%MessageDelta{} = struct] =
+               ChatVertexAI.do_process_response(model, response, MessageDelta)
+
       assert struct.role == :assistant
       assert struct.content == "This is the first part of a mes"
       assert struct.index == 0
       assert struct.status == :incomplete
     end
 
-    test "handles API error messages" do
+    test "handles API error messages", %{model: model} do
       response = %{
         "error" => %{
           "code" => 400,
@@ -333,29 +343,33 @@ defmodule ChatModels.ChatVertexAITest do
         }
       }
 
-      assert {:error, error_received} = ChatVertexAI.do_process_response(response)
+      assert {:error, error_received} = ChatVertexAI.do_process_response(model, response)
       assert %LangChainError{message: error_string} = error_received
       assert error_string == "Invalid request"
       assert error_received.original == response
     end
 
-    test "handles Jason.DecodeError" do
+    test "handles Jason.DecodeError", %{model: model} do
       response = {:error, %Jason.DecodeError{}}
 
-      assert {:error, %LangChainError{} = error} = ChatVertexAI.do_process_response(response)
+      assert {:error, %LangChainError{} = error} =
+               ChatVertexAI.do_process_response(model, response)
 
       assert error.type == "invalid_json"
       assert "Received invalid JSON:" <> _ = error.message
     end
 
-    test "handles unexpected response with error" do
+    test "handles unexpected response with error", %{model: model} do
       response = %{}
-      assert {:error, %LangChainError{} = error} = ChatVertexAI.do_process_response(response)
+
+      assert {:error, %LangChainError{} = error} =
+               ChatVertexAI.do_process_response(model, response)
+
       assert error.type == "unexpected_response"
       assert error.message == "Unexpected response"
     end
 
-    test "handles receiving a message with token usage" do
+    test "handles receiving a message with token usage", %{model: model} do
       response = %{
         "candidates" => [
           %{
@@ -371,7 +385,7 @@ defmodule ChatModels.ChatVertexAITest do
         }
       }
 
-      assert [%Message{} = struct] = ChatVertexAI.do_process_response(response)
+      assert [%Message{} = struct] = ChatVertexAI.do_process_response(model, response)
       assert struct.role == :assistant
       [%ContentPart{type: :text, content: "Hello User!"}] = struct.content
       assert struct.index == 0
