@@ -2798,7 +2798,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
   end
 
   describe "use in LLMChain" do
-    @tag live_call: true, live_open_ai: true
+    @tag live_call: true, live_anthropic: true
     test "NOT STREAMED with callbacks and token usage" do
       handler = %{
         on_llm_new_delta: fn %LLMChain{} = _chain, deltas ->
@@ -2838,7 +2838,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       assert %TokenUsage{input: 28} = usage
     end
 
-    @tag live_call: true, live_open_ai: true
+    @tag live_call: true, live_anthropic: true
     test "STREAMED with callbacks and token usage" do
       handler = %{
         on_llm_new_delta: fn %LLMChain{} = _chain, deltas ->
