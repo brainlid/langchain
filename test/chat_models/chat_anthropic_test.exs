@@ -2804,8 +2804,11 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
         on_llm_new_delta: fn %LLMChain{} = _chain, deltas ->
           send(self(), {:test_stream_deltas, deltas})
         end,
-        on_message_processed: fn _chain, message ->
+        on_message_processed: fn %LLMChain{} = _chain, message ->
           send(self(), {:test_message_processed, message})
+        end,
+        on_llm_token_usage: fn %LLMChain{} = _chain, usage ->
+          send(self(), {:test_token_usage, usage})
         end
       }
 
@@ -2830,6 +2833,9 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       assert message == updated_chain.last_message
       # we should have received the final combined message
       refute_received {:test_stream_deltas, _delta}
+
+      assert_received {:test_token_usage, usage}
+      assert %TokenUsage{input: 28} = usage
     end
 
     @tag live_call: true, live_open_ai: true
@@ -2838,8 +2844,11 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
         on_llm_new_delta: fn %LLMChain{} = _chain, deltas ->
           send(self(), deltas)
         end,
-        on_message_processed: fn _chain, message ->
+        on_message_processed: fn %LLMChain{} = _chain, message ->
           send(self(), {:test_message_processed, message})
+        end,
+        on_llm_token_usage: fn %LLMChain{} = _chain, usage ->
+          send(self(), {:test_token_usage, usage})
         end
       }
 
@@ -2868,6 +2877,9 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       assert %Message{role: :assistant} = message
       # the final returned message should match the callback message
       assert message == updated_chain.last_message
+
+      assert_received {:test_token_usage, usage}
+      assert %TokenUsage{input: 28} = usage
 
       # get all the deltas sent to the test process
       deltas = collect_messages() |> List.flatten()
