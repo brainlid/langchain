@@ -70,6 +70,7 @@ defmodule LangChain.MixProject do
           LangChain.ChatModels.ChatMistralAI,
           LangChain.ChatModels.ChatOllamaAI,
           LangChain.ChatModels.ChatPerplexity,
+          LangChain.ChatModels.ChatGrok,
           LangChain.ChatModels.ChatModel
         ],
         Chains: [
