@@ -112,7 +112,12 @@ defmodule LangChain.MixProject do
           LangChain.TextSplitter.LanguageSeparators
         ],
         Tools: [
-          LangChain.Tools.Calculator
+          LangChain.Tools.Calculator,
+          LangChain.Tools.DeepResearch,
+          LangChain.Tools.DeepResearchClient,
+          LangChain.Tools.DeepResearch.ResearchRequest,
+          LangChain.Tools.DeepResearch.ResearchStatus,
+          LangChain.Tools.DeepResearch.ResearchResult
         ],
         Utils: [
           LangChain.Utils,
