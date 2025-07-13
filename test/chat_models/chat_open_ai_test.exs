@@ -2323,7 +2323,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert inspect(changeset) =~ "**redacted**"
     end
 
-    test "does not redact org_id" do
+    test "redacts org_id" do
       chain = ChatOpenAI.new!()
 
       changeset = Ecto.Changeset.cast(chain, %{org_id: "test-org-123"}, [:org_id])
