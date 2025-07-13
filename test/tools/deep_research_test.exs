@@ -73,7 +73,7 @@ defmodule LangChain.Tools.DeepResearchTest do
                DeepResearch.execute(%{}, %{})
     end
 
-    @tag live_call: true
+    @tag live_call: true, live_deep_research: true
     # 5 minutes for real API test
     @tag timeout: 300_000
     test "handles API interaction appropriately" do
