@@ -14,6 +14,7 @@ Elixir LangChain enables Elixir applications to integrate AI services and self-h
 | OpenAI DALL-e 2 (image generation) | ✓ | ? |
 | Anthropic Claude | ✓ | ✓ |
 | Anthropic Claude (thinking) | X | ✓ |
+| xAI Grok | X | ✓ |
 | Google Gemini | ✓ | X |
 | Google Vertex AI* | ✓ | X |
 | Ollama | ✓ | ? |
@@ -25,6 +26,7 @@ Elixir LangChain enables Elixir applications to integrate AI services and self-h
 - *Google Vertex AI is Google's enterprise offering
 - **Bumblebee self-hosted models - including Llama, Mistral and Zephyr
 - ***[LMStudio](https://lmstudio.ai/docs/api/endpoints/openai) via their OpenAI compatibility API
+- ****xAI Grok models including Grok-4, Grok-3-mini, Grok-4 Heavy (multi-agent)
 
 **LangChain** is short for Language Chain. An LLM, or Large Language Model, is the "Language" part. This library makes it easier for Elixir applications to "chain" or connect different processes, integrations, libraries, services, or functionality together with an LLM.
 
@@ -96,6 +98,7 @@ config :langchain, openai_key: "YOUR SECRET KEY"
 config :langchain, openai_org_id: "YOUR_OPENAI_ORG_ID"
 
 config :langchain, :anthropic_key, System.fetch_env!("ANTHROPIC_API_KEY")
+config :langchain, :xai_api_key, System.fetch_env!("XAI_API_KEY")
 ```
 
 It's possible to use a function or a tuple to resolve the secret:
@@ -115,6 +118,7 @@ For [fly.io](https://fly.io), adding the secrets looks like this:
 ```
 fly secrets set OPENAI_API_KEY=MyOpenAIApiKey
 fly secrets set ANTHROPIC_API_KEY=MyAnthropicApiKey
+fly secrets set XAI_API_KEY=MyXaiApiKey
 ```
 
 A list of models to use:
@@ -123,6 +127,7 @@ A list of models to use:
 - [Anthropic models on AWS Bedrock](https://docs.anthropic.com/en/api/claude-on-amazon-bedrock#accessing-bedrock)
 - [OpenAI models](https://platform.openai.com/docs/models)
 - [OpenAI models on Azure](https://learn.microsoft.com/en-us/azure/ai-services/openai/concepts/models)
+- [xAI Grok models](https://docs.x.ai/docs/models)
 - [Gemini AI models](https://ai.google.dev/gemini-api/docs/models/gemini)
 
 ## Prompt caching
@@ -136,6 +141,34 @@ ChatGPT and Claude both offer prefix-based prompt caching, which can offer cost 
 ## Usage
 
 The central module in this library is `LangChain.Chains.LLMChain`. Most other pieces are either inputs to this, or structures used by it. For understanding how to use the library, start there.
+
+### xAI Grok Support
+
+LangChain supports all xAI Grok models including the advanced Grok-4 variants:
+
+```elixir
+alias LangChain.ChatModels.ChatGrok
+alias LangChain.Chains.LLMChain
+alias LangChain.Message
+
+# Basic Grok-4 usage
+{:ok, grok} = ChatGrok.new(%{model: "grok-4", temperature: 0.7})
+
+{:ok, chain} =
+  LLMChain.new!(%{llm: grok})
+  |> LLMChain.add_message(Message.new_user!("Explain quantum computing"))
+  |> LLMChain.run()
+
+# Fast and efficient Grok-3-mini
+{:ok, mini_grok} = ChatGrok.new(%{model: "grok-3-mini", temperature: 0.8})
+```
+
+Grok models offer unique capabilities:
+- **130K+ context window** for extensive conversations
+- **Multi-agent reasoning** (Grok-4 Heavy) where multiple agents collaborate
+- **Advanced reasoning mode** with first-principles thinking
+- **Specialized coding support** (Grok-4 Code)
+- **Multimodal capabilities** including vision and image analysis
 
 ### Exposing a custom Elixir function to ChatGPT
 
@@ -255,6 +288,7 @@ mix test --include live_open_ai
 mix test --include live_ollama_ai
 mix test --include live_anthropic
 mix test --include live_mistral_ai
+mix test --include live_grok
 mix test test/tools/calculator_test.exs --include live_call
 ```
 
