@@ -48,7 +48,7 @@ For faster results, let's use the mini model for a straightforward research ques
 model = ChatOpenAI.new!(%{temperature: 0, stream: false})
 
 {:ok, chain} =
-  %{llm: model, verbose: true}
+  %{llm: model, verbose: true, async_tool_timeout: 35 * 60 * 1000}
   |> LLMChain.new!()
   |> LLMChain.add_message(
     Message.new_user!("""
@@ -203,6 +203,48 @@ best_practices = """
 
 IO.puts(best_practices)
 ```
+
+## Handling Long-Running Research (Timeout Configuration)
+
+Deep Research operations can take 5-30 minutes to complete, but the default timeout for async tools in LangChain is only 2 minutes. To avoid timeout errors, you must configure the `async_tool_timeout`:
+
+```elixir
+# Configure extended timeout for Deep Research
+model = ChatOpenAI.new!(%{temperature: 0, stream: false})
+
+{:ok, chain_with_timeout} =
+  %{
+    llm: model, 
+    verbose: true,
+    async_tool_timeout: 35 * 60 * 1000  # 35 minutes in milliseconds
+  }
+  |> LLMChain.new!()
+  |> LLMChain.add_message(
+    Message.new_user!("""
+    Conduct a comprehensive analysis of global renewable energy trends in 2024-2025.
+    Include:
+    - Market growth statistics by region
+    - Technological breakthroughs in solar, wind, and battery storage
+    - Policy changes and their impacts
+    - Investment trends and major projects
+    - Challenges and future outlook
+    """)
+  )
+  |> LLMChain.add_tools(DeepResearch.new!())
+
+# This will now run without timing out
+# Note: The research will still take 5-30 minutes to complete
+{:ok, result} = LLMChain.run(chain_with_timeout, mode: :while_needs_response)
+
+IO.puts("Research initiated with proper timeout configuration. The operation will complete successfully even if it takes 30+ minutes.")
+```
+
+### Important Timeout Notes:
+
+- **Default timeout**: 2 minutes (insufficient for Deep Research)
+- **Recommended timeout**: 35 minutes (covers worst-case scenarios)
+- **Setting**: Configure via `async_tool_timeout` in milliseconds
+- **Error without configuration**: `(exit) exited in: Task.await_many(..., 120000)`
 
 ## Troubleshooting
 

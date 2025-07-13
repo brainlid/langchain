@@ -19,12 +19,32 @@ defmodule LangChain.Tools.DeepResearch do
   * Research results include inline citations and source metadata
   * Requires an OpenAI API key with access to Deep Research models
 
+  ## Timeout Configuration
+
+  Deep Research runs as an async tool with a default timeout of 2 minutes, which is insufficient
+  for Deep Research operations. You must configure the `async_tool_timeout` when using this tool:
+
+      {:ok, chain} =
+        %{
+          llm: model,
+          verbose: true,
+          async_tool_timeout: 35 * 60 * 1000  # 35 minutes in milliseconds
+        }
+        |> LLMChain.new!()
+        |> LLMChain.add_tools(DeepResearch.new!())
+
+  Without this configuration, you may encounter timeout errors after 2 minutes.
+
   ## Example
 
   The following example shows how to use the Deep Research tool in a chain:
 
       {:ok, updated_chain, %Message{} = message} =
-        %{llm: ChatOpenAI.new!(%{temperature: 0}), verbose: true}
+        %{
+          llm: ChatOpenAI.new!(%{temperature: 0}), 
+          verbose: true,
+          async_tool_timeout: 35 * 60 * 1000  # 35 minutes for Deep Research
+        }
         |> LLMChain.new!()
         |> LLMChain.add_message(
           Message.new_user!("Research the economic impact of renewable energy adoption on job markets.")
