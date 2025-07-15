@@ -778,6 +778,38 @@ defmodule LangChain.Chains.LLMChainTest do
       assert updated.last_message == user_msg
       assert updated.needs_response
     end
+
+    test "resolves image template content parts" do
+      image_template =
+        PromptTemplate.image_template!("<%= @photo_data %>", media: :jpg, detail: "low")
+
+      templates = [
+        Message.new_user!([
+          PromptTemplate.from_template!("Describe this <%= @subject %>:"),
+          image_template
+        ])
+      ]
+
+      inputs = %{
+        subject: "landscape photo",
+        photo_data: Base.encode64("fake_image_bytes")
+      }
+
+      {:ok, chat} = ChatOpenAI.new()
+      {:ok, chain} = LLMChain.new(%{llm: chat})
+      updated = LLMChain.apply_prompt_templates(chain, templates, inputs)
+
+      [user_msg] = updated.messages
+      [text_part, image_part] = user_msg.content
+
+      # Text template resolved
+      assert text_part.content == "Describe this landscape photo:"
+
+      # Image template resolved
+      assert image_part.content == Base.encode64("fake_image_bytes")
+      # Options preserved
+      assert image_part.options == [media: :jpg, detail: "low"]
+    end
   end
 
   describe "quick_prompt/2" do

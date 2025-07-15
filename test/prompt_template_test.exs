@@ -430,5 +430,43 @@ What is the answer to 1 + 1?)
       assert part.content ==
                "Incorporate relevant information from the following data:\n\nmore!!\n"
     end
+
+    test "converts image template to image ContentPart" do
+      template = PromptTemplate.image_template!("<%= @image_data %>")
+      part = PromptTemplate.to_content_part!(template, %{image_data: "base64data"})
+      assert part.type == :image
+      assert part.content == "base64data"
+    end
+
+    test "converts file template to file ContentPart" do
+      template = PromptTemplate.file_template!("<%= @file_data %>")
+      part = PromptTemplate.to_content_part!(template, %{file_data: "base64data"})
+      assert part.type == :file
+      assert part.content == "base64data"
+    end
+  end
+
+  describe "to_messages!/2 with content types" do
+    test "converts image and file templates to messages" do
+      image_template = PromptTemplate.image_template!("<%= @image_data %>")
+      file_template = PromptTemplate.file_template!("<%= @file_data %>")
+
+      messages =
+        PromptTemplate.to_messages!([image_template, file_template], %{
+          image_data: "img_data",
+          file_data: "file_data"
+        })
+
+      assert length(messages) == 2
+      [image_msg, file_msg] = messages
+
+      [image_part] = image_msg.content
+      assert image_part.type == :image
+      assert image_part.content == "img_data"
+
+      [file_part] = file_msg.content
+      assert file_part.type == :file
+      assert file_part.content == "file_data"
+    end
   end
 end
