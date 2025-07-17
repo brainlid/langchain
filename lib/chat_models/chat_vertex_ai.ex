@@ -12,7 +12,6 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   alias LangChain.Message.ContentPart
   alias LangChain.ChatModels.ChatVertexAI
 
-
   config = %{
         model: "gemini-2.0-flash",
         api_key: ..., # vertex requires gcloud auth token https://cloud.google.com/vertex-ai/generative-ai/docs/start/quickstarts/quickstart-multimodal#rest
@@ -53,6 +52,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   alias LangChain.LangChainError
   alias LangChain.Utils
   alias LangChain.Callbacks
+  alias LangChain.TokenUsage
 
   @behaviour ChatModel
 
@@ -392,7 +392,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     |> Req.post()
     |> case do
       {:ok, %Req.Response{body: data}} ->
-        case do_process_response(data) do
+        case do_process_response(vertex_ai, data) do
           {:error, reason} ->
             {:error, reason}
 
@@ -435,7 +435,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
         Utils.handle_stream_fn(
           vertex_ai,
           &ChatOpenAI.decode_stream/1,
-          &do_process_response(&1, MessageDelta)
+          &do_process_response(vertex_ai, &1, MessageDelta)
         )
     )
     |> case do
@@ -480,14 +480,31 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     update_in(data, [Access.at(-1), Access.at(-1)], &%{&1 | status: :complete})
   end
 
-  def do_process_response(response, message_type \\ Message)
+  def do_process_response(model, response, message_type \\ Message)
 
-  def do_process_response(%{"candidates" => candidates}, message_type) when is_list(candidates) do
+  def do_process_response(model, %{"candidates" => candidates} = data, message_type)
+      when is_list(candidates) do
+    token_usage = get_token_usage(data)
+
+    case token_usage do
+      %TokenUsage{} = usage ->
+        Callbacks.fire(model.callbacks, :on_llm_token_usage, [usage])
+        :ok
+
+      nil ->
+        :ok
+    end
+
     candidates
-    |> Enum.map(&do_process_response(&1, message_type))
+    |> Enum.map(&do_process_response(model, &1, message_type))
+    |> Enum.map(&TokenUsage.set(&1, token_usage))
   end
 
-  def do_process_response(%{"content" => %{"parts" => parts} = content_data} = data, Message) do
+  def do_process_response(
+        model,
+        %{"content" => %{"parts" => parts} = content_data} = data,
+        Message
+      ) do
     text_part =
       parts
       |> filter_parts_for_types(["text"])
@@ -499,14 +516,14 @@ defmodule LangChain.ChatModels.ChatVertexAI do
       parts
       |> filter_parts_for_types(["functionCall"])
       |> Enum.map(fn part ->
-        do_process_response(part, nil)
+        do_process_response(model, part, nil)
       end)
 
     tool_result_from_parts =
       parts
       |> filter_parts_for_types(["functionResponse"])
       |> Enum.map(fn part ->
-        do_process_response(part, nil)
+        do_process_response(model, part, nil)
       end)
 
     %{
@@ -527,7 +544,11 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     end
   end
 
-  def do_process_response(%{"content" => %{"parts" => parts} = content_data} = data, MessageDelta) do
+  def do_process_response(
+        model,
+        %{"content" => %{"parts" => parts} = content_data} = data,
+        MessageDelta
+      ) do
     text_content =
       case parts do
         [%{"text" => text}] ->
@@ -547,7 +568,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
       parts
       |> filter_parts_for_types(["functionCall"])
       |> Enum.map(fn part ->
-        do_process_response(part, nil)
+        do_process_response(model, part, nil)
       end)
 
     %{
@@ -567,7 +588,11 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     end
   end
 
-  def do_process_response(%{"functionCall" => %{"args" => raw_args, "name" => name}} = data, _) do
+  def do_process_response(
+        _model,
+        %{"functionCall" => %{"args" => raw_args, "name" => name}} = data,
+        _
+      ) do
     %{
       call_id: "call-#{name}",
       name: name,
@@ -586,6 +611,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   end
 
   def do_process_response(
+        _model,
         %{
           "finishReason" => finish,
           "content" => %{"parts" => parts, "role" => role},
@@ -629,12 +655,12 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     end
   end
 
-  def do_process_response(%{"error" => %{"message" => reason}} = response, _) do
+  def do_process_response(_model, %{"error" => %{"message" => reason}} = response, _) do
     Logger.error("Received error from API: #{inspect(reason)}")
     {:error, LangChainError.exception(message: reason, original: response)}
   end
 
-  def do_process_response({:error, %Jason.DecodeError{} = response}, _) do
+  def do_process_response(_model, {:error, %Jason.DecodeError{} = response}, _) do
     error_message = "Received invalid JSON: #{inspect(response)}"
     Logger.error(error_message)
 
@@ -642,7 +668,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
      LangChainError.exception(type: "invalid_json", message: error_message, original: response)}
   end
 
-  def do_process_response(other, _) do
+  def do_process_response(_model, other, _) do
     Logger.error("Trying to process an unexpected response. #{inspect(other)}")
 
     {:error,
@@ -685,6 +711,17 @@ defmodule LangChain.ChatModels.ChatVertexAI do
       role -> role
     end
   end
+
+  defp get_token_usage(%{"usageMetadata" => usage} = _response_body) do
+    # extract out the reported response token usage
+    TokenUsage.new!(%{
+      input: Map.get(usage, "promptTokenCount", 0),
+      output: Map.get(usage, "candidatesTokenCount", 0),
+      raw: usage
+    })
+  end
+
+  defp get_token_usage(_response_body), do: nil
 
   defp unmap_role("model"), do: "assistant"
   defp unmap_role("function"), do: "tool"
