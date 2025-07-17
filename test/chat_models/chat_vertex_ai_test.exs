@@ -505,4 +505,102 @@ defmodule ChatModels.ChatVertexAITest do
       assert inspect(changeset) =~ "**redacted**"
     end
   end
+
+  describe "live tests and token usage information" do
+    @tag live_call: true, live_vertex_ai: true
+    test "basic non-streamed response works and fires token usage callback" do
+      handlers = %{
+        on_llm_token_usage: fn usage ->
+          send(self(), {:fired_token_usage, usage})
+        end
+      }
+
+      chat =
+        ChatVertexAI.new!(%{
+          model: "gemini-2.5-flash",
+          temperature: 0,
+          endpoint:
+            "https://aiplatform.googleapis.com/v1/projects/eng-sandbox-7s/locations/global/publishers/google",
+          stream: false
+        })
+
+      chat = %ChatVertexAI{chat | callbacks: [handlers]}
+
+      {:ok, result} =
+        ChatVertexAI.call(chat, [
+          Message.new_user!("Return the response 'Colorful Threads'.")
+        ])
+
+      assert [
+               %Message{
+                 content: [
+                   %Message.ContentPart{
+                     type: :text,
+                     content: "Colorful Threads",
+                     options: []
+                   }
+                 ],
+                 status: :complete,
+                 role: :assistant,
+                 index: nil,
+                 tool_calls: [],
+                 metadata: %{
+                   usage: %TokenUsage{
+                     input: 7,
+                     output: 2
+                   }
+                 }
+               }
+             ] = result
+
+      assert_received {:fired_token_usage, usage}
+      assert %TokenUsage{input: 7, output: 2} = usage
+    end
+
+    @tag live_call: true, live_vertex_ai: true
+    test "streamed response works and fires token usage callback" do
+      handlers = %{
+        on_llm_token_usage: fn usage ->
+          send(self(), {:fired_token_usage, usage})
+        end
+      }
+
+      chat =
+        ChatVertexAI.new!(%{
+          model: "gemini-2.5-flash",
+          temperature: 0,
+          endpoint:
+            "https://aiplatform.googleapis.com/v1/projects/eng-sandbox-7s/locations/global/publishers/google",
+          stream: true
+        })
+
+      chat = %ChatVertexAI{chat | callbacks: [handlers]}
+
+      {:ok, result} =
+        ChatVertexAI.call(chat, [
+          Message.new_user!("Return the response 'Colorful Threads'.")
+        ])
+
+      assert [
+               [
+                 %MessageDelta{
+                   content: "Colorful Threads",
+                   status: :complete,
+                   index: nil,
+                   role: :assistant,
+                   tool_calls: nil,
+                   metadata: %{
+                     usage: %TokenUsage{
+                       input: 7,
+                       output: 2
+                     }
+                   }
+                 }
+               ]
+             ] = result
+
+      assert_received {:fired_token_usage, usage}
+      assert %TokenUsage{input: 7, output: 2} = usage
+    end
+  end
 end
