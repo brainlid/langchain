@@ -439,10 +439,16 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
         tools,
         retry_count
       ) do
+    raw_data = for_api(ollama_ai, messages, tools)
+
+    if ollama_ai.verbose_api do
+      IO.inspect(raw_data, label: "RAW DATA BEING SUBMITTED")
+    end
+
     req =
       Req.new(
         url: ollama_ai.endpoint,
-        json: for_api(ollama_ai, messages, tools),
+        json: raw_data,
         receive_timeout: ollama_ai.receive_timeout,
         retry: :transient,
         max_retries: 3,
@@ -453,7 +459,11 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
     req
     |> Req.post()
     |> case do
-      {:ok, %Req.Response{body: data}} ->
+      {:ok, %Req.Response{body: data} = response} ->
+        if ollama_ai.verbose_api do
+          IO.inspect(response, label: "RAW REQ RESPONSE")
+        end
+
         case do_process_response(ollama_ai, data) do
           {:error, reason} ->
             {:error, reason}
@@ -492,9 +502,15 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
         tools,
         retry_count
       ) do
+    raw_data = for_api(ollama_ai, messages, tools)
+
+    if ollama_ai.verbose_api do
+      IO.inspect(raw_data, label: "RAW DATA BEING SUBMITTED")
+    end
+
     Req.new(
       url: ollama_ai.endpoint,
-      json: for_api(ollama_ai, messages, tools),
+      json: raw_data,
       inet6: true,
       receive_timeout: ollama_ai.receive_timeout
     )
