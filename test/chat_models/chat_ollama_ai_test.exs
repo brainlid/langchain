@@ -43,6 +43,14 @@ defmodule ChatModels.ChatOllamaAITest do
 
       assert model.endpoint == override_url
     end
+
+    test "supports verbose_api option" do
+      model = ChatOllamaAI.new!(%{model: "llama2", verbose_api: true})
+      assert model.verbose_api == true
+
+      model = ChatOllamaAI.new!(%{model: "llama2", verbose_api: false})
+      assert model.verbose_api == false
+    end
   end
 
   describe "for_api/3" do
@@ -673,6 +681,12 @@ defmodule ChatModels.ChatOllamaAITest do
       refute Map.has_key?(result, "callbacks")
     end
 
+    test "includes verbose_api field" do
+      model = ChatOllamaAI.new!(%{model: "llama2", verbose_api: true})
+      result = ChatOllamaAI.serialize_config(model)
+      assert result["verbose_api"] == true
+    end
+
     test "creates expected map" do
       model =
         ChatOllamaAI.new!(%{
@@ -709,6 +723,7 @@ defmodule ChatModels.ChatOllamaAITest do
                "tfs_z" => 1.0,
                "top_k" => 40,
                "top_p" => 0.9,
+               "verbose_api" => false,
                "version" => 1
              }
     end

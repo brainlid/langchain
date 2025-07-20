@@ -78,7 +78,8 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
     :temperature,
     :tfs_z,
     :top_k,
-    :top_p
+    :top_p,
+    :verbose_api
   ]
 
   @required_fields [:endpoint, :model]
@@ -166,6 +167,10 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
 
     # A list of maps for callback handlers (treat as private)
     field :callbacks, {:array, :map}, default: []
+
+    # For help with debugging. It outputs the RAW Req response received and the
+    # RAW Elixir map being submitted to the API.
+    field :verbose_api, :boolean, default: false
   end
 
   @doc """
@@ -617,7 +622,8 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
         :temperature,
         :tfs_z,
         :top_k,
-        :top_p
+        :top_p,
+        :verbose_api
       ],
       @current_config_version
     )
