@@ -42,12 +42,6 @@ defmodule LangChain.Tools.DeepResearchTest do
                      "Maximum number of tool calls (web searches, etc.) to make. Controls cost and latency.",
                    minimum: 1,
                    maximum: 100
-                 },
-                 background: %{
-                   type: "boolean",
-                   description:
-                     "Whether to run in background mode (recommended for long research tasks).",
-                   default: true
                  }
                },
                required: ["query"]
