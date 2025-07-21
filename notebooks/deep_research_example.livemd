@@ -95,8 +95,7 @@ manual_execution_example = fn ->
     "query" => research_query,
     "model" => "o3-deep-research-2025-06-26",  # Full model for comprehensive research
     "system_message" => "You are an expert economic researcher. Provide detailed analysis with specific statistics and cite all sources.",
-    "max_tool_calls" => 75,  # Allow more web searches for comprehensive coverage
-    "background" => true  # Run in background mode
+    "max_tool_calls" => 75  # Allow more web searches for comprehensive coverage
   }
   
   # Execute the research (this would take 5-30 minutes in real usage)
@@ -187,7 +186,6 @@ best_practices = """
 
 ### 3. Parameter Tuning
 - Set max_tool_calls to control cost and time
-- Use background mode for long research tasks
 - Provide system_message for specialized research approaches
 
 ### 4. Integration Patterns
@@ -260,9 +258,9 @@ If you get authentication errors:
 
 ### Timeout Issues
 If requests timeout:
-- Use background mode for long research
+- Configure async_tool_timeout in LLMChain (see section above)
 - Check your network connectivity
-- Increase timeout settings if needed
+- Ensure you're using sufficient timeout values (35+ minutes)
 
 ### Rate Limiting
 If you hit rate limits:

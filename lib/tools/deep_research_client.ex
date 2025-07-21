@@ -24,7 +24,6 @@ defmodule LangChain.Tools.DeepResearchClient do
     - `:model` - The model to use (defaults to "o3-deep-research-2025-06-26")
     - `:system_message` - Optional guidance for research approach
     - `:max_tool_calls` - Maximum number of tool calls to make
-    - `:background` - Whether to run in background mode (defaults to true)
 
   ## Returns
   - `{:ok, request_id}` on success
@@ -35,10 +34,8 @@ defmodule LangChain.Tools.DeepResearchClient do
     model = Map.get(options, :model, "o3-deep-research-2025-06-26")
     system_message = Map.get(options, :system_message)
     max_tool_calls = Map.get(options, :max_tool_calls)
-    background = Map.get(options, :background, true)
-
     # Build the request body according to OpenAI Deep Research API
-    request_body = build_request_body(query, model, system_message, max_tool_calls, background)
+    request_body = build_request_body(query, model, system_message, max_tool_calls)
 
     Logger.debug("Creating deep research request with body: #{inspect(request_body)}")
 
@@ -115,13 +112,12 @@ defmodule LangChain.Tools.DeepResearchClient do
 
   # Private functions
 
-  @spec build_request_body(String.t(), String.t(), String.t() | nil, integer() | nil, boolean()) ::
-          map()
-  defp build_request_body(query, model, system_message, max_tool_calls, background) do
+  @spec build_request_body(String.t(), String.t(), String.t() | nil, integer() | nil) :: map()
+  defp build_request_body(query, model, system_message, max_tool_calls) do
     base_body = %{
       model: model,
       input: query,
-      background: background,
+      background: true,
       tools: [
         %{type: "web_search_preview"}
       ]

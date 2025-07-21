@@ -93,12 +93,6 @@ defmodule LangChain.Tools.DeepResearch do
               "Maximum number of tool calls (web searches, etc.) to make. Controls cost and latency.",
             minimum: 1,
             maximum: 100
-          },
-          background: %{
-            type: "boolean",
-            description:
-              "Whether to run in background mode (recommended for long research tasks).",
-            default: true
           }
         },
         required: ["query"]
@@ -136,7 +130,6 @@ defmodule LangChain.Tools.DeepResearch do
       model = Map.get(args, "model", "o3-deep-research-2025-06-26")
       system_message = Map.get(args, "system_message")
       max_tool_calls = Map.get(args, "max_tool_calls")
-      background = Map.get(args, "background", true)
 
       Logger.info("Starting deep research request for query: #{inspect(query)}")
 
@@ -144,8 +137,7 @@ defmodule LangChain.Tools.DeepResearch do
       case DeepResearchClient.create_research(query, %{
              model: model,
              system_message: system_message,
-             max_tool_calls: max_tool_calls,
-             background: background
+             max_tool_calls: max_tool_calls
            }) do
         {:ok, request_id} ->
           Logger.info("Deep research request created with ID: #{request_id}")
