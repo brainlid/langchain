@@ -519,8 +519,7 @@ defmodule ChatModels.ChatVertexAITest do
         ChatVertexAI.new!(%{
           model: "gemini-2.5-flash",
           temperature: 0,
-          endpoint:
-            "https://aiplatform.googleapis.com/v1/projects/eng-sandbox-7s/locations/global/publishers/google",
+          endpoint: System.fetch_env!("VERTEX_API_ENDPOINT"),
           stream: false
         })
 
@@ -569,8 +568,7 @@ defmodule ChatModels.ChatVertexAITest do
         ChatVertexAI.new!(%{
           model: "gemini-2.5-flash",
           temperature: 0,
-          endpoint:
-            "https://aiplatform.googleapis.com/v1/projects/eng-sandbox-7s/locations/global/publishers/google",
+          endpoint: System.fetch_env!("VERTEX_API_ENDPOINT"),
           stream: true
         })
 

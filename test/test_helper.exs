@@ -6,6 +6,7 @@ Application.put_env(:langchain, :aws_access_key_id, System.fetch_env!("AWS_ACCES
 Application.put_env(:langchain, :perplexity_key, System.fetch_env!("PERPLEXITY_API_KEY"))
 Application.put_env(:langchain, :mistral_api_key, System.fetch_env!("MISTRAL_API_KEY"))
 Application.put_env(:langchain, :vertex_ai_key, System.fetch_env!("VERTEX_API_KEY"))
+Application.put_env(:langchain, :vertex_ai_endpoint, System.fetch_env!("VERTEX_API_ENDPOINT"))
 
 Application.put_env(
   :langchain,
