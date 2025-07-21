@@ -9,11 +9,18 @@ defmodule LangChain.Tools.DeepResearchClient do
 
   Uses the same authentication and HTTP client patterns as other OpenAI integrations
   in LangChain, reusing the existing `:openai_key` configuration.
+
+  ## Configuration
+
+  The endpoint can be customized for alternative providers (Azure, OpenRouter, etc.):
+
+      # In config.exs or runtime.exs
+      config :langchain, :deep_research_endpoint, "https://custom-endpoint.com/v1/responses"
+
+  If not configured, defaults to OpenAI's standard endpoint.
   """
   require Logger
   alias LangChain.Config
-
-  @base_url "https://api.openai.com/v1/responses"
 
   @doc """
   Creates a new deep research request.
@@ -24,6 +31,7 @@ defmodule LangChain.Tools.DeepResearchClient do
     - `:model` - The model to use (defaults to "o3-deep-research-2025-06-26")
     - `:system_message` - Optional guidance for research approach
     - `:max_tool_calls` - Maximum number of tool calls to make
+    - `:endpoint` - Custom endpoint URL (defaults to "https://api.openai.com/v1/responses")
 
   ## Returns
   - `{:ok, request_id}` on success
@@ -34,12 +42,14 @@ defmodule LangChain.Tools.DeepResearchClient do
     model = Map.get(options, :model, "o3-deep-research-2025-06-26")
     system_message = Map.get(options, :system_message)
     max_tool_calls = Map.get(options, :max_tool_calls)
+    endpoint = Map.get(options, :endpoint, get_default_endpoint())
+
     # Build the request body according to OpenAI Deep Research API
     request_body = build_request_body(query, model, system_message, max_tool_calls)
 
     Logger.debug("Creating deep research request with body: #{inspect(request_body)}")
 
-    case make_request(:post, @base_url, request_body) do
+    case make_request(:post, endpoint, request_body) do
       {:ok, %{"id" => request_id}} ->
         {:ok, request_id}
 
@@ -57,14 +67,16 @@ defmodule LangChain.Tools.DeepResearchClient do
 
   ## Parameters
   - `request_id`: The ID returned from create_research/2
+  - `endpoint`: Optional custom endpoint URL
 
   ## Returns
   - `{:ok, status_map}` containing status information
   - `{:error, reason}` on failure
   """
-  @spec check_status(String.t()) :: {:ok, map()} | {:error, String.t()}
-  def check_status(request_id) do
-    url = "#{@base_url}/#{request_id}"
+  @spec check_status(String.t(), String.t() | nil) :: {:ok, map()} | {:error, String.t()}
+  def check_status(request_id, endpoint \\ nil) do
+    base_url = endpoint || get_default_endpoint()
+    url = "#{base_url}/#{request_id}"
 
     case make_request(:get, url) do
       {:ok, response} ->
@@ -85,14 +97,16 @@ defmodule LangChain.Tools.DeepResearchClient do
 
   ## Parameters
   - `request_id`: The ID of the completed research request
+  - `endpoint`: Optional custom endpoint URL
 
   ## Returns
   - `{:ok, result_map}` containing the research findings and metadata
   - `{:error, reason}` on failure
   """
-  @spec get_results(String.t()) :: {:ok, map()} | {:error, String.t()}
-  def get_results(request_id) do
-    url = "#{@base_url}/#{request_id}"
+  @spec get_results(String.t(), String.t() | nil) :: {:ok, map()} | {:error, String.t()}
+  def get_results(request_id, endpoint \\ nil) do
+    base_url = endpoint || get_default_endpoint()
+    url = "#{base_url}/#{request_id}"
 
     case make_request(:get, url) do
       {:ok, response} ->
@@ -304,6 +318,12 @@ defmodule LangChain.Tools.DeepResearchClient do
   defp get_api_key() do
     # Reuse the same OpenAI API key resolution as ChatOpenAI
     Config.resolve(:openai_key, "")
+  end
+
+  @spec get_default_endpoint() :: String.t()
+  defp get_default_endpoint() do
+    # Check for configured endpoint, otherwise use OpenAI default
+    Config.resolve(:deep_research_endpoint, "https://api.openai.com/v1/responses")
   end
 
   @spec extract_error_message(map() | String.t(), integer()) :: String.t()

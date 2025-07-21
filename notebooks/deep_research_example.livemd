@@ -279,4 +279,38 @@ To improve research results:
 IO.puts(troubleshooting_guide)
 ```
 
+## Using Alternative Endpoints
+
+Deep Research supports custom endpoints for alternative providers like Azure OpenAI or OpenRouter:
+
+```elixir
+# Configure custom endpoint in your application config
+# In config/config.exs or config/runtime.exs:
+# config :langchain, :deep_research_endpoint, "https://your-azure-instance.openai.azure.com/openai/responses"
+
+# Or set it at runtime:
+Application.put_env(:langchain, :deep_research_endpoint, "https://api.openrouter.ai/api/v1/responses")
+
+# Then use Deep Research normally - it will use the configured endpoint
+model = ChatOpenAI.new!(%{temperature: 0, stream: false})
+
+{:ok, chain} =
+  %{llm: model, verbose: true, async_tool_timeout: 35 * 60 * 1000}
+  |> LLMChain.new!()
+  |> LLMChain.add_message(
+    Message.new_user!("Research the latest developments in quantum computing")
+  )
+  |> LLMChain.add_tools(DeepResearch.new!())
+
+# The tool will automatically use your configured endpoint
+IO.puts("Deep Research will use the configured custom endpoint")
+```
+
+### Important Notes for Alternative Providers:
+
+- **Azure OpenAI**: Ensure your endpoint includes the full path including deployment name
+- **OpenRouter**: Check that the provider supports the Deep Research models
+- **Authentication**: The tool uses the same `:openai_key` configuration for all providers
+- **Compatibility**: The provider must support OpenAI's Deep Research API format
+
 This completes the Deep Research integration example. The tool provides powerful research capabilities while maintaining the familiar LangChain patterns and workflows.
