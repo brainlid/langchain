@@ -22,6 +22,8 @@ env:
   AWS_REGION: invalid
   PERPLEXITY_API_KEY: invalid
   MISTRAL_API_KEY: invalid
+  VERTEX_API_KEY: invalid
+  VERTEX_API_ENDPOINT: invalid
 
 permissions:
   contents: read
