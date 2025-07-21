@@ -101,6 +101,9 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     # selected using temperature sampling.
     field :top_k, :float, default: 1.0
 
+    # ThinkingConfig, https://ai.google.dev/api/generate-content#ThinkingConfig
+    field :thinking_config, :map, default: nil
+
     # Duration in seconds for the response to be received. When streaming a very
     # lengthy response, a longer time limit may be required. However, when it
     # goes on too long by itself, it tends to hallucinate more.
@@ -138,6 +141,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     :temperature,
     :top_p,
     :top_k,
+    :thinking_config,
     :receive_timeout,
     :json_response,
     :json_schema,
@@ -231,6 +235,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
         "topP" => google_ai.top_p,
         "topK" => google_ai.top_k
       }
+      |> Utils.conditionally_add_to_map("thinkingConfig", google_ai.thinking_config)
       |> Utils.conditionally_add_to_map("response_mime_type", response_mime_type)
       |> Utils.conditionally_add_to_map("response_schema", response_schema)
 
@@ -860,6 +865,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
         :temperature,
         :top_p,
         :top_k,
+        :thinking_config,
         :receive_timeout,
         :json_response,
         :json_schema,
