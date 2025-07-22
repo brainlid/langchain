@@ -18,6 +18,36 @@ defmodule LangChain.ChatModels.ChatPerplexity do
   Overall, this implementation provides a unified interface for interacting with the Perplexity Chat API
   while working around its limitations regarding tool calling.
 
+  ## Full Response Data
+
+  The full Perplexity API response, including citations and search results, is captured in the
+  `processed_content` field of the returned Message. This includes:
+
+  - `id`: Unique identifier for the chat completion
+  - `model`: The model that generated the response
+  - `created`: Unix timestamp of when the completion was created
+  - `usage`: Token usage information
+  - `citations`: Array of citation sources for the response
+  - `search_results`: Array of search results related to the response
+
+  You can access this metadata like:
+
+      {:ok, [message]} = ChatPerplexity.call(perplexity, "Tell me about climate change")
+      citations = message.processed_content.citations
+      search_results = message.processed_content.search_results
+
+      # Example of what citations might look like:
+      # ["https://climate.nasa.gov/", "https://www.ipcc.ch/"]
+
+      # Example of what search_results might look like:
+      # [
+      #   %{
+      #     "title" => "Climate Change and Global Warming",
+      #     "url" => "https://climate.nasa.gov/",
+      #     "date" => "2023-12-25"
+      #   }
+      # ]
+
   ## Tool Calls
 
   In order to use tool calls, you need specifically prompt Perplexity as outlined in their
@@ -503,8 +533,24 @@ defmodule LangChain.ChatModels.ChatPerplexity do
       end
     end
 
-    # Process the first choice
-    do_process_response(model, choice, tools)
+    # Process the first choice and add full response metadata
+    case do_process_response(model, choice, tools) do
+      {:error, _} = error ->
+        error
+
+      message ->
+        # Add the full API response data to processed_content
+        full_response_data = %{
+          id: Map.get(data, "id"),
+          model: Map.get(data, "model"),
+          created: Map.get(data, "created"),
+          usage: Map.get(data, "usage"),
+          citations: Map.get(data, "citations"),
+          search_results: Map.get(data, "search_results")
+        }
+
+        %{message | processed_content: full_response_data}
+    end
   end
 
   def do_process_response(
@@ -570,17 +616,17 @@ defmodule LangChain.ChatModels.ChatPerplexity do
     end
   end
 
-  def do_process_response(_model, %{"error" => %{"message" => reason, "type" => type}}) do
+  def do_process_response(_model, %{"error" => %{"message" => reason, "type" => type}}, _tools) do
     Logger.error("Received error from API: #{inspect(reason)}")
     {:error, LangChainError.exception(type: type, message: reason)}
   end
 
-  def do_process_response(_model, %{"error" => %{"message" => reason}}) do
+  def do_process_response(_model, %{"error" => %{"message" => reason}}, _tools) do
     Logger.error("Received error from API: #{inspect(reason)}")
     {:error, LangChainError.exception(message: reason)}
   end
 
-  def do_process_response(model, %{"choices" => %{} = usage} = _data) do
+  def do_process_response(model, %{"choices" => %{} = usage} = _data, _tools) do
     case get_token_usage(%{"usage" => usage}) do
       %TokenUsage{} = token_usage ->
         Callbacks.fire(model.callbacks, :on_llm_token_usage, [token_usage])
@@ -591,9 +637,9 @@ defmodule LangChain.ChatModels.ChatPerplexity do
     end
   end
 
-  def do_process_response(_model, %{"choices" => []}), do: :skip
+  def do_process_response(_model, %{"choices" => []}, _tools), do: :skip
 
-  def do_process_response(model, %{"choices" => choices} = data) when is_list(choices) do
+  def do_process_response(model, %{"choices" => choices} = data, tools) when is_list(choices) do
     # Fire token usage callback if present
     if usage = Map.get(data, "usage") do
       case get_token_usage(%{"usage" => usage}) do
@@ -605,15 +651,31 @@ defmodule LangChain.ChatModels.ChatPerplexity do
       end
     end
 
-    # Process each response individually
+    # Process each response individually and add full response metadata
+    full_response_data = %{
+      id: Map.get(data, "id"),
+      model: Map.get(data, "model"),
+      created: Map.get(data, "created"),
+      usage: Map.get(data, "usage"),
+      citations: Map.get(data, "citations"),
+      search_results: Map.get(data, "search_results")
+    }
+
     for choice <- choices do
-      do_process_response(model, choice)
+      case do_process_response(model, choice, tools) do
+        {:error, _} = error ->
+          error
+
+        message ->
+          %{message | processed_content: full_response_data}
+      end
     end
   end
 
   def do_process_response(
         _model,
-        %{"finish_reason" => finish_reason, "message" => %{"content" => content}} = data
+        %{"finish_reason" => finish_reason, "message" => %{"content" => content}} = data,
+        _tools
       ) do
     status = finish_reason_to_status(finish_reason)
 
@@ -659,15 +721,19 @@ defmodule LangChain.ChatModels.ChatPerplexity do
     end
   end
 
-  def do_process_response(_model, %{
-        "choices" => [
-          %{
-            "delta" => %{"role" => role, "content" => content},
-            "finish_reason" => finish,
-            "index" => index
-          } = _choice
-        ]
-      }) do
+  def do_process_response(
+        _model,
+        %{
+          "choices" => [
+            %{
+              "delta" => %{"role" => role, "content" => content},
+              "finish_reason" => finish,
+              "index" => index
+            } = _choice
+          ]
+        },
+        _tools
+      ) do
     status = finish_reason_to_status(finish)
 
     data =
@@ -698,7 +764,8 @@ defmodule LangChain.ChatModels.ChatPerplexity do
             }
             | _
           ]
-        }
+        },
+        _tools
       ) do
     status = finish_reason_to_status(finish)
 
@@ -719,9 +786,9 @@ defmodule LangChain.ChatModels.ChatPerplexity do
     end
   end
 
-  def do_process_response(_model, %{"choices" => []} = _msg), do: :skip
+  def do_process_response(_model, %{"choices" => []} = _msg, _tools), do: :skip
 
-  def do_process_response(_model, {:error, %Jason.DecodeError{} = response}) do
+  def do_process_response(_model, {:error, %Jason.DecodeError{} = response}, _tools) do
     error_message = "Received invalid JSON: #{inspect(response)}"
     Logger.error(error_message)
 
@@ -729,7 +796,7 @@ defmodule LangChain.ChatModels.ChatPerplexity do
      LangChainError.exception(type: "invalid_json", message: error_message, original: response)}
   end
 
-  def do_process_response(_model, other) do
+  def do_process_response(_model, other, _tools) do
     Logger.error("Trying to process an unexpected response. #{inspect(other)}")
     {:error, LangChainError.exception(message: "Unexpected response")}
   end
