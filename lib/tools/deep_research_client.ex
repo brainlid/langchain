@@ -157,7 +157,10 @@ defmodule LangChain.Tools.DeepResearchClient do
     # Build tools array based on include_code_interpreter
     tools =
       if include_code_interpreter do
-        [%{type: "web_search_preview"}, %{type: "code_interpreter"}]
+        [
+          %{type: "web_search_preview"},
+          %{type: "code_interpreter", container: %{type: "auto", file_ids: []}}
+        ]
       else
         [%{type: "web_search_preview"}]
       end
