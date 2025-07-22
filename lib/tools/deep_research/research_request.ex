@@ -15,7 +15,8 @@ defmodule LangChain.Tools.DeepResearch.ResearchRequest do
           max_tool_calls: integer() | nil,
           background: boolean(),
           temperature: float(),
-          max_output_tokens: integer() | nil
+          max_output_tokens: integer() | nil,
+          summary: String.t()
         }
 
   @primary_key false
@@ -27,6 +28,7 @@ defmodule LangChain.Tools.DeepResearch.ResearchRequest do
     field :background, :boolean, default: true
     field :temperature, :float, default: 1.0
     field :max_output_tokens, :integer
+    field :summary, :string, default: "auto"
   end
 
   @doc """
@@ -42,7 +44,8 @@ defmodule LangChain.Tools.DeepResearch.ResearchRequest do
       :max_tool_calls,
       :background,
       :temperature,
-      :max_output_tokens
+      :max_output_tokens,
+      :summary
     ])
     |> validate_required([:query])
     |> validate_length(:query, min: 1, max: 10_000)
@@ -50,6 +53,7 @@ defmodule LangChain.Tools.DeepResearch.ResearchRequest do
       "o3-deep-research-2025-06-26",
       "o4-mini-deep-research-2025-06-26"
     ])
+    |> validate_inclusion(:summary, ["auto", "detailed"])
     |> validate_number(:max_tool_calls, greater_than: 0, less_than_or_equal_to: 100)
     |> validate_number(:temperature, greater_than_or_equal_to: 0.0, less_than_or_equal_to: 2.0)
     |> validate_number(:max_output_tokens, greater_than: 0)
@@ -64,7 +68,8 @@ defmodule LangChain.Tools.DeepResearch.ResearchRequest do
       model: request.model,
       input: request.query,
       background: request.background,
-      tools: [%{type: "web_search_preview"}]
+      tools: [%{type: "web_search_preview"}],
+      reasoning: %{summary: request.summary}
     }
     |> maybe_add_field(:instructions, request.system_message)
     |> maybe_add_field(:max_tool_calls, request.max_tool_calls)

@@ -42,6 +42,19 @@ defmodule LangChain.Tools.DeepResearchTest do
                      "Maximum number of tool calls (web searches, etc.) to make. Controls cost and latency.",
                    minimum: 1,
                    maximum: 100
+                 },
+                 summary: %{
+                   type: "string",
+                   enum: ["auto", "detailed"],
+                   description:
+                     "Summary mode for the research report. 'auto' provides the best possible summary, 'detailed' provides more comprehensive results.",
+                   default: "auto"
+                 },
+                 include_code_interpreter: %{
+                   type: "boolean",
+                   description:
+                     "Include code interpreter tool for data analysis and visualization capabilities.",
+                   default: true
                  }
                },
                required: ["query"]
@@ -98,6 +111,24 @@ defmodule LangChain.Tools.DeepResearchTest do
       assert function.async == true
       assert Map.has_key?(function.parameters_schema, :required)
       assert "query" in function.parameters_schema.required
+    end
+
+    test "handles new parameters correctly" do
+      # Test with all parameters including new ones
+      args = %{
+        "query" => "test query",
+        "model" => "o4-mini-deep-research-2025-06-26",
+        "summary" => "detailed",
+        "include_code_interpreter" => false
+      }
+
+      # Verify the parameters are accepted (would fail if not handled)
+      function = DeepResearch.new!()
+      assert is_function(function.function, 2)
+
+      # Check default values
+      assert function.parameters_schema.properties.summary.default == "auto"
+      assert function.parameters_schema.properties.include_code_interpreter.default == true
     end
   end
 

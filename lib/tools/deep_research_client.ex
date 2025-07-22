@@ -31,6 +31,8 @@ defmodule LangChain.Tools.DeepResearchClient do
     - `:model` - The model to use (defaults to "o3-deep-research-2025-06-26")
     - `:system_message` - Optional guidance for research approach
     - `:max_tool_calls` - Maximum number of tool calls to make
+    - `:summary` - Summary mode: "auto" or "detailed" (defaults to "auto")
+    - `:include_code_interpreter` - Include code interpreter tool (defaults to true)
     - `:endpoint` - Custom endpoint URL (defaults to "https://api.openai.com/v1/responses")
 
   ## Returns
@@ -42,10 +44,20 @@ defmodule LangChain.Tools.DeepResearchClient do
     model = Map.get(options, :model, "o3-deep-research-2025-06-26")
     system_message = Map.get(options, :system_message)
     max_tool_calls = Map.get(options, :max_tool_calls)
+    summary = Map.get(options, :summary, "auto")
+    include_code_interpreter = Map.get(options, :include_code_interpreter, true)
     endpoint = Map.get(options, :endpoint, get_default_endpoint())
 
     # Build the request body according to OpenAI Deep Research API
-    request_body = build_request_body(query, model, system_message, max_tool_calls)
+    request_body =
+      build_request_body(
+        query,
+        model,
+        system_message,
+        max_tool_calls,
+        summary,
+        include_code_interpreter
+      )
 
     Logger.debug("Creating deep research request with body: #{inspect(request_body)}")
 
@@ -126,15 +138,36 @@ defmodule LangChain.Tools.DeepResearchClient do
 
   # Private functions
 
-  @spec build_request_body(String.t(), String.t(), String.t() | nil, integer() | nil) :: map()
-  defp build_request_body(query, model, system_message, max_tool_calls) do
+  @spec build_request_body(
+          String.t(),
+          String.t(),
+          String.t() | nil,
+          integer() | nil,
+          String.t(),
+          boolean()
+        ) :: map()
+  defp build_request_body(
+         query,
+         model,
+         system_message,
+         max_tool_calls,
+         summary,
+         include_code_interpreter
+       ) do
+    # Build tools array based on include_code_interpreter
+    tools =
+      if include_code_interpreter do
+        [%{type: "web_search_preview"}, %{type: "code_interpreter"}]
+      else
+        [%{type: "web_search_preview"}]
+      end
+
     base_body = %{
       model: model,
       input: query,
       background: true,
-      tools: [
-        %{type: "web_search_preview"}
-      ]
+      tools: tools,
+      reasoning: %{summary: summary}
     }
 
     # Add optional parameters if provided

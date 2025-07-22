@@ -45,5 +45,29 @@ defmodule LangChain.Tools.DeepResearchClientTest do
           assert is_binary(reason)
       end
     end
+
+    @tag live_call: true
+    test "creates research request with all new parameters" do
+      # Test with all parameters including new ones
+      options = %{
+        model: "o4-mini-deep-research-2025-06-26",
+        system_message: "Focus on recent developments",
+        max_tool_calls: 10,
+        summary: "detailed",
+        include_code_interpreter: false
+      }
+
+      result = DeepResearchClient.create_research("test query with parameters", options)
+
+      case result do
+        {:ok, request_id} ->
+          assert is_binary(request_id)
+          assert String.starts_with?(request_id, "resp_")
+
+        {:error, reason} ->
+          # API error - still a valid test result
+          assert is_binary(reason)
+      end
+    end
   end
 end
