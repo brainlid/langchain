@@ -1686,6 +1686,43 @@ defmodule LangChain.Chains.LLMChainTest do
       assert updated_chain.current_failure_count == 0
     end
 
+    test "supports multiple tool calls being made and stopping when the specific tool from the tool list is called",
+         %{greet: greet, sync: do_thing, hello_world: hello_world} do
+      # Made NOT LIVE here
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:ok,
+         new_function_calls!([
+           ToolCall.new!(%{
+             call_id: "call_fakeGreet",
+             name: "greet",
+             arguments: %{"name" => "Tim"}
+           })
+         ])}
+      end)
+
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:ok,
+         new_function_calls!([
+           ToolCall.new!(%{call_id: "call_hello_world", name: "hello_world", arguments: nil})
+         ])}
+      end)
+
+      {:ok, updated_chain, tool_result} =
+        %{llm: ChatOpenAI.new!(%{stream: false}), verbose: false}
+        |> LLMChain.new!()
+        |> LLMChain.add_tools([greet, do_thing, hello_world])
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Say hello and then call hello_world."))
+        |> LLMChain.run_until_tool_used(["do_thing", "hello_world"])
+
+      assert updated_chain.last_message.role == :tool
+
+      assert %ToolResult{is_error: false} = tool_result
+      assert tool_result.name == "hello_world"
+
+      assert updated_chain.current_failure_count == 0
+    end
+
     test "supports stopping after max_runs attempts", %{greet: greet, sync: do_thing} do
       # Made NOT LIVE here
       expect(ChatOpenAI, :call, 3, fn _model, _messages, _tools ->
