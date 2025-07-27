@@ -418,7 +418,6 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   # - `{:error, reason}` - Where reason is a `LangChain.LangChainError`
   #   explanation of what went wrong.
   #
-  # **NOTE:** callback function are IGNORED for ollama ai When `stream: true` is
   # If `stream: false`, the completed message is returned.
   #
   # If `stream: true`, the completed message is returned after MessageDelta's.
@@ -548,6 +547,18 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
     end
   end
 
+  def do_process_response(%{stream: true} = model, %{
+        "message" => %{"tool_calls" => calls} = message,
+        "done" => true
+      })
+      when calls != [] do
+    message
+    |> Map.merge(%{
+      "tool_calls" => Enum.map(calls, &do_process_response(model, &1))
+    })
+    |> create_message(:complete, MessageDelta)
+  end
+
   def do_process_response(%{stream: true} = _model, %{"message" => message, "done" => true}) do
     create_message(message, :complete, MessageDelta)
   end
@@ -566,6 +577,18 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
 
   def do_process_response(_model, %{"message" => message, "done" => true}) do
     create_message(message, :complete, Message)
+  end
+
+  def do_process_response(model,  %{
+        "message" => %{"tool_calls" => calls} = message,
+        "done" => _other
+      })
+      when calls != [] do
+    message
+    |> Map.merge(%{
+      "tool_calls" => Enum.map(calls, &do_process_response(model, &1))
+    })
+    |> create_message(:incomplete, MessageDelta)
   end
 
   def do_process_response(_model, %{"message" => message, "done" => _other}) do
