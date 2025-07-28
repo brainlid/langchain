@@ -643,6 +643,7 @@ defmodule LangChain.Chains.LLMChain do
   defp run_step(%LLMChain{} = chain) do
     chain_after_tools = execute_tool_calls(chain)
 
+    # if no tools were executed, automatically run again
     if chain_after_tools == chain do
       do_run(chain_after_tools)
     else
