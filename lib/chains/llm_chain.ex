@@ -146,6 +146,22 @@ defmodule LangChain.Chains.LLMChain do
   - The updated chain with all messages and tool calls
   - The specific tool result that matched the requested tool name
 
+  ### Using Multiple Tool Names
+
+  You can also provide a list of tool names to stop when any one of them is called:
+
+      {:ok, %LLMChain{} = updated_chain, %ToolResult{} = tool_result} =
+        %{llm: ChatOpenAI.new!(%{stream: false})}
+        |> LLMChain.new!()
+        |> LLMChain.add_tools([search_tool, summary_tool, report_tool])
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("..."))
+        |> LLMChain.run_until_tool_used(["summary_tool", "report_tool"])
+
+  This variant is useful when you have multiple tools that could serve as valid
+  endpoints for your workflow, and you want the LLM to choose the most appropriate
+  one based on the context.
+
   To prevent runaway function calls, a default `max_runs` value of 25 is set.
   You can adjust this as needed:
 
@@ -656,6 +672,24 @@ defmodule LangChain.Chains.LLMChain do
   LLM to make multiple tool calls and call a specific tool to return a result,
   signaling the end of the operation.
 
+  This function accepts either a single tool name as a string, or a list of tool
+  names. When provided with a list, the chain stops when any one of the specified
+  tools is called.
+
+  ## Examples
+
+  With a single tool name:
+
+      {:ok, %LLMChain{} = updated_chain, %ToolResult{} = tool_result} =
+        chain
+        |> LLMChain.run_until_tool_used("final_summary")
+
+  With multiple tool names:
+
+      {:ok, %LLMChain{} = updated_chain, %ToolResult{} = tool_result} =
+        chain
+        |> LLMChain.run_until_tool_used(["summary_tool", "report_tool"])
+
   ## Options
 
   - `max_runs`: The maximum number of times to run the chain. To prevent runaway
@@ -676,9 +710,16 @@ defmodule LangChain.Chains.LLMChain do
     replaced before running against the configured LLM. This is helpful, for
     example, when a different system prompt is needed for Anthropic vs OpenAI.
   """
-  @spec run_until_tool_used(t(), String.t()) ::
+  @spec run_until_tool_used(t(), [String.t()] | String.t(), Keyword.t()) ::
           {:ok, t(), Message.t()} | {:error, t(), LangChainError.t()}
-  def run_until_tool_used(%LLMChain{} = chain, tool_name, opts \\ []) do
+
+  def run_until_tool_used(chain, tool_name, opts \\ [])
+
+  def run_until_tool_used(%LLMChain{} = chain, tool_name, opts) when is_binary(tool_name) do
+    run_until_tool_used(chain, [tool_name], opts)
+  end
+
+  def run_until_tool_used(%LLMChain{} = chain, tool_names, opts) do
     chain
     |> raise_when_no_messages()
     |> initial_run_logging()
@@ -687,19 +728,30 @@ defmodule LangChain.Chains.LLMChain do
     chain = clear_exchanged_messages(chain)
 
     # Check if the tool_name exists in the registered tools
-    if Map.has_key?(chain._tool_map, tool_name) do
-      # Preserve fallback options and max_runs count if set explicitly.
-      do_run_until_tool_used(chain, tool_name, Keyword.put_new(opts, :max_runs, 25))
+    missing_tools =
+      Enum.filter(tool_names, fn tool_name ->
+        !Map.has_key?(chain._tool_map, tool_name)
+      end)
+
+    if Enum.empty?(missing_tools) do
+      do_run_until_tool_used(chain, tool_names, Keyword.put_new(opts, :max_runs, 25))
     else
+      message =
+        if length(missing_tools) > 1 do
+          "Tool names '#{Enum.join(missing_tools, ", ")}' not found in available tools"
+        else
+          "Tool name '#{List.first(missing_tools)}' not found in available tools"
+        end
+
       {:error, chain,
        LangChainError.exception(
          type: "invalid_tool_name",
-         message: "Tool name '#{tool_name}' not found in available tools"
+         message: message
        )}
     end
   end
 
-  defp do_run_until_tool_used(%LLMChain{} = chain, tool_name, opts) do
+  defp do_run_until_tool_used(%LLMChain{} = chain, tool_names, opts) do
     max_runs = Keyword.get(opts, :max_runs)
 
     if max_runs <= 0 do
@@ -750,18 +802,18 @@ defmodule LangChain.Chains.LLMChain do
           # specified name
           case updated_chain.last_message do
             %Message{role: :tool, tool_results: tool_results} when is_list(tool_results) ->
-              matching_call = Enum.find(tool_results, &(&1.name == tool_name))
+              matching_call = Enum.find(tool_results, &(&1.name in tool_names))
 
               if matching_call do
                 {:ok, updated_chain, matching_call}
               else
                 # If no matching tool result found, continue running.
-                do_run_until_tool_used(updated_chain, tool_name, next_opts)
+                do_run_until_tool_used(updated_chain, tool_names, next_opts)
               end
 
             _ ->
               # If no tool results in last message, continue running
-              do_run_until_tool_used(updated_chain, tool_name, next_opts)
+              do_run_until_tool_used(updated_chain, tool_names, next_opts)
           end
 
         {:error, updated_chain, reason} ->
