@@ -145,7 +145,9 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
 
     # Sets the stop sequences to use. When this pattern is encountered the LLM will stop generating text and return.
     # Multiple stop patterns may be set by specifying multiple separate stop parameters in a modelfile.
-    field :stop, :string
+    # Empty arrays [] are excluded from API requests via Utils.conditionally_add_to_map to preserve modelfile defaults.
+    # This prevents overriding the model's built-in stop tokens (e.g., <|eot_id|>, Human:, Assistant:).
+    field :stop, {:array, :string}, default: []
 
     field :stream, :boolean, default: false
 
@@ -223,24 +225,26 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
       model: model.model,
       messages: messages_for_api(messages),
       stream: model.stream,
-      options: %{
-        temperature: model.temperature,
-        seed: model.seed,
-        num_ctx: model.num_ctx,
-        num_predict: model.num_predict,
-        repeat_last_n: model.repeat_last_n,
-        repeat_penalty: model.repeat_penalty,
-        mirostat: model.mirostat,
-        mirostat_eta: model.mirostat_eta,
-        mirostat_tau: model.mirostat_tau,
-        num_gqa: model.num_gqa,
-        num_gpu: model.num_gpu,
-        num_thread: model.num_thread,
-        stop: model.stop,
-        tfs_z: model.tfs_z,
-        top_k: model.top_k,
-        top_p: model.top_p
-      },
+      options:
+        %{
+          temperature: model.temperature,
+          seed: model.seed,
+          num_ctx: model.num_ctx,
+          num_predict: model.num_predict,
+          repeat_last_n: model.repeat_last_n,
+          repeat_penalty: model.repeat_penalty,
+          mirostat: model.mirostat,
+          mirostat_eta: model.mirostat_eta,
+          mirostat_tau: model.mirostat_tau,
+          num_gqa: model.num_gqa,
+          num_gpu: model.num_gpu,
+          num_thread: model.num_thread,
+          tfs_z: model.tfs_z,
+          top_k: model.top_k,
+          top_p: model.top_p
+        }
+        # Conditionally add stop sequences: excludes empty arrays [] and nil to preserve modelfile defaults
+        |> Utils.conditionally_add_to_map(:stop, model.stop),
       receive_timeout: model.receive_timeout
     }
     |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(tools))
