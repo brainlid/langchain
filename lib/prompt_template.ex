@@ -40,11 +40,13 @@ defmodule LangChain.PromptTemplate do
     field :text, :string
     field :inputs, :map, virtual: true, default: %{}
     field :role, Ecto.Enum, values: [:system, :user, :assistant, :function], default: :user
+    field :content_type, Ecto.Enum, values: [:text, :image, :file], default: :text
+    field :options, :any, virtual: true, default: []
   end
 
   @type t :: %PromptTemplate{}
 
-  @create_fields [:role, :text, :inputs]
+  @create_fields [:role, :text, :inputs, :content_type, :options]
   @required_fields [:text]
 
   @spec new(attrs :: map()) :: {:ok, t()} | {:error, Ecto.Changeset.t()}
@@ -319,15 +321,67 @@ defmodule LangChain.PromptTemplate do
   end
 
   @doc """
-  Transform a PromptTemplate to a `LangChain.Message.ContentPart` of type
-  `text`. Provide the inputs at the time of transformation to render the final
-  content. Raises an exception if invalid.
+  Transform a PromptTemplate to the appropriate `LangChain.Message.ContentPart`
+  based on its content_type. Provide the inputs at the time of transformation
+  to render the final content.
+
+  ## Examples
+
+      # Text content part (default)
+      template = PromptTemplate.new!(%{text: "Hello <%= @name %>", content_type: :text})
+      part = PromptTemplate.to_content_part!(template, %{name: "World"})
+      # Returns ContentPart with type: :text, content: "Hello World"
+
+      # Image content part
+      template = PromptTemplate.image_template!("<%= @image_data %>", media: :jpg)
+      part = PromptTemplate.to_content_part!(template, %{image_data: "base64data"})
+      # Returns ContentPart with type: :image, content: "base64data", options: [media: :jpg]
   """
   @spec to_content_part!(t(), input :: %{atom() => any()}) ::
           ContentPart.t() | no_return()
-  def to_content_part!(%PromptTemplate{} = template, %{} = inputs \\ %{}) do
+  def to_content_part!(template, inputs \\ %{})
+
+  def to_content_part!(%PromptTemplate{content_type: :text} = template, %{} = inputs) do
     content = PromptTemplate.format(template, inputs)
     ContentPart.new!(%{type: :text, content: content})
+  end
+
+  def to_content_part!(%PromptTemplate{content_type: :image} = template, %{} = inputs) do
+    content = PromptTemplate.format(template, inputs)
+    ContentPart.new!(%{type: :image, content: content, options: template.options})
+  end
+
+  def to_content_part!(%PromptTemplate{content_type: :file} = template, %{} = inputs) do
+    content = PromptTemplate.format(template, inputs)
+    ContentPart.new!(%{type: :file, content: content, options: template.options})
+  end
+
+  # Backwards compatibility: when no content_type is set, default to text
+  def to_content_part!(%PromptTemplate{content_type: nil} = template, %{} = inputs) do
+    content = PromptTemplate.format(template, inputs)
+    ContentPart.new!(%{type: :text, content: content})
+  end
+
+  @doc """
+  Create a new PromptTemplate with image content type for template-based images.
+  This creates a template that will be resolved to an image ContentPart at runtime.
+
+  ## Options
+
+  Same options as `ContentPart.image!/2`.
+  """
+  @spec image_template!(String.t(), Keyword.t()) :: t() | no_return()
+  def image_template!(text, options \\ []) do
+    new!(%{text: text, content_type: :image, options: options})
+  end
+
+  @doc """
+  Create a new PromptTemplate with file content type for template-based files.
+  This creates a template that will be resolved to a file ContentPart at runtime.
+  """
+  @spec file_template!(String.t(), Keyword.t()) :: t() | no_return()
+  def file_template!(text, options \\ []) do
+    new!(%{text: text, content_type: :file, options: options})
   end
 
   @doc """
@@ -339,8 +393,14 @@ defmodule LangChain.PromptTemplate do
           [Message.t()] | no_return()
   def to_messages!(prompts, %{} = inputs \\ %{}) when is_list(prompts) do
     Enum.map(prompts, fn
-      %PromptTemplate{} = template ->
+      %PromptTemplate{content_type: content_type} = template when content_type in [nil, :text] ->
         to_message!(template, inputs)
+
+      %PromptTemplate{content_type: content_type} = template
+      when content_type in [:image, :file] ->
+        # For image/file templates, create a user message with the content part
+        content_part = to_content_part!(template, inputs)
+        Message.new_user!([content_part])
 
       # When a message has a list of content, process for PromptTemplates that
       # should become text content parts.
