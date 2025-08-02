@@ -547,6 +547,8 @@ defmodule LangChain.Chains.LLMChain do
   end
 
   defp try_chain_with_llm(chain, [llm | tail], before_fallback_fn, run_fn) do
+    %llm_module{} = llm
+
     use_chain = %LLMChain{chain | llm: llm}
 
     use_chain =
@@ -562,11 +564,17 @@ defmodule LangChain.Chains.LLMChain do
         {:ok, result} ->
           {:ok, result}
 
-        {:error, _error_chain, reason} ->
-          # run attempt received an error. Try again with the next LLM
-          Logger.warning("LLM call failed, using next fallback. Reason: #{inspect(reason)}")
+        {:error, _error_chain, reason} = error ->
+          #TODO: HERE IS WHERE WE SHOULD ADD A CHECK against the model for IF this error should be retried or not.
+          if llm_module.retry_error?(reason) do
+            # run attempt received an error. Try again with the next LLM
+            Logger.warning("LLM call failed, using next fallback. Reason: #{inspect(reason)}")
 
-          try_chain_with_llm(use_chain, tail, before_fallback_fn, run_fn)
+            try_chain_with_llm(use_chain, tail, before_fallback_fn, run_fn)
+          else
+            # error should not be retried. Return the error.
+            error
+          end
       end
     rescue
       err ->
