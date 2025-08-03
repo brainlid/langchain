@@ -443,16 +443,22 @@ defmodule LangChain.Chains.LLMChain do
 
       LLMChain.run(chain, mode: :until_success)
 
-  **Use Case**: Step-by-step execution where you need control of the loop.
-  In case you want to inspect the result of each step and decide whether to
+  **Use Case**: Step-by-step execution where you need control of the loop. In
+  case you want to inspect the result of each step and decide whether to
   continue or not, This is useful for debugging, to stop when you receive a
   signal of a guardrail or a specific condition.
 
       {:ok, updated_chain} = LLMChain.run(chain, mode: :step)
+
       # Inspect the result, check tool calls, etc.
       if should_continue?(updated_chain) do
         {:ok, final_chain} = LLMChain.run(updated_chain, mode: :step)
       end
+
+      # alternatively, provide an arity 1 function that receives an %LLMChain{} and
+      # returns a boolean indicating whether to stop now or continue to the next step.
+
+      {:ok, updated_chain} = LLMChain.run(chain, mode: :step, step_continue?: &should_continue?/1)
 
   """
   @spec run(t(), Keyword.t()) :: {:ok, t()} | {:error, t(), LangChainError.t()}
@@ -658,6 +664,22 @@ defmodule LangChain.Chains.LLMChain do
   @spec run_step(t()) :: {:ok, t()} | {:error, t(), LangChainError.t()}
   defp run_step(%LLMChain{} = chain) do
     chain_after_tools = execute_tool_calls(chain)
+
+    # TODO: check for opts :step_continue? and use that to determine if we should continue or stop.
+
+    # TODO: add test coverage for the continue/stop behavior.
+
+    # TODO: I'm afraid that auto-running if a tool wasn't used could get it stuck in a loop. If it ends with an assistant message, it should stop.
+
+    # def custom_run(chain, opts \\ []) do
+    #   {:ok, updated_chain} = LLMChain.run(chain, opts ++ [mode: :step])
+
+    #   if check_some_condition(updated_chain) do
+    #     {:ok, updated_chain}
+    #   else
+    #     custom_run(updated_chain, opts)
+    #   end
+    # end
 
     # if no tools were executed, automatically run again
     if chain_after_tools == chain do
