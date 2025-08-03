@@ -368,18 +368,18 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   """
 
   @impl ChatModel
-  def call(ollama_ai, prompt, tools \\ [])
+  def call(ollama_ai, prompt, tools \\ [], opts \\ [])
 
-  def call(%ChatOllamaAI{} = ollama_ai, prompt, tools) when is_binary(prompt) do
+  def call(%ChatOllamaAI{} = ollama_ai, prompt, tools, opts) when is_binary(prompt) do
     messages = [
       Message.new_system!(),
       Message.new_user!(prompt)
     ]
 
-    call(ollama_ai, messages, tools)
+    call(ollama_ai, messages, tools, opts)
   end
 
-  def call(%ChatOllamaAI{} = ollama_ai, messages, tools) when is_list(messages) do
+  def call(%ChatOllamaAI{} = ollama_ai, messages, tools, opts) when is_list(messages) do
     metadata = %{
       model: ollama_ai.model,
       message_count: length(messages),
@@ -394,7 +394,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
           %{model: ollama_ai.model, messages: messages}
         )
 
-        case __MODULE__.do_api_request(ollama_ai, messages, tools) do
+        case __MODULE__.do_api_request(ollama_ai, messages, tools, opts) do
           {:error, reason} ->
             {:error, reason}
 
@@ -429,11 +429,11 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   #
   # Retries the request up to 3 times on transient errors with a 1 second delay
   @doc false
-  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), integer()) ::
+  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), integer(), Keyword.t()) ::
           list() | struct() | {:error, String.t()}
-  def do_api_request(ollama_ai, messages, tools, retry_count \\ 3)
+  def do_api_request(ollama_ai, messages, tools, retry_count \\ 3, opts)
 
-  def do_api_request(_ollama_ai, _messages, _tools, 0) do
+  def do_api_request(_ollama_ai, _messages, _tools, 0, _opts) do
     raise LangChainError, "Retries exceeded. Connection failed."
   end
 
@@ -441,8 +441,11 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
         %ChatOllamaAI{stream: false} = ollama_ai,
         messages,
         tools,
-        retry_count
+        retry_count,
+        opts
       ) do
+    req_opts = opts |> Keyword.get(:req_opts, [])
+
     raw_data = for_api(ollama_ai, messages, tools)
 
     if ollama_ai.verbose_api do
@@ -459,6 +462,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
         inet6: true,
         retry_delay: fn attempt -> 300 * attempt end
       )
+      |> Req.merge(req_opts)
 
     req
     |> Req.post()
@@ -492,7 +496,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
       {:error, %Req.TransportError{reason: :closed}} ->
         # Force a retry by making a recursive call decrementing the counter
         Logger.debug(fn -> "Mint connection closed: retry count = #{inspect(retry_count)}" end)
-        do_api_request(ollama_ai, messages, tools, retry_count - 1)
+        do_api_request(ollama_ai, messages, tools, retry_count - 1, opts)
 
       other ->
         Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
@@ -504,8 +508,11 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
         %ChatOllamaAI{stream: true} = ollama_ai,
         messages,
         tools,
-        retry_count
+        retry_count,
+        opts
       ) do
+    req_opts = opts |> Keyword.get(:req_opts, [])
+
     raw_data = for_api(ollama_ai, messages, tools)
 
     if ollama_ai.verbose_api do
@@ -518,6 +525,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
       inet6: true,
       receive_timeout: ollama_ai.receive_timeout
     )
+    |> Req.merge(req_opts)
     |> Req.post(
       into:
         Utils.handle_stream_fn(
@@ -540,7 +548,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
       {:error, %Req.TransportError{reason: :closed}} ->
         # Force a retry by making a recursive call decrementing the counter
         Logger.debug(fn -> "Mint connection closed: retry count = #{inspect(retry_count)}" end)
-        do_api_request(ollama_ai, messages, tools, retry_count - 1)
+        do_api_request(ollama_ai, messages, tools, retry_count - 1, opts)
 
       other ->
         Logger.error(

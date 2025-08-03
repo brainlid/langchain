@@ -434,18 +434,18 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   `LangChain.Message` once fully complete.
   """
   @impl ChatModel
-  def call(google_ai, prompt, tools \\ [])
+  def call(google_ai, prompt, tools \\ [], opts \\ [])
 
-  def call(%ChatGoogleAI{} = google_ai, prompt, tools) when is_binary(prompt) do
+  def call(%ChatGoogleAI{} = google_ai, prompt, tools, opts) when is_binary(prompt) do
     messages = [
       Message.new_system!(),
       Message.new_user!(prompt)
     ]
 
-    call(google_ai, messages, tools)
+    call(google_ai, messages, tools, opts)
   end
 
-  def call(%ChatGoogleAI{} = google_ai, messages, tools)
+  def call(%ChatGoogleAI{} = google_ai, messages, tools, opts)
       when is_list(messages) do
     metadata = %{
       model: google_ai.model,
@@ -461,7 +461,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
           %{model: google_ai.model, messages: messages}
         )
 
-        case do_api_request(google_ai, messages, tools) do
+        case do_api_request(google_ai, messages, tools, opts) do
           {:error, reason} ->
             {:error, reason}
 
@@ -482,9 +482,11 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   end
 
   @doc false
-  @spec do_api_request(t(), [Message.t()], [Function.t()]) ::
+  @spec do_api_request(t(), [Message.t()], [Function.t()], Keyword.t()) ::
           list() | struct() | {:error, LangChainError.t()}
-  def do_api_request(%ChatGoogleAI{stream: false} = google_ai, messages, tools) do
+  def do_api_request(%ChatGoogleAI{stream: false} = google_ai, messages, tools, opts) do
+    req_opts = opts |> Keyword.get(:req_opts, [])
+
     req =
       Req.new(
         url: build_url(google_ai),
@@ -494,6 +496,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
         max_retries: 3,
         retry_delay: fn attempt -> 300 * attempt end
       )
+      |> Req.merge(req_opts)
 
     req
     |> Req.post()
@@ -535,12 +538,15 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     end
   end
 
-  def do_api_request(%ChatGoogleAI{stream: true} = google_ai, messages, tools) do
+  def do_api_request(%ChatGoogleAI{stream: true} = google_ai, messages, tools, opts) do
+    req_opts = opts |> Keyword.get(:req_opts, [])
+
     Req.new(
       url: build_url(google_ai),
       json: for_api(google_ai, messages, tools),
       receive_timeout: google_ai.receive_timeout
     )
+    |> Req.merge(req_opts)
     |> Req.Request.put_header("accept-encoding", "utf-8")
     |> Req.post(
       into:

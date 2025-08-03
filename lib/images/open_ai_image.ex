@@ -184,13 +184,13 @@ defmodule LangChain.Images.OpenAIImage do
   When successful, it returns `{:ok, generated_images}` where that is a list of
   `LangChain.Images.GeneratedImage` structs.
   """
-  @spec call(t()) :: {:ok, [GeneratedImage.t()]} | {:error, String.t()}
-  def call(openai)
+  @spec call(t(), Keyword.t()) :: {:ok, [GeneratedImage.t()]} | {:error, String.t()}
+  def call(openai, opts \\ [])
 
-  def call(%OpenAIImage{} = openai) do
+  def call(%OpenAIImage{} = openai, opts) do
     try do
       # make base api request and perform high-level success/failure checks
-      case do_api_request(openai) do
+      case do_api_request(openai, opts) do
         {:error, reason} ->
           {:error, reason}
 
@@ -214,14 +214,17 @@ defmodule LangChain.Images.OpenAIImage do
 
   # Retries the request up to 3 times on transient errors with a brief delay
   @doc false
-  @spec do_api_request(t(), retry_count :: integer()) :: {:ok, list()} | {:error, String.t()}
-  def do_api_request(openai, retry_count \\ 3)
+  @spec do_api_request(t(), retry_count :: integer(), Keyword.t()) ::
+          {:ok, list()} | {:error, String.t()}
+  def do_api_request(openai, retry_count \\ 3, opts)
 
-  def do_api_request(_openai, 0) do
+  def do_api_request(_openai, 0, _opts) do
     raise LangChainError, "Retries exceeded. Connection failed."
   end
 
-  def do_api_request(%OpenAIImage{} = openai, retry_count) do
+  def do_api_request(%OpenAIImage{} = openai, retry_count, opts) do
+    req_opts = Keyword.get(opts, :req_opts, [])
+
     req =
       Req.new(
         url: openai.endpoint,
@@ -237,6 +240,7 @@ defmodule LangChain.Images.OpenAIImage do
         max_retries: 3,
         retry_delay: fn attempt -> 300 * attempt end
       )
+      |> Req.merge(req_opts)
 
     req
     |> maybe_add_org_id_header()
@@ -259,7 +263,7 @@ defmodule LangChain.Images.OpenAIImage do
       {:error, %Req.TransportError{reason: :closed}} ->
         # Force a retry by making a recursive call decrementing the counter
         Logger.debug(fn -> "Mint connection closed: retry count = #{inspect(retry_count)}" end)
-        do_api_request(openai, retry_count - 1)
+        do_api_request(openai, retry_count - 1, opts)
 
       other ->
         Logger.error("Unexpected and unhandled API response! #{inspect(other)}")

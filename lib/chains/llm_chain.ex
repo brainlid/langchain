@@ -471,16 +471,16 @@ defmodule LangChain.Chains.LLMChain do
       function_to_run =
         case Keyword.get(opts, :mode, nil) do
           nil ->
-            &do_run/1
+            &do_run/2
 
           :while_needs_response ->
-            &run_while_needs_response/1
+            &run_while_needs_response/2
 
           :until_success ->
-            &run_until_success/1
+            &run_until_success/2
 
           :step ->
-            &run_step/1
+            &run_step/2
         end
 
       # Add telemetry for chain execution
@@ -501,7 +501,7 @@ defmodule LangChain.Chains.LLMChain do
           with_fallbacks(chain, opts, function_to_run)
         else
           # run it directly right now and return the success or error
-          function_to_run.(chain)
+          function_to_run.(chain, opts)
         end
       end)
     rescue
@@ -534,11 +534,11 @@ defmodule LangChain.Chains.LLMChain do
 
     # try the chain where we go through the full list of LLMs to try. Add the
     # current LLM as the first so all are processed the same way.
-    try_chain_with_llm(chain, [chain.llm | llm_list], before_fallback_fn, run_fn)
+    try_chain_with_llm(chain, [chain.llm | llm_list], before_fallback_fn, run_fn, opts)
   end
 
   # nothing left to try
-  defp try_chain_with_llm(chain, [], _before_fallback_fn, _run_fn) do
+  defp try_chain_with_llm(chain, [], _before_fallback_fn, _run_fn, _opts) do
     {:error, chain,
      LangChainError.exception(
        type: "all_fallbacks_failed",
@@ -546,7 +546,7 @@ defmodule LangChain.Chains.LLMChain do
      )}
   end
 
-  defp try_chain_with_llm(chain, [llm | tail], before_fallback_fn, run_fn) do
+  defp try_chain_with_llm(chain, [llm | tail], before_fallback_fn, run_fn, opts) do
     use_chain = %LLMChain{chain | llm: llm}
 
     use_chain =
@@ -558,7 +558,7 @@ defmodule LangChain.Chains.LLMChain do
       end
 
     try do
-      case run_fn.(use_chain) do
+      case run_fn.(use_chain, opts) do
         {:ok, result} ->
           {:ok, result}
 
@@ -566,7 +566,7 @@ defmodule LangChain.Chains.LLMChain do
           # run attempt received an error. Try again with the next LLM
           Logger.warning("LLM call failed, using next fallback. Reason: #{inspect(reason)}")
 
-          try_chain_with_llm(use_chain, tail, before_fallback_fn, run_fn)
+          try_chain_with_llm(use_chain, tail, before_fallback_fn, run_fn, opts)
       end
     rescue
       err ->
@@ -575,17 +575,18 @@ defmodule LangChain.Chains.LLMChain do
           "Rescued from exception during with_fallback processing. Error: #{inspect(err)}\nStack trace:\n#{Exception.format(:error, err, __STACKTRACE__)}"
         )
 
-        try_chain_with_llm(use_chain, tail, before_fallback_fn, run_fn)
+        try_chain_with_llm(use_chain, tail, before_fallback_fn, run_fn, opts)
     end
   end
 
   # Repeatedly run the chain until we get a successful ToolResponse or processed
   # assistant message. Once we've reached a successful response, it is not
   # submitted back to the LLM, the process ends there.
-  @spec run_until_success(t()) :: {:ok, t()} | {:error, t(), LangChainError.t()}
+  @spec run_until_success(t(), Keyword.t()) :: {:ok, t()} | {:error, t(), LangChainError.t()}
   defp run_until_success(
          %LLMChain{last_message: %Message{} = last_message} = chain,
-         force_recurse \\ false
+         force_recurse \\ false,
+         opts
        ) do
     stop_or_recurse =
       cond do
@@ -615,12 +616,12 @@ defmodule LangChain.Chains.LLMChain do
     case stop_or_recurse do
       :recurse ->
         chain
-        |> do_run()
+        |> do_run(opts)
         |> case do
           {:ok, updated_chain} ->
             updated_chain
             |> execute_tool_calls()
-            |> run_until_success()
+            |> run_until_success(opts)
 
           {:error, updated_chain, reason} ->
             {:error, updated_chain, reason}
@@ -635,18 +636,19 @@ defmodule LangChain.Chains.LLMChain do
   # Repeatedly run the chain while `needs_response` is true. This will execute
   # tools and re-submit the tool result to the LLM giving the LLM an
   # opportunity to execute more tools or return a response.
-  @spec run_while_needs_response(t()) :: {:ok, t()} | {:error, t(), LangChainError.t()}
-  defp run_while_needs_response(%LLMChain{needs_response: false} = chain) do
+  @spec run_while_needs_response(t(), Keyword.t()) ::
+          {:ok, t()} | {:error, t(), LangChainError.t()}
+  defp run_while_needs_response(%LLMChain{needs_response: false} = chain, _opts) do
     {:ok, chain}
   end
 
-  defp run_while_needs_response(%LLMChain{needs_response: true} = chain) do
+  defp run_while_needs_response(%LLMChain{needs_response: true} = chain, opts) do
     chain
     |> execute_tool_calls()
-    |> do_run()
+    |> do_run(opts)
     |> case do
       {:ok, updated_chain} ->
-        run_while_needs_response(updated_chain)
+        run_while_needs_response(updated_chain, opts)
 
       {:error, updated_chain, reason} ->
         {:error, updated_chain, reason}
@@ -655,13 +657,13 @@ defmodule LangChain.Chains.LLMChain do
 
   # Run the chain one step at a time. This executes the LLM call, processes
   # the message, executes any tool calls, and then returns the updated chain.
-  @spec run_step(t()) :: {:ok, t()} | {:error, t(), LangChainError.t()}
-  defp run_step(%LLMChain{} = chain) do
+  @spec run_step(t(), Keyword.t()) :: {:ok, t()} | {:error, t(), LangChainError.t()}
+  defp run_step(%LLMChain{} = chain, opts) do
     chain_after_tools = execute_tool_calls(chain)
 
     # if no tools were executed, automatically run again
     if chain_after_tools == chain do
-      do_run(chain_after_tools)
+      do_run(chain_after_tools, opts)
     else
       {:ok, chain_after_tools}
     end
@@ -785,10 +787,10 @@ defmodule LangChain.Chains.LLMChain do
             # result was returned here and make a separate decision.
             if Keyword.has_key?(opts, :with_fallbacks) do
               # run function and using fallbacks as needed.
-              with_fallbacks(chain, opts, &run_until_success(&1, true))
+              with_fallbacks(chain, opts, &run_until_success(&1, true, opts))
             else
               # run it directly right now and return the success or error
-              run_until_success(chain, true)
+              run_until_success(chain, true, opts)
             end
           end)
         rescue
@@ -823,8 +825,11 @@ defmodule LangChain.Chains.LLMChain do
   end
 
   # internal reusable function for running the chain
-  @spec do_run(t()) :: {:ok, t()} | {:error, t(), LangChainError.t()}
-  defp do_run(%LLMChain{current_failure_count: current_count, max_retry_count: max} = chain)
+  @spec do_run(t(), Keyword.t()) :: {:ok, t()} | {:error, t(), LangChainError.t()}
+  defp do_run(
+         %LLMChain{current_failure_count: current_count, max_retry_count: max} = chain,
+         _opts
+       )
        when current_count >= max do
     Callbacks.fire(chain.callbacks, :on_retries_exceeded, [chain])
 
@@ -835,7 +840,7 @@ defmodule LangChain.Chains.LLMChain do
      )}
   end
 
-  defp do_run(%LLMChain{} = chain) do
+  defp do_run(%LLMChain{} = chain, opts) do
     # submit to LLM. The "llm" is a struct. Match to get the name of the module
     # then execute the `.call` function on that module.
     %module{} = chain.llm
@@ -845,7 +850,7 @@ defmodule LangChain.Chains.LLMChain do
 
     # filter out any empty lists in the list of messages.
     message_response =
-      case module.call(use_llm, chain.messages, chain.tools) do
+      case module.call(use_llm, chain.messages, chain.tools, opts) do
         {:ok, messages} when is_list(messages) ->
           {:ok, Enum.reject(messages, &(&1 == []))}
 

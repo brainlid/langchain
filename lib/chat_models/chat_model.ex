@@ -17,7 +17,8 @@ defmodule LangChain.ChatModels.ChatModel do
   @callback call(
               t(),
               String.t() | [Message.t()],
-              [LangChain.Function.t()]
+              [LangChain.Function.t()],
+              Keyword.t()
             ) :: call_response()
 
   @callback serialize_config(t()) :: %{String.t() => any()}

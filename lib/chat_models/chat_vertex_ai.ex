@@ -326,18 +326,18 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   fully complete.
   """
   @impl ChatModel
-  def call(openai, prompt, tools \\ [])
+  def call(openai, prompt, tools \\ [], opts \\ [])
 
-  def call(%ChatVertexAI{} = vertex_ai, prompt, tools) when is_binary(prompt) do
+  def call(%ChatVertexAI{} = vertex_ai, prompt, tools, opts) when is_binary(prompt) do
     messages = [
       Message.new_system!(),
       Message.new_user!(prompt)
     ]
 
-    call(vertex_ai, messages, tools)
+    call(vertex_ai, messages, tools, opts)
   end
 
-  def call(%ChatVertexAI{} = vertex_ai, messages, tools)
+  def call(%ChatVertexAI{} = vertex_ai, messages, tools, opts)
       when is_list(messages) do
     metadata = %{
       model: vertex_ai.model,
@@ -353,7 +353,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
           %{model: vertex_ai.model, messages: messages}
         )
 
-        case do_api_request(vertex_ai, messages, tools) do
+        case do_api_request(vertex_ai, messages, tools, opts) do
           {:error, reason} ->
             {:error, reason}
 
@@ -374,9 +374,11 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   end
 
   @doc false
-  @spec do_api_request(t(), [Message.t()], [Function.t()]) ::
+  @spec do_api_request(t(), [Message.t()], [Function.t()], Keyword.t()) ::
           list() | struct() | {:error, LangChainError.t()}
-  def do_api_request(%ChatVertexAI{stream: false} = vertex_ai, messages, tools) do
+  def do_api_request(%ChatVertexAI{stream: false} = vertex_ai, messages, tools, opts) do
+    req_opts = opts |> Keyword.get(:req_opts, [])
+
     req =
       Req.new(
         url: build_url(vertex_ai),
@@ -387,6 +389,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
         auth: {:bearer, get_api_key(vertex_ai)},
         retry_delay: fn attempt -> 300 * attempt end
       )
+      |> Req.merge(req_opts)
 
     req
     |> Req.post()
@@ -422,13 +425,16 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     end
   end
 
-  def do_api_request(%ChatVertexAI{stream: true} = vertex_ai, messages, tools) do
+  def do_api_request(%ChatVertexAI{stream: true} = vertex_ai, messages, tools, opts) do
+    req_opts = opts |> Keyword.get(:req_opts, [])
+
     Req.new(
       url: build_url(vertex_ai),
       json: for_api(vertex_ai, messages, tools),
       auth: {:bearer, get_api_key(vertex_ai)},
       receive_timeout: vertex_ai.receive_timeout
     )
+    |> Req.merge(req_opts)
     |> Req.Request.put_header("accept-encoding", "utf-8")
     |> Req.post(
       into:

@@ -219,18 +219,18 @@ defmodule LangChain.ChatModels.ChatBumblebee do
   end
 
   @impl ChatModel
-  def call(model, prompt, functions \\ [])
+  def call(model, prompt, functions \\ [], opts)
 
-  def call(%ChatBumblebee{} = model, prompt, functions) when is_binary(prompt) do
+  def call(%ChatBumblebee{} = model, prompt, functions, opts) when is_binary(prompt) do
     messages = [
       Message.new_system!(),
       Message.new_user!(prompt)
     ]
 
-    call(model, messages, functions)
+    call(model, messages, functions, opts)
   end
 
-  def call(%ChatBumblebee{} = model, messages, functions) when is_list(messages) do
+  def call(%ChatBumblebee{} = model, messages, functions, _opts) when is_list(messages) do
     metadata = %{
       model: inspect(model.serving),
       template_format: model.template_format,

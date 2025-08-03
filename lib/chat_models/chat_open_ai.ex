@@ -667,18 +667,18 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   `LangChain.Message` once fully complete.
   """
   @impl ChatModel
-  def call(openai, prompt, tools \\ [])
+  def call(openai, prompt, tools \\ [], opts \\ [])
 
-  def call(%ChatOpenAI{} = openai, prompt, tools) when is_binary(prompt) do
+  def call(%ChatOpenAI{} = openai, prompt, tools, opts) when is_binary(prompt) do
     messages = [
       Message.new_system!(),
       Message.new_user!(prompt)
     ]
 
-    call(openai, messages, tools)
+    call(openai, messages, tools, opts)
   end
 
-  def call(%ChatOpenAI{} = openai, messages, tools) when is_list(messages) do
+  def call(%ChatOpenAI{} = openai, messages, tools, opts) when is_list(messages) do
     metadata = %{
       model: openai.model,
       message_count: length(messages),
@@ -694,7 +694,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         )
 
         # make base api request and perform high-level success/failure checks
-        case do_api_request(openai, messages, tools) do
+        case do_api_request(openai, messages, tools, opts) do
           {:error, reason} ->
             {:error, reason}
 
@@ -733,11 +733,14 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   # structures.
   # Retries the request up to 3 times on transient errors with a 1 second delay
   @doc false
-  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), integer()) ::
+  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), integer(), Keyword.t()) ::
           list() | struct() | {:error, LangChainError.t()}
-  def do_api_request(openai, messages, tools, retry_count \\ 3)
 
-  def do_api_request(_openai, _messages, _tools, 0) do
+  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), Keyword.t()) ::
+          list() | struct() | {:error, LangChainError.t()}
+  def do_api_request(openai, messages, tools, retry_count \\ 3, opts)
+
+  def do_api_request(_openai, _messages, _tools, 0, _opts) do
     raise LangChainError, "Retries exceeded. Connection failed."
   end
 
@@ -745,8 +748,11 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         %ChatOpenAI{stream: false} = openai,
         messages,
         tools,
-        retry_count
+        retry_count,
+        opts
       ) do
+    req_opts = opts |> Keyword.get(:req_opts, [])
+
     raw_data = for_api(openai, messages, tools)
 
     if openai.verbose_api do
@@ -768,6 +774,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         max_retries: 3,
         retry_delay: fn attempt -> 300 * attempt end
       )
+      |> Req.merge(req_opts)
 
     req
     |> maybe_add_org_id_header(openai)
@@ -811,7 +818,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       {:error, %Req.TransportError{reason: :closed}} ->
         # Force a retry by making a recursive call decrementing the counter
         Logger.debug(fn -> "Mint connection closed: retry count = #{inspect(retry_count)}" end)
-        do_api_request(openai, messages, tools, retry_count - 1)
+        do_api_request(openai, messages, tools, retry_count - 1, opts)
 
       other ->
         Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
@@ -823,8 +830,11 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         %ChatOpenAI{stream: true} = openai,
         messages,
         tools,
-        retry_count
+        retry_count,
+        opts
       ) do
+    req_opts = opts |> Keyword.get(:req_opts, [])
+
     raw_data = for_api(openai, messages, tools)
 
     if openai.verbose_api do
@@ -842,6 +852,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       ],
       receive_timeout: openai.receive_timeout
     )
+    |> Req.merge(req_opts)
     |> maybe_add_org_id_header(openai)
     |> maybe_add_proj_id_header()
     |> Req.post(
@@ -870,7 +881,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       {:error, %Req.TransportError{reason: :closed}} ->
         # Force a retry by making a recursive call decrementing the counter
         Logger.debug(fn -> "Connection closed: retry count = #{inspect(retry_count)}" end)
-        do_api_request(openai, messages, tools, retry_count - 1)
+        do_api_request(openai, messages, tools, retry_count - 1, opts)
 
       other ->
         Logger.error(

@@ -599,7 +599,7 @@ defmodule ChatModels.ChatOllamaAITest do
       {:ok, chat} = ChatOllamaAI.new(model)
       {:ok, msg} = Message.new_user("Where is the hairbrush located?")
 
-      expect(ChatOllamaAI, :do_api_request, fn _model, _msgs, _tools ->
+      expect(ChatOllamaAI, :do_api_request, fn _model, _msgs, _tools, _opts ->
         %LangChain.Message{
           content: nil,
           processed_content: nil,

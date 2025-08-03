@@ -65,7 +65,7 @@ defmodule LangChain.Chains.TextToTitleChainTest do
       fake_message = Message.new_assistant!("Summarized Title")
 
       # Made NOT LIVE here
-      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools, _opts ->
         {:ok, [fake_message]}
       end)
 
@@ -78,7 +78,7 @@ defmodule LangChain.Chains.TextToTitleChainTest do
       fake_message = Message.new_assistant!("Summarized Title")
 
       # Made NOT LIVE here
-      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools, _opts ->
         {:ok, [fake_message]}
       end)
 
@@ -100,7 +100,7 @@ defmodule LangChain.Chains.TextToTitleChainTest do
   describe "evaluate/2" do
     test "returns the summarized title", %{title_chain: title_chain} do
       # Made NOT LIVE here
-      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools, _opts ->
         {:ok, [Message.new_assistant!("Special Title")]}
       end)
 
@@ -112,7 +112,7 @@ defmodule LangChain.Chains.TextToTitleChainTest do
       fallback_title: fallback_title
     } do
       # Made NOT LIVE here
-      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools, _opts ->
         {:error, "FAKE API call failure"}
       end)
 

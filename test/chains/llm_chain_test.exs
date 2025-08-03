@@ -222,7 +222,7 @@ defmodule LangChain.Chains.LLMChainTest do
         [MessageDelta.new!(%{content: "Sock", status: :incomplete})]
       ]
 
-      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools, _opts ->
         {:ok, fake_messages}
       end)
 
@@ -349,7 +349,7 @@ defmodule LangChain.Chains.LLMChainTest do
       # Made NOT LIVE here
       fake_message = Message.new!(%{role: :assistant, content: "Socktastic!", status: :complete})
 
-      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools, _opts ->
         {:ok, [fake_message]}
       end)
 
@@ -397,7 +397,7 @@ defmodule LangChain.Chains.LLMChainTest do
         [MessageDelta.new!(%{content: nil, status: :complete})]
       ]
 
-      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools, _opts ->
         {:ok, fake_messages}
       end)
 
@@ -1132,7 +1132,7 @@ defmodule LangChain.Chains.LLMChainTest do
 
     test "ignores empty lists in the list of messages" do
       # Made NOT LIVE here
-      expect(ChatOpenAI, :call, fn _model, _prompt, _tools ->
+      expect(ChatOpenAI, :call, fn _model, _prompt, _tools, _opts ->
         {:ok,
          [
            [],
@@ -1167,7 +1167,7 @@ defmodule LangChain.Chains.LLMChainTest do
 
     test "returns error when receives overloaded from Anthropic" do
       # Made NOT LIVE here
-      expect(ChatAnthropic, :call, fn _model, _prompt, _tools ->
+      expect(ChatAnthropic, :call, fn _model, _prompt, _tools, _opts ->
         {:error, LangChainError.exception(type: "overloaded", message: "Overloaded (from test)")}
       end)
 
@@ -1210,7 +1210,7 @@ defmodule LangChain.Chains.LLMChainTest do
       ]
 
       # expect it to be called 3 times
-      expect(ChatOpenAI, :call, 3, fn _model, _messages, _tools ->
+      expect(ChatOpenAI, :call, 3, fn _model, _messages, _tools, _opts ->
         {:ok, fake_messages}
       end)
 
@@ -1290,7 +1290,7 @@ defmodule LangChain.Chains.LLMChainTest do
       ]
 
       # expects to be called 2 times
-      expect(ChatOpenAI, :call, 2, fn _model, _messages, _tools ->
+      expect(ChatOpenAI, :call, 2, fn _model, _messages, _tools, _opts ->
         {:ok, fake_messages}
       end)
 
@@ -1359,7 +1359,7 @@ defmodule LangChain.Chains.LLMChainTest do
         Message.new_assistant!(%{content: Jason.encode!(%{value: "abc"})})
       ]
 
-      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools, _opts ->
         {:ok, fake_messages}
       end)
 
@@ -1377,11 +1377,11 @@ defmodule LangChain.Chains.LLMChainTest do
 
     test "mode: :until_success - message needs processing, fails, then succeeds", %{chat: chat} do
       # Made NOT LIVE here - handles two consecutive calls
-      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools, _opts ->
         {:ok, [Message.new_assistant!(%{content: "invalid"})]}
       end)
 
-      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools, _opts ->
         {:ok,
          [
            Message.new_assistant!(%{content: Jason.encode!(%{value: "abc"})})
@@ -1411,7 +1411,7 @@ defmodule LangChain.Chains.LLMChainTest do
         ])
       ]
 
-      expect(ChatOpenAI, :call, 2, fn _model, _messages, _tools ->
+      expect(ChatOpenAI, :call, 2, fn _model, _messages, _tools, _opts ->
         {:ok, fake_messages}
       end)
 
@@ -1495,7 +1495,7 @@ defmodule LangChain.Chains.LLMChainTest do
         ])
       ]
 
-      expect(ChatOpenAI, :call, 2, fn _model, _messages, _tools ->
+      expect(ChatOpenAI, :call, 2, fn _model, _messages, _tools, _opts ->
         {:ok, fake_messages}
       end)
 
@@ -1524,7 +1524,7 @@ defmodule LangChain.Chains.LLMChainTest do
       ]
 
       # expect 3 calls
-      expect(ChatOpenAI, :call, 3, fn _model, _messages, _tools ->
+      expect(ChatOpenAI, :call, 3, fn _model, _messages, _tools, _opts ->
         {:ok, fake_messages}
       end)
 
@@ -1551,7 +1551,7 @@ defmodule LangChain.Chains.LLMChainTest do
         ])
       ]
 
-      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools, _opts ->
         {:ok, fake_messages}
       end)
 
@@ -1630,7 +1630,7 @@ defmodule LangChain.Chains.LLMChainTest do
         Message.new_assistant!(%{content: "I said hello using the hello_world function!"})
       ]
 
-      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools, _opts ->
         {:ok, fake_messages}
       end)
 
@@ -1657,7 +1657,7 @@ defmodule LangChain.Chains.LLMChainTest do
       chain: chain,
       greet: greet
     } do
-      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools, _opts ->
         {:ok,
          [
            new_function_calls!([
@@ -1697,7 +1697,7 @@ defmodule LangChain.Chains.LLMChainTest do
 
       assert step2_chain.needs_response == true
 
-      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools, _opts ->
         {:ok, [Message.new_assistant!(%{content: "I've greeted Alice for you!"})]}
       end)
 
@@ -1718,11 +1718,11 @@ defmodule LangChain.Chains.LLMChainTest do
     end
 
     test "mode: :step - supports fallbacks", %{chain: chain, hello_world: hello_world} do
-      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools, _opts ->
         {:error, LangChainError.exception(type: "rate_limited", message: "Rate limited")}
       end)
 
-      expect(ChatAnthropic, :call, fn _model, _messages, _tools ->
+      expect(ChatAnthropic, :call, fn _model, _messages, _tools, _opts ->
         {:ok,
          [
            new_function_calls!([
@@ -1784,7 +1784,7 @@ defmodule LangChain.Chains.LLMChainTest do
         Message.new_assistant!(%{content: "Initial response"})
       ]
 
-      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools, _opts ->
         {:ok, fake_messages}
       end)
 
@@ -1802,13 +1802,13 @@ defmodule LangChain.Chains.LLMChainTest do
 
     test "with_fallbacks: re-runs with next LLM after first fails" do
       # Made NOT LIVE here - handles two calls
-      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools, _opts ->
         # IO.puts "FAKE OpenAI ERROR RESULT RETURNED"
         {:error,
          LangChainError.exception(type: "too_many_requests", message: "Too many requests!")}
       end)
 
-      expect(ChatAnthropic, :call, fn _model, _messages, _tools ->
+      expect(ChatAnthropic, :call, fn _model, _messages, _tools, _opts ->
         {:ok,
          [
            Message.new_assistant!(%{content: "fallback worked!"})
@@ -1829,13 +1829,13 @@ defmodule LangChain.Chains.LLMChainTest do
 
     test "with_fallbacks: runs each LLM option and returns when all failed" do
       # Made NOT LIVE here - handles two calls
-      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools, _opts ->
         # IO.puts "FAKE OpenAI ERROR RESULT RETURNED"
         {:error,
          LangChainError.exception(type: "too_many_requests", message: "Too many requests!")}
       end)
 
-      expect(ChatAnthropic, :call, fn _model, _messages, _tools ->
+      expect(ChatAnthropic, :call, fn _model, _messages, _tools, _opts ->
         {:error, LangChainError.exception(type: "overloaded", message: "Overloaded")}
       end)
 
@@ -1854,13 +1854,13 @@ defmodule LangChain.Chains.LLMChainTest do
 
     test "with_fallbacks: runs before_fallback function and uses the resulting chain" do
       # Made NOT LIVE here - handles two calls
-      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools, _opts ->
         # IO.puts "FAKE OpenAI ERROR RESULT RETURNED"
         {:error,
          LangChainError.exception(type: "too_many_requests", message: "Too many requests!")}
       end)
 
-      expect(ChatAnthropic, :call, fn _model, _messages, _tools ->
+      expect(ChatAnthropic, :call, fn _model, _messages, _tools, _opts ->
         {:ok, Message.new_assistant!(%{content: "Claude says it's because it's not red."})}
       end)
 
@@ -1911,7 +1911,7 @@ defmodule LangChain.Chains.LLMChainTest do
     test "supports multiple tool calls being made and stopping when the specific tool is called",
          %{greet: greet, sync: do_thing} do
       # Made NOT LIVE here
-      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools, _opts ->
         {:ok,
          new_function_calls!([
            ToolCall.new!(%{
@@ -1922,7 +1922,7 @@ defmodule LangChain.Chains.LLMChainTest do
          ])}
       end)
 
-      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools, _opts ->
         {:ok,
          new_function_calls!([
            ToolCall.new!(%{call_id: "call_fakeDoThing", name: "do_thing", arguments: nil})
@@ -1948,7 +1948,7 @@ defmodule LangChain.Chains.LLMChainTest do
     test "supports multiple tool calls being made and stopping when the specific tool from the tool list is called",
          %{greet: greet, sync: do_thing, hello_world: hello_world} do
       # Made NOT LIVE here
-      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools, _opts ->
         {:ok,
          new_function_calls!([
            ToolCall.new!(%{
@@ -1959,7 +1959,7 @@ defmodule LangChain.Chains.LLMChainTest do
          ])}
       end)
 
-      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools, _opts ->
         {:ok,
          new_function_calls!([
            ToolCall.new!(%{call_id: "call_hello_world", name: "hello_world", arguments: nil})
@@ -1984,7 +1984,7 @@ defmodule LangChain.Chains.LLMChainTest do
 
     test "supports stopping after max_runs attempts", %{greet: greet, sync: do_thing} do
       # Made NOT LIVE here
-      expect(ChatOpenAI, :call, 3, fn _model, _messages, _tools ->
+      expect(ChatOpenAI, :call, 3, fn _model, _messages, _tools, _opts ->
         {:ok,
          new_function_calls!([
            ToolCall.new!(%{call_id: "call_fake123", name: "greet", arguments: %{"name" => "Tim"}})

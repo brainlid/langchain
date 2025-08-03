@@ -437,18 +437,18 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   `LangChain.Message` once fully complete.
   """
   @impl ChatModel
-  def call(anthropic, prompt, functions \\ [])
+  def call(anthropic, prompt, functions \\ [], opts \\ [])
 
-  def call(%ChatAnthropic{} = anthropic, prompt, functions) when is_binary(prompt) do
+  def call(%ChatAnthropic{} = anthropic, prompt, functions, opts) when is_binary(prompt) do
     messages = [
       Message.new_system!(),
       Message.new_user!(prompt)
     ]
 
-    call(anthropic, messages, functions)
+    call(anthropic, messages, functions, opts)
   end
 
-  def call(%ChatAnthropic{} = anthropic, messages, functions) when is_list(messages) do
+  def call(%ChatAnthropic{} = anthropic, messages, functions, opts) when is_list(messages) do
     metadata = %{
       model: anthropic.model,
       message_count: length(messages),
@@ -464,7 +464,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         )
 
         # make base api request and perform high-level success/failure checks
-        case do_api_request(anthropic, messages, functions) do
+        case do_api_request(anthropic, messages, functions, opts) do
           {:error, %LangChainError{} = error} ->
             {:error, error}
 
@@ -495,11 +495,11 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   #
   # Retries the request up to 3 times on transient errors with a 1 second delay
   @doc false
-  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), non_neg_integer()) ::
+  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), non_neg_integer(), Keyword.t()) ::
           list() | struct() | {:error, LangChainError.t()} | no_return()
-  def do_api_request(anthropic, messages, tools, retry_count \\ 3)
+  def do_api_request(anthropic, messages, tools, retry_count \\ 3, opts)
 
-  def do_api_request(_anthropic, _messages, _functions, 0) do
+  def do_api_request(_anthropic, _messages, _functions, 0, _opts) do
     raise LangChainError,
       type: "retries_exceeded",
       message: "Retries exceeded. Connection failed."
@@ -509,8 +509,11 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         %ChatAnthropic{stream: false} = anthropic,
         messages,
         tools,
-        retry_count
+        retry_count,
+        opts
       ) do
+    req_opts = opts |> Keyword.get(:req_opts, [])
+
     raw_data = for_api(anthropic, messages, tools)
 
     if anthropic.verbose_api do
@@ -528,6 +531,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         retry_delay: fn attempt -> 300 * attempt end,
         aws_sigv4: aws_sigv4_opts(anthropic.bedrock)
       )
+      |> Req.merge(req_opts)
 
     req
     |> Req.post()
@@ -577,7 +581,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       {:error, %Req.TransportError{reason: :closed}} ->
         # Force a retry by making a recursive call decrementing the counter
         Logger.debug(fn -> "Mint connection closed: retry count = #{inspect(retry_count)}" end)
-        do_api_request(anthropic, messages, tools, retry_count - 1)
+        do_api_request(anthropic, messages, tools, retry_count - 1, opts)
 
       {:error, %LangChainError{}} = error ->
         # pass through the already handled exception
@@ -594,8 +598,11 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         %ChatAnthropic{stream: true} = anthropic,
         messages,
         tools,
-        retry_count
+        retry_count,
+        opts
       ) do
+    req_opts = opts |> Keyword.get(:req_opts, [])
+
     raw_data = for_api(anthropic, messages, tools)
 
     if anthropic.verbose_api do
@@ -616,6 +623,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       aws_sigv4: aws_sigv4_opts(anthropic.bedrock),
       retry: :transient
     )
+    |> Req.merge(req_opts)
     |> Req.post(
       into:
         Utils.handle_stream_fn(
@@ -651,7 +659,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       {:error, %Req.TransportError{reason: :closed}} ->
         # Force a retry by making a recursive call decrementing the counter
         Logger.debug(fn -> "Mint connection closed: retry count = #{inspect(retry_count)}" end)
-        do_api_request(anthropic, messages, tools, retry_count - 1)
+        do_api_request(anthropic, messages, tools, retry_count - 1, opts)
 
       {:error, %LangChainError{}} = error ->
         # pass through the already handled exception

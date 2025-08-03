@@ -129,7 +129,7 @@ defmodule LangChain.Chains.RoutingChainTest do
       # Made NOT LIVE here
       fake_message = Message.new_assistant!("blog")
 
-      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools, _opts ->
         {:ok, [fake_message]}
       end)
 
@@ -144,19 +144,19 @@ defmodule LangChain.Chains.RoutingChainTest do
       routing_chain: routing_chain,
       default_route: default_route
     } do
-      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools, _opts ->
         {:ok, [Message.new_assistant!("blog")]}
       end)
 
       assert %PromptRoute{name: "blog"} = RoutingChain.evaluate(routing_chain)
 
-      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools, _opts ->
         {:ok, [Message.new_assistant!("memo")]}
       end)
 
       assert %PromptRoute{name: "memo"} = RoutingChain.evaluate(routing_chain)
 
-      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools, _opts ->
         {:ok, [Message.new_assistant!("DEFAULT")]}
       end)
 
@@ -167,7 +167,7 @@ defmodule LangChain.Chains.RoutingChainTest do
       routing_chain: routing_chain,
       default_route: default_route
     } do
-      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools, _opts ->
         {:ok, [Message.new_assistant!("invalid")]}
       end)
 
@@ -178,7 +178,7 @@ defmodule LangChain.Chains.RoutingChainTest do
       routing_chain: routing_chain,
       default_route: default_route
     } do
-      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools, _opts ->
         {:error, "FAKE API call failure"}
       end)
 

@@ -306,7 +306,7 @@ defmodule LangChain.Chains.SummarizeConversationChainTest do
       chain: chain
     } do
       # Made NOT LIVE here
-      expect(ChatAnthropic, :call, fn _model, _messages, _tools ->
+      expect(ChatAnthropic, :call, fn _model, _messages, _tools, _opts ->
         {:ok, Message.new_assistant!("- Fake OpenAI summary")}
       end)
 
@@ -358,7 +358,7 @@ defmodule LangChain.Chains.SummarizeConversationChainTest do
 
     test "set last_message correctly when keep_count is 0", %{llm_anthropic: llm, chain: chain} do
       # Made NOT LIVE here
-      expect(ChatAnthropic, :call, fn _model, _messages, _tools ->
+      expect(ChatAnthropic, :call, fn _model, _messages, _tools, _opts ->
         {:ok, Message.new_assistant!("- Fake OpenAI summary")}
       end)
 
@@ -379,7 +379,7 @@ defmodule LangChain.Chains.SummarizeConversationChainTest do
       chain: chain
     } do
       # Made NOT LIVE here
-      expect(ChatAnthropic, :call, fn _model, _messages, _tools ->
+      expect(ChatAnthropic, :call, fn _model, _messages, _tools, _opts ->
         {:error, LangChainError.exception(type: "overloaded", message: "Overloaded")}
       end)
 
@@ -391,12 +391,12 @@ defmodule LangChain.Chains.SummarizeConversationChainTest do
 
     test "supports with_fallback option", %{llm_anthropic: llm, chain: chain} do
       # Made NOT LIVE here
-      expect(ChatAnthropic, :call, fn _model, _messages, _tools ->
+      expect(ChatAnthropic, :call, fn _model, _messages, _tools, _opts ->
         {:error, LangChainError.exception(type: "overloaded", message: "Overloaded")}
       end)
 
       # Made NOT LIVE here
-      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools, _opts ->
         {:ok, Message.new_assistant!("- Fake OpenAI summary")}
       end)
 

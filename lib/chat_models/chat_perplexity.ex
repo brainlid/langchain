@@ -298,18 +298,18 @@ defmodule LangChain.ChatModels.ChatPerplexity do
   end
 
   @impl ChatModel
-  def call(perplexity, prompt, tools \\ [])
+  def call(perplexity, prompt, tools \\ [], opts \\ [])
 
-  def call(%ChatPerplexity{} = perplexity, prompt, tools) when is_binary(prompt) do
+  def call(%ChatPerplexity{} = perplexity, prompt, tools, opts) when is_binary(prompt) do
     messages = [
       Message.new_system!(),
       Message.new_user!(prompt)
     ]
 
-    call(perplexity, messages, tools)
+    call(perplexity, messages, tools, opts)
   end
 
-  def call(%ChatPerplexity{} = perplexity, messages, tools) when is_list(messages) do
+  def call(%ChatPerplexity{} = perplexity, messages, tools, opts) when is_list(messages) do
     metadata = %{
       model: perplexity.model,
       message_count: length(messages),
@@ -324,7 +324,7 @@ defmodule LangChain.ChatModels.ChatPerplexity do
           %{model: perplexity.model, messages: messages}
         )
 
-        case do_api_request(perplexity, messages, tools) do
+        case do_api_request(perplexity, messages, tools, opts) do
           {:error, reason} ->
             {:error, reason}
 
@@ -345,11 +345,11 @@ defmodule LangChain.ChatModels.ChatPerplexity do
   end
 
   @doc false
-  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), integer()) ::
+  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), integer(), Keyword.t()) ::
           list() | struct() | {:error, LangChainError.t()}
-  def do_api_request(perplexity, messages, tools, retry_count \\ 3)
+  def do_api_request(perplexity, messages, tools, retry_count \\ 3, opts)
 
-  def do_api_request(_perplexity, _messages, _tools, 0) do
+  def do_api_request(_perplexity, _messages, _tools, 0, _opts) do
     raise LangChainError, "Retries exceeded. Connection failed."
   end
 
@@ -357,8 +357,11 @@ defmodule LangChain.ChatModels.ChatPerplexity do
         %ChatPerplexity{stream: false} = perplexity,
         messages,
         tools,
-        retry_count
+        retry_count,
+        opts
       ) do
+    req_opts = opts |> Keyword.get(:req_opts, [])
+
     req =
       Req.new(
         url: perplexity.endpoint,
@@ -366,6 +369,7 @@ defmodule LangChain.ChatModels.ChatPerplexity do
         auth: {:bearer, get_api_key(perplexity)},
         receive_timeout: perplexity.receive_timeout
       )
+      |> Req.merge(req_opts)
 
     req
     |> Req.post()
@@ -402,7 +406,7 @@ defmodule LangChain.ChatModels.ChatPerplexity do
 
       {:error, %Req.TransportError{reason: :closed}} ->
         Logger.debug(fn -> "Connection closed: retry count = #{inspect(retry_count)}" end)
-        do_api_request(perplexity, messages, tools, retry_count - 1)
+        do_api_request(perplexity, messages, tools, retry_count - 1, opts)
 
       other ->
         Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
@@ -414,14 +418,18 @@ defmodule LangChain.ChatModels.ChatPerplexity do
         %ChatPerplexity{stream: true} = perplexity,
         messages,
         tools,
-        retry_count
+        retry_count,
+        opts
       ) do
+    req_opts = opts |> Keyword.get(:req_opts, [])
+
     Req.new(
       url: perplexity.endpoint,
       json: for_api(perplexity, messages, tools),
       auth: {:bearer, get_api_key(perplexity)},
       receive_timeout: perplexity.receive_timeout
     )
+    |> Req.merge(req_opts)
     |> Req.post(
       into:
         Utils.handle_stream_fn(
@@ -440,7 +448,7 @@ defmodule LangChain.ChatModels.ChatPerplexity do
 
       {:error, %Req.TransportError{reason: :closed}} ->
         Logger.debug(fn -> "Connection closed: retry count = #{inspect(retry_count)}" end)
-        do_api_request(perplexity, messages, tools, retry_count - 1)
+        do_api_request(perplexity, messages, tools, retry_count - 1, opts)
 
       other ->
         Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
