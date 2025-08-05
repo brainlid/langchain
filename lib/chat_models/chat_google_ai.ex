@@ -135,7 +135,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     field :verbose_api, :boolean, default: false
 
     # Req options to merge into the request.
-    # Refer to `https://hexdocs.pm/req/Req.html#new/1-options` for 
+    # Refer to `https://hexdocs.pm/req/Req.html#new/1-options` for
     # `Req.new` supported set of options.
     field :req_config, :map, default: %{}
   end
@@ -326,14 +326,14 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
 
   def for_api(%Message{content: content} = message) when is_list(content) do
     %{
-      "role" => message.role,
+      "role" => map_role(message.role),
       "parts" => Enum.map(content, &for_api/1)
     }
   end
 
   def for_api(%Message{content: content} = message) when is_list(content) do
     %{
-      "role" => message.role,
+      "role" => map_role(message.role),
       "parts" => Enum.map(content, &for_api/1)
     }
   end
@@ -687,7 +687,6 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     |> Enum.map(&TokenUsage.set(&1, token_usage))
   end
 
-  # Function Call in a Message
   def do_process_response(
         model,
         %{"content" => %{"parts" => parts} = content_data} = data,
@@ -740,7 +739,6 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     end
   end
 
-  # Function Call in a MessageDelta
   def do_process_response(
         model,
         %{"content" => %{"parts" => parts} = content_data} = data,
@@ -768,7 +766,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     %{
       role: unmap_role(content_data["role"]),
       content: content,
-      complete: true,
+      complete: finish_reason_to_status(data["finishReason"]),
       index: data["index"]
     }
     |> Utils.conditionally_add_to_map(:tool_calls, tool_calls_from_parts)
@@ -796,41 +794,6 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     }
     |> ToolCall.new()
     |> case do
-      {:ok, message} ->
-        message
-
-      {:error, %Ecto.Changeset{} = changeset} ->
-        {:error, LangChainError.exception(changeset)}
-    end
-  end
-
-  def do_process_response(
-        _model,
-        %{
-          "finishReason" => finish,
-          "content" => %{"parts" => parts, "role" => role},
-          "index" => index
-        },
-        message_type
-      )
-      when is_list(parts) do
-    status =
-      case message_type do
-        MessageDelta ->
-          :incomplete
-
-        Message ->
-          finish_reason_to_status(finish)
-      end
-
-    content = Enum.map_join(parts, & &1["text"])
-
-    case message_type.new(%{
-           "content" => content,
-           "role" => unmap_role(role),
-           "status" => status,
-           "index" => index
-         }) do
       {:ok, message} ->
         message
 
@@ -896,19 +859,16 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     nil
   end
 
-  defp map_role(role) do
-    case role do
-      :assistant -> :model
-      :tool -> :function
-      # System prompts are not supported yet. Google recommends using user prompt.
-      :system -> :user
-      role -> role
-    end
-  end
+  # https://ai.google.dev/api/caching#Content
+  # role must be either 'user' or 'model'.
+  # system messages are treated by Utils.split_system_message/2 in for_api/3
+  defp map_role(:assistant), do: "model"
+  defp map_role(:tool), do: "model"
+  defp map_role(:user), do: "user"
 
   defp unmap_role("model"), do: "assistant"
-  defp unmap_role("function"), do: "tool"
-  defp unmap_role(role), do: role
+  defp unmap_role("user"), do: "user"
+  defp unmap_role(invalid_role), do: invalid_role
 
   @doc """
   Generate a config map that can later restore the model's configuration.
@@ -957,6 +917,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
 
   # A full list of finish reasons and their meanings can be found here:
   # https://ai.google.dev/api/generate-content#FinishReason
+  defp finish_reason_to_status(nil), do: :incomplete
   defp finish_reason_to_status("STOP"), do: :complete
   defp finish_reason_to_status("SAFETY"), do: :complete
   defp finish_reason_to_status("MAX_TOKENS"), do: :length

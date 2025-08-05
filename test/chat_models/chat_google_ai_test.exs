@@ -119,8 +119,8 @@ defmodule ChatModels.ChatGoogleAITest do
         )
 
       assert %{"contents" => [msg1, msg2]} = data
-      assert %{"role" => :user, "parts" => [%{"text" => ^user_message}]} = msg1
-      assert %{"role" => :model, "parts" => [%{"text" => ^assistant_message}]} = msg2
+      assert %{"role" => "user", "parts" => [%{"text" => ^user_message}]} = msg1
+      assert %{"role" => "model", "parts" => [%{"text" => ^assistant_message}]} = msg2
     end
 
     test "generated a map containing response_mime_type and response_schema", %{params: params} do
@@ -173,9 +173,9 @@ defmodule ChatModels.ChatGoogleAITest do
         )
 
       assert %{"contents" => [msg1, msg2, msg3]} = data
-      assert %{"role" => :user, "parts" => [%{"text" => ^message}]} = msg1
-      assert %{"role" => :model, "parts" => [tool_call]} = msg2
-      assert %{"role" => :function, "parts" => [tool_result]} = msg3
+      assert %{"role" => "user", "parts" => [%{"text" => ^message}]} = msg1
+      assert %{"role" => "model", "parts" => [tool_call]} = msg2
+      assert %{"role" => "model", "parts" => [tool_result]} = msg3
 
       assert %{
                "functionCall" => %{
@@ -239,7 +239,7 @@ defmodule ChatModels.ChatGoogleAITest do
     test "translates a Message with function results to the expected structure" do
       expected =
         %{
-          "role" => :function,
+          "role" => "model",
           "parts" => [
             %{
               "functionResponse" => %{
@@ -355,7 +355,7 @@ defmodule ChatModels.ChatGoogleAITest do
                        }
                      }
                    ],
-                   "role" => :user
+                   "role" => "user"
                  }
                ]
              } = data
