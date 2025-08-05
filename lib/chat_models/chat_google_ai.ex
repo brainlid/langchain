@@ -670,7 +670,13 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
       |> filter_parts_for_types(["text"])
       |> filter_text_parts()
       |> Enum.map(fn part ->
-        ContentPart.new!(%{type: :text, content: part["text"]})
+        type =
+          case part["thought"] do
+            true -> :thinking
+            _ -> :text
+          end
+
+        ContentPart.new!(%{type: type, content: part["text"]})
       end)
 
     tool_calls_from_parts =
@@ -712,10 +718,13 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
         %{"content" => %{"parts" => parts} = content_data} = data,
         MessageDelta
       ) do
-    text_content =
+    content =
       case parts do
+        [%{"text" => text, "thought" => true}] ->
+          ContentPart.new!(%{type: :thinking, content: text})
+
         [%{"text" => text}] ->
-          text
+          ContentPart.new!(%{type: :text, content: text})
 
         _other ->
           nil
@@ -730,7 +739,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
 
     %{
       role: unmap_role(content_data["role"]),
-      content: text_content,
+      content: content,
       complete: true,
       index: data["index"]
     }
