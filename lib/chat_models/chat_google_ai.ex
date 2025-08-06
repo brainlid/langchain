@@ -236,17 +236,14 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
       case google_ai.thinking_budget do
         # Disable thinking
         nil ->
-          default_thinking_budget =
-            case google_ai.model do
-              "gemini-2.5-pro" ->
-                # Can't disable thinking, so use minimum value
-                128
+          case google_ai.model do
+            "gemini-2.5-pro" ->
+              # Can't disable thinking, so use minimum value
+              %{"includeThoughts" => true, "thinkingBudget" => 128}
 
-              _ ->
-                0
-            end
-
-          %{"includeThoughts" => true, "thinkingBudget" => default_thinking_budget}
+            _ ->
+              %{"includeThoughts" => false, "thinkingBudget" => 0}
+          end
 
         thinking_budget when is_integer(thinking_budget) ->
           %{"includeThoughts" => true, "thinkingBudget" => thinking_budget}
