@@ -16,7 +16,7 @@ defmodule LangChain.Utils do
   the key will not be added when the list is empty. If the value is `nil`, it
   will not be added.
   """
-  @spec conditionally_add_to_map(%{any() => any()}, key :: any(), value :: nil | list()) :: %{
+  @spec conditionally_add_to_map(%{any() => any()}, key :: any(), value :: any()) :: %{
           any() => any()
         }
   def conditionally_add_to_map(map, key, value)
