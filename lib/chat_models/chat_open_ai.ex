@@ -185,6 +185,21 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     # application.
     # https://platform.openai.com/docs/guides/safety-best-practices/end-user-ids
     field :user, :string
+
+    # Used when working with a reasoning model like `o1` and newer. This setting
+    # is required when working with those models as the API behavior needs to
+    # change.
+    field :reasoning_mode, :boolean, default: false
+    # o1 models only
+    #
+    # Constrains effort on reasoning for reasoning models. Currently supported
+    # values are `low`, `medium`, and `high`. Reducing reasoning effort can result in
+    # faster responses and fewer tokens used on reasoning in a response.
+    field :reasoning_effort, :string, default: "medium"
+
+    field :verbose_api, :boolean, default: false
+    field :verbosity, :string, default: "low"
+    field :reasoning, :map, default: %{}
   end
 
   @type t :: %ChatOpenAI{}
@@ -198,13 +213,18 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     :seed,
     :n,
     :stream,
+    :reasoning_mode,
+    :reasoning_effort,
     :receive_timeout,
     :json_response,
     :json_schema,
     :max_tokens,
     :stream_options,
     :user,
-    :tool_choice
+    :tool_choice,
+    :verbose_api,
+    :verbosity,
+    :reasoning
   ]
   @required_fields [:endpoint, :model]
 
@@ -285,7 +305,9 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         end)
         |> Enum.reverse(),
       response_format: set_response_format(openai),
-      user: openai.user
+      user: openai.user,
+      verbosity: openai.verbosity,
+      reasoning: openai.reasoning
     }
     |> Utils.conditionally_add_to_map(:max_tokens, openai.max_tokens)
     |> Utils.conditionally_add_to_map(:seed, openai.seed)
