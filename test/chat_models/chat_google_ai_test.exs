@@ -290,15 +290,7 @@ defmodule ChatModels.ChatGoogleAITest do
           "name" => "find_theaters",
           "response" => %{
             "name" => "find_theaters",
-            "content" => %{
-              "movie" => "Barbie",
-              "theaters" => [
-                %{
-                  "name" => "AMC",
-                  "address" => "2000 W El Camino Real"
-                }
-              ]
-            }
+            "content" => %{"result" => "I don't know where the theaters are."}
           }
         }
       }
@@ -307,16 +299,7 @@ defmodule ChatModels.ChatGoogleAITest do
         ToolResult.new!(%{
           name: "find_theaters",
           tool_call_id: "call-find_theaters",
-          content:
-            Jason.encode!(%{
-              "movie" => "Barbie",
-              "theaters" => [
-                %{
-                  "name" => "AMC",
-                  "address" => "2000 W El Camino Real"
-                }
-              ]
-            })
+          content: "I don't know where the theaters are."
         })
 
       assert expected == ChatGoogleAI.for_api(tool_result)
