@@ -1541,6 +1541,265 @@ defmodule LangChain.Chains.LLMChainTest do
       assert updated_chain.current_failure_count == 3
     end
 
+    test "mode: :step - last message is user message -> returns tool calls and stops", %{
+      chain: chain,
+      hello_world: hello_world
+    } do
+      fake_messages = [
+        new_function_calls!([
+          ToolCall.new!(%{call_id: "call_fake123", name: "hello_world", arguments: nil})
+        ])
+      ]
+
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:ok, fake_messages}
+      end)
+
+      {:ok, updated_chain} =
+        chain
+        |> LLMChain.add_tools([hello_world])
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Say hello!"))
+        |> LLMChain.run(mode: :step)
+
+      assert updated_chain.last_message.role == :assistant
+
+      assert [%ToolCall{name: "hello_world", call_id: "call_fake123"}] =
+               updated_chain.last_message.tool_calls
+
+      assert updated_chain.needs_response == true
+
+      assert length(updated_chain.exchanged_messages) == 1
+      assert hd(updated_chain.exchanged_messages) == updated_chain.last_message
+    end
+
+    test "mode: :step - last message is tool call -> executes tool and returns tool results", %{
+      chain: chain,
+      hello_world: hello_world
+    } do
+      tool_call_message = new_function_call!("call_fake123", "hello_world", "{}")
+
+      chain_with_tool_call =
+        chain
+        |> LLMChain.add_tools([hello_world])
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Say hello!"))
+        |> LLMChain.add_message(tool_call_message)
+
+      {:ok, updated_chain} = LLMChain.run(chain_with_tool_call, mode: :step)
+
+      assert updated_chain.last_message.role == :tool
+
+      assert [
+               %ToolResult{
+                 content: [
+                   %LangChain.Message.ContentPart{
+                     type: :text,
+                     content: "Hello world!",
+                     options: []
+                   }
+                 ],
+                 tool_call_id: "call_fake123",
+                 is_error: false
+               }
+             ] =
+               updated_chain.last_message.tool_results
+
+      assert updated_chain.needs_response == true
+
+      assert length(updated_chain.exchanged_messages) == 1
+      assert hd(updated_chain.exchanged_messages) == updated_chain.last_message
+    end
+
+    test "mode: :step - last message is tool result -> returns assistant comment", %{
+      chain: chain,
+      hello_world: hello_world
+    } do
+      tool_result = ToolResult.new!(%{tool_call_id: "call_fake123", content: "Hello world!"})
+      tool_result_message = Message.new_tool_result!(%{content: nil, tool_results: [tool_result]})
+
+      chain_with_tool_result =
+        chain
+        |> LLMChain.add_tools([hello_world])
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Say hello!"))
+        |> LLMChain.add_message(new_function_call!("call_fake123", "hello_world", "{}"))
+        |> LLMChain.add_message(tool_result_message)
+
+      fake_messages = [
+        Message.new_assistant!(%{content: "I said hello using the hello_world function!"})
+      ]
+
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:ok, fake_messages}
+      end)
+
+      {:ok, updated_chain} = LLMChain.run(chain_with_tool_result, mode: :step)
+
+      assert updated_chain.last_message.role == :assistant
+
+      assert updated_chain.last_message.content == [
+               %LangChain.Message.ContentPart{
+                 type: :text,
+                 content: "I said hello using the hello_world function!",
+                 options: []
+               }
+             ]
+
+      assert updated_chain.last_message.tool_calls == []
+      assert updated_chain.needs_response == false
+
+      assert length(updated_chain.exchanged_messages) == 1
+      assert hd(updated_chain.exchanged_messages) == updated_chain.last_message
+    end
+
+    test "mode: :step - multiple steps to complete a full interaction", %{
+      chain: chain,
+      greet: greet
+    } do
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:ok,
+         [
+           new_function_calls!([
+             ToolCall.new!(%{
+               call_id: "call_greet",
+               name: "greet",
+               arguments: %{"name" => "Alice"}
+             })
+           ])
+         ]}
+      end)
+
+      {:ok, step1_chain} =
+        chain
+        |> LLMChain.add_tools([greet])
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Please greet Alice"))
+        |> LLMChain.run(mode: :step)
+
+      assert step1_chain.last_message.role == :assistant
+      assert [%ToolCall{name: "greet"}] = step1_chain.last_message.tool_calls
+      assert step1_chain.needs_response == true
+
+      {:ok, step2_chain} = LLMChain.run(step1_chain, mode: :step)
+
+      assert step2_chain.last_message.role == :tool
+
+      assert [
+               %ToolResult{
+                 content: [
+                   %LangChain.Message.ContentPart{type: :text, content: "Hi Alice!", options: []}
+                 ],
+                 is_error: false
+               }
+             ] =
+               step2_chain.last_message.tool_results
+
+      assert step2_chain.needs_response == true
+
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:ok, [Message.new_assistant!(%{content: "I've greeted Alice for you!"})]}
+      end)
+
+      {:ok, step3_chain} = LLMChain.run(step2_chain, mode: :step)
+
+      assert step3_chain.last_message.role == :assistant
+
+      assert step3_chain.last_message.content == [
+               %LangChain.Message.ContentPart{
+                 type: :text,
+                 content: "I've greeted Alice for you!",
+                 options: []
+               }
+             ]
+
+      assert step3_chain.last_message.tool_calls == []
+      assert step3_chain.needs_response == false
+    end
+
+    test "mode: :step - supports fallbacks", %{chain: chain, hello_world: hello_world} do
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:error, LangChainError.exception(type: "rate_limited", message: "Rate limited")}
+      end)
+
+      expect(ChatAnthropic, :call, fn _model, _messages, _tools ->
+        {:ok,
+         [
+           new_function_calls!([
+             ToolCall.new!(%{call_id: "call_fallback", name: "hello_world", arguments: nil})
+           ])
+         ]}
+      end)
+
+      {:ok, updated_chain} =
+        chain
+        |> LLMChain.add_tools([hello_world])
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Say hello!"))
+        |> LLMChain.run(
+          mode: :step,
+          with_fallbacks: [ChatAnthropic.new!(%{stream: false})]
+        )
+
+      assert updated_chain.last_message.role == :assistant
+
+      assert [%ToolCall{name: "hello_world", call_id: "call_fallback"}] =
+               updated_chain.last_message.tool_calls
+    end
+
+    test "mode: :step - handles tool execution errors", %{chain: chain, fail_func: fail_func} do
+      tool_call_message = new_function_call!("call_fail", "fail_func", "{}")
+
+      chain_with_tool_call =
+        chain
+        |> LLMChain.add_tools([fail_func])
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Execute the failing function"))
+        |> LLMChain.add_message(tool_call_message)
+
+      {:ok, updated_chain} = LLMChain.run(chain_with_tool_call, mode: :step)
+
+      assert updated_chain.last_message.role == :tool
+
+      assert [
+               %ToolResult{
+                 content: [
+                   %LangChain.Message.ContentPart{
+                     type: :text,
+                     content: "Not what I wanted",
+                     options: []
+                   }
+                 ],
+                 is_error: true
+               }
+             ] =
+               updated_chain.last_message.tool_results
+
+      assert updated_chain.current_failure_count == 1
+      assert updated_chain.needs_response == true
+    end
+
+    test "mode: :step - processes message processors correctly", %{chain: chain} do
+      fake_messages = [
+        Message.new_assistant!(%{content: "Initial response"})
+      ]
+
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:ok, fake_messages}
+      end)
+
+      {:ok, updated_chain} =
+        chain
+        |> LLMChain.message_processors([&fake_success_processor/2])
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Test message"))
+        |> LLMChain.run(mode: :step)
+
+      assert updated_chain.last_message.processed_content == "Initial response *"
+
+      assert updated_chain.needs_response == false
+    end
+
     test "with_fallbacks: re-runs with next LLM after first fails" do
       # Made NOT LIVE here - handles two calls
       expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
@@ -1682,6 +1941,43 @@ defmodule LangChain.Chains.LLMChainTest do
 
       assert %ToolResult{is_error: false} = tool_result
       assert tool_result.name == "do_thing"
+
+      assert updated_chain.current_failure_count == 0
+    end
+
+    test "supports multiple tool calls being made and stopping when the specific tool from the tool list is called",
+         %{greet: greet, sync: do_thing, hello_world: hello_world} do
+      # Made NOT LIVE here
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:ok,
+         new_function_calls!([
+           ToolCall.new!(%{
+             call_id: "call_fakeGreet",
+             name: "greet",
+             arguments: %{"name" => "Tim"}
+           })
+         ])}
+      end)
+
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:ok,
+         new_function_calls!([
+           ToolCall.new!(%{call_id: "call_hello_world", name: "hello_world", arguments: nil})
+         ])}
+      end)
+
+      {:ok, updated_chain, tool_result} =
+        %{llm: ChatOpenAI.new!(%{stream: false}), verbose: false}
+        |> LLMChain.new!()
+        |> LLMChain.add_tools([greet, do_thing, hello_world])
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Say hello and then call hello_world."))
+        |> LLMChain.run_until_tool_used(["do_thing", "hello_world"])
+
+      assert updated_chain.last_message.role == :tool
+
+      assert %ToolResult{is_error: false} = tool_result
+      assert tool_result.name == "hello_world"
 
       assert updated_chain.current_failure_count == 0
     end

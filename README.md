@@ -289,6 +289,7 @@ mix test --include live_ollama_ai
 mix test --include live_anthropic
 mix test --include live_mistral_ai
 mix test --include live_grok
+mix test --include live_vertex_ai
 mix test test/tools/calculator_test.exs --include live_call
 ```
 

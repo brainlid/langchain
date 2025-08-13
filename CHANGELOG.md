@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Breaking Changes
+- **ChatOllamaAI**: Fixed `stop` field type from `:string` to `{:array, :string}` to match Ollama API requirements. Previously, stop sequences were non-functional due to API type mismatch. Now accepts arrays like `["\\n", "Human:", "<|eot_id|>"]`. Empty arrays are excluded from API requests to preserve modelfile defaults.
+
+---
+
 ## v0.4.0-rc.1
 
 ---

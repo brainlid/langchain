@@ -43,6 +43,14 @@ defmodule ChatModels.ChatOllamaAITest do
 
       assert model.endpoint == override_url
     end
+
+    test "supports verbose_api option" do
+      model = ChatOllamaAI.new!(%{model: "llama2", verbose_api: true})
+      assert model.verbose_api == true
+
+      model = ChatOllamaAI.new!(%{model: "llama2", verbose_api: false})
+      assert model.verbose_api == false
+    end
   end
 
   describe "for_api/3" do
@@ -64,7 +72,7 @@ defmodule ChatModels.ChatOllamaAITest do
           "num_gpu" => 1,
           "num_thread" => 0,
           "receive_timeout" => 300_000,
-          "stop" => "",
+          "stop" => [],
           "tfs_z" => 0.0,
           "top_k" => 0,
           "top_p" => 0.0
@@ -92,8 +100,8 @@ defmodule ChatModels.ChatOllamaAITest do
       assert data.options.num_gqa == 8
       assert data.options.num_gpu == 1
       assert data.options.num_thread == 0
-      # TODO: figure out why this is field is is being cast to nil instead of empty string
-      assert data.options.stop == nil
+      # Empty stop array should not be included in options (preserves modelfile defaults)
+      refute Map.has_key?(data.options, :stop)
       assert data.options.tfs_z == 0.0
       assert data.options.top_k == 0
       assert data.options.top_p == 0.0
@@ -107,6 +115,72 @@ defmodule ChatModels.ChatOllamaAITest do
       assert data.options.temperature == 0.4
 
       assert [%{"content" => "What color is the sky?", "role" => :user}] = data.messages
+    end
+
+    test "generates a map for an API call with custom stop sequences" do
+      ollama_with_stops = ChatOllamaAI.new!(%{"stop" => ["\\n", "User:", "<|eot_id|>"]})
+      user_message = "Tell me a story"
+
+      data = ChatOllamaAI.for_api(ollama_with_stops, [Message.new_user!(user_message)], [])
+
+      assert data.model == "llama2:latest"
+      assert data.options.stop == ["\\n", "User:", "<|eot_id|>"]
+      assert [%{"content" => "Tell me a story", "role" => :user}] = data.messages
+    end
+
+    test "does not include stop field when empty array (preserves modelfile defaults)" do
+      ollama_empty_stop = ChatOllamaAI.new!(%{"stop" => []})
+      user_message = "Hello"
+
+      data = ChatOllamaAI.for_api(ollama_empty_stop, [Message.new_user!(user_message)], [])
+
+      # Empty stop array should not be included in options (thanks to Utils.conditionally_add_to_map)
+      refute Map.has_key?(data.options, :stop)
+      assert data.model == "llama2:latest"
+    end
+
+    test "handles edge cases for stop sequences" do
+      # Test with special characters and unicode
+      ollama_unicode = ChatOllamaAI.new!(%{"stop" => ["🤖", "café", "résumé"]})
+      data = ChatOllamaAI.for_api(ollama_unicode, [Message.new_user!("test")], [])
+      assert data.options.stop == ["🤖", "café", "résumé"]
+
+      # Test with empty strings (should be filtered out by Ecto casting)
+      ollama_with_empties = ChatOllamaAI.new!(%{"stop" => ["valid", "", "also_valid"]})
+      data = ChatOllamaAI.for_api(ollama_with_empties, [Message.new_user!("test")], [])
+      # Empty strings should be filtered out by validation
+      assert data.options.stop == ["valid", "also_valid"]
+    end
+
+    test "validates stop sequence input types" do
+      # Should handle nil gracefully (nil means field not provided)
+      assert {:ok, ollama} = ChatOllamaAI.new(%{"stop" => nil})
+      assert ollama.stop == nil
+      # Both nil and [] should be excluded from API options
+      data = ChatOllamaAI.for_api(ollama, [Message.new_user!("test")], [])
+      refute Map.has_key?(data.options, :stop)
+
+      # Should reject non-array, non-nil values
+      assert {:error, changeset} = ChatOllamaAI.new(%{"stop" => "string"})
+      assert {"is invalid", _} = changeset.errors[:stop]
+    end
+
+    test "handles complex stop sequence scenarios" do
+      # Test overlapping stop sequences (one is substring of another)
+      ollama_overlap = ChatOllamaAI.new!(%{"stop" => ["robot", "robot stopped", "stop"]})
+      data = ChatOllamaAI.for_api(ollama_overlap, [Message.new_user!("test")], [])
+      assert data.options.stop == ["robot", "robot stopped", "stop"]
+
+      # Test escape sequences and special characters
+      ollama_special = ChatOllamaAI.new!(%{"stop" => ["\\n", "\\t", "\n", "\t", "\"", "'"]})
+      data = ChatOllamaAI.for_api(ollama_special, [Message.new_user!("test")], [])
+      assert data.options.stop == ["\\n", "\\t", "\n", "\t", "\"", "'"]
+
+      # Test performance with many stop sequences (should not crash)
+      many_stops = Enum.map(1..100, &"stop#{&1}")
+      ollama_many = ChatOllamaAI.new!(%{"stop" => many_stops})
+      data = ChatOllamaAI.for_api(ollama_many, [Message.new_user!("test")], [])
+      assert length(data.options.stop) == 100
     end
 
     test "generates a map for an API call with user and system messages", %{ollama_ai: ollama_ai} do
@@ -673,6 +747,12 @@ defmodule ChatModels.ChatOllamaAITest do
       refute Map.has_key?(result, "callbacks")
     end
 
+    test "includes verbose_api field" do
+      model = ChatOllamaAI.new!(%{model: "llama2", verbose_api: true})
+      result = ChatOllamaAI.serialize_config(model)
+      assert result["verbose_api"] == true
+    end
+
     test "creates expected map" do
       model =
         ChatOllamaAI.new!(%{
@@ -703,12 +783,13 @@ defmodule ChatModels.ChatOllamaAITest do
                "repeat_last_n" => 64,
                "repeat_penalty" => 1.1,
                "seed" => 123,
-               "stop" => nil,
+               "stop" => [],
                "stream" => true,
                "temperature" => 0.0,
                "tfs_z" => 1.0,
                "top_k" => 40,
                "top_p" => 0.9,
+               "verbose_api" => false,
                "version" => 1
              }
     end

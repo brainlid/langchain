@@ -360,9 +360,12 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   end
 
   def for_api(%ToolResult{} = result) do
-    content =
+    content_string =
       result.content
       |> ContentPart.parts_to_string()
+
+    content =
+      content_string
       |> Jason.decode()
       |> case do
         {:ok, data} ->
@@ -371,7 +374,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
 
         {:error, %Jason.DecodeError{}} ->
           # assume the result is intended to be a string and return it as-is
-          %{"result" => result.content}
+          %{"result" => content_string}
       end
 
     # There is no explanation for why they want it nested like this. Odd.

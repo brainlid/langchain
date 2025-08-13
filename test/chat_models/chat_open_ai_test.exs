@@ -106,6 +106,16 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       %ChatOpenAI{} = openai = ChatOpenAI.new!(%{"reasoning_effort" => "high"})
       assert openai.reasoning_effort == "high"
     end
+
+    test "supports setting org_id" do
+      # defaults to nil
+      %ChatOpenAI{} = openai = ChatOpenAI.new!()
+      assert openai.org_id == nil
+
+      # can override the default to "test-org-123"
+      %ChatOpenAI{} = openai = ChatOpenAI.new!(%{"org_id" => "test-org-123"})
+      assert openai.org_id == "test-org-123"
+    end
   end
 
   describe "for_api/3" do
@@ -124,6 +134,12 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert data.frequency_penalty == 0.5
       # NOTE: %{"type" => "text"} is the default when not specified
       assert data[:response_format] == nil
+    end
+
+    test "when frequency_penalty is not explicitly configured, it is not specified in the API call" do
+      {:ok, openai} = ChatOpenAI.new(%{"model" => @test_model})
+      data = ChatOpenAI.for_api(openai, [], [])
+      assert data[:frequency_penalty] == nil
     end
 
     test "generates a map for an API call with JSON response set to true" do
@@ -2294,6 +2310,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       result = ChatOpenAI.serialize_config(model)
       assert result["version"] == 1
       refute Map.has_key?(result, "api_key")
+      refute Map.has_key?(result, "org_id")
       refute Map.has_key?(result, "callbacks")
     end
 
@@ -2389,6 +2406,15 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       changeset = Ecto.Changeset.cast(chain, %{api_key: "1234567890"}, [:api_key])
 
       refute inspect(changeset) =~ "1234567890"
+      assert inspect(changeset) =~ "**redacted**"
+    end
+
+    test "redacts org_id" do
+      chain = ChatOpenAI.new!()
+
+      changeset = Ecto.Changeset.cast(chain, %{org_id: "test-org-123"}, [:org_id])
+
+      refute inspect(changeset) =~ "test-org-123"
       assert inspect(changeset) =~ "**redacted**"
     end
   end

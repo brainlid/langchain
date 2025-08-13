@@ -222,6 +222,10 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     # customer to provide their own.
     field :api_key, :string, redact: true
 
+    # Organization ID for OpenAI. If not set, will use global org_id. Allows for usage
+    # of a different organization ID per-call if desired.
+    field :org_id, :string, redact: true
+
     # What sampling temperature to use, between 0 and 2. Higher values like 0.8
     # will make the output more random, while lower values like 0.2 will make it
     # more focused and deterministic.
@@ -229,7 +233,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     # Number between -2.0 and 2.0. Positive values penalize new tokens based on
     # their existing frequency in the text so far, decreasing the model's
     # likelihood to repeat the same line verbatim.
-    field :frequency_penalty, :float, default: 0.0
+    field :frequency_penalty, :float, default: nil
 
     # Used when working with a reasoning model like `o1` and newer. This setting
     # is required when working with those models as the API behavior needs to
@@ -287,6 +291,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     :temperature,
     :frequency_penalty,
     :api_key,
+    :org_id,
     :seed,
     :n,
     :stream,
@@ -309,10 +314,9 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     api_key || Config.resolve(:openai_key, "")
   end
 
-  @spec get_org_id() :: String.t() | nil
-  defp get_org_id() do
-    Config.resolve(:openai_org_id)
-  end
+  @spec get_org_id(t()) :: String.t() | nil
+  defp get_org_id(%ChatOpenAI{org_id: org_id}) when is_binary(org_id), do: org_id
+  defp get_org_id(%ChatOpenAI{}), do: Config.resolve(:openai_org_id)
 
   @spec get_proj_id() :: String.t() | nil
   defp get_proj_id() do
@@ -363,7 +367,6 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     %{
       model: openai.model,
       temperature: openai.temperature,
-      frequency_penalty: openai.frequency_penalty,
       n: openai.n,
       stream: openai.stream,
       # a single ToolResult can expand into multiple tool messages for OpenAI
@@ -381,6 +384,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         |> Enum.reverse(),
       user: openai.user
     }
+    |> Utils.conditionally_add_to_map(:frequency_penalty, openai.frequency_penalty)
     |> Utils.conditionally_add_to_map(:response_format, set_response_format(openai))
     |> Utils.conditionally_add_to_map(
       :reasoning_effort,
@@ -766,7 +770,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       )
 
     req
-    |> maybe_add_org_id_header()
+    |> maybe_add_org_id_header(openai)
     |> maybe_add_proj_id_header()
     |> Req.post()
     # parse the body and return it as parsed structs
@@ -838,7 +842,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       ],
       receive_timeout: openai.receive_timeout
     )
-    |> maybe_add_org_id_header()
+    |> maybe_add_org_id_header(openai)
     |> maybe_add_proj_id_header()
     |> Req.post(
       into:
@@ -1164,8 +1168,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     nil
   end
 
-  defp maybe_add_org_id_header(%Req.Request{} = req) do
-    org_id = get_org_id()
+  defp maybe_add_org_id_header(%Req.Request{} = req, %ChatOpenAI{} = openai) do
+    org_id = get_org_id(openai)
 
     if org_id do
       Req.Request.put_header(req, "OpenAI-Organization", org_id)

@@ -920,12 +920,12 @@ defmodule LangChain.ChatModels.ChatAnthropic do
           "error" => %{"type" => type, "message" => reason}
         } = response
       ) do
-    Logger.error("Received error from API: #{inspect(reason)}")
+    Logger.error("Received error from API: #{inspect(response)}")
     {:error, LangChainError.exception(type: type, message: reason, original: response)}
   end
 
   def do_process_response(_model, %{"error" => %{"message" => reason} = error} = response) do
-    Logger.error("Received error from API: #{inspect(reason)}")
+    Logger.error("Received error from API: #{inspect(response)}")
     {:error, LangChainError.exception(type: error["type"], message: reason, original: response)}
   end
 
