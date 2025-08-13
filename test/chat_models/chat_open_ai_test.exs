@@ -136,6 +136,12 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert data[:response_format] == nil
     end
 
+    test "when frequency_penalty is not explicitly configured, it is not specified in the API call" do
+      {:ok, openai} = ChatOpenAI.new(%{"model" => @test_model})
+      data = ChatOpenAI.for_api(openai, [], [])
+      assert data[:frequency_penalty] == nil
+    end
+
     test "generates a map for an API call with JSON response set to true" do
       {:ok, openai} =
         ChatOpenAI.new(%{
