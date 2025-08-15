@@ -121,6 +121,8 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
 
     # Additional level of raw api request and response data
     field :verbose_api, :boolean, default: false
+
+    field :req_config, :map, default: %{}
   end
 
   @type t :: %ChatGoogleAI{}
@@ -137,7 +139,8 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     :json_response,
     :json_schema,
     :stream,
-    :safety_settings
+    :safety_settings,
+    :req_config
   ]
   @required_fields [
     :endpoint,
@@ -497,6 +500,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
         max_retries: 3,
         retry_delay: fn attempt -> 300 * attempt end
       )
+      |> Req.merge(google_ai.req_config |> Keyword.new())
 
     req
     |> Req.post()
@@ -545,6 +549,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
       receive_timeout: google_ai.receive_timeout
     )
     |> Req.Request.put_header("accept-encoding", "utf-8")
+    |> Req.merge(google_ai.req_config |> Keyword.new())
     |> Req.post(
       into:
         Utils.handle_stream_fn(
