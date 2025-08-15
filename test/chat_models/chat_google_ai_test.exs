@@ -544,7 +544,7 @@ defmodule ChatModels.ChatGoogleAITest do
       assert struct.role == :assistant
       assert struct.content == ContentPart.text!("This is the first part of a mes")
       assert struct.index == 0
-      assert struct.status == :incomplete
+      assert struct.status == :complete
     end
 
     test "handles receiving a MessageDelta with an empty text part", %{model: model} do
@@ -662,7 +662,7 @@ defmodule ChatModels.ChatGoogleAITest do
       assert struct.role == :assistant
       assert struct.content == ContentPart.text!("This is a partial message")
       assert struct.index == 0
-      assert struct.status == :incomplete
+      assert struct.status == :complete
 
       # Verify that token usage is properly included in metadata
       assert %TokenUsage{} = struct.metadata.usage

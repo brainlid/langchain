@@ -766,7 +766,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     %{
       role: unmap_role(content_data["role"]),
       content: content,
-      complete: finish_reason_to_status(data["finishReason"]),
+      status: finish_reason_to_status(data["finishReason"]),
       index: data["index"]
     }
     |> Utils.conditionally_add_to_map(:tool_calls, tool_calls_from_parts)
