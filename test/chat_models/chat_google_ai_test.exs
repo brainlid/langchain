@@ -542,7 +542,7 @@ defmodule ChatModels.ChatGoogleAITest do
                ChatGoogleAI.do_process_response(model, response, MessageDelta)
 
       assert struct.role == :assistant
-      assert struct.content == "This is the first part of a mes"
+      assert struct.content == ContentPart.text!("This is the first part of a mes")
       assert struct.index == 0
       assert struct.status == :incomplete
     end
@@ -564,7 +564,7 @@ defmodule ChatModels.ChatGoogleAITest do
       assert [%MessageDelta{} = struct] =
                ChatGoogleAI.do_process_response(model, response, MessageDelta)
 
-      assert struct.content == ""
+      assert struct.content == ContentPart.text!("")
     end
 
     test "handles API error messages", %{model: model} do
@@ -660,7 +660,7 @@ defmodule ChatModels.ChatGoogleAITest do
                ChatGoogleAI.do_process_response(model, response, MessageDelta)
 
       assert struct.role == :assistant
-      assert struct.content == "This is a partial message"
+      assert struct.content == ContentPart.text!("This is a partial message")
       assert struct.index == 0
       assert struct.status == :incomplete
 
@@ -778,6 +778,7 @@ defmodule ChatModels.ChatGoogleAITest do
                "model" => "gemini-1.5-flash",
                "module" => "Elixir.LangChain.ChatModels.ChatGoogleAI",
                "receive_timeout" => 60000,
+               "thinking_budget" => nil,
                "stream" => false,
                "temperature" => 0.0,
                "version" => 1,
