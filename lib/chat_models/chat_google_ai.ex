@@ -122,6 +122,9 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     # Additional level of raw api request and response data
     field :verbose_api, :boolean, default: false
 
+    # Req options to merge into the request.
+    # Refer to `https://hexdocs.pm/req/Req.html#new/1-options` for 
+    # `Req.new` supported set of options.
     field :req_config, :map, default: %{}
   end
 
