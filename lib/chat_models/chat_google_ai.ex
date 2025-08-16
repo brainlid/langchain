@@ -583,10 +583,30 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     )
     |> case do
       {:ok, %Req.Response{status: 200, body: data}} ->
-        # Google AI uses `finishReason: "STOP` for all messages in the stream.
-        # This field can't be used to terminate the list of deltas, so simulate
-        # this behavior by forcing the final delta to have `status: :complete`.
-        complete_final_delta(data)
+        # Separate message deltas by their content type
+        {data, _last_index} =
+          data
+          |> List.flatten()
+          |> Enum.reduce({[], nil}, fn
+            message_delta, {[], nil} ->
+              {[message_delta], message_delta.index}
+
+            message_delta, {acc, last_index} ->
+              [last_message_delta | _] = acc
+              last_content_type = get_in(last_message_delta.content.type)
+              content_type = get_in(message_delta.content.type)
+
+              new_index =
+                case not is_nil(content_type) && content_type != last_content_type do
+                  true -> last_index + 1
+                  false -> last_index
+                end
+
+              {[%{message_delta | index: new_index} | acc], new_index}
+          end)
+
+        data
+        |> Enum.reverse()
 
       {:ok, %Req.Response{status: status} = err} ->
         {:error,
