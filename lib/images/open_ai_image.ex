@@ -56,7 +56,7 @@ defmodule LangChain.Images.OpenAIImage do
     # The format in which the generated images are returned. Must be one of
     # `url` or `b64_json`. URLs are only valid for 60 minutes after the image
     # has been generated.
-    field :response_format, :string, default: "url"
+    field :response_format, :string
 
     # The format in which the generated images are returned.
     # This parameter is only supported for `gpt-image-1`.
@@ -191,9 +191,9 @@ defmodule LangChain.Images.OpenAIImage do
       prompt: openai.prompt,
       n: openai.n,
       quality: openai.quality,
-      response_format: openai.response_format,
       size: openai.size
     }
+    |> Utils.conditionally_add_to_map(:response_format, openai.response_format)
     |> Utils.conditionally_add_to_map(:style, openai.style)
     |> Utils.conditionally_add_to_map(:output_format, openai.output_format)
     |> Utils.conditionally_add_to_map(:user, openai.user)
