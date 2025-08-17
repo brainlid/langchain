@@ -294,13 +294,14 @@ defmodule LangChain.Images.OpenAIImage do
   def do_process_response(%{"data" => images} = response, %OpenAIImage{} = request)
       when is_list(images) do
     created_at = DateTime.from_unix!(response["created"])
+    image_type = if request.output_format, do: request.output_format, else: "png"
 
     results =
       Enum.map(images, fn
         %{"b64_json" => base64_raw_content} = image_info ->
           GeneratedImage.new!(%{
             type: :base64,
-            image_type: String.to_atom(request.output_format || "png"),
+            image_type: image_type,
             content: base64_raw_content,
             created_at: created_at,
             prompt: Map.get(image_info, "revised_prompt", request.prompt),
@@ -310,7 +311,7 @@ defmodule LangChain.Images.OpenAIImage do
         %{"url" => url} = image_info ->
           GeneratedImage.new!(%{
             type: :url,
-            image_type: String.to_atom(request.output_format || "png"),
+            image_type: image_type,
             content: url,
             created_at: created_at,
             prompt: Map.get(image_info, "revised_prompt", request.prompt),
