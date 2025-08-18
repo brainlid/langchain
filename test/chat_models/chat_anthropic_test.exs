@@ -1357,9 +1357,15 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
       @tag live_call: true, live_api: api
       test "#{BedrockHelpers.prefix_for(api)}basic streamed content example and fires ratelimit callback",
            %{live_api: api, api_config: api_config} do
+        # NOTE: These callback handlers are not wrapped because they are not
+        # being run through the LLMChain. They are being run directly from the
+        # Chat model.
         handlers = %{
           on_llm_ratelimit_info: fn headers ->
             send(self(), {:fired_ratelimit_info, headers})
+          end,
+          on_llm_response_headers: fn response_headers ->
+            send(self(), {:fired_response_headers, response_headers})
           end
         }
 
@@ -1373,26 +1379,17 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
             Message.new_user!("Return the response 'Keep up the good work!'.")
           ])
 
-        # returns a list of MessageDeltas.
-        [d1, d2, d3, d4, d5] = result
+        # NOTE: The results differ pretty significantly between the Bedrock and
+        # Anthropic APIs. To avoid test failures, we combine the results into a
+        # merged delta for final comparison.
+        merged = result |> List.flatten() |> MessageDelta.merge_deltas()
 
-        assert d1.content == []
-        assert %TokenUsage{input: 25, output: output} = d1.metadata.usage
-        assert output >= 1
-
-        assert d2.content == ContentPart.text!("")
-        assert d2.metadata == nil
-
-        assert d3.content == ContentPart.text!("Keep")
-        assert d3.metadata == nil
-
-        assert d4.content == ContentPart.text!(" up the good work!")
-        assert d4.metadata == nil
-
-        # usage
-        assert d5.content == nil
-        assert d5.metadata.usage.input == nil
-        assert %TokenUsage{input: nil, output: 9} = d5.metadata.usage
+        assert merged.merged_content == [ContentPart.text!("Keep up the good work!")]
+        assert %TokenUsage{input: input, output: 10} = merged.metadata.usage
+        # NOTE: Each API computes tokens differently. Anthropic is 25 while Bedrock is 50.
+        assert input >= 25
+        assert merged.status == :complete
+        assert merged.role == :assistant
 
         assert_received {:fired_ratelimit_info, info}
 
@@ -1409,6 +1406,13 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
                    "request-id" => _
                  } = info
         end
+
+        assert_received {:fired_response_headers, response_headers}
+
+        assert %{
+                 "connection" => ["keep-alive"],
+                 "content-type" => ["text/event-stream; charset=utf-8"]
+               } = response_headers
       end
     end
   end
@@ -2681,6 +2685,9 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
           end,
           on_llm_token_usage: fn %LLMChain{} = _chain, usage ->
             send(self(), {:fired_token_usage, usage})
+          end,
+          on_llm_response_headers: fn %LLMChain{} = _chain, response_headers ->
+            send(self(), {:fired_response_headers, response_headers})
           end
         }
 
@@ -2720,6 +2727,14 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
         # should have fired the token usage callback
         assert_received {:fired_token_usage, usage}
         assert %TokenUsage{input: 20} = usage
+
+        # should have fired the response headers callback
+        assert_received {:fired_response_headers, response_headers}
+
+        assert %{
+                 "connection" => ["keep-alive"],
+                 "content-type" => ["application/json"]
+               } = response_headers
       end
 
       Module.put_attribute(__MODULE__, :tag, {:"live_#{api}", true})

@@ -42,7 +42,8 @@ defmodule LangChain.Utils do
       :on_llm_new_delta,
       :on_llm_new_message,
       :on_llm_ratelimit_info,
-      :on_llm_token_usage
+      :on_llm_token_usage,
+      :on_llm_response_headers
     ]
 
     # get the LLM callbacks from the chain.

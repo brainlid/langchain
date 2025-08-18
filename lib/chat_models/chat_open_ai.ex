@@ -780,6 +780,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           IO.inspect(response, label: "RAW REQ RESPONSE")
         end
 
+        Callbacks.fire(openai.callbacks, :on_llm_response_headers, [response.headers])
+
         Callbacks.fire(openai.callbacks, :on_llm_ratelimit_info, [
           get_ratelimit_info(response.headers)
         ])
@@ -854,6 +856,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     )
     |> case do
       {:ok, %Req.Response{body: data} = response} ->
+        Callbacks.fire(openai.callbacks, :on_llm_response_headers, [response.headers])
+
         Callbacks.fire(openai.callbacks, :on_llm_ratelimit_info, [
           get_ratelimit_info(response.headers)
         ])

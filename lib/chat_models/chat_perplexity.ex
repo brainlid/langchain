@@ -370,7 +370,9 @@ defmodule LangChain.ChatModels.ChatPerplexity do
     req
     |> Req.post()
     |> case do
-      {:ok, %Req.Response{body: data}} ->
+      {:ok, %Req.Response{body: data} = response} ->
+        Callbacks.fire(perplexity.callbacks, :on_llm_response_headers, [response.headers])
+
         Callbacks.fire(perplexity.callbacks, :on_llm_token_usage, [
           get_token_usage(data)
         ])
@@ -432,6 +434,8 @@ defmodule LangChain.ChatModels.ChatPerplexity do
     )
     |> case do
       {:ok, response} ->
+        Callbacks.fire(perplexity.callbacks, :on_llm_response_headers, [response.headers])
+
         {:ok, response}
 
       {:error, %Req.TransportError{reason: :timeout} = err} ->

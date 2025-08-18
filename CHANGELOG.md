@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+
+- New callback `on_llm_response_headers` supports receiving the full Req HTTP response headers for a request.
+
 ### Breaking Changes
 - **ChatOllamaAI**: Fixed `stop` field type from `:string` to `{:array, :string}` to match Ollama API requirements. Previously, stop sequences were non-functional due to API type mismatch. Now accepts arrays like `["\\n", "Human:", "<|eot_id|>"]`. Empty arrays are excluded from API requests to preserve modelfile defaults.
 
