@@ -233,7 +233,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     # Number between -2.0 and 2.0. Positive values penalize new tokens based on
     # their existing frequency in the text so far, decreasing the model's
     # likelihood to repeat the same line verbatim.
-    field :frequency_penalty, :float, default: 0.0
+    field :frequency_penalty, :float, default: nil
 
     # Used when working with a reasoning model like `o1` and newer. This setting
     # is required when working with those models as the API behavior needs to
@@ -367,7 +367,6 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     %{
       model: openai.model,
       temperature: openai.temperature,
-      frequency_penalty: openai.frequency_penalty,
       n: openai.n,
       stream: openai.stream,
       # a single ToolResult can expand into multiple tool messages for OpenAI
@@ -385,6 +384,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         |> Enum.reverse(),
       user: openai.user
     }
+    |> Utils.conditionally_add_to_map(:frequency_penalty, openai.frequency_penalty)
     |> Utils.conditionally_add_to_map(:response_format, set_response_format(openai))
     |> Utils.conditionally_add_to_map(
       :reasoning_effort,
@@ -780,6 +780,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           IO.inspect(response, label: "RAW REQ RESPONSE")
         end
 
+        Callbacks.fire(openai.callbacks, :on_llm_response_headers, [response.headers])
+
         Callbacks.fire(openai.callbacks, :on_llm_ratelimit_info, [
           get_ratelimit_info(response.headers)
         ])
@@ -854,6 +856,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     )
     |> case do
       {:ok, %Req.Response{body: data} = response} ->
+        Callbacks.fire(openai.callbacks, :on_llm_response_headers, [response.headers])
+
         Callbacks.fire(openai.callbacks, :on_llm_ratelimit_info, [
           get_ratelimit_info(response.headers)
         ])

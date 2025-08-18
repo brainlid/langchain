@@ -136,6 +136,12 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert data[:response_format] == nil
     end
 
+    test "when frequency_penalty is not explicitly configured, it is not specified in the API call" do
+      {:ok, openai} = ChatOpenAI.new(%{"model" => @test_model})
+      data = ChatOpenAI.for_api(openai, [], [])
+      assert data[:frequency_penalty] == nil
+    end
+
     test "generates a map for an API call with JSON response set to true" do
       {:ok, openai} =
         ChatOpenAI.new(%{
@@ -748,6 +754,9 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       handlers = %{
         on_llm_ratelimit_info: fn headers ->
           send(self(), {:fired_ratelimit_info, headers})
+        end,
+        on_llm_response_headers: fn response_headers ->
+          send(self(), {:fired_response_headers, response_headers})
         end
       }
 
@@ -783,6 +792,13 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
                "x-ratelimit-reset-tokens" => _,
                "x-request-id" => _
              } = info
+
+      assert_received {:fired_response_headers, response_headers}
+
+      assert %{
+               "connection" => ["keep-alive"],
+               "content-type" => ["application/json"]
+             } = response_headers
     end
 
     @tag live_call: true, live_open_ai: true
@@ -790,6 +806,9 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       handlers = %{
         on_llm_ratelimit_info: fn headers ->
           send(self(), {:fired_ratelimit_info, headers})
+        end,
+        on_llm_response_headers: fn response_headers ->
+          send(self(), {:fired_response_headers, response_headers})
         end
       }
 
@@ -805,47 +824,52 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
         ])
 
       # returns a list of MessageDeltas. A list of a list because it's "n" choices.
-      assert result == [
-               [
-                 %LangChain.MessageDelta{
-                   content: "",
-                   status: :incomplete,
-                   index: 0,
-                   role: :assistant
-                 }
-               ],
-               [
-                 %LangChain.MessageDelta{
-                   content: "Color",
-                   status: :incomplete,
-                   index: 0,
-                   role: :unknown
-                 }
-               ],
-               [
-                 %LangChain.MessageDelta{
-                   content: "ful",
-                   status: :incomplete,
-                   index: 0,
-                   role: :unknown
-                 }
-               ],
-               [
-                 %LangChain.MessageDelta{
-                   content: " Threads",
-                   status: :incomplete,
-                   index: 0,
-                   role: :unknown
-                 }
-               ],
-               [
-                 %LangChain.MessageDelta{
-                   content: nil,
-                   status: :complete,
-                   index: 0,
-                   role: :unknown
-                 }
-               ]
+      assert List.flatten(result) == [
+               %LangChain.MessageDelta{
+                 content: "",
+                 merged_content: [],
+                 status: :incomplete,
+                 index: 0,
+                 role: :assistant,
+                 tool_calls: nil,
+                 metadata: nil
+               },
+               %LangChain.MessageDelta{
+                 content: "Color",
+                 merged_content: [],
+                 status: :incomplete,
+                 index: 0,
+                 role: :unknown,
+                 tool_calls: nil,
+                 metadata: nil
+               },
+               %LangChain.MessageDelta{
+                 content: "ful",
+                 merged_content: [],
+                 status: :incomplete,
+                 index: 0,
+                 role: :unknown,
+                 tool_calls: nil,
+                 metadata: nil
+               },
+               %LangChain.MessageDelta{
+                 content: " Threads",
+                 merged_content: [],
+                 status: :incomplete,
+                 index: 0,
+                 role: :unknown,
+                 tool_calls: nil,
+                 metadata: nil
+               },
+               %LangChain.MessageDelta{
+                 content: nil,
+                 merged_content: [],
+                 status: :complete,
+                 index: 0,
+                 role: :unknown,
+                 tool_calls: nil,
+                 metadata: nil
+               }
              ]
 
       assert_received {:fired_ratelimit_info, info}
@@ -859,6 +883,13 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
                "x-ratelimit-reset-tokens" => _,
                "x-request-id" => _
              } = info
+
+      assert_received {:fired_response_headers, response_headers}
+
+      assert %{
+               "connection" => ["keep-alive"],
+               "content-type" => ["text/event-stream; charset=utf-8"]
+             } = response_headers
     end
 
     @tag live_call: true, live_open_ai: true

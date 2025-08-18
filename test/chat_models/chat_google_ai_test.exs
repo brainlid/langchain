@@ -119,8 +119,8 @@ defmodule ChatModels.ChatGoogleAITest do
         )
 
       assert %{"contents" => [msg1, msg2]} = data
-      assert %{"role" => :user, "parts" => [%{"text" => ^user_message}]} = msg1
-      assert %{"role" => :model, "parts" => [%{"text" => ^assistant_message}]} = msg2
+      assert %{"role" => "user", "parts" => [%{"text" => ^user_message}]} = msg1
+      assert %{"role" => "model", "parts" => [%{"text" => ^assistant_message}]} = msg2
     end
 
     test "generated a map containing response_mime_type and response_schema", %{params: params} do
@@ -173,9 +173,9 @@ defmodule ChatModels.ChatGoogleAITest do
         )
 
       assert %{"contents" => [msg1, msg2, msg3]} = data
-      assert %{"role" => :user, "parts" => [%{"text" => ^message}]} = msg1
-      assert %{"role" => :model, "parts" => [tool_call]} = msg2
-      assert %{"role" => :function, "parts" => [tool_result]} = msg3
+      assert %{"role" => "user", "parts" => [%{"text" => ^message}]} = msg1
+      assert %{"role" => "model", "parts" => [tool_call]} = msg2
+      assert %{"role" => "model", "parts" => [tool_result]} = msg3
 
       assert %{
                "functionCall" => %{
@@ -239,7 +239,7 @@ defmodule ChatModels.ChatGoogleAITest do
     test "translates a Message with function results to the expected structure" do
       expected =
         %{
-          "role" => :function,
+          "role" => "model",
           "parts" => [
             %{
               "functionResponse" => %{
@@ -290,15 +290,7 @@ defmodule ChatModels.ChatGoogleAITest do
           "name" => "find_theaters",
           "response" => %{
             "name" => "find_theaters",
-            "content" => %{
-              "movie" => "Barbie",
-              "theaters" => [
-                %{
-                  "name" => "AMC",
-                  "address" => "2000 W El Camino Real"
-                }
-              ]
-            }
+            "content" => %{"result" => "I don't know where the theaters are."}
           }
         }
       }
@@ -307,16 +299,7 @@ defmodule ChatModels.ChatGoogleAITest do
         ToolResult.new!(%{
           name: "find_theaters",
           tool_call_id: "call-find_theaters",
-          content:
-            Jason.encode!(%{
-              "movie" => "Barbie",
-              "theaters" => [
-                %{
-                  "name" => "AMC",
-                  "address" => "2000 W El Camino Real"
-                }
-              ]
-            })
+          content: "I don't know where the theaters are."
         })
 
       assert expected == ChatGoogleAI.for_api(tool_result)
@@ -372,7 +355,7 @@ defmodule ChatModels.ChatGoogleAITest do
                        }
                      }
                    ],
-                   "role" => :user
+                   "role" => "user"
                  }
                ]
              } = data
@@ -559,9 +542,9 @@ defmodule ChatModels.ChatGoogleAITest do
                ChatGoogleAI.do_process_response(model, response, MessageDelta)
 
       assert struct.role == :assistant
-      assert struct.content == "This is the first part of a mes"
+      assert struct.content == ContentPart.text!("This is the first part of a mes")
       assert struct.index == 0
-      assert struct.status == :incomplete
+      assert struct.status == :complete
     end
 
     test "handles receiving a MessageDelta with an empty text part", %{model: model} do
@@ -581,7 +564,7 @@ defmodule ChatModels.ChatGoogleAITest do
       assert [%MessageDelta{} = struct] =
                ChatGoogleAI.do_process_response(model, response, MessageDelta)
 
-      assert struct.content == ""
+      assert struct.content == ContentPart.text!("")
     end
 
     test "handles API error messages", %{model: model} do
@@ -677,9 +660,9 @@ defmodule ChatModels.ChatGoogleAITest do
                ChatGoogleAI.do_process_response(model, response, MessageDelta)
 
       assert struct.role == :assistant
-      assert struct.content == "This is a partial message"
+      assert struct.content == ContentPart.text!("This is a partial message")
       assert struct.index == 0
-      assert struct.status == :incomplete
+      assert struct.status == :complete
 
       # Verify that token usage is properly included in metadata
       assert %TokenUsage{} = struct.metadata.usage
@@ -795,6 +778,7 @@ defmodule ChatModels.ChatGoogleAITest do
                "model" => "gemini-1.5-flash",
                "module" => "Elixir.LangChain.ChatModels.ChatGoogleAI",
                "receive_timeout" => 60000,
+               "thinking_budget" => nil,
                "stream" => false,
                "temperature" => 0.0,
                "version" => 1,
