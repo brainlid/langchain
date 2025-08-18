@@ -294,7 +294,7 @@ defmodule LangChain.Images.OpenAIImage do
   def do_process_response(%{"data" => images} = response, %OpenAIImage{} = request)
       when is_list(images) do
     created_at = DateTime.from_unix!(response["created"])
-    image_type = if request.output_format, do: request.output_format, else: "png"
+    image_type = request.output_format || "png"
 
     results =
       Enum.map(images, fn
