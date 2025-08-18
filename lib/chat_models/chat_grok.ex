@@ -577,6 +577,8 @@ defmodule LangChain.ChatModels.ChatGrok do
     )
     |> case do
       {:ok, %Req.Response{status: 200} = response} ->
+        Callbacks.fire(grok.callbacks, :on_llm_response_headers, [response.headers])
+
         case grok.stream do
           true -> handle_stream_response(response, grok, metadata)
           false -> handle_response(response, grok, metadata)
