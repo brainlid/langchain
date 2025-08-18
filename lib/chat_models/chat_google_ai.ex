@@ -539,7 +539,9 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     req
     |> Req.post()
     |> case do
-      {:ok, %Req.Response{status: 200, body: data}} ->
+      {:ok, %Req.Response{status: 200, body: data} = response} ->
+        Callbacks.fire(google_ai.callbacks, :on_llm_response_headers, [response.headers])
+
         case do_process_response(google_ai, data) do
           {:error, reason} ->
             {:error, reason}
@@ -593,7 +595,9 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
         )
     )
     |> case do
-      {:ok, %Req.Response{status: 200, body: data}} ->
+      {:ok, %Req.Response{status: 200, body: data} = response} ->
+        Callbacks.fire(google_ai.callbacks, :on_llm_response_headers, [response.headers])
+
         # Separate message deltas by their content type
         {data, _last_index} =
           data
