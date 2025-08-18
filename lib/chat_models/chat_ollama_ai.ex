@@ -39,6 +39,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   require Logger
   import Ecto.Changeset
   alias __MODULE__
+  alias LangChain.Callbacks
   alias LangChain.ChatModels.ChatModel
   alias LangChain.ChatModels.ChatOpenAI
   alias LangChain.Message
