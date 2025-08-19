@@ -381,9 +381,9 @@ defmodule LangChain.ChatModels.ChatOpenAI do
               Enum.reverse(data) ++ acc
           end
         end)
-        |> Enum.reverse(),
-      user: openai.user
+        |> Enum.reverse()
     }
+    |> Utils.conditionally_add_to_map(:user, openai.user)
     |> Utils.conditionally_add_to_map(:frequency_penalty, openai.frequency_penalty)
     |> Utils.conditionally_add_to_map(:response_format, set_response_format(openai))
     |> Utils.conditionally_add_to_map(
