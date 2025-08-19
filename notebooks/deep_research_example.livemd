@@ -1,0 +1,316 @@
+# OpenAI Deep Research with LangChain
+
+```elixir
+Mix.install([
+  {:langchain, path: "..", env: :dev}
+])
+```
+
+## Introduction
+
+This notebook demonstrates how to use OpenAI Deep Research with LangChain Elixir. Deep Research is a powerful tool that can conduct comprehensive research on complex topics, taking 5-30 minutes to analyze hundreds of sources and provide detailed reports with citations.
+
+## Setup
+
+First, ensure you have an OpenAI API key with access to Deep Research models:
+
+```elixir
+# Set your OpenAI API key
+# You can set this as an environment variable: OPENAI_KEY=your_key_here
+# Or configure it directly (not recommended for production):
+# Application.put_env(:langchain, :openai_key, "your_key_here")
+
+# Import required modules
+alias LangChain.Tools.DeepResearch
+alias LangChain.ChatModels.ChatOpenAI
+alias LangChain.Chains.LLMChain
+alias LangChain.Message
+```
+
+## Basic Deep Research Example
+
+Let's start with a simple research request:
+
+```elixir
+# Create a DeepResearch tool
+{:ok, deep_research_tool} = DeepResearch.new()
+
+# Display the tool configuration
+IO.inspect(deep_research_tool, label: "Deep Research Tool")
+```
+
+## Quick Research with o4-mini-deep-research
+
+For faster results, let's use the mini model for a straightforward research question:
+
+```elixir
+# Create an LLM chain with Deep Research capability
+model = ChatOpenAI.new!(%{temperature: 0, stream: false})
+
+{:ok, chain} =
+  %{llm: model, verbose: true, async_tool_timeout: 35 * 60 * 1000}
+  |> LLMChain.new!()
+  |> LLMChain.add_message(
+    Message.new_user!("""
+    Research the current state of electric vehicle adoption in 2024. 
+    Use the faster deep research model and focus on:
+    - Market share statistics
+    - Key trends and challenges
+    - Major developments from leading manufacturers
+    
+    Keep the research concise but comprehensive.
+    """)
+  )
+  |> LLMChain.add_tools(DeepResearch.new!())
+  |> LLMChain.run(mode: :while_needs_response)
+
+# Display the research results
+IO.puts(chain.last_message.content)
+```
+
+## Advanced Research with Custom Parameters
+
+For more complex research, you can customize the Deep Research parameters:
+
+```elixir
+# Create a custom research query with specific parameters
+research_query = """
+Conduct an in-depth analysis of the economic impact of artificial intelligence on job markets globally. Focus on:
+
+1. Quantitative data on job displacement and creation (2020-2024)
+2. Industry-specific impacts (manufacturing, services, healthcare, finance)
+3. Geographic variations (US, EU, Asia-Pacific)
+4. Policy responses and their effectiveness
+5. Future projections and recommendations
+
+Prioritize peer-reviewed research, government reports, and authoritative economic analysis.
+"""
+
+# Note: This would use the full o3-deep-research model which takes 5-30 minutes
+# For demonstration, we'll show how to structure the request
+
+manual_execution_example = fn ->
+  # This is how you would execute a comprehensive research request
+  deep_research_args = %{
+    "query" => research_query,
+    "model" => "o3-deep-research-2025-06-26",  # Full model for comprehensive research
+    "system_message" => "You are an expert economic researcher. Provide detailed analysis with specific statistics and cite all sources.",
+    "max_tool_calls" => 75  # Allow more web searches for comprehensive coverage
+  }
+  
+  # Execute the research (this would take 5-30 minutes in real usage)
+  DeepResearch.execute(deep_research_args, %{})
+end
+
+IO.puts("Advanced research configuration prepared. In production, this would initiate a 5-30 minute comprehensive research process.")
+```
+
+## Working with Research Results
+
+Deep Research returns detailed results with citations. Here's how to work with them:
+
+```elixir
+# Example of how research results are structured
+example_result = """
+## Research Findings
+
+Artificial Intelligence is significantly reshaping global job markets with both displacement and creation effects. According to recent studies, approximately 12% of current jobs face high automation risk, while AI is simultaneously creating new roles in data science, AI development, and human-AI collaboration.
+
+### Key Statistics (2020-2024)
+- Job displacement: 2.9 million roles automated globally
+- Job creation: 4.1 million new AI-related positions
+- Net job creation: +1.2 million positions
+- Fastest growing sectors: Healthcare AI (+340%), Financial AI (+280%)
+
+### Industry-Specific Impacts
+Manufacturing shows the highest displacement rates (18% of roles) but also significant upskilling opportunities. The healthcare sector demonstrates net positive job creation with AI augmenting rather than replacing medical professionals.
+
+## Sources Consulted
+
+1. World Economic Forum Future of Jobs Report 2024 - https://www.weforum.org/reports/future-of-jobs-2024
+2. McKinsey Global Institute AI Impact Study - https://www.mckinsey.com/ai-impact-2024
+3. OECD Employment Outlook: AI and Labor Markets - https://www.oecd.org/employment/ai-labor-2024
+"""
+
+IO.puts(example_result)
+```
+
+## Integration with LLM Chains
+
+Deep Research works seamlessly with LangChain's conversation flows:
+
+```elixir
+# Example of multi-turn conversation with research
+conversation_flow = fn ->
+  model = ChatOpenAI.new!(%{temperature: 0.3})
+  
+  # Start with user question
+  {:ok, chain} =
+    %{llm: model}
+    |> LLMChain.new!()
+    |> LLMChain.add_message(
+      Message.new_user!("I'm writing a policy brief on renewable energy. Can you research the latest developments?")
+    )
+    |> LLMChain.add_tools(DeepResearch.new!())
+    |> LLMChain.run(mode: :while_needs_response)
+  
+  # Follow up with specific questions based on research
+  {:ok, updated_chain} =
+    chain
+    |> LLMChain.add_message(
+      Message.new_user!("Based on that research, what are the top 3 policy recommendations for accelerating adoption?")
+    )
+    |> LLMChain.run(mode: :while_needs_response)
+  
+  updated_chain
+end
+
+IO.puts("Conversation flow example prepared. This demonstrates how Deep Research integrates with ongoing conversations.")
+```
+
+## Best Practices and Tips
+
+```elixir
+best_practices = """
+## Deep Research Best Practices
+
+### 1. Query Design
+- Be specific and detailed in your research questions
+- Include the type of sources you want (academic, industry reports, news)
+- Specify the time frame if relevant
+- Mention the depth and format you need
+
+### 2. Model Selection
+- Use o4-mini-deep-research for quick research (minutes)
+- Use o3-deep-research for comprehensive analysis (5-30 minutes)
+
+### 3. Parameter Tuning
+- Set max_tool_calls to control cost and time
+- Provide system_message for specialized research approaches
+
+### 4. Integration Patterns
+- Use in chains for conversational research workflows
+- Combine with other tools for multi-modal analysis
+- Store results for later reference and follow-up
+
+### 5. Cost Management
+- Start with smaller queries to test
+- Use max_tool_calls to limit scope
+- Monitor usage through OpenAI dashboard
+"""
+
+IO.puts(best_practices)
+```
+
+## Handling Long-Running Research (Timeout Configuration)
+
+Deep Research operations can take 5-30 minutes to complete, but the default timeout for async tools in LangChain is only 2 minutes. To avoid timeout errors, you must configure the `async_tool_timeout`:
+
+```elixir
+# Configure extended timeout for Deep Research
+model = ChatOpenAI.new!(%{temperature: 0, stream: false})
+
+{:ok, chain_with_timeout} =
+  %{
+    llm: model, 
+    verbose: true,
+    async_tool_timeout: 35 * 60 * 1000  # 35 minutes in milliseconds
+  }
+  |> LLMChain.new!()
+  |> LLMChain.add_message(
+    Message.new_user!("""
+    Conduct a comprehensive analysis of global renewable energy trends in 2024-2025.
+    Include:
+    - Market growth statistics by region
+    - Technological breakthroughs in solar, wind, and battery storage
+    - Policy changes and their impacts
+    - Investment trends and major projects
+    - Challenges and future outlook
+    """)
+  )
+  |> LLMChain.add_tools(DeepResearch.new!())
+
+# This will now run without timing out
+# Note: The research will still take 5-30 minutes to complete
+{:ok, result} = LLMChain.run(chain_with_timeout, mode: :while_needs_response)
+
+IO.puts("Research initiated with proper timeout configuration. The operation will complete successfully even if it takes 30+ minutes.")
+```
+
+### Important Timeout Notes:
+
+- **Default timeout**: 2 minutes (insufficient for Deep Research)
+- **Recommended timeout**: 35 minutes (covers worst-case scenarios)
+- **Setting**: Configure via `async_tool_timeout` in milliseconds
+- **Error without configuration**: `(exit) exited in: Task.await_many(..., 120000)`
+
+## Troubleshooting
+
+```elixir
+troubleshooting_guide = """
+## Common Issues and Solutions
+
+### API Key Configuration
+If you get authentication errors:
+- Ensure OPENAI_KEY environment variable is set
+- Verify your API key has Deep Research access
+- Check your OpenAI organization/project settings
+
+### Timeout Issues
+If requests timeout:
+- Configure async_tool_timeout in LLMChain (see section above)
+- Check your network connectivity
+- Ensure you're using sufficient timeout values (35+ minutes)
+
+### Rate Limiting
+If you hit rate limits:
+- Use max_tool_calls to reduce API calls
+- Space out requests over time
+- Check your OpenAI usage dashboard
+
+### Research Quality
+To improve research results:
+- Be more specific in your queries
+- Use system_message to guide the approach
+- Specify preferred source types
+- Include time constraints when relevant
+"""
+
+IO.puts(troubleshooting_guide)
+```
+
+## Using Alternative Endpoints
+
+Deep Research supports custom endpoints for alternative providers like Azure OpenAI or OpenRouter:
+
+```elixir
+# Configure custom endpoint in your application config
+# In config/config.exs or config/runtime.exs:
+# config :langchain, :deep_research_endpoint, "https://your-azure-instance.openai.azure.com/openai/responses"
+
+# Or set it at runtime:
+Application.put_env(:langchain, :deep_research_endpoint, "https://api.openrouter.ai/api/v1/responses")
+
+# Then use Deep Research normally - it will use the configured endpoint
+model = ChatOpenAI.new!(%{temperature: 0, stream: false})
+
+{:ok, chain} =
+  %{llm: model, verbose: true, async_tool_timeout: 35 * 60 * 1000}
+  |> LLMChain.new!()
+  |> LLMChain.add_message(
+    Message.new_user!("Research the latest developments in quantum computing")
+  )
+  |> LLMChain.add_tools(DeepResearch.new!())
+
+# The tool will automatically use your configured endpoint
+IO.puts("Deep Research will use the configured custom endpoint")
+```
+
+### Important Notes for Alternative Providers:
+
+- **Azure OpenAI**: Ensure your endpoint includes the full path including deployment name
+- **OpenRouter**: Check that the provider supports the Deep Research models
+- **Authentication**: The tool uses the same `:openai_key` configuration for all providers
+- **Compatibility**: The provider must support OpenAI's Deep Research API format
+
+This completes the Deep Research integration example. The tool provides powerful research capabilities while maintaining the familiar LangChain patterns and workflows.
