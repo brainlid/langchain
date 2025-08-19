@@ -356,7 +356,8 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
                "name" => "hello_world",
                "description" => "Give a hello world greeting",
                #  NOTE: Sends the required empty parameter definition when none set
-               "parameters" => %{"properties" => %{}, "type" => "object"}
+               "parameters" => %{"properties" => %{}, "type" => "object"},
+               "strict" => false
              }
     end
 
@@ -392,7 +393,8 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert result == %{
                "name" => "say_hi",
                "description" => "Provide a friendly greeting.",
-               "parameters" => params_def
+               "parameters" => params_def,
+               "strict" => false
              }
     end
 
@@ -425,7 +427,8 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert result == %{
                "name" => "say_hi",
                "description" => "Provide a friendly greeting.",
-               "parameters" => params_def
+               "parameters" => params_def,
+               "strict" => false
              }
     end
 
