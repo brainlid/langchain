@@ -50,6 +50,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   alias LangChain.FunctionParam
   alias LangChain.LangChainError
   alias LangChain.Utils
+  alias LangChain.Callbacks
 
   @behaviour ChatModel
 
