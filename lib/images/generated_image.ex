@@ -22,7 +22,7 @@ defmodule LangChain.Images.GeneratedImage do
 
   @primary_key false
   embedded_schema do
-    field :image_type, Ecto.Enum, values: [:png, :jpg], default: :png
+    field :image_type, Ecto.Enum, values: [:png, :jpg, :webp], default: :png
     field :type, Ecto.Enum, values: [:base64, :url], default: :url
     # When a :url, content is the URL. When base64, content is the encoded data.
     field :content, :string

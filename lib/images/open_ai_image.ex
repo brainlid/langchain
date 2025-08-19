@@ -34,12 +34,13 @@ defmodule LangChain.Images.OpenAIImage do
     # goes on too long by itself, it tends to hallucinate more.
     field :receive_timeout, :integer, default: @receive_timeout
 
-    # Defaults to `dall-e-2`. The other model option is `dall-e-3`.
+    # Defaults to `dall-e-2`. The other model option is `dall-e-3` or `gpt-image-1`.
     # The model to use for image generation.
     field :model, :string, default: "dall-e-2"
 
     # A text description of the desired image(s). The maximum length is 1000
-    # characters for `dall-e-2` and 4000 characters for `dall-e-3`.
+    # characters for `dall-e-2`, 4000 characters for `dall-e-3`
+    # and 32000 characters for `gpt-image-1`.
     field :prompt, :string
 
     # The number of images to generate. Must be between 1 and 10. For dall-e-3,
@@ -49,23 +50,30 @@ defmodule LangChain.Images.OpenAIImage do
     #  The quality of the image that will be generated. `hd` creates images with
     #  finer details and greater consistency across the image. This param is
     #  only supported for `dall-e-3`.
+    #  `high`, `medium` and `low` are supported for `gpt-image-1`.
     field :quality, :string, default: "standard"
 
     # The format in which the generated images are returned. Must be one of
     # `url` or `b64_json`. URLs are only valid for 60 minutes after the image
     # has been generated.
-    field :response_format, :string, default: "url"
+    field :response_format, :string
+
+    # The format in which the generated images are returned.
+    # This parameter is only supported for `gpt-image-1`.
+    # Must be one of `png`, `jpeg`, or `webp`.
+    field :output_format, :string
 
     # The size of the generated images. Must be one of `256x256`, `512x512`, or
     # `1024x1024` for `dall-e-2`. Must be one of `1024x1024`, `1792x1024`, or `1024x1792`
-    # for `dall-e-3` models.
+    # for `dall-e-3` models. Must be one of `1024x1024`, `1536x1024` (landscape),
+    # `1024x1536` (portrait), or `auto` (default value) for `gpt-image-1`.
     field :size, :string, default: "1024x1024"
 
     # The style of the generated images. Must be one of `vivid` or `natural`.
     # Vivid causes the model to lean towards generating hyper-real and dramatic
     # images. Natural causes the model to produce more natural, less hyper-real
     # looking images. This param is only supported for `dall-e-3`.
-    field :style, :string, default: "vivid"
+    field :style, :string
 
     # A unique identifier representing your end-user, which can help OpenAI to
     # monitor and detect abuse
@@ -83,6 +91,7 @@ defmodule LangChain.Images.OpenAIImage do
     :n,
     :quality,
     :response_format,
+    :output_format,
     :size,
     :style,
     :user
@@ -135,10 +144,7 @@ defmodule LangChain.Images.OpenAIImage do
   defp common_validation(changeset) do
     changeset
     |> validate_required(@required_fields)
-    |> validate_inclusion(:model, ["dall-e-2", "dall-e-3"])
-    |> validate_inclusion(:quality, ["standard", "hd"])
-    |> validate_inclusion(:response_format, ["url", "b64_json"])
-    |> validate_inclusion(:style, ["vivid", "natural"])
+    |> validate_inclusion(:model, ["dall-e-2", "dall-e-3", "gpt-image-1"])
     |> validate_number(:receive_timeout, greater_than_or_equal_to: 0)
   end
 
@@ -149,12 +155,26 @@ defmodule LangChain.Images.OpenAIImage do
         |> validate_length(:prompt, max: 4_000)
         |> validate_number(:n, equal_to: 1)
         |> validate_inclusion(:size, ["1024x1024", "1792x1024", "1024x1792"])
+        |> validate_inclusion(:quality, ["standard", "hd"])
+        |> validate_inclusion(:style, ["vivid", "natural"])
+        |> validate_inclusion(:response_format, ["url", "b64_json"])
 
       "dall-e-2" ->
         changeset
         |> validate_length(:prompt, max: 1_000)
         |> validate_number(:n, greater_than_or_equal_to: 1, less_than_or_equal_to: 10)
         |> validate_inclusion(:size, ["256x256", "512x512", "1024x1024"])
+        |> validate_inclusion(:quality, ["standard", "hd"])
+        |> validate_inclusion(:response_format, ["url", "b64_json"])
+
+      "gpt-image-1" ->
+        changeset
+        |> validate_length(:prompt, max: 32_000)
+        |> validate_number(:n, greater_than_or_equal_to: 1, less_than_or_equal_to: 10)
+        |> validate_inclusion(:size, ["1024x1024", "1536x1024", "1024x1536"])
+        |> validate_inclusion(:quality, ["high", "medium", "low"])
+        |> validate_inclusion(:output_format, ["png", "jpeg", "webp"])
+        |> validate_inclusion(:response_format, ["b64_json"])
 
       _other ->
         changeset
@@ -171,10 +191,11 @@ defmodule LangChain.Images.OpenAIImage do
       prompt: openai.prompt,
       n: openai.n,
       quality: openai.quality,
-      response_format: openai.response_format,
-      size: openai.size,
-      style: openai.style
+      size: openai.size
     }
+    |> Utils.conditionally_add_to_map(:response_format, openai.response_format)
+    |> Utils.conditionally_add_to_map(:style, openai.style)
+    |> Utils.conditionally_add_to_map(:output_format, openai.output_format)
     |> Utils.conditionally_add_to_map(:user, openai.user)
   end
 
@@ -273,24 +294,25 @@ defmodule LangChain.Images.OpenAIImage do
   def do_process_response(%{"data" => images} = response, %OpenAIImage{} = request)
       when is_list(images) do
     created_at = DateTime.from_unix!(response["created"])
+    image_type = request.output_format || "png"
 
     results =
       Enum.map(images, fn
         %{"b64_json" => base64_raw_content} = image_info ->
           GeneratedImage.new!(%{
             type: :base64,
-            image_type: :png,
+            image_type: image_type,
             content: base64_raw_content,
             created_at: created_at,
             prompt: Map.get(image_info, "revised_prompt", request.prompt),
             metadata: %{"model" => request.model, "quality" => request.quality}
           })
 
-        %{"url" => base64_raw_content} = image_info ->
+        %{"url" => url} = image_info ->
           GeneratedImage.new!(%{
             type: :url,
-            image_type: :png,
-            content: base64_raw_content,
+            image_type: image_type,
+            content: url,
             created_at: created_at,
             prompt: Map.get(image_info, "revised_prompt", request.prompt),
             metadata: %{"model" => request.model, "quality" => request.quality}
