@@ -53,6 +53,8 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   alias LangChain.Utils
   alias LangChain.Callbacks
   alias LangChain.TokenUsage
+  alias LangChain.NativeTool
+  alias LangChain.Function
 
   @behaviour ChatModel
 
@@ -303,6 +305,14 @@ defmodule LangChain.ChatModels.ChatVertexAI do
         "response" => content
       }
     }
+  end
+
+  defp for_api(%NativeTool{name: name, configuration: %{} = config}) do
+    %{name => config}
+  end
+
+  defp for_api(%NativeTool{name: name, configuration: nil}) do
+    name
   end
 
   defp for_api(nil), do: nil
