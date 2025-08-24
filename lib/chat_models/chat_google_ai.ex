@@ -664,10 +664,6 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   defp get_action(%ChatGoogleAI{stream: false}), do: "generateContent"
   defp get_action(%ChatGoogleAI{stream: true}), do: "streamGenerateContent"
 
-  def complete_final_delta(data) when is_list(data) do
-    update_in(data, [Access.at(-1), Access.at(-1)], &%{&1 | status: :complete})
-  end
-
   def do_process_response(model, response, message_type \\ Message)
 
   def do_process_response(model, %{"candidates" => candidates} = data, message_type)
@@ -693,9 +689,12 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
 
   def do_process_response(
         model,
-        %{"content" => %{"parts" => parts} = content_data} = data,
+        %{"content" => content} = data,
         Message
       ) do
+    role = content["role"]
+    parts = content["parts"] || []
+
     text_part =
       parts
       |> filter_parts_for_types(["text"])
@@ -725,7 +724,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
       end)
 
     %{
-      role: unmap_role(content_data["role"]),
+      role: unmap_role(role),
       content: text_part,
       complete: true,
       index: data["index"],
@@ -745,9 +744,12 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
 
   def do_process_response(
         model,
-        %{"content" => %{"parts" => parts} = content_data} = data,
+        %{"content" => content} = data,
         MessageDelta
       ) do
+    role = content["role"]
+    parts = content["parts"] || []
+
     content =
       case parts do
         [%{"text" => text, "thought" => true}] ->
@@ -768,7 +770,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
       end)
 
     %{
-      role: unmap_role(content_data["role"]),
+      role: unmap_role(role),
       content: content,
       status: finish_reason_to_status(data["finishReason"]),
       index: data["index"]
