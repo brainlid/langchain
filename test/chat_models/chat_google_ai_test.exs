@@ -524,6 +524,25 @@ defmodule ChatModels.ChatGoogleAITest do
       assert call.arguments == %{"value" => 123}
     end
 
+    test "handles no parts in content", %{model: model} do
+      response = %{
+        "candidates" => [
+          %{
+            "content" => %{
+              "role" => "model"
+            },
+            "finishReason" => "STOP",
+            "index" => 0
+          }
+        ]
+      }
+
+      assert [%Message{} = struct] = ChatGoogleAI.do_process_response(model, response)
+      assert struct.role == :assistant
+      assert struct.content == []
+      assert struct.status == :complete
+    end
+
     test "handles receiving MessageDeltas as well", %{model: model} do
       response = %{
         "candidates" => [
@@ -565,6 +584,27 @@ defmodule ChatModels.ChatGoogleAITest do
                ChatGoogleAI.do_process_response(model, response, MessageDelta)
 
       assert struct.content == ContentPart.text!("")
+    end
+
+    test "handles receiving a MessageDelta with no parts in content", %{model: model} do
+      response = %{
+        "candidates" => [
+          %{
+            "content" => %{
+              "role" => "model"
+            },
+            "finishReason" => "STOP",
+            "index" => 0
+          }
+        ]
+      }
+
+      assert [%MessageDelta{} = struct] =
+               ChatGoogleAI.do_process_response(model, response, MessageDelta)
+
+      assert struct.role == :assistant
+      assert struct.content == nil
+      assert struct.status == :complete
     end
 
     test "handles API error messages", %{model: model} do
