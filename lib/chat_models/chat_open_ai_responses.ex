@@ -204,35 +204,35 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
 
   # https://platform.openai.com/docs/api-reference/responses/create
   embedded_schema do
-    field :receive_timeout, :integer, default: @receive_timeout
-    field :api_key, :string, redact: true
-    field :endpoint, :string, default: "https://api.openai.com/v1/responses"
+    field(:receive_timeout, :integer, default: @receive_timeout)
+    field(:api_key, :string, redact: true)
+    field(:endpoint, :string, default: "https://api.openai.com/v1/responses")
 
-    field :model, :string, default: "gpt-3.5-turbo"
+    field(:model, :string, default: "gpt-3.5-turbo")
 
-    field :include, {:array, :string}, default: []
+    field(:include, {:array, :string}, default: [])
     # omit instructions becasue langchain assumes statelessness
-    field :max_output_tokens, :integer, default: nil
+    field(:max_output_tokens, :integer, default: nil)
     # omit metadata because chat_open_ai also omits it
     # omit parallel_tool_calls because chat_open_ai also omits it
     # omit previous_response_id becasue langchain assumes statelessness
-    field :reasoning, :map, default: nil
+    field(:reasoning, :map, default: nil)
     # omit service_tier because chat_open_ai also omits it
     # omit store, but set it explicitly to false later to keep statelessness. the API will default true unless we set it
-    field :stream, :boolean, default: false
-    field :temperature, :float, default: 1.0
-    field :json_response, :boolean, default: false
-    field :json_schema, :map, default: nil
-    field :json_schema_name, :string, default: nil
+    field(:stream, :boolean, default: false)
+    field(:temperature, :float, default: 1.0)
+    field(:json_response, :boolean, default: false)
+    field(:json_schema, :map, default: nil)
+    field(:json_schema_name, :string, default: nil)
 
     # This can be a string or object. We will need to allow ["none", "auto", "required", "file_search", "web_search_preview", and "computer_use_preview"] and take any other string and turn it to %{name: value, type: "function"}
-    field :tool_choice, :any, default: nil, virtual: true
-    field :top_p, :float, default: 1.0
-    field :truncation, :string
-    field :user, :string
+    field(:tool_choice, :any, default: nil, virtual: true)
+    field(:top_p, :float, default: 1.0)
+    field(:truncation, :string)
+    field(:user, :string)
 
-    field :callbacks, {:array, :map}, default: []
-    field :verbose_api, :boolean, default: false
+    field(:callbacks, {:array, :map}, default: [])
+    field(:verbose_api, :boolean, default: false)
   end
 
   @type t :: %ChatOpenAIResponses{}
@@ -715,7 +715,6 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
             {:error, reason}
 
           result ->
-            dbg(result)
             Callbacks.fire(openai.callbacks, :on_llm_new_message, [result])
 
             # Track non-streaming response completion
@@ -774,7 +773,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
           get_ratelimit_info(response.headers)
         ])
 
-        data
+        List.flatten(data)
 
       {:error, %LangChainError{} = error} ->
         {:error, error}
@@ -942,6 +941,96 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     end
   end
 
+  # This is the first event we get for a function call.
+  # It is followed by a series of `response.function_call_arguments.delta` events.
+  # It is followed by a `response.function_call_arguments.done` event. (which we skip)
+  # Finally, it is followed by a `response.output_item.done` event.
+  def do_process_response(_model, %{
+        "type" => "response.output_item.added",
+        "output_index" => output_index,
+        "item" => %{
+          "type" => "function_call",
+          "call_id" => call_id,
+          "name" => name,
+          "arguments" => args
+        }
+      }) do
+    data = %{
+      status: :incomplete,
+      type: :function,
+      call_id: call_id,
+      name: name,
+      arguments: args,
+      index: output_index
+    }
+
+    with {:ok, %ToolCall{} = call} <- ToolCall.new(data),
+         {:ok, delta} <-
+           MessageDelta.new(%{
+             content: "",
+             status: :incomplete,
+             role: :assistant,
+             tool_calls: [call]
+           }) do
+      delta
+    else
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:error, LangChainError.exception(changeset)}
+    end
+  end
+
+  def do_process_response(_model, %{
+        "type" => "response.function_call_arguments.delta",
+        "output_index" => output_index,
+        "delta" => delta_text
+      }) do
+    data = %{
+      arguments: delta_text,
+      index: output_index
+    }
+
+    with {:ok, call} <- ToolCall.new(data),
+         {:ok, message} <-
+           MessageDelta.new(%{
+             content: "",
+             status: :incomplete,
+             role: :assistant,
+             tool_calls: [call]
+           }) do
+      message
+    else
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:error, LangChainError.exception(changeset)}
+    end
+  end
+
+  def do_process_response(_model, %{
+        "type" => "response.output_item.done",
+        "output_index" => output_index,
+        "item" => %{"type" => "function_call"} = item
+      }) do
+    data = %{
+      status: :complete,
+      index: output_index,
+      call_id: item["call_id"],
+      arguments: item["arguments"],
+      name: item["name"]
+    }
+
+    with {:ok, call} <- ToolCall.new(data),
+         {:ok, message} <-
+           MessageDelta.new(%{
+             status: :complete,
+             role: :assistant,
+             tool_calls: [call]
+           }) do
+      message
+    else
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:error, LangChainError.exception(changeset)}
+    end
+  end
+
   # Streaming events explicitly skipped
 
   # Items we should come back and implement:
@@ -960,7 +1049,6 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     "response.content_part.done",
     "response.refusal.delta",
     "response.refusal.done",
-    "response.function_call_arguments.delta",
     "response.function_call_arguments.done",
     "response.file_search_call.in_progress",
     "response.file_search_call.searching",
@@ -1193,5 +1281,12 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   @impl ChatModel
   def restore_from_map(%{"version" => 1} = data) do
     ChatOpenAIResponses.new(data)
+  end
+end
+
+# temporary; big chain inspect clutters the console
+defimpl Inspect, for: LangChain.Chains.LLMChain do
+  def inspect(_chain, _opts) do
+    "#<LLMChain>"
   end
 end
