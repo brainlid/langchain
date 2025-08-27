@@ -476,9 +476,11 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
 
   def for_api(%ChatOpenAIResponses{} = _model, %ToolResult{type: :function} = result) do
     # a ToolResult becomes a stand-alone %Message{role: :tool} response.
+    [%ContentPart{type: :text, content: output, options: []}] = result.content
+
     %{
       "call_id" => result.tool_call_id,
-      "output" => result.content,
+      "output" => output,
       "type" => "function_call_output"
     }
   end
