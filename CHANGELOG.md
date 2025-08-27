@@ -1,8 +1,8 @@
 # Changelog
 
-## [Unreleased]
+## v0.4.0-rc.2
 
-
+### Added
 - New callback `on_llm_response_headers` supports receiving the full Req HTTP response headers for a request.
 
 ### Breaking Changes
