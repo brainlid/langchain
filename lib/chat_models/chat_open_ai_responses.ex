@@ -193,6 +193,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   alias LangChain.Utils
   alias LangChain.MessageDelta
   alias LangChain.Callbacks
+  alias LangChain.ChatModels.ReasoningOptions
 
   @behaviour ChatModel
 
@@ -216,7 +217,8 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     # omit metadata because chat_open_ai also omits it
     # omit parallel_tool_calls because chat_open_ai also omits it
     # omit previous_response_id becasue langchain assumes statelessness
-    field(:reasoning, :map, default: nil)
+    # Reasoning options for gpt-5 and o-series models
+    embeds_one(:reasoning, ReasoningOptions)
     # omit service_tier because chat_open_ai also omits it
     # omit store, but set it explicitly to false later to keep statelessness. the API will default true unless we set it
     field(:stream, :boolean, default: false)
@@ -245,7 +247,6 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     :model,
     :include,
     :max_output_tokens,
-    :reasoning,
     :stream,
     :temperature,
     :json_response,
@@ -282,6 +283,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   def new(%{} = attrs \\ %{}) do
     %ChatOpenAIResponses{}
     |> cast(attrs, @create_fields)
+    |> cast_embed(:reasoning)
     |> common_validation()
     |> apply_action(:insert)
   end
@@ -320,6 +322,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
       temperature: openai.temperature,
       top_p: openai.top_p,
       stream: openai.stream,
+      store: false,
       input:
         messages
         |> Enum.reduce([], fn m, acc ->
@@ -336,7 +339,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     }
     |> Utils.conditionally_add_to_map(:include, openai.include)
     |> Utils.conditionally_add_to_map(:max_output_tokens, openai.max_output_tokens)
-    |> Utils.conditionally_add_to_map(:reasoning, openai.reasoning)
+    |> Utils.conditionally_add_to_map(:reasoning, ReasoningOptions.to_api_map(openai.reasoning))
     |> Utils.conditionally_add_to_map(:text, set_text_format(openai))
     |> Utils.conditionally_add_to_map(:tool_choice, get_tool_choice(openai))
     |> Utils.conditionally_add_to_map(:truncation, openai.truncation)
@@ -1079,9 +1082,11 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     "error"
   ]
 
-  def do_process_response(_model, %{"type" => event})
-      when event in @skippable_streaming_events,
-      do: :skip
+  def do_process_response(_model, %{"type" => event} = event_data)
+      when event in @skippable_streaming_events do
+    Logger.warning("Skipping event: #{event} with data: #{inspect(event_data)}")
+    :skip
+  end
 
   def do_process_response(_model, %{"error" => %{"message" => reason}}) do
     Logger.error("Received error from API: #{inspect(reason)}")
@@ -1186,18 +1191,6 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     end
   end
 
-  defp finish_reason_to_status(nil), do: :incomplete
-  defp finish_reason_to_status("stop"), do: :complete
-  defp finish_reason_to_status("tool_calls"), do: :complete
-  defp finish_reason_to_status("content_filter"), do: :complete
-  defp finish_reason_to_status("length"), do: :length
-  defp finish_reason_to_status("max_tokens"), do: :length
-
-  defp finish_reason_to_status(other) do
-    Logger.warning("Unsupported finish_reason in message. Reason: #{inspect(other)}")
-    nil
-  end
-
   defp maybe_add_org_id_header(%Req.Request{} = req) do
     org_id = get_org_id()
 
@@ -1236,19 +1229,6 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     return
   end
 
-  defp get_token_usage(%{"usage" => usage} = _response_body) do
-    # extract out the reported response token usage
-    #
-    #  https://platform.openai.com/docs/api-reference/chat/object#chat/object-usage
-    TokenUsage.new!(%{
-      input: Map.get(usage, "prompt_tokens"),
-      output: Map.get(usage, "completion_tokens"),
-      raw: usage
-    })
-  end
-
-  defp get_token_usage(_response_body), do: nil
-
   @doc """
   Generate a config map that can later restore the model's configuration.
   """
@@ -1262,8 +1242,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         :model,
         :temperature,
         :frequency_penalty,
-        :reasoning_mode,
-        :reasoning_effort,
+        :reasoning,
         :receive_timeout,
         :seed,
         :n,

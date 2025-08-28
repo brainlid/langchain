@@ -1,24 +1,12 @@
 defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
   use LangChain.BaseCase
-  import LangChain.Fixtures
 
   doctest LangChain.ChatModels.ChatOpenAIResponses
   alias LangChain.ChatModels.ChatOpenAIResponses
   alias LangChain.Function
   alias LangChain.FunctionParam
-  alias LangChain.TokenUsage
-  alias LangChain.LangChainError
-  alias LangChain.Message
-  alias LangChain.Message.ContentPart
-  alias LangChain.Message.ToolCall
-  alias LangChain.Message.ToolResult
 
   @test_model "gpt-4o-mini-2024-07-18"
-  @gpt4 "gpt-4-1106-preview"
-
-  defp hello_world(_args, _context) do
-    "Hello world!"
-  end
 
   setup do
     {:ok, hello_world} =
@@ -116,6 +104,190 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
       assert {"must be greater than or equal to %{number}", _} = changeset.errors[:temperature]
     end
 
+    test "supports setting reasoning options" do
+      {:ok, openai} =
+        ChatOpenAIResponses.new(%{
+          "model" => @test_model,
+          "reasoning" => %{
+            "effort" => "high"
+          }
+        })
+
+      assert openai.reasoning.effort == :high
+    end
+
+    test "validates reasoning_effort values" do
+      assert {:error, changeset} =
+               ChatOpenAIResponses.new(%{
+                 "model" => @test_model,
+                 "reasoning" => %{"effort" => "invalid"}
+               })
+
+      refute changeset.valid?
+      assert changeset.errors == []
+      assert changeset.changes.reasoning.errors[:effort] != nil
+    end
+
+    test "supports setting reasoning_summary" do
+      {:ok, openai} =
+        ChatOpenAIResponses.new(%{
+          "model" => @test_model,
+          "reasoning" => %{
+            "summary" => "detailed"
+          }
+        })
+
+      assert openai.reasoning.summary == :detailed
+    end
+
+    test "validates reasoning_summary values" do
+      assert {:error, changeset} =
+               ChatOpenAIResponses.new(%{
+                 "model" => @test_model,
+                 "reasoning" => %{"summary" => "invalid"}
+               })
+
+      refute changeset.valid?
+      assert changeset.errors == []
+      assert changeset.changes.reasoning.errors[:summary] != nil
+    end
+
+    test "supports setting reasoning_generate_summary (deprecated)" do
+      {:ok, openai} =
+        ChatOpenAIResponses.new(%{
+          "model" => @test_model,
+          "reasoning" => %{
+            "generate_summary" => "concise"
+          }
+        })
+
+      assert openai.reasoning.generate_summary == :concise
+    end
+
+    test "validates reasoning_generate_summary values" do
+      assert {:error, changeset} =
+               ChatOpenAIResponses.new(%{
+                 "model" => @test_model,
+                 "reasoning" => %{"generate_summary" => "invalid"}
+               })
+
+      refute changeset.valid?
+      assert changeset.errors == []
+      assert changeset.changes.reasoning.errors[:generate_summary] != nil
+    end
+
+    test "accepts all valid reasoning_effort values" do
+      valid_efforts = ["minimal", "low", "medium", "high"]
+
+      for effort <- valid_efforts do
+        assert {:ok, %ChatOpenAIResponses{reasoning: reasoning}} =
+                 ChatOpenAIResponses.new(%{
+                   "model" => @test_model,
+                   "reasoning" => %{"effort" => effort}
+                 })
+
+        assert reasoning.effort == String.to_atom(effort)
+      end
+    end
+
+    test "accepts all valid reasoning summary values" do
+      valid_summaries = ["auto", "concise", "detailed"]
+
+      for summary <- valid_summaries do
+        assert {:ok, %ChatOpenAIResponses{reasoning: reasoning}} =
+                 ChatOpenAIResponses.new(%{
+                   "model" => @test_model,
+                   "reasoning" => %{"summary" => summary}
+                 })
+
+        assert reasoning.summary == String.to_atom(summary)
+
+        assert {:ok, %ChatOpenAIResponses{reasoning: reasoning}} =
+                 ChatOpenAIResponses.new(%{
+                   "model" => @test_model,
+                   "reasoning" => %{"generate_summary" => summary}
+                 })
+
+        assert reasoning.generate_summary == String.to_atom(summary)
+      end
+    end
+
     # Support
+  end
+
+  describe "for_api/3 reasoning options" do
+    test "includes reasoning options when set" do
+      openai =
+        ChatOpenAIResponses.new!(%{
+          "model" => @test_model,
+          "reasoning" => %{
+            "effort" => "high",
+            "summary" => "detailed"
+          }
+        })
+
+      result = ChatOpenAIResponses.for_api(openai, [], [])
+
+      assert result.reasoning == %{
+               "effort" => "high",
+               "summary" => "detailed"
+             }
+    end
+
+    test "excludes reasoning when no options are set" do
+      openai = ChatOpenAIResponses.new!(%{"model" => @test_model})
+
+      result = ChatOpenAIResponses.for_api(openai, [], [])
+
+      refute Map.has_key?(result, :reasoning)
+    end
+
+    test "includes only set reasoning options" do
+      openai =
+        ChatOpenAIResponses.new!(%{
+          "model" => @test_model,
+          "reasoning" => %{
+            "effort" => "medium"
+          }
+        })
+
+      result = ChatOpenAIResponses.for_api(openai, [], [])
+
+      assert result.reasoning == %{"effort" => "medium"}
+    end
+
+    test "includes deprecated reasoning_generate_summary" do
+      openai =
+        ChatOpenAIResponses.new!(%{
+          "model" => @test_model,
+          "reasoning" => %{
+            "generate_summary" => "auto"
+          }
+        })
+
+      result = ChatOpenAIResponses.for_api(openai, [], [])
+
+      assert result.reasoning == %{"generate_summary" => "auto"}
+    end
+
+    test "includes all reasoning options when all are set" do
+      openai =
+        ChatOpenAIResponses.new!(%{
+          "model" => @test_model,
+          "reasoning" => %{
+            "effort" => "low",
+            "summary" => "concise",
+            "generate_summary" => "auto"
+          }
+        })
+
+      result = ChatOpenAIResponses.for_api(openai, [], [])
+
+      assert result.reasoning == %{
+               "effort" => "low",
+               "summary" => "concise",
+               "generate_summary" => "auto"
+             }
+    end
   end
 end
