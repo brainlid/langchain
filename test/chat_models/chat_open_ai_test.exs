@@ -1975,6 +1975,99 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert call.index == 0
     end
 
+    test "parses a MessageDelta with tool_calls (LiteLLM format)", %{model: model} do
+      # Test LiteLLM proxy format where finish_reason might be missing
+      litellm_response = %{
+        "choices" => [
+          %{
+            "delta" => %{
+              "role" => "assistant",
+              "tool_calls" => [
+                %{
+                  "function" => %{"arguments" => "", "name" => "user_info"},
+                  "id" => "call_Gstq9ZhPTXPvgx7JqdnQWRKx",
+                  "index" => 0,
+                  "type" => "function"
+                }
+              ]
+            },
+            "index" => 0
+            # Note: finish_reason is missing here, which is what LiteLLM sends
+          }
+        ],
+        "created" => 1_756_553_455,
+        "id" => "chatcmpl-CAE5GBnvkFwVyW4zfZGcACKcqjRYn",
+        "model" => "gpt-4.1",
+        "object" => "chat.completion.chunk",
+        "system_fingerprint" => "fp_3502f4eb73"
+      }
+
+      # This should not raise an error
+      result = ChatOpenAI.do_process_response(model, litellm_response)
+      assert [%MessageDelta{} = delta] = result
+      assert delta.role == :assistant
+      assert delta.status == :incomplete
+      assert length(delta.tool_calls) == 1
+
+      [tool_call] = delta.tool_calls
+      assert tool_call.call_id == "call_Gstq9ZhPTXPvgx7JqdnQWRKx"
+      assert tool_call.name == "user_info"
+      assert tool_call.type == :function
+      assert tool_call.index == 0
+    end
+
+    test "parses MessageDelta with content streaming (LiteLLM format)", %{model: model} do
+      # Test exact LiteLLM content streaming format from user's logs
+      # First chunk with role
+      first_chunk = %{
+        "choices" => [
+          %{
+            "delta" => %{"content" => "#", "role" => "assistant"},
+            "index" => 0
+            # Note: no finish_reason field at all
+          }
+        ],
+        "created" => 1_756_563_102,
+        "id" => "chatcmpl-68b3069dc68fea6daea17721",
+        "model" => "kimi-k2-0711-preview",
+        "object" => "chat.completion.chunk",
+        "system_fingerprint" => "fpv0_a5c14cfb"
+      }
+
+      # Subsequent chunks without role
+      subsequent_chunk = %{
+        "choices" => [
+          %{
+            "delta" => %{"content" => " The"},
+            "index" => 0
+            # Note: no finish_reason, no role
+          }
+        ],
+        "created" => 1_756_563_102,
+        "id" => "chatcmpl-68b3069dc68fea6daea17721",
+        "model" => "kimi-k2-0711-preview",
+        "object" => "chat.completion.chunk",
+        "system_fingerprint" => "fpv0_a5c14cfb"
+      }
+
+      # Test first chunk processing
+      result1 = ChatOpenAI.do_process_response(model, first_chunk)
+      assert [%MessageDelta{} = delta1] = result1
+      assert delta1.role == :assistant
+      assert delta1.content == "#"
+      assert delta1.status == :incomplete
+      assert delta1.index == 0
+
+      # Test subsequent chunk processing
+      result2 = ChatOpenAI.do_process_response(model, subsequent_chunk)
+      assert [%MessageDelta{} = delta2] = result2
+      # No role in delta
+      assert delta2.role == :unknown
+      assert delta2.content == " The"
+      assert delta2.status == :incomplete
+      assert delta2.index == 0
+    end
+
     test "parses a MessageDelta with tool_calls", %{model: model} do
       response = get_streamed_deltas_multiple_tool_calls()
       [d1, d2, d3 | _rest] = response
