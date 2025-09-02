@@ -2181,6 +2181,62 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     end
   end
 
+  describe "Responses API tool call streaming" do
+    test "handles output_item.added with function_call" do
+      model = ChatOpenAI.new!(%{model: "gpt-5"})
+
+      data = %{
+        "type" => "response.output_item.added",
+        "output_index" => 1,
+        "item" => %{"type" => "function_call", "id" => "fc_123", "name" => "web_scrape"}
+      }
+
+      %MessageDelta{role: :assistant, tool_calls: [call]} =
+        ChatOpenAI.do_process_response(model, data)
+
+      assert call.status == :incomplete
+      assert call.type == :function
+      assert call.call_id == "fc_123"
+      assert call.name == "web_scrape"
+      assert call.index == 1
+    end
+
+    test "handles function_call_arguments.delta and done" do
+      model = ChatOpenAI.new!(%{model: "gpt-5"})
+
+      delta1 = %{
+        "type" => "response.function_call_arguments.delta",
+        "output_index" => 2,
+        "item_id" => "fc_abc",
+        "delta" => "{\"url\":\"https://example.com\""
+      }
+
+      %MessageDelta{role: :assistant, tool_calls: [call1]} =
+        ChatOpenAI.do_process_response(model, delta1)
+
+      assert call1.status == :incomplete
+      assert call1.call_id == "fc_abc"
+      assert is_binary(call1.arguments)
+      assert String.contains?(call1.arguments, "https://example.com")
+
+      done = %{
+        "type" => "response.function_call_arguments.done",
+        "output_index" => 2,
+        "item_id" => "fc_abc",
+        "arguments" => "{\"url\":\"https://example.com\"}",
+        "name" => "web_scrape"
+      }
+
+      %MessageDelta{role: :assistant, tool_calls: [call2]} =
+        ChatOpenAI.do_process_response(model, done)
+
+      assert call2.status == :complete
+      assert call2.call_id == "fc_abc"
+      assert call2.arguments == %{"url" => "https://example.com"}
+      assert call2.index == 2
+    end
+  end
+
   def get_streamed_deltas_basic_text do
     [
       %{

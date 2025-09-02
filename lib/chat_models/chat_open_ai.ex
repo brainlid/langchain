@@ -1152,9 +1152,40 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     :skip
   end
 
-  # Responses API - output item lifecycle (reasoning/messages scaffolding)
-  # Ignore these in streaming until we have content deltas
-  def do_process_response(_model, %{"type" => "response.output_item.added"}), do: :skip
+  # Responses API - output item lifecycle (reasoning/messages scaffolding and tool calls)
+  # Handle function_call item creation; ignore other scaffolding
+  def do_process_response(
+        _model,
+        %{"type" => "response.output_item.added", "item" => item} = data
+      ) do
+    case item do
+      %{"type" => "function_call"} ->
+        index = Map.get(data, "output_index", 0)
+        call_id = item["id"] || Map.get(data, "item_id")
+        name = item["name"]
+
+        tool_call =
+          ToolCall.new!(%{
+            status: :incomplete,
+            type: :function,
+            call_id: call_id,
+            name: name,
+            index: index
+          })
+
+        MessageDelta.new!(%{
+          role: :assistant,
+          content: nil,
+          status: :incomplete,
+          index: index,
+          tool_calls: [tool_call]
+        })
+
+      _ ->
+        :skip
+    end
+  end
+
   def do_process_response(_model, %{"type" => "response.output_item.done"}), do: :skip
 
   # Responses API - content part lifecycle and deltas
@@ -1188,6 +1219,60 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     index = Map.get(data, "output_index", 0)
 
     MessageDelta.new!(%{role: :unknown, content: nil, status: :complete, index: index})
+  end
+
+  # Responses API - tool call arguments streaming
+  def do_process_response(
+        _model,
+        %{"type" => "response.function_call_arguments.delta", "delta" => text} = data
+      ) do
+    index = Map.get(data, "output_index", 0)
+    call_id = Map.get(data, "item_id")
+
+    tool_call =
+      ToolCall.new!(%{
+        status: :incomplete,
+        type: :function,
+        call_id: call_id,
+        arguments: text,
+        index: index
+      })
+
+    MessageDelta.new!(%{
+      role: :assistant,
+      content: nil,
+      status: :incomplete,
+      index: index,
+      tool_calls: [tool_call]
+    })
+  end
+
+  def do_process_response(
+        _model,
+        %{"type" => "response.function_call_arguments.done", "arguments" => args} = data
+      ) do
+    index = Map.get(data, "output_index", 0)
+    call_id = Map.get(data, "item_id")
+    name = Map.get(data, "name")
+
+    # Mark the tool call as complete with the final arguments
+    tool_call =
+      ToolCall.new!(%{
+        status: :complete,
+        type: :function,
+        call_id: call_id,
+        arguments: args,
+        name: name,
+        index: index
+      })
+
+    MessageDelta.new!(%{
+      role: :assistant,
+      content: nil,
+      status: :incomplete,
+      index: index,
+      tool_calls: [tool_call]
+    })
   end
 
   # Text done/completed marker
