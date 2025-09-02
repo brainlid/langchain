@@ -238,6 +238,130 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert data.model == @test_model
       assert data.tool_choice == %{"type" => "function", "function" => %{"name" => "set_weather"}}
     end
+
+    test "uses 'input' key for GPT-5 models and excludes seed" do
+      {:ok, openai} =
+        ChatOpenAI.new(%{
+          model: "gpt-5",
+          temperature: 0.7,
+          seed: 42
+        })
+
+      user_message = Message.new_user!("Hello, GPT-5!")
+      data = ChatOpenAI.for_api(openai, [user_message], [])
+
+      assert data.model == "gpt-5"
+      assert data.temperature == 0.7
+      # GPT-5 should use 'input' key instead of 'messages'
+      assert Map.has_key?(data, :input)
+      refute Map.has_key?(data, :messages)
+      assert is_list(data.input)
+      assert length(data.input) == 1
+      # GPT-5 should NOT include seed parameter even if set
+      refute Map.has_key?(data, :seed)
+    end
+
+    test "uses 'input' key for GPT-5 variant models" do
+      {:ok, openai} =
+        ChatOpenAI.new(%{
+          model: "gpt-5-turbo"
+        })
+
+      user_message = Message.new_user!("Hello, GPT-5 Turbo!")
+      data = ChatOpenAI.for_api(openai, [user_message], [])
+
+      assert data.model == "gpt-5-turbo"
+      # GPT-5 variants should also use 'input' key
+      assert Map.has_key?(data, :input)
+      refute Map.has_key?(data, :messages)
+    end
+
+    test "uses 'messages' key for non-GPT-5 models and includes seed" do
+      {:ok, openai} =
+        ChatOpenAI.new(%{
+          model: "gpt-4",
+          seed: 42
+        })
+
+      user_message = Message.new_user!("Hello, GPT-4!")
+      data = ChatOpenAI.for_api(openai, [user_message], [])
+
+      assert data.model == "gpt-4"
+      # Non-GPT-5 models should use 'messages' key
+      assert Map.has_key?(data, :messages)
+      refute Map.has_key?(data, :input)
+      assert is_list(data.messages)
+      assert length(data.messages) == 1
+      # Non-GPT-5 models should include seed parameter if set
+      assert data.seed == 42
+    end
+
+    test "uses 'messages' key for default model" do
+      {:ok, openai} = ChatOpenAI.new(%{})
+
+      user_message = Message.new_user!("Hello!")
+      data = ChatOpenAI.for_api(openai, [user_message], [])
+
+      # Default model should use 'messages' key
+      assert Map.has_key?(data, :messages)
+      refute Map.has_key?(data, :input)
+    end
+
+    test "formats tools differently for GPT-5 models" do
+      {:ok, openai} = ChatOpenAI.new(%{model: "gpt-5"})
+
+      {:ok, test_function} =
+        Function.new(%{
+          name: "test_function",
+          description: "A test function",
+          parameters: [],
+          function: fn _args, _context -> {:ok, "test result"} end
+        })
+
+      user_message = Message.new_user!("Hello!")
+      data = ChatOpenAI.for_api(openai, [user_message], [test_function])
+
+      assert data.model == "gpt-5"
+      assert is_list(data.tools)
+      assert length(data.tools) == 1
+
+      # GPT-5 should have name and parameters at the top level
+      tool = hd(data.tools)
+      assert tool["type"] == "function"
+      assert tool["name"] == "test_function"
+      assert tool["description"] == "A test function"
+      assert Map.has_key?(tool, "parameters")
+      # Should NOT have nested "function" key
+      refute Map.has_key?(tool, "function")
+    end
+
+    test "formats tools in standard way for non-GPT-5 models" do
+      {:ok, openai} = ChatOpenAI.new(%{model: "gpt-4"})
+
+      {:ok, test_function} =
+        Function.new(%{
+          name: "test_function",
+          description: "A test function",
+          parameters: [],
+          function: fn _args, _context -> {:ok, "test result"} end
+        })
+
+      user_message = Message.new_user!("Hello!")
+      data = ChatOpenAI.for_api(openai, [user_message], [test_function])
+
+      assert data.model == "gpt-4"
+      assert is_list(data.tools)
+      assert length(data.tools) == 1
+
+      # Non-GPT-5 should have standard nested structure
+      tool = hd(data.tools)
+      assert tool["type"] == "function"
+      assert Map.has_key?(tool, "function")
+      assert tool["function"]["name"] == "test_function"
+      assert tool["function"]["description"] == "A test function"
+      # Should NOT have name at top level
+      refute Map.has_key?(tool, "name")
+    end
   end
 
   describe "for_api/1" do
@@ -593,12 +717,36 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert result == expected
     end
 
+    test "uses 'input_text' type for GPT-5 text content" do
+      expected = %{"type" => "input_text", "text" => "Hello GPT-5"}
+
+      result =
+        ChatOpenAI.content_part_for_api(
+          ChatOpenAI.new!(%{model: "gpt-5"}),
+          ContentPart.text!("Hello GPT-5")
+        )
+
+      assert result == expected
+    end
+
     test "turns an image ContentPart into the expected JSON format" do
       expected = %{"type" => "image_url", "image_url" => %{"url" => "image_base64_data"}}
 
       result =
         ChatOpenAI.content_part_for_api(
           ChatOpenAI.new!(),
+          ContentPart.image!("image_base64_data")
+        )
+
+      assert result == expected
+    end
+
+    test "uses 'input_image' type for GPT-5 image content" do
+      expected = %{"type" => "input_image", "image_url" => %{"url" => "image_base64_data"}}
+
+      result =
+        ChatOpenAI.content_part_for_api(
+          ChatOpenAI.new!(%{model: "gpt-5"}),
           ContentPart.image!("image_base64_data")
         )
 

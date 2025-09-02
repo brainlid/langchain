@@ -314,4 +314,8 @@ defmodule LangChain.Message.ContentPart do
   def content_to_string(content, type) when is_list(content) do
     parts_to_string(content, type)
   end
+
+  def content_to_string(%{content: content}, type) do
+    content_to_string(content, type)
+  end
 end

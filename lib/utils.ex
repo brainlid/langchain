@@ -234,15 +234,21 @@ defmodule LangChain.Utils do
 
       {:data, raw_data}, {req, %Req.Response{status: status} = response}
       when status in 400..599 ->
-        case Jason.decode(raw_data) do
+        # Accumulate error chunks until we can decode a full JSON error
+        buffered_err = Req.Response.get_private(response, :lang_error_incomplete, "")
+        combined = buffered_err <> raw_data
+
+        case Jason.decode(combined) do
           {:ok, data} ->
             {:halt, {req, %{response | body: transform_data_fn.(data)}}}
 
           {:error, reason} ->
             Logger.error("Failed to JSON decode error response. ERROR: #{inspect(reason)}")
 
-            {:halt,
-             {req, LangChainError.exception("Failed to handle error response from server.")}}
+            updated_response =
+              Req.Response.put_private(response, :lang_error_incomplete, combined)
+
+            {:cont, {req, updated_response}}
         end
 
       {:data, _raw_data}, {req, response} ->

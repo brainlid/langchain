@@ -364,48 +364,92 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           atom() => any()
         }
   def for_api(%ChatOpenAI{} = openai, messages, tools) do
-    %{
-      model: openai.model,
-      temperature: openai.temperature,
-      n: openai.n,
-      stream: openai.stream,
-      # a single ToolResult can expand into multiple tool messages for OpenAI
-      messages:
-        messages
-        |> Enum.reduce([], fn m, acc ->
-          case for_api(openai, m) do
-            %{} = data ->
-              [data | acc]
+    {input_key, input_value} =
+      if is_gpt5_model?(openai) do
+        {
+          :input,
+          messages
+          |> Enum.reduce([], fn m, acc ->
+            case for_api(openai, m) do
+              %{} = data -> [data | acc]
+              data when is_list(data) -> Enum.reverse(data) ++ acc
+            end
+          end)
+          |> Enum.reverse()
+        }
+      else
+        {
+          :messages,
+          messages
+          |> Enum.reduce([], fn m, acc ->
+            case for_api(openai, m) do
+              %{} = data -> [data | acc]
+              data when is_list(data) -> Enum.reverse(data) ++ acc
+            end
+          end)
+          |> Enum.reverse()
+        }
+      end
 
-            data when is_list(data) ->
-              Enum.reverse(data) ++ acc
-          end
-        end)
-        |> Enum.reverse()
-    }
-    |> Utils.conditionally_add_to_map(:user, openai.user)
-    |> Utils.conditionally_add_to_map(:frequency_penalty, openai.frequency_penalty)
-    |> Utils.conditionally_add_to_map(:response_format, set_response_format(openai))
-    |> Utils.conditionally_add_to_map(
-      :reasoning_effort,
-      if(openai.reasoning_mode, do: openai.reasoning_effort, else: nil)
-    )
-    |> Utils.conditionally_add_to_map(:max_tokens, openai.max_tokens)
-    |> Utils.conditionally_add_to_map(:seed, openai.seed)
-    |> Utils.conditionally_add_to_map(
-      :stream_options,
-      get_stream_options_for_api(openai.stream_options)
-    )
-    |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(openai, tools))
-    |> Utils.conditionally_add_to_map(:tool_choice, get_tool_choice(openai))
+    base =
+      %{
+        model: openai.model,
+        stream: openai.stream
+      }
+      |> Utils.conditionally_add_to_map(
+        :temperature,
+        if(is_gpt5_model?(openai), do: nil, else: openai.temperature)
+      )
+      |> Map.put(input_key, input_value)
+      |> Utils.conditionally_add_to_map(:user, openai.user)
+      |> Utils.conditionally_add_to_map(
+        :frequency_penalty,
+        if(is_gpt5_model?(openai), do: nil, else: openai.frequency_penalty)
+      )
+      |> Utils.conditionally_add_to_map(:response_format, set_response_format(openai))
+      |> Utils.conditionally_add_to_map(
+        :reasoning_effort,
+        if(openai.reasoning_mode, do: openai.reasoning_effort, else: nil)
+      )
+      |> Utils.conditionally_add_to_map(:max_tokens, openai.max_tokens)
+      # GPT-5 (Responses API) does not support 'seed' param
+      |> Utils.conditionally_add_to_map(
+        :seed,
+        if(is_gpt5_model?(openai), do: nil, else: openai.seed)
+      )
+      |> Utils.conditionally_add_to_map(
+        :stream_options,
+        if(is_gpt5_model?(openai),
+          do: nil,
+          else: get_stream_options_for_api(openai.stream_options)
+        )
+      )
+      |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(openai, tools))
+      |> Utils.conditionally_add_to_map(:tool_choice, get_tool_choice(openai))
+
+    if is_gpt5_model?(openai) do
+      base
+    else
+      Utils.conditionally_add_to_map(base, :n, openai.n)
+    end
   end
 
   defp get_tools_for_api(%_{} = _model, nil), do: []
 
-  defp get_tools_for_api(%_{} = model, tools) do
+  defp get_tools_for_api(%ChatOpenAI{} = model, tools) do
     Enum.map(tools, fn
       %Function{} = function ->
-        %{"type" => "function", "function" => for_api(model, function)}
+        if is_gpt5_model?(model) do
+          # GPT-5 (Responses API) expects flattened function declarations
+          %{
+            "type" => "function",
+            "name" => function.name,
+            "parameters" => get_parameters(function)
+          }
+          |> Utils.conditionally_add_to_map("description", function.description)
+        else
+          %{"type" => "function", "function" => for_api(model, function)}
+        end
     end)
   end
 
@@ -559,8 +603,10 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   @doc """
   Convert a ContentPart to the expected map of data for the OpenAI API.
   """
-  def content_part_for_api(%_{} = _model, %ContentPart{type: :text} = part) do
-    %{"type" => "text", "text" => part.content}
+  def content_part_for_api(%_{} = model, %ContentPart{type: :text} = part) do
+    # For GPT-5 use "input_text"; for older models use "text"
+    type = if is_gpt5_model?(model), do: "input_text", else: "text"
+    %{"type" => type, "text" => part.content}
   end
 
   def content_part_for_api(%_{} = _model, %ContentPart{type: :file, options: opts} = part) do
@@ -584,7 +630,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     }
   end
 
-  def content_part_for_api(%_{} = _model, %ContentPart{type: image} = part)
+  def content_part_for_api(%_{} = model, %ContentPart{type: image} = part)
       when image in [:image, :image_url] do
     media_prefix =
       case Keyword.get(part.options || [], :media, nil) do
@@ -614,12 +660,20 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
     detail_option = Keyword.get(part.options, :detail, nil)
 
-    %{
-      "type" => "image_url",
-      "image_url" =>
-        %{"url" => media_prefix <> part.content}
-        |> Utils.conditionally_add_to_map("detail", detail_option)
-    }
+    if is_gpt5_model?(model) do
+      %{
+        "type" => "input_image",
+        # Responses API expects a string URL for image_url
+        "image_url" => media_prefix <> part.content
+      }
+    else
+      %{
+        "type" => "image_url",
+        "image_url" =>
+          %{"url" => media_prefix <> part.content}
+          |> Utils.conditionally_add_to_map("detail", detail_option)
+      }
+    end
   end
 
   @doc false
@@ -922,7 +976,14 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           acc
 
         json ->
-          parse_combined_data(incomplete, json, done)
+          # Remove any SSE event lines like "event: response.output_text.delta"
+          cleaned =
+            json
+            |> String.split("\n")
+            |> Enum.reject(&String.starts_with?(&1, "event:"))
+            |> Enum.join("\n")
+
+          parse_combined_data(incomplete, cleaned, done)
       end
     end)
   end
@@ -981,6 +1042,140 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         |> Enum.map(&do_process_response(model, &1))
         |> Enum.map(&TokenUsage.set(&1, token_usage))
     end
+  end
+
+  # Responses API (GPT-5) - non-streaming final response
+  def do_process_response(
+        _model,
+        %{"object" => "response", "content" => parts} = data
+      )
+      when is_list(parts) do
+    text_parts =
+      parts
+      |> Enum.filter(&match?(%{"type" => "output_text"}, &1))
+      |> Enum.map(fn %{"text" => text} -> ContentPart.text!(text) end)
+
+    case Message.new(%{
+           "role" => "assistant",
+           "content" => text_parts,
+           "complete" => true,
+           "index" => 0
+         }) do
+      {:ok, message} ->
+        message = TokenUsage.set(message, get_token_usage(data))
+        [message]
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:error, LangChainError.exception(changeset)}
+    end
+  end
+
+  # Responses API (GPT-5) - non-streaming final response with "output" array
+  def do_process_response(
+        _model,
+        %{"object" => "response", "output" => outputs} = data
+      )
+      when is_list(outputs) do
+    text_parts =
+      outputs
+      |> Enum.filter(&match?(%{"type" => "message"}, &1))
+      |> Enum.flat_map(fn %{"content" => parts} -> parts end)
+      |> Enum.filter(&match?(%{"type" => "output_text"}, &1))
+      |> Enum.map(fn %{"text" => text} -> ContentPart.text!(text) end)
+
+    case Message.new(%{
+           "role" => "assistant",
+           "content" => text_parts,
+           "complete" => true,
+           "index" => 0
+         }) do
+      {:ok, message} ->
+        message = TokenUsage.set(message, get_token_usage(data))
+        [message]
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:error, LangChainError.exception(changeset)}
+    end
+  end
+
+  # Responses API (GPT-5) - streaming events
+  # Text delta
+  def do_process_response(
+        _model,
+        %{"type" => "response.output_text.delta", "delta" => text} = data
+      ) do
+    index = Map.get(data, "output_index", 0)
+
+    MessageDelta.new!(%{
+      role: :unknown,
+      content: ContentPart.text!(text),
+      status: :incomplete,
+      index: index
+    })
+  end
+
+  # Responses API - non-content lifecycle events (skip)
+  def do_process_response(_model, %{"type" => type})
+      when type in [
+             "response.created",
+             "response.in_progress"
+           ] do
+    :skip
+  end
+
+  # Responses API - output item lifecycle (reasoning/messages scaffolding)
+  # Ignore these in streaming until we have content deltas
+  def do_process_response(_model, %{"type" => "response.output_item.added"}), do: :skip
+  def do_process_response(_model, %{"type" => "response.output_item.done"}), do: :skip
+
+  # Responses API - content part lifecycle and deltas
+  def do_process_response(_model, %{"type" => "response.content_part.added"} = data) do
+    index = Map.get(data, "output_index", 0)
+
+    content =
+      case get_in(data, ["part", "type"]) do
+        "output_text" -> ContentPart.text!(get_in(data, ["part", "text"]) || "")
+        _ -> nil
+      end
+
+    MessageDelta.new!(%{role: :unknown, content: content, status: :incomplete, index: index})
+  end
+
+  def do_process_response(_model, %{"type" => "response.content_part.delta", "delta" => text} = data) do
+    index = Map.get(data, "output_index", 0)
+
+    MessageDelta.new!(%{
+      role: :unknown,
+      content: ContentPart.text!(text),
+      status: :incomplete,
+      index: index
+    })
+  end
+
+  def do_process_response(_model, %{"type" => "response.content_part.done"} = data) do
+    index = Map.get(data, "output_index", 0)
+
+    MessageDelta.new!(%{role: :unknown, content: nil, status: :complete, index: index})
+  end
+
+  # Text done/completed marker
+  def do_process_response(
+        _model,
+        %{"type" => "response.output_text.done"} = data
+      ) do
+    index = Map.get(data, "output_index", 0)
+
+    MessageDelta.new!(%{
+      role: :unknown,
+      content: nil,
+      status: :complete,
+      index: index
+    })
+  end
+
+  # Responses API - completed event carries usage
+  def do_process_response(_model, %{"type" => "response.completed", "response" => resp}) do
+    get_token_usage(%{"usage" => Map.get(resp, "usage", %{})})
   end
 
   # Full message with tool call
@@ -1172,6 +1367,13 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     nil
   end
 
+  # Detect GPT-5 family models to switch to Responses API shape
+  defp is_gpt5_model?(%ChatOpenAI{model: model}) when is_binary(model) do
+    String.starts_with?(model, "gpt-5")
+  end
+
+  defp is_gpt5_model?(_), do: false
+
   defp maybe_add_org_id_header(%Req.Request{} = req, %ChatOpenAI{} = openai) do
     org_id = get_org_id(openai)
 
@@ -1217,6 +1419,15 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     TokenUsage.new!(%{
       input: Map.get(usage, "prompt_tokens"),
       output: Map.get(usage, "completion_tokens"),
+      raw: usage
+    })
+  end
+
+  # GPT-5 Responses API usage shape
+  defp get_token_usage(%{"usage" => usage} = _response_body) when is_map(usage) do
+    TokenUsage.new!(%{
+      input: Map.get(usage, "input_tokens") || Map.get(usage, "prompt_tokens"),
+      output: Map.get(usage, "output_tokens") || Map.get(usage, "completion_tokens"),
       raw: usage
     })
   end
