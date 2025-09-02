@@ -298,7 +298,7 @@ defmodule LangChain.Images.OpenAIImage do
 
     results =
       Enum.map(images, fn
-        %{"b64_json" => base64_raw_content} = image_info ->
+        %{"b64_json" => base64_raw_content} = image_info when is_binary(base64_raw_content) ->
           GeneratedImage.new!(%{
             type: :base64,
             image_type: image_type,
