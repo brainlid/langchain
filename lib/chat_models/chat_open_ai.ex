@@ -515,7 +515,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
     %{
       "role" => role,
-      "content" => content_parts_for_api(model, content)
+      "content" => content_parts_for_api(model, content, role)
     }
     |> Utils.conditionally_add_to_map("name", msg.name)
     |> Utils.conditionally_add_to_map(
@@ -526,9 +526,15 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
   def for_api(%_{} = model, %Message{role: :assistant, tool_calls: tool_calls} = msg)
       when is_list(tool_calls) do
+    content =
+      case msg.content do
+        list when is_list(list) -> content_parts_for_api(model, list, :assistant)
+        other -> other
+      end
+
     %{
       "role" => :assistant,
-      "content" => msg.content
+      "content" => content
     }
     |> Utils.conditionally_add_to_map("tool_calls", Enum.map(tool_calls, &for_api(model, &1)))
   end
@@ -600,6 +606,13 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     Enum.map(content_parts, &content_part_for_api(model, &1))
   end
 
+  # With role context (GPT-5 needs assistant vs user mapping)
+  def content_parts_for_api(%_{} = model, content_parts, role) when is_list(content_parts) do
+    Enum.map(content_parts, fn
+      %ContentPart{} = part -> content_part_for_api_with_role(model, part, role)
+    end)
+  end
+
   @doc """
   Convert a ContentPart to the expected map of data for the OpenAI API.
   """
@@ -608,6 +621,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     type = if is_gpt5_model?(model), do: "input_text", else: "text"
     %{"type" => type, "text" => part.content}
   end
+
+  # (3-arity text variant is defined earlier at lines ~623)
 
   def content_part_for_api(%_{} = _model, %ContentPart{type: :file, options: opts} = part) do
     file_params =
@@ -674,6 +689,20 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           |> Utils.conditionally_add_to_map("detail", detail_option)
       }
     end
+  end
+
+  # Role-aware mapping helper for GPT-5
+  defp content_part_for_api_with_role(%_{} = model, %ContentPart{type: :text} = part, role) do
+    if is_gpt5_model?(model) do
+      type = if role == :assistant, do: "output_text", else: "input_text"
+      %{"type" => type, "text" => part.content}
+    else
+      content_part_for_api(model, part)
+    end
+  end
+
+  defp content_part_for_api_with_role(%_{} = model, %ContentPart{} = part, _role) do
+    content_part_for_api(model, part)
   end
 
   @doc false
@@ -1141,7 +1170,10 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     MessageDelta.new!(%{role: :unknown, content: content, status: :incomplete, index: index})
   end
 
-  def do_process_response(_model, %{"type" => "response.content_part.delta", "delta" => text} = data) do
+  def do_process_response(
+        _model,
+        %{"type" => "response.content_part.delta", "delta" => text} = data
+      ) do
     index = Map.get(data, "output_index", 0)
 
     MessageDelta.new!(%{

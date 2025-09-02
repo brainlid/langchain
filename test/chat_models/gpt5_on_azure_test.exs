@@ -69,6 +69,15 @@ defmodule LangChain.ChatModels.GPT5OnAzureTest do
       assert is_list(data)
       flattened = data |> List.flatten()
       assert Enum.any?(flattened, fn d -> match?(%MessageDelta{}, d) end)
+
+      # Ensure no unexpected error tuples are present in streaming output
+      refute Enum.any?(flattened, fn d -> match?({:error, %_{}}, d) end)
+
+      # Ensure we don't emit reasoning-only scaffolding
+      refute Enum.any?(flattened, fn
+               %MessageDelta{content: %ContentPart{type: :thinking}} -> true
+               _ -> false
+             end)
     end
   end
 
