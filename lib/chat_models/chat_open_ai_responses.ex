@@ -1084,7 +1084,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
 
   def do_process_response(_model, %{"type" => event} = event_data)
       when event in @skippable_streaming_events do
-    Logger.warning("Skipping event: #{event} with data: #{inspect(event_data)}")
+    # Logger.warning("Skipping event: #{event} with data: #{inspect(event_data)}")
     :skip
   end
 
