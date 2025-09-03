@@ -283,6 +283,67 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     field :verbose_api, :boolean, default: false
   end
 
+  # Submit using colon action, e.g. .../responses/{id}:submit_tool_outputs
+  defp submit_tool_outputs_request_to_colon(
+         %ChatOpenAI{} = openai,
+         response_id,
+         payload,
+         action_suffix,
+         version_mode
+       ) do
+    uri = URI.parse(openai.endpoint)
+    base_path = uri.path || ""
+
+    adjusted_base_path =
+      if version_mode == :v1 do
+        azure_add_v1_to_path(base_path)
+      else
+        base_path
+      end
+
+    new_path =
+      adjusted_base_path
+      |> String.trim_trailing("/")
+      |> Kernel.<>("/" <> to_string(response_id) <> action_suffix)
+
+    url = URI.to_string(%URI{uri | path: new_path})
+
+    req =
+      Req.new(
+        url: url,
+        json: payload,
+        auth: {:bearer, get_api_key(openai)},
+        headers: [
+          {"api-key", get_api_key(openai)}
+        ],
+        receive_timeout: openai.receive_timeout,
+        retry: :transient,
+        max_retries: 3,
+        retry_delay: fn attempt -> 300 * attempt end
+      )
+      |> maybe_add_org_id_header(openai)
+      |> maybe_add_proj_id_header()
+
+    Logger.debug(fn -> "Submitting tool outputs to #{url} payload=#{inspect(payload)}" end)
+
+    case Req.post(req) do
+      {:ok, %Req.Response{body: data, headers: headers}} ->
+        {:ok, data, headers}
+
+      {:error, %Req.TransportError{} = err} ->
+        {:error, err}
+
+      {:ok, %Req.Response{body: data}} ->
+        {:ok, data, %{}}
+
+      other ->
+        Logger.error("Unexpected colon POST response: #{inspect(other)}")
+
+        {:error,
+         LangChainError.exception(type: "unexpected_response", message: "Unexpected response")}
+    end
+  end
+
   @type t :: %ChatOpenAI{}
 
   @create_fields [
@@ -731,7 +792,9 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   # Detect if endpoint query has api-version set to preview or latest
   defp is_preview_latest?(endpoint) when is_binary(endpoint) do
     case URI.parse(endpoint).query do
-      nil -> false
+      nil ->
+        false
+
       query ->
         case URI.decode_query(query)["api-version"] do
           nil -> false
@@ -753,7 +816,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
             URI.to_string(%URI{uri | path: adjusted})
           end
 
-        _ -> endpoint
+        _ ->
+          endpoint
       end
     else
       endpoint
@@ -961,7 +1025,13 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     # SSE does not reach a terminal event until the continue call occurs.
     if is_gpt5_model?(openai) and is_list(tools) and length(tools) > 0 do
       # Force the non-streaming continue loop even if streaming is requested
-      return = do_responses_continue_loop(%ChatOpenAI{openai | stream: false}, messages, tools, retry_count)
+      return =
+        do_responses_continue_loop(
+          %ChatOpenAI{openai | stream: false},
+          messages,
+          tools,
+          retry_count
+        )
 
       case return do
         {:ok, [%Message{} | _] = messages} ->
@@ -1059,6 +1129,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
       other ->
         Logger.error("Unexpected error starting Responses loop: #{inspect(other)}")
+
         {:error,
          LangChainError.exception(type: "unexpected_response", message: "Unexpected response")}
     end
@@ -1077,7 +1148,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
             tool_outputs:
               Enum.map(tool_outputs, fn
                 %{"tool_call_id" => alt_id, "call_id" => call_id, "output_text" => text} ->
-                  %{"call_id" => (call_id || alt_id), "output" => text}
+                  %{"call_id" => call_id || alt_id, "output" => text}
 
                 %{"tool_call_id" => alt_id, "output_text" => text} ->
                   %{"call_id" => alt_id, "output" => text}
@@ -1096,12 +1167,16 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           {:error, %Req.TransportError{reason: :closed}} ->
             # single retry path for closed connections during continue
             case submit_tool_outputs_with_fallbacks(openai, response_id, continue_payload) do
-              {:ok, next_resp, _headers} -> continue_until_complete(openai, tools, next_resp, depth + 1)
-              other -> other
+              {:ok, next_resp, _headers} ->
+                continue_until_complete(openai, tools, next_resp, depth + 1)
+
+              other ->
+                other
             end
 
           other ->
             Logger.error("Unexpected continue response: #{inspect(other)}")
+
             {:error,
              LangChainError.exception(type: "unexpected_response", message: "Unexpected response")}
         end
@@ -1109,19 +1184,30 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       :final ->
         # Convert final Responses object to a Message list using existing parser
         case do_process_response(openai, resp) do
-          {:error, %LangChainError{} = reason} -> {:error, reason}
-          %Message{} = message -> {:ok, [message]}
-          [%Message{} | _] = messages -> {:ok, messages}
+          {:error, %LangChainError{} = reason} ->
+            {:error, reason}
+
+          %Message{} = message ->
+            {:ok, [message]}
+
+          [%Message{} | _] = messages ->
+            {:ok, messages}
+
           other ->
             Logger.error("Unexpected final parse in Responses loop: #{inspect(other)}")
+
             {:error,
-             LangChainError.exception(type: "unexpected_response", message: "Unexpected final parse")}
+             LangChainError.exception(
+               type: "unexpected_response",
+               message: "Unexpected final parse"
+             )}
         end
     end
   end
 
   defp continue_until_complete(_openai, _tools, resp, _depth) do
     Logger.error("Exceeded maximum continue iterations. Resp: #{inspect(resp)}")
+
     {:error,
      LangChainError.exception(type: "exceeded_max_runs", message: "Exceeded maximum continues")}
   end
@@ -1168,15 +1254,18 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     end
   end
 
-  defp extract_required_tool_calls(%{"status" => status}) when status in ["completed", "finished"] do
+  defp extract_required_tool_calls(%{"status" => status})
+       when status in ["completed", "finished"] do
     :final
   end
 
   defp extract_required_tool_calls(_resp), do: :final
 
   defp extract_response_metadata(%{"metadata" => meta}) when is_map(meta), do: meta
+
   defp extract_response_metadata(%{"response" => %{"metadata" => meta}}) when is_map(meta),
     do: meta
+
   defp extract_response_metadata(_), do: nil
 
   # Execute LangChain tools and return the Responses API's expected tool_outputs list
@@ -1193,15 +1282,20 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         call_id = call["id"] || call["call_id"] || call["tool_call_id"]
         name = call["name"]
         raw_args = Map.get(call, "arguments")
+
         args =
           cond do
-            is_map(raw_args) -> raw_args
+            is_map(raw_args) ->
+              raw_args
+
             is_binary(raw_args) ->
               case Jason.decode(raw_args) do
                 {:ok, %{} = m} -> m
                 _ -> %{}
               end
-            true -> %{}
+
+            true ->
+              %{}
           end
 
         output_text =
@@ -1272,50 +1366,18 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
       other ->
         Logger.error("Unexpected POST response: #{inspect(other)}")
+
         {:error,
          LangChainError.exception(type: "unexpected_response", message: "Unexpected response")}
     end
   end
 
-  # Azure/Responses tool output submission endpoint helper
-  defp submit_tool_outputs_request(%ChatOpenAI{} = openai, response_id, payload) do
-    # For Azure Responses API, the continue/tool outputs endpoint is
-    # POST {base_path}/{response_id}?api-version=...
-    # The configured endpoint includes the query; inject the id and segment into the path.
-    uri = URI.parse(openai.endpoint)
-    base_path = uri.path || ""
-    new_path =
-      base_path
-      |> String.trim_trailing("/")
-      |> Kernel.<>("/" <> to_string(response_id) <> "/tool_outputs")
-
-    continue_url = URI.to_string(%URI{uri | path: new_path})
-
-    req =
-      Req.new(
-        url: continue_url,
-        json: payload,
-        auth: {:bearer, get_api_key(openai)},
-        headers: [
-          {"api-key", get_api_key(openai)}
-        ],
-        receive_timeout: openai.receive_timeout,
-        retry: :transient,
-        max_retries: 3,
-        retry_delay: fn attempt -> 300 * attempt end
-      )
-      |> maybe_add_org_id_header(openai)
-      |> maybe_add_proj_id_header()
-
-    Logger.debug(fn -> "Submitting tool outputs to #{continue_url} payload=#{inspect(payload)}" end)
-    case Req.post(req) do
-      {:ok, %Req.Response{body: data, headers: headers}} -> {:ok, data, headers}
-      {:error, %Req.TransportError{} = err} -> {:error, err}
-      {:ok, %Req.Response{body: data}} -> {:ok, data, %{}}
-      other ->
-        Logger.error("Unexpected tool_outputs POST response: #{inspect(other)}")
-        {:error,
-         LangChainError.exception(type: "unexpected_response", message: "Unexpected response")}
+  # Helper to adjust an Azure OpenAI path to include "/openai/v1/" when needed
+  defp azure_add_v1_to_path(path) when is_binary(path) do
+    cond do
+      String.contains?(path, "/openai/v1/") -> path
+      String.contains?(path, "/openai/") -> String.replace(path, "/openai/", "/openai/v1/")
+      true -> path
     end
   end
 
@@ -1323,44 +1385,155 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   defp submit_tool_outputs_with_fallbacks(%ChatOpenAI{} = openai, response_id, payload) do
     # Build two payload variants differing by id key
     outputs = Map.get(payload, :tool_outputs) || Map.get(payload, "tool_outputs") || []
-    with_call_id = Map.put(payload, :tool_outputs, Enum.map(outputs, fn o -> %{ "call_id" => o["call_id"] || o[:call_id] || o["tool_call_id"], "output" => o["output"] || o[:output] } end))
-    with_tool_call_id = Map.put(payload, :tool_outputs, Enum.map(outputs, fn o -> %{ "tool_call_id" => o["tool_call_id"] || o[:tool_call_id] || o["call_id"], "output" => o["output"] || o[:output] } end))
 
+    with_call_id =
+      Map.put(
+        payload,
+        :tool_outputs,
+        Enum.map(outputs, fn o ->
+          %{
+            "call_id" => o["call_id"] || o[:call_id] || o["tool_call_id"],
+            "output" => o["output"] || o[:output]
+          }
+        end)
+      )
+
+    with_tool_call_id =
+      Map.put(
+        payload,
+        :tool_outputs,
+        Enum.map(outputs, fn o ->
+          %{
+            "tool_call_id" => o["tool_call_id"] || o[:tool_call_id] || o["call_id"],
+            "output" => o["output"] || o[:output]
+          }
+        end)
+      )
+
+    # Nested under submit_tool_outputs
+    nested_call_id = %{
+      "submit_tool_outputs" => %{
+        "tool_outputs" =>
+          Enum.map(outputs, fn o ->
+            %{
+              "call_id" => o["call_id"] || o[:call_id] || o["tool_call_id"],
+              "output" => o["output"] || o[:output]
+            }
+          end)
+      }
+    }
+
+    nested_tool_call_id = %{
+      "submit_tool_outputs" => %{
+        "tool_outputs" =>
+          Enum.map(outputs, fn o ->
+            %{
+              "tool_call_id" => o["tool_call_id"] || o[:tool_call_id] || o["call_id"],
+              "output" => o["output"] || o[:output]
+            }
+          end)
+      }
+    }
+
+    # Try multiple endpoint shapes and versions (original vs /v1) and query-event variants
     attempts = [
-      {:post_path, :tool_outputs, with_call_id},
-      {:post_path, :tool_outputs, with_tool_call_id},
-      {:post_path, :continue, with_call_id},
-      {:post_path, :continue, with_tool_call_id}
+      # Path variants (original base path only)
+      {:post_path, :root, nested_call_id, :original},
+      {:post_path, :root, nested_tool_call_id, :original},
+      {:post_path, :tool_outputs_underscore, with_call_id, :original},
+      {:post_path, :tool_outputs_underscore, with_tool_call_id, :original},
+      {:post_path, :tool_outputs_hyphen, with_call_id, :original},
+      {:post_path, :tool_outputs_hyphen, with_tool_call_id, :original},
+      {:post_path, :submit_tool_outputs_underscore, with_call_id, :original},
+      {:post_path, :submit_tool_outputs_underscore, with_tool_call_id, :original},
+      {:post_path, :continue, with_call_id, :original},
+      {:post_path, :continue, with_tool_call_id, :original},
+      {:post_path, :root, with_call_id, :original},
+      {:post_path, :root, with_tool_call_id, :original},
+      # Colon action variants
+      {:post_colon, :submit_tool_outputs_underscore, with_call_id, :original},
+      {:post_colon, :submit_tool_outputs_underscore, with_tool_call_id, :original},
+      {:post_colon, :submit_tool_outputs_hyphen, with_call_id, :original},
+      {:post_colon, :submit_tool_outputs_hyphen, with_tool_call_id, :original},
+      {:post_colon, :continue, with_call_id, :original},
+      {:post_colon, :continue, with_tool_call_id, :original},
+      # Query event variants used by some Azure configurations
+      {:post_event, :submit_tool_outputs, with_call_id, :original},
+      {:post_event, :submit_tool_outputs, with_tool_call_id, :original},
+      {:post_event, :continue, with_call_id, :original},
+      {:post_event, :continue, with_tool_call_id, :original}
     ]
 
-    Enum.reduce_while(attempts, {:error, LangChainError.exception(message: "all attempts failed")}, fn {mode, segment, pl}, _acc ->
-      result =
-        case mode do
-          :post_path ->
-            segment_path =
-              case segment do
-                :tool_outputs -> "/tool_outputs"
-                :continue -> "/continue"
-              end
+    Enum.reduce_while(
+      attempts,
+      {:error, LangChainError.exception(message: "all attempts failed")},
+      fn attempt, _acc ->
+        result =
+          case attempt do
+            {:post_path, segment, pl, version_mode} ->
+              segment_path =
+                case segment do
+                  :tool_outputs_underscore -> "/tool_outputs"
+                  :tool_outputs_hyphen -> "/tool-outputs"
+                  :submit_tool_outputs_underscore -> "/submit_tool_outputs"
+                  :continue -> "/continue"
+                  :root -> ""
+                end
 
-            submit_tool_outputs_request_to_path(openai, response_id, pl, segment_path)
+              submit_tool_outputs_request_to_path(
+                openai,
+                response_id,
+                pl,
+                segment_path,
+                version_mode
+              )
+
+            {:post_colon, action, pl, version_mode} ->
+              action_suffix =
+                case action do
+                  :submit_tool_outputs_underscore -> ":submit_tool_outputs"
+                  :submit_tool_outputs_hyphen -> ":submit-tool-outputs"
+                  :continue -> ":continue"
+                end
+
+              submit_tool_outputs_request_to_colon(
+                openai,
+                response_id,
+                pl,
+                action_suffix,
+                version_mode
+              )
+
+            {:post_event, event, pl, version_mode} ->
+              submit_tool_outputs_request_with_event(openai, response_id, pl, event, version_mode)
+          end
+
+        case result do
+          {:ok, %{"error" => _} = data, _headers} ->
+            {:cont,
+             {:error,
+              LangChainError.exception(
+                original: data,
+                message: get_in(data, ["error", "message"])
+              )}}
+
+          {:ok, %{} = data, headers} ->
+            {:halt, {:ok, data, headers}}
+
+          {:error, _} = err ->
+            {:cont, err}
         end
-
-      case result do
-        {:ok, %{"error" => _} = data, _headers} ->
-          # treat as failure and try next
-          {:cont, {:error, LangChainError.exception(original: data, message: get_in(data, ["error", "message"]))}}
-
-        {:ok, %{} = data, headers} ->
-          {:halt, {:ok, data, headers}}
-
-        {:error, _} = err ->
-          {:cont, err}
       end
-    end)
+    )
   end
 
-  defp submit_tool_outputs_request_to_path(%ChatOpenAI{} = openai, response_id, payload, segment_path) do
+  defp submit_tool_outputs_request_to_path(
+         %ChatOpenAI{} = openai,
+         response_id,
+         payload,
+         segment_path,
+         version_mode
+       ) do
     uri = URI.parse(openai.endpoint)
     base_path = uri.path || ""
 
@@ -1374,10 +1547,14 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         is_preview_latest?(openai.endpoint) ->
           # For preview/latest, ensure v1 responses path and do not inject deployments
           cond do
-            String.contains?(base_path, "/openai/v1/responses") -> base_path
+            String.contains?(base_path, "/openai/v1/responses") ->
+              base_path
+
             String.contains?(base_path, "/openai/responses") ->
               String.replace(base_path, "/openai/responses", "/openai/v1/responses")
-            true -> base_path
+
+            true ->
+              base_path
           end
 
         true ->
@@ -1385,10 +1562,22 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           base_path
       end
 
+    adjusted_base_path =
+      case version_mode do
+        :v1 -> azure_add_v1_to_path(adjusted_base_path)
+        _ -> adjusted_base_path
+      end
+
     new_path =
       adjusted_base_path
       |> String.trim_trailing("/")
-      |> Kernel.<>("/" <> to_string(response_id) <> segment_path)
+      |> Kernel.<>(
+        if segment_path == "" do
+          "/" <> to_string(response_id)
+        else
+          "/" <> to_string(response_id) <> segment_path
+        end
+      )
 
     url = URI.to_string(%URI{uri | path: new_path})
 
@@ -1411,11 +1600,18 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     Logger.debug(fn -> "Submitting tool outputs to #{url} payload=#{inspect(payload)}" end)
 
     case Req.post(req) do
-      {:ok, %Req.Response{body: data, headers: headers}} -> {:ok, data, headers}
-      {:error, %Req.TransportError{} = err} -> {:error, err}
-      {:ok, %Req.Response{body: data}} -> {:ok, data, %{}}
+      {:ok, %Req.Response{body: data, headers: headers}} ->
+        {:ok, data, headers}
+
+      {:error, %Req.TransportError{} = err} ->
+        {:error, err}
+
+      {:ok, %Req.Response{body: data}} ->
+        {:ok, data, %{}}
+
       other ->
         Logger.error("Unexpected tool_outputs POST response: #{inspect(other)}")
+
         {:error,
          LangChainError.exception(type: "unexpected_response", message: "Unexpected response")}
     end
@@ -1478,6 +1674,77 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           parse_combined_data(incomplete, cleaned, done)
       end
     end)
+  end
+
+  # Submit using query event variants, e.g. .../responses/{id}?api-version=...&event=submit_tool_outputs
+  defp submit_tool_outputs_request_with_event(
+         %ChatOpenAI{} = openai,
+         response_id,
+         payload,
+         event,
+         version_mode
+       ) do
+    uri = URI.parse(openai.endpoint)
+    base_path = uri.path || ""
+
+    adjusted_base_path =
+      if version_mode == :v1 do
+        azure_add_v1_to_path(base_path)
+      else
+        base_path
+      end
+
+    new_path =
+      adjusted_base_path
+      |> String.trim_trailing("/")
+      |> Kernel.<>("/" <> to_string(response_id))
+
+    # Merge existing query with event parameter
+    query_map =
+      case uri.query do
+        nil -> %{}
+        q -> URI.decode_query(q)
+      end
+      |> Map.put("event", to_string(event))
+
+    url = URI.to_string(%URI{uri | path: new_path, query: URI.encode_query(query_map)})
+
+    req =
+      Req.new(
+        url: url,
+        json: payload,
+        auth: {:bearer, get_api_key(openai)},
+        headers: [
+          {"api-key", get_api_key(openai)}
+        ],
+        receive_timeout: openai.receive_timeout,
+        retry: :transient,
+        max_retries: 3,
+        retry_delay: fn attempt -> 300 * attempt end
+      )
+      |> maybe_add_org_id_header(openai)
+      |> maybe_add_proj_id_header()
+
+    Logger.debug(fn ->
+      "Submitting tool outputs via event '#{event}' to #{url} payload=#{inspect(payload)}"
+    end)
+
+    case Req.post(req) do
+      {:ok, %Req.Response{body: data, headers: headers}} ->
+        {:ok, data, headers}
+
+      {:error, %Req.TransportError{} = err} ->
+        {:error, err}
+
+      {:ok, %Req.Response{body: data}} ->
+        {:ok, data, %{}}
+
+      other ->
+        Logger.error("Unexpected event POST response: #{inspect(other)}")
+
+        {:error,
+         LangChainError.exception(type: "unexpected_response", message: "Unexpected response")}
+    end
   end
 
   defp parse_combined_data("", json, done) do
