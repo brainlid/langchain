@@ -6,6 +6,7 @@ defmodule LangChain.ChatModels.GPT5OnAzureTest do
   alias LangChain.MessageDelta
   alias LangChain.Function
   alias LangChain.FunctionParam
+  alias LangChain.Chains.LLMChain
 
   @moduletag :live_call
   @moduletag :live_azure
@@ -78,6 +79,99 @@ defmodule LangChain.ChatModels.GPT5OnAzureTest do
                %MessageDelta{content: %ContentPart{type: :thinking}} -> true
                _ -> false
              end)
+    end
+  end
+
+  describe "Azure GPT-5 - tools with Responses continue loop (non-streaming driver)" do
+    @tag live_call: true, live_azure: true
+    test "executes a tool call through continue loop and returns final assistant message" do
+      {:ok, chat} =
+        ChatOpenAI.new(%{
+          endpoint: azure_endpoint!(),
+          api_key: azure_key!(),
+          model: "gpt-5",
+          temperature: 0,
+          # streaming can be true in user code, but the continue loop forces non-streaming internally
+          stream: true
+        })
+
+      {:ok, calc} =
+        Function.new(%{
+          name: "echo_arg",
+          description: "Echoes a 'msg' argument back",
+          parameters: [FunctionParam.new!(%{name: "msg", type: :string, required: true})],
+          function: fn %{"msg" => msg}, _ctx -> {:ok, "ECHO: #{msg}"} end
+        })
+
+      chain =
+        %{llm: chat, verbose: false, stream: true}
+        |> LLMChain.new!()
+        |> LLMChain.add_tools([calc])
+        |> LLMChain.add_message(Message.new_system!("You are a helpful assistant."))
+        |> LLMChain.add_callback(%{
+          on_llm_new_delta: fn
+            _model, deltas ->
+              dbg(deltas)
+          end,
+          on_message_processed: fn chain, data ->
+            dbg(chain)
+            dbg(data)
+          end
+        })
+        |> LLMChain.add_message(
+          Message.new_user!("Call the tool echo_arg with msg='ping', then answer succinctly.")
+        )
+
+      # Run in default mode. The ChatOpenAI adapter will perform the continue loop
+      # for GPT-5 Responses when tools are present.
+      case LLMChain.run(chain) |> dbg do
+        {:ok, %LLMChain{last_message: %Message{role: :assistant} = assistant}} ->
+          assert is_list(assistant.content)
+          text = ContentPart.parts_to_string(assistant.content)
+          assert text != nil
+
+        other ->
+          flunk("Unexpected result: #{inspect(other)}")
+      end
+    end
+
+    test "executes a tool call without streaming and returns final assistant message" do
+      {:ok, chat} =
+        ChatOpenAI.new(%{
+          endpoint: azure_endpoint!(),
+          api_key: azure_key!(),
+          model: "gpt-5",
+          temperature: 0
+        })
+
+      {:ok, calc} =
+        Function.new(%{
+          name: "echo_arg",
+          description: "Echoes a 'msg' argument back",
+          parameters: [FunctionParam.new!(%{name: "msg", type: :string, required: true})],
+          function: fn %{"msg" => msg}, _ctx -> {:ok, "ECHO: #{msg}"} end
+        })
+
+      chain =
+        %{llm: chat, verbose: false, stream: true}
+        |> LLMChain.new!()
+        |> LLMChain.add_tools([calc])
+        |> LLMChain.add_message(Message.new_system!("You are a helpful assistant."))
+        |> LLMChain.add_message(
+          Message.new_user!("Call the tool echo_arg with msg='ping', then answer succinctly.")
+        )
+
+      # Run in default mode. The ChatOpenAI adapter will perform the continue loop
+      # for GPT-5 Responses when tools are present.
+      case LLMChain.run(chain) |> dbg do
+        {:ok, %LLMChain{last_message: %Message{role: :assistant} = assistant}} ->
+          assert is_list(assistant.content)
+          text = ContentPart.parts_to_string(assistant.content)
+          assert text != nil
+
+        other ->
+          flunk("Unexpected result: #{inspect(other)}")
+      end
     end
   end
 

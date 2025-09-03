@@ -95,7 +95,7 @@ defmodule LangChain.Message.ToolCall do
       # when the message should be complete, we are more strict
       :complete ->
         changeset
-        |> validate_required([:status, :type, :call_id, :name])
+        |> validate_required([:status, :type, :call_id])
         |> validate_and_parse_arguments()
     end
   end

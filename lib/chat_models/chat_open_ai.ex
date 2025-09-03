@@ -728,6 +728,38 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   defp get_message_role(%ChatOpenAI{}, role), do: role
   defp get_message_role(_model, role), do: role
 
+  # Detect if endpoint query has api-version set to preview or latest
+  defp is_preview_latest?(endpoint) when is_binary(endpoint) do
+    case URI.parse(endpoint).query do
+      nil -> false
+      query ->
+        case URI.decode_query(query)["api-version"] do
+          nil -> false
+          version when is_binary(version) -> version == "latest" or version == "preview"
+          _ -> false
+        end
+    end
+  end
+
+  # Normalize base endpoint for Azure next-gen (preview/latest): ensure /openai/v1/
+  defp azure_normalize_base_endpoint(%ChatOpenAI{endpoint: endpoint} = _openai) do
+    if is_preview_latest?(endpoint) do
+      case URI.parse(endpoint) do
+        %URI{path: path} = uri when is_binary(path) ->
+          if String.contains?(path, "/openai/v1/") do
+            endpoint
+          else
+            adjusted = String.replace(path, "/openai/", "/openai/v1/")
+            URI.to_string(%URI{uri | path: adjusted})
+          end
+
+        _ -> endpoint
+      end
+    else
+      endpoint
+    end
+  end
+
   @doc """
   Calls the OpenAI API passing the ChatOpenAI struct with configuration, plus
   either a simple message or the list of messages to act as the prompt.
@@ -830,77 +862,92 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         tools,
         retry_count
       ) do
-    raw_data = for_api(openai, messages, tools)
+    # GPT-5 (Responses API) with tools requires a non-streaming create + continue loop
+    # regardless of the external stream flag. Handle that here.
+    if is_gpt5_model?(openai) and is_list(tools) and length(tools) > 0 do
+      return = do_responses_continue_loop(openai, messages, tools, retry_count)
 
-    if openai.verbose_api do
-      IO.inspect(raw_data, label: "RAW DATA BEING SUBMITTED")
-    end
+      case return do
+        {:ok, [%Message{} | _] = messages} ->
+          Callbacks.fire(openai.callbacks, :on_llm_new_message, [messages])
+          messages
 
-    req =
-      Req.new(
-        url: openai.endpoint,
-        json: raw_data,
-        # required for OpenAI API
-        auth: {:bearer, get_api_key(openai)},
-        # required for Azure OpenAI version
-        headers: [
-          {"api-key", get_api_key(openai)}
-        ],
-        receive_timeout: openai.receive_timeout,
-        retry: :transient,
-        max_retries: 3,
-        retry_delay: fn attempt -> 300 * attempt end
-      )
+        other ->
+          other
+      end
+    else
+      raw_data = for_api(openai, messages, tools)
 
-    req
-    |> maybe_add_org_id_header(openai)
-    |> maybe_add_proj_id_header()
-    |> Req.post()
-    # parse the body and return it as parsed structs
-    |> case do
-      {:ok, %Req.Response{body: data} = response} ->
-        if openai.verbose_api do
-          IO.inspect(response, label: "RAW REQ RESPONSE")
-        end
+      if openai.verbose_api do
+        IO.inspect(raw_data, label: "RAW DATA BEING SUBMITTED")
+      end
 
-        Callbacks.fire(openai.callbacks, :on_llm_response_headers, [response.headers])
+      req =
+        Req.new(
+          url: azure_normalize_base_endpoint(openai),
+          json: raw_data,
+          # required for OpenAI API
+          auth: {:bearer, get_api_key(openai)},
+          # required for Azure OpenAI version
+          headers: [
+            {"api-key", get_api_key(openai)}
+          ],
+          receive_timeout: openai.receive_timeout,
+          retry: :transient,
+          max_retries: 3,
+          retry_delay: fn attempt -> 300 * attempt end
+        )
 
-        Callbacks.fire(openai.callbacks, :on_llm_ratelimit_info, [
-          get_ratelimit_info(response.headers)
-        ])
+      req
+      |> maybe_add_org_id_header(openai)
+      |> maybe_add_proj_id_header()
+      |> Req.post()
+      # parse the body and return it as parsed structs
+      |> case do
+        {:ok, %Req.Response{body: data} = response} ->
+          if openai.verbose_api do
+            IO.inspect(response, label: "RAW REQ RESPONSE")
+          end
 
-        case do_process_response(openai, data) do
-          {:error, %LangChainError{} = reason} ->
-            {:error, reason}
+          Callbacks.fire(openai.callbacks, :on_llm_response_headers, [response.headers])
 
-          result ->
-            Callbacks.fire(openai.callbacks, :on_llm_new_message, [result])
+          Callbacks.fire(openai.callbacks, :on_llm_ratelimit_info, [
+            get_ratelimit_info(response.headers)
+          ])
 
-            # Track non-streaming response completion
-            LangChain.Telemetry.emit_event(
-              [:langchain, :llm, :response, :non_streaming],
-              %{system_time: System.system_time()},
-              %{
-                model: openai.model,
-                response_size: byte_size(inspect(result))
-              }
-            )
+          case do_process_response(openai, data) do
+            {:error, %LangChainError{} = reason} ->
+              {:error, reason}
 
-            result
-        end
+            result ->
+              Callbacks.fire(openai.callbacks, :on_llm_new_message, [result])
 
-      {:error, %Req.TransportError{reason: :timeout} = err} ->
-        {:error,
-         LangChainError.exception(type: "timeout", message: "Request timed out", original: err)}
+              # Track non-streaming response completion
+              LangChain.Telemetry.emit_event(
+                [:langchain, :llm, :response, :non_streaming],
+                %{system_time: System.system_time()},
+                %{
+                  model: openai.model,
+                  response_size: byte_size(inspect(result))
+                }
+              )
 
-      {:error, %Req.TransportError{reason: :closed}} ->
-        # Force a retry by making a recursive call decrementing the counter
-        Logger.debug(fn -> "Mint connection closed: retry count = #{inspect(retry_count)}" end)
-        do_api_request(openai, messages, tools, retry_count - 1)
+              result
+          end
 
-      other ->
-        Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
-        other
+        {:error, %Req.TransportError{reason: :timeout} = err} ->
+          {:error,
+           LangChainError.exception(type: "timeout", message: "Request timed out", original: err)}
+
+        {:error, %Req.TransportError{reason: :closed}} ->
+          # Force a retry by making a recursive call decrementing the counter
+          Logger.debug(fn -> "Mint connection closed: retry count = #{inspect(retry_count)}" end)
+          do_api_request(openai, messages, tools, retry_count - 1)
+
+        other ->
+          Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
+          other
+      end
     end
   end
 
@@ -910,62 +957,478 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         tools,
         retry_count
       ) do
-    raw_data = for_api(openai, messages, tools)
+    # GPT-5 (Responses API) with tools requires a non-streaming create + continue loop
+    # SSE does not reach a terminal event until the continue call occurs.
+    if is_gpt5_model?(openai) and is_list(tools) and length(tools) > 0 do
+      # Force the non-streaming continue loop even if streaming is requested
+      return = do_responses_continue_loop(%ChatOpenAI{openai | stream: false}, messages, tools, retry_count)
 
-    if openai.verbose_api do
-      IO.inspect(raw_data, label: "RAW DATA BEING SUBMITTED")
+      case return do
+        {:ok, [%Message{} | _] = messages} ->
+          Callbacks.fire(openai.callbacks, :on_llm_new_message, [messages])
+          messages
+
+        other ->
+          other
+      end
+    else
+      raw_data = for_api(openai, messages, tools)
+
+      if openai.verbose_api do
+        IO.inspect(raw_data, label: "RAW DATA BEING SUBMITTED")
+      end
+
+      Req.new(
+        url: azure_normalize_base_endpoint(openai),
+        json: raw_data,
+        # required for OpenAI API
+        auth: {:bearer, get_api_key(openai)},
+        # required for Azure OpenAI version
+        headers: [
+          {"api-key", get_api_key(openai)}
+        ],
+        receive_timeout: openai.receive_timeout
+      )
+      |> maybe_add_org_id_header(openai)
+      |> maybe_add_proj_id_header()
+      |> Req.post(
+        into:
+          Utils.handle_stream_fn(
+            openai,
+            &decode_stream/1,
+            &do_process_response(openai, &1)
+          )
+      )
+      |> case do
+        {:ok, %Req.Response{body: data} = response} ->
+          Callbacks.fire(openai.callbacks, :on_llm_response_headers, [response.headers])
+
+          Callbacks.fire(openai.callbacks, :on_llm_ratelimit_info, [
+            get_ratelimit_info(response.headers)
+          ])
+
+          data
+
+        {:error, %LangChainError{} = error} ->
+          {:error, error}
+
+        {:error, %Req.TransportError{reason: :timeout} = err} ->
+          {:error,
+           LangChainError.exception(type: "timeout", message: "Request timed out", original: err)}
+
+        {:error, %Req.TransportError{reason: :closed}} ->
+          # Force a retry by making a recursive call decrementing the counter
+          Logger.debug(fn -> "Connection closed: retry count = #{inspect(retry_count)}" end)
+          do_api_request(openai, messages, tools, retry_count - 1)
+
+        other ->
+          Logger.error(
+            "Unhandled and unexpected response from streamed post call. #{inspect(other)}"
+          )
+
+          {:error,
+           LangChainError.exception(type: "unexpected_response", message: "Unexpected response")}
+      end
     end
+  end
 
-    Req.new(
-      url: openai.endpoint,
-      json: raw_data,
-      # required for OpenAI API
-      auth: {:bearer, get_api_key(openai)},
-      # required for Azure OpenAI version
-      headers: [
-        {"api-key", get_api_key(openai)}
-      ],
-      receive_timeout: openai.receive_timeout
-    )
-    |> maybe_add_org_id_header(openai)
-    |> maybe_add_proj_id_header()
-    |> Req.post(
-      into:
-        Utils.handle_stream_fn(
-          openai,
-          &decode_stream/1,
-          &do_process_response(openai, &1)
-        )
-    )
-    |> case do
-      {:ok, %Req.Response{body: data} = response} ->
-        Callbacks.fire(openai.callbacks, :on_llm_response_headers, [response.headers])
+  # --- GPT-5 Responses API: create + continue tool-calling loop (non-streaming driver) ---
 
-        Callbacks.fire(openai.callbacks, :on_llm_ratelimit_info, [
-          get_ratelimit_info(response.headers)
-        ])
+  # Drive the Responses API until completion, executing LangChain tools locally
+  # and feeding their outputs back via the continue request using prompt_state.
+  defp do_responses_continue_loop(%ChatOpenAI{} = openai, messages, tools, retry_count) do
+    # Always call the base request with stream=false for the driver loop
+    base_model = %ChatOpenAI{openai | stream: false}
+    raw_data = for_api(base_model, messages, tools)
 
-        data
-
-      {:error, %LangChainError{} = error} ->
-        {:error, error}
+    with {:ok, first_resp, headers} <- post_openai_json(openai, raw_data),
+         :ok <- fire_headers_callbacks(openai, headers) do
+      Logger.debug(fn -> "Responses initial body: #{inspect(first_resp)}" end)
+      continue_until_complete(openai, tools, first_resp, 0)
+    else
+      {:error, %Req.TransportError{reason: :closed}} when retry_count > 0 ->
+        Logger.debug(fn -> "Connection closed: retry count = #{inspect(retry_count)}" end)
+        do_responses_continue_loop(openai, messages, tools, retry_count - 1)
 
       {:error, %Req.TransportError{reason: :timeout} = err} ->
         {:error,
          LangChainError.exception(type: "timeout", message: "Request timed out", original: err)}
 
-      {:error, %Req.TransportError{reason: :closed}} ->
-        # Force a retry by making a recursive call decrementing the counter
-        Logger.debug(fn -> "Connection closed: retry count = #{inspect(retry_count)}" end)
-        do_api_request(openai, messages, tools, retry_count - 1)
+      {:error, %LangChainError{} = err} ->
+        {:error, err}
 
       other ->
-        Logger.error(
-          "Unhandled and unexpected response from streamed post call. #{inspect(other)}"
-        )
-
+        Logger.error("Unexpected error starting Responses loop: #{inspect(other)}")
         {:error,
          LangChainError.exception(type: "unexpected_response", message: "Unexpected response")}
+    end
+  end
+
+  # Continue loop: parse response for tool calls; if present, execute and continue; else finalize
+  defp continue_until_complete(%ChatOpenAI{} = openai, tools, %{} = resp, depth)
+       when depth < 25 do
+    case extract_required_tool_calls(resp) do
+      {:continue, response_id, prompt_state, tool_calls} ->
+        metadata = extract_response_metadata(resp)
+        {tool_outputs, _had_errors} = execute_responses_tool_calls(tools, tool_calls)
+
+        continue_payload =
+          %{
+            tool_outputs:
+              Enum.map(tool_outputs, fn
+                %{"tool_call_id" => alt_id, "call_id" => call_id, "output_text" => text} ->
+                  %{"call_id" => (call_id || alt_id), "output" => text}
+
+                %{"tool_call_id" => alt_id, "output_text" => text} ->
+                  %{"call_id" => alt_id, "output" => text}
+              end),
+            metadata: metadata || %{}
+          }
+          |> Utils.conditionally_add_to_map(:prompt_state, prompt_state)
+
+        case submit_tool_outputs_with_fallbacks(openai, response_id, continue_payload) do
+          {:ok, next_resp, _headers} ->
+            continue_until_complete(openai, tools, next_resp, depth + 1)
+
+          {:error, %LangChainError{} = err} ->
+            {:error, err}
+
+          {:error, %Req.TransportError{reason: :closed}} ->
+            # single retry path for closed connections during continue
+            case submit_tool_outputs_with_fallbacks(openai, response_id, continue_payload) do
+              {:ok, next_resp, _headers} -> continue_until_complete(openai, tools, next_resp, depth + 1)
+              other -> other
+            end
+
+          other ->
+            Logger.error("Unexpected continue response: #{inspect(other)}")
+            {:error,
+             LangChainError.exception(type: "unexpected_response", message: "Unexpected response")}
+        end
+
+      :final ->
+        # Convert final Responses object to a Message list using existing parser
+        case do_process_response(openai, resp) do
+          {:error, %LangChainError{} = reason} -> {:error, reason}
+          %Message{} = message -> {:ok, [message]}
+          [%Message{} | _] = messages -> {:ok, messages}
+          other ->
+            Logger.error("Unexpected final parse in Responses loop: #{inspect(other)}")
+            {:error,
+             LangChainError.exception(type: "unexpected_response", message: "Unexpected final parse")}
+        end
+    end
+  end
+
+  defp continue_until_complete(_openai, _tools, resp, _depth) do
+    Logger.error("Exceeded maximum continue iterations. Resp: #{inspect(resp)}")
+    {:error,
+     LangChainError.exception(type: "exceeded_max_runs", message: "Exceeded maximum continues")}
+  end
+
+  # If response indicates tools are required, returns {:continue, response_id, prompt_state, tool_calls}
+  # Otherwise returns :final
+  defp extract_required_tool_calls(%{"required_action" => required_action} = resp)
+       when is_map(required_action) do
+    # Two shapes are seen: directly under required_action["tool_calls"] or nested under submit_tool_outputs
+    tool_calls =
+      Map.get(required_action, "tool_calls") ||
+        get_in(required_action, ["submit_tool_outputs", "tool_calls"]) || []
+
+    if is_list(tool_calls) and tool_calls != [] do
+      response_id = resp["id"] || get_in(resp, ["response", "id"]) || get_in(resp, ["id"])
+      prompt_state = Map.get(resp, "prompt_state") || get_in(resp, ["response", "prompt_state"])
+      {:continue, response_id, prompt_state, tool_calls}
+    else
+      :final
+    end
+  end
+
+  # Fallback shape: non-streaming may expose function calls as output items
+  defp extract_required_tool_calls(%{"output" => outputs} = resp) when is_list(outputs) do
+    tool_calls =
+      outputs
+      |> Enum.filter(&match?(%{"type" => "function_call"}, &1))
+      |> Enum.map(fn %{"id" => id, "name" => name} = item ->
+        %{
+          "id" => id,
+          "type" => "function",
+          "name" => name,
+          "arguments" => Map.get(item, "arguments"),
+          "call_id" => Map.get(item, "call_id")
+        }
+      end)
+
+    if tool_calls != [] do
+      response_id = resp["id"] || get_in(resp, ["response", "id"]) || get_in(resp, ["id"])
+      prompt_state = Map.get(resp, "prompt_state") || get_in(resp, ["response", "prompt_state"])
+      {:continue, response_id, prompt_state, tool_calls}
+    else
+      :final
+    end
+  end
+
+  defp extract_required_tool_calls(%{"status" => status}) when status in ["completed", "finished"] do
+    :final
+  end
+
+  defp extract_required_tool_calls(_resp), do: :final
+
+  defp extract_response_metadata(%{"metadata" => meta}) when is_map(meta), do: meta
+  defp extract_response_metadata(%{"response" => %{"metadata" => meta}}) when is_map(meta),
+    do: meta
+  defp extract_response_metadata(_), do: nil
+
+  # Execute LangChain tools and return the Responses API's expected tool_outputs list
+  defp execute_responses_tool_calls(tools, tool_calls) when is_list(tools) do
+    tool_map =
+      tools
+      |> Enum.reduce(%{}, fn
+        %Function{name: name} = f, acc -> Map.put(acc, name, f)
+        _other, acc -> acc
+      end)
+
+    results =
+      Enum.map(tool_calls, fn call ->
+        call_id = call["id"] || call["call_id"] || call["tool_call_id"]
+        name = call["name"]
+        raw_args = Map.get(call, "arguments")
+        args =
+          cond do
+            is_map(raw_args) -> raw_args
+            is_binary(raw_args) ->
+              case Jason.decode(raw_args) do
+                {:ok, %{} = m} -> m
+                _ -> %{}
+              end
+            true -> %{}
+          end
+
+        output_text =
+          case Map.get(tool_map, name) do
+            %Function{} = function ->
+              case Function.execute(function, args, nil) do
+                {:ok, %ToolResult{} = tr} -> tool_result_to_string(tr)
+                {:ok, llm_result, _processed} -> to_output_string(llm_result)
+                {:ok, llm_result} -> to_output_string(llm_result)
+                {:error, reason} when is_binary(reason) -> reason
+                {:error, other} -> inspect(other)
+              end
+
+            nil ->
+              "ERROR: Tool '#{name}' not found"
+          end
+
+        %{"tool_call_id" => call_id, "output_text" => output_text}
+      end)
+
+    {results, Enum.any?(results, fn r -> String.starts_with?(r["output_text"], "ERROR:") end)}
+  end
+
+  defp tool_result_to_string(%ToolResult{content: content}) when is_binary(content), do: content
+
+  defp tool_result_to_string(%ToolResult{content: content}) when is_list(content) do
+    # ContentParts list -> stringify text
+    LangChain.Message.ContentPart.content_to_string(content, :text) || Jason.encode!(content)
+  end
+
+  defp tool_result_to_string(%ToolResult{content: content}) when is_map(content),
+    do: Jason.encode!(content)
+
+  defp tool_result_to_string(%ToolResult{content: content}), do: to_output_string(content)
+
+  defp to_output_string(content) when is_binary(content), do: content
+  defp to_output_string(content) when is_map(content), do: Jason.encode!(content)
+  defp to_output_string(content) when is_list(content), do: Jason.encode!(content)
+  defp to_output_string(content), do: inspect(content)
+
+  # Low-level POST wrapper returning {:ok, body, headers} | {:error, reason}
+  defp post_openai_json(%ChatOpenAI{} = openai, %{} = json) do
+    req =
+      Req.new(
+        url: azure_normalize_base_endpoint(openai),
+        json: json,
+        auth: {:bearer, get_api_key(openai)},
+        headers: [
+          {"api-key", get_api_key(openai)}
+        ],
+        receive_timeout: openai.receive_timeout,
+        retry: :transient,
+        max_retries: 3,
+        retry_delay: fn attempt -> 300 * attempt end
+      )
+      |> maybe_add_org_id_header(openai)
+      |> maybe_add_proj_id_header()
+
+    case Req.post(req) do
+      {:ok, %Req.Response{body: data, headers: headers}} ->
+        {:ok, data, headers}
+
+      {:error, %Req.TransportError{} = err} ->
+        {:error, err}
+
+      {:ok, %Req.Response{body: data}} ->
+        {:ok, data, %{}}
+
+      other ->
+        Logger.error("Unexpected POST response: #{inspect(other)}")
+        {:error,
+         LangChainError.exception(type: "unexpected_response", message: "Unexpected response")}
+    end
+  end
+
+  # Azure/Responses tool output submission endpoint helper
+  defp submit_tool_outputs_request(%ChatOpenAI{} = openai, response_id, payload) do
+    # For Azure Responses API, the continue/tool outputs endpoint is
+    # POST {base_path}/{response_id}?api-version=...
+    # The configured endpoint includes the query; inject the id and segment into the path.
+    uri = URI.parse(openai.endpoint)
+    base_path = uri.path || ""
+    new_path =
+      base_path
+      |> String.trim_trailing("/")
+      |> Kernel.<>("/" <> to_string(response_id) <> "/tool_outputs")
+
+    continue_url = URI.to_string(%URI{uri | path: new_path})
+
+    req =
+      Req.new(
+        url: continue_url,
+        json: payload,
+        auth: {:bearer, get_api_key(openai)},
+        headers: [
+          {"api-key", get_api_key(openai)}
+        ],
+        receive_timeout: openai.receive_timeout,
+        retry: :transient,
+        max_retries: 3,
+        retry_delay: fn attempt -> 300 * attempt end
+      )
+      |> maybe_add_org_id_header(openai)
+      |> maybe_add_proj_id_header()
+
+    Logger.debug(fn -> "Submitting tool outputs to #{continue_url} payload=#{inspect(payload)}" end)
+    case Req.post(req) do
+      {:ok, %Req.Response{body: data, headers: headers}} -> {:ok, data, headers}
+      {:error, %Req.TransportError{} = err} -> {:error, err}
+      {:ok, %Req.Response{body: data}} -> {:ok, data, %{}}
+      other ->
+        Logger.error("Unexpected tool_outputs POST response: #{inspect(other)}")
+        {:error,
+         LangChainError.exception(type: "unexpected_response", message: "Unexpected response")}
+    end
+  end
+
+  # Try multiple Azure Responses API shapes for submitting tool outputs
+  defp submit_tool_outputs_with_fallbacks(%ChatOpenAI{} = openai, response_id, payload) do
+    # Build two payload variants differing by id key
+    outputs = Map.get(payload, :tool_outputs) || Map.get(payload, "tool_outputs") || []
+    with_call_id = Map.put(payload, :tool_outputs, Enum.map(outputs, fn o -> %{ "call_id" => o["call_id"] || o[:call_id] || o["tool_call_id"], "output" => o["output"] || o[:output] } end))
+    with_tool_call_id = Map.put(payload, :tool_outputs, Enum.map(outputs, fn o -> %{ "tool_call_id" => o["tool_call_id"] || o[:tool_call_id] || o["call_id"], "output" => o["output"] || o[:output] } end))
+
+    attempts = [
+      {:post_path, :tool_outputs, with_call_id},
+      {:post_path, :tool_outputs, with_tool_call_id},
+      {:post_path, :continue, with_call_id},
+      {:post_path, :continue, with_tool_call_id}
+    ]
+
+    Enum.reduce_while(attempts, {:error, LangChainError.exception(message: "all attempts failed")}, fn {mode, segment, pl}, _acc ->
+      result =
+        case mode do
+          :post_path ->
+            segment_path =
+              case segment do
+                :tool_outputs -> "/tool_outputs"
+                :continue -> "/continue"
+              end
+
+            submit_tool_outputs_request_to_path(openai, response_id, pl, segment_path)
+        end
+
+      case result do
+        {:ok, %{"error" => _} = data, _headers} ->
+          # treat as failure and try next
+          {:cont, {:error, LangChainError.exception(original: data, message: get_in(data, ["error", "message"]))}}
+
+        {:ok, %{} = data, headers} ->
+          {:halt, {:ok, data, headers}}
+
+        {:error, _} = err ->
+          {:cont, err}
+      end
+    end)
+  end
+
+  defp submit_tool_outputs_request_to_path(%ChatOpenAI{} = openai, response_id, payload, segment_path) do
+    uri = URI.parse(openai.endpoint)
+    base_path = uri.path || ""
+
+    # Azure Responses endpoints may omit the deployment segment. If missing,
+    # insert "/deployments/<model>" using the configured model name.
+    adjusted_base_path =
+      cond do
+        String.contains?(base_path, "/openai/deployments/") ->
+          base_path
+
+        is_preview_latest?(openai.endpoint) ->
+          # For preview/latest, ensure v1 responses path and do not inject deployments
+          cond do
+            String.contains?(base_path, "/openai/v1/responses") -> base_path
+            String.contains?(base_path, "/openai/responses") ->
+              String.replace(base_path, "/openai/responses", "/openai/v1/responses")
+            true -> base_path
+          end
+
+        true ->
+          # Older dated api-versions without deployments: keep base path unchanged
+          base_path
+      end
+
+    new_path =
+      adjusted_base_path
+      |> String.trim_trailing("/")
+      |> Kernel.<>("/" <> to_string(response_id) <> segment_path)
+
+    url = URI.to_string(%URI{uri | path: new_path})
+
+    req =
+      Req.new(
+        url: url,
+        json: payload,
+        auth: {:bearer, get_api_key(openai)},
+        headers: [
+          {"api-key", get_api_key(openai)}
+        ],
+        receive_timeout: openai.receive_timeout,
+        retry: :transient,
+        max_retries: 3,
+        retry_delay: fn attempt -> 300 * attempt end
+      )
+      |> maybe_add_org_id_header(openai)
+      |> maybe_add_proj_id_header()
+
+    Logger.debug(fn -> "Submitting tool outputs to #{url} payload=#{inspect(payload)}" end)
+
+    case Req.post(req) do
+      {:ok, %Req.Response{body: data, headers: headers}} -> {:ok, data, headers}
+      {:error, %Req.TransportError{} = err} -> {:error, err}
+      {:ok, %Req.Response{body: data}} -> {:ok, data, %{}}
+      other ->
+        Logger.error("Unexpected tool_outputs POST response: #{inspect(other)}")
+        {:error,
+         LangChainError.exception(type: "unexpected_response", message: "Unexpected response")}
+    end
+  end
+
+  defp fire_headers_callbacks(%{callbacks: callbacks} = _openai, headers) do
+    # Best-effort header callback compatibility
+    try do
+      Callbacks.fire(callbacks, :on_llm_response_headers, [headers])
+      Callbacks.fire(callbacks, :on_llm_ratelimit_info, [get_ratelimit_info(headers)])
+      :ok
+    rescue
+      _ -> :ok
     end
   end
 
