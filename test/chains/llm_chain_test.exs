@@ -1800,6 +1800,139 @@ defmodule LangChain.Chains.LLMChainTest do
       assert updated_chain.needs_response == false
     end
 
+    test "mode: :step with should_continue? - continues while function returns true", %{
+      chain: chain,
+      greet: greet
+    } do
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:ok,
+         [
+           new_function_calls!([
+             ToolCall.new!(%{
+               call_id: "call_greet",
+               name: "greet",
+               arguments: %{"name" => "Alice"}
+             })
+           ])
+         ]}
+      end)
+
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:ok, [Message.new_assistant!(%{content: "I've greeted Alice for you!"})]}
+      end)
+
+      should_continue_fn = fn updated_chain ->
+        updated_chain.needs_response and Enum.count(updated_chain.exchanged_messages) < 5
+      end
+
+      {:ok, final_chain} =
+        chain
+        |> LLMChain.add_tools([greet])
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Please greet Alice"))
+        |> LLMChain.run(mode: :step, should_continue?: should_continue_fn)
+
+      assert final_chain.last_message.role == :assistant
+      assert final_chain.needs_response == false
+
+      assert final_chain.last_message.content == [
+               %LangChain.Message.ContentPart{
+                 type: :text,
+                 content: "I've greeted Alice for you!",
+                 options: []
+               }
+             ]
+
+      # Should have exchanged 3 messages: tool call, tool result, final response
+      assert length(final_chain.exchanged_messages) == 3
+    end
+
+    test "mode: :step with should_continue? - stops when function returns false", %{
+      chain: chain,
+      greet: greet
+    } do
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:ok,
+         [
+           new_function_calls!([
+             ToolCall.new!(%{
+               call_id: "call_greet",
+               name: "greet",
+               arguments: %{"name" => "Alice"}
+             })
+           ])
+         ]}
+      end)
+
+      should_continue_fn = fn _updated_chain -> false end
+
+      {:ok, final_chain} =
+        chain
+        |> LLMChain.add_tools([greet])
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Please greet Alice"))
+        |> LLMChain.run(mode: :step, should_continue?: should_continue_fn)
+
+      assert final_chain.last_message.role == :assistant
+      assert [%ToolCall{name: "greet"}] = final_chain.last_message.tool_calls
+      assert final_chain.needs_response == true
+
+      # Should have only 1 exchanged message
+      assert length(final_chain.exchanged_messages) == 1
+    end
+
+    test "mode: :step with should_continue? - handles errors correctly", %{
+      chain: chain,
+      fail_func: fail_func
+    } do
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:ok,
+         [
+           new_function_calls!([
+             ToolCall.new!(%{call_id: "call_fail", name: "fail_func", arguments: %{}})
+           ])
+         ]}
+      end)
+
+      should_continue_fn = fn updated_chain ->
+        updated_chain.current_failure_count == 0
+      end
+
+      {:ok, final_chain} =
+        chain
+        |> LLMChain.add_tools([fail_func])
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Execute the failing function"))
+        |> LLMChain.run(mode: :step, should_continue?: should_continue_fn)
+
+      assert final_chain.last_message.role == :tool
+      assert final_chain.current_failure_count == 1
+      assert final_chain.needs_response == true
+
+      assert length(final_chain.exchanged_messages) == 2
+    end
+
+    test "mode: :step with should_continue? - returns error when run_single_step fails", %{
+      chain: chain
+    } do
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:error, LangChainError.exception(type: "api_error", message: "API rate limit exceeded")}
+      end)
+
+      should_continue_fn = fn _updated_chain -> true end
+
+      {:error, error_chain, reason} =
+        chain
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Say something"))
+        |> LLMChain.run(mode: :step, should_continue?: should_continue_fn)
+
+      # Should return the error from the LLM call
+      assert reason.type == "api_error"
+      assert reason.message == "API rate limit exceeded"
+      assert error_chain.exchanged_messages == []
+    end
+
     test "with_fallbacks: re-runs with next LLM after first fails" do
       # Made NOT LIVE here - handles two calls
       expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
