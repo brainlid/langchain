@@ -20,6 +20,8 @@ defmodule LangChain.ChatModels.ChatModel do
               [LangChain.Function.t()]
             ) :: call_response()
 
+  @callback retry_error?(LangChainError.t()) :: boolean()
+
   @callback serialize_config(t()) :: %{String.t() => any()}
 
   @callback restore_from_map(%{String.t() => any()}) :: {:ok, struct()} | {:error, String.t()}
