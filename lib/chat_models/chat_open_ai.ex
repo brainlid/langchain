@@ -1008,8 +1008,10 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   # Delta message tool call
   def do_process_response(
         model,
-        %{"delta" => delta_body, "finish_reason" => finish, "index" => index} = _msg
+        %{"delta" => delta_body, "index" => index} = msg
       ) do
+    # finish_reason might not be present in all streaming responses (e.g., LiteLLM proxy)
+    finish = Map.get(msg, "finish_reason", nil)
     status = finish_reason_to_status(finish)
 
     tool_calls =
