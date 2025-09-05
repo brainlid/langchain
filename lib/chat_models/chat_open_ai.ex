@@ -270,6 +270,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     # Tool choice option
     field :tool_choice, :map
 
+    field :parallel_tool_calls, :boolean
+
     # A list of maps for callback handlers (treated as internal)
     field :callbacks, {:array, :map}, default: []
 
@@ -304,6 +306,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     :stream_options,
     :user,
     :tool_choice,
+    :parallel_tool_calls,
     :verbose_api
   ]
   @required_fields [:endpoint, :model]
@@ -398,6 +401,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     )
     |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(openai, tools))
     |> Utils.conditionally_add_to_map(:tool_choice, get_tool_choice(openai))
+    |> Utils.conditionally_add_to_map(:parallel_tool_calls, openai.parallel_tool_calls)
   end
 
   defp get_tools_for_api(%_{} = _model, nil), do: []
