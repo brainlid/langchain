@@ -1036,6 +1036,28 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     end
   end
 
+  def do_process_response(_model, %{
+        "type" => "response.completed",
+        "response" => response
+      }) do
+    usage = get_token_usage(response)
+
+    data = %{
+      content: "",
+      status: :complete,
+      role: :assistant,
+      metadata: %{usage: usage}
+    }
+
+    case MessageDelta.new(data) do
+      {:ok, message} ->
+        message
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:error, LangChainError.exception(changeset)}
+    end
+  end
+
   # Streaming events explicitly skipped
 
   # Items we should come back and implement:
@@ -1044,7 +1066,6 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   # - error
 
   @skippable_streaming_events [
-    "response.completed",
     "response.created",
     "response.in_progress",
     "response.incomplete",
@@ -1082,7 +1103,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     "error"
   ]
 
-  def do_process_response(_model, %{"type" => event} = event_data)
+  def do_process_response(_model, %{"type" => event})
       when event in @skippable_streaming_events do
     # Logger.warning("Skipping event: #{event} with data: #{inspect(event_data)}")
     :skip
@@ -1105,6 +1126,19 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     Logger.error("Trying to process an unexpected response. #{inspect(other)}")
     {:error, LangChainError.exception(message: "Unexpected response")}
   end
+
+  defp get_token_usage(%{"usage" => usage} = _response_body) when is_map(usage) do
+    # extract out the reported response token usage
+    #
+    # https://platform.openai.com/docs/api-reference/responses_streaming/response/completed#responses_streaming/response/completed-response-usage
+    TokenUsage.new!(%{
+      input: Map.get(usage, "input_tokens"),
+      output: Map.get(usage, "output_tokens"),
+      raw: usage
+    })
+  end
+
+  defp get_token_usage(_response_body), do: nil
 
   defp content_items_to_content_parts_and_tool_calls(content_items) do
     Enum.reduce(content_items, {[], []}, fn content_item, {content_parts, tool_calls} ->
@@ -1262,12 +1296,5 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   @impl ChatModel
   def restore_from_map(%{"version" => 1} = data) do
     ChatOpenAIResponses.new(data)
-  end
-end
-
-# temporary; big chain inspect clutters the console
-defimpl Inspect, for: LangChain.Chains.LLMChain do
-  def inspect(_chain, _opts) do
-    "#<LLMChain>"
   end
 end
