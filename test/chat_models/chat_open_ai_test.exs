@@ -116,6 +116,16 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       %ChatOpenAI{} = openai = ChatOpenAI.new!(%{"org_id" => "test-org-123"})
       assert openai.org_id == "test-org-123"
     end
+
+    test "supports passing parallel_tool_calls" do
+      # defaults to nil
+      %ChatOpenAI{} = openai = ChatOpenAI.new!()
+      assert openai.parallel_tool_calls == nil
+
+      # can override the default to "test-org-123"
+      %ChatOpenAI{} = openai = ChatOpenAI.new!(%{"parallel_tool_calls" => false})
+      assert openai.parallel_tool_calls == false
+    end
   end
 
   describe "for_api/3" do
@@ -134,6 +144,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert data.frequency_penalty == 0.5
       # NOTE: %{"type" => "text"} is the default when not specified
       assert data[:response_format] == nil
+      assert data[:parallel_tool_calls] == nil
     end
 
     test "when frequency_penalty is not explicitly configured, it is not specified in the API call" do
@@ -237,6 +248,18 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       data = ChatOpenAI.for_api(openai, [], [])
       assert data.model == @test_model
       assert data.tool_choice == %{"type" => "function", "function" => %{"name" => "set_weather"}}
+    end
+
+    test "generated a map for an API call with parallel_tool_calls set to false" do
+      {:ok, openai} =
+        ChatOpenAI.new(%{
+          model: @test_model,
+          parallel_tool_calls: false
+        })
+
+      data = ChatOpenAI.for_api(openai, [], [])
+      assert data.model == @test_model
+      assert data.parallel_tool_calls == false
     end
   end
 
