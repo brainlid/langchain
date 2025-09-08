@@ -117,6 +117,24 @@ defmodule LangChain.Images.OpenAIImageTest do
       assert %{"model" => "dall-e-2"} = image.metadata
     end
 
+    test "handles LiteLLM response with null b64_json and url" do
+      request = OpenAIImage.new!(%{prompt: "pretend"})
+      content = "https://oaidalleapiprodscus.blob.core.windows.net/private/org-test/user-test/img-test.png"
+      # created is a Unix timestamp in UTC
+      data = %{
+        "created" => 1_715_047_358,
+        "data" => [%{"b64_json" => nil, "url" => content, "revised_prompt" => "A revised prompt"}]
+      }
+
+      {:ok, [%GeneratedImage{} = image]} = OpenAIImage.do_process_response(data, request)
+      assert image.type == :url
+      assert image.image_type == :png
+      assert image.content == content
+      assert image.prompt == "A revised prompt"
+      assert image.created_at == ~U[2024-05-07 02:02:38Z]
+      assert %{"model" => "dall-e-2"} = image.metadata
+    end
+
     test "handles when rejected for content violation" do
       response = %{
         "error" => %{
