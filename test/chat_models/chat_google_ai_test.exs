@@ -818,7 +818,7 @@ defmodule ChatModels.ChatGoogleAITest do
                "model" => "gemini-1.5-flash",
                "module" => "Elixir.LangChain.ChatModels.ChatGoogleAI",
                "receive_timeout" => 60000,
-               "thinking_budget" => nil,
+               "thinking_config" => nil,
                "stream" => false,
                "temperature" => 0.0,
                "version" => 1,
