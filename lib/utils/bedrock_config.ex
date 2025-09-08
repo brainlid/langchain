@@ -26,7 +26,8 @@ defmodule LangChain.Utils.BedrockConfig do
       config :langchain,
         aws_access_key_id: System.fetch_env!("AWS_ACCESS_KEY_ID"),
         aws_secret_access_key: System.fetch_env!("AWS_SECRET_ACCESS_KEY"),
-        aws_region: System.get_env("AWS_REGION", "us-west-1")
+        aws_region: System.get_env("AWS_REGION", "us-west-1"),
+        aws_session_token: System.get_env("AWS_SESSION_TOKEN") # optional
 
   Then, when you want to later use a Bedrock Anthropic model, this is will load
   it:
@@ -83,7 +84,8 @@ defmodule LangChain.Utils.BedrockConfig do
       config :langchain,
         aws_access_key_id: System.fetch_env!("AWS_ACCESS_KEY_ID"),
         aws_secret_access_key: System.fetch_env!("AWS_SECRET_ACCESS_KEY"),
-        aws_region: System.get_env("AWS_REGION", "us-west-1")
+        aws_region: System.get_env("AWS_REGION", "us-west-1"),
+        aws_session_token: System.get_env("AWS_SESSION_TOKEN") # optional
 
   """
   def from_application_env!() do
