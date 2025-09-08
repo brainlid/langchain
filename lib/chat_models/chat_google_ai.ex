@@ -101,7 +101,10 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     # selected using temperature sampling.
     field :top_k, :float, default: 1.0
 
-    # ThinkingConfig, https://ai.google.dev/api/generate-content#ThinkingConfig
+    # Configure thinking budget and whether to include thought summaries (content type `:thinking`).
+    # See https://ai.google.dev/gemini-api/docs/thinking.
+    #
+    # Config reference: https://ai.google.dev/api/generate-content#ThinkingConfig.
     field :thinking_config, :map, default: nil
 
     # Duration in seconds for the response to be received. When streaming a very
