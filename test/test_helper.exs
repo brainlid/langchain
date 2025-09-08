@@ -21,6 +21,8 @@ Application.put_env(
   System.get_env("AWS_REGION", "us-east-1")
 )
 
+Mimic.copy(Application)
+
 Mimic.copy(LangChain.Utils.BedrockStreamDecoder)
 Mimic.copy(LangChain.Utils.AwsEventstreamDecoder)
 
