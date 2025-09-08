@@ -119,7 +119,10 @@ defmodule LangChain.Images.OpenAIImageTest do
 
     test "handles LiteLLM response with null b64_json and url" do
       request = OpenAIImage.new!(%{prompt: "pretend"})
-      content = "https://oaidalleapiprodscus.blob.core.windows.net/private/org-test/user-test/img-test.png"
+
+      content =
+        "https://oaidalleapiprodscus.blob.core.windows.net/private/org-test/user-test/img-test.png"
+
       # created is a Unix timestamp in UTC
       data = %{
         "created" => 1_715_047_358,
