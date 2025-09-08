@@ -101,18 +101,6 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     # selected using temperature sampling.
     field :top_k, :float, default: 1.0
 
-    # thinking models only
-    #
-    # The number of thinking tokens it can use when generating a response.
-    # Model-specific behavior:
-    # - 2.5 Pro: Dynamic thinking by default (128-32768 range), cannot disable thinking
-    # - 2.5 Flash: Dynamic thinking by default (0-24576 range), set to 0 to disable
-    # - 2.5 Flash Lite: No thinking by default (512-24576 range), set to 0 to disable
-    # Set to -1 to enable dynamic thinking (model decides when and how much to think)
-    # Set to 0 to disable thinking (except for 2.5 Pro which uses minimum value)
-    # Set to specific value within model's range for fixed thinking budget
-    field :thinking_budget, :integer
-
     # Duration in seconds for the response to be received. When streaming a very
     # lengthy response, a longer time limit may be required. However, when it
     # goes on too long by itself, it tends to hallucinate more.
@@ -150,7 +138,6 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     :temperature,
     :top_p,
     :top_k,
-    :thinking_budget,
     :receive_timeout,
     :json_response,
     :json_schema,
@@ -238,23 +225,6 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
           {nil, nil}
       end
 
-    thinking_config =
-      case google_ai.thinking_budget do
-        # Disable thinking
-        nil ->
-          case google_ai.model do
-            "gemini-2.5-pro" ->
-              # Can't disable thinking, so use minimum value
-              %{"includeThoughts" => true, "thinkingBudget" => 128}
-
-            _ ->
-              %{"includeThoughts" => false, "thinkingBudget" => 0}
-          end
-
-        thinking_budget when is_integer(thinking_budget) ->
-          %{"includeThoughts" => true, "thinkingBudget" => thinking_budget}
-      end
-
     generation_config_params =
       %{
         "temperature" => google_ai.temperature,
@@ -263,7 +233,6 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
       }
       |> Utils.conditionally_add_to_map("response_mime_type", response_mime_type)
       |> Utils.conditionally_add_to_map("response_schema", response_schema)
-      |> Utils.conditionally_add_to_map("thinkingConfig", thinking_config)
 
     req =
       %{
@@ -892,7 +861,6 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
         :top_p,
         :top_k,
         :receive_timeout,
-        :thinking_budget,
         :json_response,
         :json_schema,
         :stream,
