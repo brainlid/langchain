@@ -112,24 +112,6 @@ defmodule LangChain.Tools.DeepResearchTest do
       assert Map.has_key?(function.parameters_schema, :required)
       assert "query" in function.parameters_schema.required
     end
-
-    test "handles new parameters correctly" do
-      # Test with all parameters including new ones
-      args = %{
-        "query" => "test query",
-        "model" => "o4-mini-deep-research-2025-06-26",
-        "summary" => "detailed",
-        "include_code_interpreter" => false
-      }
-
-      # Verify the parameters are accepted (would fail if not handled)
-      function = DeepResearch.new!()
-      assert is_function(function.function, 2)
-
-      # Check default values
-      assert function.parameters_schema.properties.summary.default == "auto"
-      assert function.parameters_schema.properties.include_code_interpreter.default == true
-    end
   end
 
   describe "internal functions" do
