@@ -29,11 +29,15 @@ defmodule LangChain.TokenUsage do
     field :input, :integer
     field :output, :integer
     field :raw, :map, default: %{}
+    # For token usage attached to a MessageDelta, whether the token usage is cumulative
+    # (all tokens for the message so far) or just the token usage for this delta.
+    # Varies by model.
+    field :cumulative, :boolean, default: false
   end
 
   @type t :: %TokenUsage{}
 
-  @create_fields [:input, :output, :raw]
+  @create_fields [:input, :output, :raw, :cumulative]
   # Anthropic returns only the output token count when streaming deltas
   @required_fields []
 
@@ -101,6 +105,8 @@ defmodule LangChain.TokenUsage do
   def add(nil, nil), do: nil
   def add(nil, usage), do: usage
   def add(usage, nil), do: usage
+
+  def add(_, %TokenUsage{cumulative: true} = usage), do: usage
 
   def add(%TokenUsage{} = usage1, %TokenUsage{} = usage2) do
     new!(%{

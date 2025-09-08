@@ -915,7 +915,9 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     TokenUsage.new!(%{
       input: Map.get(usage, "promptTokenCount", 0),
       output: Map.get(usage, "candidatesTokenCount", 0),
-      raw: usage
+      raw: usage,
+      # Empirically, each delta's token usage includes the total token usage so far.
+      cumulative: true
     })
   end
 
