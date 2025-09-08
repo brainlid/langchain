@@ -327,19 +327,30 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   def for_api(%Message{content: content} = message) when is_list(content) do
     %{
       "role" => map_role(message.role),
-      "parts" => Enum.map(content, &for_api/1)
+      "parts" =>
+        Enum.map(content, &for_api/1)
+        |> List.flatten()
     }
   end
 
   def for_api(%Message{content: content} = message) when is_list(content) do
     %{
       "role" => map_role(message.role),
-      "parts" => Enum.map(content, &for_api/1)
+      "parts" =>
+        Enum.map(content, &for_api/1)
+        |> List.flatten()
     }
   end
 
   def for_api(%ContentPart{type: :text} = part) do
     %{"text" => part.content}
+  end
+
+  def for_api(%ContentPart{type: :thinking}) do
+    # The thinking parts are only thought summaries and are not meant to be
+    # included in future generation requests.
+    # See https://ai.google.dev/gemini-api/docs/thinking#summaries.
+    []
   end
 
   def for_api(%ContentPart{type: :file_url} = part) do
@@ -859,6 +870,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
 
   def get_message_contents(%{content: contents} = _message) when is_list(contents) do
     Enum.map(contents, &for_api/1)
+    |> List.flatten()
   end
 
   def get_message_contents(%{content: nil} = _message) do
