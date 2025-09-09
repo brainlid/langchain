@@ -35,6 +35,8 @@ defmodule LangChain.ChatModels.ChatOrq do
   alias LangChain.Message.ToolResult
   alias LangChain.MessageDelta
   alias LangChain.TokenUsage
+  alias LangChain.Function
+  alias LangChain.FunctionParam
   alias LangChain.LangChainError
   alias LangChain.Utils
   alias LangChain.Callbacks
@@ -162,7 +164,7 @@ defmodule LangChain.ChatModels.ChatOrq do
         ) :: %{
           atom() => any()
         }
-  def for_api(%ChatOrq{} = orq, messages, _tools) do
+  def for_api(%ChatOrq{} = orq, messages, tools) do
     base =
       %{
         key: orq.key,
@@ -193,13 +195,38 @@ defmodule LangChain.ChatModels.ChatOrq do
       )
       |> Utils.conditionally_add_to_map(:file_ids, orq.file_ids)
       |> Utils.conditionally_add_to_map(:metadata, orq.metadata)
-      |> Utils.conditionally_add_to_map(:extra_params, orq.extra_params)
+      |> Utils.conditionally_add_to_map(:extra_params, get_extra_params_with_tools(orq, tools))
       |> Utils.conditionally_add_to_map(:documents, orq.documents)
       |> Utils.conditionally_add_to_map(:invoke_options, orq.invoke_options)
       |> Utils.conditionally_add_to_map(:thread, orq.thread)
       |> Utils.conditionally_add_to_map(:knowledge_filter, orq.knowledge_filter)
 
     base
+  end
+
+  # Helper function to merge tools into extra_params
+  defp get_extra_params_with_tools(%ChatOrq{} = orq, tools) do
+    tools_for_api = get_tools_for_api(orq, tools)
+
+    base_extra_params = orq.extra_params || %{}
+
+    case tools_for_api do
+      tools when is_list(tools) and length(tools) > 0 ->
+        Map.put(base_extra_params, "tools", tools_for_api)
+
+      _ ->
+        if map_size(base_extra_params) > 0, do: base_extra_params, else: nil
+    end
+  end
+
+  # Convert tools to the format expected by ORQ API (same as OpenAI format)
+  defp get_tools_for_api(%_{} = _model, nil), do: []
+
+  defp get_tools_for_api(%_{} = model, tools) do
+    Enum.map(tools, fn
+      %Function{} = function ->
+        %{"type" => "function", "function" => for_api(model, function)}
+    end)
   end
 
   # Message conversions (compatible with orq schema)
@@ -209,6 +236,7 @@ defmodule LangChain.ChatModels.ChatOrq do
           | ToolCall.t()
           | ToolResult.t()
           | ContentPart.t()
+          | Function.t()
         ) ::
           %{String.t() => any()} | [%{String.t() => any()}]
   def for_api(%_{} = model, %Message{content: content} = msg) when is_list(content) do
@@ -272,6 +300,15 @@ defmodule LangChain.ChatModels.ChatOrq do
         "arguments" => Jason.encode!(fun.arguments)
       }
     }
+  end
+
+  # Function support (for tools)
+  def for_api(%_{} = _model, %Function{} = fun) do
+    %{
+      "name" => fun.name,
+      "parameters" => get_parameters(fun)
+    }
+    |> Utils.conditionally_add_to_map("description", fun.description)
   end
 
   # Handle ContentPart structures directly
@@ -380,6 +417,23 @@ defmodule LangChain.ChatModels.ChatOrq do
         %{"url" => media_prefix <> part.content}
         |> Utils.conditionally_add_to_map("detail", detail_option)
     }
+  end
+
+  @doc false
+  def get_parameters(%Function{parameters: [], parameters_schema: nil} = _fun) do
+    %{
+      "type" => "object",
+      "properties" => %{}
+    }
+  end
+
+  def get_parameters(%Function{parameters: [], parameters_schema: schema} = _fun)
+      when is_map(schema) do
+    schema
+  end
+
+  def get_parameters(%Function{parameters: params} = _fun) do
+    FunctionParam.to_parameters_schema(params)
   end
 
   @doc false
