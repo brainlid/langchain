@@ -128,6 +128,173 @@ defmodule LangChain.ChatModels.ChatOrqTest do
                index: 0
              } = d4
     end
+
+    test "handles streaming tool call deltas correctly" do
+      model = ChatOrq.new!(%{key: "deployment_key", stream: true})
+
+      # Simulate the exact streaming tool call data that was causing the error
+      streaming_deltas = [
+        # First chunk with tool call initialization
+        %{
+          "choices" => [
+            %{
+              "delta" => %{
+                "role" => "assistant",
+                "tool_calls" => [
+                  %{
+                    "function" => %{"arguments" => "", "name" => "add"},
+                    "id" => "call_Q2wAHnrzlZCLQLKAWyxK9PHh",
+                    "index" => 0,
+                    "type" => "function"
+                  }
+                ]
+              },
+              "finish_reason" => nil,
+              "index" => 0
+            }
+          ]
+        },
+        # Second chunk with partial arguments
+        %{
+          "choices" => [
+            %{
+              "delta" => %{
+                "tool_calls" => [
+                  %{
+                    "function" => %{"arguments" => "{\""},
+                    "index" => 0
+                  }
+                ]
+              },
+              "finish_reason" => nil,
+              "index" => 0
+            }
+          ]
+        },
+        # Third chunk with more arguments
+        %{
+          "choices" => [
+            %{
+              "delta" => %{
+                "tool_calls" => [
+                  %{
+                    "function" => %{"arguments" => "a"},
+                    "index" => 0
+                  }
+                ]
+              },
+              "finish_reason" => nil,
+              "index" => 0
+            }
+          ]
+        },
+        # Fourth chunk completing the arguments
+        %{
+          "choices" => [
+            %{
+              "delta" => %{
+                "tool_calls" => [
+                  %{
+                    "function" => %{"arguments" => "\":31490,\"b\":112722}"},
+                    "index" => 0
+                  }
+                ]
+              },
+              "finish_reason" => nil,
+              "index" => 0
+            }
+          ]
+        },
+        # Final chunk with completion
+        %{
+          "choices" => [
+            %{
+              "delta" => %{},
+              "finish_reason" => "tool_calls",
+              "index" => 0
+            }
+          ]
+        }
+      ]
+
+      # Process each delta and verify they don't cause errors
+      processed_deltas =
+        Enum.map(streaming_deltas, fn delta ->
+          # ChatOrq.do_process_response returns list for "choices"
+          [processed] = ChatOrq.do_process_response(model, delta)
+          processed
+        end)
+
+      # Verify the first delta has the tool call structure
+      [d1, d2, d3, d4, d5] = processed_deltas
+
+      # First delta should have role and tool calls
+      assert %MessageDelta{
+               role: :assistant,
+               status: :incomplete,
+               index: 0,
+               tool_calls: [tool_call]
+             } = d1
+
+      assert tool_call.name == "add"
+      assert tool_call.call_id == "call_Q2wAHnrzlZCLQLKAWyxK9PHh"
+      # Empty string gets converted to nil
+      assert tool_call.arguments == nil
+      assert tool_call.index == 0
+      assert tool_call.status == :incomplete
+
+      # Second delta should have partial arguments
+      assert %MessageDelta{
+               role: :unknown,
+               status: :incomplete,
+               index: 0,
+               tool_calls: [tool_call2]
+             } = d2
+
+      assert tool_call2.arguments == "{\""
+      assert tool_call2.index == 0
+
+      # Third delta should have more arguments
+      assert %MessageDelta{
+               role: :unknown,
+               status: :incomplete,
+               index: 0,
+               tool_calls: [tool_call3]
+             } = d3
+
+      assert tool_call3.arguments == "a"
+      assert tool_call3.index == 0
+
+      # Fourth delta should have completed arguments
+      assert %MessageDelta{
+               role: :unknown,
+               status: :incomplete,
+               index: 0,
+               tool_calls: [tool_call4]
+             } = d4
+
+      assert tool_call4.arguments == "\":31490,\"b\":112722}"
+      assert tool_call4.index == 0
+
+      # Final delta should be complete
+      assert %MessageDelta{
+               role: :unknown,
+               status: :complete,
+               index: 0,
+               tool_calls: nil
+             } = d5
+
+      # Test merging the deltas to ensure they combine correctly
+      merged = MessageDelta.merge_deltas(processed_deltas)
+      assert merged.status == :complete
+      assert length(merged.tool_calls) == 1
+
+      final_tool_call = List.first(merged.tool_calls)
+      assert final_tool_call.name == "add"
+      assert final_tool_call.call_id == "call_Q2wAHnrzlZCLQLKAWyxK9PHh"
+      # The arguments should be merged from all the chunks
+      assert final_tool_call.arguments == "{\"a\":31490,\"b\":112722}"
+    end
   end
 
   describe "call/2 - LIVE" do

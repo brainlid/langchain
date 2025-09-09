@@ -802,16 +802,27 @@ defmodule LangChain.ChatModels.ChatOrq do
 
   # Orq.ai streaming message (has "message" instead of "delta") - only for incomplete streaming chunks
   def do_process_response(
-        _model,
+        model,
         %{"finish_reason" => nil, "message" => message_body, "index" => index} = _msg
       ) do
     # For streaming chunks with finish_reason: nil, status is always incomplete
     status = :incomplete
 
+    # Process tool calls if present
+    tool_calls =
+      case message_body do
+        %{"tool_calls" => tools_data} when is_list(tools_data) ->
+          Enum.map(tools_data, &do_process_response(model, &1))
+
+        _other ->
+          nil
+      end
+
     data =
       message_body
       |> Map.put("index", index)
       |> Map.put("status", status)
+      |> Map.put("tool_calls", tool_calls)
 
     case LangChain.MessageDelta.new(data) do
       {:ok, message} ->
@@ -824,7 +835,7 @@ defmodule LangChain.ChatModels.ChatOrq do
 
   # Orq.ai final streaming message (has "message" instead of "delta") - for complete streaming chunks
   def do_process_response(
-        _model,
+        model,
         %{"finish_reason" => finish, "message" => message_body, "index" => index} = _msg
       )
       when finish in ["stop", "tool_calls", "length", "max_tokens"] do
@@ -850,10 +861,21 @@ defmodule LangChain.ChatModels.ChatOrq do
           :complete
       end
 
+    # Process tool calls if present
+    tool_calls =
+      case message_body do
+        %{"tool_calls" => tools_data} when is_list(tools_data) ->
+          Enum.map(tools_data, &do_process_response(model, &1))
+
+        _other ->
+          nil
+      end
+
     data =
       message_body
       |> Map.put("index", index)
       |> Map.put("status", status)
+      |> Map.put("tool_calls", tool_calls)
 
     case LangChain.MessageDelta.new(data) do
       {:ok, message} ->
@@ -925,7 +947,7 @@ defmodule LangChain.ChatModels.ChatOrq do
     end
   end
 
-  # Tool call as part of a delta message
+  # Tool call as part of a delta message - handles both OpenAI and ORQ formats
   def do_process_response(_model, %{"function" => func_body, "index" => index} = tool_call) do
     case ToolCall.new(%{
            status: :incomplete,
@@ -933,6 +955,56 @@ defmodule LangChain.ChatModels.ChatOrq do
            call_id: tool_call["id"],
            name: Map.get(func_body, "name", nil),
            arguments: Map.get(func_body, "arguments", nil),
+           index: index
+         }) do
+      {:ok, %ToolCall{} = call} ->
+        call
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        reason = Utils.changeset_error_to_string(changeset)
+        Logger.error("Failed to process ToolCall for a function. Reason: #{reason}")
+        {:error, LangChainError.exception(changeset)}
+    end
+  end
+
+  # Tool call with direct function data (ORQ streaming format)
+  def do_process_response(_model, %{
+        "function" => %{"name" => name, "arguments" => args},
+        "id" => call_id,
+        "index" => index,
+        "type" => "function"
+      }) do
+    case ToolCall.new(%{
+           status: :incomplete,
+           type: :function,
+           call_id: call_id,
+           name: name,
+           arguments: args,
+           index: index
+         }) do
+      {:ok, %ToolCall{} = call} ->
+        call
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        reason = Utils.changeset_error_to_string(changeset)
+        Logger.error("Failed to process ToolCall for a function. Reason: #{reason}")
+        {:error, LangChainError.exception(changeset)}
+    end
+  end
+
+  # Tool call with partial data (streaming chunks)
+  def do_process_response(
+        _model,
+        %{"id" => call_id, "index" => index, "type" => "function"} = tool_call
+      ) do
+    func_data = Map.get(tool_call, "function", %{})
+
+    case ToolCall.new(%{
+           status: :incomplete,
+           type: :function,
+           call_id: call_id,
+           name: Map.get(func_data, "name", nil),
+           arguments: Map.get(func_data, "arguments", nil),
            index: index
          }) do
       {:ok, %ToolCall{} = call} ->
