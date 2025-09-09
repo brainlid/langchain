@@ -629,6 +629,27 @@ defmodule LangChain.ChatModels.ChatOrq do
           result ->
             Callbacks.fire(orq.callbacks, :on_llm_new_message, [result])
 
+            # Fire on_message_processed for assistant messages
+            case result do
+              %Message{role: :assistant} = message ->
+                Callbacks.fire(orq.callbacks, :on_message_processed, [message])
+
+              [%Message{role: :assistant} = message | _] ->
+                Callbacks.fire(orq.callbacks, :on_message_processed, [message])
+
+              messages when is_list(messages) ->
+                Enum.each(messages, fn
+                  %Message{role: :assistant} = message ->
+                    Callbacks.fire(orq.callbacks, :on_message_processed, [message])
+
+                  _ ->
+                    :ok
+                end)
+
+              _ ->
+                :ok
+            end
+
             # Track non-streaming response completion
             LangChain.Telemetry.emit_event(
               [:langchain, :llm, :response, :non_streaming],

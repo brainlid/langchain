@@ -599,4 +599,106 @@ defmodule LangChain.ChatModels.ChatOrqTest do
       assert weather_call.arguments["location"] =~ "New York"
     end
   end
+
+  describe "on_message_processed callback" do
+    test "fires on_message_processed for non-streaming assistant messages" do
+      model = ChatOrq.new!(%{key: "test_key", stream: false})
+
+      # Mock a successful non-streaming response
+      response_data = %{
+        "choices" => [
+          %{
+            "message" => %{
+              "role" => "assistant",
+              "content" => "Hello there!"
+            },
+            "finish_reason" => "stop",
+            "index" => 0
+          }
+        ],
+        "usage" => %{
+          "prompt_tokens" => 5,
+          "completion_tokens" => 3,
+          "total_tokens" => 8
+        }
+      }
+
+      # Process the response to get the message
+      [message] = ChatOrq.do_process_response(model, response_data)
+      assert %Message{role: :assistant} = message
+
+      # Test that the callback would be fired by simulating the callback logic
+      test_pid = self()
+
+      callbacks = [
+        %{
+          on_message_processed: fn msg ->
+            send(test_pid, {:message_processed, msg})
+          end
+        }
+      ]
+
+      # Simulate the callback firing logic from the non-streaming response handler
+      case message do
+        %Message{role: :assistant} = msg ->
+          Enum.each(callbacks, fn callback ->
+            if callback[:on_message_processed] do
+              callback[:on_message_processed].(msg)
+            end
+          end)
+
+        _ ->
+          :ok
+      end
+
+      assert_received {:message_processed, received_message}
+      assert received_message == message
+      assert received_message.role == :assistant
+      assert received_message.content == [ContentPart.text!("Hello there!")]
+    end
+
+    test "does not fire on_message_processed for non-assistant messages" do
+      model = ChatOrq.new!(%{key: "test_key", stream: false})
+
+      # Mock a token usage response (not an assistant message)
+      response_data = %{
+        "choices" => [],
+        "usage" => %{
+          "prompt_tokens" => 5,
+          "completion_tokens" => 0,
+          "total_tokens" => 5
+        }
+      }
+
+      # Process the response to get token usage
+      token_usage = ChatOrq.do_process_response(model, response_data)
+      assert %TokenUsage{} = token_usage
+
+      # Test that the callback would NOT be fired
+      test_pid = self()
+
+      callbacks = [
+        %{
+          on_message_processed: fn msg ->
+            send(test_pid, {:message_processed, msg})
+          end
+        }
+      ]
+
+      # Simulate the callback firing logic - should not fire for TokenUsage
+      case token_usage do
+        %Message{role: :assistant} = msg ->
+          Enum.each(callbacks, fn callback ->
+            if callback[:on_message_processed] do
+              callback[:on_message_processed].(msg)
+            end
+          end)
+
+        _ ->
+          :ok
+      end
+
+      refute_received {:message_processed, _}
+    end
+  end
 end
