@@ -253,9 +253,15 @@ defmodule LangChain.ChatModels.ChatOrq do
 
   def for_api(%_{} = model, %Message{role: :assistant, tool_calls: tool_calls} = msg)
       when is_list(tool_calls) do
+    content =
+      case msg.content do
+        content when is_list(content) -> content_parts_to_string(content)
+        content -> content
+      end
+
     %{
       "role" => :assistant,
-      "content" => msg.content
+      "content" => content
     }
     |> Utils.conditionally_add_to_map("tool_calls", Enum.map(tool_calls, &for_api(model, &1)))
   end
@@ -337,6 +343,52 @@ defmodule LangChain.ChatModels.ChatOrq do
   end
 
   def content_parts_to_string(content) when is_binary(content), do: content
+
+  @doc """
+  Convert content to a list of ContentParts. Content may be a string or already a list of ContentParts.
+  """
+  def content_to_parts(content) when is_binary(content) do
+    [ContentPart.text!(content)]
+  end
+
+  def content_to_parts(content) when is_list(content) do
+    content
+  end
+
+  def content_to_parts(nil), do: []
+
+  @doc """
+  Convert content to a single ContentPart for MessageDelta. Content may be a string or already a ContentPart.
+  """
+  def content_to_single_part(content) when is_binary(content) and content != "" do
+    ContentPart.text!(content)
+  end
+
+  def content_to_single_part(""), do: nil
+
+  def content_to_single_part(content) when is_list(content) and length(content) == 0 do
+    nil
+  end
+
+  def content_to_single_part(content) when is_list(content) and length(content) == 1 do
+    List.first(content)
+  end
+
+  def content_to_single_part(content) when is_list(content) do
+    # Join multiple parts into a single text part for MessageDelta compatibility
+    text_content =
+      content
+      |> Enum.map(fn
+        %ContentPart{type: :text, content: text} -> text
+        %ContentPart{content: other} -> other
+      end)
+      |> Enum.join("")
+
+    ContentPart.text!(text_content)
+  end
+
+  def content_to_single_part(%ContentPart{} = part), do: part
+  def content_to_single_part(nil), do: nil
 
   @doc """
   Convert a ContentPart to the expected map of data for the API.
@@ -709,7 +761,7 @@ defmodule LangChain.ChatModels.ChatOrq do
       when finish_reason in ["tool_calls", "stop"] do
     case Message.new(%{
            "role" => "assistant",
-           "content" => message["content"],
+           "content" => content_to_parts(message["content"]),
            "complete" => true,
            "index" => data["index"],
            "tool_calls" => Enum.map(calls || [], &do_process_response(model, &1))
@@ -744,6 +796,7 @@ defmodule LangChain.ChatModels.ChatOrq do
 
     data_map =
       message
+      |> Map.update("content", [], &content_to_single_part/1)
       |> Map.put("index", data["index"])
       |> Map.put("status", status)
       |> Map.put("tool_calls", Enum.map(calls || [], &do_process_response(model, &1)))
@@ -766,7 +819,7 @@ defmodule LangChain.ChatModels.ChatOrq do
              not is_map_key(message, "tool_calls") do
     case Message.new(%{
            "role" => message["role"],
-           "content" => message["content"],
+           "content" => content_to_parts(message["content"]),
            "complete" => true,
            "index" => index
          }) do
@@ -803,6 +856,7 @@ defmodule LangChain.ChatModels.ChatOrq do
 
     data =
       message
+      |> Map.update("content", [], &content_to_single_part/1)
       |> Map.put("index", index)
       |> Map.put("status", status)
 
@@ -835,6 +889,7 @@ defmodule LangChain.ChatModels.ChatOrq do
 
     data =
       message_body
+      |> Map.update("content", [], &content_to_single_part/1)
       |> Map.put("index", index)
       |> Map.put("status", status)
       |> Map.put("tool_calls", tool_calls)
@@ -888,6 +943,7 @@ defmodule LangChain.ChatModels.ChatOrq do
 
     data =
       message_body
+      |> Map.update("content", [], &content_to_single_part/1)
       |> Map.put("index", index)
       |> Map.put("status", status)
       |> Map.put("tool_calls", tool_calls)
@@ -948,6 +1004,7 @@ defmodule LangChain.ChatModels.ChatOrq do
 
     data =
       delta_body
+      |> Map.update("content", [], &content_to_single_part/1)
       |> Map.put("role", role)
       |> Map.put("index", index)
       |> Map.put("status", status)
@@ -1088,7 +1145,10 @@ defmodule LangChain.ChatModels.ChatOrq do
           nil
       end
 
-    case Message.new(Map.merge(message, %{"status" => status, "index" => index})) do
+    # Normalize content to ContentPart arrays for consistency
+    normalized_message = Map.update(message, "content", [], &content_to_parts/1)
+
+    case Message.new(Map.merge(normalized_message, %{"status" => status, "index" => index})) do
       {:ok, message} ->
         message
 

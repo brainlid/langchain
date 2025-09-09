@@ -102,31 +102,34 @@ defmodule LangChain.ChatModels.ChatOrqTest do
 
       assert %MessageDelta{
                role: :assistant,
-               content: "",
+               content: nil,
                status: :incomplete,
                index: 0
              } = d1
 
       assert %MessageDelta{
                role: :unknown,
-               content: "Colorful",
+               content: %ContentPart{type: :text, content: "Colorful"},
                status: :incomplete,
                index: 0
              } = d2
 
       assert %MessageDelta{
                role: :unknown,
-               content: " Threads",
+               content: %ContentPart{type: :text, content: " Threads"},
                status: :incomplete,
                index: 0
              } = d3
 
+      # The final delta has empty content, which should be nil after processing
       assert %MessageDelta{
                role: :unknown,
-               content: nil,
                status: :complete,
                index: 0
              } = d4
+
+      # Content should be empty list for empty delta body
+      assert d4.content == []
     end
 
     test "handles streaming tool call deltas correctly" do
