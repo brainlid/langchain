@@ -128,8 +128,8 @@ defmodule LangChain.ChatModels.ChatOrqTest do
                index: 0
              } = d4
 
-      # Content should be empty list for empty delta body
-      assert d4.content == []
+      # Content should be nil for empty delta body
+      assert d4.content == nil
     end
 
     test "handles streaming tool call deltas correctly" do

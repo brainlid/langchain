@@ -817,7 +817,7 @@ defmodule LangChain.ChatModels.ChatOrq do
 
     data_map =
       message
-      |> Map.update("content", [], &content_to_single_part/1)
+      |> Map.update("content", nil, &content_to_single_part/1)
       |> Map.put("index", data["index"])
       |> Map.put("status", status)
       |> Map.put("tool_calls", Enum.map(calls || [], &do_process_response(model, &1)))
@@ -877,7 +877,7 @@ defmodule LangChain.ChatModels.ChatOrq do
 
     data =
       message
-      |> Map.update("content", [], &content_to_single_part/1)
+      |> Map.update("content", nil, &content_to_single_part/1)
       |> Map.put("index", index)
       |> Map.put("status", status)
 
@@ -910,7 +910,7 @@ defmodule LangChain.ChatModels.ChatOrq do
 
     data =
       message_body
-      |> Map.update("content", [], &content_to_single_part/1)
+      |> Map.update("content", nil, &content_to_single_part/1)
       |> Map.put("index", index)
       |> Map.put("status", status)
       |> Map.put("tool_calls", tool_calls)
@@ -964,7 +964,7 @@ defmodule LangChain.ChatModels.ChatOrq do
 
     data =
       message_body
-      |> Map.update("content", [], &content_to_single_part/1)
+      |> Map.update("content", nil, &content_to_single_part/1)
       |> Map.put("index", index)
       |> Map.put("status", status)
       |> Map.put("tool_calls", tool_calls)
@@ -1025,7 +1025,7 @@ defmodule LangChain.ChatModels.ChatOrq do
 
     data =
       delta_body
-      |> Map.update("content", [], &content_to_single_part/1)
+      |> Map.update("content", nil, &content_to_single_part/1)
       |> Map.put("role", role)
       |> Map.put("index", index)
       |> Map.put("status", status)
