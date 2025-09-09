@@ -297,6 +297,82 @@ defmodule LangChain.ChatModels.ChatOrqTest do
     end
   end
 
+  describe "for_api/2 - tool result handling" do
+    test "converts ToolResult content to string for API" do
+      model = ChatOrq.new!(%{key: "deployment_key"})
+
+      # Create a ToolResult with ContentPart list (the problematic case)
+      tool_result = %LangChain.Message.ToolResult{
+        type: :function,
+        tool_call_id: "call_test123",
+        content: [
+          %ContentPart{type: :text, content: "230521"}
+        ]
+      }
+
+      # Convert to API format
+      api_data = ChatOrq.for_api(model, tool_result)
+
+      # Verify the content is a string, not an array
+      assert api_data["role"] == :tool
+      assert api_data["tool_call_id"] == "call_test123"
+      assert api_data["content"] == "230521"
+      assert is_binary(api_data["content"])
+    end
+
+    test "converts Message with tool_results to string content for API" do
+      model = ChatOrq.new!(%{key: "deployment_key"})
+
+      # Create a Message with tool_results (another problematic case)
+      tool_result = %LangChain.Message.ToolResult{
+        type: :function,
+        tool_call_id: "call_test456",
+        content: [
+          %ContentPart{type: :text, content: "Hello"},
+          %ContentPart{type: :text, content: " World"}
+        ]
+      }
+
+      message = %Message{
+        role: :tool,
+        tool_results: [tool_result]
+      }
+
+      # Convert to API format
+      api_data = ChatOrq.for_api(model, message)
+
+      # Should return a list of tool messages
+      assert is_list(api_data)
+      assert length(api_data) == 1
+
+      [tool_msg] = api_data
+      assert tool_msg["role"] == :tool
+      assert tool_msg["tool_call_id"] == "call_test456"
+      assert tool_msg["content"] == "Hello World"
+      assert is_binary(tool_msg["content"])
+    end
+
+    test "handles binary content directly" do
+      model = ChatOrq.new!(%{key: "deployment_key"})
+
+      # Create a ToolResult with direct string content
+      tool_result = %LangChain.Message.ToolResult{
+        type: :function,
+        tool_call_id: "call_test789",
+        content: "Direct string content"
+      }
+
+      # Convert to API format
+      api_data = ChatOrq.for_api(model, tool_result)
+
+      # Verify the content remains a string
+      assert api_data["role"] == :tool
+      assert api_data["tool_call_id"] == "call_test789"
+      assert api_data["content"] == "Direct string content"
+      assert is_binary(api_data["content"])
+    end
+  end
+
   describe "call/2 - LIVE" do
     # Skip live API calls in CI
     @tag live_call: true, live_orq_ai: true

@@ -274,7 +274,7 @@ defmodule LangChain.ChatModels.ChatOrq do
     %{
       "role" => :tool,
       "tool_call_id" => result.tool_call_id,
-      "content" => content_parts_for_api(result.content)
+      "content" => content_parts_to_string(result.content)
     }
   end
 
@@ -285,7 +285,7 @@ defmodule LangChain.ChatModels.ChatOrq do
       %{
         "role" => :tool,
         "tool_call_id" => result.tool_call_id,
-        "content" => content_parts_for_api(result.content)
+        "content" => content_parts_to_string(result.content)
       }
     end)
   end
@@ -322,6 +322,21 @@ defmodule LangChain.ChatModels.ChatOrq do
   def content_parts_for_api(content_parts) when is_list(content_parts) do
     Enum.map(content_parts, &content_part_for_api(&1))
   end
+
+  @doc """
+  Convert a list of ContentParts to a string for tool results.
+  ORQ API expects tool result content to be a string, not an array.
+  """
+  def content_parts_to_string(content_parts) when is_list(content_parts) do
+    content_parts
+    |> Enum.map(fn
+      %ContentPart{type: :text, content: text} -> text
+      %ContentPart{type: _other, content: content} -> content
+    end)
+    |> Enum.join("")
+  end
+
+  def content_parts_to_string(content) when is_binary(content), do: content
 
   @doc """
   Convert a ContentPart to the expected map of data for the API.
