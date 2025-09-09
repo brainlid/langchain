@@ -242,7 +242,7 @@ defmodule LangChain.ChatModels.ChatOrq do
   def for_api(%_{} = model, %Message{content: content} = msg) when is_list(content) do
     %{
       "role" => msg.role,
-      "content" => content_parts_for_api(content)
+      "content" => content_parts_to_string(content)
     }
     |> Utils.conditionally_add_to_map("name", msg.name)
     |> Utils.conditionally_add_to_map(
@@ -260,11 +260,11 @@ defmodule LangChain.ChatModels.ChatOrq do
     |> Utils.conditionally_add_to_map("tool_calls", Enum.map(tool_calls, &for_api(model, &1)))
   end
 
-  def for_api(%_{} = model, %Message{role: :user, content: content} = msg)
+  def for_api(%_{} = _model, %Message{role: :user, content: content} = msg)
       when is_list(content) do
     %{
       "role" => msg.role,
-      "content" => Enum.map(content, &for_api(model, &1))
+      "content" => content_parts_to_string(content)
     }
     |> Utils.conditionally_add_to_map("name", msg.name)
   end
