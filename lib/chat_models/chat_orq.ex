@@ -631,9 +631,9 @@ defmodule LangChain.ChatModels.ChatOrq do
     end
   end
 
-  # Full message with tool call
+  # Full message with tool call (non-streaming)
   def do_process_response(
-        model,
+        %{stream: false} = model,
         %{"finish_reason" => finish_reason, "message" => %{"tool_calls" => calls} = message} =
           data
       )
@@ -653,9 +653,44 @@ defmodule LangChain.ChatModels.ChatOrq do
     end
   end
 
+  # Full message with tool call (streaming) - return MessageDelta
+  def do_process_response(
+        %{stream: true} = model,
+        %{"finish_reason" => finish_reason, "message" => %{"tool_calls" => calls} = message} =
+          data
+      )
+      when finish_reason in ["tool_calls", "stop"] do
+    status =
+      case finish_reason do
+        "stop" ->
+          :complete
+
+        "tool_calls" ->
+          :complete
+
+        other ->
+          Logger.warning("Unsupported finish_reason in message. Reason: #{inspect(other)}")
+          :complete
+      end
+
+    data_map =
+      message
+      |> Map.put("index", data["index"])
+      |> Map.put("status", status)
+      |> Map.put("tool_calls", Enum.map(calls || [], &do_process_response(model, &1)))
+
+    case LangChain.MessageDelta.new(data_map) do
+      {:ok, message} ->
+        message
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:error, LangChainError.exception(changeset)}
+    end
+  end
+
   # Full message without tool calls (non-streaming)
   def do_process_response(
-        _model,
+        %{stream: false} = _model,
         %{"finish_reason" => finish_reason, "message" => message, "index" => index} = _data
       )
       when finish_reason in ["stop", "length", "max_tokens"] and
@@ -666,6 +701,43 @@ defmodule LangChain.ChatModels.ChatOrq do
            "complete" => true,
            "index" => index
          }) do
+      {:ok, message} ->
+        message
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:error, LangChainError.exception(changeset)}
+    end
+  end
+
+  # Full message without tool calls (streaming) - return MessageDelta
+  def do_process_response(
+        %{stream: true} = _model,
+        %{"finish_reason" => finish_reason, "message" => message, "index" => index} = _data
+      )
+      when finish_reason in ["stop", "length", "max_tokens"] and
+             not is_map_key(message, "tool_calls") do
+    status =
+      case finish_reason do
+        "stop" ->
+          :complete
+
+        "length" ->
+          :length
+
+        "max_tokens" ->
+          :length
+
+        other ->
+          Logger.warning("Unsupported finish_reason in message. Reason: #{inspect(other)}")
+          :complete
+      end
+
+    data =
+      message
+      |> Map.put("index", index)
+      |> Map.put("status", status)
+
+    case LangChain.MessageDelta.new(data) do
       {:ok, message} ->
         message
 
