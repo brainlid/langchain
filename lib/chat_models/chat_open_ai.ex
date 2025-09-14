@@ -291,6 +291,11 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     # For help with debugging. It outputs the RAW Req response received and the
     # RAW Elixir map being submitted to the API.
     field :verbose_api, :boolean, default: false
+
+    # Req options to merge into the request.
+    # Refer to `https://hexdocs.pm/req/Req.html#new/1-options` for
+    # `Req.new` supported set of options.
+    field :req_config, :map, default: %{}
   end
 
   @type t :: %ChatOpenAI{}
@@ -315,7 +320,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     :user,
     :tool_choice,
     :parallel_tool_calls,
-    :verbose_api
+    :verbose_api,
+    :req_config
   ]
   @required_fields [:endpoint, :model]
 
@@ -784,6 +790,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     req
     |> maybe_add_org_id_header(openai)
     |> maybe_add_proj_id_header()
+    |> Req.merge(openai.req_config |> Keyword.new())
     |> Req.post()
     # parse the body and return it as parsed structs
     |> case do
@@ -858,6 +865,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     )
     |> maybe_add_org_id_header(openai)
     |> maybe_add_proj_id_header()
+    |> Req.merge(openai.req_config |> Keyword.new())
     |> Req.post(
       into:
         Utils.handle_stream_fn(
