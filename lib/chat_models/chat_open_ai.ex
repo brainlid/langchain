@@ -255,6 +255,10 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     # faster responses and fewer tokens used on reasoning in a response.
     field :reasoning_effort, :string, default: "medium"
 
+    # Verbosity level for the response.
+    # https://platform.openai.com/docs/api-reference/chat/create#chat-create-verbosity
+    field :verbosity, :string
+
     # Duration in seconds for the response to be received. When streaming a very
     # lengthy response, a longer time limit may be required. However, when it
     # goes on too long by itself, it tends to hallucinate more.
@@ -312,6 +316,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     :stream,
     :reasoning_mode,
     :reasoning_effort,
+    :verbosity,
     :receive_timeout,
     :json_response,
     :json_schema,
@@ -407,6 +412,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       :reasoning_effort,
       if(openai.reasoning_mode, do: openai.reasoning_effort, else: nil)
     )
+    |> Utils.conditionally_add_to_map(:verbosity, openai.verbosity)
     |> Utils.conditionally_add_to_map(:max_tokens, openai.max_tokens)
     |> Utils.conditionally_add_to_map(:seed, openai.seed)
     |> Utils.conditionally_add_to_map(

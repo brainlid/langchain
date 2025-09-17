@@ -107,6 +107,16 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert openai.reasoning_effort == "high"
     end
 
+    test "supports overriding verbosity" do
+      # defaults to nil
+      %ChatOpenAI{} = openai = ChatOpenAI.new!()
+      assert openai.verbosity == nil
+
+      # can override the default to "high"
+      %ChatOpenAI{} = openai = ChatOpenAI.new!(%{"verbosity" => "high"})
+      assert openai.verbosity == "high"
+    end
+
     test "supports setting org_id" do
       # defaults to nil
       %ChatOpenAI{} = openai = ChatOpenAI.new!()
