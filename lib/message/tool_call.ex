@@ -20,14 +20,14 @@ defmodule LangChain.Message.ToolCall do
 
   @primary_key false
   embedded_schema do
-    field :status, Ecto.Enum, values: [:incomplete, :complete], default: :incomplete
-    field :type, Ecto.Enum, values: [:function], default: :function
-    field :call_id, :string
-    field :name, :string
-    field :arguments, :any, virtual: true
+    field(:status, Ecto.Enum, values: [:incomplete, :complete], default: :incomplete)
+    field(:type, Ecto.Enum, values: [:function], default: :function)
+    field(:call_id, :string)
+    field(:name, :string)
+    field(:arguments, :any, virtual: true)
     # when the tool call is incomplete, the index indicates which tool call to
     # update on a ToolCall.
-    field :index, :integer
+    field(:index, :integer)
   end
 
   # https://cookbook.openai.com/examples/how_to_call_functions_with_chat_models
@@ -207,6 +207,14 @@ defmodule LangChain.Message.ToolCall do
   defp update_status(%ToolCall{} = primary, %ToolCall{} = _delta_part) do
     # status flag not updated
     primary
+  end
+
+  defp append_arguments(%ToolCall{status: :incomplete} = primary, %ToolCall{
+         status: :complete,
+         arguments: new_arguments
+       })
+       when is_map(new_arguments) do
+    %ToolCall{primary | arguments: new_arguments}
   end
 
   defp append_arguments(%ToolCall{} = primary, %ToolCall{

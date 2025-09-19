@@ -287,6 +287,13 @@ defmodule LangChain.Utils do
   """
   def stringify_keys(nil), do: nil
 
+  # Handle structs by converting them to maps first
+  def stringify_keys(%{__struct__: _} = struct) do
+    struct
+    |> Map.from_struct()
+    |> stringify_keys()
+  end
+
   def stringify_keys(map = %{}) do
     map
     |> Enum.map(fn {k, v} -> {to_string(k), stringify_keys(v)} end)
