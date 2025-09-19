@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.4.0-rc.3
+
+### Added
+- **ChatOrqAI**: Added Orq AI chat model support (#377)
+- **ChatOpenAI**: Added OpenAI Deep Research integration (#336)
+- **ChatOpenAI**: Added `parallel_tool_calls` option (#371)
+- **ChatOpenAI**: Added `req_config` option for custom Req configuration (#376)
+- **ChatOpenAI**: Added verbosity parameter support (#379)
+- **ChatVertexAI**: Added support for native tool calls (#359)
+- **ChatGoogleAI**: Added full thinking configuration support (#375)
+- **Bedrock**: Added optional AWS session token handling in BedrockHelpers (#372)
+- **LLMChain**: Added `should_continue?` function for automatic looping on mode `:step` (#361)
+- **Core**: Added `retry_on_fallback?` to chat model definition and all models (#350)
+
+### Fixed
+- **Images**: Fixed handling of LiteLLM responses with null `b64_json` in OpenAI image generation (#368)
+- **Core**: Fixed handling of missing `finish_reason` in streaming responses for LiteLLM compatibility (#367)
+- **ChatGoogleAI**: Fixed error prevention from thinking content parts (#374)
+- **ChatGoogleAI**: Fixed handling of Gemini's cumulative token usage (#373)
+
+---
+
 ## v0.4.0-rc.2
 
 ### Added
