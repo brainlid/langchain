@@ -53,6 +53,8 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   alias LangChain.Utils
   alias LangChain.Callbacks
   alias LangChain.TokenUsage
+  alias LangChain.NativeTool
+  alias LangChain.Function
 
   @behaviour ChatModel
 
@@ -305,6 +307,14 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     }
   end
 
+  defp for_api(%NativeTool{name: name, configuration: %{} = config}) do
+    %{name => config}
+  end
+
+  defp for_api(%NativeTool{name: name, configuration: nil}) do
+    name
+  end
+
   defp for_api(nil), do: nil
 
   @doc """
@@ -391,7 +401,9 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     req
     |> Req.post()
     |> case do
-      {:ok, %Req.Response{body: data}} ->
+      {:ok, %Req.Response{body: data} = response} ->
+        Callbacks.fire(vertex_ai.callbacks, :on_llm_response_headers, [response.headers])
+
         case do_process_response(vertex_ai, data) do
           {:error, reason} ->
             {:error, reason}
@@ -439,7 +451,9 @@ defmodule LangChain.ChatModels.ChatVertexAI do
         )
     )
     |> case do
-      {:ok, %Req.Response{body: data}} ->
+      {:ok, %Req.Response{body: data} = response} ->
+        Callbacks.fire(vertex_ai.callbacks, :on_llm_response_headers, [response.headers])
+
         # Google AI uses `finishReason: "STOP` for all messages in the stream.
         # This field can't be used to terminate the list of deltas, so simulate
         # this behavior by forcing the final delta to have `status: :complete`.

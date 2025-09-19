@@ -119,6 +119,14 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   By default, the LLM will choose a tool call if a tool is available and it
   determines it is needed. That's the "auto" mode.
 
+  ## Parallel Tool Calls
+
+  By default, OpenAI models may decide to make multiple tool calls at once,
+  including calling the same tool multiple times. You can limit this behavior by
+  setting the `parallel_tool_calls`
+  [option](https://platform.openai.com/docs/api-reference/chat/create#chat_create-parallel_tool_calls)
+  to false.
+
   ### Example
   For the LLM's response to make a tool call of the "get_weather" function.
 
@@ -233,7 +241,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     # Number between -2.0 and 2.0. Positive values penalize new tokens based on
     # their existing frequency in the text so far, decreasing the model's
     # likelihood to repeat the same line verbatim.
-    field :frequency_penalty, :float, default: 0.0
+    field :frequency_penalty, :float, default: nil
 
     # Used when working with a reasoning model like `o1` and newer. This setting
     # is required when working with those models as the API behavior needs to
@@ -246,6 +254,10 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     # values are `low`, `medium`, and `high`. Reducing reasoning effort can result in
     # faster responses and fewer tokens used on reasoning in a response.
     field :reasoning_effort, :string, default: "medium"
+
+    # Verbosity level for the response.
+    # https://platform.openai.com/docs/api-reference/chat/create#chat-create-verbosity
+    field :verbosity, :string
 
     # Duration in seconds for the response to be received. When streaming a very
     # lengthy response, a longer time limit may be required. However, when it
@@ -270,6 +282,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     # Tool choice option
     field :tool_choice, :map
 
+    field :parallel_tool_calls, :boolean
+
     # A list of maps for callback handlers (treated as internal)
     field :callbacks, {:array, :map}, default: []
 
@@ -281,6 +295,11 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     # For help with debugging. It outputs the RAW Req response received and the
     # RAW Elixir map being submitted to the API.
     field :verbose_api, :boolean, default: false
+
+    # Req options to merge into the request.
+    # Refer to `https://hexdocs.pm/req/Req.html#new/1-options` for
+    # `Req.new` supported set of options.
+    field :req_config, :map, default: %{}
   end
 
   @type t :: %ChatOpenAI{}
@@ -297,6 +316,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     :stream,
     :reasoning_mode,
     :reasoning_effort,
+    :verbosity,
     :receive_timeout,
     :json_response,
     :json_schema,
@@ -304,7 +324,9 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     :stream_options,
     :user,
     :tool_choice,
-    :verbose_api
+    :parallel_tool_calls,
+    :verbose_api,
+    :req_config
   ]
   @required_fields [:endpoint, :model]
 
@@ -367,7 +389,6 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     %{
       model: openai.model,
       temperature: openai.temperature,
-      frequency_penalty: openai.frequency_penalty,
       n: openai.n,
       stream: openai.stream,
       # a single ToolResult can expand into multiple tool messages for OpenAI
@@ -382,14 +403,16 @@ defmodule LangChain.ChatModels.ChatOpenAI do
               Enum.reverse(data) ++ acc
           end
         end)
-        |> Enum.reverse(),
-      user: openai.user
+        |> Enum.reverse()
     }
+    |> Utils.conditionally_add_to_map(:user, openai.user)
+    |> Utils.conditionally_add_to_map(:frequency_penalty, openai.frequency_penalty)
     |> Utils.conditionally_add_to_map(:response_format, set_response_format(openai))
     |> Utils.conditionally_add_to_map(
       :reasoning_effort,
       if(openai.reasoning_mode, do: openai.reasoning_effort, else: nil)
     )
+    |> Utils.conditionally_add_to_map(:verbosity, openai.verbosity)
     |> Utils.conditionally_add_to_map(:max_tokens, openai.max_tokens)
     |> Utils.conditionally_add_to_map(:seed, openai.seed)
     |> Utils.conditionally_add_to_map(
@@ -398,6 +421,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     )
     |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(openai, tools))
     |> Utils.conditionally_add_to_map(:tool_choice, get_tool_choice(openai))
+    |> Utils.conditionally_add_to_map(:parallel_tool_calls, openai.parallel_tool_calls)
   end
 
   defp get_tools_for_api(%_{} = _model, nil), do: []
@@ -772,6 +796,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     req
     |> maybe_add_org_id_header(openai)
     |> maybe_add_proj_id_header()
+    |> Req.merge(openai.req_config |> Keyword.new())
     |> Req.post()
     # parse the body and return it as parsed structs
     |> case do
@@ -779,6 +804,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         if openai.verbose_api do
           IO.inspect(response, label: "RAW REQ RESPONSE")
         end
+
+        Callbacks.fire(openai.callbacks, :on_llm_response_headers, [response.headers])
 
         Callbacks.fire(openai.callbacks, :on_llm_ratelimit_info, [
           get_ratelimit_info(response.headers)
@@ -844,6 +871,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     )
     |> maybe_add_org_id_header(openai)
     |> maybe_add_proj_id_header()
+    |> Req.merge(openai.req_config |> Keyword.new())
     |> Req.post(
       into:
         Utils.handle_stream_fn(
@@ -854,6 +882,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     )
     |> case do
       {:ok, %Req.Response{body: data} = response} ->
+        Callbacks.fire(openai.callbacks, :on_llm_response_headers, [response.headers])
+
         Callbacks.fire(openai.callbacks, :on_llm_ratelimit_info, [
           get_ratelimit_info(response.headers)
         ])
@@ -1004,8 +1034,10 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   # Delta message tool call
   def do_process_response(
         model,
-        %{"delta" => delta_body, "finish_reason" => finish, "index" => index} = _msg
+        %{"delta" => delta_body, "index" => index} = msg
       ) do
+    # finish_reason might not be present in all streaming responses (e.g., LiteLLM proxy)
+    finish = Map.get(msg, "finish_reason", nil)
     status = finish_reason_to_status(finish)
 
     tool_calls =

@@ -1,9 +1,35 @@
 # Changelog
 
-## [Unreleased]
+## v0.4.0-rc.2
+
+### Added
+- **ChatGrok**: Added xAI Grok chat model support (#338)
+- **ChatGoogleAI**: Added thinking support (#354)
+- **ChatGoogleAI**: Added `req_config` option for custom Req configuration (#357)
+- **ChatOllamaAI**: Added missing `verbose_api` field for streaming compatibility (#341)
+- **ChatVertexAI**: Added usage data to Message response metadata (#335)
+- **Images**: Added support for `gpt-image-1` model in OpenAI image generation (#360)
+- **LLMChain**: Added new run mode `:step` for step-by-step execution (#343)
+- **LLMChain**: Added support for multiple tools in `run_until_tool_used` (#345)
+- **OpenAI**: Added organization ID as a parameter for API requests (#337)
+- New callback `on_llm_response_headers` supports receiving the full Req HTTP response headers for a request (#358)
+
+### Changed
+- **Bedrock**: Added OpenAI-compatible API compatibility (#356)
+- **ChatAnthropic**: Expanded logging for API errors (#349)
+- **ChatAnthropic**: Added transient Req retry support in stream mode (#329)
+- **ChatGoogleAI**: Cleaned up MessageDelta handling (#353)
+- **ChatOpenAI**: Only include "user" field with requests when a value is provided (#364)
+- **Dependencies**: Updated gettext requirement to `~> 0.26` (#332)
+
+### Fixed
+- **ChatGoogleAI**: Handle responses with no content parts (#365)
+- **ChatGoogleAI**: Prevent crash when ToolResult contains string content (#352)
+- **Core**: Fixed issue with poorly matching list in case statements (#334)
+- **Core**: Filter out empty lists in message responses (#333)
 
 ### Breaking Changes
-- **ChatOllamaAI**: Fixed `stop` field type from `:string` to `{:array, :string}` to match Ollama API requirements. Previously, stop sequences were non-functional due to API type mismatch. Now accepts arrays like `["\\n", "Human:", "<|eot_id|>"]`. Empty arrays are excluded from API requests to preserve modelfile defaults.
+- **ChatOllamaAI**: Fixed `stop` field type from `:string` to `{:array, :string}` to match Ollama API requirements. Previously, stop sequences were non-functional due to API type mismatch. Now accepts arrays like `["\\n", "Human:", "<|eot_id|>"]`. Empty arrays are excluded from API requests to preserve modelfile defaults (#342)
 
 ---
 

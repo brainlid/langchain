@@ -410,9 +410,19 @@ defmodule LangChain.Chains.LLMChain do
 
   - `mode: :step` - (for step-by-step execution control) Executes one step of
     the chain: makes an LLM call, processes the message, executes any tool
-    calls, and then stops. This allows the caller to inspect the result and
-    decide whether to continue by calling `run` again. Perfect for scenarios
-    where you need to examine each message or tool result before proceeding.
+    calls, and then stops. This allows the caller to inspect messages and
+    modify the chain between steps before deciding whether to continue by
+    calling `run` again. Perfect for scenarios where you need to examine
+    each message, update context, or modify the chain state before proceeding.
+
+  - `should_continue?` - (for automated stepped execution with conditional
+    stopping) Needs to be used with `mode: :step`, this option accepts a function
+    that receives the updated chain after each step and returns a boolean
+    indicating whether to continue. This internally handles the loop logic,
+    making stepped execution more streamlined for scenarios where you need
+    to inspect the chain state to determine when to stop (e.g., max iterations,
+    completion conditions, error thresholds). The function signature is
+    `(LLMChain.t() -> boolean())`.
 
   - `with_fallbacks: [...]` - Provide a list of chat models to use as a fallback
     when one fails. This helps a production system remain operational when an
@@ -443,6 +453,17 @@ defmodule LangChain.Chains.LLMChain do
 
       LLMChain.run(chain, mode: :until_success)
 
+  **Use Case**: Automated stepped execution with a continuation function.
+  When you want step-by-step control but prefer the loop to be handled
+  internally based on a condition function.
+
+      should_continue_fn = fn updated_chain ->
+        # Continue while we need a response and haven't hit max iterations
+        updated_chain.needs_response && Enum.count(updated_chain.exchanged_messages) < 10
+      end
+
+      {:ok, final_chain} = LLMChain.run(chain, mode: :step, should_continue?: should_continue_fn)
+
   **Use Case**: Step-by-step execution where you need control of the loop.
   In case you want to inspect the result of each step and decide whether to
   continue or not, This is useful for debugging, to stop when you receive a
@@ -451,7 +472,12 @@ defmodule LangChain.Chains.LLMChain do
       {:ok, updated_chain} = LLMChain.run(chain, mode: :step)
       # Inspect the result, check tool calls, etc.
       if should_continue?(updated_chain) do
-        {:ok, final_chain} = LLMChain.run(updated_chain, mode: :step)
+        # Optionally modify the chain before continuing
+        modified_chain = updated_chain
+          |> LLMChain.update_custom_context(%{iteration_count: get_iteration_count() + 1})
+          |> LLMChain.add_message(Message.new_user!("Continue with the next step"))
+
+        {:ok, final_chain} = LLMChain.run(modified_chain, mode: :step)
       end
 
   """
@@ -480,7 +506,8 @@ defmodule LangChain.Chains.LLMChain do
             &run_until_success/1
 
           :step ->
-            &run_step/1
+            should_continue_fn = Keyword.get(opts, :should_continue?)
+            &run_step(&1, should_continue_fn)
         end
 
       # Add telemetry for chain execution
@@ -663,8 +690,29 @@ defmodule LangChain.Chains.LLMChain do
 
   # Run the chain one step at a time. This executes the LLM call, processes
   # the message, executes any tool calls, and then returns the updated chain.
-  @spec run_step(t()) :: {:ok, t()} | {:error, t(), LangChainError.t()}
-  defp run_step(%LLMChain{} = chain) do
+  # When should_continue_fn is provided, it loops automatically based on the function.
+  @spec run_step(t(), (t() -> boolean()) | nil) :: {:ok, t()} | {:error, t(), LangChainError.t()}
+  defp run_step(%LLMChain{} = chain, should_continue_fn)
+       when is_function(should_continue_fn, 1) do
+    case run_single_step(chain) do
+      {:ok, updated_chain} ->
+        if should_continue_fn.(updated_chain) do
+          run_step(updated_chain, should_continue_fn)
+        else
+          {:ok, updated_chain}
+        end
+
+      {:error, updated_chain, reason} ->
+        {:error, updated_chain, reason}
+    end
+  end
+
+  defp run_step(%LLMChain{} = chain, _) do
+    run_single_step(chain)
+  end
+
+  @spec run_single_step(t()) :: {:ok, t()} | {:error, t(), LangChainError.t()}
+  defp run_single_step(%LLMChain{} = chain) do
     chain_after_tools = execute_tool_calls(chain)
 
     # if no tools were executed, automatically run again

@@ -2,7 +2,7 @@ defmodule LangChain.MixProject do
   use Mix.Project
 
   @source_url "https://github.com/brainlid/langchain"
-  @version "0.4.0-rc.1"
+  @version "0.4.0-rc.2"
 
   def project do
     [
@@ -70,6 +70,7 @@ defmodule LangChain.MixProject do
           LangChain.ChatModels.ChatMistralAI,
           LangChain.ChatModels.ChatOllamaAI,
           LangChain.ChatModels.ChatPerplexity,
+          LangChain.ChatModels.ChatGrok,
           LangChain.ChatModels.ChatModel
         ],
         Chains: [
@@ -112,7 +113,12 @@ defmodule LangChain.MixProject do
           LangChain.TextSplitter.LanguageSeparators
         ],
         Tools: [
-          LangChain.Tools.Calculator
+          LangChain.Tools.Calculator,
+          LangChain.Tools.DeepResearch,
+          LangChain.Tools.DeepResearchClient,
+          LangChain.Tools.DeepResearch.ResearchRequest,
+          LangChain.Tools.DeepResearch.ResearchStatus,
+          LangChain.Tools.DeepResearch.ResearchResult
         ],
         Utils: [
           LangChain.Utils,

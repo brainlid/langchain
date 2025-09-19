@@ -50,6 +50,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   alias LangChain.FunctionParam
   alias LangChain.LangChainError
   alias LangChain.Utils
+  alias LangChain.Callbacks
 
   @behaviour ChatModel
 
@@ -468,6 +469,8 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
           IO.inspect(response, label: "RAW REQ RESPONSE")
         end
 
+        Callbacks.fire(ollama_ai.callbacks, :on_llm_response_headers, [response.headers])
+
         case do_process_response(ollama_ai, data) do
           {:error, reason} ->
             {:error, reason}
@@ -527,7 +530,9 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
         )
     )
     |> case do
-      {:ok, %Req.Response{body: data}} ->
+      {:ok, %Req.Response{body: data} = response} ->
+        Callbacks.fire(ollama_ai.callbacks, :on_llm_response_headers, [response.headers])
+
         data
 
       {:error, %LangChainError{} = error} ->
