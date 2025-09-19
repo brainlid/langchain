@@ -20,7 +20,7 @@ defmodule LangChain.ChatModels.ChatModel do
               [LangChain.Function.t()]
             ) :: call_response()
 
-  @callback retry_error?(LangChainError.t()) :: boolean()
+  @callback retry_on_fallback?(LangChainError.t()) :: boolean()
 
   @callback serialize_config(t()) :: %{String.t() => any()}
 

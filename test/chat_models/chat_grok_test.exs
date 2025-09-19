@@ -227,17 +227,13 @@ defmodule LangChain.ChatModels.ChatGrokTest do
 
       serialized = ChatGrok.serialize_config(original)
       assert is_map(serialized)
-      assert serialized.model == "grok-4"
-      assert serialized.module == ChatGrok
+      assert serialized["model"] == "grok-4"
+      assert serialized["version"] == 1
 
       {:ok, restored} = ChatGrok.restore_from_map(serialized)
       assert restored.model == original.model
       assert restored.temperature == original.temperature
       assert restored.max_tokens == original.max_tokens
-    end
-
-    test "handles invalid restore data" do
-      assert {:error, _reason} = ChatGrok.restore_from_map(%{invalid: "data"})
     end
   end
 

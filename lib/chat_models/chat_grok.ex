@@ -511,6 +511,7 @@ defmodule LangChain.ChatModels.ChatGrok do
   @doc """
   Calls the xAI API with the given messages and tools.
   """
+  @impl ChatModel
   def call(grok, prompt, tools \\ [])
 
   def call(%ChatGrok{} = grok, prompt, tools) when is_binary(prompt) do
@@ -588,7 +589,7 @@ defmodule LangChain.ChatModels.ChatGrok do
         handle_error_response(response)
 
       {:error, %Mint.TransportError{reason: :timeout}} ->
-        {:error, LangChainError.exception(type: :timeout, message: "Request timed out")}
+        {:error, LangChainError.exception(type: "timeout", message: "Request timed out")}
 
       {:error, %Mint.TransportError{reason: reason}} ->
         detailed_msg = "Transport error: #{inspect(reason)}"
@@ -597,7 +598,7 @@ defmodule LangChain.ChatModels.ChatGrok do
           IO.puts("🚨 Grok Transport Error: #{detailed_msg}")
         end
 
-        {:error, LangChainError.exception(type: :transport_error, message: detailed_msg)}
+        {:error, LangChainError.exception(type: "transport_error", message: detailed_msg)}
 
       {:error, %Req.TransportError{reason: reason}} ->
         detailed_msg = "Req transport error: #{inspect(reason)}"
@@ -606,7 +607,7 @@ defmodule LangChain.ChatModels.ChatGrok do
           IO.puts("🚨 Grok Req Error: #{detailed_msg}")
         end
 
-        {:error, LangChainError.exception(type: :transport_error, message: detailed_msg)}
+        {:error, LangChainError.exception(type: "transport_error", message: detailed_msg)}
 
       {:error, reason} ->
         detailed_msg = "HTTP request failed: #{inspect(reason)}"
@@ -615,7 +616,7 @@ defmodule LangChain.ChatModels.ChatGrok do
           IO.puts("🚨 Grok Request Error: #{detailed_msg}")
         end
 
-        {:error, LangChainError.exception(type: :http_error, message: detailed_msg)}
+        {:error, LangChainError.exception(type: "http_error", message: detailed_msg)}
     end
   end
 
@@ -767,23 +768,54 @@ defmodule LangChain.ChatModels.ChatGrok do
   @doc """
   Serialize the configuration of a ChatGrok struct to a map for saving.
   """
-  def serialize_config(%ChatGrok{} = grok) do
-    grok
-    |> Map.from_struct()
-    |> Map.put(:module, ChatGrok)
-    |> Map.put(:version, @current_config_version)
+  @impl ChatModel
+  def serialize_config(%ChatGrok{} = model) do
+    Utils.to_serializable_map(
+      model,
+      [
+        :endpoint,
+        :receive_timeout,
+        :model,
+        :max_tokens,
+        :temperature,
+        :top_p,
+        :frequency_penalty,
+        :presence_penalty,
+        :seed,
+        :n,
+        :stream,
+        :stream_options,
+        :tool_choice,
+        :response_format,
+        :verbose_api,
+        :reasoning_mode,
+        :multi_agent,
+        :large_context
+      ],
+      @current_config_version
+    )
   end
 
   @doc """
   Restore a ChatGrok struct from a serialized configuration map.
   """
-  def restore_from_map(%{"module" => "Elixir.LangChain.ChatModels.ChatGrok"} = data) do
-    new(data)
+  @impl ChatModel
+  def restore_from_map(%{"version" => 1} = data) do
+    ChatGrok.new(data)
   end
 
-  def restore_from_map(%{module: ChatGrok} = data) do
-    new(data)
-  end
-
-  def restore_from_map(_), do: {:error, "Invalid ChatGrok configuration"}
+  @doc """
+  Determine if an error should be retried. If `true`, a fallback LLM may be
+  used. If `false`, the error is understood to be more fundamental with the
+  request rather than a service issue and it should not be retried or fallback
+  to another service.
+  """
+  @impl ChatModel
+  @spec retry_on_fallback?(LangChainError.t()) :: boolean()
+  def retry_on_fallback?(%LangChainError{type: "rate_limited"}), do: true
+  def retry_on_fallback?(%LangChainError{type: "rate_limit_exceeded"}), do: true
+  def retry_on_fallback?(%LangChainError{type: "timeout"}), do: true
+  def retry_on_fallback?(%LangChainError{type: "transport_error"}), do: true
+  def retry_on_fallback?(%LangChainError{type: "too_many_requests"}), do: true
+  def retry_on_fallback?(_), do: false
 end

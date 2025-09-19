@@ -592,8 +592,9 @@ defmodule LangChain.Chains.LLMChain do
           {:ok, result}
 
         {:error, _error_chain, reason} = error ->
-          #TODO: HERE IS WHERE WE SHOULD ADD A CHECK against the model for IF this error should be retried or not.
-          if llm_module.retry_error?(reason) do
+          # Check with the chat model if this error should be retried on a
+          # fallback model or not.
+          if llm_module.retry_on_fallback?(reason) do
             # run attempt received an error. Try again with the next LLM
             Logger.warning("LLM call failed, using next fallback. Reason: #{inspect(reason)}")
 

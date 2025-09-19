@@ -491,12 +491,13 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   to another service.
   """
   @impl ChatModel
-  @spec retry_error?(LangChainError.t()) :: boolean()
-  def retry_error?(%LangChainError{type: "rate_limit_exceeded"}), do: true
-  def retry_error?(%LangChainError{type: "overloaded"}), do: true
-  def retry_error?(%LangChainError{type: "timeout"}), do: true
-  def retry_error?(%LangChainError{type: "invalid_request_error"}), do: false
-  def retry_error?(_), do: false
+  @spec retry_on_fallback?(LangChainError.t()) :: boolean()
+  def retry_on_fallback?(%LangChainError{type: "rate_limited"}), do: true
+  def retry_on_fallback?(%LangChainError{type: "rate_limit_exceeded"}), do: true
+  def retry_on_fallback?(%LangChainError{type: "overloaded"}), do: true
+  def retry_on_fallback?(%LangChainError{type: "timeout"}), do: true
+  def retry_on_fallback?(%LangChainError{type: "invalid_request_error"}), do: false
+  def retry_on_fallback?(_), do: false
 
   # Call Anthropic's API.
   #
