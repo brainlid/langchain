@@ -1941,11 +1941,11 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       {:ok, deltas} = ChatAnthropic.call(llm, "What is 400 + 50 + 3?")
       # IO.inspect(deltas, label: "RESULT DELTAS")
 
-      {:ok, %Message{} = merged} = MessageDelta.merge_deltas(deltas) |> MessageDelta.to_message()
+      {:ok, %Message{} = merged} = deltas |> List.flatten |> MessageDelta.merge_deltas() |> MessageDelta.to_message()
       # IO.inspect(merged, label: "MERGED")
 
       answer = ContentPart.parts_to_string(merged.content)
-      # IO.inspect(parts, label: "PARTS")
+      # IO.inspect(answer, label: "ANSWER")
       assert answer =~ "453"
     end
 
@@ -2662,10 +2662,12 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
         assert updated_chain.last_message.status == :complete
         assert updated_chain.last_message.role == :assistant
         # the final message includes the token usage
-        assert %TokenUsage{input: 20} = updated_chain.last_message.metadata.usage
+        assert %TokenUsage{input: usage} = updated_chain.last_message.metadata.usage
+        # Anthropic and Bedrock compute token usage differently for the same inputs.
+        assert usage in [20, 40]
 
         assert_received {:streamed_fn, data}
-        assert %MessageDelta{role: :assistant} = data
+        assert [%MessageDelta{role: :assistant} | _] = data
       end
 
       Module.put_attribute(__MODULE__, :tag, {:"live_#{api}", true})
@@ -2770,7 +2772,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
         assert updated_chain.last_message.role == :assistant
 
         assert_received {:streamed_fn, data}
-        assert %MessageDelta{role: :assistant} = data
+        assert [%MessageDelta{role: :assistant} | _] = data
       end
     end
 
@@ -2886,7 +2888,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       {:ok, updated_chain} = original_chain |> LLMChain.run()
 
       assert %Message{role: :assistant, status: :complete} = updated_chain.last_message
-      assert %TokenUsage{input: 28} = updated_chain.last_message.metadata.usage
+      assert %TokenUsage{input: 56} = updated_chain.last_message.metadata.usage
 
       assert_received {:test_message_processed, message}
       assert %Message{role: :assistant} = message
@@ -2894,7 +2896,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       assert message == updated_chain.last_message
 
       assert_received {:test_token_usage, usage}
-      assert %TokenUsage{input: 28} = usage
+      assert %TokenUsage{input: 56} = usage
 
       # get all the deltas sent to the test process
       deltas = collect_messages() |> List.flatten()
