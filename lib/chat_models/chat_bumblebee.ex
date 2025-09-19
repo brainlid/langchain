@@ -572,6 +572,16 @@ defmodule LangChain.ChatModels.ChatBumblebee do
   defp fire_token_usage_callback(_model, _token_summary), do: :ok
 
   @doc """
+  Determine if an error should be retried. If `true`, a fallback LLM may be
+  used. If `false`, the error is understood to be more fundamental with the
+  request rather than a service issue and it should not be retried or fallback
+  to another service.
+  """
+  @impl ChatModel
+  @spec retry_on_fallback?(LangChainError.t()) :: boolean()
+  def retry_on_fallback?(_), do: true
+
+  @doc """
   Generate a config map that can later restore the model's configuration.
   """
   @impl ChatModel
