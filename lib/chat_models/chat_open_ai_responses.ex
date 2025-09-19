@@ -222,7 +222,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     # omit service_tier because chat_open_ai also omits it
     # omit store, but set it explicitly to false later to keep statelessness. the API will default true unless we set it
     field(:stream, :boolean, default: false)
-    field(:temperature, :float, default: 1.0)
+    field(:temperature, :float, default: nil)
     field(:json_response, :boolean, default: false)
     field(:json_schema, :map, default: nil)
     field(:json_schema_name, :string, default: nil)
@@ -319,8 +319,6 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   def for_api(%ChatOpenAIResponses{} = openai, messages, tools) do
     %{
       model: openai.model,
-      temperature: openai.temperature,
-      top_p: openai.top_p,
       stream: openai.stream,
       store: false,
       input:
@@ -334,8 +332,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
               Enum.reverse(data) ++ acc
           end
         end)
-        |> Enum.reverse(),
-      user: openai.user
+        |> Enum.reverse()
     }
     |> Utils.conditionally_add_to_map(:include, openai.include)
     |> Utils.conditionally_add_to_map(:max_output_tokens, openai.max_output_tokens)
@@ -344,6 +341,9 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     |> Utils.conditionally_add_to_map(:tool_choice, get_tool_choice(openai))
     |> Utils.conditionally_add_to_map(:truncation, openai.truncation)
     |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(openai, tools))
+    |> Utils.conditionally_add_to_map(:user, openai.user)
+    |> Utils.conditionally_add_to_map(:temperature, openai.temperature)
+    |> Utils.conditionally_add_to_map(:top_p, openai.top_p)
   end
 
   defp get_tools_for_api(%ChatOpenAIResponses{} = _model, nil), do: []
@@ -1225,6 +1225,41 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     end
   end
 
+  # Handle reasoning output from gpt-5 and o-series models
+  # We can either ignore it or store it as metadata
+  defp content_item_to_content_part_or_tool_call(%{
+         "type" => "reasoning",
+         "id" => reasoning_id,
+         "summary" => summary
+       }) do
+    # Store reasoning as an unsupported content part for now
+    # This preserves the information without breaking the flow
+    case ContentPart.new(%{
+           type: :unsupported,
+           options: %{
+             id: reasoning_id,
+             summary: summary,
+             type: "reasoning"
+           }
+         }) do
+      {:ok, %ContentPart{} = part} ->
+        part
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        reason = Utils.changeset_error_to_string(changeset)
+        Logger.warning("Failed to process reasoning output. Reason: #{reason}")
+        # Return a minimal content part to avoid breaking the flow
+        ContentPart.text!("")
+    end
+  end
+
+  # Catch-all for unknown content item types
+  defp content_item_to_content_part_or_tool_call(%{"type" => type} = item) do
+    Logger.warning("Unknown content item type: #{type}. Item: #{inspect(item)}")
+    # Return empty text content to avoid breaking the flow
+    ContentPart.text!("")
+  end
+
   defp maybe_add_org_id_header(%Req.Request{} = req) do
     org_id = get_org_id()
 
@@ -1297,4 +1332,16 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   def restore_from_map(%{"version" => 1} = data) do
     ChatOpenAIResponses.new(data)
   end
+
+  @doc """
+  Determine if an error should be retried with a fallback model.
+  Aligns with other providers.
+  """
+  @impl ChatModel
+  @spec retry_on_fallback?(LangChainError.t()) :: boolean()
+  def retry_on_fallback?(%LangChainError{type: "rate_limited"}), do: true
+  def retry_on_fallback?(%LangChainError{type: "rate_limit_exceeded"}), do: true
+  def retry_on_fallback?(%LangChainError{type: "timeout"}), do: true
+  def retry_on_fallback?(%LangChainError{type: "too_many_requests"}), do: true
+  def retry_on_fallback?(_), do: false
 end
