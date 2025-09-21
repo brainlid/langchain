@@ -1941,7 +1941,9 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       {:ok, deltas} = ChatAnthropic.call(llm, "What is 400 + 50 + 3?")
       # IO.inspect(deltas, label: "RESULT DELTAS")
 
-      {:ok, %Message{} = merged} = deltas |> List.flatten |> MessageDelta.merge_deltas() |> MessageDelta.to_message()
+      {:ok, %Message{} = merged} =
+        deltas |> List.flatten() |> MessageDelta.merge_deltas() |> MessageDelta.to_message()
+
       # IO.inspect(merged, label: "MERGED")
 
       answer = ContentPart.parts_to_string(merged.content)
