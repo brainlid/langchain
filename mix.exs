@@ -12,6 +12,7 @@ defmodule LangChain.MixProject do
       elixirc_paths: elixirc_paths(Mix.env()),
       test_options: [docs: true],
       start_permanent: Mix.env() == :prod,
+      aliases: aliases(),
       deps: deps(),
       package: package(),
       docs: &docs/0,
@@ -27,6 +28,12 @@ defmodule LangChain.MixProject do
   def application do
     [
       extra_applications: [:logger]
+    ]
+  end
+
+  def cli do
+    [
+      preferred_envs: [precommit: :test]
     ]
   end
 
@@ -47,6 +54,18 @@ defmodule LangChain.MixProject do
     ]
   end
 
+  # Aliases are shortcuts or tasks specific to the current project.
+  # For example, before performing a commit, run the following checks:
+  #
+  #     $ mix precommit
+  #
+  # See the documentation for `Mix` for more info on aliases.
+  defp aliases do
+    [
+      precommit: ["compile --warning-as-errors", "deps.unlock --unused", "format", "test"]
+    ]
+  end
+
   defp docs do
     [
       main: "readme",
@@ -63,6 +82,7 @@ defmodule LangChain.MixProject do
       groups_for_modules: [
         "Chat Models": [
           LangChain.ChatModels.ChatOpenAI,
+          LangChain.ChatModels.ChatOpenAIResponses,
           LangChain.ChatModels.ChatAnthropic,
           LangChain.ChatModels.ChatBumblebee,
           LangChain.ChatModels.ChatGoogleAI,
