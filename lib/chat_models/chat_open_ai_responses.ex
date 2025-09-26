@@ -205,15 +205,15 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
 
   # https://platform.openai.com/docs/api-reference/responses/create
   embedded_schema do
-    field(:receive_timeout, :integer, default: @receive_timeout)
-    field(:api_key, :string, redact: true)
-    field(:endpoint, :string, default: "https://api.openai.com/v1/responses")
+    field :receive_timeout, :integer, default: @receive_timeout
+    field :api_key, :string, redact: true
+    field :endpoint, :string, default: "https://api.openai.com/v1/responses"
 
-    field(:model, :string, default: "gpt-3.5-turbo")
+    field :model, :string, default: "gpt-3.5-turbo"
 
-    field(:include, {:array, :string}, default: [])
+    field :include, {:array, :string}, default: []
     # omit instructions becasue langchain assumes statelessness
-    field(:max_output_tokens, :integer, default: nil)
+    field :max_output_tokens, :integer, default: nil
     # omit metadata because chat_open_ai also omits it
     # omit parallel_tool_calls because chat_open_ai also omits it
     # omit previous_response_id becasue langchain assumes statelessness
@@ -221,20 +221,20 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     embeds_one(:reasoning, ReasoningOptions)
     # omit service_tier because chat_open_ai also omits it
     # omit store, but set it explicitly to false later to keep statelessness. the API will default true unless we set it
-    field(:stream, :boolean, default: false)
-    field(:temperature, :float, default: nil)
-    field(:json_response, :boolean, default: false)
-    field(:json_schema, :map, default: nil)
-    field(:json_schema_name, :string, default: nil)
+    field :stream, :boolean, default: false
+    field :temperature, :float, default: nil
+    field :json_response, :boolean, default: false
+    field :json_schema, :map, default: nil
+    field :json_schema_name, :string, default: nil
 
     # This can be a string or object. We will need to allow ["none", "auto", "required", "file_search", "web_search_preview", and "computer_use_preview"] and take any other string and turn it to %{name: value, type: "function"}
-    field(:tool_choice, :any, default: nil, virtual: true)
-    field(:top_p, :float, default: 1.0)
-    field(:truncation, :string)
-    field(:user, :string)
+    field :tool_choice, :any, default: nil, virtual: true
+    field :top_p, :float, default: 1.0
+    field :truncation, :string
+    field :user, :string
 
-    field(:callbacks, {:array, :map}, default: [])
-    field(:verbose_api, :boolean, default: false)
+    field :callbacks, {:array, :map}, default: []
+    field :verbose_api, :boolean, default: false
   end
 
   @type t :: %ChatOpenAIResponses{}
