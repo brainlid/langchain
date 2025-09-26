@@ -1,5 +1,5 @@
 defmodule LangChain.Chains.LLMChain do
-  @doc """
+  @moduledoc """
   Define an LLMChain. This is the heart of the LangChain library.
 
   The chain deals with tools, a tool map, delta tracking, tracking the messages
