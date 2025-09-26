@@ -38,7 +38,11 @@ defmodule LangChain.Utils.ChainResult do
   end
 
   def to_string(%LLMChain{last_message: %Message{role: :assistant, status: _incomplete}} = chain) do
-    {:error, chain, LangChainError.exception(type: "to_string", message: "Message is incomplete")}
+    {:error, chain,
+     LangChainError.exception(
+       type: "to_string",
+       message: "Message is incomplete and stopped for length"
+     )}
   end
 
   def to_string(%LLMChain{last_message: %Message{}} = chain) do

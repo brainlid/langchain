@@ -38,7 +38,7 @@ defmodule LangChain.Utils.ChainResultTest do
       assert error.message == "No last message"
     end
 
-    test "returns error when incomplete last message" do
+    test "returns error when incomplete last message was stopped for length" do
       chain = %LLMChain{
         last_message: Message.new!(%{role: :assistant, content: "Incomplete", status: :length})
       }
@@ -46,7 +46,7 @@ defmodule LangChain.Utils.ChainResultTest do
       assert {:error, _chain, %LangChainError{} = error} = ChainResult.to_string(chain)
 
       assert error.type == "to_string"
-      assert error.message == "Message is incomplete"
+      assert error.message == "Message is incomplete and stopped for length"
     end
 
     test "returns error when last message is not from assistant" do
