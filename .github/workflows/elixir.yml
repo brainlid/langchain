@@ -40,16 +40,16 @@ jobs:
               otp: "25"
           - pair:
               elixir: "1.18"
-              otp: "27"
+              otp: "28"
             lint: lint
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: erlef/setup-beam@v1
         with:
           elixir-version: "1.18"
-          otp-version: "27"
+          otp-version: "28"
 
       - uses: actions/cache@v4
         with:
