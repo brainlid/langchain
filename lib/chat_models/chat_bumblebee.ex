@@ -112,6 +112,11 @@ defmodule LangChain.ChatModels.ChatBumblebee do
   alias LangChain.Utils.Parser.LLAMA_3_1_CustomToolParser
   alias LangChain.Utils.Parser.LLAMA_3_2_CustomToolParser
 
+  # Suppress warnings for optional dependencies
+  @compile {:no_warn_undefined, [Nx.Serving]}
+  @compile {:no_warn_undefined, [LangChain.Utils.Parser.LLAMA_3_1_CustomToolParser]}
+  @compile {:no_warn_undefined, [LangChain.Utils.Parser.LLAMA_3_2_CustomToolParser]}
+
   @behaviour ChatModel
 
   @current_config_version 1
