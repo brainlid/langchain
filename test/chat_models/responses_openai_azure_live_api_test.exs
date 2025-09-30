@@ -406,6 +406,96 @@ defmodule LangChain.ChatModels.ResponseOpenAIAzureLiveApiTest do
     assert Enum.all?(deltas, fn d -> match?(%MessageDelta{}, d) end)
   end
 
+  test "json format response", %{llm: llm} do
+    # Note: Azure OpenAI Responses API does not currently support the 'text' parameter
+    # for structured JSON output. This test verifies proper error handling.
+    llm_with_json = %{llm | json_response: true}
+
+    result =
+      ChatOpenAIResponses.call(
+        llm_with_json,
+        [
+          Message.new_user!(
+            "Return a JSON object with information about this person: John Smith is 35 years old and lives in Seattle. Include fields: name, age, and city."
+          )
+        ],
+        []
+      )
+
+    case result do
+      {:ok, message} ->
+        # If it works (future Azure support), verify JSON response
+        assert message.role == :assistant
+        assert is_list(message.content)
+
+        content_str = ContentPart.parts_to_string(message.content)
+        assert {:ok, parsed_json} = Jason.decode(content_str)
+        assert is_map(parsed_json)
+
+      {:error, %LangChain.LangChainError{message: message}} ->
+        # Current Azure behavior: does not support text parameter
+        assert message =~ ~r/Unknown parameter.*text/i
+    end
+  end
+
+  test "json format response with schema", %{llm: llm} do
+    json_schema = %{
+      "type" => "object",
+      "properties" => %{
+        "name" => %{"type" => "string"},
+        "age" => %{"type" => "integer"},
+        "city" => %{"type" => "string"}
+      },
+      "required" => ["name", "age", "city"],
+      "additionalProperties" => false
+    }
+
+    llm_with_json_schema = %{
+      llm
+      | json_response: true,
+        json_schema: json_schema,
+        json_schema_name: "person_info"
+    }
+
+    result =
+      ChatOpenAIResponses.call(
+        llm_with_json_schema,
+        [
+          Message.new_user!(
+            "Extract the person information from this text: John Smith is 35 years old and lives in Seattle."
+          )
+        ],
+        []
+      )
+
+    case result do
+      {:ok, message} ->
+        # If it works, verify structured JSON response
+        assert message.role == :assistant
+        assert is_list(message.content)
+
+        content_str = ContentPart.parts_to_string(message.content)
+        assert {:ok, parsed_json} = Jason.decode(content_str)
+
+        # Verify the JSON follows the schema
+        assert is_map(parsed_json)
+        assert Map.has_key?(parsed_json, "name")
+        assert Map.has_key?(parsed_json, "age")
+
+        # Verify the extracted data types match schema
+        assert is_binary(parsed_json["name"])
+        assert is_integer(parsed_json["age"])
+
+        # Verify the extracted data is reasonable
+        assert parsed_json["name"] =~ ~r/John|Smith/i
+        assert parsed_json["age"] == 35
+
+      {:error, %LangChain.LangChainError{message: message}} ->
+        # Azure may not support text.format parameter yet
+        assert message =~ ~r/Unknown parameter.*text/i
+    end
+  end
+
   # # Not supported yet
   # test "native web_search_preview tool", %{llm: llm} do
   #   # Create native web_search_preview tool

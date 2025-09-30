@@ -348,9 +348,12 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
       assert data.model == @test_model
 
       assert data.text == %{
-               "type" => "json_schema",
-               "name" => "person",
-               "schema" => json_schema
+               "format" => %{
+                 "type" => "json_schema",
+                 "name" => "person",
+                 "schema" => json_schema,
+                 "strict" => true
+               }
              }
     end
 
