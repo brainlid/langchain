@@ -495,6 +495,41 @@ defmodule LangChain.ChatModels.ResponseOpenAIAzureLiveApiTest do
     assert map_size(parsed_json) == 3
   end
 
+  test "json schema with invalid schema format returns error", %{llm: llm} do
+    # Testing that malformed JSON schema returns an error
+    # Intentionally missing required "type" field at root level
+    invalid_schema = %{
+      "properties" => %{
+        "answer" => %{"type" => "string"}
+      },
+      "required" => ["answer"]
+    }
+
+    llm_with_invalid_schema = %{
+      llm
+      | json_response: true,
+        json_schema: invalid_schema,
+        json_schema_name: "invalid_format"
+    }
+
+    result =
+      ChatOpenAIResponses.call(
+        llm_with_invalid_schema,
+        [Message.new_user!("What is 2 + 2?")],
+        []
+      )
+
+    # Should return an error about invalid schema
+    assert {:error, %LangChain.LangChainError{message: error_message}} = result
+    assert is_binary(error_message)
+    assert String.length(error_message) > 0
+
+    # Verify error contains specific text about schema validation
+    # The API should indicate the schema is invalid or missing required fields
+    assert error_message =~ ~r/Invalid schema|'type' is required|schema.*invalid/i,
+           "Expected error about invalid schema, got: #{error_message}"
+  end
+
   # # Not supported yet
   # test "native web_search_preview tool", %{llm: llm} do
   #   # Create native web_search_preview tool
