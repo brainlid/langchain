@@ -406,6 +406,130 @@ defmodule LangChain.ChatModels.ResponseOpenAIAzureLiveApiTest do
     assert Enum.all?(deltas, fn d -> match?(%MessageDelta{}, d) end)
   end
 
+  test "json format response", %{llm: llm} do
+    # Testing with gpt-5 on Azure OpenAI Responses API
+    llm_with_json = %{llm | json_response: true}
+
+    {:ok, message} =
+      ChatOpenAIResponses.call(
+        llm_with_json,
+        [
+          Message.new_user!(
+            "Return a JSON object with information about this person: John Smith is 35 years old and lives in Seattle. Include fields: name, age, and city."
+          )
+        ],
+        []
+      )
+
+    # Verify JSON response
+    assert message.role == :assistant
+    assert is_list(message.content)
+
+    content_str = ContentPart.parts_to_string(message.content)
+    assert {:ok, parsed_json} = Jason.decode(content_str)
+    assert is_map(parsed_json)
+
+    # Verify the JSON contains expected information
+    # Note: Field names may vary based on model interpretation
+    json_str = Jason.encode!(parsed_json)
+    assert json_str =~ ~r/John|Smith/i
+    assert json_str =~ ~r/35/
+    assert json_str =~ ~r/Seattle/i
+  end
+
+  test "json format response with schema", %{llm: llm} do
+    # Testing with gpt-5 on Azure OpenAI Responses API
+    json_schema = %{
+      "type" => "object",
+      "properties" => %{
+        "name" => %{"type" => "string"},
+        "age" => %{"type" => "integer"},
+        "city" => %{"type" => "string"}
+      },
+      "required" => ["name", "age", "city"],
+      "additionalProperties" => false
+    }
+
+    llm_with_json_schema = %{
+      llm
+      | json_response: true,
+        json_schema: json_schema,
+        json_schema_name: "person_info"
+    }
+
+    {:ok, message} =
+      ChatOpenAIResponses.call(
+        llm_with_json_schema,
+        [
+          Message.new_user!(
+            "Extract the person information from this text: John Smith is 35 years old and lives in Seattle."
+          )
+        ],
+        []
+      )
+
+    # Verify structured JSON response
+    assert message.role == :assistant
+    assert is_list(message.content)
+
+    content_str = ContentPart.parts_to_string(message.content)
+    assert {:ok, parsed_json} = Jason.decode(content_str)
+
+    # Verify the JSON follows the schema exactly
+    assert is_map(parsed_json)
+    assert Map.has_key?(parsed_json, "name")
+    assert Map.has_key?(parsed_json, "age")
+    assert Map.has_key?(parsed_json, "city")
+
+    # Verify the extracted data types match schema
+    assert is_binary(parsed_json["name"])
+    assert is_integer(parsed_json["age"])
+    assert is_binary(parsed_json["city"])
+
+    # Verify the extracted data is correct
+    assert parsed_json["name"] =~ ~r/John|Smith/i
+    assert parsed_json["age"] == 35
+    assert parsed_json["city"] =~ ~r/Seattle/i
+
+    # Verify no additional properties (strict mode)
+    assert map_size(parsed_json) == 3
+  end
+
+  test "json schema with invalid schema format returns error", %{llm: llm} do
+    # Testing that malformed JSON schema returns an error
+    # Intentionally missing required "type" field at root level
+    invalid_schema = %{
+      "properties" => %{
+        "answer" => %{"type" => "string"}
+      },
+      "required" => ["answer"]
+    }
+
+    llm_with_invalid_schema = %{
+      llm
+      | json_response: true,
+        json_schema: invalid_schema,
+        json_schema_name: "invalid_format"
+    }
+
+    result =
+      ChatOpenAIResponses.call(
+        llm_with_invalid_schema,
+        [Message.new_user!("What is 2 + 2?")],
+        []
+      )
+
+    # Should return an error about invalid schema
+    assert {:error, %LangChain.LangChainError{message: error_message}} = result
+    assert is_binary(error_message)
+    assert String.length(error_message) > 0
+
+    # Verify error contains specific text about schema validation
+    # The API should indicate the schema is invalid or missing required fields
+    assert error_message =~ ~r/Invalid schema|'type' is required|schema.*invalid/i,
+           "Expected error about invalid schema, got: #{error_message}"
+  end
+
   # # Not supported yet
   # test "native web_search_preview tool", %{llm: llm} do
   #   # Create native web_search_preview tool

@@ -365,14 +365,17 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
        })
        when not is_nil(json_schema) and not is_nil(json_schema_name) do
     %{
-      "name" => json_schema_name,
-      "schema" => json_schema,
-      "type" => "json_schema"
+      "format" => %{
+        "type" => "json_schema",
+        "name" => json_schema_name,
+        "schema" => json_schema,
+        "strict" => true
+      }
     }
   end
 
   defp set_text_format(%ChatOpenAIResponses{json_response: true}) do
-    %{"type" => "json_object"}
+    %{"format" => %{"type" => "json_object"}}
   end
 
   defp set_text_format(%ChatOpenAIResponses{json_response: false}) do
