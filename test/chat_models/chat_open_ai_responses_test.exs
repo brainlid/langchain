@@ -322,7 +322,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
 
       data = ChatOpenAIResponses.for_api(openai, [], [])
       assert data.model == @test_model
-      assert data.text == %{"type" => "json_object"}
+      assert data.text == %{"format" => %{"type" => "json_object"}}
       refute data[:temperature]
     end
 

@@ -375,7 +375,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   end
 
   defp set_text_format(%ChatOpenAIResponses{json_response: true}) do
-    %{"type" => "json_object"}
+    %{"format" => %{"type" => "json_object"}}
   end
 
   defp set_text_format(%ChatOpenAIResponses{json_response: false}) do

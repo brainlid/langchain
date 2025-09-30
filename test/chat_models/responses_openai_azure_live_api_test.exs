@@ -407,11 +407,10 @@ defmodule LangChain.ChatModels.ResponseOpenAIAzureLiveApiTest do
   end
 
   test "json format response", %{llm: llm} do
-    # Note: Azure OpenAI Responses API does not currently support the 'text' parameter
-    # for structured JSON output. This test verifies proper error handling.
+    # Testing with gpt-5 on Azure OpenAI Responses API
     llm_with_json = %{llm | json_response: true}
 
-    result =
+    {:ok, message} =
       ChatOpenAIResponses.call(
         llm_with_json,
         [
@@ -422,23 +421,24 @@ defmodule LangChain.ChatModels.ResponseOpenAIAzureLiveApiTest do
         []
       )
 
-    case result do
-      {:ok, message} ->
-        # If it works (future Azure support), verify JSON response
-        assert message.role == :assistant
-        assert is_list(message.content)
+    # Verify JSON response
+    assert message.role == :assistant
+    assert is_list(message.content)
 
-        content_str = ContentPart.parts_to_string(message.content)
-        assert {:ok, parsed_json} = Jason.decode(content_str)
-        assert is_map(parsed_json)
+    content_str = ContentPart.parts_to_string(message.content)
+    assert {:ok, parsed_json} = Jason.decode(content_str)
+    assert is_map(parsed_json)
 
-      {:error, %LangChain.LangChainError{message: message}} ->
-        # Current Azure behavior: does not support text parameter
-        assert message =~ ~r/Unknown parameter.*text/i
-    end
+    # Verify the JSON contains expected information
+    # Note: Field names may vary based on model interpretation
+    json_str = Jason.encode!(parsed_json)
+    assert json_str =~ ~r/John|Smith/i
+    assert json_str =~ ~r/35/
+    assert json_str =~ ~r/Seattle/i
   end
 
   test "json format response with schema", %{llm: llm} do
+    # Testing with gpt-5 on Azure OpenAI Responses API
     json_schema = %{
       "type" => "object",
       "properties" => %{
@@ -457,7 +457,7 @@ defmodule LangChain.ChatModels.ResponseOpenAIAzureLiveApiTest do
         json_schema_name: "person_info"
     }
 
-    result =
+    {:ok, message} =
       ChatOpenAIResponses.call(
         llm_with_json_schema,
         [
@@ -468,32 +468,31 @@ defmodule LangChain.ChatModels.ResponseOpenAIAzureLiveApiTest do
         []
       )
 
-    case result do
-      {:ok, message} ->
-        # If it works, verify structured JSON response
-        assert message.role == :assistant
-        assert is_list(message.content)
+    # Verify structured JSON response
+    assert message.role == :assistant
+    assert is_list(message.content)
 
-        content_str = ContentPart.parts_to_string(message.content)
-        assert {:ok, parsed_json} = Jason.decode(content_str)
+    content_str = ContentPart.parts_to_string(message.content)
+    assert {:ok, parsed_json} = Jason.decode(content_str)
 
-        # Verify the JSON follows the schema
-        assert is_map(parsed_json)
-        assert Map.has_key?(parsed_json, "name")
-        assert Map.has_key?(parsed_json, "age")
+    # Verify the JSON follows the schema exactly
+    assert is_map(parsed_json)
+    assert Map.has_key?(parsed_json, "name")
+    assert Map.has_key?(parsed_json, "age")
+    assert Map.has_key?(parsed_json, "city")
 
-        # Verify the extracted data types match schema
-        assert is_binary(parsed_json["name"])
-        assert is_integer(parsed_json["age"])
+    # Verify the extracted data types match schema
+    assert is_binary(parsed_json["name"])
+    assert is_integer(parsed_json["age"])
+    assert is_binary(parsed_json["city"])
 
-        # Verify the extracted data is reasonable
-        assert parsed_json["name"] =~ ~r/John|Smith/i
-        assert parsed_json["age"] == 35
+    # Verify the extracted data is correct
+    assert parsed_json["name"] =~ ~r/John|Smith/i
+    assert parsed_json["age"] == 35
+    assert parsed_json["city"] =~ ~r/Seattle/i
 
-      {:error, %LangChain.LangChainError{message: message}} ->
-        # Azure may not support text.format parameter yet
-        assert message =~ ~r/Unknown parameter.*text/i
-    end
+    # Verify no additional properties (strict mode)
+    assert map_size(parsed_json) == 3
   end
 
   # # Not supported yet
