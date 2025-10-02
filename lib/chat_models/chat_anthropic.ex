@@ -399,14 +399,24 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   end
 
   defp get_tool_choice(%ChatAnthropic{
-         tool_choice: %{"type" => "tool", "name" => name} = _tool_choice
+         tool_choice: %{"type" => "tool", "name" => name} = tool_choice
        })
-       when is_binary(name) and byte_size(name) > 0,
-       do: %{"type" => "tool", "name" => name}
+       when is_binary(name) and byte_size(name) > 0 do
+    %{"type" => "tool", "name" => name}
+    |> Utils.conditionally_add_to_map(
+      "disable_parallel_tool_use",
+      Map.get(tool_choice, "disable_parallel_tool_use")
+    )
+  end
 
-  defp get_tool_choice(%ChatAnthropic{tool_choice: %{"type" => type} = _tool_choice})
-       when is_binary(type) and byte_size(type) > 0,
-       do: %{"type" => type}
+  defp get_tool_choice(%ChatAnthropic{tool_choice: %{"type" => type} = tool_choice})
+       when is_binary(type) and byte_size(type) > 0 do
+    %{"type" => type}
+    |> Utils.conditionally_add_to_map(
+      "disable_parallel_tool_use",
+      Map.get(tool_choice, "disable_parallel_tool_use")
+    )
+  end
 
   defp get_tool_choice(%ChatAnthropic{}), do: nil
 

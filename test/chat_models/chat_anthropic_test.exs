@@ -238,6 +238,30 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
       assert data.tool_choice == %{"type" => "tool", "name" => "get_weather"}
     end
 
+    test "includes disable_parallel_tool_use when set in tool_choice" do
+      {:ok, anthropic} =
+        ChatAnthropic.new(%{
+          model: @test_model,
+          tool_choice: %{"type" => "auto", "disable_parallel_tool_use" => true}
+        })
+
+      data = ChatAnthropic.for_api(anthropic, [], [])
+      assert data.model == @test_model
+      assert data.tool_choice == %{"type" => "auto", "disable_parallel_tool_use" => true}
+    end
+
+    test "includes disable_parallel_tool_use with specific tool" do
+      {:ok, anthropic} =
+        ChatAnthropic.new(%{
+          model: @test_model,
+          tool_choice: %{"type" => "tool", "name" => "get_weather", "disable_parallel_tool_use" => true}
+        })
+
+      data = ChatAnthropic.for_api(anthropic, [], [])
+      assert data.model == @test_model
+      assert data.tool_choice == %{"type" => "tool", "name" => "get_weather", "disable_parallel_tool_use" => true}
+    end
+
     test "adds tool definitions to map" do
       tool =
         Function.new!(%{
