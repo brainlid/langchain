@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.4.0
+
+### Added
+- **ChatOpenAI**: Added support for json-schema in OpenAI responses API (#387)
+- **Documentation**: Added AGENTS.md and CLAUDE.md file support (#385)
+- **CI**: Added support for OTP 28 (#382)
+
+### Changed
+- **ChatOpenAI**: Enhanced OpenAI responses handling (#381)
+- **Documentation**: Use moduledoc instead of doc for LLMChain documentation (#384)
+- **Utils.ChainResult**: Added clarity to message stopped for length handling
+
+### Fixed
+- **ChatBumblebee**: Suppressed compiler warning messages when used as a dependency (#386)
+- **Core**: Fixed Ecto field formatting
+
+---
+
 ## v0.4.0-rc.3
 
 ### Added
