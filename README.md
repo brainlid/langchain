@@ -77,7 +77,7 @@ in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:langchain, "0.4.0-rc.1"}
+    {:langchain, "0.4.0"}
   ]
 end
 ```
