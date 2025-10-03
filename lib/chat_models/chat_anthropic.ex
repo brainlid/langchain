@@ -196,6 +196,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult
+  alias LangChain.NativeTool
   alias LangChain.MessageDelta
   alias LangChain.TokenUsage
   alias LangChain.Function
@@ -1292,6 +1293,14 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     }
     |> Utils.conditionally_add_to_map("is_error", result.is_error)
     |> Utils.conditionally_add_to_map("cache_control", get_cache_control_setting(result.options))
+  end
+
+  def for_api(%NativeTool{name: "web_fetch", configuration: %{"type" => type} = config}) do
+    %{
+      name: "web_fetch",
+      type: type
+    }
+    |> Utils.conditionally_add_to_map("max_uses", config["max_uses"])
   end
 
   @doc """
