@@ -877,15 +877,25 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
           | {:error, String.t()}
 
   # Complete Response with output lists
-  def do_process_response(_model, %{"status" => "completed", "output" => content_items})
+  def do_process_response(
+        _model,
+        %{"status" => "completed", "output" => content_items} = response
+      )
       when is_list(content_items) do
     {content_parts, tool_calls} = content_items_to_content_parts_and_tool_calls(content_items)
+
+    metadata =
+      case get_token_usage(response) do
+        nil -> %{}
+        %TokenUsage{} = usage -> %{usage: usage}
+      end
 
     Message.new!(%{
       content: content_parts,
       status: :complete,
       role: :assistant,
-      tool_calls: tool_calls
+      tool_calls: tool_calls,
+      metadata: metadata
     })
   end
 
@@ -1251,6 +1261,33 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
       {:error, %Ecto.Changeset{} = changeset} ->
         reason = Utils.changeset_error_to_string(changeset)
         Logger.warning("Failed to process reasoning output. Reason: #{reason}")
+        # Return a minimal content part to avoid breaking the flow
+        ContentPart.text!("")
+    end
+  end
+
+  defp content_item_to_content_part_or_tool_call(
+         %{
+           "type" => "file_search_call"
+         } = part
+       ) do
+    # Store reasoning as an unsupported content part for now
+    # This preserves the information without breaking the flow
+    case ContentPart.new(%{
+           type: :unsupported,
+           options: %{
+             id: part["id"],
+             type: "file_search_call",
+             queries: part["queries"],
+             results: part["results"]
+           }
+         }) do
+      {:ok, %ContentPart{} = part} ->
+        part
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        reason = Utils.changeset_error_to_string(changeset)
+        Logger.warning("Failed to process file_search output. Reason: #{reason}")
         # Return a minimal content part to avoid breaking the flow
         ContentPart.text!("")
     end

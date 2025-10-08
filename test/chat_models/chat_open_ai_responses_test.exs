@@ -641,6 +641,79 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
       assert length(result.tool_calls) == 1
     end
 
+    test "handles completed response with usage metadata", %{model: model} do
+      response = %{
+        "status" => "completed",
+        "output" => [
+          %{
+            "content" => [
+              %{
+                "annotations" => [],
+                "logprobs" => [],
+                "text" => "hello",
+                "type" => "output_text"
+              }
+            ],
+            "role" => "assistant",
+            "status" => "completed",
+            "type" => "message"
+          }
+        ],
+        "usage" => %{
+          "input_tokens" => 27,
+          "input_tokens_details" => %{"cached_tokens" => 0},
+          "output_tokens" => 115,
+          "output_tokens_details" => %{"reasoning_tokens" => 0},
+          "total_tokens" => 142
+        }
+      }
+
+      result = ChatOpenAIResponses.do_process_response(model, response)
+      assert %LangChain.Message{} = result
+      assert %{usage: %LangChain.TokenUsage{} = usage} = result.metadata
+      assert %LangChain.TokenUsage{input: 27, output: 115} = usage
+    end
+
+    test "handles completed response with file_search results", %{model: model} do
+      response = %{
+        "status" => "completed",
+        "output" => [
+          %{
+            "id" => "fs_0d1b1549e16f51d20168e6af70c7b8819fae111b23577a202d",
+            "queries" => ["What is the meaning of life?"],
+            "results" => [
+              %{
+                "attributes" => %{},
+                "file_id" => "file-yTrvU63VL1AgEyFqtUYzfVT3",
+                "filename" => "Enreach_Contact.pdf",
+                "score" => 0.0059,
+                "text" => "text part 1",
+                "vector_store_id" => "vs_1"
+              },
+              %{
+                "attributes" => %{},
+                "file_id" => "file-yTrvU63VL1AgEyFqtUYzfVT3",
+                "filename" => "Enreach_Contact.pdf",
+                "score" => 0.0037,
+                "text" => "text part 2",
+                "vector_store_id" => "vs_2"
+              }
+            ],
+            "status" => "completed",
+            "type" => "file_search_call"
+          }
+        ]
+      }
+
+      result = ChatOpenAIResponses.do_process_response(model, response)
+      assert %LangChain.Message{} = result
+      assert result.role == :assistant
+      assert result.status == :complete
+      [content_part] = result.content
+      assert content_part.type == :unsupported
+      assert %{results: [_, _], queries: [_], type: "file_search_call"} = content_part.options
+    end
+
     test "handles error responses", %{model: model} do
       response = %{"error" => %{"message" => "API key invalid"}}
 
