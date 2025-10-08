@@ -877,15 +877,25 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
           | {:error, String.t()}
 
   # Complete Response with output lists
-  def do_process_response(_model, %{"status" => "completed", "output" => content_items})
+  def do_process_response(
+        _model,
+        %{"status" => "completed", "output" => content_items} = response
+      )
       when is_list(content_items) do
     {content_parts, tool_calls} = content_items_to_content_parts_and_tool_calls(content_items)
+
+    metadata =
+      case get_token_usage(response) do
+        nil -> %{}
+        %TokenUsage{} = usage -> %{usage: usage}
+      end
 
     Message.new!(%{
       content: content_parts,
       status: :complete,
       role: :assistant,
-      tool_calls: tool_calls
+      tool_calls: tool_calls,
+      metadata: metadata
     })
   end
 
