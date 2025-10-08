@@ -1266,6 +1266,33 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     end
   end
 
+  defp content_item_to_content_part_or_tool_call(
+         %{
+           "type" => "file_search_call"
+         } = part
+       ) do
+    # Store reasoning as an unsupported content part for now
+    # This preserves the information without breaking the flow
+    case ContentPart.new(%{
+           type: :unsupported,
+           options: %{
+             id: part["id"],
+             type: "file_search_call",
+             queries: part["queries"],
+             results: part["results"]
+           }
+         }) do
+      {:ok, %ContentPart{} = part} ->
+        part
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        reason = Utils.changeset_error_to_string(changeset)
+        Logger.warning("Failed to process file_search output. Reason: #{reason}")
+        # Return a minimal content part to avoid breaking the flow
+        ContentPart.text!("")
+    end
+  end
+
   # Catch-all for unknown content item types
   defp content_item_to_content_part_or_tool_call(%{"type" => type} = item) do
     Logger.warning("Unknown content item type: #{type}. Item: #{inspect(item)}")
