@@ -472,7 +472,11 @@ defmodule LangChain.ChatModels.ChatVertexAI do
         )
 
         {:error,
-         LangChainError.exception(type: "unexpected_response", message: "Unexpected response")}
+         LangChainError.exception(
+           type: "unexpected_response",
+           message: "Unexpected response",
+           original: other
+         )}
     end
   end
 

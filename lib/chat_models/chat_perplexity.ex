@@ -735,7 +735,13 @@ defmodule LangChain.ChatModels.ChatPerplexity do
 
   def do_process_response(_model, other) do
     Logger.error("Trying to process an unexpected response. #{inspect(other)}")
-    {:error, LangChainError.exception(message: "Unexpected response")}
+
+    {:error,
+     LangChainError.exception(
+       type: "unexpected_response",
+       message: "Unexpected response",
+       original: other
+     )}
   end
 
   defp finish_reason_to_status(nil), do: :incomplete
