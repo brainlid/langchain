@@ -132,10 +132,11 @@ A list of models to use:
 
 ## Prompt caching
 
-ChatGPT and Claude both offer prefix-based prompt caching, which can offer cost and performance benefits for longer prompts. Gemini offers context caching, which is similar.
+ChatGPT, Claude, and DeepSeek all offer prefix-based prompt caching, which can offer cost and performance benefits for longer prompts. Gemini offers context caching, which is similar.
 
 - [ChatGPT's prompt caching](https://openai.com/index/api-prompt-caching/) is automatic for prompts longer than 1024 tokens, caching the longest common prefix.
 - [Claude's prompt caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching) is not automatic. It's prefixing processes tools, system, and then messages, in that order, up to and including the block designated with {"cache_control": {"type": "ephemeral"}} . See LangChain.ChatModels.ChatAnthropicTest and for an example.
+- [DeepSeek's prompt caching](https://api-docs.deepseek.com/guides/kv_cache) provides automatic caching for repeated prompts and system messages, helping reduce costs and improve response times for longer conversations.
 - [Gemini's context caching]((https://ai.google.dev/gemini-api/docs/caching?lang=python)) requires a separate call which is not supported by Langchain.
 
 ## Usage
