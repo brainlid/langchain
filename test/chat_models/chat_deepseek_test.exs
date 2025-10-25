@@ -992,20 +992,20 @@ defmodule LangChain.ChatModels.ChatDeepSeekTest do
   describe "endpoint validation" do
     test "accepts valid https URLs in new/1" do
       assert {:ok, %ChatDeepSeek{}} =
-        ChatDeepSeek.new(%{endpoint: "https://api.deepseek.com/chat/completions"})
+               ChatDeepSeek.new(%{endpoint: "https://api.deepseek.com/chat/completions"})
     end
 
     test "accepts valid http URLs in new/1" do
       assert {:ok, %ChatDeepSeek{}} =
-        ChatDeepSeek.new(%{endpoint: "http://localhost:8080/chat/completions"})
+               ChatDeepSeek.new(%{endpoint: "http://localhost:8080/chat/completions"})
     end
 
     test "rejects invalid URLs without http/https in new/1" do
       assert {:error, %Ecto.Changeset{}} =
-        ChatDeepSeek.new(%{endpoint: "ftp://example.com"})
+               ChatDeepSeek.new(%{endpoint: "ftp://example.com"})
 
       assert {:error, %Ecto.Changeset{}} =
-        ChatDeepSeek.new(%{endpoint: "api.deepseek.com/chat/completions"})
+               ChatDeepSeek.new(%{endpoint: "api.deepseek.com/chat/completions"})
     end
   end
 
