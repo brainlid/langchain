@@ -76,8 +76,8 @@ defmodule LangChain.DeepAgents.Agent do
 
   - `:todo_opts` - Options for TodoList middleware
   - `:filesystem_opts` - Options for Filesystem middleware
+  - `:summarization_opts` - Options for Summarization middleware (e.g., `[max_tokens_before_summary: 150_000, messages_to_keep: 8]`)
   - `:subagent_opts` - Options for SubAgent middleware
-  - `:summarization_opts` - Options for Summarization middleware
 
   ### Human-in-the-loop configuration
 
@@ -316,12 +316,17 @@ defmodule LangChain.DeepAgents.Agent do
   end
 
   defp default_middleware(opts) do
+    model = Keyword.get(opts, :model)
+
     # Build default middleware stack
     base_middleware = [
       # TodoList middleware for task management
       {LangChain.DeepAgents.Middleware.TodoList, Keyword.get(opts, :todo_opts, [])},
       # Filesystem middleware for mock file operations
       {LangChain.DeepAgents.Middleware.Filesystem, Keyword.get(opts, :filesystem_opts, [])},
+      # Summarization middleware for managing conversation length
+      {LangChain.DeepAgents.Middleware.Summarization,
+       Keyword.merge([model: model], Keyword.get(opts, :summarization_opts, []))},
       # PatchToolCalls middleware to fix dangling tool calls
       {LangChain.DeepAgents.Middleware.PatchToolCalls, []}
     ]

@@ -159,15 +159,15 @@ defmodule LangChain.DeepAgents.AgentTest do
 
   describe "middleware composition - default behavior" do
     test "appends user middleware to defaults" do
-      # Phase 2: defaults include TodoList middleware
+      # Defaults include TodoList, Filesystem, Summarization, and PatchToolCalls
       {:ok, agent} =
         Agent.new(
           model: mock_model(),
           middleware: [TestMiddleware1]
         )
 
-      # Default middleware (TodoList + Filesystem + PatchToolCalls) + TestMiddleware1 = 4
-      assert length(agent.middleware) == 4
+      # Default middleware (TodoList + Filesystem + Summarization + PatchToolCalls) + TestMiddleware1 = 5
+      assert length(agent.middleware) == 5
     end
 
     test "collects system prompts from middleware" do
