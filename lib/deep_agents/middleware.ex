@@ -57,7 +57,8 @@ defmodule LangChain.DeepAgents.Middleware do
 
   @type config :: keyword()
   @type middleware_config :: any()
-  @type middleware_result :: {:ok, State.t()} | {:error, term()}
+  @type middleware_result ::
+          {:ok, State.t()} | {:interrupt, State.t(), any()} | {:error, term()}
 
   @doc """
   Initialize middleware with configuration options.
@@ -121,6 +122,7 @@ defmodule LangChain.DeepAgents.Middleware do
   ## Returns
 
   - `{:ok, updated_state}` - Success with potentially modified state
+  - `{:interrupt, state, interrupt_data}` - Pause execution for human intervention
   - `{:error, reason}` - Failure, halts execution
   """
   @callback after_model(State.t(), middleware_config) :: middleware_result()

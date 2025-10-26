@@ -68,6 +68,7 @@ defmodule LangChain.DeepAgents.Agent do
   - `:middleware` - List of middleware modules/configs (default: [])
   - `:replace_default_middleware` - If true, use only provided middleware (default: false)
   - `:name` - Agent name for identification (default: nil)
+  - `:interrupt_on` - Map of tool names to interrupt configuration (default: nil)
 
   ### Middleware-specific options
 
@@ -77,6 +78,24 @@ defmodule LangChain.DeepAgents.Agent do
   - `:filesystem_opts` - Options for Filesystem middleware
   - `:subagent_opts` - Options for SubAgent middleware
   - `:summarization_opts` - Options for Summarization middleware
+
+  ### Human-in-the-loop configuration
+
+  The `:interrupt_on` option enables human oversight for specific tools:
+
+      # Simple boolean configuration
+      interrupt_on: %{
+        "write_file" => true,    # Require approval
+        "delete_file" => true,
+        "read_file" => false     # No approval needed
+      }
+
+      # Advanced configuration
+      interrupt_on: %{
+        "write_file" => %{
+          allowed_decisions: [:approve, :edit, :reject]
+        }
+      }
 
   ## Examples
 
@@ -89,8 +108,33 @@ defmodule LangChain.DeepAgents.Agent do
       # With custom tools
       {:ok, agent} = Agent.new(
         model: model,
-        tools: [calculator_tool, search_tool]
+        tools: [write_file_tool, search_tool]
       )
+
+      # With human-in-the-loop for file operations
+      {:ok, agent} = Agent.new(
+        model: model,
+        tools: [write_file_tool, delete_file_tool],
+        interrupt_on: %{
+          "write_file" => true,  # Require approval for writes
+          "delete_file" => %{allowed_decisions: [:approve, :reject]}  # No edit for deletes
+        }
+      )
+
+      # Execute and handle interrupts
+      case Agent.execute(agent, state) do
+        {:ok, final_state} ->
+          IO.puts("Agent completed successfully")
+
+        {:interrupt, interrupted_state, interrupt_data} ->
+          # Present interrupt_data.action_requests to user
+          # Get their decisions
+          decisions = UI.get_decisions(interrupt_data)
+          {:ok, final_state} = Agent.resume(agent, interrupted_state, decisions)
+
+        {:error, reason} ->
+          Logger.error("Agent failed: \#{inspect(reason)}")
+      end
 
       # With custom middleware configuration
       {:ok, agent} = Agent.new(
@@ -134,16 +178,113 @@ defmodule LangChain.DeepAgents.Agent do
   2. LLM execution
   3. after_model hooks (in reverse order)
 
+  ## Returns
+
+  - `{:ok, state}` - Normal completion
+  - `{:interrupt, state, interrupt_data}` - Execution paused for human approval
+  - `{:error, reason}` - Execution failed
+
   ## Examples
 
       state = State.new!(%{messages: [%{role: "user", content: "Hello"}]})
-      {:ok, result} = Agent.execute(agent, state)
+
+      case Agent.execute(agent, state) do
+        {:ok, final_state} ->
+          # Normal completion
+          handle_response(final_state)
+
+        {:interrupt, interrupted_state, interrupt_data} ->
+          # Human approval needed
+          decisions = get_human_decisions(interrupt_data)
+          {:ok, final_state} = Agent.resume(agent, interrupted_state, decisions)
+          handle_response(final_state)
+
+        {:error, err} ->
+          # Handle error
+          Logger.error("Agent execution failed: \#{inspect(err)}")
+      end
   """
   def execute(%Agent{} = agent, %State{} = state) do
     with {:ok, prepared_state} <- apply_before_model_hooks(state, agent.middleware),
          {:ok, response_state} <- execute_model(agent, prepared_state),
-         {:ok, final_state} <- apply_after_model_hooks(response_state, agent.middleware) do
-      {:ok, final_state}
+         result <- apply_after_model_hooks(response_state, agent.middleware) do
+      result
+    end
+  end
+
+  @doc """
+  Resume agent execution after a human-in-the-loop interrupt.
+
+  Takes decisions from the human reviewer and continues agent execution.
+
+  ## Parameters
+
+  - `agent` - The agent instance
+  - `state` - The state at the point of interruption
+  - `decisions` - List of decision maps from human reviewer
+
+  ## Decision Format
+
+      decisions = [
+        %{type: :approve},                                    # Approve with original arguments
+        %{type: :edit, arguments: %{"path" => "other.txt"}}, # Edit arguments
+        %{type: :reject}                                      # Reject execution
+      ]
+
+  ## Examples
+
+      # Get interrupt from execution
+      {:interrupt, state, interrupt_data} = Agent.execute(agent, initial_state)
+
+      # Examine the interrupt data
+      # interrupt_data.action_requests - List of tools needing approval
+      # interrupt_data.review_configs - Map of tool_name => %{allowed_decisions: [...]}
+
+      # Example: Display to user and get decisions
+      decisions =
+        Enum.map(interrupt_data.action_requests, fn request ->
+          # Show request.tool_name, request.arguments to user
+          case get_user_choice(request) do
+            :approve -> %{type: :approve}
+            :reject -> %{type: :reject}
+            {:edit, new_args} -> %{type: :edit, arguments: new_args}
+          end
+        end)
+
+      # Resume execution with decisions
+      {:ok, final_state} = Agent.resume(agent, state, decisions)
+
+      # Or handle edit decision example
+      decisions = [
+        %{type: :approve},  # Approve first tool
+        %{type: :edit, arguments: %{"path" => "/tmp/safe.txt"}},  # Edit second tool's path
+        %{type: :reject}  # Reject third tool
+      ]
+
+      {:ok, final_state} = Agent.resume(agent, state, decisions)
+  """
+  def resume(%Agent{} = agent, %State{} = state, decisions) when is_list(decisions) do
+    # Find the HumanInTheLoop middleware in the stack
+    hitl_middleware =
+      Enum.find(agent.middleware, fn {module, _config} ->
+        module == LangChain.DeepAgents.Middleware.HumanInTheLoop
+      end)
+
+    case hitl_middleware do
+      nil ->
+        {:error, "Agent does not have HumanInTheLoop middleware configured"}
+
+      {module, config} ->
+        # Process the decisions through the middleware
+        case module.process_decisions(state, decisions, config) do
+          {:ok, updated_state} ->
+            # Continue execution - skip before_model and execute_model phases
+            # Just run remaining after_model hooks if needed
+            {:ok, updated_state}
+
+          {:error, reason} ->
+            {:error, reason}
+        end
     end
   end
 
@@ -176,20 +317,27 @@ defmodule LangChain.DeepAgents.Agent do
 
   defp default_middleware(opts) do
     # Build default middleware stack
-    # Phase 2+: Including TodoList, Filesystem, and future middleware
-    [
+    base_middleware = [
       # TodoList middleware for task management
       {LangChain.DeepAgents.Middleware.TodoList, Keyword.get(opts, :todo_opts, [])},
       # Filesystem middleware for mock file operations
       {LangChain.DeepAgents.Middleware.Filesystem, Keyword.get(opts, :filesystem_opts, [])},
       # PatchToolCalls middleware to fix dangling tool calls
       {LangChain.DeepAgents.Middleware.PatchToolCalls, []}
-      # Future phases will add:
-      # - SubAgent middleware
-      # - Summarization middleware
-      # - HumanInTheLoop middleware (should run after PatchToolCalls)
-      # - etc.
     ]
+
+    # Conditionally add HumanInTheLoop middleware if interrupt_on is configured
+    middleware_with_hitl =
+      case Keyword.get(opts, :interrupt_on) do
+        nil ->
+          base_middleware
+
+        interrupt_on when is_map(interrupt_on) ->
+          base_middleware ++
+            [{LangChain.DeepAgents.Middleware.HumanInTheLoop, [interrupt_on: interrupt_on]}]
+      end
+
+    middleware_with_hitl
   end
 
   defp initialize_middleware(middleware_list) do
@@ -247,8 +395,15 @@ defmodule LangChain.DeepAgents.Agent do
     |> Enum.reverse()
     |> Enum.reduce_while({:ok, state}, fn mw, {:ok, current_state} ->
       case Middleware.apply_after_model(current_state, mw) do
-        {:ok, updated_state} -> {:cont, {:ok, updated_state}}
-        {:error, reason} -> {:halt, {:error, reason}}
+        {:ok, updated_state} ->
+          {:cont, {:ok, updated_state}}
+
+        {:interrupt, interrupted_state, interrupt_data} ->
+          # Middleware requested an interrupt, halt and return interrupt
+          {:halt, {:interrupt, interrupted_state, interrupt_data}}
+
+        {:error, reason} ->
+          {:halt, {:error, reason}}
       end
     end)
   end
