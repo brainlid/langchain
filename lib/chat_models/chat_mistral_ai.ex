@@ -461,7 +461,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
     |> Req.post(
       into:
         Utils.handle_stream_fn(
-          mistralai,
+          Map.take(mistralai, [:stream]),
           # Mistral's streaming API is mostly compatible with OpenAI's,
           # so we can reuse the same decoder
           &ChatOpenAI.decode_stream/1,
@@ -491,7 +491,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
   # Parse final or partial responses to produce the appropriate LangChain structure.
   @doc false
   @spec do_process_response(
-          %{:callbacks => [map()]},
+          t(),
           data :: %{String.t() => any()} | {:error, any()}
         ) ::
           :skip
@@ -499,7 +499,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
           | [Message.t()]
           | MessageDelta.t()
           | [MessageDelta.t()]
-          | {:error, String.t()}
+          | {:error, LangChainError.t()}
   # The last chunk of the response contains both the final delta in the "choices" key,
   # and the token usage in the "usage" key
   def do_process_response(model, %{"choices" => choices, "usage" => %{} = _usage} = data) do

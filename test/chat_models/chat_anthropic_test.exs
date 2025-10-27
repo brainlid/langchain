@@ -1373,9 +1373,8 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
       # Made NOT LIVE here
       expect(Req, :post, fn _req_struct, _opts ->
         # IO.puts "REQ OVERLOAD USED!!!!"
-        {:ok,
-         {:error,
-          LangChainError.exception(type: "overloaded_error", message: "Overloaded (from test)")}}
+        {:error,
+         LangChainError.exception(type: "overloaded_error", message: "Overloaded (from test)")}
       end)
 
       model = ChatAnthropic.new!(%{stream: true, model: @test_model})

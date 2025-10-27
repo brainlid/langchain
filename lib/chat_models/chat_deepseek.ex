@@ -698,7 +698,7 @@ defmodule LangChain.ChatModels.ChatDeepSeek do
     |> Req.post(
       into:
         Utils.handle_stream_fn(
-          deepseek,
+          Map.take(deepseek, [:stream]),
           &decode_stream/1,
           &do_process_response(deepseek, &1)
         )
@@ -1057,12 +1057,8 @@ defmodule LangChain.ChatModels.ChatDeepSeek do
   defp merge_response_metadata(message, response_data) do
     response_metadata = extract_response_metadata(response_data)
 
-    if map_size(response_metadata) > 0 do
-      current_metadata = message.metadata || %{}
-      %{message | metadata: Map.merge(current_metadata, response_metadata)}
-    else
-      message
-    end
+    current_metadata = message.metadata || %{}
+    %{message | metadata: Map.merge(current_metadata, response_metadata)}
   end
 
   defp finish_reason_to_status(nil), do: :incomplete

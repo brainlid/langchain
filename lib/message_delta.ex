@@ -476,7 +476,7 @@ defmodule LangChain.MessageDelta do
         %MessageDelta{metadata: %{usage: new_usage}} = _delta_part
       )
       when not is_nil(new_usage) do
-    current_usage = TokenUsage.get(primary)
+    current_usage = TokenUsage.get(Map.take(primary, [:metadata]))
     combined_usage = TokenUsage.add(current_usage, new_usage)
 
     %MessageDelta{primary | metadata: Map.put(primary.metadata || %{}, :usage, combined_usage)}

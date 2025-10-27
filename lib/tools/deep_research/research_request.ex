@@ -19,6 +19,17 @@ defmodule LangChain.Tools.DeepResearch.ResearchRequest do
           summary: String.t()
         }
 
+  @type precast_t() :: %__MODULE__{
+          query: String.t() | nil,
+          model: String.t() | nil,
+          system_message: String.t() | nil,
+          max_tool_calls: integer() | nil,
+          background: boolean() | nil,
+          temperature: float() | nil,
+          max_output_tokens: integer() | nil,
+          summary: String.t() | nil
+        }
+
   @primary_key false
   embedded_schema do
     field :query, :string
@@ -34,7 +45,7 @@ defmodule LangChain.Tools.DeepResearch.ResearchRequest do
   @doc """
   Creates a changeset for a research request.
   """
-  @spec changeset(__MODULE__.t(), map()) :: Ecto.Changeset.t()
+  @spec changeset(__MODULE__.precast_t(), map()) :: Ecto.Changeset.t()
   def changeset(request \\ %__MODULE__{}, attrs) do
     request
     |> cast(attrs, [

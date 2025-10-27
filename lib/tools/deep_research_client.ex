@@ -22,6 +22,16 @@ defmodule LangChain.Tools.DeepResearchClient do
   require Logger
   alias LangChain.Config
 
+  @typedoc """
+  Deep Research Result
+  """
+  @type research_result() :: %{
+          output_text: String.t(),
+          sources: list(),
+          usage: map(),
+          model: String.t()
+        }
+
   @doc """
   Creates a new deep research request.
 
@@ -115,7 +125,8 @@ defmodule LangChain.Tools.DeepResearchClient do
   - `{:ok, result_map}` containing the research findings and metadata
   - `{:error, reason}` on failure
   """
-  @spec get_results(String.t(), String.t() | nil) :: {:ok, map()} | {:error, String.t()}
+  @spec get_results(String.t(), String.t() | nil) ::
+          {:ok, research_result()} | {:error, String.t()}
   def get_results(request_id, endpoint \\ nil) do
     base_url = endpoint || get_default_endpoint()
     url = "#{base_url}/#{request_id}"
@@ -183,7 +194,7 @@ defmodule LangChain.Tools.DeepResearchClient do
   defp maybe_add_field(map, _key, nil), do: map
   defp maybe_add_field(map, key, value), do: Map.put(map, key, value)
 
-  @spec extract_research_result(map()) :: map()
+  @spec extract_research_result(map()) :: research_result()
   defp extract_research_result(response) do
     # Extract the main research text from the output array
     output_text = extract_output_text(response)

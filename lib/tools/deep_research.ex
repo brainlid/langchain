@@ -195,7 +195,7 @@ defmodule LangChain.Tools.DeepResearch do
   end
 
   @spec poll_with_backoff(String.t(), integer(), integer(), integer()) ::
-          {:ok, map()} | {:error, String.t()}
+          {:ok, DeepResearchClient.research_result()} | {:error, String.t()}
   defp poll_with_backoff(request_id, interval, max_interval, attempts) do
     case DeepResearchClient.check_status(request_id) do
       {:ok, %{status: "completed"}} ->
@@ -234,7 +234,7 @@ defmodule LangChain.Tools.DeepResearch do
 
   # Formats the research result for LLM consumption, including the main findings
   # and a summary of sources used.
-  @spec format_research_result(map()) :: String.t()
+  @spec format_research_result(DeepResearchClient.research_result()) :: String.t()
   defp format_research_result(%{output_text: text, sources: sources}) when is_list(sources) do
     source_summary = format_sources(sources)
 
@@ -249,14 +249,6 @@ defmodule LangChain.Tools.DeepResearch do
     """
   end
 
-  defp format_research_result(%{output_text: text}) do
-    text
-  end
-
-  defp format_research_result(result) do
-    "Research completed. Result: #{inspect(result)}"
-  end
-
   @spec format_sources(list()) :: String.t()
   defp format_sources(sources) when is_list(sources) do
     sources
@@ -268,6 +260,4 @@ defmodule LangChain.Tools.DeepResearch do
     end)
     |> Enum.join("\n")
   end
-
-  defp format_sources(_), do: "No source information available."
 end
