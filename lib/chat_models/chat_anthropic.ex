@@ -200,6 +200,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   alias LangChain.TokenUsage
   alias LangChain.Function
   alias LangChain.FunctionParam
+  alias LangChain.NativeTool
   alias LangChain.Utils
   alias LangChain.Callbacks
   alias LangChain.Utils.BedrockStreamDecoder
@@ -426,6 +427,9 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     Enum.map(tools, fn
       %Function{} = function ->
         function_for_api(function)
+
+      %NativeTool{} = tool ->
+        native_tool_for_api(tool)
     end)
   end
 
@@ -1099,6 +1103,26 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     }
   end
 
+  # Handle server-side tool use (like web_search) - these are executed by Anthropic's servers
+  # We just acknowledge them and continue, as the results are incorporated into the response
+  defp do_process_content_response(
+         %Message{} = message,
+         %{"type" => "server_tool_use", "id" => _call_id, "name" => _name} = _call
+       ) do
+    message
+  end
+
+  defp do_process_content_response(
+         %Message{} = message,
+         %{
+           "type" => "web_search_tool_result",
+           "tool_use_id" => _tool_use_id,
+           "content" => _results
+         }
+       ) do
+    message
+  end
+
   defp do_process_content_response({:error, _reason} = error, _content) do
     error
   end
@@ -1306,6 +1330,33 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     }
     |> Utils.conditionally_add_to_map("description", fun.description)
     |> Utils.conditionally_add_to_map("cache_control", get_cache_control_setting(fun.options))
+  end
+
+  @doc """
+  Convert a NativeTool to the format expected by the Anthropic API.
+
+  Native tools like web_search_20250305 use the tool type as the identifier.
+  For Anthropic, if a "name" field is not provided in configuration, we extract
+  it from the type by removing any version suffix (e.g., "_20250305").
+  Configuration options are merged into the tool definition.
+  """
+  @spec native_tool_for_api(NativeTool.t()) :: map()
+  def native_tool_for_api(%NativeTool{configuration: %{type: _, name: _} = config}) do
+    config
+  end
+
+  def native_tool_for_api(%NativeTool{name: type, configuration: config}) when is_map(config) do
+    base_name = String.replace(type, ~r/_\d{8}$/, "")
+    Map.merge(%{type: type, name: base_name}, config)
+  end
+
+  def native_tool_for_api(%NativeTool{name: type, configuration: nil}) do
+    base_name = String.replace(type, ~r/_\d{8}$/, "")
+
+    %{
+      type: type,
+      name: base_name
+    }
   end
 
   @doc """
