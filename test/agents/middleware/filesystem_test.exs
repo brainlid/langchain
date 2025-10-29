@@ -1,8 +1,8 @@
-defmodule LangChain.DeepAgents.Middleware.FilesystemTest do
+defmodule LangChain.Agents.Middleware.FilesystemTest do
   use ExUnit.Case, async: true
 
-  alias LangChain.DeepAgents.Middleware.Filesystem
-  alias LangChain.DeepAgents.State
+  alias LangChain.Agents.Middleware.Filesystem
+  alias LangChain.Agents.State
 
   describe "init/1" do
     test "initializes with default config" do

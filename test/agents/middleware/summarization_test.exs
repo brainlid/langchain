@@ -1,8 +1,8 @@
-defmodule LangChain.DeepAgents.Middleware.SummarizationTest do
+defmodule LangChain.Agents.Middleware.SummarizationTest do
   use ExUnit.Case, async: true
 
-  alias LangChain.DeepAgents.Middleware.Summarization
-  alias LangChain.DeepAgents.State
+  alias LangChain.Agents.Middleware.Summarization
+  alias LangChain.Agents.State
   alias LangChain.Message
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult

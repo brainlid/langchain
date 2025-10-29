@@ -1,8 +1,8 @@
-defmodule LangChain.DeepAgents.Middleware.HumanInTheLoopIntegrationTest do
+defmodule LangChain.Agents.Middleware.HumanInTheLoopIntegrationTest do
   use ExUnit.Case, async: true
 
-  alias LangChain.DeepAgents.Agent
-  alias LangChain.DeepAgents.State
+  alias LangChain.Agents.Agent
+  alias LangChain.Agents.State
   alias LangChain.Message
   alias LangChain.Function
   alias LangChain.ChatModels.ChatAnthropic
@@ -65,7 +65,7 @@ defmodule LangChain.DeepAgents.Middleware.HumanInTheLoopIntegrationTest do
 
       # Check that HITL middleware is in the stack
       assert Enum.any?(agent.middleware, fn {module, _config} ->
-               module == LangChain.DeepAgents.Middleware.HumanInTheLoop
+               module == LangChain.Agents.Middleware.HumanInTheLoop
              end)
     end
 
@@ -79,7 +79,7 @@ defmodule LangChain.DeepAgents.Middleware.HumanInTheLoopIntegrationTest do
 
       # Check that HITL middleware is NOT in the stack
       refute Enum.any?(agent.middleware, fn {module, _config} ->
-               module == LangChain.DeepAgents.Middleware.HumanInTheLoop
+               module == LangChain.Agents.Middleware.HumanInTheLoop
              end)
     end
 
@@ -448,7 +448,7 @@ defmodule LangChain.DeepAgents.Middleware.HumanInTheLoopIntegrationTest do
 
       # HITL middleware should still be added even with empty config
       assert Enum.any?(agent.middleware, fn {module, _config} ->
-               module == LangChain.DeepAgents.Middleware.HumanInTheLoop
+               module == LangChain.Agents.Middleware.HumanInTheLoop
              end)
     end
 
@@ -461,7 +461,7 @@ defmodule LangChain.DeepAgents.Middleware.HumanInTheLoopIntegrationTest do
                )
 
       refute Enum.any?(agent.middleware, fn {module, _config} ->
-               module == LangChain.DeepAgents.Middleware.HumanInTheLoop
+               module == LangChain.Agents.Middleware.HumanInTheLoop
              end)
     end
   end

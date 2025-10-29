@@ -1,4 +1,4 @@
-defmodule LangChain.DeepAgents.Middleware.Filesystem do
+defmodule LangChain.Agents.Middleware.Filesystem do
   @moduledoc """
   Middleware that adds mock filesystem capabilities to agents.
 
@@ -57,7 +57,7 @@ defmodule LangChain.DeepAgents.Middleware.Filesystem do
 
   Provide persistence callbacks to save/load files from external storage:
 
-      # Module-based (implement LangChain.DeepAgents.FilesystemCallbacks)
+      # Module-based (implement LangChain.Agents.FilesystemCallbacks)
       {:ok, agent} = Agent.new(
         model: model,
         filesystem_opts: [
@@ -113,7 +113,7 @@ defmodule LangChain.DeepAgents.Middleware.Filesystem do
   - Home directory shortcuts ("~") are rejected
   """
 
-  @behaviour LangChain.DeepAgents.Middleware
+  @behaviour LangChain.Agents.Middleware
 
   require Logger
   alias LangChain.Function
@@ -422,7 +422,7 @@ defmodule LangChain.DeepAgents.Middleware.Filesystem do
 
       # Try to get content from memory first (using State.get_file handles FileData extraction)
       content =
-        case LangChain.DeepAgents.State.get_file(context.state, normalized_path) do
+        case LangChain.Agents.State.get_file(context.state, normalized_path) do
           nil ->
             # Not in memory, try persistence
             case call_persistence_read(config, normalized_path) do
@@ -490,8 +490,8 @@ defmodule LangChain.DeepAgents.Middleware.Filesystem do
       if get_config_value(config, :cache_reads, true) and
            not Map.has_key?(context.state.files, file_path) do
         # Return only the file change as a state delta
-        file_data = LangChain.DeepAgents.State.create_file_data(content)
-        %LangChain.DeepAgents.State{files: %{file_path => file_data}}
+        file_data = LangChain.Agents.State.create_file_data(content)
+        %LangChain.Agents.State{files: %{file_path => file_data}}
       else
         nil
       end
@@ -515,16 +515,16 @@ defmodule LangChain.DeepAgents.Middleware.Filesystem do
         # Validate path
         with {:ok, normalized_path} <- validate_path(file_path) do
           # Check if file already exists (overwrite protection)
-          file_data = LangChain.DeepAgents.State.get_file_data(context.state, normalized_path)
+          file_data = LangChain.Agents.State.get_file_data(context.state, normalized_path)
 
           if file_data do
             {:error,
              "File already exists: #{normalized_path}. Use edit_file to modify existing files, or delete it first."}
           else
             # Create file data
-            file_data = LangChain.DeepAgents.State.create_file_data(content)
+            file_data = LangChain.Agents.State.create_file_data(content)
             # Return state delta with only the new file
-            state_delta = %LangChain.DeepAgents.State{files: %{normalized_path => file_data}}
+            state_delta = %LangChain.Agents.State{files: %{normalized_path => file_data}}
 
             # Attempt persistence if configured
             case call_persistence_write(config, normalized_path, content) do
@@ -566,7 +566,7 @@ defmodule LangChain.DeepAgents.Middleware.Filesystem do
         # Validate path
         with {:ok, normalized_path} <- validate_path(file_path) do
           # Get file content using State.get_file (handles FileData extraction)
-          case LangChain.DeepAgents.State.get_file(context.state, normalized_path) do
+          case LangChain.Agents.State.get_file(context.state, normalized_path) do
             nil ->
               {:error, "File not found: #{normalized_path}"}
 
@@ -628,11 +628,11 @@ defmodule LangChain.DeepAgents.Middleware.Filesystem do
 
   defp persist_edit(state, file_path, updated_content, success_message, config) do
     # Get existing file data to preserve created_at
-    existing_file_data = LangChain.DeepAgents.State.get_file_data(state, file_path)
+    existing_file_data = LangChain.Agents.State.get_file_data(state, file_path)
     # Update file data with new content
-    file_data = LangChain.DeepAgents.State.update_file_data(updated_content, existing_file_data)
+    file_data = LangChain.Agents.State.update_file_data(updated_content, existing_file_data)
     # Return state delta with only the updated file
-    state_delta = %LangChain.DeepAgents.State{files: %{file_path => file_data}}
+    state_delta = %LangChain.Agents.State{files: %{file_path => file_data}}
 
     # Attempt persistence if configured
     case call_persistence_write(config, file_path, updated_content) do

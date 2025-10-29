@@ -1,4 +1,4 @@
-defmodule LangChain.DeepAgents.Middleware.Summarization do
+defmodule LangChain.Agents.Middleware.Summarization do
   @moduledoc """
   Middleware that automatically manages conversation length through intelligent summarization.
 
@@ -118,9 +118,9 @@ defmodule LangChain.DeepAgents.Middleware.Summarization do
   - Minimal overhead when under threshold
   """
 
-  @behaviour LangChain.DeepAgents.Middleware
+  @behaviour LangChain.Agents.Middleware
 
-  alias LangChain.DeepAgents.State
+  alias LangChain.Agents.State
   alias LangChain.Message
   alias LangChain.Chains.SummarizeConversationChain
   alias LangChain.Utils

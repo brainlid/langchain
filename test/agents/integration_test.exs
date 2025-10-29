@@ -1,9 +1,9 @@
-defmodule LangChain.DeepAgents.IntegrationTest do
+defmodule LangChain.Agents.IntegrationTest do
   use ExUnit.Case
   use Mimic
 
-  alias LangChain.DeepAgents.Agent
-  alias LangChain.DeepAgents.State
+  alias LangChain.Agents.Agent
+  alias LangChain.Agents.State
   alias LangChain.ChatModels.ChatOpenAI
   alias LangChain.Message
   alias LangChain.Message.ToolCall

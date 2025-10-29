@@ -1,7 +1,7 @@
-defmodule LangChain.DeepAgents.StateTest do
+defmodule LangChain.Agents.StateTest do
   use ExUnit.Case, async: true
 
-  alias LangChain.DeepAgents.State
+  alias LangChain.Agents.State
   alias LangChain.Message
 
   doctest State
@@ -248,7 +248,7 @@ defmodule LangChain.DeepAgents.StateTest do
 
   describe "put_todo/2" do
     test "adds a new todo" do
-      alias LangChain.DeepAgents.Todo
+      alias LangChain.Agents.Todo
 
       state = State.new!()
       todo = Todo.new!(%{id: "1", content: "Task", status: :pending})
@@ -260,7 +260,7 @@ defmodule LangChain.DeepAgents.StateTest do
     end
 
     test "replaces existing todo with same ID" do
-      alias LangChain.DeepAgents.Todo
+      alias LangChain.Agents.Todo
 
       todo1 = Todo.new!(%{id: "1", content: "Original", status: :pending})
       state = State.new!(%{todos: [todo1]})
@@ -274,7 +274,7 @@ defmodule LangChain.DeepAgents.StateTest do
     end
 
     test "maintains insertion order for todos" do
-      alias LangChain.DeepAgents.Todo
+      alias LangChain.Agents.Todo
 
       state = State.new!()
       todo_c = Todo.new!(%{id: "c", content: "C"})
@@ -293,7 +293,7 @@ defmodule LangChain.DeepAgents.StateTest do
     end
 
     test "updating a todo maintains its position in the list" do
-      alias LangChain.DeepAgents.Todo
+      alias LangChain.Agents.Todo
 
       # Create initial list of todos
       todo1 = Todo.new!(%{id: "1", content: "First", status: :pending})
@@ -330,7 +330,7 @@ defmodule LangChain.DeepAgents.StateTest do
 
   describe "get_todo/2" do
     test "retrieves todo by ID" do
-      alias LangChain.DeepAgents.Todo
+      alias LangChain.Agents.Todo
 
       todo = Todo.new!(%{id: "test", content: "Task"})
       state = State.new!(%{todos: [todo]})
@@ -348,7 +348,7 @@ defmodule LangChain.DeepAgents.StateTest do
 
   describe "delete_todo/2" do
     test "removes todo by ID" do
-      alias LangChain.DeepAgents.Todo
+      alias LangChain.Agents.Todo
 
       todo1 = Todo.new!(%{id: "1", content: "Keep"})
       todo2 = Todo.new!(%{id: "2", content: "Remove"})
@@ -361,7 +361,7 @@ defmodule LangChain.DeepAgents.StateTest do
     end
 
     test "handles deleting non-existent todo" do
-      alias LangChain.DeepAgents.Todo
+      alias LangChain.Agents.Todo
 
       todo = Todo.new!(%{id: "1", content: "Task"})
       state = State.new!(%{todos: [todo]})
@@ -374,7 +374,7 @@ defmodule LangChain.DeepAgents.StateTest do
 
   describe "get_todos_by_status/2" do
     test "filters todos by status" do
-      alias LangChain.DeepAgents.Todo
+      alias LangChain.Agents.Todo
 
       todo1 = Todo.new!(%{id: "1", content: "Task 1", status: :pending})
       todo2 = Todo.new!(%{id: "2", content: "Task 2", status: :completed})
@@ -392,7 +392,7 @@ defmodule LangChain.DeepAgents.StateTest do
     end
 
     test "returns empty list when no matches" do
-      alias LangChain.DeepAgents.Todo
+      alias LangChain.Agents.Todo
 
       todo = Todo.new!(%{id: "1", content: "Task", status: :pending})
       state = State.new!(%{todos: [todo]})
@@ -404,7 +404,7 @@ defmodule LangChain.DeepAgents.StateTest do
 
   describe "set_todos/2" do
     test "replaces all todos" do
-      alias LangChain.DeepAgents.Todo
+      alias LangChain.Agents.Todo
 
       old_todo = Todo.new!(%{id: "old", content: "Old"})
       state = State.new!(%{todos: [old_todo]})
@@ -424,7 +424,7 @@ defmodule LangChain.DeepAgents.StateTest do
     end
 
     test "can set empty list" do
-      alias LangChain.DeepAgents.Todo
+      alias LangChain.Agents.Todo
 
       todo = Todo.new!(%{id: "1", content: "Task"})
       state = State.new!(%{todos: [todo]})

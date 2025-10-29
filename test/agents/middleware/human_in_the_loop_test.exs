@@ -1,8 +1,8 @@
-defmodule LangChain.DeepAgents.Middleware.HumanInTheLoopTest do
+defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
   use ExUnit.Case, async: true
 
-  alias LangChain.DeepAgents.Middleware.HumanInTheLoop
-  alias LangChain.DeepAgents.State
+  alias LangChain.Agents.Middleware.HumanInTheLoop
+  alias LangChain.Agents.State
   alias LangChain.Message
   alias LangChain.Message.ToolCall
 

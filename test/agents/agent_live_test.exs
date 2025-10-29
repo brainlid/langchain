@@ -1,8 +1,8 @@
-defmodule LangChain.DeepAgents.AgentLiveTest do
+defmodule LangChain.Agents.AgentLiveTest do
   use ExUnit.Case
 
-  alias LangChain.DeepAgents.Agent
-  alias LangChain.DeepAgents.State
+  alias LangChain.Agents.Agent
+  alias LangChain.Agents.State
   alias LangChain.ChatModels.ChatAnthropic
   alias LangChain.Message
 
@@ -56,7 +56,7 @@ defmodule LangChain.DeepAgents.AgentLiveTest do
         State.new!(%{
           messages: [
             Message.new_user!(
-              "Create a file called 'test.txt' with the content 'Hello from DeepAgents integration test!'"
+              "Create a file called 'test.txt' with the content 'Hello from Agents integration test!'"
             )
           ]
         })
@@ -69,11 +69,11 @@ defmodule LangChain.DeepAgents.AgentLiveTest do
 
       # Get file content (handles FileData structure)
       file_content = State.get_file(final_state, "test.txt")
-      assert file_content =~ "Hello from DeepAgents"
+      assert file_content =~ "Hello from Agents"
 
       # Verify file metadata
       file_data = State.get_file_data(final_state, "test.txt")
-      assert file_data.content =~ "Hello from DeepAgents"
+      assert file_data.content =~ "Hello from Agents"
       assert %DateTime{} = file_data.created_at
       assert %DateTime{} = file_data.modified_at
 

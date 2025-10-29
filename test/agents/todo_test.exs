@@ -1,7 +1,7 @@
-defmodule LangChain.DeepAgents.TodoTest do
+defmodule LangChain.Agents.TodoTest do
   use ExUnit.Case, async: true
 
-  alias LangChain.DeepAgents.Todo
+  alias LangChain.Agents.Todo
 
   doctest Todo
 

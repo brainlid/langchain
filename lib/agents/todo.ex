@@ -1,4 +1,4 @@
-defmodule LangChain.DeepAgents.Todo do
+defmodule LangChain.Agents.Todo do
   @moduledoc """
   TODO item structure for task tracking.
 

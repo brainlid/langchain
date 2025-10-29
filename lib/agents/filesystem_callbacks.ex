@@ -1,4 +1,4 @@
-defmodule LangChain.DeepAgents.FilesystemCallbacks do
+defmodule LangChain.Agents.FilesystemCallbacks do
   @moduledoc """
   Behavior for filesystem persistence callbacks.
 
@@ -8,7 +8,7 @@ defmodule LangChain.DeepAgents.FilesystemCallbacks do
   ## Example Implementation
 
       defmodule MyApp.FilesystemPersistence do
-        @behaviour LangChain.DeepAgents.FilesystemCallbacks
+        @behaviour LangChain.Agents.FilesystemCallbacks
 
         @impl true
         def on_write(file_path, content, context) do
@@ -44,7 +44,7 @@ defmodule LangChain.DeepAgents.FilesystemCallbacks do
 
   ## Configuration
 
-      {:ok, agent} = DeepAgents.new(
+      {:ok, agent} = Agents.new(
         model: model,
         filesystem_opts: [
           persistence: MyApp.FilesystemPersistence,
@@ -54,7 +54,7 @@ defmodule LangChain.DeepAgents.FilesystemCallbacks do
 
   ## Alternative: Function-based Callbacks
 
-      {:ok, agent} = DeepAgents.new(
+      {:ok, agent} = Agents.new(
         model: model,
         filesystem_opts: [
           on_write: fn file_path, content, context ->

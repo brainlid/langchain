@@ -1,8 +1,8 @@
-defmodule LangChain.DeepAgents.Middleware.TodoListTest do
+defmodule LangChain.Agents.Middleware.TodoListTest do
   use ExUnit.Case, async: true
 
-  alias LangChain.DeepAgents.{State, Todo}
-  alias LangChain.DeepAgents.Middleware.TodoList
+  alias LangChain.Agents.{State, Todo}
+  alias LangChain.Agents.Middleware.TodoList
   alias LangChain.Function
 
   describe "system_prompt/1" do

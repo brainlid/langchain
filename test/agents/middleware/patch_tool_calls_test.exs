@@ -1,8 +1,8 @@
-defmodule LangChain.DeepAgents.Middleware.PatchToolCallsTest do
+defmodule LangChain.Agents.Middleware.PatchToolCallsTest do
   use ExUnit.Case, async: true
 
-  alias LangChain.DeepAgents.Middleware.PatchToolCalls
-  alias LangChain.DeepAgents.State
+  alias LangChain.Agents.Middleware.PatchToolCalls
+  alias LangChain.Agents.State
   alias LangChain.Message
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult

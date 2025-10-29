@@ -1,8 +1,8 @@
-defmodule LangChain.DeepAgents.Middleware.PatchToolCallsIntegrationTest do
+defmodule LangChain.Agents.Middleware.PatchToolCallsIntegrationTest do
   use ExUnit.Case, async: true
 
-  alias LangChain.DeepAgents.Agent
-  alias LangChain.DeepAgents.State
+  alias LangChain.Agents.Agent
+  alias LangChain.Agents.State
   alias LangChain.Message
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult
@@ -28,7 +28,7 @@ defmodule LangChain.DeepAgents.Middleware.PatchToolCallsIntegrationTest do
         agent.middleware
         |> Enum.map(fn {module, _config} -> module end)
 
-      assert LangChain.DeepAgents.Middleware.PatchToolCalls in middleware_modules
+      assert LangChain.Agents.Middleware.PatchToolCalls in middleware_modules
     end
 
     test "patches dangling tool calls during agent execution", %{agent: agent} do
@@ -60,7 +60,7 @@ defmodule LangChain.DeepAgents.Middleware.PatchToolCallsIntegrationTest do
       # Apply before_model hooks manually
       {:ok, processed_state} =
         Enum.reduce_while(middleware_list, {:ok, state}, fn mw, {:ok, current_state} ->
-          case LangChain.DeepAgents.Middleware.apply_before_model(current_state, mw) do
+          case LangChain.Agents.Middleware.apply_before_model(current_state, mw) do
             {:ok, updated_state} -> {:cont, {:ok, updated_state}}
             {:error, reason} -> {:halt, {:error, reason}}
           end
@@ -103,7 +103,7 @@ defmodule LangChain.DeepAgents.Middleware.PatchToolCallsIntegrationTest do
       # Apply before_model hooks
       {:ok, processed_state} =
         Enum.reduce_while(middleware_list, {:ok, state}, fn mw, {:ok, current_state} ->
-          case LangChain.DeepAgents.Middleware.apply_before_model(current_state, mw) do
+          case LangChain.Agents.Middleware.apply_before_model(current_state, mw) do
             {:ok, updated_state} -> {:cont, {:ok, updated_state}}
             {:error, reason} -> {:halt, {:error, reason}}
           end
@@ -121,7 +121,7 @@ defmodule LangChain.DeepAgents.Middleware.PatchToolCallsIntegrationTest do
           model: model,
           replace_default_middleware: true,
           middleware: [
-            LangChain.DeepAgents.Middleware.PatchToolCalls
+            LangChain.Agents.Middleware.PatchToolCalls
           ]
         )
 
@@ -143,7 +143,7 @@ defmodule LangChain.DeepAgents.Middleware.PatchToolCallsIntegrationTest do
       # Apply before_model hooks
       {:ok, processed_state} =
         Enum.reduce_while(agent.middleware, {:ok, state}, fn mw, {:ok, current_state} ->
-          case LangChain.DeepAgents.Middleware.apply_before_model(current_state, mw) do
+          case LangChain.Agents.Middleware.apply_before_model(current_state, mw) do
             {:ok, updated_state} -> {:cont, {:ok, updated_state}}
             {:error, reason} -> {:halt, {:error, reason}}
           end
@@ -180,7 +180,7 @@ defmodule LangChain.DeepAgents.Middleware.PatchToolCallsIntegrationTest do
       # Apply all middleware in order (TodoList, Filesystem, PatchToolCalls)
       {:ok, processed_state} =
         Enum.reduce_while(agent.middleware, {:ok, state}, fn mw, {:ok, current_state} ->
-          case LangChain.DeepAgents.Middleware.apply_before_model(current_state, mw) do
+          case LangChain.Agents.Middleware.apply_before_model(current_state, mw) do
             {:ok, updated_state} -> {:cont, {:ok, updated_state}}
             {:error, reason} -> {:halt, {:error, reason}}
           end
@@ -222,7 +222,7 @@ defmodule LangChain.DeepAgents.Middleware.PatchToolCallsIntegrationTest do
       # Apply middleware
       {:ok, processed_state} =
         Enum.reduce_while(agent.middleware, {:ok, state}, fn mw, {:ok, current_state} ->
-          case LangChain.DeepAgents.Middleware.apply_before_model(current_state, mw) do
+          case LangChain.Agents.Middleware.apply_before_model(current_state, mw) do
             {:ok, updated_state} -> {:cont, {:ok, updated_state}}
             {:error, reason} -> {:halt, {:error, reason}}
           end

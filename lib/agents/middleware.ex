@@ -1,4 +1,4 @@
-defmodule LangChain.DeepAgents.Middleware do
+defmodule LangChain.Agents.Middleware do
   @moduledoc """
   Behavior for DeepAgent middleware components.
 
@@ -21,7 +21,7 @@ defmodule LangChain.DeepAgents.Middleware do
   ## Example
 
       defmodule MyMiddleware do
-        @behaviour LangChain.DeepAgents.Middleware
+        @behaviour LangChain.Agents.Middleware
 
         @impl true
         def init(opts) do
@@ -53,7 +53,7 @@ defmodule LangChain.DeepAgents.Middleware do
   - Module name: `MyMiddleware`
   - Tuple with options: `{MyMiddleware, [enabled: true]}`
   """
-  alias LangChain.DeepAgents.State
+  alias LangChain.Agents.State
 
   @type config :: keyword()
   @type middleware_config :: any()
@@ -96,7 +96,7 @@ defmodule LangChain.DeepAgents.Middleware do
 
   ## Parameters
 
-  - `state` - The current `LangChain.DeepAgents.State` struct
+  - `state` - The current `LangChain.Agents.State` struct
   - `config` - The middleware configuration from `init/1`
 
   ## Returns
@@ -116,7 +116,7 @@ defmodule LangChain.DeepAgents.Middleware do
 
   ## Parameters
 
-  - `state` - The current `LangChain.DeepAgents.State` struct (with LLM response)
+  - `state` - The current `LangChain.Agents.State` struct (with LLM response)
   - `config` - The middleware configuration from `init/1`
 
   ## Returns

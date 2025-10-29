@@ -1,6 +1,6 @@
-defmodule LangChain.DeepAgents.Agent do
+defmodule LangChain.Agents.Agent do
   @moduledoc """
-  Main entry point for creating DeepAgents.
+  Main entry point for creating Agents.
 
   A DeepAgent is an AI agent with composable middleware that provides
   capabilities like TODO management, filesystem operations, and task delegation.
@@ -40,7 +40,7 @@ defmodule LangChain.DeepAgents.Agent do
   require Logger
 
   alias __MODULE__
-  alias LangChain.DeepAgents.{Middleware, State}
+  alias LangChain.Agents.{Middleware, State}
   alias LangChain.LangChainError
   alias LangChain.Message
   alias LangChain.Function
@@ -267,7 +267,7 @@ defmodule LangChain.DeepAgents.Agent do
     # Find the HumanInTheLoop middleware in the stack
     hitl_middleware =
       Enum.find(agent.middleware, fn {module, _config} ->
-        module == LangChain.DeepAgents.Middleware.HumanInTheLoop
+        module == LangChain.Agents.Middleware.HumanInTheLoop
       end)
 
     case hitl_middleware do
@@ -321,14 +321,14 @@ defmodule LangChain.DeepAgents.Agent do
     # Build default middleware stack
     base_middleware = [
       # TodoList middleware for task management
-      {LangChain.DeepAgents.Middleware.TodoList, Keyword.get(opts, :todo_opts, [])},
+      {LangChain.Agents.Middleware.TodoList, Keyword.get(opts, :todo_opts, [])},
       # Filesystem middleware for mock file operations
-      {LangChain.DeepAgents.Middleware.Filesystem, Keyword.get(opts, :filesystem_opts, [])},
+      {LangChain.Agents.Middleware.Filesystem, Keyword.get(opts, :filesystem_opts, [])},
       # Summarization middleware for managing conversation length
-      {LangChain.DeepAgents.Middleware.Summarization,
+      {LangChain.Agents.Middleware.Summarization,
        Keyword.merge([model: model], Keyword.get(opts, :summarization_opts, []))},
       # PatchToolCalls middleware to fix dangling tool calls
-      {LangChain.DeepAgents.Middleware.PatchToolCalls, []}
+      {LangChain.Agents.Middleware.PatchToolCalls, []}
     ]
 
     # Conditionally add HumanInTheLoop middleware if interrupt_on is configured
@@ -339,7 +339,7 @@ defmodule LangChain.DeepAgents.Agent do
 
         interrupt_on when is_map(interrupt_on) ->
           base_middleware ++
-            [{LangChain.DeepAgents.Middleware.HumanInTheLoop, [interrupt_on: interrupt_on]}]
+            [{LangChain.Agents.Middleware.HumanInTheLoop, [interrupt_on: interrupt_on]}]
       end
 
     middleware_with_hitl

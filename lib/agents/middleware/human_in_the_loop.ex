@@ -1,4 +1,4 @@
-defmodule LangChain.DeepAgents.Middleware.HumanInTheLoop do
+defmodule LangChain.Agents.Middleware.HumanInTheLoop do
   @moduledoc """
   Middleware that enables human oversight and intervention in agent workflows.
 
@@ -171,9 +171,9 @@ defmodule LangChain.DeepAgents.Middleware.HumanInTheLoop do
   5. Custom user middleware
   """
 
-  @behaviour LangChain.DeepAgents.Middleware
+  @behaviour LangChain.Agents.Middleware
 
-  alias LangChain.DeepAgents.State
+  alias LangChain.Agents.State
   alias LangChain.Message
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult

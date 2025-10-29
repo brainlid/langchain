@@ -1,4 +1,4 @@
-defmodule LangChain.DeepAgents.Middleware.TodoList do
+defmodule LangChain.Agents.Middleware.TodoList do
   @moduledoc """
   Middleware that adds TODO list management capabilities to agents.
 
@@ -22,9 +22,9 @@ defmodule LangChain.DeepAgents.Middleware.TodoList do
   - `:auto_cleanup` - Automatically remove completed TODOs
   """
 
-  @behaviour LangChain.DeepAgents.Middleware
+  @behaviour LangChain.Agents.Middleware
 
-  alias LangChain.DeepAgents.{State, Todo}
+  alias LangChain.Agents.{State, Todo}
   alias LangChain.Function
 
   @system_prompt """

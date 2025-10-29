@@ -1,8 +1,8 @@
-defmodule LangChain.DeepAgents.AgentTest do
+defmodule LangChain.Agents.AgentTest do
   use ExUnit.Case, async: true
   use Mimic
 
-  alias LangChain.DeepAgents.{Agent, Middleware, State}
+  alias LangChain.Agents.{Agent, Middleware, State}
   alias LangChain.ChatModels.ChatAnthropic
   alias LangChain.Message
 

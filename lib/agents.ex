@@ -1,8 +1,8 @@
-defmodule LangChain.DeepAgents do
+defmodule LangChain.Agents do
   @moduledoc """
-  DeepAgents provides hierarchical agent capabilities with composable middleware.
+  Agents provides hierarchical agent capabilities with composable middleware.
 
-  DeepAgents extends LangChain with powerful features:
+  Agents extends LangChain with powerful features:
 
   - **Middleware System**: Composable components for agent capabilities
   - **TODO Management**: Task planning and progress tracking
@@ -12,38 +12,38 @@ defmodule LangChain.DeepAgents do
 
   ## Quick Start
 
-      alias LangChain.DeepAgents
+      alias LangChain.Agents
       alias LangChain.ChatModels.ChatAnthropic
 
       # Create an agent
-      {:ok, agent} = DeepAgents.new(
+      {:ok, agent} = Agents.new(
         model: ChatAnthropic.new!(%{model: "claude-3-5-sonnet-20241022"}),
         system_prompt: "You are a helpful assistant."
       )
 
       # Execute with messages
-      {:ok, result} = DeepAgents.execute(agent, [
+      {:ok, result} = Agents.execute(agent, [
         %{role: "user", content: "Hello!"}
       ])
 
   ## Middleware Composition
 
-  DeepAgents uses a middleware pattern for extensibility:
+  Agents uses a middleware pattern for extensibility:
 
       # Use default middleware (TODO, Filesystem, SubAgent, etc.)
-      {:ok, agent} = DeepAgents.new(
+      {:ok, agent} = Agents.new(
         model: model,
         middleware: [MyCustomMiddleware]
       )
 
       # Customize default middleware
-      {:ok, agent} = DeepAgents.new(
+      {:ok, agent} = Agents.new(
         model: model,
         filesystem_opts: [long_term_memory: true]
       )
 
       # Provide complete middleware stack
-      {:ok, agent} = DeepAgents.new(
+      {:ok, agent} = Agents.new(
         model: model,
         replace_default_middleware: true,
         middleware: [MyMiddleware1, MyMiddleware2]
@@ -52,7 +52,7 @@ defmodule LangChain.DeepAgents do
   ## Creating Custom Middleware
 
       defmodule MyMiddleware do
-        @behaviour LangChain.DeepAgents.Middleware
+        @behaviour LangChain.Agents.Middleware
 
         @impl true
         def init(opts) do
@@ -92,13 +92,13 @@ defmodule LangChain.DeepAgents do
         metadata: %{session_id: "123"}
       })
 
-      {:ok, result_state} = DeepAgents.execute(agent, state)
+      {:ok, result_state} = Agents.execute(agent, state)
 
-  See `LangChain.DeepAgents.State` for state management functions.
+  See `LangChain.Agents.State` for state management functions.
   """
 
-  alias LangChain.DeepAgents.Agent, as: Agent
-  alias LangChain.DeepAgents.State, as: State
+  alias LangChain.Agents.Agent, as: Agent
+  alias LangChain.Agents.State, as: State
 
   @doc """
   Create a new DeepAgent with default middleware stack.
@@ -120,19 +120,19 @@ defmodule LangChain.DeepAgents do
   ## Examples
 
       # Basic agent
-      {:ok, agent} = DeepAgents.new(
+      {:ok, agent} = Agents.new(
         model: ChatAnthropic.new!(%{model: "claude-3-5-sonnet-20241022"}),
         system_prompt: "You are helpful."
       )
 
       # With custom tools
-      {:ok, agent} = DeepAgents.new(
+      {:ok, agent} = Agents.new(
         model: model,
         tools: [calculator_tool, search_tool]
       )
 
       # With custom middleware
-      {:ok, agent} = DeepAgents.new(
+      {:ok, agent} = Agents.new(
         model: model,
         middleware: [LoggingMiddleware, MetricsMiddleware]
       )
@@ -153,10 +153,10 @@ defmodule LangChain.DeepAgents do
 
       # Execute with State struct
       state = State.new!(%{messages: [%{role: "user", content: "Hello"}]})
-      {:ok, result_state} = DeepAgents.execute(agent, state)
+      {:ok, result_state} = Agents.execute(agent, state)
 
       # Execute with message list (convenience)
-      {:ok, result_state} = DeepAgents.execute(agent, [
+      {:ok, result_state} = Agents.execute(agent, [
         %{role: "user", content: "Hello"}
       ])
   """
@@ -176,7 +176,7 @@ defmodule LangChain.DeepAgents do
 
   ## Examples
 
-      task = DeepAgents.execute_async(agent, messages)
+      task = Agents.execute_async(agent, messages)
       {:ok, result_state} = Task.await(task)
   """
   def execute_async(agent, state_or_messages) do

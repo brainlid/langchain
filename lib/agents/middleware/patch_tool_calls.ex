@@ -1,4 +1,4 @@
-defmodule LangChain.DeepAgents.Middleware.PatchToolCalls do
+defmodule LangChain.Agents.Middleware.PatchToolCalls do
   @moduledoc """
   Middleware that identifies and resolves "dangling tool calls" in the message history.
 
@@ -80,9 +80,9 @@ defmodule LangChain.DeepAgents.Middleware.PatchToolCalls do
       ]
   """
 
-  @behaviour LangChain.DeepAgents.Middleware
+  @behaviour LangChain.Agents.Middleware
 
-  alias LangChain.DeepAgents.State
+  alias LangChain.Agents.State
   alias LangChain.Message
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult

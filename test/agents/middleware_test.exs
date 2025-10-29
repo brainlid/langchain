@@ -1,7 +1,7 @@
-defmodule LangChain.DeepAgents.MiddlewareTest do
+defmodule LangChain.Agents.MiddlewareTest do
   use ExUnit.Case, async: true
 
-  alias LangChain.DeepAgents.Middleware
+  alias LangChain.Agents.Middleware
 
   # Test middleware implementations
 

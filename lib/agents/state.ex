@@ -1,4 +1,4 @@
-defmodule LangChain.DeepAgents.State do
+defmodule LangChain.Agents.State do
   @moduledoc """
   Agent state structure with support for middleware state.
 
@@ -276,7 +276,7 @@ defmodule LangChain.DeepAgents.State do
   If a TODO with the same ID exists, it will be replaced at its current position.
   If the TODO ID doesn't exist, it will be appended to the end of the list.
   """
-  def put_todo(%State{} = state, %LangChain.DeepAgents.Todo{} = todo) do
+  def put_todo(%State{} = state, %LangChain.Agents.Todo{} = todo) do
     # Find the index of the existing TODO with the same ID
     existing_index =
       Enum.find_index(state.todos, fn
