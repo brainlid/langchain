@@ -162,6 +162,23 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         ContentPart.text!("<large document content>", cache_control: true)
       ])
 
+  This will set a single cache breakpoint that will include your functions (processed first) and system message.
+  Anthropic limits conversations to a maximum of 4 cache_control blocks.
+
+  For multi-turn conversations, turning on message_caching (see below) will add a second cache breakpoint and
+  give you higher cache utilization and response times. Writing to the cache increases write costs so this setting
+  is not on by default.
+
+  ### Supported Content Types
+
+  Prompt caching can be applied to:
+  - Text content in system messages
+  - Text content in user messages
+  - Tool results in the `content` field when returning a list of `ContentPart` structs.
+  - Tool definitions in the `options` field when creating a `Function` struct.
+
+  For more information, see the [Anthropic prompt caching documentation](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching).
+
   ### Advanced Cache Control
 
   For more explicit control over caching parameters, you can provide a map instead of `true`:
@@ -174,16 +191,67 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
   The default is "5m" for 5 minutes but supports "1h" for 1 hour depending on your account.
 
+  ### Automatic Message Caching for Multi-Turn Conversations
 
-  ### Supported Content Types
+  For multi-turn conversations, Anthropic recommends placing a cache breakpoint on the last user message
+  to achieve high cache hit rates. The `:cache_messages` option automates this pattern by automatically
+  adding `cache_control` to the last user message's last text content part.
 
-  Prompt caching can be applied to:
-  - Text content in system messages
-  - Text content in user messages
-  - Tool results in the `content` field when returning a list of `ContentPart` structs.
-  - Tool definitions in the `options` field when creating a `Function` struct.
+  This is particularly effective for conversations because as new turns are added, the cache breakpoint
+  automatically moves to the newest message, maximizing cache utilization across the conversation history.
 
-  For more information, see the [Anthropic prompt caching documentation](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching).
+  With :cache_messages enabled:
+  - The cache breakpoint is only added to the **last user message** in the conversation
+  - It's added to the **last text ContentPart** within that message (skips tool_result types)
+  - This works alongside system message caching and tool caching
+
+  #### Enabling Message Caching
+
+  Message caching is disabled by default since writing to the cache increases write costs. Whether this
+  is worth it depends on your situation.
+
+  To enable automatic message caching, set `cache_messages: %{enabled: true}`:
+
+      model = ChatAnthropic.new!(%{
+        model: "claude-3-5-sonnet-20241022",
+        cache_messages: %{enabled: true}
+      })
+
+  This will automatically add cache_control to the last text ContentPart of the last user message
+  in every API request.
+
+  #### With Custom TTL
+
+  You can specify a custom TTL (time-to-live) for the cache breakpoint:
+
+      model = ChatAnthropic.new!(%{
+        model: "claude-3-5-sonnet-20241022",
+        cache_messages: %{enabled: true, ttl: "1h"}
+      })
+
+  Supported TTL values are "5m" (5 minutes, default) and "1h" (1 hour), depending on your account settings.
+
+  NOTE: Cache writes with a 5m TTL have cost 1.25X whereas 1h writes cost 3X.
+
+  #### Multi-Turn Conversation Example
+
+  As you add messages to a conversation, the cache breakpoint automatically moves to the latest user message:
+
+      # Turn 1 - cache breakpoint on first message
+      {:ok, chain} =
+        LLMChain.new!(%{llm: model})
+        |> LLMChain.add_message(Message.new_user!("What is machine learning?"))
+        |> LLMChain.run()
+
+      # Turn 2 - cache breakpoint moves to second message
+      # Previous messages are now in the cache
+      {:ok, chain} =
+        chain
+        |> LLMChain.add_message(Message.new_user!("Can you give me an example?"))
+        |> LLMChain.run()
+
+  This achieves ~90-100% cache hit rates in multi-turn conversations, significantly reducing latency and costs.
+
   """
   use Ecto.Schema
   require Logger
@@ -286,6 +354,12 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
     # Additional level of raw api request and response data
     field :verbose_api, :boolean, default: false
+
+    # Automatically cache messages in multi-turn conversations.
+    # Set to %{enabled: true} to add cache_control to the last user message's last ContentPart.
+    # Can include TTL: %{enabled: true, ttl: "1h"} or %{enabled: true, ttl: "5m"}
+    # Set to %{enabled: false} or nil to disable automatic message caching.
+    field :cache_messages, :map
   end
 
   @type t :: %ChatAnthropic{}
@@ -304,7 +378,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     :thinking,
     :tool_choice,
     :beta_headers,
-    :verbose_api
+    :verbose_api,
+    :cache_messages
   ]
   @required_fields [:endpoint, :model]
 
@@ -370,7 +445,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     messages =
       messages
       |> Enum.map(&message_for_api/1)
-      |> post_process_and_combine_messages()
+      |> post_process_and_combine_messages(anthropic.cache_messages)
 
     %{
       model: anthropic.model,
@@ -1524,25 +1599,110 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   After all the messages have been converted using `for_api/1`, this combines
   multiple sequential tool response messages. The Anthropic API is very strict
   about user, assistant, user, assistant sequenced messages.
+
+  When `cache_messages` is set, it also adds cache_control to the last user message's
+  last ContentPart to enable efficient caching in multi-turn conversations.
   """
-  def post_process_and_combine_messages(messages) do
+  def post_process_and_combine_messages(messages, cache_messages \\ nil) do
     messages
     |> Enum.reverse()
+    |> Enum.with_index()
     |> Enum.reduce([], fn
       # when two "user" role messages are listed together, combine them. This
       # can happen because multiple ToolCalls require multiple tool response
       # messages, but Anthropic does those as a User message and strictly
       # enforces that multiple user messages in a row are not permitted.
-      %{"role" => "user"} = item, [%{"role" => "user"} = prev | rest] = _acc ->
+      {%{"role" => "user"} = item, index}, [%{"role" => "user"} = prev | rest] = _acc ->
         updated_prev = merge_user_messages(item, prev)
-        # merge current item into the previous and return the updated list
-        # updated_prev = Map.put(prev, "content", item["content"] ++ prev["content"])
-        [updated_prev | rest]
+        # If this is the last message (index 0) and it's a user message, add cache_control
+        if index == 0 && cache_messages_enabled?(cache_messages) do
+          [add_cache_control_to_last_content(updated_prev, cache_messages) | rest]
+        else
+          [updated_prev | rest]
+        end
 
-      item, acc ->
+      {%{"role" => "user"} = item, 0}, acc ->
+        # This is the last message and it's a user message, add cache_control if requested
+        if cache_messages_enabled?(cache_messages) do
+          [add_cache_control_to_last_content(item, cache_messages) | acc]
+        else
+          [item | acc]
+        end
+
+      {item, _index}, acc ->
         [item | acc]
     end)
   end
+
+  # Check if cache_messages is enabled
+  defp cache_messages_enabled?(%{enabled: true}), do: true
+  defp cache_messages_enabled?(%{"enabled" => true}), do: true
+  defp cache_messages_enabled?(_), do: false
+
+  # Add cache_control to the last ContentPart in a user message
+  defp add_cache_control_to_last_content(
+         %{"role" => "user", "content" => content} = message,
+         cache_messages
+       )
+       when is_list(content) and length(content) > 0 do
+    # Get the cache control setting
+    cache_control = get_cache_control_from_setting(cache_messages)
+
+    # Find the last text content part (skip tool_result types)
+    {_content_before_last_text, last_text_index} =
+      content
+      |> Enum.with_index()
+      |> Enum.reverse()
+      |> Enum.find({nil, nil}, fn {part, _idx} ->
+        part["type"] == "text"
+      end)
+
+    case last_text_index do
+      nil ->
+        # No text parts found, return message unchanged
+        message
+
+      idx ->
+        # Update the last text part with cache_control (if it doesn't already have one)
+        updated_content =
+          List.update_at(content, idx, fn part ->
+            if Map.has_key?(part, "cache_control") do
+              # Keep existing cache_control
+              part
+            else
+              # Add cache_control
+              Map.put(part, "cache_control", cache_control)
+            end
+          end)
+
+        Map.put(message, "content", updated_content)
+    end
+  end
+
+  defp add_cache_control_to_last_content(message, _cache_messages), do: message
+
+  # Convert cache_messages setting to the cache_control block format
+  defp get_cache_control_from_setting(%{enabled: true} = settings) do
+    case Map.get(settings, :ttl) do
+      nil ->
+        @default_cache_control_block
+
+      ttl ->
+        %{"type" => "ephemeral", "ttl" => ttl}
+    end
+  end
+
+  defp get_cache_control_from_setting(%{"enabled" => true} = settings) do
+    case Map.get(settings, "ttl") do
+      nil ->
+        @default_cache_control_block
+
+      ttl ->
+        %{"type" => "ephemeral", "ttl" => ttl}
+    end
+  end
+
+  defp get_cache_control_from_setting(_), do: nil
 
   # Merge the two user messages
   defp merge_user_messages(%{"role" => "user"} = item, %{"role" => "user"} = prev) do
