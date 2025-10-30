@@ -1,4 +1,4 @@
-defmodule LangChain.Agents.Middleware.Filesystem do
+defmodule LangChain.Agents.Middleware.FileSystem do
   @moduledoc """
   Middleware that adds mock filesystem capabilities to agents.
 
