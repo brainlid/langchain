@@ -1,6 +1,6 @@
-defmodule LangChain.Agents.FilesystemCallbacks do
+defmodule LangChain.Agents.FileSystemCallbacks do
   @moduledoc """
-  Behavior for filesystem persistence callbacks.
+  Behavior for file system persistence callbacks.
 
   Implement this behavior to provide custom persistence for filesystem operations.
   All callbacks are optional - implement only what you need.
