@@ -208,6 +208,41 @@ defmodule LangChain.Agents.FileSystemServer do
   end
 
   @doc """
+  Register file entries in the filesystem.
+
+  Useful for pre-populating the filesystem with file metadata.
+  Accepts either a single FileEntry or a list of FileEntry structs.
+
+  ## Parameters
+
+  - `agent_id` - Agent identifier
+  - `file_entry_or_entries` - FileEntry struct or list of FileEntry structs
+
+  ## Returns
+
+  - `:ok` on success
+
+  ## Examples
+
+      iex> {:ok, entry} = FileEntry.new_memory_file("/scratch/temp.txt", "data")
+      iex> FileSystemServer.register_files("agent-123", entry)
+      :ok
+
+      iex> {:ok, entry1} = FileEntry.new_memory_file("/scratch/file1.txt", "data1")
+      iex> {:ok, entry2} = FileEntry.new_memory_file("/scratch/file2.txt", "data2")
+      iex> FileSystemServer.register_files("agent-123", [entry1, entry2])
+      :ok
+  """
+  @spec register_files(String.t(), FileEntry.t() | [FileEntry.t()]) :: :ok
+  def register_files(agent_id, %FileEntry{} = file_entry) do
+    register_files(agent_id, [file_entry])
+  end
+
+  def register_files(agent_id, file_entries) when is_list(file_entries) do
+    GenServer.call(via_tuple(agent_id), {:register_files, file_entries})
+  end
+
+  @doc """
   Get all registered persistence configurations.
 
   Returns a map of base_directory => FileSystemConfig.
@@ -273,6 +308,12 @@ defmodule LangChain.Agents.FileSystemServer do
   @impl true
   def handle_call(:get_persistence_configs, _from, state) do
     {:reply, state.persistence_configs, state}
+  end
+
+  @impl true
+  def handle_call({:register_files, file_entries}, _from, state) do
+    {:ok, new_state} = FileSystemState.register_files(state, file_entries)
+    {:reply, :ok, new_state}
   end
 
   @impl true

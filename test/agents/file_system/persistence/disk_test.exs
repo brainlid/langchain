@@ -10,33 +10,32 @@ defmodule LangChain.Agents.FileSystem.Persistence.DiskTest do
     agent_id = "test_agent_#{System.unique_integer([:positive])}"
 
     opts = [
-      agent_id: agent_id,
       path: tmp_dir,
-      memories_directory: "Memories"
+      base_directory: "Memories"
     ]
 
     %{agent_id: agent_id, opts: opts, tmp_dir: tmp_dir}
   end
 
   describe "write_to_storage/2" do
-    test "writes file to disk", %{opts: opts, tmp_dir: tmp_dir, agent_id: agent_id} do
+    test "writes file to disk", %{opts: opts, tmp_dir: tmp_dir} do
       {:ok, entry} = FileEntry.new_persisted_file("/Memories/test.txt", "test content")
 
-      assert :ok = Disk.write_to_storage(entry, opts)
+      assert {:ok, _written_entry} = Disk.write_to_storage(entry, opts)
 
-      # Verify file exists on disk
-      expected_path = Path.join([tmp_dir, agent_id, "Memories", "test.txt"])
+      # Verify file exists on disk (base_directory "Memories" is stripped)
+      expected_path = Path.join(tmp_dir, "test.txt")
       assert File.exists?(expected_path)
       assert File.read!(expected_path) == "test content"
     end
 
-    test "creates nested directories", %{opts: opts, tmp_dir: tmp_dir, agent_id: agent_id} do
+    test "creates nested directories", %{opts: opts, tmp_dir: tmp_dir} do
       {:ok, entry} =
         FileEntry.new_persisted_file("/Memories/deep/nested/file.txt", "nested content")
 
-      assert :ok = Disk.write_to_storage(entry, opts)
+      assert {:ok, _written_entry} = Disk.write_to_storage(entry, opts)
 
-      expected_path = Path.join([tmp_dir, agent_id, "Memories", "deep", "nested", "file.txt"])
+      expected_path = Path.join([tmp_dir, "deep", "nested", "file.txt"])
       assert File.exists?(expected_path)
       assert File.read!(expected_path) == "nested content"
     end
@@ -44,26 +43,26 @@ defmodule LangChain.Agents.FileSystem.Persistence.DiskTest do
     test "overwrites existing file", %{opts: opts} do
       {:ok, entry} = FileEntry.new_persisted_file("/Memories/test.txt", "original")
 
-      assert :ok = Disk.write_to_storage(entry, opts)
+      assert {:ok, _written_entry} = Disk.write_to_storage(entry, opts)
 
       # Overwrite with new content
       {:ok, updated_entry} = FileEntry.new_persisted_file("/Memories/test.txt", "updated")
 
-      assert :ok = Disk.write_to_storage(updated_entry, opts)
+      assert {:ok, _written_entry2} = Disk.write_to_storage(updated_entry, opts)
 
       # Verify updated content
-      {:ok, content} = Disk.load_from_storage(entry, opts)
-      assert content == "updated"
+      {:ok, loaded_entry} = Disk.load_from_storage(entry, opts)
+      assert loaded_entry.content == "updated"
     end
 
     test "handles unicode content", %{opts: opts} do
       unicode_content = "Hello 世界 🌍"
       {:ok, entry} = FileEntry.new_persisted_file("/Memories/unicode.txt", unicode_content)
 
-      assert :ok = Disk.write_to_storage(entry, opts)
+      assert {:ok, _written_entry} = Disk.write_to_storage(entry, opts)
 
-      {:ok, loaded_content} = Disk.load_from_storage(entry, opts)
-      assert loaded_content == unicode_content
+      {:ok, loaded_entry} = Disk.load_from_storage(entry, opts)
+      assert loaded_entry.content == unicode_content
     end
 
     test "handles large content", %{opts: opts} do
@@ -71,10 +70,10 @@ defmodule LangChain.Agents.FileSystem.Persistence.DiskTest do
       large_content = String.duplicate("a", 1_000_000)
       {:ok, entry} = FileEntry.new_persisted_file("/Memories/large.txt", large_content)
 
-      assert :ok = Disk.write_to_storage(entry, opts)
+      assert {:ok, _written_entry} = Disk.write_to_storage(entry, opts)
 
-      {:ok, loaded_content} = Disk.load_from_storage(entry, opts)
-      assert byte_size(loaded_content) == 1_000_000
+      {:ok, loaded_entry} = Disk.load_from_storage(entry, opts)
+      assert byte_size(loaded_entry.content) == 1_000_000
     end
   end
 
@@ -84,10 +83,11 @@ defmodule LangChain.Agents.FileSystem.Persistence.DiskTest do
       {:ok, entry} = FileEntry.new_persisted_file("/Memories/load.txt", content)
 
       # Write first
-      :ok = Disk.write_to_storage(entry, opts)
+      {:ok, _written_entry} = Disk.write_to_storage(entry, opts)
 
       # Then load
-      assert {:ok, ^content} = Disk.load_from_storage(entry, opts)
+      assert {:ok, loaded_entry} = Disk.load_from_storage(entry, opts)
+      assert loaded_entry.content == content
     end
 
     test "returns error for non-existent file", %{opts: opts} do
@@ -100,20 +100,21 @@ defmodule LangChain.Agents.FileSystem.Persistence.DiskTest do
       content = "nested file content"
       {:ok, entry} = FileEntry.new_persisted_file("/Memories/a/b/c/file.txt", content)
 
-      :ok = Disk.write_to_storage(entry, opts)
+      {:ok, _written_entry} = Disk.write_to_storage(entry, opts)
 
-      assert {:ok, ^content} = Disk.load_from_storage(entry, opts)
+      assert {:ok, loaded_entry} = Disk.load_from_storage(entry, opts)
+      assert loaded_entry.content == content
     end
   end
 
   describe "delete_from_storage/2" do
-    test "deletes existing file", %{opts: opts, tmp_dir: tmp_dir, agent_id: agent_id} do
+    test "deletes existing file", %{opts: opts, tmp_dir: tmp_dir} do
       {:ok, entry} = FileEntry.new_persisted_file("/Memories/delete.txt", "content")
 
       # Write file
-      :ok = Disk.write_to_storage(entry, opts)
+      {:ok, _written_entry} = Disk.write_to_storage(entry, opts)
 
-      expected_path = Path.join([tmp_dir, agent_id, "Memories", "delete.txt"])
+      expected_path = Path.join(tmp_dir, "delete.txt")
       assert File.exists?(expected_path)
 
       # Delete file
@@ -128,12 +129,12 @@ defmodule LangChain.Agents.FileSystem.Persistence.DiskTest do
       assert :ok = Disk.delete_from_storage(entry, opts)
     end
 
-    test "deletes file from nested directory", %{opts: opts, tmp_dir: tmp_dir, agent_id: agent_id} do
+    test "deletes file from nested directory", %{opts: opts, tmp_dir: tmp_dir} do
       {:ok, entry} = FileEntry.new_persisted_file("/Memories/a/b/file.txt", "content")
 
-      :ok = Disk.write_to_storage(entry, opts)
+      {:ok, _written_entry} = Disk.write_to_storage(entry, opts)
 
-      expected_path = Path.join([tmp_dir, agent_id, "Memories", "a", "b", "file.txt"])
+      expected_path = Path.join([tmp_dir, "a", "b", "file.txt"])
       assert File.exists?(expected_path)
 
       assert :ok = Disk.delete_from_storage(entry, opts)
@@ -150,7 +151,7 @@ defmodule LangChain.Agents.FileSystem.Persistence.DiskTest do
 
     test "lists single file", %{agent_id: agent_id, opts: opts} do
       {:ok, entry} = FileEntry.new_persisted_file("/Memories/file1.txt", "content")
-      :ok = Disk.write_to_storage(entry, opts)
+      {:ok, _written_entry} = Disk.write_to_storage(entry, opts)
 
       assert {:ok, ["/Memories/file1.txt"]} = Disk.list_persisted_files(agent_id, opts)
     end
@@ -164,7 +165,7 @@ defmodule LangChain.Agents.FileSystem.Persistence.DiskTest do
 
       for {path, content} <- files do
         {:ok, entry} = FileEntry.new_persisted_file(path, content)
-        :ok = Disk.write_to_storage(entry, opts)
+        {:ok, _written_entry} = Disk.write_to_storage(entry, opts)
       end
 
       {:ok, listed_files} = Disk.list_persisted_files(agent_id, opts)
@@ -184,7 +185,7 @@ defmodule LangChain.Agents.FileSystem.Persistence.DiskTest do
 
       for {path, content} <- files do
         {:ok, entry} = FileEntry.new_persisted_file(path, content)
-        :ok = Disk.write_to_storage(entry, opts)
+        {:ok, _written_entry} = Disk.write_to_storage(entry, opts)
       end
 
       {:ok, listed_files} = Disk.list_persisted_files(agent_id, opts)
@@ -204,7 +205,7 @@ defmodule LangChain.Agents.FileSystem.Persistence.DiskTest do
 
     test "returns files with correct path format", %{agent_id: agent_id, opts: opts} do
       {:ok, entry} = FileEntry.new_persisted_file("/Memories/test.txt", "content")
-      :ok = Disk.write_to_storage(entry, opts)
+      {:ok, _written_entry} = Disk.write_to_storage(entry, opts)
 
       {:ok, [path]} = Disk.list_persisted_files(agent_id, opts)
 
@@ -215,38 +216,33 @@ defmodule LangChain.Agents.FileSystem.Persistence.DiskTest do
     end
   end
 
-  describe "default_base_path" do
-    test "uses system temp directory by default" do
-      agent_id = "test_agent"
-      opts = [agent_id: agent_id]
+  describe "path requirement" do
+    test "requires path to be provided" do
+      # This test verifies that path is required
+      opts = []
 
       {:ok, entry} = FileEntry.new_persisted_file("/Memories/temp.txt", "content")
-      assert :ok = Disk.write_to_storage(entry, opts)
 
-      # Should write to system temp directory
-      temp_base = System.tmp_dir!()
-      expected_path = Path.join([temp_base, "langchain_agents", agent_id, "Memories", "temp.txt"])
-
-      assert File.exists?(expected_path)
-
-      # Cleanup
-      File.rm_rf!(Path.join([temp_base, "langchain_agents", agent_id]))
+      # Should raise KeyError because path is required
+      assert_raise KeyError, fn ->
+        Disk.write_to_storage(entry, opts)
+      end
     end
   end
 
-  describe "custom memories_directory" do
-    test "works with different memories directory", %{tmp_dir: tmp_dir, agent_id: agent_id} do
+  describe "custom base_directory" do
+    test "works with different base_directory", %{tmp_dir: tmp_dir, agent_id: agent_id} do
       opts = [
-        agent_id: agent_id,
         path: tmp_dir,
-        memories_directory: "persistent"
+        base_directory: "persistent"
       ]
 
       {:ok, entry} = FileEntry.new_persisted_file("/persistent/data.txt", "data")
-      assert :ok = Disk.write_to_storage(entry, opts)
+      assert {:ok, _written_entry} = Disk.write_to_storage(entry, opts)
 
-      expected_path = Path.join([tmp_dir, agent_id, "persistent", "data.txt"])
+      expected_path = Path.join(tmp_dir, "data.txt")
       assert File.exists?(expected_path)
+      assert File.read!(expected_path) == "data"
 
       {:ok, [path]} = Disk.list_persisted_files(agent_id, opts)
       assert path == "/persistent/data.txt"
@@ -299,7 +295,7 @@ defmodule LangChain.Agents.FileSystem.Persistence.DiskTest do
         end
 
       results = Task.await_many(tasks)
-      assert Enum.all?(results, &(&1 == :ok))
+      assert Enum.all?(results, &match?({:ok, _}, &1))
 
       # Verify all files exist
       {:ok, files} = Disk.list_persisted_files(agent_id, opts)
@@ -318,12 +314,12 @@ defmodule LangChain.Agents.FileSystem.Persistence.DiskTest do
         end
 
       results = Task.await_many(tasks)
-      assert Enum.all?(results, &(&1 == :ok))
+      assert Enum.all?(results, &match?({:ok, _}, &1))
 
       # One of the writes should have succeeded
       {:ok, entry} = FileEntry.new_indexed_file(path)
-      {:ok, content} = Disk.load_from_storage(entry, opts)
-      assert String.starts_with?(content, "content")
+      {:ok, loaded_entry} = Disk.load_from_storage(entry, opts)
+      assert String.starts_with?(loaded_entry.content, "content")
     end
   end
 end

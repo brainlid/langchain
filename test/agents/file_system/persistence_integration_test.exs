@@ -85,7 +85,7 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
       assert clean_entry.dirty == false
 
       # Verify file exists on disk
-      disk_path = Path.join([tmp_dir, agent_id, "Memories", "test.txt"])
+      disk_path = Path.join(tmp_dir, "test.txt")
       assert File.exists?(disk_path)
       assert File.read!(disk_path) == content
     end
@@ -166,7 +166,7 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
       Process.sleep(150)
 
       # File should NOT exist on disk
-      disk_path = Path.join([tmp_dir, agent_id, "scratch", "temp.txt"])
+      disk_path = Path.join(tmp_dir, "temp.txt")
       refute File.exists?(disk_path)
     end
 
@@ -200,7 +200,7 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
 
       # All files should exist on disk
       for i <- 1..3 do
-        disk_path = Path.join([tmp_dir, agent_id, "Memories", "file#{i}.txt"])
+        disk_path = Path.join(tmp_dir, "file#{i}.txt")
         assert File.exists?(disk_path)
         assert File.read!(disk_path) == "content#{i}"
       end
@@ -223,8 +223,8 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
       GenServer.stop(pid, :normal)
 
       # Files should be on disk
-      disk_path1 = Path.join([tmp_dir, agent_id, "Memories", "file1.txt"])
-      disk_path2 = Path.join([tmp_dir, agent_id, "Memories", "file2.txt"])
+      disk_path1 = Path.join(tmp_dir, "file1.txt")
+      disk_path2 = Path.join(tmp_dir, "file2.txt")
 
       assert File.exists?(disk_path1)
       assert File.exists?(disk_path2)
@@ -250,7 +250,7 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
       # Wait for persist
       Process.sleep(150)
 
-      disk_path = Path.join([tmp_dir, agent_id, "Memories", "delete_me.txt"])
+      disk_path = Path.join(tmp_dir, "delete_me.txt")
       assert File.exists?(disk_path)
 
       # Delete file
@@ -287,7 +287,7 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
       # Second: start new server (should index files)
       # Note: Lazy loading indexing would need to be implemented in FileSystemState.new/1
       # For now, this tests the disk backend's list_persisted_files capability
-      {:ok, files} = Disk.list_persisted_files(agent_id, path: tmp_dir)
+      {:ok, files} = Disk.list_persisted_files(agent_id, path: tmp_dir, base_directory: "Memories")
 
       assert length(files) == 2
       assert "/Memories/file1.txt" in files
@@ -318,7 +318,7 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
 
       Process.sleep(150)
 
-      disk_path = Path.join([tmp_dir, agent_id, "persistent", "data.txt"])
+      disk_path = Path.join(tmp_dir, "data.txt")
       assert File.exists?(disk_path)
       assert File.read!(disk_path) == "persisted"
 
@@ -330,7 +330,7 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
 
       Process.sleep(150)
 
-      disk_path2 = Path.join([tmp_dir, agent_id, "Memories", "temp.txt"])
+      disk_path2 = Path.join(tmp_dir, "temp.txt")
       refute File.exists?(disk_path2)
     end
   end
@@ -352,7 +352,7 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
 
       Process.sleep(150)
 
-      disk_path = Path.join([tmp_dir, agent_id, "Memories/year/2024/month/10/day/30/log.txt"])
+      disk_path = Path.join([tmp_dir, "year", "2024", "month", "10", "day", "30", "log.txt"])
       assert File.exists?(disk_path)
       assert File.read!(disk_path) == content
     end
@@ -379,7 +379,7 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
 
       Process.sleep(150)
 
-      {:ok, listed_files} = Disk.list_persisted_files(agent_id, path: tmp_dir)
+      {:ok, listed_files} = Disk.list_persisted_files(agent_id, path: tmp_dir, base_directory: "Memories")
 
       assert length(listed_files) == 4
 
@@ -417,11 +417,11 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
       Process.sleep(200)
 
       # All files should be on disk
-      {:ok, files} = Disk.list_persisted_files(agent_id, path: tmp_dir)
+      {:ok, files} = Disk.list_persisted_files(agent_id, path: tmp_dir, base_directory: "Memories")
       assert length(files) == 10
 
       for i <- 1..10 do
-        disk_path = Path.join([tmp_dir, agent_id, "Memories", "subagent_#{i}.txt"])
+        disk_path = Path.join(tmp_dir, "subagent_#{i}.txt")
         assert File.exists?(disk_path)
         assert File.read!(disk_path) == "result #{i}"
       end

@@ -2,7 +2,9 @@ defmodule LangChain.Agents.FileSystem.MultiPersistenceTest do
   use ExUnit.Case, async: false
 
   alias LangChain.Agents.FileSystemServer
-  alias LangChain.Agents.FileSystem.{FileSystemConfig, FileSystemState, Persistence}
+  alias LangChain.Agents.FileSystem.FileSystemConfig
+  alias LangChain.Agents.FileSystem.FileSystemState
+  alias LangChain.Agents.FileSystem.Persistence
 
   @moduletag :tmp_dir
 
@@ -86,8 +88,8 @@ defmodule LangChain.Agents.FileSystem.MultiPersistenceTest do
       assert [{_, clean_entry}] = :ets.lookup(table, "/user_files/data.txt")
       assert clean_entry.dirty == false
 
-      # Verify file exists on disk
-      user_path = Path.join([tmp_dir, "users", agent_id, "user_files", "data.txt"])
+      # Verify file exists on disk (base_directory is stripped)
+      user_path = Path.join([tmp_dir, "users", "data.txt"])
       assert File.exists?(user_path)
       assert File.read!(user_path) == "user data"
 
@@ -104,13 +106,14 @@ defmodule LangChain.Agents.FileSystem.MultiPersistenceTest do
       assert temp_entry.persistence == :memory
     end
 
-    test "prevents registering same base_directory twice", %{agent_id: agent_id} do
+    test "prevents registering same base_directory twice", %{agent_id: agent_id, tmp_dir: tmp_dir} do
       {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id)
 
       {:ok, config1} =
         FileSystemConfig.new(%{
           base_directory: "user_files",
-          persistence_module: Persistence.Disk
+          persistence_module: Persistence.Disk,
+          storage_opts: [path: tmp_dir]
         })
 
       assert :ok = FileSystemServer.register_persistence(agent_id, config1)
@@ -120,7 +123,8 @@ defmodule LangChain.Agents.FileSystem.MultiPersistenceTest do
         FileSystemConfig.new(%{
           base_directory: "user_files",
           persistence_module: Persistence.Disk,
-          debounce_ms: 10000
+          debounce_ms: 10000,
+          storage_opts: [path: tmp_dir]
         })
 
       assert {:error, reason} = FileSystemServer.register_persistence(agent_id, config2)
@@ -216,6 +220,94 @@ defmodule LangChain.Agents.FileSystem.MultiPersistenceTest do
       # Try to delete from readonly directory (should fail)
       assert {:error, reason} = FileSystemServer.delete_file(agent_id, "/readonly/file.txt")
       assert reason =~ "read-only"
+    end
+
+    test "lazy loads persisted file on first read", %{agent_id: agent_id} do
+      # Create a fake persistence module that tracks when files are loaded
+      test_pid = self()
+
+      # Create a shared ETS table for fake storage
+      storage_table = :ets.new(:fake_storage, [:set, :public])
+      :ets.insert(storage_table, {"/data/existing.txt", "lazy loaded content"})
+
+      defmodule LazyLoadPersistence do
+        alias LangChain.Agents.FileSystem.FileEntry
+        @behaviour Persistence
+
+        def write_to_storage(entry, _opts), do: {:ok, %{entry | dirty: false}}
+
+        def load_from_storage(%FileEntry{path: path} = entry, opts) do
+          # Get the test PID and storage table from opts
+          test_pid = Keyword.get(opts, :test_pid)
+          storage_table = Keyword.get(opts, :storage_table)
+
+          if test_pid, do: send(test_pid, {:loaded, path})
+
+          # Return content from ETS storage
+          case :ets.lookup(storage_table, path) do
+            [{^path, content}] ->
+              {:ok, %{entry | content: content, loaded: true, dirty: false}}
+            [] -> {:error, :enoent}
+          end
+        end
+
+        def delete_from_storage(_entry, _opts), do: :ok
+
+        def list_persisted_files(_agent_id, opts) do
+          # Return all file paths from ETS storage
+          storage_table = Keyword.get(opts, :storage_table)
+          paths = :ets.tab2list(storage_table) |> Enum.map(fn {path, _} -> path end)
+          {:ok, paths}
+        end
+      end
+
+      {:ok, config} =
+        FileSystemConfig.new(%{
+          base_directory: "data",
+          persistence_module: LazyLoadPersistence,
+          debounce_ms: 100,
+          storage_opts: [test_pid: test_pid, storage_table: storage_table]
+        })
+
+      # Start the server - this should call list_persisted_files and index the file
+      {:ok, _pid} =
+        FileSystemServer.start_link(
+          agent_id: agent_id,
+          persistence_configs: [config]
+        )
+
+      table = FileSystemState.get_table_name(agent_id)
+
+      # File should be indexed but NOT loaded
+      assert [{"/data/existing.txt", entry}] = :ets.lookup(table, "/data/existing.txt")
+      assert entry.persistence == :persisted
+      assert entry.loaded == false
+      assert entry.content == nil
+
+      # We should NOT have received a load message yet
+      refute_received {:loaded, _}
+
+      # Now read the file - this should trigger lazy loading
+      assert {:ok, content} = FileSystemServer.read_file(agent_id, "/data/existing.txt")
+      assert content == "lazy loaded content"
+
+      # Should have received load message
+      assert_receive {:loaded, "/data/existing.txt"}, 100
+
+      # File should now be loaded in ETS
+      assert [{"/data/existing.txt", loaded_entry}] = :ets.lookup(table, "/data/existing.txt")
+      assert loaded_entry.loaded == true
+      assert loaded_entry.content == "lazy loaded content"
+
+      # Reading again should NOT trigger another load (it's cached in ETS)
+      assert {:ok, content} = FileSystemServer.read_file(agent_id, "/data/existing.txt")
+      assert content == "lazy loaded content"
+
+      # Should not receive another load message
+      refute_received {:loaded, _}
+
+      # Cleanup
+      :ets.delete(storage_table)
     end
   end
 end

@@ -63,6 +63,9 @@ defmodule LangChain.Agents.FileSystem.Persistence do
   @doc """
   Write a file entry to persistent storage.
 
+  The persistence backend should return the FileEntry with updated metadata
+  after the write completes (actual size on disk, updated timestamps, etc.).
+
   ## Parameters
 
   - `file_entry` - The FileEntry to persist (includes path, content, metadata)
@@ -70,14 +73,17 @@ defmodule LangChain.Agents.FileSystem.Persistence do
 
   ## Returns
 
-  - `:ok` on success
+  - `{:ok, file_entry}` where file_entry has updated metadata from the storage system
   - `{:error, reason}` on failure
   """
   @callback write_to_storage(file_entry :: FileEntry.t(), opts :: keyword()) ::
-              :ok | {:error, term()}
+              {:ok, FileEntry.t()} | {:error, term()}
 
   @doc """
-  Load a file's content from persistent storage.
+  Load a file from persistent storage.
+
+  The persistence backend should return a complete FileEntry with all metadata
+  populated from the storage system (size, MIME type, timestamps, etc.).
 
   ## Parameters
 
@@ -86,12 +92,12 @@ defmodule LangChain.Agents.FileSystem.Persistence do
 
   ## Returns
 
-  - `{:ok, content}` where content is a string
+  - `{:ok, file_entry}` where file_entry is a complete FileEntry with content and metadata
   - `{:error, :enoent}` if file doesn't exist
   - `{:error, reason}` on other failures
   """
   @callback load_from_storage(file_entry :: FileEntry.t(), opts :: keyword()) ::
-              {:ok, String.t()} | {:error, term()}
+              {:ok, FileEntry.t()} | {:error, term()}
 
   @doc """
   Delete a file from persistent storage.

@@ -2,7 +2,26 @@ defmodule LangChain.Agents.FileSystemServerTest do
   use ExUnit.Case, async: true
 
   alias LangChain.Agents.FileSystemServer
-  alias LangChain.Agents.FileSystem.{FileSystemConfig, FileSystemState}
+  alias LangChain.Agents.FileSystem.{FileEntry, FileSystemConfig, FileSystemState}
+
+  # Mock persistence modules for testing
+  defmodule MockPersistence do
+    @behaviour LangChain.Agents.FileSystem.Persistence
+
+    def write_to_storage(entry, _opts), do: {:ok, %{entry | dirty: false}}
+    def load_from_storage(_entry, _opts), do: {:error, :enoent}
+    def delete_from_storage(_entry, _opts), do: :ok
+    def list_persisted_files(_agent_id, _opts), do: {:ok, []}
+  end
+
+  defmodule TestModule do
+    @behaviour LangChain.Agents.FileSystem.Persistence
+
+    def write_to_storage(entry, _opts), do: {:ok, %{entry | dirty: false}}
+    def load_from_storage(_entry, _opts), do: {:error, :enoent}
+    def delete_from_storage(_entry, _opts), do: :ok
+    def list_persisted_files(_agent_id, _opts), do: {:ok, []}
+  end
 
   setup do
     # Start a test registry for this test
@@ -140,7 +159,7 @@ defmodule LangChain.Agents.FileSystemServerTest do
       defmodule TestPersistence do
         @behaviour LangChain.Agents.FileSystem.Persistence
 
-        def write_to_storage(_entry, _opts), do: :ok
+        def write_to_storage(entry, _opts), do: {:ok, %{entry | dirty: false}}
         def load_from_storage(_entry, _opts), do: {:error, :enoent}
         def delete_from_storage(_entry, _opts), do: :ok
         def list_persisted_files(_agent_id, _opts), do: {:ok, []}
@@ -181,14 +200,14 @@ defmodule LangChain.Agents.FileSystemServerTest do
       defmodule TestPersistence2 do
         @behaviour LangChain.Agents.FileSystem.Persistence
 
-        def write_to_storage(_entry, opts) do
+        def write_to_storage(entry, opts) do
           # Get test_pid from opts
           case Keyword.get(opts, :test_pid) do
             nil -> :ok
             test_pid -> send(test_pid, {:persisted, System.monotonic_time()})
           end
 
-          :ok
+          {:ok, %{entry | dirty: false}}
         end
 
         def load_from_storage(_entry, _opts), do: {:error, :enoent}
@@ -260,7 +279,7 @@ defmodule LangChain.Agents.FileSystemServerTest do
       defmodule TestPersistence3 do
         @behaviour LangChain.Agents.FileSystem.Persistence
 
-        def write_to_storage(_entry, _opts), do: :ok
+        def write_to_storage(entry, _opts), do: {:ok, %{entry | dirty: false}}
 
         def load_from_storage(_entry, _opts), do: {:error, :enoent}
 
@@ -333,7 +352,7 @@ defmodule LangChain.Agents.FileSystemServerTest do
             test_pid -> send(test_pid, {:flushed, entry.path})
           end
 
-          :ok
+          {:ok, %{entry | dirty: false}}
         end
 
         def load_from_storage(_entry, _opts), do: {:error, :enoent}
@@ -401,7 +420,7 @@ defmodule LangChain.Agents.FileSystemServerTest do
       defmodule TestPersistence5 do
         @behaviour LangChain.Agents.FileSystem.Persistence
 
-        def write_to_storage(_entry, _opts), do: :ok
+        def write_to_storage(entry, _opts), do: {:ok, %{entry | dirty: false}}
         def load_from_storage(_entry, _opts), do: {:error, :enoent}
         def delete_from_storage(_entry, _opts), do: :ok
         def list_persisted_files(_agent_id, _opts), do: {:ok, []}
@@ -471,7 +490,7 @@ defmodule LangChain.Agents.FileSystemServerTest do
 
         def write_to_storage(entry, _opts) do
           send(:test_process, {:flushed_on_terminate, entry.path})
-          :ok
+          {:ok, %{entry | dirty: false}}
         end
 
         def load_from_storage(_entry, _opts), do: {:error, :enoent}
@@ -507,7 +526,7 @@ defmodule LangChain.Agents.FileSystemServerTest do
       defmodule TestPersistence7 do
         @behaviour LangChain.Agents.FileSystem.Persistence
 
-        def write_to_storage(_entry, _opts), do: :ok
+        def write_to_storage(entry, _opts), do: {:ok, %{entry | dirty: false}}
         def load_from_storage(_entry, _opts), do: {:error, :enoent}
         def delete_from_storage(_entry, _opts), do: :ok
         def list_persisted_files(_agent_id, _opts), do: {:ok, []}
@@ -532,6 +551,61 @@ defmodule LangChain.Agents.FileSystemServerTest do
       FileSystemServer.write_file(agent_id, "/Memories/file.txt", "data")
       assert [{_, entry2}] = :ets.lookup(table, "/Memories/file.txt")
       assert entry2.persistence == :memory
+    end
+  end
+
+  describe "register_files/2" do
+    test "registers a single file entry", %{agent_id: agent_id} do
+      {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id)
+
+      # Create a file entry
+      {:ok, entry} = FileEntry.new_memory_file("/test/data.txt", "test content")
+
+      # Register it
+      assert :ok = FileSystemServer.register_files(agent_id, entry)
+
+      # Should be able to read it immediately
+      assert {:ok, content} = FileSystemServer.read_file(agent_id, "/test/data.txt")
+      assert content == "test content"
+    end
+
+    test "registers multiple file entries", %{agent_id: agent_id} do
+      {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id)
+
+      # Create multiple file entries
+      {:ok, entry1} = FileEntry.new_memory_file("/test/file1.txt", "content1")
+      {:ok, entry2} = FileEntry.new_memory_file("/test/file2.txt", "content2")
+      {:ok, entry3} = FileEntry.new_memory_file("/test/file3.txt", "content3")
+
+      # Register them all at once
+      assert :ok = FileSystemServer.register_files(agent_id, [entry1, entry2, entry3])
+
+      # All should be readable
+      assert {:ok, "content1"} = FileSystemServer.read_file(agent_id, "/test/file1.txt")
+      assert {:ok, "content2"} = FileSystemServer.read_file(agent_id, "/test/file2.txt")
+      assert {:ok, "content3"} = FileSystemServer.read_file(agent_id, "/test/file3.txt")
+    end
+
+    test "registers indexed files for lazy loading", %{agent_id: agent_id} do
+      {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id)
+
+      # Create indexed file entries (not loaded)
+      {:ok, entry1} = FileEntry.new_indexed_file("/data/lazy1.txt")
+      {:ok, entry2} = FileEntry.new_indexed_file("/data/lazy2.txt")
+
+      # Register them
+      assert :ok = FileSystemServer.register_files(agent_id, [entry1, entry2])
+
+      table = FileSystemState.get_table_name(agent_id)
+
+      # Files should exist but not be loaded
+      assert [{"/data/lazy1.txt", e1}] = :ets.lookup(table, "/data/lazy1.txt")
+      assert e1.loaded == false
+      assert e1.content == nil
+
+      assert [{"/data/lazy2.txt", e2}] = :ets.lookup(table, "/data/lazy2.txt")
+      assert e2.loaded == false
+      assert e2.content == nil
     end
   end
 
@@ -577,35 +651,49 @@ defmodule LangChain.Agents.FileSystemServerTest do
     end
 
     test "lazy loads persisted file on first read", %{agent_id: agent_id} do
-      # For this test, we'll test the full flow: write, flush, restart, and lazy load
-      # This avoids needing to manually manipulate ETS (which is now protected)
+      # Create a fake persistence module that tracks when files are loaded
+      test_pid = self()
+
+      # Create a shared ETS table for fake storage
+      storage_table = :ets.new(:test_storage_8, [:set, :public])
+      :ets.insert(storage_table, {"/Memories/data.txt", "persisted content"})
+
       defmodule TestPersistence8 do
         @behaviour LangChain.Agents.FileSystem.Persistence
 
-        def write_to_storage(entry, _opts) do
-          # Store in process dictionary to simulate persistence
-          path = entry.path
-          content = entry.content
-          stored = Process.get(:test_storage, %{})
-          Process.put(:test_storage, Map.put(stored, path, content))
-          :ok
+        def write_to_storage(entry, opts) do
+          # Store in ETS to simulate persistence
+          storage_table = Keyword.get(opts, :storage_table)
+          :ets.insert(storage_table, {entry.path, entry.content})
+          {:ok, %{entry | dirty: false}}
         end
 
-        def load_from_storage(%{path: path}, _opts) do
-          # Load from process dictionary
-          stored = Process.get(:test_storage, %{})
+        def load_from_storage(%{path: path} = entry, opts) do
+          # Notify test when load happens
+          test_pid = Keyword.get(opts, :test_pid)
+          storage_table = Keyword.get(opts, :storage_table)
 
-          case Map.get(stored, path) do
-            nil -> {:error, :not_found}
-            content -> {:ok, content}
+          if test_pid, do: send(test_pid, {:loaded, path})
+
+          # Load from ETS
+          case :ets.lookup(storage_table, path) do
+            [{^path, content}] ->
+              {:ok, %{entry | content: content, loaded: true, dirty: false}}
+            [] -> {:error, :enoent}
           end
         end
 
         def delete_from_storage(_entry, _opts), do: :ok
-        def list_persisted_files(_agent_id, _opts), do: {:ok, []}
+
+        def list_persisted_files(_agent_id, opts) do
+          # Return files from ETS
+          storage_table = Keyword.get(opts, :storage_table)
+          paths = :ets.tab2list(storage_table) |> Enum.map(fn {path, _} -> path end)
+          {:ok, paths}
+        end
       end
 
-      config = make_config(TestPersistence8, "Memories")
+      config = make_config(TestPersistence8, "Memories", storage_opts: [test_pid: test_pid, storage_table: storage_table])
 
       {:ok, _pid} =
         FileSystemServer.start_link(
@@ -613,14 +701,31 @@ defmodule LangChain.Agents.FileSystemServerTest do
           persistence_configs: [config]
         )
 
-      # Write and persist a file
-      :ok = FileSystemServer.write_file(agent_id, "/Memories/data.txt", "persisted content")
-      :ok = FileSystemServer.flush_all(agent_id)
+      table = FileSystemState.get_table_name(agent_id)
 
-      # Verify lazy loading works by reading the file
-      # The file should still be in memory after flush, so let's verify the content
+      # File should be indexed but NOT loaded
+      assert [{"/Memories/data.txt", entry}] = :ets.lookup(table, "/Memories/data.txt")
+      assert entry.persistence == :persisted
+      assert entry.loaded == false
+      assert entry.content == nil
+
+      # We should NOT have received a load message yet
+      refute_received {:loaded, _}
+
+      # Now read the file - this should trigger lazy loading
       assert {:ok, content} = FileSystemServer.read_file(agent_id, "/Memories/data.txt")
       assert content == "persisted content"
+
+      # Should have received load message
+      assert_receive {:loaded, "/Memories/data.txt"}, 100
+
+      # File should now be loaded
+      assert [{"/Memories/data.txt", loaded_entry}] = :ets.lookup(table, "/Memories/data.txt")
+      assert loaded_entry.loaded == true
+      assert loaded_entry.content == "persisted content"
+
+      # Cleanup
+      :ets.delete(storage_table)
     end
 
     test "supports concurrent reads from ETS without GenServer bottleneck", %{agent_id: agent_id} do

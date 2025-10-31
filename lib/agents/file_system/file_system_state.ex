@@ -57,6 +57,9 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
         debounce_timers: %{}
       }
 
+      # Index existing files from all persistence backends
+      state = index_persisted_files(state)
+
       Logger.debug("FileSystemState initialized for agent #{agent_id}")
       {:ok, state}
     end
@@ -74,6 +77,10 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
 
   @doc """
   Registers a new persistence configuration.
+
+  When a persistence config is registered, this function calls the persistence module's
+  `list_persisted_files/2` callback to discover existing files and adds them to the
+  filesystem with `loaded: false` (lazy loading).
 
   ## Parameters
 
@@ -100,9 +107,69 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
     if Map.has_key?(state.persistence_configs, base_dir) do
       {:error, "Base directory '#{base_dir}' already has a registered persistence config"}
     else
+      # Add the config
       new_configs = Map.put(state.persistence_configs, base_dir, config)
-      {:ok, %{state | persistence_configs: new_configs}}
+      new_state = %{state | persistence_configs: new_configs}
+
+      # List existing persisted files and add them as indexed (not loaded)
+      opts = FileSystemConfig.build_storage_opts(config, state.agent_id)
+
+      case config.persistence_module.list_persisted_files(state.agent_id, opts) do
+        {:ok, paths} ->
+          # Add all paths as indexed files (loaded: false)
+          Enum.each(paths, fn path ->
+            case FileEntry.new_indexed_file(path) do
+              {:ok, entry} ->
+                :ets.insert(state.table_name, {path, entry})
+                Logger.debug("Indexed persisted file: #{path}")
+
+              {:error, reason} ->
+                Logger.warning("Failed to index file #{path}: #{inspect(reason)}")
+            end
+          end)
+
+          {:ok, new_state}
+
+        {:error, reason} ->
+          Logger.error(
+            "Failed to list persisted files for #{base_dir}: #{inspect(reason)}"
+          )
+
+          # Still return success but with no indexed files
+          {:ok, new_state}
+      end
     end
+  end
+
+  @doc """
+  Registers file entries in the filesystem.
+
+  This is useful for pre-populating the filesystem with file metadata without
+  loading content. For example, used by tests or for in-memory only files.
+
+  ## Parameters
+
+  - `state` - Current FileSystemState
+  - `file_entries` - List of FileEntry structs to register
+
+  ## Returns
+
+  - `{:ok, new_state}` on success
+
+  ## Examples
+
+      iex> {:ok, entry} = FileEntry.new_memory_file("/scratch/temp.txt", "data")
+      iex> {:ok, new_state} = FileSystemState.register_files(state, [entry])
+  """
+  @spec register_files(t(), [FileEntry.t()]) :: {:ok, t()}
+  def register_files(%FileSystemState{} = state, file_entries) when is_list(file_entries) do
+    # Add all entries to ETS
+    Enum.each(file_entries, fn entry ->
+      :ets.insert(state.table_name, {entry.path, entry})
+      Logger.debug("Registered file: #{entry.path}")
+    end)
+
+    {:ok, state}
   end
 
   @doc """
@@ -249,9 +316,8 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
           opts = FileSystemConfig.build_storage_opts(config, state.agent_id)
 
           case config.persistence_module.write_to_storage(entry, opts) do
-            :ok ->
-              # Mark file as clean
-              updated_entry = FileEntry.mark_clean(entry)
+            {:ok, updated_entry} ->
+              # Persistence backend returned updated FileEntry with refreshed metadata
               :ets.insert(state.table_name, {path, updated_entry})
               Logger.debug("Persisted file after debounce: #{path}")
 
@@ -313,10 +379,9 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
           opts = FileSystemConfig.build_storage_opts(config, state.agent_id)
 
           case config.persistence_module.load_from_storage(entry, opts) do
-            {:ok, content} ->
-              # Update entry with loaded content
-              updated_entry = %FileEntry{entry | content: content, loaded: true}
-              :ets.insert(state.table_name, {path, updated_entry})
+            {:ok, loaded_entry} ->
+              # Persistence backend returned complete FileEntry with content and metadata
+              :ets.insert(state.table_name, {path, loaded_entry})
               Logger.debug("Lazy-loaded file from persistence: #{path}")
               {:ok, state}
 
@@ -421,5 +486,34 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
         Process.cancel_timer(timer_ref)
         %{state | debounce_timers: Map.delete(state.debounce_timers, path)}
     end
+  end
+
+  # Index files from all registered persistence backends
+  defp index_persisted_files(%FileSystemState{} = state) do
+    Enum.each(state.persistence_configs, fn {_base_dir, config} ->
+      opts = FileSystemConfig.build_storage_opts(config, state.agent_id)
+
+      case config.persistence_module.list_persisted_files(state.agent_id, opts) do
+        {:ok, paths} ->
+          # Add all paths as indexed files (loaded: false)
+          Enum.each(paths, fn path ->
+            case FileEntry.new_indexed_file(path) do
+              {:ok, entry} ->
+                :ets.insert(state.table_name, {path, entry})
+                Logger.debug("Indexed persisted file: #{path}")
+
+              {:error, reason} ->
+                Logger.warning("Failed to index file #{path}: #{inspect(reason)}")
+            end
+          end)
+
+        {:error, reason} ->
+          Logger.error(
+            "Failed to list persisted files for #{config.base_directory}: #{inspect(reason)}"
+          )
+      end
+    end)
+
+    state
   end
 end
