@@ -323,7 +323,7 @@ defmodule LangChain.Agents.Agent do
       # TodoList middleware for task management
       {LangChain.Agents.Middleware.TodoList, Keyword.get(opts, :todo_opts, [])},
       # Filesystem middleware for mock file operations
-      {LangChain.Agents.Middleware.Filesystem, Keyword.get(opts, :filesystem_opts, [])},
+      {LangChain.Agents.Middleware.FileSystem, Keyword.get(opts, :filesystem_opts, [])},
       # Summarization middleware for managing conversation length
       {LangChain.Agents.Middleware.Summarization,
        Keyword.merge([model: model], Keyword.get(opts, :summarization_opts, []))},

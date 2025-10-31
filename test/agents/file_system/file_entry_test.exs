@@ -24,7 +24,8 @@ defmodule LangChain.Agents.FileSystem.FileEntryTest do
       path = "/data.json"
       content = ~s({"key": "value"})
 
-      assert {:ok, entry} = FileEntry.new_memory_file(path, content, mime_type: "application/json")
+      assert {:ok, entry} =
+               FileEntry.new_memory_file(path, content, mime_type: "application/json")
 
       assert entry.metadata.mime_type == "application/json"
     end
@@ -64,7 +65,10 @@ defmodule LangChain.Agents.FileSystem.FileEntryTest do
       custom = %{"author" => "Alice"}
 
       assert {:ok, entry} =
-               FileEntry.new_persisted_file(path, content, mime_type: "text/markdown", custom: custom)
+               FileEntry.new_persisted_file(path, content,
+                 mime_type: "text/markdown",
+                 custom: custom
+               )
 
       assert entry.metadata.mime_type == "text/markdown"
       assert entry.metadata.custom == custom
@@ -223,6 +227,7 @@ defmodule LangChain.Agents.FileSystem.FileEntryTest do
 
       # Mark clean again
       clean_again = FileEntry.mark_clean(modified)
+
       assert [clean_again.persistence, clean_again.loaded, clean_again.dirty] ==
                [:persisted, true, false]
     end

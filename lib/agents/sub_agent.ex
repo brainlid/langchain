@@ -35,7 +35,7 @@ defmodule LangChain.Agents.SubAgent do
 
   - **Ephemeral**: SubAgents are created per-task and don't persist
   - **Isolated**: Fresh conversation context with no parent history
-  - **Shared Filesystem**: Access to parent's mock filesystem
+  - **Shared File System**: Access to parent's shared file system
   - **Multi-Step Capable**: Can perform multiple tool calls and operations
   - **Natural Completion**: Finish when LLM produces message without tool calls
   - **No Nesting**: SubAgents cannot spawn sub-subagents
@@ -410,7 +410,15 @@ defmodule LangChain.Agents.SubAgent do
     """
     def new(attrs) do
       %Config{}
-      |> cast(attrs, [:name, :description, :system_prompt, :tools, :model, :middleware, :interrupt_on])
+      |> cast(attrs, [
+        :name,
+        :description,
+        :system_prompt,
+        :tools,
+        :model,
+        :middleware,
+        :interrupt_on
+      ])
       |> validate_required([:name, :description, :system_prompt, :tools])
       |> validate_length(:name, min: 1, max: 100)
       |> validate_length(:description, min: 1, max: 500)

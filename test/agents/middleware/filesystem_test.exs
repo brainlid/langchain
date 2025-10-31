@@ -1,23 +1,23 @@
-defmodule LangChain.Agents.Middleware.FilesystemTest do
+defmodule LangChain.Agents.Middleware.FileSystemTest do
   use ExUnit.Case, async: true
 
-  alias LangChain.Agents.Middleware.Filesystem
+  alias LangChain.Agents.Middleware.FileSystem
   alias LangChain.Agents.State
 
   describe "init/1" do
     test "initializes with default config" do
-      assert {:ok, config} = Filesystem.init([])
+      assert {:ok, config} = FileSystem.init([])
       assert config.long_term_memory == false
       assert config.memories_prefix == "memories"
     end
 
     test "initializes with long_term_memory option" do
-      assert {:ok, config} = Filesystem.init(long_term_memory: true)
+      assert {:ok, config} = FileSystem.init(long_term_memory: true)
       assert config.long_term_memory == true
     end
 
     test "initializes with custom memories_prefix" do
-      assert {:ok, config} = Filesystem.init(memories_prefix: ".my_memories")
+      assert {:ok, config} = FileSystem.init(memories_prefix: ".my_memories")
       assert config.memories_prefix == ".my_memories"
     end
   end
@@ -25,7 +25,7 @@ defmodule LangChain.Agents.Middleware.FilesystemTest do
   describe "system_prompt/1" do
     test "returns base system prompt by default" do
       config = %{long_term_memory: false}
-      prompt = Filesystem.system_prompt(config)
+      prompt = FileSystem.system_prompt(config)
 
       assert prompt =~ "Filesystem Tools"
       assert prompt =~ "ls"
@@ -36,7 +36,7 @@ defmodule LangChain.Agents.Middleware.FilesystemTest do
 
     test "includes long-term memory supplement when enabled" do
       config = %{long_term_memory: true}
-      prompt = Filesystem.system_prompt(config)
+      prompt = FileSystem.system_prompt(config)
 
       assert prompt =~ "persist across conversations"
     end
@@ -44,7 +44,7 @@ defmodule LangChain.Agents.Middleware.FilesystemTest do
 
   describe "tools/1" do
     test "returns four filesystem tools" do
-      tools = Filesystem.tools(%{long_term_memory: false})
+      tools = FileSystem.tools(%{long_term_memory: false})
 
       assert length(tools) == 4
       tool_names = Enum.map(tools, & &1.name)
@@ -55,7 +55,7 @@ defmodule LangChain.Agents.Middleware.FilesystemTest do
     end
 
     test "all tools have required fields" do
-      tools = Filesystem.tools(%{long_term_memory: false})
+      tools = FileSystem.tools(%{long_term_memory: false})
 
       for tool <- tools do
         assert is_binary(tool.name)
@@ -67,7 +67,7 @@ defmodule LangChain.Agents.Middleware.FilesystemTest do
 
     test "ls tool description includes memories_prefix when long_term_memory is enabled" do
       config = %{long_term_memory: true, memories_prefix: "memories"}
-      [ls_tool | _] = Filesystem.tools(config)
+      [ls_tool | _] = FileSystem.tools(config)
 
       assert ls_tool.name == "ls"
       assert ls_tool.description =~ "memories"
@@ -76,7 +76,7 @@ defmodule LangChain.Agents.Middleware.FilesystemTest do
 
     test "ls tool description does not include memories_prefix when long_term_memory is disabled" do
       config = %{long_term_memory: false}
-      [ls_tool | _] = Filesystem.tools(config)
+      [ls_tool | _] = FileSystem.tools(config)
 
       assert ls_tool.name == "ls"
       refute ls_tool.description =~ "longterm filesystem"
@@ -86,7 +86,7 @@ defmodule LangChain.Agents.Middleware.FilesystemTest do
   describe "ls tool" do
     test "lists files when filesystem has files" do
       state = State.new!(%{files: %{"file1.txt" => "content1", "file2.txt" => "content2"}})
-      [ls_tool | _] = Filesystem.tools(%{})
+      [ls_tool | _] = FileSystem.tools(%{})
 
       assert {:ok, result} = ls_tool.function.(%{}, %{state: state})
       assert result =~ "file1.txt"
@@ -95,7 +95,7 @@ defmodule LangChain.Agents.Middleware.FilesystemTest do
 
     test "reports empty filesystem" do
       state = State.new!(%{files: %{}})
-      [ls_tool | _] = Filesystem.tools(%{})
+      [ls_tool | _] = FileSystem.tools(%{})
 
       assert {:ok, result} = ls_tool.function.(%{}, %{state: state})
       assert result =~ "No files"
@@ -115,7 +115,7 @@ defmodule LangChain.Agents.Middleware.FilesystemTest do
       # Use State.put_file to create FileData structure
       initial_state = State.new!(%{files: %{}})
       state = State.put_file(initial_state, "test.txt", String.trim(content))
-      [_, read_file_tool | _] = Filesystem.tools(%{})
+      [_, read_file_tool | _] = FileSystem.tools(%{})
 
       %{state: state, tool: read_file_tool}
     end
@@ -172,7 +172,7 @@ defmodule LangChain.Agents.Middleware.FilesystemTest do
   describe "write_file tool" do
     setup do
       state = State.new!(%{files: %{}})
-      [_, _, write_file_tool | _] = Filesystem.tools(%{})
+      [_, _, write_file_tool | _] = FileSystem.tools(%{})
 
       %{state: state, tool: write_file_tool}
     end
@@ -225,7 +225,7 @@ defmodule LangChain.Agents.Middleware.FilesystemTest do
       # Use State.put_file to create FileData structure
       initial_state = State.new!(%{files: %{}})
       state = State.put_file(initial_state, "test.ex", String.trim(content))
-      [_, _, _, edit_file_tool] = Filesystem.tools(%{})
+      [_, _, _, edit_file_tool] = FileSystem.tools(%{})
 
       %{state: state, tool: edit_file_tool}
     end
@@ -311,7 +311,7 @@ defmodule LangChain.Agents.Middleware.FilesystemTest do
 
   describe "integration scenarios" do
     test "complete workflow: write, read, edit" do
-      [ls_tool, read_tool, write_tool, edit_tool] = Filesystem.tools(%{})
+      [ls_tool, read_tool, write_tool, edit_tool] = FileSystem.tools(%{})
 
       # Start with empty filesystem
       state = State.new!(%{files: %{}})
@@ -353,7 +353,7 @@ defmodule LangChain.Agents.Middleware.FilesystemTest do
     end
 
     test "multiple files can coexist" do
-      [_, _, write_tool, _] = Filesystem.tools(%{})
+      [_, _, write_tool, _] = FileSystem.tools(%{})
       state = State.new!(%{files: %{}})
 
       # Write multiple files - tools return state deltas that need to be merged

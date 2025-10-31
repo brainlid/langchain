@@ -119,7 +119,9 @@ defmodule LangChain.Agents.SubAgentTest do
       assert {:error, changeset} = SubAgentConfig.new(attrs)
       errors = errors_on(changeset)
       assert errors[:tools]
-      assert "can't be blank" in errors[:tools] or "must contain at least one tool" in errors[:tools]
+
+      assert "can't be blank" in errors[:tools] or
+               "must contain at least one tool" in errors[:tools]
     end
 
     test "validates tools must be non-empty list" do
@@ -459,7 +461,8 @@ defmodule LangChain.Agents.SubAgentTest do
 
     test "returns error on invalid configuration" do
       # This would happen if instantiation fails
-      model = nil  # Invalid model
+      # Invalid model
+      model = nil
 
       configs = [
         SubAgentConfig.new!(%{
@@ -589,12 +592,13 @@ defmodule LangChain.Agents.SubAgentTest do
       default_middleware = [
         {LangChain.Agents.Middleware.TodoList, []},
         {LangChain.Agents.Middleware.SubAgent, []},
-        {LangChain.Agents.Middleware.Filesystem, []}
+        {LangChain.Agents.Middleware.FileSystem, []}
       ]
 
       result = SubAgent.subagent_middleware_stack(default_middleware)
 
       assert length(result) == 2
+
       refute Enum.any?(result, fn
                {LangChain.Agents.Middleware.SubAgent, _} -> true
                _ -> false
@@ -605,7 +609,7 @@ defmodule LangChain.Agents.SubAgentTest do
       default_middleware = [
         {LangChain.Agents.Middleware.TodoList, []},
         LangChain.Agents.Middleware.SubAgent,
-        {LangChain.Agents.Middleware.Filesystem, []}
+        {LangChain.Agents.Middleware.FileSystem, []}
       ]
 
       result = SubAgent.subagent_middleware_stack(default_middleware)
@@ -630,13 +634,14 @@ defmodule LangChain.Agents.SubAgentTest do
     test "preserves other middleware" do
       default_middleware = [
         {LangChain.Agents.Middleware.TodoList, []},
-        {LangChain.Agents.Middleware.Filesystem, []},
+        {LangChain.Agents.Middleware.FileSystem, []},
         {LangChain.Agents.Middleware.PatchToolCalls, []}
       ]
 
       result = SubAgent.subagent_middleware_stack(default_middleware)
 
       assert length(result) == 3
+
       assert Enum.all?(result, fn
                {mod, _} -> mod != LangChain.Agents.Middleware.SubAgent
              end)
@@ -665,19 +670,21 @@ defmodule LangChain.Agents.SubAgentTest do
 
   describe "SubAgent.prepare_subagent_state/2" do
     test "creates fresh conversation with task description" do
-      parent_state = State.new!(%{
-        messages: [
-          Message.new_user!("Original task"),
-          Message.new_assistant!("Response")
-        ],
-        files: %{"data.txt" => "content"},
-        todos: [Todo.new!(%{content: "Parent todo"})]
-      })
+      parent_state =
+        State.new!(%{
+          messages: [
+            Message.new_user!("Original task"),
+            Message.new_assistant!("Response")
+          ],
+          files: %{"data.txt" => "content"},
+          todos: [Todo.new!(%{content: "Parent todo"})]
+        })
 
-      subagent_state = SubAgent.prepare_subagent_state(
-        "Research renewable energy",
-        parent_state
-      )
+      subagent_state =
+        SubAgent.prepare_subagent_state(
+          "Research renewable energy",
+          parent_state
+        )
 
       # Fresh conversation with single user message
       assert length(subagent_state.messages) == 1
@@ -695,59 +702,67 @@ defmodule LangChain.Agents.SubAgentTest do
     end
 
     test "inherits filesystem from parent" do
-      parent_state = State.new!(%{
-        files: %{
-          "file1.txt" => "content1",
-          "file2.txt" => "content2"
-        }
-      })
+      parent_state =
+        State.new!(%{
+          files: %{
+            "file1.txt" => "content1",
+            "file2.txt" => "content2"
+          }
+        })
 
-      subagent_state = SubAgent.prepare_subagent_state(
-        "Do something",
-        parent_state
-      )
+      subagent_state =
+        SubAgent.prepare_subagent_state(
+          "Do something",
+          parent_state
+        )
 
       assert subagent_state.files == parent_state.files
     end
 
     test "starts with empty todos" do
-      parent_state = State.new!(%{
-        todos: [
-          Todo.new!(%{content: "Parent todo 1"}),
-          Todo.new!(%{content: "Parent todo 2"})
-        ]
-      })
+      parent_state =
+        State.new!(%{
+          todos: [
+            Todo.new!(%{content: "Parent todo 1"}),
+            Todo.new!(%{content: "Parent todo 2"})
+          ]
+        })
 
-      subagent_state = SubAgent.prepare_subagent_state(
-        "Do something",
-        parent_state
-      )
+      subagent_state =
+        SubAgent.prepare_subagent_state(
+          "Do something",
+          parent_state
+        )
 
       assert subagent_state.todos == []
     end
 
     test "inherits metadata from parent" do
-      parent_state = State.new!(%{
-        metadata: %{key: "value", nested: %{data: 123}}
-      })
+      parent_state =
+        State.new!(%{
+          metadata: %{key: "value", nested: %{data: 123}}
+        })
 
-      subagent_state = SubAgent.prepare_subagent_state(
-        "Do something",
-        parent_state
-      )
+      subagent_state =
+        SubAgent.prepare_subagent_state(
+          "Do something",
+          parent_state
+        )
 
       assert subagent_state.metadata == parent_state.metadata
     end
 
     test "inherits middleware_state from parent" do
-      parent_state = State.new!(%{
-        middleware_state: %{some_middleware: %{config: "value"}}
-      })
+      parent_state =
+        State.new!(%{
+          middleware_state: %{some_middleware: %{config: "value"}}
+        })
 
-      subagent_state = SubAgent.prepare_subagent_state(
-        "Do something",
-        parent_state
-      )
+      subagent_state =
+        SubAgent.prepare_subagent_state(
+          "Do something",
+          parent_state
+        )
 
       assert subagent_state.middleware_state == parent_state.middleware_state
     end
@@ -755,13 +770,14 @@ defmodule LangChain.Agents.SubAgentTest do
 
   describe "SubAgent.extract_subagent_result/2" do
     test "extracts final message from result state" do
-      result_state = State.new!(%{
-        messages: [
-          Message.new_user!("Task"),
-          Message.new_assistant!("Intermediate"),
-          Message.new_assistant!("Final result")
-        ]
-      })
+      result_state =
+        State.new!(%{
+          messages: [
+            Message.new_user!("Task"),
+            Message.new_assistant!("Intermediate"),
+            Message.new_assistant!("Final result")
+          ]
+        })
 
       result = SubAgent.extract_subagent_result(result_state)
 
@@ -776,10 +792,11 @@ defmodule LangChain.Agents.SubAgentTest do
     end
 
     test "excludes messages from state updates" do
-      result_state = State.new!(%{
-        messages: [Message.new_assistant!("Final")],
-        files: %{"output.txt" => "data"}
-      })
+      result_state =
+        State.new!(%{
+          messages: [Message.new_assistant!("Final")],
+          files: %{"output.txt" => "data"}
+        })
 
       result = SubAgent.extract_subagent_result(result_state)
 
@@ -788,10 +805,11 @@ defmodule LangChain.Agents.SubAgentTest do
     end
 
     test "excludes todos from state updates" do
-      result_state = State.new!(%{
-        messages: [Message.new_assistant!("Final")],
-        todos: [Todo.new!(%{content: "SubAgent todo"})]
-      })
+      result_state =
+        State.new!(%{
+          messages: [Message.new_assistant!("Final")],
+          todos: [Todo.new!(%{content: "SubAgent todo"})]
+        })
 
       result = SubAgent.extract_subagent_result(result_state)
 
@@ -799,10 +817,11 @@ defmodule LangChain.Agents.SubAgentTest do
     end
 
     test "includes files in state updates" do
-      result_state = State.new!(%{
-        messages: [Message.new_assistant!("Final")],
-        files: %{"output.txt" => "result data"}
-      })
+      result_state =
+        State.new!(%{
+          messages: [Message.new_assistant!("Final")],
+          files: %{"output.txt" => "result data"}
+        })
 
       result = SubAgent.extract_subagent_result(result_state)
 
@@ -810,10 +829,11 @@ defmodule LangChain.Agents.SubAgentTest do
     end
 
     test "includes metadata in state updates" do
-      result_state = State.new!(%{
-        messages: [Message.new_assistant!("Final")],
-        metadata: %{computed: true, value: 42}
-      })
+      result_state =
+        State.new!(%{
+          messages: [Message.new_assistant!("Final")],
+          metadata: %{computed: true, value: 42}
+        })
 
       result = SubAgent.extract_subagent_result(result_state)
 
@@ -821,9 +841,10 @@ defmodule LangChain.Agents.SubAgentTest do
     end
 
     test "includes tool_call_id when provided" do
-      result_state = State.new!(%{
-        messages: [Message.new_assistant!("Final")]
-      })
+      result_state =
+        State.new!(%{
+          messages: [Message.new_assistant!("Final")]
+        })
 
       result = SubAgent.extract_subagent_result(result_state, "call_123")
 
@@ -831,9 +852,10 @@ defmodule LangChain.Agents.SubAgentTest do
     end
 
     test "handles nil tool_call_id" do
-      result_state = State.new!(%{
-        messages: [Message.new_assistant!("Final")]
-      })
+      result_state =
+        State.new!(%{
+          messages: [Message.new_assistant!("Final")]
+        })
 
       result = SubAgent.extract_subagent_result(result_state)
 
@@ -843,9 +865,10 @@ defmodule LangChain.Agents.SubAgentTest do
 
   describe "SubAgent.merge_subagent_result/2" do
     test "merges files from subagent" do
-      parent_state = State.new!(%{
-        files: %{"a.txt" => "A"}
-      })
+      parent_state =
+        State.new!(%{
+          files: %{"a.txt" => "A"}
+        })
 
       subagent_result = %{
         final_message: Message.new_assistant!("Done"),
@@ -860,9 +883,10 @@ defmodule LangChain.Agents.SubAgentTest do
     end
 
     test "subagent files override parent files" do
-      parent_state = State.new!(%{
-        files: %{"shared.txt" => "Parent version"}
-      })
+      parent_state =
+        State.new!(%{
+          files: %{"shared.txt" => "Parent version"}
+        })
 
       subagent_result = %{
         final_message: Message.new_assistant!("Done"),
@@ -877,9 +901,10 @@ defmodule LangChain.Agents.SubAgentTest do
     end
 
     test "deep merges metadata" do
-      parent_state = State.new!(%{
-        metadata: %{step: 1, parent_key: "value"}
-      })
+      parent_state =
+        State.new!(%{
+          metadata: %{step: 1, parent_key: "value"}
+        })
 
       subagent_result = %{
         final_message: Message.new_assistant!("Done"),
@@ -898,12 +923,13 @@ defmodule LangChain.Agents.SubAgentTest do
     end
 
     test "preserves parent messages" do
-      parent_state = State.new!(%{
-        messages: [
-          Message.new_user!("Parent task"),
-          Message.new_assistant!("Parent response")
-        ]
-      })
+      parent_state =
+        State.new!(%{
+          messages: [
+            Message.new_user!("Parent task"),
+            Message.new_assistant!("Parent response")
+          ]
+        })
 
       subagent_result = %{
         final_message: Message.new_assistant!("SubAgent result"),
@@ -918,9 +944,10 @@ defmodule LangChain.Agents.SubAgentTest do
     end
 
     test "preserves parent todos" do
-      parent_state = State.new!(%{
-        todos: [Todo.new!(%{content: "Parent todo"})]
-      })
+      parent_state =
+        State.new!(%{
+          todos: [Todo.new!(%{content: "Parent todo"})]
+        })
 
       subagent_result = %{
         final_message: Message.new_assistant!("Done"),
@@ -934,9 +961,10 @@ defmodule LangChain.Agents.SubAgentTest do
     end
 
     test "handles missing files in state updates" do
-      parent_state = State.new!(%{
-        files: %{"a.txt" => "A"}
-      })
+      parent_state =
+        State.new!(%{
+          files: %{"a.txt" => "A"}
+        })
 
       subagent_result = %{
         final_message: Message.new_assistant!("Done"),
@@ -949,9 +977,10 @@ defmodule LangChain.Agents.SubAgentTest do
     end
 
     test "handles missing metadata in state updates" do
-      parent_state = State.new!(%{
-        metadata: %{key: "value"}
-      })
+      parent_state =
+        State.new!(%{
+          metadata: %{key: "value"}
+        })
 
       subagent_result = %{
         final_message: Message.new_assistant!("Done"),

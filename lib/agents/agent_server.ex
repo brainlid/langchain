@@ -320,8 +320,7 @@ defmodule LangChain.Agents.AgentServer do
 
   @impl true
   def handle_call(:execute, _from, server_state) do
-    {:reply, {:error, "Cannot execute, server is in state: #{server_state.status}"},
-     server_state}
+    {:reply, {:error, "Cannot execute, server is in state: #{server_state.status}"}, server_state}
   end
 
   @impl true
