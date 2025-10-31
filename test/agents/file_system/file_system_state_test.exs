@@ -1,7 +1,8 @@
 defmodule LangChain.Agents.FileSystem.FileSystemStateTest do
   use ExUnit.Case, async: true
 
-  alias LangChain.Agents.FileSystem.{FileSystemState, FileSystemConfig}
+  alias LangChain.Agents.FileSystem.FileSystemState
+  alias LangChain.Agents.FileSystem.FileSystemConfig
 
   # Helper to add persistence config to state
   defp add_persistence_config(state, module, base_dir \\ "Memories", opts \\ []) do
@@ -21,17 +22,19 @@ defmodule LangChain.Agents.FileSystem.FileSystemStateTest do
   end
 
   describe "new/1" do
-    test "creates state with ETS table" do
+    test "creates state with named ETS table" do
       agent_id = "test_agent_#{System.unique_integer([:positive])}"
       assert {:ok, state} = FileSystemState.new(agent_id: agent_id)
 
       assert state.agent_id == agent_id
-      assert is_reference(state.fs_table)
+      assert is_atom(state.table_name)
       assert state.persistence_configs == %{}
       assert state.debounce_timers == %{}
 
-      # Verify ETS table exists and is accessible
-      assert :ets.info(state.fs_table) != :undefined
+      # Verify ETS table exists and is accessible by name
+      assert :ets.info(state.table_name) != :undefined
+      # Verify table name matches expected pattern
+      assert state.table_name == FileSystemState.get_table_name(agent_id)
     end
   end
 
@@ -49,7 +52,7 @@ defmodule LangChain.Agents.FileSystem.FileSystemStateTest do
       assert {:ok, new_state} = FileSystemState.write_file(state, path, content, [])
 
       # Verify file is in ETS
-      assert [{^path, entry}] = :ets.lookup(new_state.fs_table, path)
+      assert [{^path, entry}] = :ets.lookup(new_state.table_name, path)
       assert entry.path == path
       assert entry.content == content
       assert entry.persistence == :memory
@@ -75,7 +78,7 @@ defmodule LangChain.Agents.FileSystem.FileSystemStateTest do
       assert {:ok, new_state} = FileSystemState.write_file(state, path, content, [])
 
       # Verify file is in ETS
-      assert [{^path, entry}] = :ets.lookup(new_state.fs_table, path)
+      assert [{^path, entry}] = :ets.lookup(new_state.table_name, path)
       assert entry.persistence == :persisted
       assert entry.dirty == true
       assert entry.loaded == true
@@ -123,10 +126,10 @@ defmodule LangChain.Agents.FileSystem.FileSystemStateTest do
       path = "/scratch/file.txt"
 
       {:ok, state} = FileSystemState.write_file(state, path, "data", [])
-      assert :ets.lookup(state.fs_table, path) != []
+      assert :ets.lookup(state.table_name, path) != []
 
       assert {:ok, new_state} = FileSystemState.delete_file(state, path)
-      assert :ets.lookup(new_state.fs_table, path) == []
+      assert :ets.lookup(new_state.table_name, path) == []
     end
 
     test "deletes a persisted file and cancels timer", %{state: state} do
@@ -150,7 +153,7 @@ defmodule LangChain.Agents.FileSystem.FileSystemStateTest do
       assert {:ok, new_state} = FileSystemState.delete_file(state, path)
 
       # Verify file is gone
-      assert :ets.lookup(new_state.fs_table, path) == []
+      assert :ets.lookup(new_state.table_name, path) == []
 
       # Verify timer was cancelled
       refute Map.has_key?(new_state.debounce_timers, path)

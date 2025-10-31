@@ -8,18 +8,19 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
 
   require Logger
   alias __MODULE__
-  alias LangChain.Agents.FileSystem.{FileEntry, FileSystemConfig}
+  alias LangChain.Agents.FileSystem.FileEntry
+  alias LangChain.Agents.FileSystem.FileSystemConfig
 
   defstruct [
     :agent_id,
-    :fs_table,
+    :table_name,
     :persistence_configs,
     :debounce_timers
   ]
 
   @type t :: %FileSystemState{
           agent_id: String.t(),
-          fs_table: :ets.tid(),
+          table_name: atom(),
           persistence_configs: %{String.t() => FileSystemConfig.t()},
           debounce_timers: %{String.t() => reference()}
         }
@@ -35,16 +36,15 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
   @spec new(keyword()) :: {:ok, t()} | {:error, term()}
   def new(opts) do
     with {:ok, agent_id} <- fetch_agent_id(opts) do
-      # Create ETS table
-      table_name = :"agent_filesystem_#{agent_id}"
+      # Create named ETS table
+      table_name = get_table_name(agent_id)
 
-      fs_table =
+      # https://www.erlang.org/doc/apps/stdlib/ets.html#new/2
+      table_name =
         :ets.new(table_name, [
           :set,
-          :public,
-          {:read_concurrency, true},
-          {:write_concurrency, false},
-          {:heir, :none}
+          :protected,
+          :named_table
         ])
 
       # Build persistence configs map
@@ -52,7 +52,7 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
 
       state = %FileSystemState{
         agent_id: agent_id,
-        fs_table: fs_table,
+        table_name: table_name,
         persistence_configs: persistence_configs,
         debounce_timers: %{}
       }
@@ -60,6 +60,16 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
       Logger.debug("FileSystemState initialized for agent #{agent_id}")
       {:ok, state}
     end
+  end
+
+  @doc """
+  Get the name of the ETS table for an agent.
+
+  This is a public function so the table can be accessed by agent_id alone.
+  """
+  @spec get_table_name(String.t()) :: atom()
+  def get_table_name(agent_id) do
+    :"agent_filesystem_#{agent_id}"
   end
 
   @doc """
@@ -126,7 +136,7 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
       case entry_result do
         {:ok, entry} ->
           # Write to ETS
-          :ets.insert(state.fs_table, {path, entry})
+          :ets.insert(state.table_name, {path, entry})
 
           # Schedule debounce timer if persisted
           new_state =
@@ -145,6 +155,32 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
   end
 
   @doc """
+  Reads a file entry from the ETS table.
+
+  This is the single source of truth for reading file entries from ETS.
+  All other functions should use this to read entries.
+
+  ## Parameters
+
+  - `agent_id` - Agent identifier (used to look up the named ETS table)
+  - `path` - The file path to read
+
+  ## Returns
+
+  - `{:ok, entry}` - File entry found
+  - `{:error, :enoent}` - File not found
+  """
+  @spec read_file(String.t(), String.t()) :: {:ok, FileEntry.t()} | {:error, :enoent}
+  def read_file(agent_id, path) do
+    table = get_table_name(agent_id)
+
+    case :ets.lookup(table, path) do
+      [{^path, entry}] -> {:ok, entry}
+      [] -> {:error, :enoent}
+    end
+  end
+
+  @doc """
   Deletes a file from the filesystem.
 
   Returns `{:ok, new_state}` or `{:error, reason, state}`.
@@ -158,8 +194,8 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
     if config && config.readonly do
       {:error, "Cannot delete from read-only directory: #{config.base_directory}", state}
     else
-      case :ets.lookup(state.fs_table, path) do
-        [{^path, %FileEntry{persistence: :persisted} = entry}] ->
+      case read_file(state.agent_id, path) do
+        {:ok, %FileEntry{persistence: :persisted} = entry} ->
           # Cancel any pending timer
           new_state = cancel_timer(state, path)
 
@@ -169,7 +205,7 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
 
             case config.persistence_module.delete_from_storage(entry, opts) do
               :ok ->
-                :ets.delete(state.fs_table, path)
+                :ets.delete(state.table_name, path)
                 {:ok, new_state}
 
               {:error, reason} ->
@@ -177,16 +213,16 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
                 {:error, reason, state}
             end
           else
-            :ets.delete(state.fs_table, path)
+            :ets.delete(state.table_name, path)
             {:ok, new_state}
           end
 
-        [{^path, _entry}] ->
+        {:ok, _entry} ->
           # Memory-only file, just delete from ETS
-          :ets.delete(state.fs_table, path)
+          :ets.delete(state.table_name, path)
           {:ok, state}
 
-        [] ->
+        {:error, :enoent} ->
           # File doesn't exist, that's OK
           {:ok, state}
       end
@@ -207,8 +243,8 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
     config = find_config_for_path(state, path)
 
     # Persist the file
-    case :ets.lookup(state.fs_table, path) do
-      [{^path, %FileEntry{dirty: true, persistence: :persisted} = entry}] ->
+    case read_file(state.agent_id, path) do
+      {:ok, %FileEntry{dirty: true, persistence: :persisted} = entry} ->
         if config do
           opts = FileSystemConfig.build_storage_opts(config, state.agent_id)
 
@@ -216,7 +252,7 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
             :ok ->
               # Mark file as clean
               updated_entry = FileEntry.mark_clean(entry)
-              :ets.insert(state.fs_table, {path, updated_entry})
+              :ets.insert(state.table_name, {path, updated_entry})
               Logger.debug("Persisted file after debounce: #{path}")
 
             {:error, reason} ->
@@ -252,11 +288,63 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
   end
 
   @doc """
+  Loads a file's content from persistence into ETS.
+
+  Called by FileSystemServer when a file needs to be lazy-loaded.
+  If the file is already loaded or is memory-only, returns {:ok, state} without changes.
+
+  ## Returns
+
+  - `{:ok, state}` - File loaded successfully (or already loaded)
+  - `{:error, reason, state}` - Failed to load from persistence
+  """
+  @spec load_file(t(), String.t()) :: {:ok, t()} | {:error, term(), t()}
+  def load_file(%FileSystemState{} = state, path) do
+    case read_file(state.agent_id, path) do
+      {:ok, %FileEntry{loaded: true} = _entry} ->
+        # Already loaded
+        {:ok, state}
+
+      {:ok, %FileEntry{loaded: false, persistence: :persisted} = entry} ->
+        # File exists but not loaded, load from persistence
+        config = find_config_for_path(state, path)
+
+        if config do
+          opts = FileSystemConfig.build_storage_opts(config, state.agent_id)
+
+          case config.persistence_module.load_from_storage(entry, opts) do
+            {:ok, content} ->
+              # Update entry with loaded content
+              updated_entry = %FileEntry{entry | content: content, loaded: true}
+              :ets.insert(state.table_name, {path, updated_entry})
+              Logger.debug("Lazy-loaded file from persistence: #{path}")
+              {:ok, state}
+
+            {:error, reason} ->
+              Logger.error("Failed to load #{path} from persistence: #{inspect(reason)}")
+              {:error, reason, state}
+          end
+        else
+          # No persistence config for this path - shouldn't happen for persisted files
+          {:error, :no_persistence_config, state}
+        end
+
+      {:error, :enoent} ->
+        # File doesn't exist
+        {:error, :enoent, state}
+
+      {:ok, %FileEntry{persistence: :memory}} ->
+        # Memory-only file should always be loaded
+        {:ok, state}
+    end
+  end
+
+  @doc """
   Computes filesystem statistics.
   """
   @spec stats(t()) :: map()
   def stats(%FileSystemState{} = state) do
-    all_entries = :ets.tab2list(state.fs_table)
+    all_entries = :ets.tab2list(state.table_name)
 
     total_files = length(all_entries)
 

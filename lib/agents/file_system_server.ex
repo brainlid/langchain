@@ -2,7 +2,10 @@ defmodule LangChain.Agents.FileSystemServer do
   @moduledoc """
   GenServer managing virtual filesystem with debounce-based auto-persistence.
 
-  Owns ETS table for file storage and manages per-file debounce timers.
+  Owns a named ETS table for file storage and manages per-file debounce timers.
+  The ETS table is named based on agent_id, allowing direct access without needing
+  to pass around table references or PIDs.
+
   This server is designed to outlive AgentServer crashes when supervised with
   `:rest_for_one` strategy, providing crash resilience.
 
@@ -15,31 +18,32 @@ defmodule LangChain.Agents.FileSystemServer do
   ## Configuration
 
   - `:agent_id` - Agent identifier (required)
-  - `:persistence_module` - Persistence backend module (optional, default: nil)
-  - `:debounce_ms` - Milliseconds of inactivity before auto-persist (default: 5000)
-  - `:storage_opts` - Configuration for persistence module (optional)
+  - `:persistence_configs` - List of FileSystemConfig structs (optional, default: [])
 
   ## Examples
 
       # Memory-only filesystem
       {:ok, pid} = start_link(agent_id: "agent-123")
 
-      # Disk persistence with 5-second debounce
-      {:ok, pid} = start_link(
-        agent_id: "agent-123",
+      # With disk persistence
+      {:ok, config} = FileSystemConfig.new(%{
+        base_directory: "Memories",
         persistence_module: LangChain.Agents.FileSystem.Persistence.Disk,
         debounce_ms: 5000,
         storage_opts: [path: "/data/agents"]
+      })
+      {:ok, pid} = start_link(
+        agent_id: "agent-123",
+        persistence_configs: [config]
       )
   """
 
   use GenServer
   require Logger
 
-  alias LangChain.Agents.FileSystem.{FileSystemState, FileSystemConfig}
-
-  @type fs_ref :: pid()
-  @type table_ref :: :ets.tid()
+  alias LangChain.Agents.FileSystem.FileSystemState
+  alias LangChain.Agents.FileSystem.FileSystemConfig
+  alias LangChain.Agents.FileSystem.FileEntry
 
   # ============================================================================
   # Client API
@@ -51,39 +55,29 @@ defmodule LangChain.Agents.FileSystemServer do
   ## Options
 
   - `:agent_id` - Agent identifier (required)
-  - `:persistence_module` - Persistence backend module (optional, default: nil)
-  - `:debounce_ms` - Milliseconds of inactivity before auto-persist (default: 5000)
-  - `:storage_opts` - Configuration for persistence module (optional)
-    - `:memories_directory` - Which virtual directory triggers persistence (default: "Memories")
-    - Additional options depend on the persistence module being used
+  - `:persistence_configs` - List of FileSystemConfig structs (optional, default: [])
 
   ## Examples
 
       # Memory-only filesystem
       {:ok, pid} = start_link(agent_id: "agent-123")
 
-      # Disk persistence with 5-second debounce
-      {:ok, pid} = start_link(
-        agent_id: "agent-123",
+      # With disk persistence
+      {:ok, config} = FileSystemConfig.new(%{
+        base_directory: "Memories",
         persistence_module: LangChain.Agents.FileSystem.Persistence.Disk,
         debounce_ms: 5000,
         storage_opts: [path: "/data/agents"]
+      })
+      {:ok, pid} = start_link(
+        agent_id: "agent-123",
+        persistence_configs: [config]
       )
   """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
     agent_id = Keyword.fetch!(opts, :agent_id)
     GenServer.start_link(__MODULE__, opts, name: via_tuple(agent_id))
-  end
-
-  @doc """
-  Get ETS table reference for direct reads.
-
-  SubAgents should use this to get the table for fast read operations.
-  """
-  @spec get_table(fs_ref()) :: table_ref()
-  def get_table(fs_ref) do
-    GenServer.call(fs_ref, :get_table)
   end
 
   @doc """
@@ -109,15 +103,68 @@ defmodule LangChain.Agents.FileSystemServer do
 
   ## Examples
 
-      iex> write_file(fs_pid, "/tmp/notes.txt", "Hello")
+      iex> write_file("agent-123", "/tmp/notes.txt", "Hello")
       :ok
 
-      iex> write_file(fs_pid, "/Memories/chat_log.txt", data)
+      iex> write_file("agent-123", "/Memories/chat_log.txt", data)
       :ok  # Auto-persists after 5s (default) of no more writes
   """
-  @spec write_file(fs_ref(), String.t(), String.t(), keyword()) :: :ok | {:error, term()}
-  def write_file(fs_ref, path, content, opts \\ []) do
-    GenServer.call(fs_ref, {:write_file, path, content, opts})
+  @spec write_file(String.t(), String.t(), String.t(), keyword()) :: :ok | {:error, term()}
+  def write_file(agent_id, path, content, opts \\ []) do
+    GenServer.call(via_tuple(agent_id), {:write_file, path, content, opts})
+  end
+
+  @doc """
+  Read file content from filesystem with lazy loading.
+
+  This function optimizes for concurrent reads by:
+  1. Reading directly from named ETS table if file is already loaded (no GenServer bottleneck)
+  2. Making a GenServer call only if file needs to be loaded from persistence
+  3. After loading, reading from ETS again (avoiding large data transfer across processes)
+
+  ## Returns
+
+  - `{:ok, content}` - File content as string
+  - `{:error, :enoent}` - File doesn't exist
+  - `{:error, reason}` - Other errors (permission, load failure, etc.)
+
+  ## Examples
+
+      iex> read_file("agent-123", "/Memories/notes.txt")
+      {:ok, "My notes..."}
+
+      iex> read_file("agent-123", "/nonexistent.txt")
+      {:error, :enoent}
+  """
+  @spec read_file(String.t(), String.t()) :: {:ok, String.t()} | {:error, term()}
+  def read_file(agent_id, path) do
+    # Try to read directly from named ETS table using FileSystemState
+    case FileSystemState.read_file(agent_id, path) do
+      {:ok, %FileEntry{loaded: true, content: content}} ->
+        # File is loaded, return content immediately
+        {:ok, content}
+
+      {:ok, %FileEntry{loaded: false}} ->
+        # File exists but not loaded - ask GenServer to load it
+        case GenServer.call(via_tuple(agent_id), {:load_file, path}) do
+          :ok ->
+            # File loaded, read from ETS again
+            case FileSystemState.read_file(agent_id, path) do
+              {:ok, %FileEntry{content: content}} ->
+                {:ok, content}
+
+              {:error, :enoent} ->
+                {:error, :enoent}
+            end
+
+          {:error, reason} ->
+            {:error, reason}
+        end
+
+      {:error, :enoent} ->
+        # File doesn't exist
+        {:error, :enoent}
+    end
   end
 
   @doc """
@@ -125,9 +172,9 @@ defmodule LangChain.Agents.FileSystemServer do
 
   If file was persisted, it's also removed from storage immediately (no debounce).
   """
-  @spec delete_file(fs_ref(), String.t()) :: :ok | {:error, term()}
-  def delete_file(fs_ref, path) do
-    GenServer.call(fs_ref, {:delete_file, path})
+  @spec delete_file(String.t(), String.t()) :: :ok | {:error, term()}
+  def delete_file(agent_id, path) do
+    GenServer.call(via_tuple(agent_id), {:delete_file, path})
   end
 
   @doc """
@@ -137,7 +184,7 @@ defmodule LangChain.Agents.FileSystemServer do
 
   ## Parameters
 
-  - `fs_ref` - FileSystemServer PID
+  - `agent_id` - Agent identifier
   - `config` - FileSystemConfig struct
 
   ## Returns
@@ -152,12 +199,12 @@ defmodule LangChain.Agents.FileSystemServer do
       ...>   persistence_module: MyApp.Persistence.Disk,
       ...>   storage_opts: [path: "/data/users"]
       ...> })
-      iex> FileSystemServer.register_persistence(fs_pid, config)
+      iex> FileSystemServer.register_persistence("agent-123", config)
       :ok
   """
-  @spec register_persistence(fs_ref(), FileSystemConfig.t()) :: :ok | {:error, term()}
-  def register_persistence(fs_ref, %FileSystemConfig{} = config) do
-    GenServer.call(fs_ref, {:register_persistence, config})
+  @spec register_persistence(String.t(), FileSystemConfig.t()) :: :ok | {:error, term()}
+  def register_persistence(agent_id, %FileSystemConfig{} = config) do
+    GenServer.call(via_tuple(agent_id), {:register_persistence, config})
   end
 
   @doc """
@@ -167,12 +214,12 @@ defmodule LangChain.Agents.FileSystemServer do
 
   ## Examples
 
-      iex> FileSystemServer.get_persistence_configs(fs_pid)
+      iex> FileSystemServer.get_persistence_configs("agent-123")
       %{"user_files" => %FileSystemConfig{}, "S3" => %FileSystemConfig{}}
   """
-  @spec get_persistence_configs(fs_ref()) :: %{String.t() => FileSystemConfig.t()}
-  def get_persistence_configs(fs_ref) do
-    GenServer.call(fs_ref, :get_persistence_configs)
+  @spec get_persistence_configs(String.t()) :: %{String.t() => FileSystemConfig.t()}
+  def get_persistence_configs(agent_id) do
+    GenServer.call(via_tuple(agent_id), :get_persistence_configs)
   end
 
   @doc """
@@ -180,9 +227,9 @@ defmodule LangChain.Agents.FileSystemServer do
 
   Useful for graceful shutdown or checkpoints.
   """
-  @spec flush_all(fs_ref()) :: :ok
-  def flush_all(fs_ref) do
-    GenServer.call(fs_ref, :flush_all)
+  @spec flush_all(String.t()) :: :ok
+  def flush_all(agent_id) do
+    GenServer.call(via_tuple(agent_id), :flush_all)
   end
 
   @doc """
@@ -190,9 +237,9 @@ defmodule LangChain.Agents.FileSystemServer do
 
   Returns map with various statistics about the filesystem state.
   """
-  @spec stats(fs_ref()) :: {:ok, map()}
-  def stats(fs_ref) do
-    GenServer.call(fs_ref, :stats)
+  @spec stats(String.t()) :: {:ok, map()}
+  def stats(agent_id) do
+    GenServer.call(via_tuple(agent_id), :stats)
   end
 
   # ============================================================================
@@ -210,11 +257,6 @@ defmodule LangChain.Agents.FileSystemServer do
       {:error, reason} ->
         {:stop, reason}
     end
-  end
-
-  @impl true
-  def handle_call(:get_table, _from, state) do
-    {:reply, state.fs_table, state}
   end
 
   @impl true
@@ -237,6 +279,18 @@ defmodule LangChain.Agents.FileSystemServer do
   def handle_call({:write_file, path, content, opts}, _from, state) do
     case FileSystemState.write_file(state, path, content, opts) do
       {:ok, new_state} ->
+        {:reply, :ok, new_state}
+
+      {:error, reason, state} ->
+        {:reply, {:error, reason}, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:load_file, path}, _from, state) do
+    case FileSystemState.load_file(state, path) do
+      {:ok, new_state} ->
+        # Return :ok WITHOUT the file content (client will read from ETS)
         {:reply, :ok, new_state}
 
       {:error, reason, state} ->

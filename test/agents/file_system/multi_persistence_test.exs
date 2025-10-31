@@ -2,7 +2,7 @@ defmodule LangChain.Agents.FileSystem.MultiPersistenceTest do
   use ExUnit.Case, async: false
 
   alias LangChain.Agents.FileSystemServer
-  alias LangChain.Agents.FileSystem.{FileSystemConfig, Persistence}
+  alias LangChain.Agents.FileSystem.{FileSystemConfig, FileSystemState, Persistence}
 
   @moduletag :tmp_dir
 
@@ -38,11 +38,11 @@ defmodule LangChain.Agents.FileSystem.MultiPersistenceTest do
       tmp_dir: tmp_dir
     } do
       # Start with memory-only filesystem
-      {:ok, pid} = FileSystemServer.start_link(agent_id: agent_id)
-      table = FileSystemServer.get_table(pid)
+      {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id)
+      table = FileSystemState.get_table_name(agent_id)
 
       # Verify no persistence configs initially
-      assert FileSystemServer.get_persistence_configs(pid) == %{}
+      assert FileSystemServer.get_persistence_configs(agent_id) == %{}
 
       # Register first persistence backend for "user_files"
       {:ok, user_config} =
@@ -53,7 +53,7 @@ defmodule LangChain.Agents.FileSystem.MultiPersistenceTest do
           storage_opts: [path: Path.join(tmp_dir, "users")]
         })
 
-      assert :ok = FileSystemServer.register_persistence(pid, user_config)
+      assert :ok = FileSystemServer.register_persistence(agent_id, user_config)
 
       # Register second persistence backend for "account_files" (read-only)
       {:ok, account_config} =
@@ -65,16 +65,16 @@ defmodule LangChain.Agents.FileSystem.MultiPersistenceTest do
           storage_opts: [path: Path.join(tmp_dir, "accounts")]
         })
 
-      assert :ok = FileSystemServer.register_persistence(pid, account_config)
+      assert :ok = FileSystemServer.register_persistence(agent_id, account_config)
 
       # Verify both configs are registered
-      configs = FileSystemServer.get_persistence_configs(pid)
+      configs = FileSystemServer.get_persistence_configs(agent_id)
       assert map_size(configs) == 2
       assert Map.has_key?(configs, "user_files")
       assert Map.has_key?(configs, "account_files")
 
       # Write to user_files (should persist)
-      assert :ok = FileSystemServer.write_file(pid, "/user_files/data.txt", "user data")
+      assert :ok = FileSystemServer.write_file(agent_id, "/user_files/data.txt", "user data")
 
       assert [{_, entry}] = :ets.lookup(table, "/user_files/data.txt")
       assert entry.persistence == :persisted
@@ -93,19 +93,19 @@ defmodule LangChain.Agents.FileSystem.MultiPersistenceTest do
 
       # Try to write to account_files (read-only, should fail)
       assert {:error, reason} =
-               FileSystemServer.write_file(pid, "/account_files/data.txt", "account data")
+               FileSystemServer.write_file(agent_id, "/account_files/data.txt", "account data")
 
       assert reason =~ "read-only"
 
       # Write to memory-only location
-      assert :ok = FileSystemServer.write_file(pid, "/scratch/temp.txt", "temp data")
+      assert :ok = FileSystemServer.write_file(agent_id, "/scratch/temp.txt", "temp data")
 
       assert [{_, temp_entry}] = :ets.lookup(table, "/scratch/temp.txt")
       assert temp_entry.persistence == :memory
     end
 
     test "prevents registering same base_directory twice", %{agent_id: agent_id} do
-      {:ok, pid} = FileSystemServer.start_link(agent_id: agent_id)
+      {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id)
 
       {:ok, config1} =
         FileSystemConfig.new(%{
@@ -113,7 +113,7 @@ defmodule LangChain.Agents.FileSystem.MultiPersistenceTest do
           persistence_module: Persistence.Disk
         })
 
-      assert :ok = FileSystemServer.register_persistence(pid, config1)
+      assert :ok = FileSystemServer.register_persistence(agent_id, config1)
 
       # Try to register same base_directory again
       {:ok, config2} =
@@ -123,7 +123,7 @@ defmodule LangChain.Agents.FileSystem.MultiPersistenceTest do
           debounce_ms: 10000
         })
 
-      assert {:error, reason} = FileSystemServer.register_persistence(pid, config2)
+      assert {:error, reason} = FileSystemServer.register_persistence(agent_id, config2)
       assert reason =~ "already has a registered persistence config"
     end
 
@@ -156,7 +156,7 @@ defmodule LangChain.Agents.FileSystem.MultiPersistenceTest do
           do: Persistence.Disk.list_persisted_files(agent_id, opts)
       end
 
-      {:ok, pid} = FileSystemServer.start_link(agent_id: agent_id)
+      {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id)
 
       # Register fast config (100ms debounce)
       {:ok, fast_config} =
@@ -167,7 +167,7 @@ defmodule LangChain.Agents.FileSystem.MultiPersistenceTest do
           storage_opts: [path: tmp_dir, test_pid: test_pid]
         })
 
-      assert :ok = FileSystemServer.register_persistence(pid, fast_config)
+      assert :ok = FileSystemServer.register_persistence(agent_id, fast_config)
 
       # Register slow config (500ms debounce)
       {:ok, slow_config} =
@@ -178,12 +178,12 @@ defmodule LangChain.Agents.FileSystem.MultiPersistenceTest do
           storage_opts: [path: tmp_dir, test_pid: test_pid]
         })
 
-      assert :ok = FileSystemServer.register_persistence(pid, slow_config)
+      assert :ok = FileSystemServer.register_persistence(agent_id, slow_config)
 
       # Write to both directories at the same time
       start_time = System.monotonic_time()
-      FileSystemServer.write_file(pid, "/fast/file.txt", "fast data")
-      FileSystemServer.write_file(pid, "/slow/file.txt", "slow data")
+      FileSystemServer.write_file(agent_id, "/fast/file.txt", "fast data")
+      FileSystemServer.write_file(agent_id, "/slow/file.txt", "slow data")
 
       # Wait for fast persistence
       assert_receive {:persisted, "/fast/file.txt", fast_time}, 200
@@ -201,7 +201,7 @@ defmodule LangChain.Agents.FileSystem.MultiPersistenceTest do
     end
 
     test "readonly config prevents deletes", %{agent_id: agent_id, tmp_dir: tmp_dir} do
-      {:ok, pid} = FileSystemServer.start_link(agent_id: agent_id)
+      {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id)
 
       {:ok, config} =
         FileSystemConfig.new(%{
@@ -211,10 +211,10 @@ defmodule LangChain.Agents.FileSystem.MultiPersistenceTest do
           storage_opts: [path: tmp_dir]
         })
 
-      assert :ok = FileSystemServer.register_persistence(pid, config)
+      assert :ok = FileSystemServer.register_persistence(agent_id, config)
 
       # Try to delete from readonly directory (should fail)
-      assert {:error, reason} = FileSystemServer.delete_file(pid, "/readonly/file.txt")
+      assert {:error, reason} = FileSystemServer.delete_file(agent_id, "/readonly/file.txt")
       assert reason =~ "read-only"
     end
   end
