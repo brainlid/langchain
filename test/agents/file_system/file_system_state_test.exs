@@ -251,13 +251,12 @@ defmodule LangChain.Agents.FileSystem.FileSystemStateTest do
     end
 
     test "returns stats for empty filesystem", %{state: state} do
-      stats = FileSystemState.stats(state)
+      stats = FileSystemState.stats(state.agent_id)
 
       assert stats.total_files == 0
       assert stats.memory_files == 0
       assert stats.persisted_files == 0
       assert stats.dirty_files == 0
-      assert stats.pending_persist == 0
     end
 
     test "counts different file types correctly", %{state: state} do
@@ -280,13 +279,12 @@ defmodule LangChain.Agents.FileSystem.FileSystemStateTest do
       {:ok, state} = FileSystemState.write_file(state, "/Memories/file3.txt", "data3", [])
       {:ok, state} = FileSystemState.write_file(state, "/Memories/file4.txt", "data4", [])
 
-      stats = FileSystemState.stats(state)
+      stats = FileSystemState.stats(state.agent_id)
 
       assert stats.total_files == 4
       assert stats.memory_files == 2
       assert stats.persisted_files == 2
       assert stats.dirty_files == 2
-      assert stats.pending_persist == 2
     end
   end
 end

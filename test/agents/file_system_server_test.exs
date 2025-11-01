@@ -313,9 +313,9 @@ defmodule LangChain.Agents.FileSystemServerTest do
       path = "/Memories/file.txt"
       FileSystemServer.write_file(agent_id, path, "data")
 
-      # Verify file exists and has pending timer
-      {:ok, stats} = FileSystemServer.stats(agent_id)
-      assert stats.pending_persist == 1
+      # Verify file exists and is dirty (pending persist)
+      stats = FileSystemServer.stats(agent_id)
+      assert stats.dirty_files == 1
 
       # Delete the file
       assert :ok = FileSystemServer.delete_file(agent_id, path)
@@ -326,9 +326,9 @@ defmodule LangChain.Agents.FileSystemServerTest do
       # Verify file is gone from ETS
       assert :ets.lookup(table, path) == []
 
-      # Verify timer was cancelled
-      {:ok, stats} = FileSystemServer.stats(agent_id)
-      assert stats.pending_persist == 0
+      # Verify no dirty files remain
+      stats = FileSystemServer.stats(agent_id)
+      assert stats.dirty_files == 0
     end
 
     test "deletes non-existent file returns ok", %{agent_id: agent_id} do
@@ -377,9 +377,8 @@ defmodule LangChain.Agents.FileSystemServerTest do
       FileSystemServer.write_file(agent_id, "/Memories/file2.txt", "data2")
       FileSystemServer.write_file(agent_id, "/Memories/file3.txt", "data3")
 
-      # Verify timers are pending
-      {:ok, stats_before} = FileSystemServer.stats(agent_id)
-      assert stats_before.pending_persist == 3
+      # Verify files are dirty (timers pending)
+      stats_before = FileSystemServer.stats(agent_id)
       assert stats_before.dirty_files == 3
 
       # Flush all
@@ -394,8 +393,7 @@ defmodule LangChain.Agents.FileSystemServerTest do
       Process.sleep(50)
 
       # Verify all files are now clean and no timers pending
-      {:ok, stats_after} = FileSystemServer.stats(agent_id)
-      assert stats_after.pending_persist == 0
+      stats_after = FileSystemServer.stats(agent_id)
       assert stats_after.dirty_files == 0
     end
   end
@@ -405,14 +403,13 @@ defmodule LangChain.Agents.FileSystemServerTest do
       {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id)
 
       # Empty filesystem
-      {:ok, stats} = FileSystemServer.stats(agent_id)
+      stats = FileSystemServer.stats(agent_id)
       assert stats.total_files == 0
       assert stats.memory_files == 0
       assert stats.persisted_files == 0
       assert stats.loaded_files == 0
       assert stats.not_loaded_files == 0
       assert stats.dirty_files == 0
-      assert stats.pending_persist == 0
       assert stats.total_size == 0
     end
 
@@ -442,7 +439,7 @@ defmodule LangChain.Agents.FileSystemServerTest do
       FileSystemServer.write_file(agent_id, "/Memories/file3.txt", "data3")
       FileSystemServer.write_file(agent_id, "/Memories/file4.txt", "data4")
 
-      {:ok, stats} = FileSystemServer.stats(agent_id)
+      stats = FileSystemServer.stats(agent_id)
 
       assert stats.total_files == 4
       assert stats.memory_files == 2
@@ -450,7 +447,6 @@ defmodule LangChain.Agents.FileSystemServerTest do
       assert stats.loaded_files == 4
       assert stats.not_loaded_files == 0
       assert stats.dirty_files == 2
-      assert stats.pending_persist == 2
       assert stats.total_size == byte_size("data1data2data3data4")
     end
   end

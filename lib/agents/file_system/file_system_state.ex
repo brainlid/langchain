@@ -405,11 +405,57 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
   end
 
   @doc """
+  Lists all file paths in the filesystem.
+
+  Returns paths for both memory and persisted files, regardless of load status.
+
+  ## Parameters
+
+  - `agent_id` - Agent identifier (used to look up the named ETS table)
+
+  ## Examples
+
+      iex> FileSystemState.list_files("agent-123")
+      ["/file1.txt", "/Memories/file2.txt"]
+  """
+  @spec list_files(String.t()) :: [String.t()]
+  def list_files(agent_id) when is_binary(agent_id) do
+    table = get_table_name(agent_id)
+
+    table
+    |> :ets.tab2list()
+    |> Enum.map(fn {path, _entry} -> path end)
+    |> Enum.sort()
+  end
+
+  @doc """
+  Check if a file exists in the filesystem.
+
+  ## Examples
+
+      iex> FileSystemState.file_exists?(state, "/notes.txt")
+      true
+
+      iex> FileSystemState.file_exists?(state, "/nonexistent.txt")
+      false
+  """
+  @spec file_exists?(String.t(), String.t()) :: boolean()
+  def file_exists?(agent_id, path) do
+    table = get_table_name(agent_id)
+
+    case :ets.lookup(table, path) do
+      [{^path, _entry}] -> true
+      [] -> false
+    end
+  end
+
+  @doc """
   Computes filesystem statistics.
   """
-  @spec stats(t()) :: map()
-  def stats(%FileSystemState{} = state) do
-    all_entries = :ets.tab2list(state.table_name)
+  @spec stats(String.t()) :: map()
+  def stats(agent_id) do
+    table = get_table_name(agent_id)
+    all_entries = :ets.tab2list(table)
 
     total_files = length(all_entries)
 
@@ -437,7 +483,6 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
       loaded_files: loaded_files,
       not_loaded_files: not_loaded_files,
       dirty_files: dirty_files,
-      pending_persist: map_size(state.debounce_timers),
       total_size: total_size
     }
   end

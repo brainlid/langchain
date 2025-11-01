@@ -185,7 +185,7 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
       FileSystemServer.write_file(agent_id, "/Memories/file3.txt", "content3")
 
       # Verify they're dirty
-      {:ok, stats_before} = FileSystemServer.stats(agent_id)
+      stats_before = FileSystemServer.stats(agent_id)
       assert stats_before.dirty_files == 3
 
       # Flush all
@@ -195,7 +195,7 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
       Process.sleep(100)
 
       # All should be clean now
-      {:ok, stats_after} = FileSystemServer.stats(agent_id)
+      stats_after = FileSystemServer.stats(agent_id)
       assert stats_after.dirty_files == 0
 
       # All files should exist on disk
@@ -439,10 +439,9 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
         )
 
       # Initial state
-      {:ok, stats} = FileSystemServer.stats(agent_id)
+      stats = FileSystemServer.stats(agent_id)
       assert stats.total_files == 0
       assert stats.dirty_files == 0
-      assert stats.pending_persist == 0
 
       # Write files
       FileSystemServer.write_file(agent_id, "/scratch/temp.txt", "temp")
@@ -450,21 +449,19 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
       FileSystemServer.write_file(agent_id, "/Memories/persist2.txt", "data2")
 
       # Check stats before persist
-      {:ok, stats_before} = FileSystemServer.stats(agent_id)
+      stats_before = FileSystemServer.stats(agent_id)
       assert stats_before.total_files == 3
       assert stats_before.memory_files == 1
       assert stats_before.persisted_files == 2
       assert stats_before.dirty_files == 2
-      assert stats_before.pending_persist == 2
 
       # Wait for persist
       Process.sleep(150)
 
       # Check stats after persist
-      {:ok, stats_after} = FileSystemServer.stats(agent_id)
+      stats_after = FileSystemServer.stats(agent_id)
       assert stats_after.total_files == 3
       assert stats_after.dirty_files == 0
-      assert stats_after.pending_persist == 0
     end
   end
 

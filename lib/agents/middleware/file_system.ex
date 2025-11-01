@@ -119,75 +119,61 @@ defmodule LangChain.Agents.Middleware.FileSystem do
   alias LangChain.Function
 
   @system_prompt """
-  ## Filesystem Tools `ls`, `read_file`, `write_file`, `edit_file`
+  ## Filesystem Tools
 
-  You have access to a filesystem which you can interact with using these tools.
-  All file paths must start with a /.
-
-  - ls: list files in the filesystem (optionally filter with patterns)
-  - read_file: read a file from the filesystem
-  - write_file: write to a file in the filesystem
-  - edit_file: edit a file in the filesystem
+  You have access to a virtual filesystem with these tools:
+  - `ls`: List files (optionally filter with patterns)
+  - `read_file`: Read file contents with line numbers and pagination
+  - `write_file`: Create new files (cannot overwrite existing files)
+  - `edit_file`: Modify existing files with string replacement
 
   ## File Organization
 
   Use hierarchical paths to organize files logically:
-  - Use forward slashes (/) to access logical groupings
-  - Examples: "data.csv", "/Chapter 1/notes.txt", "/images/diagram.png", "/data/results.csv"
+  - All paths must start with a forward slash "/"
+  - Examples: "/notes.txt", "/Chapter1/summary.md", "/data/results.csv"
+  - No path traversal ("..") or home directory ("~") allowed
 
-  # ## Using the ls Tool
+  ## Pattern Filtering
 
-  # List files with optional pattern filtering:
-  # - `ls()` - List all files
-  # - `ls(pattern: "/Chapter 1/*")` - List files in "Chapter 1"
-  # - `ls(pattern: "*summary*")` - Find files containing "summary"
-  # - `ls(pattern: "*.md")` - Find all markdown files
+  The `ls` tool supports wildcard patterns:
+  - `*` matches any characters
+  - Examples: `*summary*`, `*.md`, `/Chapter1/*`
 
   ## Best Practices
 
-  - Always use `ls` before reading or editing to see available files
-  - Read files before editing them to understand their content
-  - Use `edit_file` for modifications, `write_file` for new files or complete rewrites
+  - Always use `ls` first to see available files
+  - Read files before editing to understand content
+  - Use `edit_file` for modifications, `write_file` only for new files
   - Provide sufficient context in `old_string` to ensure unique matches
-  - Use hierarchical paths to organize related files together
+  - Group related files in the same directory
 
-  [PLACEHOLDER: Additional filesystem guidance will be added]
+  ## Persistence Behavior
+
+  - Different directories may have different persistence settings
+  - Some directories may be read-only (you can read but not write)
+  - Large or archived files may load slowly on first access
   """
 
   @impl true
   def init(opts) do
+    # Require agent_id to link to FileSystemServer
+    agent_id = Keyword.fetch!(opts, :agent_id)
+
     config = %{
-      long_term_memory: Keyword.get(opts, :long_term_memory, false),
-      memories_prefix: Keyword.get(opts, :memories_prefix, "memories"),
+      agent_id: agent_id,
       # Tool configuration
       enabled_tools:
         Keyword.get(opts, :enabled_tools, ["ls", "read_file", "write_file", "edit_file"]),
-      custom_tool_descriptions: Keyword.get(opts, :custom_tool_descriptions, %{}),
-      # Persistence configuration
-      persistence: Keyword.get(opts, :persistence),
-      on_write: Keyword.get(opts, :on_write),
-      on_read: Keyword.get(opts, :on_read),
-      on_delete: Keyword.get(opts, :on_delete),
-      on_list: Keyword.get(opts, :on_list),
-      context: Keyword.get(opts, :context, %{}),
-      # Behavior options
-      cache_reads: Keyword.get(opts, :cache_reads, true),
-      fail_on_persistence_error: Keyword.get(opts, :fail_on_persistence_error, false)
+      custom_tool_descriptions: Keyword.get(opts, :custom_tool_descriptions, %{})
     }
 
     {:ok, config}
   end
 
   @impl true
-  def system_prompt(config) do
-    supplement =
-      if Map.get(config, :long_term_memory, false) do
-        "\n\nNote: Files persist across conversations with long-term memory enabled."
-      else
-        ""
-      end
-
-    @system_prompt <> supplement
+  def system_prompt(_config) do
+    @system_prompt
   end
 
   @impl true
@@ -233,17 +219,7 @@ defmodule LangChain.Agents.Middleware.FileSystem do
     Without a pattern, lists all files.
     """
 
-    # Add longterm memory supplement if persistence is enabled
-    longterm_supplement =
-      if Map.get(config, :long_term_memory, false) do
-        memories_prefix = Map.get(config, :memories_prefix, "memories")
-
-        "\n- Files from the longterm filesystem will be prefixed with the #{memories_prefix} path."
-      else
-        ""
-      end
-
-    description = get_custom_description(config, "ls", default_description <> longterm_supplement)
+    description = get_custom_description(config, "ls", default_description)
 
     Function.new!(%{
       name: "ls",
@@ -373,28 +349,16 @@ defmodule LangChain.Agents.Middleware.FileSystem do
 
   # Tool execution functions
 
-  defp execute_ls_tool(args, context, config) do
+  defp execute_ls_tool(args, _context, config) do
     pattern = get_arg(args, "pattern")
 
-    # Get in-memory files
-    memory_files = Map.keys(context.state.files)
-
-    # Attempt to get persisted files
-    all_files =
-      case call_persistence_list(config) do
-        {:ok, persisted_files} ->
-          # Merge and deduplicate
-          (memory_files ++ persisted_files) |> Enum.uniq()
-
-        {:error, _reason} ->
-          # Just use memory files
-          memory_files
-      end
+    # List all files using FileSystemServer (reads directly from ETS)
+    all_files = LangChain.Agents.FileSystemServer.list_files(config.agent_id)
 
     # Apply pattern filtering
     filtered_files = filter_by_pattern(all_files, pattern)
 
-    # Sort for consistency
+    # Sort for consistency (already sorted by FileSystemServer, but ensure it)
     sorted_files = Enum.sort(filtered_files)
 
     message =
@@ -410,44 +374,38 @@ defmodule LangChain.Agents.Middleware.FileSystem do
       end
 
     {:ok, message}
+  rescue
+    e ->
+      {:error, "Filesystem not available: #{Exception.message(e)}"}
   end
 
-  defp execute_read_file_tool(args, context, config) do
+  defp execute_read_file_tool(args, _context, config) do
     file_path = get_arg(args, "file_path")
+    offset = get_arg(args, "offset") || 0
+    limit = get_arg(args, "limit") || 2000
 
     # Validate path
     with {:ok, normalized_path} <- validate_path(file_path) do
-      offset = get_arg(args, "offset") || 0
-      limit = get_arg(args, "limit") || 2000
+      # Read file using FileSystemServer (handles lazy loading automatically)
+      case LangChain.Agents.FileSystemServer.read_file(config.agent_id, normalized_path) do
+        {:ok, content} ->
+          format_file_content(content, normalized_path, offset, limit)
 
-      # Try to get content from memory first (using State.get_file handles FileData extraction)
-      content =
-        case LangChain.Agents.State.get_file(context.state, normalized_path) do
-          nil ->
-            # Not in memory, try persistence
-            case call_persistence_read(config, normalized_path) do
-              {:ok, persisted_content} ->
-                persisted_content
+        {:error, :enoent} ->
+          {:error, "File not found: #{normalized_path}"}
 
-              {:error, _reason} ->
-                nil
-            end
-
-          memory_content ->
-            memory_content
-        end
-
-      execute_read_with_content(content, normalized_path, offset, limit, context, config)
+        {:error, reason} ->
+          {:error, "Failed to read file: #{inspect(reason)}"}
+      end
     else
       {:error, reason} -> {:error, reason}
     end
+  rescue
+    e ->
+      {:error, "Filesystem not available: #{Exception.message(e)}"}
   end
 
-  defp execute_read_with_content(nil, file_path, _offset, _limit, _context, _config) do
-    {:error, "File not found: #{file_path}"}
-  end
-
-  defp execute_read_with_content(content, file_path, offset, limit, context, config) do
+  defp format_file_content(content, _file_path, offset, limit) do
     lines = String.split(content, "\n")
     total_lines = length(lines)
 
@@ -485,25 +443,10 @@ defmodule LangChain.Agents.Middleware.FileSystem do
         header <> Enum.join(selected_lines, "\n")
       end
 
-    # If we loaded from persistence and caching is enabled, return state delta
-    state_delta =
-      if get_config_value(config, :cache_reads, true) and
-           not Map.has_key?(context.state.files, file_path) do
-        # Return only the file change as a state delta
-        file_data = LangChain.Agents.State.create_file_data(content)
-        %LangChain.Agents.State{files: %{file_path => file_data}}
-      else
-        nil
-      end
-
-    if state_delta do
-      {:ok, result, state_delta}
-    else
-      {:ok, result}
-    end
+    {:ok, result}
   end
 
-  defp execute_write_file_tool(args, context, config) do
+  defp execute_write_file_tool(args, _context, config) do
     file_path = get_arg(args, "file_path")
     content = get_arg(args, "content")
 
@@ -515,44 +458,33 @@ defmodule LangChain.Agents.Middleware.FileSystem do
         # Validate path
         with {:ok, normalized_path} <- validate_path(file_path) do
           # Check if file already exists (overwrite protection)
-          file_data = LangChain.Agents.State.get_file_data(context.state, normalized_path)
-
-          if file_data do
+          if LangChain.Agents.FileSystemServer.file_exists?(config.agent_id, normalized_path) do
             {:error,
-             "File already exists: #{normalized_path}. Use edit_file to modify existing files, or delete it first."}
+             "File already exists: #{normalized_path}. Use edit_file to modify existing files."}
           else
-            # Create file data
-            file_data = LangChain.Agents.State.create_file_data(content)
-            # Return state delta with only the new file
-            state_delta = %LangChain.Agents.State{files: %{normalized_path => file_data}}
-
-            # Attempt persistence if configured
-            case call_persistence_write(config, normalized_path, content) do
-              {:ok, _metadata} ->
-                {:ok, "File created successfully: #{normalized_path}", state_delta}
-
-              {:error, :not_configured} ->
-                # No persistence configured, that's fine
-                {:ok, "File created successfully: #{normalized_path}", state_delta}
+            # Write file using FileSystemServer
+            case LangChain.Agents.FileSystemServer.write_file(
+                   config.agent_id,
+                   normalized_path,
+                   content
+                 ) do
+              :ok ->
+                {:ok, "File created successfully: #{normalized_path}"}
 
               {:error, reason} ->
-                if get_config_value(config, :fail_on_persistence_error, false) do
-                  {:error, "Failed to persist file: #{reason}"}
-                else
-                  Logger.warning("File persistence failed for #{normalized_path}: #{reason}")
-
-                  {:ok, "File created in memory: #{normalized_path} (persistence warning)",
-                   state_delta}
-                end
+                {:error, "Failed to create file: #{inspect(reason)}"}
             end
           end
         else
           {:error, reason} -> {:error, reason}
         end
     end
+  rescue
+    e ->
+      {:error, "Filesystem not available: #{Exception.message(e)}"}
   end
 
-  defp execute_edit_file_tool(args, context, config) do
+  defp execute_edit_file_tool(args, _context, config) do
     file_path = get_arg(args, "file_path")
     old_string = get_arg(args, "old_string")
     new_string = get_arg(args, "new_string")
@@ -565,29 +497,34 @@ defmodule LangChain.Agents.Middleware.FileSystem do
       true ->
         # Validate path
         with {:ok, normalized_path} <- validate_path(file_path) do
-          # Get file content using State.get_file (handles FileData extraction)
-          case LangChain.Agents.State.get_file(context.state, normalized_path) do
-            nil ->
-              {:error, "File not found: #{normalized_path}"}
-
-            content ->
+          # Read current content using FileSystemServer
+          case LangChain.Agents.FileSystemServer.read_file(config.agent_id, normalized_path) do
+            {:ok, content} ->
               perform_edit(
-                context.state,
+                config.agent_id,
                 normalized_path,
                 content,
                 old_string,
                 new_string,
-                replace_all,
-                config
+                replace_all
               )
+
+            {:error, :enoent} ->
+              {:error, "File not found: #{normalized_path}"}
+
+            {:error, reason} ->
+              {:error, "Failed to read file: #{inspect(reason)}"}
           end
         else
           {:error, reason} -> {:error, reason}
         end
     end
+  rescue
+    e ->
+      {:error, "Filesystem not available: #{Exception.message(e)}"}
   end
 
-  defp perform_edit(state, file_path, content, old_string, new_string, replace_all, config) do
+  defp perform_edit(agent_id, file_path, content, old_string, new_string, replace_all) do
     # Split to count occurrences
     parts = String.split(content, old_string, parts: :infinity)
     occurrence_count = length(parts) - 1
@@ -599,14 +536,7 @@ defmodule LangChain.Agents.Middleware.FileSystem do
       occurrence_count == 1 ->
         # Single occurrence, safe to replace
         updated_content = String.replace(content, old_string, new_string, global: false)
-
-        persist_edit(
-          state,
-          file_path,
-          updated_content,
-          "File edited successfully: #{file_path}",
-          config
-        )
+        write_edit(agent_id, file_path, updated_content, "File edited successfully: #{file_path}")
 
       occurrence_count > 1 and not replace_all ->
         {:error,
@@ -616,40 +546,22 @@ defmodule LangChain.Agents.Middleware.FileSystem do
         # Replace all occurrences
         updated_content = String.replace(content, old_string, new_string, global: true)
 
-        persist_edit(
-          state,
+        write_edit(
+          agent_id,
           file_path,
           updated_content,
-          "File edited successfully: #{file_path} (#{occurrence_count} replacements)",
-          config
+          "File edited successfully: #{file_path} (#{occurrence_count} replacements)"
         )
     end
   end
 
-  defp persist_edit(state, file_path, updated_content, success_message, config) do
-    # Get existing file data to preserve created_at
-    existing_file_data = LangChain.Agents.State.get_file_data(state, file_path)
-    # Update file data with new content
-    file_data = LangChain.Agents.State.update_file_data(updated_content, existing_file_data)
-    # Return state delta with only the updated file
-    state_delta = %LangChain.Agents.State{files: %{file_path => file_data}}
-
-    # Attempt persistence if configured
-    case call_persistence_write(config, file_path, updated_content) do
-      {:ok, _metadata} ->
-        {:ok, success_message, state_delta}
-
-      {:error, :not_configured} ->
-        # No persistence configured, that's fine
-        {:ok, success_message, state_delta}
+  defp write_edit(agent_id, file_path, updated_content, success_message) do
+    case LangChain.Agents.FileSystemServer.write_file(agent_id, file_path, updated_content) do
+      :ok ->
+        {:ok, success_message}
 
       {:error, reason} ->
-        if get_config_value(config, :fail_on_persistence_error, false) do
-          {:error, "Failed to persist edit: #{reason}"}
-        else
-          Logger.warning("File edit persistence failed for #{file_path}: #{reason}")
-          {:ok, success_message <> " (persistence warning)", state_delta}
-        end
+        {:error, "Failed to save edit: #{inspect(reason)}"}
     end
   end
 
@@ -666,108 +578,6 @@ defmodule LangChain.Agents.Middleware.FileSystem do
       _ -> default
     end
   end
-
-  defp get_config_value(config, key, default) when is_map(config) do
-    Map.get(config, key, default)
-  end
-
-  defp get_config_value(_config, _key, default), do: default
-
-  # Persistence helper functions
-
-  defp call_persistence_write(config, file_path, content) do
-    callback = get_callback(config, :on_write)
-
-    case callback do
-      nil ->
-        {:error, :not_configured}
-
-      fun when is_function(fun, 3) ->
-        fun.(file_path, content, get_config_value(config, :context, %{}))
-
-      module when is_atom(module) ->
-        try do
-          if function_exported?(module, :on_write, 3) do
-            module.on_write(file_path, content, get_config_value(config, :context, %{}))
-          else
-            {:error, :not_configured}
-          end
-        rescue
-          e ->
-            Logger.warning("Persistence write error: #{Exception.message(e)}")
-            {:error, Exception.message(e)}
-        end
-    end
-  rescue
-    e ->
-      Logger.warning("Persistence write error: #{Exception.message(e)}")
-      {:error, Exception.message(e)}
-  end
-
-  defp call_persistence_read(config, file_path) do
-    callback = get_callback(config, :on_read)
-
-    case callback do
-      nil ->
-        {:error, :not_configured}
-
-      fun when is_function(fun, 2) ->
-        fun.(file_path, get_config_value(config, :context, %{}))
-
-      module when is_atom(module) ->
-        try do
-          if function_exported?(module, :on_read, 2) do
-            module.on_read(file_path, get_config_value(config, :context, %{}))
-          else
-            {:error, :not_configured}
-          end
-        rescue
-          e ->
-            Logger.warning("Persistence read error: #{Exception.message(e)}")
-            {:error, Exception.message(e)}
-        end
-    end
-  rescue
-    e ->
-      Logger.warning("Persistence read error: #{Exception.message(e)}")
-      {:error, Exception.message(e)}
-  end
-
-  defp call_persistence_list(config) do
-    callback = get_callback(config, :on_list)
-
-    case callback do
-      nil ->
-        {:error, :not_configured}
-
-      fun when is_function(fun, 1) ->
-        fun.(get_config_value(config, :context, %{}))
-
-      module when is_atom(module) ->
-        try do
-          if function_exported?(module, :on_list, 1) do
-            module.on_list(get_config_value(config, :context, %{}))
-          else
-            {:error, :not_configured}
-          end
-        rescue
-          e ->
-            Logger.warning("Persistence list error: #{Exception.message(e)}")
-            {:error, Exception.message(e)}
-        end
-    end
-  rescue
-    e ->
-      Logger.warning("Persistence list error: #{Exception.message(e)}")
-      {:error, :not_configured}
-  end
-
-  defp get_callback(config, callback_name) when is_map(config) do
-    # Check for explicit callback function first
-    Map.get(config, callback_name) || Map.get(config, :persistence)
-  end
-
-  defp get_callback(_config, _callback_name), do: nil
 
   defp filter_by_pattern(files, nil), do: files
 
@@ -793,9 +603,8 @@ defmodule LangChain.Agents.Middleware.FileSystem do
       String.trim(path) == "" ->
         {:error, "Path cannot be empty"}
 
-      String.starts_with?(path, "/") ->
-        {:error,
-         "Paths starting with '/' are not allowed. Use relative paths like 'file.txt' or 'dir/file.txt'"}
+      not String.starts_with?(path, "/") ->
+        {:error, "Path must start with '/' (e.g., '/notes.txt', '/data/file.csv')"}
 
       String.contains?(path, "..") ->
         {:error, "Path traversal with '..' is not allowed"}
@@ -815,7 +624,6 @@ defmodule LangChain.Agents.Middleware.FileSystem do
     path
     |> String.replace("\\", "/")
     |> String.replace(~r|/+|, "/")
-    |> String.trim("/")
   end
 
   @doc false

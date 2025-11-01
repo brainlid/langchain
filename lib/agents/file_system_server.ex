@@ -268,13 +268,45 @@ defmodule LangChain.Agents.FileSystemServer do
   end
 
   @doc """
+  List all file paths in the filesystem.
+
+  Returns paths for both memory and persisted files, regardless of load status.
+  Reads directly from ETS table without GenServer call for optimal performance.
+
+  ## Examples
+
+      iex> list_files("agent-123")
+      ["/file1.txt", "/Memories/file2.txt"]
+  """
+  @spec list_files(String.t()) :: [String.t()]
+  def list_files(agent_id) do
+    FileSystemState.list_files(agent_id)
+  end
+
+  @doc """
+  Check if a file exists in the filesystem.
+
+  ## Examples
+
+      iex> file_exists?("agent-123", "/notes.txt")
+      true
+
+      iex> file_exists?("agent-123", "/nonexistent.txt")
+      false
+  """
+  @spec file_exists?(String.t(), String.t()) :: boolean()
+  def file_exists?(agent_id, path) do
+    FileSystemState.file_exists?(agent_id, path)
+  end
+
+  @doc """
   Get filesystem statistics.
 
   Returns map with various statistics about the filesystem state.
   """
   @spec stats(String.t()) :: {:ok, map()}
   def stats(agent_id) do
-    GenServer.call(via_tuple(agent_id), :stats)
+    FileSystemState.stats(agent_id)
   end
 
   # ============================================================================
@@ -354,12 +386,6 @@ defmodule LangChain.Agents.FileSystemServer do
   def handle_call(:flush_all, _from, state) do
     new_state = FileSystemState.flush_all(state)
     {:reply, :ok, new_state}
-  end
-
-  @impl true
-  def handle_call(:stats, _from, state) do
-    stats = FileSystemState.stats(state)
-    {:reply, {:ok, stats}, state}
   end
 
   @impl true
