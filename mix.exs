@@ -44,7 +44,7 @@ defmodule LangChain.MixProject do
   defp deps do
     [
       {:ecto, "~> 3.10 or ~> 3.11"},
-      {:gettext, "~> 1.0"},
+      {:gettext, "~> 0.26.2 or ~> 1.0.0"},
       {:req, ">= 0.5.2"},
       {:nimble_parsec, "~> 1.4", optional: true},
       {:abacus, "~> 2.1.0", optional: true},
@@ -92,6 +92,7 @@ defmodule LangChain.MixProject do
           LangChain.ChatModels.ChatOllamaAI,
           LangChain.ChatModels.ChatPerplexity,
           LangChain.ChatModels.ChatGrok,
+          LangChain.ChatModels.ChatDeepSeek,
           LangChain.ChatModels.ChatModel
         ],
         Chains: [
