@@ -9,6 +9,7 @@ defmodule LangChain.Agents.Agent do
 
       # Create agent with default middleware
       {:ok, agent} = Agent.new(
+        agent_id: "my-agent-1",
         model: ChatAnthropic.new!(%{model: "claude-3-5-sonnet-20241022"}),
         system_prompt: "You are a helpful assistant."
       )
@@ -37,10 +38,12 @@ defmodule LangChain.Agents.Agent do
   """
 
   use Ecto.Schema
+  import Ecto.Changeset
   require Logger
 
   alias __MODULE__
-  alias LangChain.Agents.{Middleware, State}
+  alias LangChain.Agents.Middleware
+  alias LangChain.Agents.State
   alias LangChain.LangChainError
   alias LangChain.Message
   alias LangChain.Function
@@ -48,6 +51,7 @@ defmodule LangChain.Agents.Agent do
 
   @primary_key false
   embedded_schema do
+    field :agent_id, :string
     field :model, :any, virtual: true
     field :system_prompt, :string
     field :tools, {:array, :any}, default: [], virtual: true
@@ -57,11 +61,15 @@ defmodule LangChain.Agents.Agent do
 
   @type t :: %Agent{}
 
+  @create_fields [:agent_id, :model, :system_prompt, :tools, :middleware, :name]
+  @required_fields [:agent_id, :model]
+
   @doc """
   Create a new DeepAgent.
 
   ## Options
 
+  - `:agent_id` - Unique identifier for the agent (required)
   - `:model` - LangChain ChatModel struct (required)
   - `:system_prompt` - Base system instructions (default: "")
   - `:tools` - Additional tools beyond middleware (default: [])
@@ -101,18 +109,21 @@ defmodule LangChain.Agents.Agent do
 
       # Basic agent
       {:ok, agent} = Agent.new(
+        agent_id: "basic-agent",
         model: ChatAnthropic.new!(%{model: "claude-3-5-sonnet-20241022"}),
         system_prompt: "You are helpful."
       )
 
       # With custom tools
       {:ok, agent} = Agent.new(
+        agent_id: "tool-agent",
         model: model,
         tools: [write_file_tool, search_tool]
       )
 
       # With human-in-the-loop for file operations
       {:ok, agent} = Agent.new(
+        agent_id: "hitl-agent",
         model: model,
         tools: [write_file_tool, delete_file_tool],
         interrupt_on: %{
@@ -138,17 +149,25 @@ defmodule LangChain.Agents.Agent do
 
       # With custom middleware configuration
       {:ok, agent} = Agent.new(
+        agent_id: "custom-middleware-agent",
         model: model,
         filesystem_opts: [long_term_memory: true]
       )
   """
   def new(opts \\ []) do
+    # Generate agent_id if not provided
+    agent_id = Keyword.get(opts, :agent_id, generate_agent_id())
+
+    # Add agent_id to opts for middleware initialization
+    opts_with_agent_id = Keyword.put(opts, :agent_id, agent_id)
+
     with {:ok, model} <- validate_model(opts),
-         {:ok, middleware_list} <- build_middleware_list(opts),
+         {:ok, middleware_list} <- build_middleware_list(opts_with_agent_id),
          {:ok, initialized_middleware} <- initialize_middleware(middleware_list),
          {:ok, system_prompt} <- assemble_system_prompt(opts, initialized_middleware),
          {:ok, all_tools} <- collect_tools(opts, initialized_middleware) do
-      agent = %Agent{
+      attrs = %{
+        agent_id: agent_id,
         model: model,
         system_prompt: system_prompt,
         tools: all_tools,
@@ -156,7 +175,9 @@ defmodule LangChain.Agents.Agent do
         name: Keyword.get(opts, :name)
       }
 
-      {:ok, agent}
+      %Agent{}
+      |> changeset(attrs)
+      |> apply_action(:insert)
     end
   end
 
@@ -166,7 +187,23 @@ defmodule LangChain.Agents.Agent do
   def new!(opts \\ []) do
     case new(opts) do
       {:ok, agent} -> agent
-      {:error, reason} -> raise LangChainError, reason
+      {:error, changeset} -> raise LangChainError, changeset
+    end
+  end
+
+  @doc false
+  def changeset(agent \\ %Agent{}, attrs) do
+    agent
+    |> cast(attrs, @create_fields)
+    |> validate_required(@required_fields)
+    |> put_default_system_prompt()
+  end
+
+  defp put_default_system_prompt(changeset) do
+    # Ensure system_prompt is never nil - default to empty string
+    case get_field(changeset, :system_prompt) do
+      nil -> put_change(changeset, :system_prompt, "")
+      _ -> changeset
     end
   end
 
@@ -290,6 +327,11 @@ defmodule LangChain.Agents.Agent do
 
   # Private functions
 
+  defp generate_agent_id do
+    # Generate a unique ID using Elixir's Uniq library or a simple UUID
+    ("agent_" <> :crypto.strong_rand_bytes(16)) |> Base.url_encode64(padding: false)
+  end
+
   defp validate_model(opts) do
     case Keyword.get(opts, :model) do
       nil -> {:error, "Model is required"}
@@ -317,13 +359,15 @@ defmodule LangChain.Agents.Agent do
 
   defp default_middleware(opts) do
     model = Keyword.get(opts, :model)
+    agent_id = Keyword.get(opts, :agent_id)
 
     # Build default middleware stack
     base_middleware = [
       # TodoList middleware for task management
       {LangChain.Agents.Middleware.TodoList, Keyword.get(opts, :todo_opts, [])},
       # Filesystem middleware for mock file operations
-      {LangChain.Agents.Middleware.FileSystem, Keyword.get(opts, :filesystem_opts, [])},
+      {LangChain.Agents.Middleware.FileSystem,
+       Keyword.merge([agent_id: agent_id], Keyword.get(opts, :filesystem_opts, []))},
       # Summarization middleware for managing conversation length
       {LangChain.Agents.Middleware.Summarization,
        Keyword.merge([model: model], Keyword.get(opts, :summarization_opts, []))},
