@@ -49,6 +49,7 @@ defmodule LangChain.MixProject do
       {:nimble_parsec, "~> 1.4", optional: true},
       {:abacus, "~> 2.1.0", optional: true},
       {:nx, ">= 0.7.0", optional: true},
+      {:phoenix_pubsub, "~> 2.1", optional: true},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
       {:mimic, "~> 1.8", only: :test}
     ]
@@ -139,6 +140,13 @@ defmodule LangChain.MixProject do
           LangChain.Tools.DeepResearch.ResearchRequest,
           LangChain.Tools.DeepResearch.ResearchStatus,
           LangChain.Tools.DeepResearch.ResearchResult
+        ],
+        Agents: [
+          LangChain.Agents.Agent,
+          LangChain.Agents.AgentServer,
+          LangChain.Agents.State,
+          LangChain.Agents.Todo,
+          LangChain.Agents.Middleware
         ],
         Utils: [
           LangChain.Utils,
