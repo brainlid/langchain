@@ -287,7 +287,8 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
       # Second: start new server (should index files)
       # Note: Lazy loading indexing would need to be implemented in FileSystemState.new/1
       # For now, this tests the disk backend's list_persisted_files capability
-      {:ok, files} = Disk.list_persisted_files(agent_id, path: tmp_dir, base_directory: "Memories")
+      {:ok, files} =
+        Disk.list_persisted_files(agent_id, path: tmp_dir, base_directory: "Memories")
 
       assert length(files) == 2
       assert "/Memories/file1.txt" in files
@@ -379,7 +380,8 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
 
       Process.sleep(150)
 
-      {:ok, listed_files} = Disk.list_persisted_files(agent_id, path: tmp_dir, base_directory: "Memories")
+      {:ok, listed_files} =
+        Disk.list_persisted_files(agent_id, path: tmp_dir, base_directory: "Memories")
 
       assert length(listed_files) == 4
 
@@ -417,7 +419,9 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
       Process.sleep(200)
 
       # All files should be on disk
-      {:ok, files} = Disk.list_persisted_files(agent_id, path: tmp_dir, base_directory: "Memories")
+      {:ok, files} =
+        Disk.list_persisted_files(agent_id, path: tmp_dir, base_directory: "Memories")
+
       assert length(files) == 10
 
       for i <- 1..10 do

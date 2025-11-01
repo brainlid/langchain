@@ -30,7 +30,9 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
     end
 
     test "initializes with custom enabled_tools", %{agent_id: agent_id} do
-      assert {:ok, config} = FileSystem.init(agent_id: agent_id, enabled_tools: ["ls", "read_file"])
+      assert {:ok, config} =
+               FileSystem.init(agent_id: agent_id, enabled_tools: ["ls", "read_file"])
+
       assert config.enabled_tools == ["ls", "read_file"]
     end
 
@@ -63,7 +65,11 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
 
   describe "tools/1" do
     test "returns four filesystem tools by default", %{agent_id: agent_id} do
-      tools = FileSystem.tools(%{agent_id: agent_id, enabled_tools: ["ls", "read_file", "write_file", "edit_file"]})
+      tools =
+        FileSystem.tools(%{
+          agent_id: agent_id,
+          enabled_tools: ["ls", "read_file", "write_file", "edit_file"]
+        })
 
       assert length(tools) == 4
       tool_names = Enum.map(tools, & &1.name)
@@ -91,7 +97,11 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
       FileSystemServer.write_file(agent_id, "/file1.txt", "content1")
       FileSystemServer.write_file(agent_id, "/file2.txt", "content2")
 
-      [ls_tool | _] = FileSystem.tools(%{agent_id: agent_id, enabled_tools: ["ls", "read_file", "write_file", "edit_file"]})
+      [ls_tool | _] =
+        FileSystem.tools(%{
+          agent_id: agent_id,
+          enabled_tools: ["ls", "read_file", "write_file", "edit_file"]
+        })
 
       assert {:ok, result} = ls_tool.function.(%{}, %{state: State.new!()})
       assert result =~ "/file1.txt"
@@ -99,7 +109,11 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
     end
 
     test "reports empty filesystem", %{agent_id: agent_id} do
-      [ls_tool | _] = FileSystem.tools(%{agent_id: agent_id, enabled_tools: ["ls", "read_file", "write_file", "edit_file"]})
+      [ls_tool | _] =
+        FileSystem.tools(%{
+          agent_id: agent_id,
+          enabled_tools: ["ls", "read_file", "write_file", "edit_file"]
+        })
 
       assert {:ok, result} = ls_tool.function.(%{}, %{state: State.new!()})
       assert result =~ "No files"
@@ -110,7 +124,11 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
       FileSystemServer.write_file(agent_id, "/test.md", "content")
       FileSystemServer.write_file(agent_id, "/other.txt", "content")
 
-      [ls_tool | _] = FileSystem.tools(%{agent_id: agent_id, enabled_tools: ["ls", "read_file", "write_file", "edit_file"]})
+      [ls_tool | _] =
+        FileSystem.tools(%{
+          agent_id: agent_id,
+          enabled_tools: ["ls", "read_file", "write_file", "edit_file"]
+        })
 
       assert {:ok, result} = ls_tool.function.(%{"pattern" => "*test*"}, %{state: State.new!()})
       assert result =~ "/test.txt"
@@ -130,7 +148,12 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
       """
 
       FileSystemServer.write_file(agent_id, "/test.txt", String.trim(content))
-      [_, read_file_tool | _] = FileSystem.tools(%{agent_id: agent_id, enabled_tools: ["ls", "read_file", "write_file", "edit_file"]})
+
+      [_, read_file_tool | _] =
+        FileSystem.tools(%{
+          agent_id: agent_id,
+          enabled_tools: ["ls", "read_file", "write_file", "edit_file"]
+        })
 
       %{tool: read_file_tool}
     end
@@ -189,7 +212,12 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
 
   describe "write_file tool" do
     setup %{agent_id: agent_id} do
-      [_, _, write_file_tool | _] = FileSystem.tools(%{agent_id: agent_id, enabled_tools: ["ls", "read_file", "write_file", "edit_file"]})
+      [_, _, write_file_tool | _] =
+        FileSystem.tools(%{
+          agent_id: agent_id,
+          enabled_tools: ["ls", "read_file", "write_file", "edit_file"]
+        })
+
       %{tool: write_file_tool}
     end
 
@@ -232,7 +260,12 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
   describe "edit_file tool" do
     setup %{agent_id: agent_id} do
       FileSystemServer.write_file(agent_id, "/edit.txt", "Hello World")
-      [_, _, _, edit_file_tool] = FileSystem.tools(%{agent_id: agent_id, enabled_tools: ["ls", "read_file", "write_file", "edit_file"]})
+
+      [_, _, _, edit_file_tool] =
+        FileSystem.tools(%{
+          agent_id: agent_id,
+          enabled_tools: ["ls", "read_file", "write_file", "edit_file"]
+        })
 
       %{tool: edit_file_tool}
     end

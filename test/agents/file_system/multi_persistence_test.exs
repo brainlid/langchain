@@ -247,7 +247,9 @@ defmodule LangChain.Agents.FileSystem.MultiPersistenceTest do
           case :ets.lookup(storage_table, path) do
             [{^path, content}] ->
               {:ok, %{entry | content: content, loaded: true, dirty: false}}
-            [] -> {:error, :enoent}
+
+            [] ->
+              {:error, :enoent}
           end
         end
 
