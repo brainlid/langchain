@@ -675,7 +675,9 @@ defmodule LangChain.Agents.FileSystemServerTest do
           case :ets.lookup(storage_table, path) do
             [{^path, content}] ->
               {:ok, %{entry | content: content, loaded: true, dirty: false}}
-            [] -> {:error, :enoent}
+
+            [] ->
+              {:error, :enoent}
           end
         end
 
@@ -689,7 +691,10 @@ defmodule LangChain.Agents.FileSystemServerTest do
         end
       end
 
-      config = make_config(TestPersistence8, "Memories", storage_opts: [test_pid: test_pid, storage_table: storage_table])
+      config =
+        make_config(TestPersistence8, "Memories",
+          storage_opts: [test_pid: test_pid, storage_table: storage_table]
+        )
 
       {:ok, _pid} =
         FileSystemServer.start_link(

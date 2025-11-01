@@ -131,9 +131,7 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
           {:ok, new_state}
 
         {:error, reason} ->
-          Logger.error(
-            "Failed to list persisted files for #{base_dir}: #{inspect(reason)}"
-          )
+          Logger.error("Failed to list persisted files for #{base_dir}: #{inspect(reason)}")
 
           # Still return success but with no indexed files
           {:ok, new_state}
