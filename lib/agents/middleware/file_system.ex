@@ -159,9 +159,11 @@ defmodule LangChain.Agents.Middleware.FileSystem do
   def init(opts) do
     # Require agent_id to link to FileSystemServer
     agent_id = Keyword.fetch!(opts, :agent_id)
+    registry = Keyword.get(opts, :registry)
 
     config = %{
       agent_id: agent_id,
+      registry: registry,
       # Tool configuration
       enabled_tools:
         Keyword.get(opts, :enabled_tools, ["ls", "read_file", "write_file", "edit_file"]),
@@ -349,11 +351,12 @@ defmodule LangChain.Agents.Middleware.FileSystem do
 
   # Tool execution functions
 
-  defp execute_ls_tool(args, _context, config) do
+  defp execute_ls_tool(args, context, config) do
     pattern = get_arg(args, "pattern")
+    registry = get_registry(context, config)
 
     # List all files using FileSystemServer (reads directly from ETS)
-    all_files = LangChain.Agents.FileSystemServer.list_files(config.agent_id)
+    all_files = LangChain.Agents.FileSystemServer.list_files(registry, config.agent_id)
 
     # Apply pattern filtering
     filtered_files = filter_by_pattern(all_files, pattern)
@@ -379,15 +382,16 @@ defmodule LangChain.Agents.Middleware.FileSystem do
       {:error, "Filesystem not available: #{Exception.message(e)}"}
   end
 
-  defp execute_read_file_tool(args, _context, config) do
+  defp execute_read_file_tool(args, context, config) do
     file_path = get_arg(args, "file_path")
     offset = get_arg(args, "offset") || 0
     limit = get_arg(args, "limit") || 2000
+    registry = get_registry(context, config)
 
     # Validate path
     with {:ok, normalized_path} <- validate_path(file_path) do
       # Read file using FileSystemServer (handles lazy loading automatically)
-      case LangChain.Agents.FileSystemServer.read_file(config.agent_id, normalized_path) do
+      case LangChain.Agents.FileSystemServer.read_file(registry, config.agent_id, normalized_path) do
         {:ok, content} ->
           format_file_content(content, normalized_path, offset, limit)
 
@@ -446,9 +450,10 @@ defmodule LangChain.Agents.Middleware.FileSystem do
     {:ok, result}
   end
 
-  defp execute_write_file_tool(args, _context, config) do
+  defp execute_write_file_tool(args, context, config) do
     file_path = get_arg(args, "file_path")
     content = get_arg(args, "content")
+    registry = get_registry(context, config)
 
     cond do
       is_nil(file_path) or is_nil(content) ->
@@ -458,12 +463,13 @@ defmodule LangChain.Agents.Middleware.FileSystem do
         # Validate path
         with {:ok, normalized_path} <- validate_path(file_path) do
           # Check if file already exists (overwrite protection)
-          if LangChain.Agents.FileSystemServer.file_exists?(config.agent_id, normalized_path) do
+          if LangChain.Agents.FileSystemServer.file_exists?(registry, config.agent_id, normalized_path) do
             {:error,
              "File already exists: #{normalized_path}. Use edit_file to modify existing files."}
           else
             # Write file using FileSystemServer
             case LangChain.Agents.FileSystemServer.write_file(
+                   registry,
                    config.agent_id,
                    normalized_path,
                    content
@@ -484,11 +490,12 @@ defmodule LangChain.Agents.Middleware.FileSystem do
       {:error, "Filesystem not available: #{Exception.message(e)}"}
   end
 
-  defp execute_edit_file_tool(args, _context, config) do
+  defp execute_edit_file_tool(args, context, config) do
     file_path = get_arg(args, "file_path")
     old_string = get_arg(args, "old_string")
     new_string = get_arg(args, "new_string")
     replace_all = get_boolean_arg(args, "replace_all", false)
+    registry = get_registry(context, config)
 
     cond do
       is_nil(file_path) or is_nil(old_string) or is_nil(new_string) ->
@@ -498,9 +505,10 @@ defmodule LangChain.Agents.Middleware.FileSystem do
         # Validate path
         with {:ok, normalized_path} <- validate_path(file_path) do
           # Read current content using FileSystemServer
-          case LangChain.Agents.FileSystemServer.read_file(config.agent_id, normalized_path) do
+          case LangChain.Agents.FileSystemServer.read_file(registry, config.agent_id, normalized_path) do
             {:ok, content} ->
               perform_edit(
+                registry,
                 config.agent_id,
                 normalized_path,
                 content,
@@ -524,7 +532,7 @@ defmodule LangChain.Agents.Middleware.FileSystem do
       {:error, "Filesystem not available: #{Exception.message(e)}"}
   end
 
-  defp perform_edit(agent_id, file_path, content, old_string, new_string, replace_all) do
+  defp perform_edit(registry, agent_id, file_path, content, old_string, new_string, replace_all) do
     # Split to count occurrences
     parts = String.split(content, old_string, parts: :infinity)
     occurrence_count = length(parts) - 1
@@ -536,7 +544,7 @@ defmodule LangChain.Agents.Middleware.FileSystem do
       occurrence_count == 1 ->
         # Single occurrence, safe to replace
         updated_content = String.replace(content, old_string, new_string, global: false)
-        write_edit(agent_id, file_path, updated_content, "File edited successfully: #{file_path}")
+        write_edit(registry, agent_id, file_path, updated_content, "File edited successfully: #{file_path}")
 
       occurrence_count > 1 and not replace_all ->
         {:error,
@@ -547,6 +555,7 @@ defmodule LangChain.Agents.Middleware.FileSystem do
         updated_content = String.replace(content, old_string, new_string, global: true)
 
         write_edit(
+          registry,
           agent_id,
           file_path,
           updated_content,
@@ -555,14 +564,22 @@ defmodule LangChain.Agents.Middleware.FileSystem do
     end
   end
 
-  defp write_edit(agent_id, file_path, updated_content, success_message) do
-    case LangChain.Agents.FileSystemServer.write_file(agent_id, file_path, updated_content) do
+  defp write_edit(registry, agent_id, file_path, updated_content, success_message) do
+    case LangChain.Agents.FileSystemServer.write_file(registry, agent_id, file_path, updated_content) do
       :ok ->
         {:ok, success_message}
 
       {:error, reason} ->
         {:error, "Failed to save edit: #{inspect(reason)}"}
     end
+  end
+
+  defp get_registry(context, config) do
+    # Priority: context[:registry] > config.registry > default
+    context_registry = if is_map(context), do: Map.get(context, :registry), else: nil
+    config_registry = Map.get(config, :registry)
+
+    context_registry || config_registry || LangChain.Agents.AgentRegistry.default_registry()
   end
 
   defp get_arg(args, key) when is_map(args) do

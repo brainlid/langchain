@@ -26,18 +26,20 @@ defmodule LangChain.Agents.FileSystemServerTest do
     def list_persisted_files(_agent_id, _opts), do: {:ok, []}
   end
 
+  @test_registry LangChain.Test.Registry
+
   setup do
     # Start a test registry for this test
     agent_id = "test_agent_#{System.unique_integer([:positive])}"
 
     {:ok, _registry} =
-      start_supervised({Registry, keys: :unique, name: LangChain.Agents.Registry})
+      start_supervised({Registry, keys: :unique, name: @test_registry})
 
     on_exit(fn ->
       # Cleanup any running FileSystemServer
       # Wrap in try-catch because Registry might be gone already during cleanup
       try do
-        case FileSystemServer.whereis(agent_id) do
+        case FileSystemServer.whereis(@test_registry, agent_id) do
           nil -> :ok
           pid -> GenServer.stop(pid, :normal)
         end
@@ -48,7 +50,7 @@ defmodule LangChain.Agents.FileSystemServerTest do
       end
     end)
 
-    %{agent_id: agent_id}
+    %{agent_id: agent_id, registry: @test_registry}
   end
 
   # Helper to create persistence config for tests
@@ -68,12 +70,12 @@ defmodule LangChain.Agents.FileSystemServerTest do
   end
 
   describe "start_link/1" do
-    test "starts with minimal config", %{agent_id: agent_id} do
-      assert {:ok, pid} = FileSystemServer.start_link(agent_id: agent_id)
+    test "starts with minimal config", %{agent_id: agent_id, registry: registry} do
+      assert {:ok, pid} = FileSystemServer.start_link(agent_id: agent_id, registry: registry)
       assert Process.alive?(pid)
     end
 
-    test "starts with persistence configuration", %{agent_id: agent_id} do
+    test "starts with persistence configuration", %{agent_id: agent_id, registry: registry} do
       config =
         make_config(MockPersistence, "Memories",
           debounce_ms: 1000,
@@ -82,6 +84,7 @@ defmodule LangChain.Agents.FileSystemServerTest do
 
       opts = [
         agent_id: agent_id,
+        registry: registry,
         persistence_configs: [config]
       ]
 
@@ -89,7 +92,7 @@ defmodule LangChain.Agents.FileSystemServerTest do
       assert Process.alive?(pid)
 
       # Verify configuration
-      configs = FileSystemServer.get_persistence_configs(agent_id)
+      configs = FileSystemServer.get_persistence_configs(registry, agent_id)
       assert map_size(configs) == 1
       assert %{"Memories" => loaded_config} = configs
       assert loaded_config.persistence_module == MockPersistence
@@ -101,28 +104,28 @@ defmodule LangChain.Agents.FileSystemServerTest do
       end
     end
 
-    test "can be found via whereis", %{agent_id: agent_id} do
-      assert FileSystemServer.whereis(agent_id) == nil
+    test "can be found via whereis", %{agent_id: agent_id, registry: registry} do
+      assert FileSystemServer.whereis(registry, agent_id) == nil
 
-      {:ok, pid} = FileSystemServer.start_link(agent_id: agent_id)
+      {:ok, pid} = FileSystemServer.start_link(agent_id: agent_id, registry: registry)
 
-      assert FileSystemServer.whereis(agent_id) == pid
+      assert FileSystemServer.whereis(registry, agent_id) == pid
     end
   end
 
 
   describe "write_file/4" do
-    test "writes a memory file", %{agent_id: agent_id} do
-      {:ok, pid} = FileSystemServer.start_link(agent_id: agent_id)
+    test "writes a memory file", %{agent_id: agent_id, registry: registry} do
+      {:ok, pid} = FileSystemServer.start_link(agent_id: agent_id, registry: registry)
 
       path = "/scratch/test.txt"
       content = "test content"
 
-      assert :ok = FileSystemServer.write_file(agent_id, path, content)
+      assert :ok = FileSystemServer.write_file(registry, agent_id, path, content)
 
       # Verify file exists via API
-      assert FileSystemServer.file_exists?(agent_id, path)
-      assert {:ok, ^content} = FileSystemServer.read_file(agent_id, path)
+      assert FileSystemServer.file_exists?(registry, agent_id, path)
+      assert {:ok, ^content} = FileSystemServer.read_file(registry, agent_id, path)
 
       # Verify internal state
       state = :sys.get_state(pid)
@@ -135,15 +138,16 @@ defmodule LangChain.Agents.FileSystemServerTest do
     end
 
     test "writes to unconfigured directory as memory-only", %{
-      agent_id: agent_id
+      agent_id: agent_id,
+      registry: registry
     } do
-      {:ok, pid} = FileSystemServer.start_link(agent_id: agent_id)
+      {:ok, pid} = FileSystemServer.start_link(agent_id: agent_id, registry: registry)
 
       path = "/Memories/important.txt"
       content = "important data"
 
       # No persistence config for /Memories/, so should be memory-only
-      assert :ok = FileSystemServer.write_file(agent_id, path, content)
+      assert :ok = FileSystemServer.write_file(registry, agent_id, path, content)
 
       # File should be memory-only
       state = :sys.get_state(pid)
@@ -151,7 +155,7 @@ defmodule LangChain.Agents.FileSystemServerTest do
       assert entry.persistence == :memory
     end
 
-    test "writes persisted file and schedules debounce timer", %{agent_id: agent_id} do
+    test "writes persisted file and schedules debounce timer", %{agent_id: agent_id, registry: registry} do
       defmodule TestPersistence do
         @behaviour LangChain.Agents.FileSystem.Persistence
 
@@ -166,13 +170,14 @@ defmodule LangChain.Agents.FileSystemServerTest do
       {:ok, pid} =
         FileSystemServer.start_link(
           agent_id: agent_id,
+          registry: registry,
           persistence_configs: [config]
         )
 
       path = "/Memories/file.txt"
       content = "persisted content"
 
-      assert :ok = FileSystemServer.write_file(agent_id, path, content)
+      assert :ok = FileSystemServer.write_file(registry, agent_id, path, content)
 
       # File should be marked as persisted and dirty
       state = :sys.get_state(pid)
@@ -190,7 +195,7 @@ defmodule LangChain.Agents.FileSystemServerTest do
       assert clean_entry.dirty == false
     end
 
-    test "updates existing file and resets debounce timer", %{agent_id: agent_id} do
+    test "updates existing file and resets debounce timer", %{agent_id: agent_id, registry: registry} do
       test_pid = self()
 
       defmodule TestPersistence2 do
@@ -216,17 +221,18 @@ defmodule LangChain.Agents.FileSystemServerTest do
       {:ok, _pid} =
         FileSystemServer.start_link(
           agent_id: agent_id,
+          registry: registry,
           persistence_configs: [config]
         )
 
       path = "/Memories/file.txt"
 
       # Write multiple times rapidly
-      FileSystemServer.write_file(agent_id, path, "v1")
+      FileSystemServer.write_file(registry, agent_id, path, "v1")
       Process.sleep(50)
-      FileSystemServer.write_file(agent_id, path, "v2")
+      FileSystemServer.write_file(registry, agent_id, path, "v2")
       Process.sleep(50)
-      FileSystemServer.write_file(agent_id, path, "v3")
+      FileSystemServer.write_file(registry, agent_id, path, "v3")
 
       # Should only persist once after all writes complete
       Process.sleep(150)
@@ -236,8 +242,8 @@ defmodule LangChain.Agents.FileSystemServerTest do
       refute_received {:persisted, _time}
     end
 
-    test "writes with custom metadata", %{agent_id: agent_id} do
-      {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id)
+    test "writes with custom metadata", %{agent_id: agent_id, registry: registry} do
+      {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id, registry: registry)
 
       path = "/data.json"
       content = ~s({"key": "value"})
@@ -247,7 +253,7 @@ defmodule LangChain.Agents.FileSystemServerTest do
         custom: %{"author" => "test"}
       ]
 
-      assert :ok = FileSystemServer.write_file(agent_id, path, content, opts)
+      assert :ok = FileSystemServer.write_file(registry, agent_id, path, content, opts)
 
       entry = get_entry(agent_id, path)
       assert entry.metadata.mime_type == "application/json"
@@ -256,18 +262,18 @@ defmodule LangChain.Agents.FileSystemServerTest do
   end
 
   describe "delete_file/2" do
-    test "deletes memory file", %{agent_id: agent_id} do
-      {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id)
+    test "deletes memory file", %{agent_id: agent_id, registry: registry} do
+      {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id, registry: registry)
 
       path = "/scratch/file.txt"
-      FileSystemServer.write_file(agent_id, path, "data")
-      assert FileSystemServer.file_exists?(agent_id, path)
+      FileSystemServer.write_file(registry, agent_id, path, "data")
+      assert FileSystemServer.file_exists?(registry, agent_id, path)
 
-      assert :ok = FileSystemServer.delete_file(agent_id, path)
-      assert !FileSystemServer.file_exists?(agent_id, path)
+      assert :ok = FileSystemServer.delete_file(registry, agent_id, path)
+      assert !FileSystemServer.file_exists?(registry, agent_id, path)
     end
 
-    test "deletes persisted file and cancels timer", %{agent_id: agent_id} do
+    test "deletes persisted file and cancels timer", %{agent_id: agent_id, registry: registry} do
       test_pid = self()
 
       defmodule TestPersistence3 do
@@ -299,40 +305,41 @@ defmodule LangChain.Agents.FileSystemServerTest do
       {:ok, _pid} =
         FileSystemServer.start_link(
           agent_id: agent_id,
+          registry: registry,
           persistence_configs: [config]
         )
 
 
       path = "/Memories/file.txt"
-      FileSystemServer.write_file(agent_id, path, "data")
+      FileSystemServer.write_file(registry, agent_id, path, "data")
 
       # Verify file exists and is dirty (pending persist)
-      {:ok, stats} = FileSystemServer.stats(agent_id)
+      {:ok, stats} = FileSystemServer.stats(registry, agent_id)
       assert stats.dirty_files == 1
 
       # Delete the file
-      assert :ok = FileSystemServer.delete_file(agent_id, path)
+      assert :ok = FileSystemServer.delete_file(registry, agent_id, path)
 
       # Verify storage deletion was called
       assert_received :deleted_from_storage
 
       # Verify file is gone from ETS
-      assert !FileSystemServer.file_exists?(agent_id, path)
+      assert !FileSystemServer.file_exists?(registry, agent_id, path)
 
       # Verify no dirty files remain
-      {:ok, stats} = FileSystemServer.stats(agent_id)
+      {:ok, stats} = FileSystemServer.stats(registry, agent_id)
       assert stats.dirty_files == 0
     end
 
-    test "deletes non-existent file returns ok", %{agent_id: agent_id} do
-      {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id)
+    test "deletes non-existent file returns ok", %{agent_id: agent_id, registry: registry} do
+      {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id, registry: registry)
 
-      assert :ok = FileSystemServer.delete_file(agent_id, "/nonexistent.txt")
+      assert :ok = FileSystemServer.delete_file(registry, agent_id, "/nonexistent.txt")
     end
   end
 
   describe "flush_all/1" do
-    test "persists all dirty files immediately", %{agent_id: agent_id} do
+    test "persists all dirty files immediately", %{agent_id: agent_id, registry: registry} do
       test_pid = self()
 
       defmodule TestPersistence4 do
@@ -362,20 +369,21 @@ defmodule LangChain.Agents.FileSystemServerTest do
       {:ok, _pid} =
         FileSystemServer.start_link(
           agent_id: agent_id,
+          registry: registry,
           persistence_configs: [config]
         )
 
       # Write multiple files
-      FileSystemServer.write_file(agent_id, "/Memories/file1.txt", "data1")
-      FileSystemServer.write_file(agent_id, "/Memories/file2.txt", "data2")
-      FileSystemServer.write_file(agent_id, "/Memories/file3.txt", "data3")
+      FileSystemServer.write_file(registry, agent_id, "/Memories/file1.txt", "data1")
+      FileSystemServer.write_file(registry, agent_id, "/Memories/file2.txt", "data2")
+      FileSystemServer.write_file(registry, agent_id, "/Memories/file3.txt", "data3")
 
       # Verify files are dirty (timers pending)
-      {:ok, stats_before} = FileSystemServer.stats(agent_id)
+      {:ok, stats_before} = FileSystemServer.stats(registry, agent_id)
       assert stats_before.dirty_files == 3
 
       # Flush all
-      assert :ok = FileSystemServer.flush_all(agent_id)
+      assert :ok = FileSystemServer.flush_all(registry, agent_id)
 
       # Should receive persist calls for all files
       assert_received {:flushed, "/Memories/file1.txt"}
@@ -386,17 +394,17 @@ defmodule LangChain.Agents.FileSystemServerTest do
       Process.sleep(50)
 
       # Verify all files are now clean and no timers pending
-      {:ok, stats_after} = FileSystemServer.stats(agent_id)
+      {:ok, stats_after} = FileSystemServer.stats(registry, agent_id)
       assert stats_after.dirty_files == 0
     end
   end
 
   describe "stats/1" do
-    test "returns filesystem statistics", %{agent_id: agent_id} do
-      {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id)
+    test "returns filesystem statistics", %{agent_id: agent_id, registry: registry} do
+      {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id, registry: registry)
 
       # Empty filesystem
-      {:ok, stats} = FileSystemServer.stats(agent_id)
+      {:ok, stats} = FileSystemServer.stats(registry, agent_id)
       assert stats.total_files == 0
       assert stats.memory_files == 0
       assert stats.persisted_files == 0
@@ -406,7 +414,7 @@ defmodule LangChain.Agents.FileSystemServerTest do
       assert stats.total_size == 0
     end
 
-    test "counts different file types correctly", %{agent_id: agent_id} do
+    test "counts different file types correctly", %{agent_id: agent_id, registry: registry} do
       defmodule TestPersistence5 do
         @behaviour LangChain.Agents.FileSystem.Persistence
 
@@ -421,18 +429,19 @@ defmodule LangChain.Agents.FileSystemServerTest do
       {:ok, _pid} =
         FileSystemServer.start_link(
           agent_id: agent_id,
+          registry: registry,
           persistence_configs: [config]
         )
 
       # Write memory files
-      FileSystemServer.write_file(agent_id, "/scratch/file1.txt", "data1")
-      FileSystemServer.write_file(agent_id, "/scratch/file2.txt", "data2")
+      FileSystemServer.write_file(registry, agent_id, "/scratch/file1.txt", "data1")
+      FileSystemServer.write_file(registry, agent_id, "/scratch/file2.txt", "data2")
 
       # Write persisted files
-      FileSystemServer.write_file(agent_id, "/Memories/file3.txt", "data3")
-      FileSystemServer.write_file(agent_id, "/Memories/file4.txt", "data4")
+      FileSystemServer.write_file(registry, agent_id, "/Memories/file3.txt", "data3")
+      FileSystemServer.write_file(registry, agent_id, "/Memories/file4.txt", "data4")
 
-      {:ok, stats} = FileSystemServer.stats(agent_id)
+      {:ok, stats} = FileSystemServer.stats(registry, agent_id)
 
       assert stats.total_files == 4
       assert stats.memory_files == 2
@@ -445,16 +454,17 @@ defmodule LangChain.Agents.FileSystemServerTest do
   end
 
   describe "get_persistence_configs/1" do
-    test "returns persistence configurations", %{agent_id: agent_id} do
+    test "returns persistence configurations", %{agent_id: agent_id, registry: registry} do
       config = make_config(TestModule, "data", storage_opts: [path: "/test"])
 
       {:ok, _pid} =
         FileSystemServer.start_link(
           agent_id: agent_id,
+          registry: registry,
           persistence_configs: [config]
         )
 
-      configs = FileSystemServer.get_persistence_configs(agent_id)
+      configs = FileSystemServer.get_persistence_configs(registry, agent_id)
 
       assert map_size(configs) == 1
       assert %{"data" => loaded_config} = configs
@@ -463,17 +473,17 @@ defmodule LangChain.Agents.FileSystemServerTest do
       assert loaded_config.base_directory == "data"
     end
 
-    test "returns empty map when no persistence configured", %{agent_id: agent_id} do
-      {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id)
+    test "returns empty map when no persistence configured", %{agent_id: agent_id, registry: registry} do
+      {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id, registry: registry)
 
-      configs = FileSystemServer.get_persistence_configs(agent_id)
+      configs = FileSystemServer.get_persistence_configs(registry, agent_id)
 
       assert configs == %{}
     end
   end
 
   describe "terminate/2" do
-    test "flushes pending writes on termination", %{agent_id: agent_id} do
+    test "flushes pending writes on termination", %{agent_id: agent_id, registry: registry} do
       defmodule TestPersistence6 do
         @behaviour LangChain.Agents.FileSystem.Persistence
 
@@ -494,12 +504,13 @@ defmodule LangChain.Agents.FileSystemServerTest do
       {:ok, pid} =
         FileSystemServer.start_link(
           agent_id: agent_id,
+          registry: registry,
           persistence_configs: [config]
         )
 
       # Write files with long debounce
-      FileSystemServer.write_file(agent_id, "/Memories/file1.txt", "data1")
-      FileSystemServer.write_file(agent_id, "/Memories/file2.txt", "data2")
+      FileSystemServer.write_file(registry, agent_id, "/Memories/file1.txt", "data1")
+      FileSystemServer.write_file(registry, agent_id, "/Memories/file2.txt", "data2")
 
       # Stop the server (should flush pending writes)
       GenServer.stop(pid, :normal)
@@ -511,7 +522,7 @@ defmodule LangChain.Agents.FileSystemServerTest do
   end
 
   describe "configurable memories directory" do
-    test "uses custom memories_directory from storage_opts", %{agent_id: agent_id} do
+    test "uses custom memories_directory from storage_opts", %{agent_id: agent_id, registry: registry} do
       defmodule TestPersistence7 do
         @behaviour LangChain.Agents.FileSystem.Persistence
 
@@ -526,39 +537,40 @@ defmodule LangChain.Agents.FileSystemServerTest do
       {:ok, _pid} =
         FileSystemServer.start_link(
           agent_id: agent_id,
+          registry: registry,
           persistence_configs: [config]
         )
 
 
       # Files under /persistent/ should be persisted
-      FileSystemServer.write_file(agent_id, "/persistent/file.txt", "data")
+      FileSystemServer.write_file(registry, agent_id, "/persistent/file.txt", "data")
       entry = get_entry(agent_id, "/persistent/file.txt")
       assert entry.persistence == :persisted
 
       # Files under /Memories/ should be memory-only with this config
-      FileSystemServer.write_file(agent_id, "/Memories/file.txt", "data")
+      FileSystemServer.write_file(registry, agent_id, "/Memories/file.txt", "data")
       entry2 = get_entry(agent_id, "/Memories/file.txt")
       assert entry2.persistence == :memory
     end
   end
 
   describe "register_files/2" do
-    test "registers a single file entry", %{agent_id: agent_id} do
-      {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id)
+    test "registers a single file entry", %{agent_id: agent_id, registry: registry} do
+      {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id, registry: registry)
 
       # Create a file entry
       {:ok, entry} = FileEntry.new_memory_file("/test/data.txt", "test content")
 
       # Register it
-      assert :ok = FileSystemServer.register_files(agent_id, entry)
+      assert :ok = FileSystemServer.register_files(registry, agent_id, entry)
 
       # Should be able to read it immediately
-      assert {:ok, content} = FileSystemServer.read_file(agent_id, "/test/data.txt")
+      assert {:ok, content} = FileSystemServer.read_file(registry, agent_id, "/test/data.txt")
       assert content == "test content"
     end
 
-    test "registers multiple file entries", %{agent_id: agent_id} do
-      {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id)
+    test "registers multiple file entries", %{agent_id: agent_id, registry: registry} do
+      {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id, registry: registry)
 
       # Create multiple file entries
       {:ok, entry1} = FileEntry.new_memory_file("/test/file1.txt", "content1")
@@ -566,23 +578,23 @@ defmodule LangChain.Agents.FileSystemServerTest do
       {:ok, entry3} = FileEntry.new_memory_file("/test/file3.txt", "content3")
 
       # Register them all at once
-      assert :ok = FileSystemServer.register_files(agent_id, [entry1, entry2, entry3])
+      assert :ok = FileSystemServer.register_files(registry, agent_id, [entry1, entry2, entry3])
 
       # All should be readable
-      assert {:ok, "content1"} = FileSystemServer.read_file(agent_id, "/test/file1.txt")
-      assert {:ok, "content2"} = FileSystemServer.read_file(agent_id, "/test/file2.txt")
-      assert {:ok, "content3"} = FileSystemServer.read_file(agent_id, "/test/file3.txt")
+      assert {:ok, "content1"} = FileSystemServer.read_file(registry, agent_id, "/test/file1.txt")
+      assert {:ok, "content2"} = FileSystemServer.read_file(registry, agent_id, "/test/file2.txt")
+      assert {:ok, "content3"} = FileSystemServer.read_file(registry, agent_id, "/test/file3.txt")
     end
 
-    test "registers indexed files for lazy loading", %{agent_id: agent_id} do
-      {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id)
+    test "registers indexed files for lazy loading", %{agent_id: agent_id, registry: registry} do
+      {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id, registry: registry)
 
       # Create indexed file entries (not loaded)
       {:ok, entry1} = FileEntry.new_indexed_file("/data/lazy1.txt")
       {:ok, entry2} = FileEntry.new_indexed_file("/data/lazy2.txt")
 
       # Register them
-      assert :ok = FileSystemServer.register_files(agent_id, [entry1, entry2])
+      assert :ok = FileSystemServer.register_files(registry, agent_id, [entry1, entry2])
 
       # Files should exist but not be loaded
       e1 = get_entry(agent_id, "/data/lazy1.txt")
@@ -596,14 +608,14 @@ defmodule LangChain.Agents.FileSystemServerTest do
   end
 
   describe "concurrent operations" do
-    test "handles multiple writes to different files", %{agent_id: agent_id} do
-      {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id)
+    test "handles multiple writes to different files", %{agent_id: agent_id, registry: registry} do
+      {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id, registry: registry)
 
       # Simulate concurrent writes
       tasks =
         for i <- 1..10 do
           Task.async(fn ->
-            FileSystemServer.write_file(agent_id, "/file#{i}.txt", "data#{i}")
+            FileSystemServer.write_file(registry, agent_id, "/file#{i}.txt", "data#{i}")
           end)
         end
 
@@ -619,23 +631,23 @@ defmodule LangChain.Agents.FileSystemServerTest do
   end
 
   describe "read_file/2" do
-    test "reads memory file directly from ETS", %{agent_id: agent_id} do
-      {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id)
+    test "reads memory file directly from ETS", %{agent_id: agent_id, registry: registry} do
+      {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id, registry: registry)
 
       # Write a memory file
-      :ok = FileSystemServer.write_file(agent_id, "/scratch/notes.txt", "My notes")
+      :ok = FileSystemServer.write_file(registry, agent_id, "/scratch/notes.txt", "My notes")
 
       # Read should work immediately
-      assert {:ok, "My notes"} = FileSystemServer.read_file(agent_id, "/scratch/notes.txt")
+      assert {:ok, "My notes"} = FileSystemServer.read_file(registry, agent_id, "/scratch/notes.txt")
     end
 
-    test "returns error for nonexistent file", %{agent_id: agent_id} do
-      {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id)
+    test "returns error for nonexistent file", %{agent_id: agent_id, registry: registry} do
+      {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id, registry: registry)
 
-      assert {:error, :enoent} = FileSystemServer.read_file(agent_id, "/nonexistent.txt")
+      assert {:error, :enoent} = FileSystemServer.read_file(registry, agent_id, "/nonexistent.txt")
     end
 
-    test "lazy loads persisted file on first read", %{agent_id: agent_id} do
+    test "lazy loads persisted file on first read", %{agent_id: agent_id, registry: registry} do
       # Create a fake persistence module that tracks when files are loaded
       test_pid = self()
 
@@ -688,6 +700,7 @@ defmodule LangChain.Agents.FileSystemServerTest do
       {:ok, _pid} =
         FileSystemServer.start_link(
           agent_id: agent_id,
+          registry: registry,
           persistence_configs: [config]
         )
 
@@ -702,7 +715,7 @@ defmodule LangChain.Agents.FileSystemServerTest do
       refute_received {:loaded, _}
 
       # Now read the file - this should trigger lazy loading
-      assert {:ok, content} = FileSystemServer.read_file(agent_id, "/Memories/data.txt")
+      assert {:ok, content} = FileSystemServer.read_file(registry, agent_id, "/Memories/data.txt")
       assert content == "persisted content"
 
       # Should have received load message
@@ -717,19 +730,19 @@ defmodule LangChain.Agents.FileSystemServerTest do
       :ets.delete(storage_table)
     end
 
-    test "supports concurrent reads from ETS without GenServer bottleneck", %{agent_id: agent_id} do
-      {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id)
+    test "supports concurrent reads from ETS without GenServer bottleneck", %{agent_id: agent_id, registry: registry} do
+      {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id, registry: registry)
 
       # Write files
       for i <- 1..20 do
-        :ok = FileSystemServer.write_file(agent_id, "/file#{i}.txt", "content#{i}")
+        :ok = FileSystemServer.write_file(registry, agent_id, "/file#{i}.txt", "content#{i}")
       end
 
       # Simulate concurrent reads
       tasks =
         for i <- 1..20 do
           Task.async(fn ->
-            FileSystemServer.read_file(agent_id, "/file#{i}.txt")
+            FileSystemServer.read_file(registry, agent_id, "/file#{i}.txt")
           end)
         end
 
@@ -742,19 +755,19 @@ defmodule LangChain.Agents.FileSystemServerTest do
       end
     end
 
-    test "supports concurrent reads after files are loaded", %{agent_id: agent_id} do
-      {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id)
+    test "supports concurrent reads after files are loaded", %{agent_id: agent_id, registry: registry} do
+      {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id, registry: registry)
 
       # Write multiple files
       for i <- 1..5 do
-        :ok = FileSystemServer.write_file(agent_id, "/file#{i}.txt", "content#{i}")
+        :ok = FileSystemServer.write_file(registry, agent_id, "/file#{i}.txt", "content#{i}")
       end
 
       # Concurrent reads should all succeed
       tasks =
         for i <- 1..5 do
           Task.async(fn ->
-            FileSystemServer.read_file(agent_id, "/file#{i}.txt")
+            FileSystemServer.read_file(registry, agent_id, "/file#{i}.txt")
           end)
         end
 

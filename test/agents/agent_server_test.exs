@@ -6,13 +6,17 @@ defmodule LangChain.Agents.AgentServerTest do
   alias LangChain.ChatModels.ChatAnthropic
   alias LangChain.Message
 
+  @test_registry LangChain.Test.Registry
+
   setup :set_mimic_global
   setup :verify_on_exit!
 
-  setup_all do
-    # Copy Agent module for mocking
-    Mimic.copy(Agent)
-    :ok
+  setup do
+    # Start test registry
+    {:ok, _registry} =
+      start_supervised({Registry, keys: :unique, name: @test_registry})
+
+    %{registry: @test_registry}
   end
 
   # Helper to create a mock model
@@ -25,27 +29,26 @@ defmodule LangChain.Agents.AgentServerTest do
 
   # Helper to create a simple agent
   defp create_test_agent(opts \\ []) do
-    Agent.new!(
-      Keyword.merge(
-        [
-          model: mock_model(),
-          system_prompt: "Test agent",
-          replace_default_middleware: true,
-          middleware: []
-        ],
-        opts
-      )
-    )
+    default_opts = [
+      model: mock_model(),
+      system_prompt: "Test agent",
+      replace_default_middleware: true,
+      middleware: [],
+      registry: @test_registry
+    ]
+
+    Agent.new!(Keyword.merge(default_opts, opts))
   end
 
   describe "start_link/1" do
-    test "starts server with agent and initial state" do
+    test "starts server with agent and initial state", %{registry: registry} do
       agent = create_test_agent()
       initial_state = State.new!(%{messages: [Message.new_user!("Hello")]})
 
       assert {:ok, pid} =
                AgentServer.start_link(
                  agent: agent,
+                 registry: registry,
                  initial_state: initial_state,
                  pubsub: nil
                )
@@ -57,44 +60,49 @@ defmodule LangChain.Agents.AgentServerTest do
       assert length(state.messages) == 1
     end
 
-    test "starts server with default empty state" do
+    test "starts server with default empty state", %{registry: registry} do
       agent = create_test_agent()
 
-      assert {:ok, pid} = AgentServer.start_link(agent: agent, pubsub: nil)
+      assert {:ok, pid} = AgentServer.start_link(agent: agent, registry: registry, pubsub: nil)
 
       state = AgentServer.get_state(pid)
       assert state.messages == []
     end
 
-    test "starts with named registration" do
+    test "starts with named registration", %{registry: registry} do
       agent = create_test_agent()
 
       assert {:ok, pid} =
                AgentServer.start_link(
                  agent: agent,
+                 registry: registry,
                  name: :test_agent_server,
                  pubsub: nil
                )
 
-      assert Process.whereis(:test_agent_server) == pid
+      # Note: The name option is removed by start_link in favor of registry-based naming
+      # So we can't check Process.whereis(:test_agent_server)
+      # Instead, verify it's registered via the registry
+      assert Process.alive?(pid)
+      assert AgentServer.whereis(registry, agent.agent_id) == pid
     end
 
-    test "initializes with idle status" do
+    test "initializes with idle status", %{registry: registry} do
       agent = create_test_agent()
 
-      {:ok, pid} = AgentServer.start_link(agent: agent, pubsub: nil)
+      {:ok, pid} = AgentServer.start_link(agent: agent, registry: registry, pubsub: nil)
 
       assert AgentServer.get_status(pid) == :idle
     end
   end
 
   describe "get_state/1" do
-    test "returns current state" do
+    test "returns current state", %{registry: registry} do
       agent = create_test_agent()
       msg = Message.new_user!("Test")
       initial_state = State.new!(%{messages: [msg]})
 
-      {:ok, pid} = AgentServer.start_link(agent: agent, initial_state: initial_state, pubsub: nil)
+      {:ok, pid} = AgentServer.start_link(agent: agent, registry: registry, initial_state: initial_state, pubsub: nil)
 
       state = AgentServer.get_state(pid)
       assert length(state.messages) == 1
@@ -103,20 +111,20 @@ defmodule LangChain.Agents.AgentServerTest do
   end
 
   describe "get_status/1" do
-    test "returns current status" do
+    test "returns current status", %{registry: registry} do
       agent = create_test_agent()
-      {:ok, pid} = AgentServer.start_link(agent: agent, pubsub: nil)
+      {:ok, pid} = AgentServer.start_link(agent: agent, registry: registry, pubsub: nil)
 
       assert AgentServer.get_status(pid) == :idle
     end
   end
 
   describe "get_info/1" do
-    test "returns comprehensive server info" do
+    test "returns comprehensive server info", %{registry: registry} do
       agent = create_test_agent()
       initial_state = State.new!(%{messages: [Message.new_user!("Test")]})
 
-      {:ok, pid} = AgentServer.start_link(agent: agent, initial_state: initial_state, pubsub: nil)
+      {:ok, pid} = AgentServer.start_link(agent: agent, registry: registry, initial_state: initial_state, pubsub: nil)
 
       info = AgentServer.get_info(pid)
 
@@ -128,13 +136,13 @@ defmodule LangChain.Agents.AgentServerTest do
   end
 
   describe "execute/1" do
-    setup do
+    setup %{registry: registry} do
       # Mock the Agent.execute to avoid real LLM calls
       agent = create_test_agent()
-      {:ok, agent: agent}
+      {:ok, agent: agent, registry: registry}
     end
 
-    test "executes agent successfully", %{agent: agent} do
+    test "executes agent successfully", %{agent: agent, registry: registry} do
       initial_state = State.new!(%{messages: [Message.new_user!("Hello")]})
 
       Agent
@@ -144,7 +152,7 @@ defmodule LangChain.Agents.AgentServerTest do
         {:ok, new_state}
       end)
 
-      {:ok, pid} = AgentServer.start_link(agent: agent, initial_state: initial_state, pubsub: nil)
+      {:ok, pid} = AgentServer.start_link(agent: agent, registry: registry, initial_state: initial_state, pubsub: nil)
 
       assert :ok = AgentServer.execute(pid)
 
@@ -156,7 +164,7 @@ defmodule LangChain.Agents.AgentServerTest do
       assert length(state.messages) == 2
     end
 
-    test "transitions to running status immediately", %{agent: agent} do
+    test "transitions to running status immediately", %{agent: agent, registry: registry} do
       initial_state = State.new!(%{messages: [Message.new_user!("Hello")]})
 
       Agent
@@ -165,14 +173,14 @@ defmodule LangChain.Agents.AgentServerTest do
         {:ok, state}
       end)
 
-      {:ok, pid} = AgentServer.start_link(agent: agent, initial_state: initial_state, pubsub: nil)
+      {:ok, pid} = AgentServer.start_link(agent: agent, registry: registry, initial_state: initial_state, pubsub: nil)
 
       assert :ok = AgentServer.execute(pid)
       # Should immediately be running
       assert AgentServer.get_status(pid) == :running
     end
 
-    test "returns error if not idle", %{agent: agent} do
+    test "returns error if not idle", %{agent: agent, registry: registry} do
       initial_state = State.new!(%{messages: [Message.new_user!("Hello")]})
 
       Agent
@@ -181,7 +189,7 @@ defmodule LangChain.Agents.AgentServerTest do
         {:ok, state}
       end)
 
-      {:ok, pid} = AgentServer.start_link(agent: agent, initial_state: initial_state, pubsub: nil)
+      {:ok, pid} = AgentServer.start_link(agent: agent, registry: registry, initial_state: initial_state, pubsub: nil)
 
       # First execution succeeds
       assert :ok = AgentServer.execute(pid)
@@ -190,7 +198,7 @@ defmodule LangChain.Agents.AgentServerTest do
       assert {:error, _} = AgentServer.execute(pid)
     end
 
-    test "handles agent execution error", %{agent: agent} do
+    test "handles agent execution error", %{agent: agent, registry: registry} do
       initial_state = State.new!(%{messages: [Message.new_user!("Hello")]})
 
       Agent
@@ -198,7 +206,7 @@ defmodule LangChain.Agents.AgentServerTest do
         {:error, "Something went wrong"}
       end)
 
-      {:ok, pid} = AgentServer.start_link(agent: agent, initial_state: initial_state, pubsub: nil)
+      {:ok, pid} = AgentServer.start_link(agent: agent, registry: registry, initial_state: initial_state, pubsub: nil)
 
       assert :ok = AgentServer.execute(pid)
 
@@ -210,7 +218,7 @@ defmodule LangChain.Agents.AgentServerTest do
       assert info.error == "Something went wrong"
     end
 
-    test "handles agent interrupt", %{agent: agent} do
+    test "handles agent interrupt", %{agent: agent, registry: registry} do
       initial_state = State.new!(%{messages: [Message.new_user!("Write file")]})
 
       interrupt_data = %{
@@ -225,7 +233,7 @@ defmodule LangChain.Agents.AgentServerTest do
         {:interrupt, state, interrupt_data}
       end)
 
-      {:ok, pid} = AgentServer.start_link(agent: agent, initial_state: initial_state, pubsub: nil)
+      {:ok, pid} = AgentServer.start_link(agent: agent, registry: registry, initial_state: initial_state, pubsub: nil)
 
       assert :ok = AgentServer.execute(pid)
 
@@ -239,7 +247,7 @@ defmodule LangChain.Agents.AgentServerTest do
   end
 
   describe "resume/2" do
-    setup do
+    setup %{registry: registry} do
       agent = create_test_agent()
 
       initial_state = State.new!(%{messages: [Message.new_user!("Write file")]})
@@ -257,11 +265,11 @@ defmodule LangChain.Agents.AgentServerTest do
         {:interrupt, state, interrupt_data}
       end)
 
-      {:ok, pid} = AgentServer.start_link(agent: agent, initial_state: initial_state, pubsub: nil)
+      {:ok, pid} = AgentServer.start_link(agent: agent, registry: registry, initial_state: initial_state, pubsub: nil)
       :ok = AgentServer.execute(pid)
       Process.sleep(50)
 
-      {:ok, agent: agent, pid: pid}
+      {:ok, agent: agent, pid: pid, registry: registry}
     end
 
     test "resumes execution after interrupt", %{agent: agent, pid: pid} do
@@ -281,13 +289,13 @@ defmodule LangChain.Agents.AgentServerTest do
       assert AgentServer.get_status(pid) == :completed
     end
 
-    test "returns error if not interrupted", %{agent: _agent, pid: setup_pid} do
+    test "returns error if not interrupted", %{agent: _agent, pid: setup_pid, registry: registry} do
       # Stop the server from setup first since it uses the default name
       GenServer.stop(setup_pid, :normal)
 
       # Create a new idle server
       agent = create_test_agent()
-      {:ok, pid} = AgentServer.start_link(agent: agent, pubsub: nil)
+      {:ok, pid} = AgentServer.start_link(agent: agent, registry: registry, pubsub: nil)
 
       decisions = [%{type: :approve}]
       assert {:error, _} = AgentServer.resume(pid, decisions)
@@ -313,7 +321,7 @@ defmodule LangChain.Agents.AgentServerTest do
   end
 
   describe "PubSub events" do
-    setup do
+    setup %{registry: registry} do
       # Start a test PubSub with supervisor
       pubsub_name = :"test_pubsub_#{:erlang.unique_integer([:positive])}"
       {:ok, _} = start_supervised({Phoenix.PubSub, name: pubsub_name})
@@ -324,6 +332,7 @@ defmodule LangChain.Agents.AgentServerTest do
       {:ok, pid} =
         AgentServer.start_link(
           agent: agent,
+          registry: registry,
           initial_state: initial_state,
           pubsub: Phoenix.PubSub,
           pubsub_name: pubsub_name,
@@ -333,7 +342,7 @@ defmodule LangChain.Agents.AgentServerTest do
       # Subscribe to events
       :ok = AgentServer.subscribe(pid)
 
-      {:ok, agent: agent, pid: pid, pubsub_name: pubsub_name}
+      {:ok, agent: agent, pid: pid, pubsub_name: pubsub_name, registry: registry}
     end
 
     test "broadcasts status changes", %{agent: agent, pid: pid} do
@@ -447,9 +456,9 @@ defmodule LangChain.Agents.AgentServerTest do
   end
 
   describe "stop/1" do
-    test "stops the server gracefully" do
+    test "stops the server gracefully", %{registry: registry} do
       agent = create_test_agent()
-      {:ok, pid} = AgentServer.start_link(agent: agent, pubsub: nil)
+      {:ok, pid} = AgentServer.start_link(agent: agent, registry: registry, pubsub: nil)
 
       assert Process.alive?(pid)
       assert :ok = AgentServer.stop(pid)

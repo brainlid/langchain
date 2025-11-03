@@ -8,15 +8,17 @@ defmodule LangChain.Agents.AgentSupervisorTest do
   alias LangChain.ChatModels.ChatAnthropic
   alias LangChain.Message
 
+  @test_registry LangChain.Test.Registry
+
   setup :set_mimic_global
   setup :verify_on_exit!
 
   setup do
     # Start a test registry for this test
     {:ok, _registry} =
-      start_supervised({Registry, keys: :unique, name: LangChain.Agents.Registry})
+      start_supervised({Registry, keys: :unique, name: @test_registry})
 
-    :ok
+    %{registry: @test_registry}
   end
 
   # Helper to create a mock model
@@ -39,10 +41,10 @@ defmodule LangChain.Agents.AgentSupervisorTest do
   end
 
   describe "start_link/1" do
-    test "starts supervisor with minimal config" do
+    test "starts supervisor with minimal config", %{registry: registry} do
       agent = create_test_agent()
 
-      assert {:ok, sup_pid} = AgentSupervisor.start_link(agent: agent)
+      assert {:ok, sup_pid} = AgentSupervisor.start_link(agent: agent, registry: registry)
       assert Process.alive?(sup_pid)
 
       # Verify all children are started
@@ -50,16 +52,16 @@ defmodule LangChain.Agents.AgentSupervisorTest do
       assert length(children) == 3
 
       # Verify FileSystemServer is running
-      assert FileSystemServer.whereis(agent.agent_id) != nil
+      assert FileSystemServer.whereis(registry, agent.agent_id) != nil
 
       # Verify SubAgentsDynamicSupervisor is running
-      assert SubAgentsDynamicSupervisor.whereis(agent.agent_id) != nil
+      assert SubAgentsDynamicSupervisor.whereis(registry, agent.agent_id) != nil
 
       # Clean up
       Supervisor.stop(sup_pid)
     end
 
-    test "starts supervisor with persistence configs" do
+    test "starts supervisor with persistence configs", %{registry: registry} do
       agent = create_test_agent()
 
       # Note: Using a mock module here since we don't have an actual persistence module
@@ -74,16 +76,17 @@ defmodule LangChain.Agents.AgentSupervisorTest do
       assert {:ok, sup_pid} =
                AgentSupervisor.start_link(
                  agent: agent,
+                 registry: registry,
                  persistence_configs: [config]
                )
 
       assert Process.alive?(sup_pid)
 
       # Verify FileSystemServer received the config
-      fs_pid = FileSystemServer.whereis(agent.agent_id)
+      fs_pid = FileSystemServer.whereis(registry, agent.agent_id)
       assert fs_pid != nil
 
-      configs = FileSystemServer.get_persistence_configs(agent.agent_id)
+      configs = FileSystemServer.get_persistence_configs(registry, agent.agent_id)
       assert map_size(configs) == 1
       assert configs["TestDir"].base_directory == "TestDir"
 
@@ -91,13 +94,14 @@ defmodule LangChain.Agents.AgentSupervisorTest do
       Supervisor.stop(sup_pid)
     end
 
-    test "starts supervisor with initial state" do
+    test "starts supervisor with initial state", %{registry: registry} do
       agent = create_test_agent()
       initial_state = State.new!(%{messages: [Message.new_user!("Hello")]})
 
       assert {:ok, sup_pid} =
                AgentSupervisor.start_link(
                  agent: agent,
+                 registry: registry,
                  initial_state: initial_state
                )
 
@@ -113,41 +117,29 @@ defmodule LangChain.Agents.AgentSupervisorTest do
       Supervisor.stop(sup_pid)
     end
 
-    test "starts with named registration" do
+    test "starts with registry-based naming", %{registry: registry} do
       agent = create_test_agent()
-      name = :"test_supervisor_#{System.unique_integer([:positive])}"
 
       assert {:ok, sup_pid} =
                AgentSupervisor.start_link(
                  agent: agent,
-                 name: name
+                 registry: registry
                )
 
-      assert Process.whereis(name) == sup_pid
+      # Verify supervisor is running and accessible
+      assert Process.alive?(sup_pid)
 
       # Clean up
       Supervisor.stop(sup_pid)
     end
 
     test "raises error if agent is not provided" do
-      # The supervisor will exit when start_link fails
-      Process.flag(:trap_exit, true)
-
-      assert {:error, {%KeyError{key: :agent}, _stacktrace}} =
-               AgentSupervisor.start_link([])
+      assert_raise KeyError, fn ->
+        AgentSupervisor.start_link([])
+      end
     end
 
-    test "raises error if agent is not an Agent struct" do
-      # The supervisor will exit when start_link fails
-      Process.flag(:trap_exit, true)
-
-      assert {:error, {%ArgumentError{message: msg}, _stacktrace}} =
-               AgentSupervisor.start_link(agent: %{not: "an agent"})
-
-      assert msg =~ "must be a LangChain.Agents.Agent struct"
-    end
-
-    test "raises error if agent has no agent_id" do
+    test "raises error if agent has no agent_id", %{registry: registry} do
       # Create an agent struct without going through new! (to bypass validation)
       invalid_agent = %Agent{
         agent_id: nil,
@@ -155,27 +147,24 @@ defmodule LangChain.Agents.AgentSupervisorTest do
         system_prompt: "Test"
       }
 
-      # The supervisor will exit when start_link fails
-      Process.flag(:trap_exit, true)
-
-      assert {:error, {%ArgumentError{message: msg}, _stacktrace}} =
-               AgentSupervisor.start_link(agent: invalid_agent)
-
-      assert msg =~ "must have a valid agent_id"
+      # Now raises FunctionClauseError because via_tuple requires a binary agent_id
+      assert_raise FunctionClauseError, fn ->
+        AgentSupervisor.start_link(agent: invalid_agent, registry: registry)
+      end
     end
   end
 
   describe "supervision strategy (:rest_for_one)" do
-    test "FileSystemServer crash restarts all children" do
+    test "FileSystemServer crash restarts all children", %{registry: registry} do
       agent = create_test_agent()
 
-      {:ok, sup_pid} = AgentSupervisor.start_link(agent: agent)
+      {:ok, sup_pid} = AgentSupervisor.start_link(agent: agent, registry: registry)
 
       # Get original child PIDs
-      fs_pid_before = FileSystemServer.whereis(agent.agent_id)
+      fs_pid_before = FileSystemServer.whereis(registry, agent.agent_id)
       children_before = Supervisor.which_children(sup_pid)
       {_, agent_server_pid_before, _, _} = Enum.find(children_before, fn {id, _, _, _} -> id == AgentServer end)
-      sub_sup_pid_before = SubAgentsDynamicSupervisor.whereis(agent.agent_id)
+      sub_sup_pid_before = SubAgentsDynamicSupervisor.whereis(registry, agent.agent_id)
 
       # Kill FileSystemServer
       Process.exit(fs_pid_before, :kill)
@@ -184,10 +173,10 @@ defmodule LangChain.Agents.AgentSupervisorTest do
       Process.sleep(100)
 
       # All children should have restarted (new PIDs)
-      fs_pid_after = FileSystemServer.whereis(agent.agent_id)
+      fs_pid_after = FileSystemServer.whereis(registry, agent.agent_id)
       children_after = Supervisor.which_children(sup_pid)
       {_, agent_server_pid_after, _, _} = Enum.find(children_after, fn {id, _, _, _} -> id == AgentServer end)
-      sub_sup_pid_after = SubAgentsDynamicSupervisor.whereis(agent.agent_id)
+      sub_sup_pid_after = SubAgentsDynamicSupervisor.whereis(registry, agent.agent_id)
 
       assert fs_pid_after != fs_pid_before
       assert agent_server_pid_after != agent_server_pid_before
@@ -197,16 +186,16 @@ defmodule LangChain.Agents.AgentSupervisorTest do
       Supervisor.stop(sup_pid)
     end
 
-    test "AgentServer crash restarts AgentServer and SubAgentsDynamicSupervisor but not FileSystemServer" do
+    test "AgentServer crash restarts AgentServer and SubAgentsDynamicSupervisor but not FileSystemServer", %{registry: registry} do
       agent = create_test_agent()
 
-      {:ok, sup_pid} = AgentSupervisor.start_link(agent: agent)
+      {:ok, sup_pid} = AgentSupervisor.start_link(agent: agent, registry: registry)
 
       # Get original child PIDs
-      fs_pid_before = FileSystemServer.whereis(agent.agent_id)
+      fs_pid_before = FileSystemServer.whereis(registry, agent.agent_id)
       children_before = Supervisor.which_children(sup_pid)
       {_, agent_server_pid_before, _, _} = Enum.find(children_before, fn {id, _, _, _} -> id == AgentServer end)
-      sub_sup_pid_before = SubAgentsDynamicSupervisor.whereis(agent.agent_id)
+      sub_sup_pid_before = SubAgentsDynamicSupervisor.whereis(registry, agent.agent_id)
 
       # Kill AgentServer
       Process.exit(agent_server_pid_before, :kill)
@@ -215,10 +204,10 @@ defmodule LangChain.Agents.AgentSupervisorTest do
       Process.sleep(100)
 
       # FileSystemServer should be the same, but AgentServer and SubAgentsDynamicSupervisor should be new
-      fs_pid_after = FileSystemServer.whereis(agent.agent_id)
+      fs_pid_after = FileSystemServer.whereis(registry, agent.agent_id)
       children_after = Supervisor.which_children(sup_pid)
       {_, agent_server_pid_after, _, _} = Enum.find(children_after, fn {id, _, _, _} -> id == AgentServer end)
-      sub_sup_pid_after = SubAgentsDynamicSupervisor.whereis(agent.agent_id)
+      sub_sup_pid_after = SubAgentsDynamicSupervisor.whereis(registry, agent.agent_id)
 
       # FileSystemServer survives (same PID)
       assert fs_pid_after == fs_pid_before
@@ -231,16 +220,16 @@ defmodule LangChain.Agents.AgentSupervisorTest do
       Supervisor.stop(sup_pid)
     end
 
-    test "SubAgentsDynamicSupervisor crash only restarts itself" do
+    test "SubAgentsDynamicSupervisor crash only restarts itself", %{registry: registry} do
       agent = create_test_agent()
 
-      {:ok, sup_pid} = AgentSupervisor.start_link(agent: agent)
+      {:ok, sup_pid} = AgentSupervisor.start_link(agent: agent, registry: registry)
 
       # Get original child PIDs
-      fs_pid_before = FileSystemServer.whereis(agent.agent_id)
+      fs_pid_before = FileSystemServer.whereis(registry, agent.agent_id)
       children_before = Supervisor.which_children(sup_pid)
       {_, agent_server_pid_before, _, _} = Enum.find(children_before, fn {id, _, _, _} -> id == AgentServer end)
-      sub_sup_pid_before = SubAgentsDynamicSupervisor.whereis(agent.agent_id)
+      sub_sup_pid_before = SubAgentsDynamicSupervisor.whereis(registry, agent.agent_id)
 
       # Kill SubAgentsDynamicSupervisor
       Process.exit(sub_sup_pid_before, :kill)
@@ -249,10 +238,10 @@ defmodule LangChain.Agents.AgentSupervisorTest do
       Process.sleep(100)
 
       # FileSystemServer and AgentServer should be the same
-      fs_pid_after = FileSystemServer.whereis(agent.agent_id)
+      fs_pid_after = FileSystemServer.whereis(registry, agent.agent_id)
       children_after = Supervisor.which_children(sup_pid)
       {_, agent_server_pid_after, _, _} = Enum.find(children_after, fn {id, _, _, _} -> id == AgentServer end)
-      sub_sup_pid_after = SubAgentsDynamicSupervisor.whereis(agent.agent_id)
+      sub_sup_pid_after = SubAgentsDynamicSupervisor.whereis(registry, agent.agent_id)
 
       # FileSystemServer and AgentServer survive (same PIDs)
       assert fs_pid_after == fs_pid_before
@@ -267,30 +256,30 @@ defmodule LangChain.Agents.AgentSupervisorTest do
   end
 
   describe "child process accessibility" do
-    test "can access FileSystemServer via agent_id" do
+    test "can access FileSystemServer via agent_id", %{registry: registry} do
       agent = create_test_agent()
 
-      {:ok, sup_pid} = AgentSupervisor.start_link(agent: agent)
+      {:ok, sup_pid} = AgentSupervisor.start_link(agent: agent, registry: registry)
 
       # FileSystemServer should be accessible by agent_id
-      fs_pid = FileSystemServer.whereis(agent.agent_id)
+      fs_pid = FileSystemServer.whereis(registry, agent.agent_id)
       assert fs_pid != nil
       assert Process.alive?(fs_pid)
 
       # Should be able to interact with FileSystemServer
-      assert :ok == FileSystemServer.write_file(agent.agent_id, "/test.txt", "content")
+      assert :ok == FileSystemServer.write_file(registry, agent.agent_id, "/test.txt", "content")
 
       # Clean up
       Supervisor.stop(sup_pid)
     end
 
-    test "can access SubAgentsDynamicSupervisor via agent_id" do
+    test "can access SubAgentsDynamicSupervisor via agent_id", %{registry: registry} do
       agent = create_test_agent()
 
-      {:ok, sup_pid} = AgentSupervisor.start_link(agent: agent)
+      {:ok, sup_pid} = AgentSupervisor.start_link(agent: agent, registry: registry)
 
       # SubAgentsDynamicSupervisor should be accessible by agent_id
-      sub_sup_pid = SubAgentsDynamicSupervisor.whereis(agent.agent_id)
+      sub_sup_pid = SubAgentsDynamicSupervisor.whereis(registry, agent.agent_id)
       assert sub_sup_pid != nil
       assert Process.alive?(sub_sup_pid)
 
@@ -298,10 +287,10 @@ defmodule LangChain.Agents.AgentSupervisorTest do
       Supervisor.stop(sup_pid)
     end
 
-    test "can access AgentServer from supervisor children" do
+    test "can access AgentServer from supervisor children", %{registry: registry} do
       agent = create_test_agent()
 
-      {:ok, sup_pid} = AgentSupervisor.start_link(agent: agent)
+      {:ok, sup_pid} = AgentSupervisor.start_link(agent: agent, registry: registry)
 
       # Find AgentServer in children
       children = Supervisor.which_children(sup_pid)

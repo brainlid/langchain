@@ -18,6 +18,7 @@ defmodule LangChain.Agents.AgentSupervisor do
 
   Accepts a keyword list with:
   - `:agent` - The Agent struct (required)
+  - `:registry` - Registry module name for process registration (optional, defaults to LangChain.Agents.Registry)
   - `:persistence_configs` - List of FileSystemConfig structs (optional, default: [])
   - `:initial_state` - Initial State for AgentServer (optional)
   - `:pubsub` - PubSub module for AgentServer (optional)
@@ -57,11 +58,18 @@ defmodule LangChain.Agents.AgentSupervisor do
         pubsub: Phoenix.PubSub,
         pubsub_name: :my_app_pubsub
       )
+
+      # With custom registry
+      {:ok, sup_pid} = AgentSupervisor.start_link(
+        agent: agent,
+        registry: MyApp.AgentRegistry
+      )
   """
 
   use Supervisor
 
   alias LangChain.Agents.Agent
+  alias LangChain.Agents.AgentRegistry
   alias LangChain.Agents.AgentServer
   alias LangChain.Agents.FileSystemServer
   alias LangChain.Agents.SubAgentsDynamicSupervisor
@@ -73,35 +81,58 @@ defmodule LangChain.Agents.AgentSupervisor do
   ## Options
 
   - `:agent` - The Agent struct (required)
+  - `:registry` - Registry module name for process registration (optional, defaults to LangChain.Agents.Registry)
   - `:persistence_configs` - List of FileSystemConfig structs (optional, default: [])
   - `:initial_state` - Initial State for AgentServer (optional)
   - `:pubsub` - PubSub module for AgentServer (optional)
   - `:pubsub_name` - PubSub instance name (optional)
-  - `:name` - Supervisor name registration (optional)
 
   ## Examples
 
+      # Using default registry
       {:ok, sup_pid} = AgentSupervisor.start_link(
         agent: agent,
         persistence_configs: [config]
       )
 
+      # Using custom registry
       {:ok, sup_pid} = AgentSupervisor.start_link(
         agent: agent,
-        name: {:via, Registry, {MyRegistry, :agent_sup}}
+        registry: MyApp.AgentRegistry
       )
   """
   @spec start_link(keyword()) :: Supervisor.on_start()
   def start_link(config) do
-    {name, config} = Keyword.pop(config, :name, __MODULE__)
+    registry = Keyword.get(config, :registry, AgentRegistry.default_registry())
+    agent = Keyword.fetch!(config, :agent)
+    agent_id = agent.agent_id
+
+    # Build via tuple for this supervisor
+    name = AgentRegistry.via_tuple(registry, :agent_supervisor, agent_id)
+
+    # Add registry to config so it's available in init/1
+    config = Keyword.put(config, :registry, registry)
 
     Supervisor.start_link(__MODULE__, config, name: name)
+  end
+
+  @doc """
+  Get the AgentSupervisor PID for an agent.
+
+  ## Examples
+
+      pid = AgentSupervisor.whereis(MyApp.Registry, "agent-123")
+  """
+  @spec whereis(atom(), String.t()) :: pid() | nil
+  def whereis(registry, agent_id) do
+    AgentRegistry.whereis(registry, :agent_supervisor, agent_id)
   end
 
   @impl true
   def init(config) do
     # Extract configuration
     agent = Keyword.fetch!(config, :agent)
+    registry = Keyword.fetch!(config, :registry)
     persistence_configs = Keyword.get(config, :persistence_configs, [])
     initial_state = Keyword.get(config, :initial_state, State.new!())
     pubsub = Keyword.get(config, :pubsub)
@@ -119,12 +150,13 @@ defmodule LangChain.Agents.AgentSupervisor do
       raise ArgumentError, "Agent must have a valid agent_id"
     end
 
-    # Build child specifications
+    # Build child specifications with registry
     children = [
       # 1. FileSystemServer - starts first, survives AgentServer crashes
       {FileSystemServer,
        [
          agent_id: agent_id,
+         registry: registry,
          persistence_configs: persistence_configs
        ]},
 
@@ -132,6 +164,7 @@ defmodule LangChain.Agents.AgentSupervisor do
       {AgentServer,
        [
          agent: agent,
+         registry: registry,
          initial_state: initial_state,
          pubsub: pubsub,
          pubsub_name: pubsub_name
@@ -139,7 +172,9 @@ defmodule LangChain.Agents.AgentSupervisor do
        |> Enum.reject(fn {_k, v} -> is_nil(v) end)},
 
       # 3. SubAgentsDynamicSupervisor - for spawning sub-agents
-      {SubAgentsDynamicSupervisor, agent_id: agent_id}
+      {SubAgentsDynamicSupervisor,
+       agent_id: agent_id,
+       registry: registry}
     ]
 
     # Use :rest_for_one strategy

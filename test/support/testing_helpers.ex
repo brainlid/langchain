@@ -5,6 +5,14 @@ defmodule LangChain.TestingHelpers do
 
   alias LangChain.Agents.FileSystemServer
 
+  # Default test registry
+  @test_registry LangChain.Test.Registry
+
+  @doc """
+  Returns the default test registry name.
+  """
+  def test_registry, do: @test_registry
+
   @doc """
   Collects all messages sent to the current test process and returns them as a
   list.
@@ -34,6 +42,7 @@ defmodule LangChain.TestingHelpers do
 
   - `agent_id` - The agent identifier
   - `path` - The file path to retrieve
+  - `registry` - The registry name (optional, defaults to test registry)
 
   ## Returns
 
@@ -44,8 +53,8 @@ defmodule LangChain.TestingHelpers do
       entry = get_entry("agent-123", "/file.txt")
       assert entry.content == "test content"
   """
-  def get_entry(agent_id, path) do
-    pid = FileSystemServer.whereis(agent_id)
+  def get_entry(agent_id, path, registry \\ @test_registry) do
+    pid = FileSystemServer.whereis(registry, agent_id)
     state = :sys.get_state(pid)
     Map.get(state.files, path)
   end
