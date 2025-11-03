@@ -3,8 +3,14 @@ defmodule LangChain.Agents.FileSystem.MultiPersistenceTest do
 
   alias LangChain.Agents.FileSystemServer
   alias LangChain.Agents.FileSystem.FileSystemConfig
-  alias LangChain.Agents.FileSystem.FileSystemState
   alias LangChain.Agents.FileSystem.Persistence
+
+  # Helper to get file entry from GenServer state
+  defp get_entry(agent_id, path) do
+    pid = FileSystemServer.whereis(agent_id)
+    state = :sys.get_state(pid)
+    Map.get(state.files, path)
+  end
 
   @moduletag :tmp_dir
 
@@ -41,7 +47,6 @@ defmodule LangChain.Agents.FileSystem.MultiPersistenceTest do
     } do
       # Start with memory-only filesystem
       {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id)
-      table = FileSystemState.get_table_name(agent_id)
 
       # Verify no persistence configs initially
       assert FileSystemServer.get_persistence_configs(agent_id) == %{}
@@ -78,14 +83,14 @@ defmodule LangChain.Agents.FileSystem.MultiPersistenceTest do
       # Write to user_files (should persist)
       assert :ok = FileSystemServer.write_file(agent_id, "/user_files/data.txt", "user data")
 
-      assert [{_, entry}] = :ets.lookup(table, "/user_files/data.txt")
+      entry = get_entry(agent_id, "/user_files/data.txt")
       assert entry.persistence == :persisted
       assert entry.dirty == true
 
       # Wait for debounce
       Process.sleep(150)
 
-      assert [{_, clean_entry}] = :ets.lookup(table, "/user_files/data.txt")
+      clean_entry = get_entry(agent_id, "/user_files/data.txt")
       assert clean_entry.dirty == false
 
       # Verify file exists on disk (base_directory is stripped)
@@ -102,7 +107,7 @@ defmodule LangChain.Agents.FileSystem.MultiPersistenceTest do
       # Write to memory-only location
       assert :ok = FileSystemServer.write_file(agent_id, "/scratch/temp.txt", "temp data")
 
-      assert [{_, temp_entry}] = :ets.lookup(table, "/scratch/temp.txt")
+      temp_entry = get_entry(agent_id, "/scratch/temp.txt")
       assert temp_entry.persistence == :memory
     end
 
@@ -278,10 +283,9 @@ defmodule LangChain.Agents.FileSystem.MultiPersistenceTest do
           persistence_configs: [config]
         )
 
-      table = FileSystemState.get_table_name(agent_id)
 
       # File should be indexed but NOT loaded
-      assert [{"/data/existing.txt", entry}] = :ets.lookup(table, "/data/existing.txt")
+      entry = get_entry(agent_id, "/data/existing.txt")
       assert entry.persistence == :persisted
       assert entry.loaded == false
       assert entry.content == nil
@@ -297,7 +301,7 @@ defmodule LangChain.Agents.FileSystem.MultiPersistenceTest do
       assert_receive {:loaded, "/data/existing.txt"}, 100
 
       # File should now be loaded in ETS
-      assert [{"/data/existing.txt", loaded_entry}] = :ets.lookup(table, "/data/existing.txt")
+      loaded_entry = get_entry(agent_id, "/data/existing.txt")
       assert loaded_entry.loaded == true
       assert loaded_entry.content == "lazy loaded content"
 

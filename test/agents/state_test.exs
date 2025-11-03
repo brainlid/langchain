@@ -11,7 +11,6 @@ defmodule LangChain.Agents.StateTest do
       assert {:ok, state} = State.new()
       assert state.messages == []
       assert state.todos == []
-      assert state.files == %{}
       assert state.metadata == %{}
       assert state.middleware_state == %{}
     end
@@ -22,14 +21,12 @@ defmodule LangChain.Agents.StateTest do
       attrs = %{
         messages: [message],
         todos: [%{id: "1", content: "task"}],
-        files: %{"file.txt" => "content"},
         metadata: %{key: "value"}
       }
 
       assert {:ok, state} = State.new(attrs)
       assert state.messages == attrs.messages
       assert state.todos == attrs.todos
-      assert state.files == attrs.files
       assert state.metadata == attrs.metadata
     end
   end
@@ -77,25 +74,6 @@ defmodule LangChain.Agents.StateTest do
       assert Enum.at(merged.todos, 0).id == "1"
     end
 
-    test "merges files with right side winning" do
-      left = State.new!(%{files: %{"a.txt" => "old", "b.txt" => "keep"}})
-      right = State.new!(%{files: %{"a.txt" => "new", "c.txt" => "add"}})
-
-      merged = State.merge_states(left, right)
-
-      assert merged.files["a.txt"] == "new"
-      assert merged.files["b.txt"] == "keep"
-      assert merged.files["c.txt"] == "add"
-    end
-
-    test "handles nil files" do
-      left = State.new!(%{files: %{"a.txt" => "content"}})
-      right = State.new!()
-
-      merged = State.merge_states(left, right)
-      assert merged.files == %{"a.txt" => "content"}
-    end
-
     test "deep merges metadata" do
       left = State.new!(%{metadata: %{a: 1, nested: %{x: 1, y: 2}}})
       right = State.new!(%{metadata: %{b: 2, nested: %{y: 3, z: 4}}})
@@ -123,10 +101,10 @@ defmodule LangChain.Agents.StateTest do
     test "merges map into state" do
       state = State.new!(%{messages: [Message.new_user!("hello")]})
 
-      merged = State.merge_states(state, %{files: %{"test.txt" => "content"}})
+      merged = State.merge_states(state, %{metadata: %{key: "value"}})
 
       assert merged.messages == state.messages
-      assert merged.files == %{"test.txt" => "content"}
+      assert merged.metadata == %{key: "value"}
     end
   end
 
@@ -164,52 +142,6 @@ defmodule LangChain.Agents.StateTest do
       updated = State.add_messages(state, messages)
 
       assert length(updated.messages) == 2
-    end
-  end
-
-  describe "put_file/3" do
-    test "adds a file to empty filesystem" do
-      state = State.new!()
-      updated = State.put_file(state, "/test.txt", "content")
-
-      # Files now use FileData structure, use State.get_file to extract content
-      assert State.get_file(updated, "/test.txt") == "content"
-    end
-
-    test "overwrites existing file" do
-      state = State.new!(%{files: %{"/test.txt" => "old"}})
-      updated = State.put_file(state, "/test.txt", "new")
-
-      # Files now use FileData structure, use State.get_file to extract content
-      assert State.get_file(updated, "/test.txt") == "new"
-    end
-  end
-
-  describe "get_file/2" do
-    test "retrieves existing file" do
-      state = State.new!(%{files: %{"/test.txt" => "content"}})
-      assert State.get_file(state, "/test.txt") == "content"
-    end
-
-    test "returns nil for missing file" do
-      state = State.new!()
-      assert State.get_file(state, "/missing.txt") == nil
-    end
-  end
-
-  describe "delete_file/2" do
-    test "removes file from filesystem" do
-      state = State.new!(%{files: %{"/test.txt" => "content"}})
-      updated = State.delete_file(state, "/test.txt")
-
-      assert updated.files == %{}
-    end
-
-    test "handles deleting non-existent file" do
-      state = State.new!()
-      updated = State.delete_file(state, "/missing.txt")
-
-      assert updated.files == %{}
     end
   end
 

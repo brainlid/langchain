@@ -2,8 +2,8 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
   @moduledoc """
   State management for the FileSystem.
 
-  This module handles all state transitions and ETS operations for the virtual
-  filesystem. It's designed to be testable independently of the GenServer.
+  This module handles all state transitions for the virtual filesystem.
+  File entries are stored in an in-memory map within the GenServer state.
   """
 
   require Logger
@@ -13,20 +13,20 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
 
   defstruct [
     :agent_id,
-    :table_name,
+    :files,
     :persistence_configs,
     :debounce_timers
   ]
 
   @type t :: %FileSystemState{
           agent_id: String.t(),
-          table_name: atom(),
+          files: %{String.t() => FileEntry.t()},
           persistence_configs: %{String.t() => FileSystemConfig.t()},
           debounce_timers: %{String.t() => reference()}
         }
 
   @doc """
-  Creates a new FileSystemState and initializes the ETS table.
+  Creates a new FileSystemState.
 
   ## Options
 
@@ -36,23 +36,12 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
   @spec new(keyword()) :: {:ok, t()} | {:error, term()}
   def new(opts) do
     with {:ok, agent_id} <- fetch_agent_id(opts) do
-      # Create named ETS table
-      table_name = get_table_name(agent_id)
-
-      # https://www.erlang.org/doc/apps/stdlib/ets.html#new/2
-      table_name =
-        :ets.new(table_name, [
-          :set,
-          :protected,
-          :named_table
-        ])
-
       # Build persistence configs map
       persistence_configs = build_persistence_configs(opts)
 
       state = %FileSystemState{
         agent_id: agent_id,
-        table_name: table_name,
+        files: %{},
         persistence_configs: persistence_configs,
         debounce_timers: %{}
       }
@@ -63,16 +52,6 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
       Logger.debug("FileSystemState initialized for agent #{agent_id}")
       {:ok, state}
     end
-  end
-
-  @doc """
-  Get the name of the ETS table for an agent.
-
-  This is a public function so the table can be accessed by agent_id alone.
-  """
-  @spec get_table_name(String.t()) :: atom()
-  def get_table_name(agent_id) do
-    :"agent_filesystem_#{agent_id}"
   end
 
   @doc """
@@ -117,22 +96,23 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
       case config.persistence_module.list_persisted_files(state.agent_id, opts) do
         {:ok, paths} ->
           # Add all paths as indexed files (loaded: false)
-          Enum.each(paths, fn path ->
-            case FileEntry.new_indexed_file(path) do
-              {:ok, entry} ->
-                :ets.insert(state.table_name, {path, entry})
-                Logger.debug("Indexed persisted file: #{path}")
+          new_files =
+            Enum.reduce(paths, new_state.files, fn path, acc_files ->
+              case FileEntry.new_indexed_file(path) do
+                {:ok, entry} ->
+                  Logger.debug("Indexed persisted file: #{path}")
+                  Map.put(acc_files, path, entry)
 
-              {:error, reason} ->
-                Logger.warning("Failed to index file #{path}: #{inspect(reason)}")
-            end
-          end)
+                {:error, reason} ->
+                  Logger.warning("Failed to index file #{path}: #{inspect(reason)}")
+                  acc_files
+              end
+            end)
 
-          {:ok, new_state}
+          {:ok, %{new_state | files: new_files}}
 
         {:error, reason} ->
           Logger.error("Failed to list persisted files for #{base_dir}: #{inspect(reason)}")
-
           # Still return success but with no indexed files
           {:ok, new_state}
       end
@@ -161,13 +141,14 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
   """
   @spec register_files(t(), [FileEntry.t()]) :: {:ok, t()}
   def register_files(%FileSystemState{} = state, file_entries) when is_list(file_entries) do
-    # Add all entries to ETS
-    Enum.each(file_entries, fn entry ->
-      :ets.insert(state.table_name, {entry.path, entry})
-      Logger.debug("Registered file: #{entry.path}")
-    end)
+    # Add all entries to files map
+    new_files =
+      Enum.reduce(file_entries, state.files, fn entry, acc_files ->
+        Logger.debug("Registered file: #{entry.path}")
+        Map.put(acc_files, entry.path, entry)
+      end)
 
-    {:ok, state}
+    {:ok, %{state | files: new_files}}
   end
 
   @doc """
@@ -200,15 +181,16 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
 
       case entry_result do
         {:ok, entry} ->
-          # Write to ETS
-          :ets.insert(state.table_name, {path, entry})
+          # Add to files map
+          new_files = Map.put(state.files, path, entry)
+          new_state = %{state | files: new_files}
 
           # Schedule debounce timer if persisted
           new_state =
             if config do
-              schedule_persist(state, path, config)
+              schedule_persist(new_state, path, config)
             else
-              state
+              new_state
             end
 
           {:ok, new_state}
@@ -220,14 +202,11 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
   end
 
   @doc """
-  Reads a file entry from the ETS table.
-
-  This is the single source of truth for reading file entries from ETS.
-  All other functions should use this to read entries.
+  Reads a file entry from the filesystem state.
 
   ## Parameters
 
-  - `agent_id` - Agent identifier (used to look up the named ETS table)
+  - `state` - Current FileSystemState
   - `path` - The file path to read
 
   ## Returns
@@ -235,13 +214,11 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
   - `{:ok, entry}` - File entry found
   - `{:error, :enoent}` - File not found
   """
-  @spec read_file(String.t(), String.t()) :: {:ok, FileEntry.t()} | {:error, :enoent}
-  def read_file(agent_id, path) do
-    table = get_table_name(agent_id)
-
-    case :ets.lookup(table, path) do
-      [{^path, entry}] -> {:ok, entry}
-      [] -> {:error, :enoent}
+  @spec read_file(t(), String.t()) :: {:ok, FileEntry.t()} | {:error, :enoent}
+  def read_file(%FileSystemState{} = state, path) do
+    case Map.get(state.files, path) do
+      nil -> {:error, :enoent}
+      entry -> {:ok, entry}
     end
   end
 
@@ -259,8 +236,12 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
     if config && config.readonly do
       {:error, "Cannot delete from read-only directory: #{config.base_directory}", state}
     else
-      case read_file(state.agent_id, path) do
-        {:ok, %FileEntry{persistence: :persisted} = entry} ->
+      case Map.get(state.files, path) do
+        nil ->
+          # File doesn't exist, that's OK
+          {:ok, state}
+
+        %FileEntry{persistence: :persisted} = entry ->
           # Cancel any pending timer
           new_state = cancel_timer(state, path)
 
@@ -270,26 +251,22 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
 
             case config.persistence_module.delete_from_storage(entry, opts) do
               :ok ->
-                :ets.delete(state.table_name, path)
-                {:ok, new_state}
+                new_files = Map.delete(new_state.files, path)
+                {:ok, %{new_state | files: new_files}}
 
               {:error, reason} ->
                 Logger.error("Failed to delete #{path} from storage: #{inspect(reason)}")
                 {:error, reason, state}
             end
           else
-            :ets.delete(state.table_name, path)
-            {:ok, new_state}
+            new_files = Map.delete(new_state.files, path)
+            {:ok, %{new_state | files: new_files}}
           end
 
-        {:ok, _entry} ->
-          # Memory-only file, just delete from ETS
-          :ets.delete(state.table_name, path)
-          {:ok, state}
-
-        {:error, :enoent} ->
-          # File doesn't exist, that's OK
-          {:ok, state}
+        _entry ->
+          # Memory-only file, just delete from map
+          new_files = Map.delete(state.files, path)
+          {:ok, %{state | files: new_files}}
       end
     end
   end
@@ -308,23 +285,25 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
     config = find_config_for_path(state, path)
 
     # Persist the file
-    case read_file(state.agent_id, path) do
-      {:ok, %FileEntry{dirty: true, persistence: :persisted} = entry} ->
+    case Map.get(state.files, path) do
+      %FileEntry{dirty: true, persistence: :persisted} = entry ->
         if config do
           opts = FileSystemConfig.build_storage_opts(config, state.agent_id)
 
           case config.persistence_module.write_to_storage(entry, opts) do
             {:ok, updated_entry} ->
               # Persistence backend returned updated FileEntry with refreshed metadata
-              :ets.insert(state.table_name, {path, updated_entry})
+              new_files = Map.put(state.files, path, updated_entry)
               Logger.debug("Persisted file after debounce: #{path}")
+              %{state | files: new_files}
 
             {:error, reason} ->
               Logger.error("Failed to persist #{path}: #{inspect(reason)}")
+              state
           end
+        else
+          state
         end
-
-        state
 
       _ ->
         # File no longer dirty or doesn't exist - no-op
@@ -364,12 +343,16 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
   """
   @spec load_file(t(), String.t()) :: {:ok, t()} | {:error, term(), t()}
   def load_file(%FileSystemState{} = state, path) do
-    case read_file(state.agent_id, path) do
-      {:ok, %FileEntry{loaded: true} = _entry} ->
+    case Map.get(state.files, path) do
+      nil ->
+        # File doesn't exist
+        {:error, :enoent, state}
+
+      %FileEntry{loaded: true} = _entry ->
         # Already loaded
         {:ok, state}
 
-      {:ok, %FileEntry{loaded: false, persistence: :persisted} = entry} ->
+      %FileEntry{loaded: false, persistence: :persisted} = entry ->
         # File exists but not loaded, load from persistence
         config = find_config_for_path(state, path)
 
@@ -379,9 +362,9 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
           case config.persistence_module.load_from_storage(entry, opts) do
             {:ok, loaded_entry} ->
               # Persistence backend returned complete FileEntry with content and metadata
-              :ets.insert(state.table_name, {path, loaded_entry})
+              new_files = Map.put(state.files, path, loaded_entry)
               Logger.debug("Lazy-loaded file from persistence: #{path}")
-              {:ok, state}
+              {:ok, %{state | files: new_files}}
 
             {:error, reason} ->
               Logger.error("Failed to load #{path} from persistence: #{inspect(reason)}")
@@ -392,11 +375,7 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
           {:error, :no_persistence_config, state}
         end
 
-      {:error, :enoent} ->
-        # File doesn't exist
-        {:error, :enoent, state}
-
-      {:ok, %FileEntry{persistence: :memory}} ->
+      %FileEntry{persistence: :memory} ->
         # Memory-only file should always be loaded
         {:ok, state}
     end
@@ -409,20 +388,17 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
 
   ## Parameters
 
-  - `agent_id` - Agent identifier (used to look up the named ETS table)
+  - `state` - Current FileSystemState
 
   ## Examples
 
-      iex> FileSystemState.list_files("agent-123")
+      iex> FileSystemState.list_files(state)
       ["/file1.txt", "/Memories/file2.txt"]
   """
-  @spec list_files(String.t()) :: [String.t()]
-  def list_files(agent_id) when is_binary(agent_id) do
-    table = get_table_name(agent_id)
-
-    table
-    |> :ets.tab2list()
-    |> Enum.map(fn {path, _entry} -> path end)
+  @spec list_files(t()) :: [String.t()]
+  def list_files(%FileSystemState{} = state) do
+    state.files
+    |> Map.keys()
     |> Enum.sort()
   end
 
@@ -437,40 +413,34 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
       iex> FileSystemState.file_exists?(state, "/nonexistent.txt")
       false
   """
-  @spec file_exists?(String.t(), String.t()) :: boolean()
-  def file_exists?(agent_id, path) do
-    table = get_table_name(agent_id)
-
-    case :ets.lookup(table, path) do
-      [{^path, _entry}] -> true
-      [] -> false
-    end
+  @spec file_exists?(t(), String.t()) :: boolean()
+  def file_exists?(%FileSystemState{} = state, path) do
+    Map.has_key?(state.files, path)
   end
 
   @doc """
   Computes filesystem statistics.
   """
-  @spec stats(String.t()) :: map()
-  def stats(agent_id) do
-    table = get_table_name(agent_id)
-    all_entries = :ets.tab2list(table)
+  @spec stats(t()) :: map()
+  def stats(%FileSystemState{} = state) do
+    all_entries = Map.values(state.files)
 
     total_files = length(all_entries)
 
     memory_files =
-      Enum.count(all_entries, fn {_path, entry} -> entry.persistence == :memory end)
+      Enum.count(all_entries, fn entry -> entry.persistence == :memory end)
 
     persisted_files =
-      Enum.count(all_entries, fn {_path, entry} -> entry.persistence == :persisted end)
+      Enum.count(all_entries, fn entry -> entry.persistence == :persisted end)
 
-    loaded_files = Enum.count(all_entries, fn {_path, entry} -> entry.loaded end)
-    not_loaded_files = Enum.count(all_entries, fn {_path, entry} -> not entry.loaded end)
-    dirty_files = Enum.count(all_entries, fn {_path, entry} -> entry.dirty end)
+    loaded_files = Enum.count(all_entries, fn entry -> entry.loaded end)
+    not_loaded_files = Enum.count(all_entries, fn entry -> not entry.loaded end)
+    dirty_files = Enum.count(all_entries, fn entry -> entry.dirty end)
 
     total_size =
       all_entries
-      |> Enum.filter(fn {_path, entry} -> entry.loaded and not is_nil(entry.content) end)
-      |> Enum.reduce(0, fn {_path, entry}, acc ->
+      |> Enum.filter(fn entry -> entry.loaded and not is_nil(entry.content) end)
+      |> Enum.reduce(0, fn entry, acc ->
         acc + byte_size(entry.content)
       end)
 
@@ -533,30 +503,34 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
 
   # Index files from all registered persistence backends
   defp index_persisted_files(%FileSystemState{} = state) do
-    Enum.each(state.persistence_configs, fn {_base_dir, config} ->
-      opts = FileSystemConfig.build_storage_opts(config, state.agent_id)
+    new_files =
+      Enum.reduce(state.persistence_configs, state.files, fn {_base_dir, config}, acc_files ->
+        opts = FileSystemConfig.build_storage_opts(config, state.agent_id)
 
-      case config.persistence_module.list_persisted_files(state.agent_id, opts) do
-        {:ok, paths} ->
-          # Add all paths as indexed files (loaded: false)
-          Enum.each(paths, fn path ->
-            case FileEntry.new_indexed_file(path) do
-              {:ok, entry} ->
-                :ets.insert(state.table_name, {path, entry})
-                Logger.debug("Indexed persisted file: #{path}")
+        case config.persistence_module.list_persisted_files(state.agent_id, opts) do
+          {:ok, paths} ->
+            # Add all paths as indexed files (loaded: false)
+            Enum.reduce(paths, acc_files, fn path, inner_acc ->
+              case FileEntry.new_indexed_file(path) do
+                {:ok, entry} ->
+                  Logger.debug("Indexed persisted file: #{path}")
+                  Map.put(inner_acc, path, entry)
 
-              {:error, reason} ->
-                Logger.warning("Failed to index file #{path}: #{inspect(reason)}")
-            end
-          end)
+                {:error, reason} ->
+                  Logger.warning("Failed to index file #{path}: #{inspect(reason)}")
+                  inner_acc
+              end
+            end)
 
-        {:error, reason} ->
-          Logger.error(
-            "Failed to list persisted files for #{config.base_directory}: #{inspect(reason)}"
-          )
-      end
-    end)
+          {:error, reason} ->
+            Logger.error(
+              "Failed to list persisted files for #{config.base_directory}: #{inspect(reason)}"
+            )
 
-    state
+            acc_files
+        end
+      end)
+
+    %{state | files: new_files}
   end
 end

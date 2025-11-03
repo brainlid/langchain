@@ -232,10 +232,13 @@ defmodule LangChain.Agents.SubAgent do
   Merge SubAgent result back into parent state.
 
   Applies SubAgent's state changes to parent while maintaining proper isolation:
-  - Files are merged (SubAgent changes override)
   - Metadata is deep merged
   - Custom state fields are merged
   - Parent's conversation and TODOs are preserved
+
+  **Note**: Files are managed by FileSystemServer and are not part of State.
+  File changes made by SubAgents are automatically persisted to the shared FileSystemServer
+  and don't need to be merged here.
 
   ## Parameters
 
@@ -249,22 +252,17 @@ defmodule LangChain.Agents.SubAgent do
   ## Examples
 
       parent_state = State.new!(%{
-        files: %{"a.txt" => "A"},
         metadata: %{step: 1}
       })
 
       subagent_result = %{
         final_message: Message.new_assistant!("Done"),
         state_updates: %{
-          files: %{"b.txt" => "B"},
           metadata: %{step: 2, computed: true}
         }
       }
 
       merged = SubAgent.merge_subagent_result(parent_state, subagent_result)
-
-      # Files merged
-      assert merged.files == %{"a.txt" => "A", "b.txt" => "B"}
 
       # Metadata deep merged
       assert merged.metadata == %{step: 2, computed: true}
@@ -274,8 +272,6 @@ defmodule LangChain.Agents.SubAgent do
 
     # Start with parent state
     parent_state
-    # Merge files (SubAgent changes override)
-    |> Map.put(:files, Map.merge(parent_state.files, state_updates[:files] || %{}))
     # Deep merge metadata
     |> Map.put(
       :metadata,
@@ -287,7 +283,7 @@ defmodule LangChain.Agents.SubAgent do
 
   defp merge_custom_state_fields(state, state_updates) do
     # Merge any custom fields that aren't standard State fields
-    standard_fields = [:messages, :todos, :files, :metadata, :middleware_state]
+    standard_fields = [:messages, :todos, :metadata, :middleware_state]
 
     state_updates
     |> Enum.reject(fn {key, _} -> key in standard_fields end)

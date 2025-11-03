@@ -13,11 +13,6 @@ defmodule LangChain.Agents.AgentServer do
 
   The server broadcasts events on the topic `"agent_server:\#{server_id}"`:
 
-  ### File Events
-  - `{:file_added, path, content}` - New file created
-  - `{:file_updated, path, content}` - Existing file modified
-  - `{:file_deleted, path}` - File removed
-
   ### Todo Events
   - `{:todo_created, todo}` - New todo item created
   - `{:todo_updated, todo}` - Todo status or content changed
@@ -30,10 +25,14 @@ defmodule LangChain.Agents.AgentServer do
   - `{:status_changed, :completed, final_state}` - Execution completed successfully
   - `{:status_changed, :error, reason}` - Execution failed
 
+  **Note**: File events are NOT broadcast by AgentServer. Files are managed by
+  `FileSystemServer` which provides its own event handling mechanism.
+
   ## Usage
 
       # Start a server
       {:ok, agent} = Agent.new(
+        agent_id: "my-agent-1",
         model: model,
         system_prompt: "You are a helpful assistant."
       )
@@ -149,13 +148,9 @@ defmodule LangChain.Agents.AgentServer do
       )
   """
   def start_link(opts) do
-    {name, opts} = Keyword.pop(opts, :name)
+    {name, opts} = Keyword.pop(opts, :name, __MODULE__)
 
-    if name do
-      GenServer.start_link(__MODULE__, opts, name: name)
-    else
-      GenServer.start_link(__MODULE__, opts)
-    end
+    GenServer.start_link(__MODULE__, opts, name: name)
   end
 
   @doc """
@@ -465,42 +460,8 @@ defmodule LangChain.Agents.AgentServer do
   end
 
   defp broadcast_state_changes(server_state, old_state, new_state) do
-    # Broadcast file changes
-    broadcast_file_changes(server_state, old_state.files, new_state.files)
-
     # Broadcast todo changes
     broadcast_todo_changes(server_state, old_state.todos, new_state.todos)
-  end
-
-  defp broadcast_file_changes(server_state, old_files, new_files) do
-    # Find new or updated files
-    Enum.each(new_files, fn {path, file_data} ->
-      old_file_data = Map.get(old_files, path)
-      content = State.extract_file_content(file_data)
-
-      cond do
-        # New file
-        old_file_data == nil ->
-          broadcast_event(server_state, {:file_added, path, content})
-
-        # File updated (content changed)
-        State.extract_file_content(old_file_data) != content ->
-          broadcast_event(server_state, {:file_updated, path, content})
-
-        # No change
-        true ->
-          :ok
-      end
-    end)
-
-    # Find deleted files
-    old_paths = MapSet.new(Map.keys(old_files))
-    new_paths = MapSet.new(Map.keys(new_files))
-    deleted_paths = MapSet.difference(old_paths, new_paths)
-
-    Enum.each(deleted_paths, fn path ->
-      broadcast_event(server_state, {:file_deleted, path})
-    end)
   end
 
   defp broadcast_todo_changes(server_state, old_todos, new_todos) do

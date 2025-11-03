@@ -4,7 +4,13 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
   alias LangChain.Agents.FileSystemServer
   alias LangChain.Agents.FileSystem.Persistence.Disk
   alias LangChain.Agents.FileSystem.FileSystemConfig
-  alias LangChain.Agents.FileSystem.FileSystemState
+
+  # Helper to get file entry from GenServer state
+  defp get_entry(agent_id, path) do
+    pid = FileSystemServer.whereis(agent_id)
+    state = :sys.get_state(pid)
+    Map.get(state.files, path)
+  end
 
   @moduletag :tmp_dir
 
@@ -64,7 +70,6 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
           persistence_configs: [config]
         )
 
-      table = FileSystemState.get_table_name(agent_id)
 
       # Write a file to persisted directory
       path = "/Memories/test.txt"
@@ -72,7 +77,7 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
       assert :ok = FileSystemServer.write_file(agent_id, path, content)
 
       # File should be in ETS immediately
-      assert [{^path, entry}] = :ets.lookup(table, path)
+      entry = get_entry(agent_id, path)
       assert entry.content == content
       assert entry.persistence == :persisted
       assert entry.dirty == true
@@ -81,7 +86,7 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
       Process.sleep(150)
 
       # File should now be clean
-      assert [{^path, clean_entry}] = :ets.lookup(table, path)
+      clean_entry = get_entry(agent_id, path)
       assert clean_entry.dirty == false
 
       # Verify file exists on disk
@@ -150,7 +155,6 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
           persistence_configs: [config]
         )
 
-      table = FileSystemState.get_table_name(agent_id)
 
       # Write to non-persisted directory
       path = "/scratch/temp.txt"
@@ -158,7 +162,7 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
       assert :ok = FileSystemServer.write_file(agent_id, path, content)
 
       # File should be in ETS
-      assert [{^path, entry}] = :ets.lookup(table, path)
+      entry = get_entry(agent_id, path)
       assert entry.persistence == :memory
       assert entry.dirty == false
 
@@ -185,7 +189,7 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
       FileSystemServer.write_file(agent_id, "/Memories/file3.txt", "content3")
 
       # Verify they're dirty
-      stats_before = FileSystemServer.stats(agent_id)
+      {:ok, stats_before} = FileSystemServer.stats(agent_id)
       assert stats_before.dirty_files == 3
 
       # Flush all
@@ -195,7 +199,7 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
       Process.sleep(100)
 
       # All should be clean now
-      stats_after = FileSystemServer.stats(agent_id)
+      {:ok, stats_after} = FileSystemServer.stats(agent_id)
       assert stats_after.dirty_files == 0
 
       # All files should exist on disk
@@ -241,7 +245,6 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
           persistence_configs: [config]
         )
 
-      table = FileSystemState.get_table_name(agent_id)
 
       # Write and persist file
       path = "/Memories/delete_me.txt"
@@ -257,7 +260,7 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
       assert :ok = FileSystemServer.delete_file(agent_id, path)
 
       # Should be gone from ETS
-      assert :ets.lookup(table, path) == []
+      assert !FileSystemServer.file_exists?(agent_id, path)
 
       # Should be gone from disk (no debounce on delete)
       refute File.exists?(disk_path)
@@ -309,12 +312,11 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
           persistence_configs: [config]
         )
 
-      table = FileSystemState.get_table_name(agent_id)
 
       # Files under /persistent/ should be persisted
       FileSystemServer.write_file(agent_id, "/persistent/data.txt", "persisted")
 
-      assert [{_, entry}] = :ets.lookup(table, "/persistent/data.txt")
+      entry = get_entry(agent_id, "/persistent/data.txt")
       assert entry.persistence == :persisted
 
       Process.sleep(150)
@@ -326,7 +328,7 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
       # Files under /Memories/ should NOT be persisted with this config
       FileSystemServer.write_file(agent_id, "/Memories/temp.txt", "not persisted")
 
-      assert [{_, entry2}] = :ets.lookup(table, "/Memories/temp.txt")
+      entry2 = get_entry(agent_id, "/Memories/temp.txt")
       assert entry2.persistence == :memory
 
       Process.sleep(150)
@@ -443,7 +445,7 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
         )
 
       # Initial state
-      stats = FileSystemServer.stats(agent_id)
+      {:ok, stats} = FileSystemServer.stats(agent_id)
       assert stats.total_files == 0
       assert stats.dirty_files == 0
 
@@ -453,7 +455,7 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
       FileSystemServer.write_file(agent_id, "/Memories/persist2.txt", "data2")
 
       # Check stats before persist
-      stats_before = FileSystemServer.stats(agent_id)
+      {:ok, stats_before} = FileSystemServer.stats(agent_id)
       assert stats_before.total_files == 3
       assert stats_before.memory_files == 1
       assert stats_before.persisted_files == 2
@@ -463,7 +465,7 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
       Process.sleep(150)
 
       # Check stats after persist
-      stats_after = FileSystemServer.stats(agent_id)
+      {:ok, stats_after} = FileSystemServer.stats(agent_id)
       assert stats_after.total_files == 3
       assert stats_after.dirty_files == 0
     end
@@ -491,13 +493,12 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
           persistence_configs: [config]
         )
 
-      table = FileSystemState.get_table_name(agent_id)
 
       # Write should succeed (ETS write)
       assert :ok = FileSystemServer.write_file(agent_id, "/Memories/file.txt", "content")
 
       # File should be in ETS
-      assert [{_, entry}] = :ets.lookup(table, "/Memories/file.txt")
+      entry = get_entry(agent_id, "/Memories/file.txt")
       assert entry.content == "content"
 
       # Wait for persist attempt (should fail but not crash)
@@ -507,7 +508,7 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
       assert Process.alive?(pid)
 
       # File should still be dirty (persist failed)
-      assert [{_, entry_after}] = :ets.lookup(table, "/Memories/file.txt")
+      entry_after = get_entry(agent_id, "/Memories/file.txt")
       assert entry_after.dirty == true
     end
   end

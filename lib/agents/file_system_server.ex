@@ -2,9 +2,7 @@ defmodule LangChain.Agents.FileSystemServer do
   @moduledoc """
   GenServer managing virtual filesystem with debounce-based auto-persistence.
 
-  Owns a named ETS table for file storage and manages per-file debounce timers.
-  The ETS table is named based on agent_id, allowing direct access without needing
-  to pass around table references or PIDs.
+  Manages file storage in GenServer state and handles per-file debounce timers.
 
   This server is designed to outlive AgentServer crashes when supervised with
   `:rest_for_one` strategy, providing crash resilience.
@@ -117,11 +115,6 @@ defmodule LangChain.Agents.FileSystemServer do
   @doc """
   Read file content from filesystem with lazy loading.
 
-  This function optimizes for concurrent reads by:
-  1. Reading directly from named ETS table if file is already loaded (no GenServer bottleneck)
-  2. Making a GenServer call only if file needs to be loaded from persistence
-  3. After loading, reading from ETS again (avoiding large data transfer across processes)
-
   ## Returns
 
   - `{:ok, content}` - File content as string
@@ -138,33 +131,7 @@ defmodule LangChain.Agents.FileSystemServer do
   """
   @spec read_file(String.t(), String.t()) :: {:ok, String.t()} | {:error, term()}
   def read_file(agent_id, path) do
-    # Try to read directly from named ETS table using FileSystemState
-    case FileSystemState.read_file(agent_id, path) do
-      {:ok, %FileEntry{loaded: true, content: content}} ->
-        # File is loaded, return content immediately
-        {:ok, content}
-
-      {:ok, %FileEntry{loaded: false}} ->
-        # File exists but not loaded - ask GenServer to load it
-        case GenServer.call(via_tuple(agent_id), {:load_file, path}) do
-          :ok ->
-            # File loaded, read from ETS again
-            case FileSystemState.read_file(agent_id, path) do
-              {:ok, %FileEntry{content: content}} ->
-                {:ok, content}
-
-              {:error, :enoent} ->
-                {:error, :enoent}
-            end
-
-          {:error, reason} ->
-            {:error, reason}
-        end
-
-      {:error, :enoent} ->
-        # File doesn't exist
-        {:error, :enoent}
-    end
+    GenServer.call(via_tuple(agent_id), {:read_file, path})
   end
 
   @doc """
@@ -271,7 +238,6 @@ defmodule LangChain.Agents.FileSystemServer do
   List all file paths in the filesystem.
 
   Returns paths for both memory and persisted files, regardless of load status.
-  Reads directly from ETS table without GenServer call for optimal performance.
 
   ## Examples
 
@@ -280,7 +246,7 @@ defmodule LangChain.Agents.FileSystemServer do
   """
   @spec list_files(String.t()) :: [String.t()]
   def list_files(agent_id) do
-    FileSystemState.list_files(agent_id)
+    GenServer.call(via_tuple(agent_id), :list_files)
   end
 
   @doc """
@@ -296,7 +262,7 @@ defmodule LangChain.Agents.FileSystemServer do
   """
   @spec file_exists?(String.t(), String.t()) :: boolean()
   def file_exists?(agent_id, path) do
-    FileSystemState.file_exists?(agent_id, path)
+    GenServer.call(via_tuple(agent_id), {:file_exists?, path})
   end
 
   @doc """
@@ -306,7 +272,7 @@ defmodule LangChain.Agents.FileSystemServer do
   """
   @spec stats(String.t()) :: {:ok, map()}
   def stats(agent_id) do
-    FileSystemState.stats(agent_id)
+    GenServer.call(via_tuple(agent_id), :stats)
   end
 
   # ============================================================================
@@ -360,6 +326,35 @@ defmodule LangChain.Agents.FileSystemServer do
   end
 
   @impl true
+  def handle_call({:read_file, path}, _from, state) do
+    case FileSystemState.read_file(state, path) do
+      {:ok, %FileEntry{loaded: true, content: content}} ->
+        # File is loaded, return content
+        {:reply, {:ok, content}, state}
+
+      {:ok, %FileEntry{loaded: false}} ->
+        # File exists but not loaded - load it first
+        case FileSystemState.load_file(state, path) do
+          {:ok, new_state} ->
+            # Now get the content
+            case FileSystemState.read_file(new_state, path) do
+              {:ok, %FileEntry{content: content}} ->
+                {:reply, {:ok, content}, new_state}
+
+              {:error, :enoent} ->
+                {:reply, {:error, :enoent}, new_state}
+            end
+
+          {:error, reason, state} ->
+            {:reply, {:error, reason}, state}
+        end
+
+      {:error, :enoent} ->
+        {:reply, {:error, :enoent}, state}
+    end
+  end
+
+  @impl true
   def handle_call({:load_file, path}, _from, state) do
     case FileSystemState.load_file(state, path) do
       {:ok, new_state} ->
@@ -369,6 +364,24 @@ defmodule LangChain.Agents.FileSystemServer do
       {:error, reason, state} ->
         {:reply, {:error, reason}, state}
     end
+  end
+
+  @impl true
+  def handle_call(:list_files, _from, state) do
+    files = FileSystemState.list_files(state)
+    {:reply, files, state}
+  end
+
+  @impl true
+  def handle_call({:file_exists?, path}, _from, state) do
+    exists = FileSystemState.file_exists?(state, path)
+    {:reply, exists, state}
+  end
+
+  @impl true
+  def handle_call(:stats, _from, state) do
+    stats = FileSystemState.stats(state)
+    {:reply, {:ok, stats}, state}
   end
 
   @impl true

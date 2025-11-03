@@ -281,7 +281,10 @@ defmodule LangChain.Agents.AgentServerTest do
       assert AgentServer.get_status(pid) == :completed
     end
 
-    test "returns error if not interrupted", %{agent: _agent} do
+    test "returns error if not interrupted", %{agent: _agent, pid: setup_pid} do
+      # Stop the server from setup first since it uses the default name
+      GenServer.stop(setup_pid, :normal)
+
       # Create a new idle server
       agent = create_test_agent()
       {:ok, pid} = AgentServer.start_link(agent: agent, pubsub: nil)
@@ -348,65 +351,8 @@ defmodule LangChain.Agents.AgentServerTest do
       assert_receive {:status_changed, :completed, _state}, 200
     end
 
-    test "broadcasts file added event", %{agent: agent, pid: pid} do
-      Agent
-      |> expect(:execute, fn ^agent, state ->
-        new_state = State.put_file(state, "test.txt", "Hello, World!")
-        {:ok, new_state}
-      end)
-
-      :ok = AgentServer.execute(pid)
-
-      # Should receive status change
-      assert_receive {:status_changed, :running, nil}, 100
-
-      # Should receive file added event
-      assert_receive {:file_added, "test.txt", "Hello, World!"}, 200
-
-      # Should receive completed status
-      assert_receive {:status_changed, :completed, _state}, 200
-    end
-
-    test "broadcasts file updated event", %{agent: agent, pid: pid} do
-      # Set initial file
-      initial_state = State.new!() |> State.put_file("test.txt", "Version 1")
-
-      # Update the server state
-      :sys.replace_state(pid, fn server_state ->
-        %{server_state | state: initial_state}
-      end)
-
-      Agent
-      |> expect(:execute, fn ^agent, state ->
-        new_state = State.put_file(state, "test.txt", "Version 2")
-        {:ok, new_state}
-      end)
-
-      :ok = AgentServer.execute(pid)
-
-      assert_receive {:status_changed, :running, nil}, 100
-      assert_receive {:file_updated, "test.txt", "Version 2"}, 200
-    end
-
-    test "broadcasts file deleted event", %{agent: agent, pid: pid} do
-      # Set initial file
-      initial_state = State.new!() |> State.put_file("test.txt", "Data")
-
-      :sys.replace_state(pid, fn server_state ->
-        %{server_state | state: initial_state}
-      end)
-
-      Agent
-      |> expect(:execute, fn ^agent, state ->
-        new_state = State.delete_file(state, "test.txt")
-        {:ok, new_state}
-      end)
-
-      :ok = AgentServer.execute(pid)
-
-      assert_receive {:status_changed, :running, nil}, 100
-      assert_receive {:file_deleted, "test.txt"}, 200
-    end
+    # NOTE: File events are NOT broadcast by AgentServer anymore
+    # Files are managed by FileSystemServer which has its own event handling
 
     test "broadcasts todo created event", %{agent: agent, pid: pid} do
       Agent
@@ -496,26 +442,8 @@ defmodule LangChain.Agents.AgentServerTest do
       assert_receive {:status_changed, :error, "Test error"}, 200
     end
 
-    test "broadcasts multiple file changes in one execution", %{agent: agent, pid: pid} do
-      Agent
-      |> expect(:execute, fn ^agent, state ->
-        new_state =
-          state
-          |> State.put_file("file1.txt", "Content 1")
-          |> State.put_file("file2.txt", "Content 2")
-          |> State.put_file("file3.txt", "Content 3")
-
-        {:ok, new_state}
-      end)
-
-      :ok = AgentServer.execute(pid)
-
-      assert_receive {:status_changed, :running, nil}, 100
-      assert_receive {:file_added, "file1.txt", "Content 1"}, 200
-      assert_receive {:file_added, "file2.txt", "Content 2"}, 200
-      assert_receive {:file_added, "file3.txt", "Content 3"}, 200
-      assert_receive {:status_changed, :completed, _state}, 200
-    end
+    # NOTE: File events are NOT broadcast by AgentServer anymore
+    # Files are managed by FileSystemServer
   end
 
   describe "stop/1" do

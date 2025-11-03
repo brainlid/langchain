@@ -2,7 +2,8 @@ defmodule LangChain.Agents.FileSystemServerTest do
   use ExUnit.Case, async: true
 
   alias LangChain.Agents.FileSystemServer
-  alias LangChain.Agents.FileSystem.{FileEntry, FileSystemConfig, FileSystemState}
+  alias LangChain.Agents.FileSystem.FileEntry
+  alias LangChain.Agents.FileSystem.FileSystemConfig
 
   # Mock persistence modules for testing
   defmodule MockPersistence do
@@ -64,6 +65,13 @@ defmodule LangChain.Agents.FileSystemServerTest do
     config
   end
 
+  # Helper to get file entry from GenServer state
+  defp get_entry(agent_id, path) do
+    pid = FileSystemServer.whereis(agent_id)
+    state = :sys.get_state(pid)
+    Map.get(state.files, path)
+  end
+
   describe "start_link/1" do
     test "starts with minimal config", %{agent_id: agent_id} do
       assert {:ok, pid} = FileSystemServer.start_link(agent_id: agent_id)
@@ -107,30 +115,23 @@ defmodule LangChain.Agents.FileSystemServerTest do
     end
   end
 
-  describe "named ETS table" do
-    test "creates named ETS table accessible by agent_id", %{agent_id: agent_id} do
-      {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id)
-
-      table_name = FileSystemState.get_table_name(agent_id)
-      assert is_atom(table_name)
-
-      # Verify table is accessible by name
-      assert :ets.info(table_name) != :undefined
-    end
-  end
 
   describe "write_file/4" do
     test "writes a memory file", %{agent_id: agent_id} do
-      {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id)
-      table = FileSystemState.get_table_name(agent_id)
+      {:ok, pid} = FileSystemServer.start_link(agent_id: agent_id)
 
       path = "/scratch/test.txt"
       content = "test content"
 
       assert :ok = FileSystemServer.write_file(agent_id, path, content)
 
-      # Verify file exists in ETS
-      assert [{^path, entry}] = :ets.lookup(table, path)
+      # Verify file exists via API
+      assert FileSystemServer.file_exists?(agent_id, path)
+      assert {:ok, ^content} = FileSystemServer.read_file(agent_id, path)
+
+      # Verify internal state
+      state = :sys.get_state(pid)
+      entry = Map.get(state.files, path)
       assert entry.path == path
       assert entry.content == content
       assert entry.persistence == :memory
@@ -141,8 +142,7 @@ defmodule LangChain.Agents.FileSystemServerTest do
     test "writes to unconfigured directory as memory-only", %{
       agent_id: agent_id
     } do
-      {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id)
-      table = FileSystemState.get_table_name(agent_id)
+      {:ok, pid} = FileSystemServer.start_link(agent_id: agent_id)
 
       path = "/Memories/important.txt"
       content = "important data"
@@ -151,7 +151,8 @@ defmodule LangChain.Agents.FileSystemServerTest do
       assert :ok = FileSystemServer.write_file(agent_id, path, content)
 
       # File should be memory-only
-      assert [{^path, entry}] = :ets.lookup(table, path)
+      state = :sys.get_state(pid)
+      entry = Map.get(state.files, path)
       assert entry.persistence == :memory
     end
 
@@ -167,13 +168,11 @@ defmodule LangChain.Agents.FileSystemServerTest do
 
       config = make_config(TestPersistence, "Memories")
 
-      {:ok, _pid} =
+      {:ok, pid} =
         FileSystemServer.start_link(
           agent_id: agent_id,
           persistence_configs: [config]
         )
-
-      table = FileSystemState.get_table_name(agent_id)
 
       path = "/Memories/file.txt"
       content = "persisted content"
@@ -181,7 +180,8 @@ defmodule LangChain.Agents.FileSystemServerTest do
       assert :ok = FileSystemServer.write_file(agent_id, path, content)
 
       # File should be marked as persisted and dirty
-      assert [{^path, entry}] = :ets.lookup(table, path)
+      state = :sys.get_state(pid)
+      entry = Map.get(state.files, path)
       assert entry.persistence == :persisted
       assert entry.dirty == true
       assert entry.loaded == true
@@ -190,7 +190,8 @@ defmodule LangChain.Agents.FileSystemServerTest do
       Process.sleep(150)
 
       # File should now be clean
-      assert [{^path, clean_entry}] = :ets.lookup(table, path)
+      state = :sys.get_state(pid)
+      clean_entry = Map.get(state.files, path)
       assert clean_entry.dirty == false
     end
 
@@ -242,7 +243,6 @@ defmodule LangChain.Agents.FileSystemServerTest do
 
     test "writes with custom metadata", %{agent_id: agent_id} do
       {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id)
-      table = FileSystemState.get_table_name(agent_id)
 
       path = "/data.json"
       content = ~s({"key": "value"})
@@ -254,7 +254,7 @@ defmodule LangChain.Agents.FileSystemServerTest do
 
       assert :ok = FileSystemServer.write_file(agent_id, path, content, opts)
 
-      assert [{^path, entry}] = :ets.lookup(table, path)
+      entry = get_entry(agent_id, path)
       assert entry.metadata.mime_type == "application/json"
       assert entry.metadata.custom == %{"author" => "test"}
     end
@@ -263,14 +263,13 @@ defmodule LangChain.Agents.FileSystemServerTest do
   describe "delete_file/2" do
     test "deletes memory file", %{agent_id: agent_id} do
       {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id)
-      table = FileSystemState.get_table_name(agent_id)
 
       path = "/scratch/file.txt"
       FileSystemServer.write_file(agent_id, path, "data")
-      assert :ets.lookup(table, path) != []
+      assert FileSystemServer.file_exists?(agent_id, path)
 
       assert :ok = FileSystemServer.delete_file(agent_id, path)
-      assert :ets.lookup(table, path) == []
+      assert !FileSystemServer.file_exists?(agent_id, path)
     end
 
     test "deletes persisted file and cancels timer", %{agent_id: agent_id} do
@@ -308,13 +307,12 @@ defmodule LangChain.Agents.FileSystemServerTest do
           persistence_configs: [config]
         )
 
-      table = FileSystemState.get_table_name(agent_id)
 
       path = "/Memories/file.txt"
       FileSystemServer.write_file(agent_id, path, "data")
 
       # Verify file exists and is dirty (pending persist)
-      stats = FileSystemServer.stats(agent_id)
+      {:ok, stats} = FileSystemServer.stats(agent_id)
       assert stats.dirty_files == 1
 
       # Delete the file
@@ -324,10 +322,10 @@ defmodule LangChain.Agents.FileSystemServerTest do
       assert_received :deleted_from_storage
 
       # Verify file is gone from ETS
-      assert :ets.lookup(table, path) == []
+      assert !FileSystemServer.file_exists?(agent_id, path)
 
       # Verify no dirty files remain
-      stats = FileSystemServer.stats(agent_id)
+      {:ok, stats} = FileSystemServer.stats(agent_id)
       assert stats.dirty_files == 0
     end
 
@@ -378,7 +376,7 @@ defmodule LangChain.Agents.FileSystemServerTest do
       FileSystemServer.write_file(agent_id, "/Memories/file3.txt", "data3")
 
       # Verify files are dirty (timers pending)
-      stats_before = FileSystemServer.stats(agent_id)
+      {:ok, stats_before} = FileSystemServer.stats(agent_id)
       assert stats_before.dirty_files == 3
 
       # Flush all
@@ -393,7 +391,7 @@ defmodule LangChain.Agents.FileSystemServerTest do
       Process.sleep(50)
 
       # Verify all files are now clean and no timers pending
-      stats_after = FileSystemServer.stats(agent_id)
+      {:ok, stats_after} = FileSystemServer.stats(agent_id)
       assert stats_after.dirty_files == 0
     end
   end
@@ -403,7 +401,7 @@ defmodule LangChain.Agents.FileSystemServerTest do
       {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id)
 
       # Empty filesystem
-      stats = FileSystemServer.stats(agent_id)
+      {:ok, stats} = FileSystemServer.stats(agent_id)
       assert stats.total_files == 0
       assert stats.memory_files == 0
       assert stats.persisted_files == 0
@@ -439,7 +437,7 @@ defmodule LangChain.Agents.FileSystemServerTest do
       FileSystemServer.write_file(agent_id, "/Memories/file3.txt", "data3")
       FileSystemServer.write_file(agent_id, "/Memories/file4.txt", "data4")
 
-      stats = FileSystemServer.stats(agent_id)
+      {:ok, stats} = FileSystemServer.stats(agent_id)
 
       assert stats.total_files == 4
       assert stats.memory_files == 2
@@ -536,16 +534,15 @@ defmodule LangChain.Agents.FileSystemServerTest do
           persistence_configs: [config]
         )
 
-      table = FileSystemState.get_table_name(agent_id)
 
       # Files under /persistent/ should be persisted
       FileSystemServer.write_file(agent_id, "/persistent/file.txt", "data")
-      assert [{_, entry}] = :ets.lookup(table, "/persistent/file.txt")
+      entry = get_entry(agent_id, "/persistent/file.txt")
       assert entry.persistence == :persisted
 
       # Files under /Memories/ should be memory-only with this config
       FileSystemServer.write_file(agent_id, "/Memories/file.txt", "data")
-      assert [{_, entry2}] = :ets.lookup(table, "/Memories/file.txt")
+      entry2 = get_entry(agent_id, "/Memories/file.txt")
       assert entry2.persistence == :memory
     end
   end
@@ -592,14 +589,12 @@ defmodule LangChain.Agents.FileSystemServerTest do
       # Register them
       assert :ok = FileSystemServer.register_files(agent_id, [entry1, entry2])
 
-      table = FileSystemState.get_table_name(agent_id)
-
       # Files should exist but not be loaded
-      assert [{"/data/lazy1.txt", e1}] = :ets.lookup(table, "/data/lazy1.txt")
+      e1 = get_entry(agent_id, "/data/lazy1.txt")
       assert e1.loaded == false
       assert e1.content == nil
 
-      assert [{"/data/lazy2.txt", e2}] = :ets.lookup(table, "/data/lazy2.txt")
+      e2 = get_entry(agent_id, "/data/lazy2.txt")
       assert e2.loaded == false
       assert e2.content == nil
     end
@@ -608,7 +603,6 @@ defmodule LangChain.Agents.FileSystemServerTest do
   describe "concurrent operations" do
     test "handles multiple writes to different files", %{agent_id: agent_id} do
       {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id)
-      table = FileSystemState.get_table_name(agent_id)
 
       # Simulate concurrent writes
       tasks =
@@ -623,7 +617,7 @@ defmodule LangChain.Agents.FileSystemServerTest do
 
       # Verify all files exist
       for i <- 1..10 do
-        assert [{_, entry}] = :ets.lookup(table, "/file#{i}.txt")
+        entry = get_entry(agent_id, "/file#{i}.txt")
         assert entry.content == "data#{i}"
       end
     end
@@ -702,10 +696,9 @@ defmodule LangChain.Agents.FileSystemServerTest do
           persistence_configs: [config]
         )
 
-      table = FileSystemState.get_table_name(agent_id)
 
       # File should be indexed but NOT loaded
-      assert [{"/Memories/data.txt", entry}] = :ets.lookup(table, "/Memories/data.txt")
+      entry = get_entry(agent_id, "/Memories/data.txt")
       assert entry.persistence == :persisted
       assert entry.loaded == false
       assert entry.content == nil
@@ -721,7 +714,7 @@ defmodule LangChain.Agents.FileSystemServerTest do
       assert_receive {:loaded, "/Memories/data.txt"}, 100
 
       # File should now be loaded
-      assert [{"/Memories/data.txt", loaded_entry}] = :ets.lookup(table, "/Memories/data.txt")
+      loaded_entry = get_entry(agent_id, "/Memories/data.txt")
       assert loaded_entry.loaded == true
       assert loaded_entry.content == "persisted content"
 

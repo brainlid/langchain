@@ -701,23 +701,8 @@ defmodule LangChain.Agents.SubAgentTest do
       assert content_text =~ "renewable energy"
     end
 
-    test "inherits filesystem from parent" do
-      parent_state =
-        State.new!(%{
-          files: %{
-            "file1.txt" => "content1",
-            "file2.txt" => "content2"
-          }
-        })
-
-      subagent_state =
-        SubAgent.prepare_subagent_state(
-          "Do something",
-          parent_state
-        )
-
-      assert subagent_state.files == parent_state.files
-    end
+    # NOTE: Files are now managed by FileSystemServer, not State
+    # So SubAgents automatically share the parent's filesystem via the shared FileSystemServer
 
     test "starts with empty todos" do
       parent_state =
@@ -795,13 +780,13 @@ defmodule LangChain.Agents.SubAgentTest do
       result_state =
         State.new!(%{
           messages: [Message.new_assistant!("Final")],
-          files: %{"output.txt" => "data"}
+          metadata: %{key: "value"}
         })
 
       result = SubAgent.extract_subagent_result(result_state)
 
       refute Map.has_key?(result.state_updates, :messages)
-      assert result.state_updates[:files] == %{"output.txt" => "data"}
+      assert result.state_updates[:metadata] == %{key: "value"}
     end
 
     test "excludes todos from state updates" do
@@ -816,17 +801,8 @@ defmodule LangChain.Agents.SubAgentTest do
       refute Map.has_key?(result.state_updates, :todos)
     end
 
-    test "includes files in state updates" do
-      result_state =
-        State.new!(%{
-          messages: [Message.new_assistant!("Final")],
-          files: %{"output.txt" => "result data"}
-        })
-
-      result = SubAgent.extract_subagent_result(result_state)
-
-      assert result.state_updates[:files] == %{"output.txt" => "result data"}
-    end
+    # NOTE: Files are now managed by FileSystemServer, not State
+    # File changes are automatically persisted to the shared FileSystemServer
 
     test "includes metadata in state updates" do
       result_state =
@@ -864,41 +840,8 @@ defmodule LangChain.Agents.SubAgentTest do
   end
 
   describe "SubAgent.merge_subagent_result/2" do
-    test "merges files from subagent" do
-      parent_state =
-        State.new!(%{
-          files: %{"a.txt" => "A"}
-        })
-
-      subagent_result = %{
-        final_message: Message.new_assistant!("Done"),
-        state_updates: %{
-          files: %{"b.txt" => "B"}
-        }
-      }
-
-      merged = SubAgent.merge_subagent_result(parent_state, subagent_result)
-
-      assert merged.files == %{"a.txt" => "A", "b.txt" => "B"}
-    end
-
-    test "subagent files override parent files" do
-      parent_state =
-        State.new!(%{
-          files: %{"shared.txt" => "Parent version"}
-        })
-
-      subagent_result = %{
-        final_message: Message.new_assistant!("Done"),
-        state_updates: %{
-          files: %{"shared.txt" => "SubAgent version"}
-        }
-      }
-
-      merged = SubAgent.merge_subagent_result(parent_state, subagent_result)
-
-      assert merged.files["shared.txt"] == "SubAgent version"
-    end
+    # NOTE: Files are now managed by FileSystemServer, not State
+    # File merging happens automatically through the shared FileSystemServer
 
     test "deep merges metadata" do
       parent_state =
@@ -960,21 +903,7 @@ defmodule LangChain.Agents.SubAgentTest do
       assert merged.todos == parent_state.todos
     end
 
-    test "handles missing files in state updates" do
-      parent_state =
-        State.new!(%{
-          files: %{"a.txt" => "A"}
-        })
-
-      subagent_result = %{
-        final_message: Message.new_assistant!("Done"),
-        state_updates: %{}
-      }
-
-      merged = SubAgent.merge_subagent_result(parent_state, subagent_result)
-
-      assert merged.files == %{"a.txt" => "A"}
-    end
+    # NOTE: Files are now managed by FileSystemServer, not State
 
     test "handles missing metadata in state updates" do
       parent_state =
