@@ -851,7 +851,7 @@ defmodule ChatModels.ChatGoogleAITest do
         end
       }
 
-      chat =
+      %ChatGoogleAI{} = chat =
         ChatGoogleAI.new!(%{
           temperature: 0,
           stream: false
@@ -903,7 +903,7 @@ defmodule ChatModels.ChatGoogleAITest do
         end
       }
 
-      chat =
+      %ChatGoogleAI{} = chat =
         ChatGoogleAI.new!(%{
           temperature: 0,
           stream: true

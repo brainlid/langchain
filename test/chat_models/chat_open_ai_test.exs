@@ -794,7 +794,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       }
 
       # https://js.langchain.com/docs/modules/models/chat/
-      {:ok, chat} =
+      {:ok, %ChatOpenAI{} = chat} =
         ChatOpenAI.new(%{
           temperature: 1,
           seed: 0,
@@ -846,7 +846,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       }
 
       # https://js.langchain.com/docs/modules/models/chat/
-      {:ok, chat} =
+      {:ok, %ChatOpenAI{} = chat} =
         ChatOpenAI.new(%{temperature: 1, seed: 0, stream: true})
 
       chat = %ChatOpenAI{chat | callbacks: [handlers]}
@@ -1058,7 +1058,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
       # https://js.langchain.com/docs/modules/models/chat/
       # NOTE streamed. Should receive complete message.
-      {:ok, chat} =
+      {:ok, %ChatOpenAI{} = chat} =
         ChatOpenAI.new(%{seed: 0, temperature: 1, stream: false})
 
       chat = %ChatOpenAI{chat | callbacks: [handler]}
@@ -1683,7 +1683,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
         end
       }
 
-      {:ok, chat} = ChatOpenAI.new(%{seed: 0, stream: true})
+      {:ok, %ChatOpenAI{} = chat} = ChatOpenAI.new(%{seed: 0, stream: true})
 
       chat = %ChatOpenAI{chat | callbacks: [handler]}
 
@@ -1721,7 +1721,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
         end
       }
 
-      chat =
+      %ChatOpenAI{} = chat =
         ChatOpenAI.new!(%{seed: 0, stream: true, receive_timeout: 50})
 
       chat = %ChatOpenAI{chat | callbacks: [handler]}

@@ -1402,7 +1402,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
           end
         }
 
-        {:ok, chat} =
+        {:ok, %ChatAnthropic{} = chat} =
           ChatAnthropic.new(%{stream: true} |> Map.merge(api_config))
 
         chat = %ChatAnthropic{chat | callbacks: [handlers]}

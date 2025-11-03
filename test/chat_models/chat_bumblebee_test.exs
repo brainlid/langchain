@@ -40,7 +40,7 @@ defmodule LangChain.ChatModels.ChatBumblebeeTest do
     end
 
     test "handles non-streamed full text response", %{handler: handler} do
-      model = ChatBumblebee.new!(%{serving: Fake, stream: false})
+      %ChatBumblebee{} = model = ChatBumblebee.new!(%{serving: Fake, stream: false})
       model = %ChatBumblebee{model | callbacks: [handler]}
 
       response = %{
@@ -62,7 +62,7 @@ defmodule LangChain.ChatModels.ChatBumblebeeTest do
     end
 
     test "handles stream when stream: false", %{handler: handler} do
-      model = ChatBumblebee.new!(%{serving: Fake, stream: false})
+      %ChatBumblebee{} = model = ChatBumblebee.new!(%{serving: Fake, stream: false})
       model = %ChatBumblebee{model | callbacks: [handler]}
 
       expected_message = Message.new_assistant!(%{content: "Hello.", status: :complete})
@@ -81,7 +81,7 @@ defmodule LangChain.ChatModels.ChatBumblebeeTest do
     test "handles a stream when stream: false and no stream_done requested", %{
       handler: handler
     } do
-      model = ChatBumblebee.new!(%{serving: Fake, stream: false})
+      %ChatBumblebee{} = model = ChatBumblebee.new!(%{serving: Fake, stream: false})
       model = %ChatBumblebee{model | callbacks: [handler]}
 
       expected_message = Message.new_assistant!(%{content: "Hello.", status: :complete})
@@ -100,7 +100,7 @@ defmodule LangChain.ChatModels.ChatBumblebeeTest do
     test "handles a stream when stream: true and no stream_done requested", %{
       handler: handler
     } do
-      model = ChatBumblebee.new!(%{serving: Fake, stream: true})
+      %ChatBumblebee{} = model = ChatBumblebee.new!(%{serving: Fake, stream: true})
       model = %ChatBumblebee{model | callbacks: [handler]}
 
       expected_deltas = [
@@ -125,7 +125,7 @@ defmodule LangChain.ChatModels.ChatBumblebeeTest do
     end
 
     test "handles stream when stream: true", %{handler: handler} do
-      model = ChatBumblebee.new!(%{serving: Fake, stream: true})
+      %ChatBumblebee{} = model = ChatBumblebee.new!(%{serving: Fake, stream: true})
       model = %ChatBumblebee{model | callbacks: [handler]}
 
       expected_deltas = [

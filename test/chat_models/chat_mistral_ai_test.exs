@@ -535,7 +535,7 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
         end
       }
 
-      chat =
+      %ChatMistralAI{} = chat =
         ChatMistralAI.new!(%{
           temperature: 0,
           model: "mistral-small-2503",
@@ -580,7 +580,7 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
         end
       }
 
-      chat =
+      %ChatMistralAI{} = chat =
         ChatMistralAI.new!(%{
           temperature: 0,
           model: "mistral-small-2503",
