@@ -1,16 +1,11 @@
 defmodule LangChain.Agents.FileSystem.MultiPersistenceTest do
   use ExUnit.Case, async: false
 
+  import LangChain.TestingHelpers
+
   alias LangChain.Agents.FileSystemServer
   alias LangChain.Agents.FileSystem.FileSystemConfig
   alias LangChain.Agents.FileSystem.Persistence
-
-  # Helper to get file entry from GenServer state
-  defp get_entry(agent_id, path) do
-    pid = FileSystemServer.whereis(agent_id)
-    state = :sys.get_state(pid)
-    Map.get(state.files, path)
-  end
 
   @moduletag :tmp_dir
 

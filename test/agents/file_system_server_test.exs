@@ -1,6 +1,8 @@
 defmodule LangChain.Agents.FileSystemServerTest do
   use ExUnit.Case, async: true
 
+  import LangChain.TestingHelpers
+
   alias LangChain.Agents.FileSystemServer
   alias LangChain.Agents.FileSystem.FileEntry
   alias LangChain.Agents.FileSystem.FileSystemConfig
@@ -63,13 +65,6 @@ defmodule LangChain.Agents.FileSystemServerTest do
       })
 
     config
-  end
-
-  # Helper to get file entry from GenServer state
-  defp get_entry(agent_id, path) do
-    pid = FileSystemServer.whereis(agent_id)
-    state = :sys.get_state(pid)
-    Map.get(state.files, path)
   end
 
   describe "start_link/1" do

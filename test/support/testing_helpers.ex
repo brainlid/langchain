@@ -1,4 +1,10 @@
 defmodule LangChain.TestingHelpers do
+  @moduledoc """
+  Shared testing helper functions used across test suites.
+  """
+
+  alias LangChain.Agents.FileSystemServer
+
   @doc """
   Collects all messages sent to the current test process and returns them as a
   list.
@@ -17,5 +23,30 @@ defmodule LangChain.TestingHelpers do
     after
       0 -> Enum.reverse(acc)
     end
+  end
+
+  @doc """
+  Helper to get a file entry from FileSystemServer's GenServer state.
+
+  This is useful for inspecting the internal state of the filesystem in tests.
+
+  ## Parameters
+
+  - `agent_id` - The agent identifier
+  - `path` - The file path to retrieve
+
+  ## Returns
+
+  The FileEntry struct or nil if not found.
+
+  ## Examples
+
+      entry = get_entry("agent-123", "/file.txt")
+      assert entry.content == "test content"
+  """
+  def get_entry(agent_id, path) do
+    pid = FileSystemServer.whereis(agent_id)
+    state = :sys.get_state(pid)
+    Map.get(state.files, path)
   end
 end
