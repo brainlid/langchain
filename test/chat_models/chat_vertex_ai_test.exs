@@ -515,7 +515,7 @@ defmodule ChatModels.ChatVertexAITest do
         end
       }
 
-      chat =
+      %ChatVertexAI{} = chat =
         ChatVertexAI.new!(%{
           model: "gemini-2.5-flash",
           temperature: 0,
@@ -564,7 +564,7 @@ defmodule ChatModels.ChatVertexAITest do
         end
       }
 
-      chat =
+      %ChatVertexAI{} = chat =
         ChatVertexAI.new!(%{
           model: "gemini-2.5-flash",
           temperature: 0,

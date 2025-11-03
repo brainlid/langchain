@@ -565,7 +565,7 @@ defmodule LangChain.Chains.LLMChain do
   end
 
   # nothing left to try
-  defp try_chain_with_llm(chain, [], _before_fallback_fn, _run_fn) do
+  defp try_chain_with_llm(%LLMChain{} = chain, [], _before_fallback_fn, _run_fn) do
     {:error, chain,
      LangChainError.exception(
        type: "all_fallbacks_failed",
@@ -573,7 +573,7 @@ defmodule LangChain.Chains.LLMChain do
      )}
   end
 
-  defp try_chain_with_llm(chain, [llm | tail], before_fallback_fn, run_fn) do
+  defp try_chain_with_llm(%LLMChain{} = chain, [llm | tail], before_fallback_fn, run_fn) do
     %llm_module{} = llm
 
     use_chain = %LLMChain{chain | llm: llm}
@@ -1405,12 +1405,12 @@ defmodule LangChain.Chains.LLMChain do
   """
   def cancel_delta(%LLMChain{delta: nil} = chain, _message_status), do: chain
 
-  def cancel_delta(%LLMChain{delta: delta} = chain, message_status) do
+  def cancel_delta(%LLMChain{delta: %MessageDelta{} = delta} = chain, message_status) do
     # remove the in-progress delta
     updated_chain = %LLMChain{chain | delta: nil}
 
     case MessageDelta.to_message(%MessageDelta{delta | status: :complete}) do
-      {:ok, message} ->
+      {:ok, %Message{} = message} ->
         message = %Message{message | status: message_status}
         add_message(updated_chain, message)
 

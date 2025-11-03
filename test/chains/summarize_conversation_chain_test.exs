@@ -25,9 +25,9 @@ defmodule LangChain.Chains.SummarizeConversationChainTest do
     llm_openai = ChatOpenAI.new!(%{model: @test_openai_model})
 
     data = %{llm: llm_anthropic, keep_count: 2, threshold_count: 6}
-    summarizer = SummarizeConversationChain.new!(data)
+    %SummarizeConversationChain{} = summarizer = SummarizeConversationChain.new!(data)
     # basic chain to be summarized (no messages yet)
-    chain = LLMChain.new!(%{llm: llm_anthropic})
+    %LLMChain{} = chain = LLMChain.new!(%{llm: llm_anthropic})
 
     %{
       chain: chain,
@@ -224,7 +224,7 @@ defmodule LangChain.Chains.SummarizeConversationChainTest do
     end
 
     test "correctly handles when keeping 0 messages", %{
-      summarizer: summarizer,
+      summarizer: %SummarizeConversationChain{} = summarizer,
       chain: chain,
       test_messages: test_messages
     } do
