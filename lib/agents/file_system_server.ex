@@ -16,7 +16,6 @@ defmodule LangChain.Agents.FileSystemServer do
   ## Configuration
 
   - `:agent_id` - Agent identifier (required)
-  - `:registry` - Registry module name for process registration (optional, defaults to LangChain.Agents.Registry)
   - `:persistence_configs` - List of FileSystemConfig structs (optional, default: [])
 
   ## Examples
@@ -40,7 +39,6 @@ defmodule LangChain.Agents.FileSystemServer do
   use GenServer
   require Logger
 
-  alias LangChain.Agents.AgentRegistry
   alias LangChain.Agents.FileSystem.FileSystemState
   alias LangChain.Agents.FileSystem.FileSystemConfig
   alias LangChain.Agents.FileSystem.FileEntry
@@ -55,7 +53,6 @@ defmodule LangChain.Agents.FileSystemServer do
   ## Options
 
   - `:agent_id` - Agent identifier (required)
-  - `:registry` - Registry module name for process registration (optional, defaults to LangChain.Agents.Registry)
   - `:persistence_configs` - List of FileSystemConfig structs (optional, default: [])
 
   ## Examples
@@ -63,7 +60,7 @@ defmodule LangChain.Agents.FileSystemServer do
       # Memory-only filesystem
       {:ok, pid} = start_link(agent_id: "agent-123")
 
-      # With disk persistence and custom registry
+      # With disk persistence
       {:ok, config} = FileSystemConfig.new(%{
         base_directory: "Memories",
         persistence_module: LangChain.Agents.FileSystem.Persistence.Disk,
@@ -72,28 +69,24 @@ defmodule LangChain.Agents.FileSystemServer do
       })
       {:ok, pid} = start_link(
         agent_id: "agent-123",
-        registry: MyApp.AgentRegistry,
         persistence_configs: [config]
       )
   """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
     agent_id = Keyword.fetch!(opts, :agent_id)
-    registry = Keyword.get(opts, :registry, AgentRegistry.default_registry())
-
-    GenServer.start_link(__MODULE__, opts, name: via_tuple(registry, agent_id))
+    GenServer.start_link(__MODULE__, opts, name: via_tuple(agent_id))
   end
 
   @doc """
   Get the FileSystemServer PID for an agent.
-
-  ## Examples
-
-      pid = FileSystemServer.whereis(MyApp.Registry, "agent-123")
   """
-  @spec whereis(atom(), String.t()) :: pid() | nil
-  def whereis(registry, agent_id) do
-    AgentRegistry.whereis(registry, :file_system_server, agent_id)
+  @spec whereis(String.t()) :: pid() | nil
+  def whereis(agent_id) do
+    case Registry.lookup(LangChain.Agents.Registry, {:file_system_server, agent_id}) do
+      [{pid, _}] -> pid
+      [] -> nil
+    end
   end
 
   @doc """
@@ -108,15 +101,15 @@ defmodule LangChain.Agents.FileSystemServer do
 
   ## Examples
 
-      iex> write_file(MyApp.Registry, "agent-123", "/tmp/notes.txt", "Hello")
+      iex> write_file("agent-123", "/tmp/notes.txt", "Hello")
       :ok
 
-      iex> write_file(MyApp.Registry, "agent-123", "/Memories/chat_log.txt", data)
+      iex> write_file("agent-123", "/Memories/chat_log.txt", data)
       :ok  # Auto-persists after 5s (default) of no more writes
   """
-  @spec write_file(atom(), String.t(), String.t(), String.t(), keyword()) :: :ok | {:error, term()}
-  def write_file(registry, agent_id, path, content, opts \\ []) do
-    GenServer.call(via_tuple(registry, agent_id), {:write_file, path, content, opts})
+  @spec write_file(String.t(), String.t(), String.t(), keyword()) :: :ok | {:error, term()}
+  def write_file(agent_id, path, content, opts \\ []) do
+    GenServer.call(via_tuple(agent_id), {:write_file, path, content, opts})
   end
 
   @doc """
@@ -130,15 +123,15 @@ defmodule LangChain.Agents.FileSystemServer do
 
   ## Examples
 
-      iex> read_file(MyApp.Registry, "agent-123", "/Memories/notes.txt")
+      iex> read_file("agent-123", "/Memories/notes.txt")
       {:ok, "My notes..."}
 
-      iex> read_file(MyApp.Registry, "agent-123", "/nonexistent.txt")
+      iex> read_file("agent-123", "/nonexistent.txt")
       {:error, :enoent}
   """
-  @spec read_file(atom(), String.t(), String.t()) :: {:ok, String.t()} | {:error, term()}
-  def read_file(registry, agent_id, path) do
-    GenServer.call(via_tuple(registry, agent_id), {:read_file, path})
+  @spec read_file(String.t(), String.t()) :: {:ok, String.t()} | {:error, term()}
+  def read_file(agent_id, path) do
+    GenServer.call(via_tuple(agent_id), {:read_file, path})
   end
 
   @doc """
@@ -146,9 +139,9 @@ defmodule LangChain.Agents.FileSystemServer do
 
   If file was persisted, it's also removed from storage immediately (no debounce).
   """
-  @spec delete_file(atom(), String.t(), String.t()) :: :ok | {:error, term()}
-  def delete_file(registry, agent_id, path) do
-    GenServer.call(via_tuple(registry, agent_id), {:delete_file, path})
+  @spec delete_file(String.t(), String.t()) :: :ok | {:error, term()}
+  def delete_file(agent_id, path) do
+    GenServer.call(via_tuple(agent_id), {:delete_file, path})
   end
 
   @doc """
@@ -158,7 +151,6 @@ defmodule LangChain.Agents.FileSystemServer do
 
   ## Parameters
 
-  - `registry` - Registry module name
   - `agent_id` - Agent identifier
   - `config` - FileSystemConfig struct
 
@@ -174,12 +166,12 @@ defmodule LangChain.Agents.FileSystemServer do
       ...>   persistence_module: MyApp.Persistence.Disk,
       ...>   storage_opts: [path: "/data/users"]
       ...> })
-      iex> FileSystemServer.register_persistence(MyApp.Registry, "agent-123", config)
+      iex> FileSystemServer.register_persistence("agent-123", config)
       :ok
   """
-  @spec register_persistence(atom(), String.t(), FileSystemConfig.t()) :: :ok | {:error, term()}
-  def register_persistence(registry, agent_id, %FileSystemConfig{} = config) do
-    GenServer.call(via_tuple(registry, agent_id), {:register_persistence, config})
+  @spec register_persistence(String.t(), FileSystemConfig.t()) :: :ok | {:error, term()}
+  def register_persistence(agent_id, %FileSystemConfig{} = config) do
+    GenServer.call(via_tuple(agent_id), {:register_persistence, config})
   end
 
   @doc """
@@ -190,7 +182,6 @@ defmodule LangChain.Agents.FileSystemServer do
 
   ## Parameters
 
-  - `registry` - Registry module name
   - `agent_id` - Agent identifier
   - `file_entry_or_entries` - FileEntry struct or list of FileEntry structs
 
@@ -201,21 +192,21 @@ defmodule LangChain.Agents.FileSystemServer do
   ## Examples
 
       iex> {:ok, entry} = FileEntry.new_memory_file("/scratch/temp.txt", "data")
-      iex> FileSystemServer.register_files(MyApp.Registry, "agent-123", entry)
+      iex> FileSystemServer.register_files("agent-123", entry)
       :ok
 
       iex> {:ok, entry1} = FileEntry.new_memory_file("/scratch/file1.txt", "data1")
       iex> {:ok, entry2} = FileEntry.new_memory_file("/scratch/file2.txt", "data2")
-      iex> FileSystemServer.register_files(MyApp.Registry, "agent-123", [entry1, entry2])
+      iex> FileSystemServer.register_files("agent-123", [entry1, entry2])
       :ok
   """
-  @spec register_files(atom(), String.t(), FileEntry.t() | [FileEntry.t()]) :: :ok
-  def register_files(registry, agent_id, %FileEntry{} = file_entry) do
-    register_files(registry, agent_id, [file_entry])
+  @spec register_files(String.t(), FileEntry.t() | [FileEntry.t()]) :: :ok
+  def register_files(agent_id, %FileEntry{} = file_entry) do
+    register_files(agent_id, [file_entry])
   end
 
-  def register_files(registry, agent_id, file_entries) when is_list(file_entries) do
-    GenServer.call(via_tuple(registry, agent_id), {:register_files, file_entries})
+  def register_files(agent_id, file_entries) when is_list(file_entries) do
+    GenServer.call(via_tuple(agent_id), {:register_files, file_entries})
   end
 
   @doc """
@@ -225,12 +216,12 @@ defmodule LangChain.Agents.FileSystemServer do
 
   ## Examples
 
-      iex> FileSystemServer.get_persistence_configs(MyApp.Registry, "agent-123")
+      iex> FileSystemServer.get_persistence_configs("agent-123")
       %{"user_files" => %FileSystemConfig{}, "S3" => %FileSystemConfig{}}
   """
-  @spec get_persistence_configs(atom(), String.t()) :: %{String.t() => FileSystemConfig.t()}
-  def get_persistence_configs(registry, agent_id) do
-    GenServer.call(via_tuple(registry, agent_id), :get_persistence_configs)
+  @spec get_persistence_configs(String.t()) :: %{String.t() => FileSystemConfig.t()}
+  def get_persistence_configs(agent_id) do
+    GenServer.call(via_tuple(agent_id), :get_persistence_configs)
   end
 
   @doc """
@@ -238,9 +229,9 @@ defmodule LangChain.Agents.FileSystemServer do
 
   Useful for graceful shutdown or checkpoints.
   """
-  @spec flush_all(atom(), String.t()) :: :ok
-  def flush_all(registry, agent_id) do
-    GenServer.call(via_tuple(registry, agent_id), :flush_all)
+  @spec flush_all(String.t()) :: :ok
+  def flush_all(agent_id) do
+    GenServer.call(via_tuple(agent_id), :flush_all)
   end
 
   @doc """
@@ -250,12 +241,12 @@ defmodule LangChain.Agents.FileSystemServer do
 
   ## Examples
 
-      iex> list_files(MyApp.Registry, "agent-123")
+      iex> list_files("agent-123")
       ["/file1.txt", "/Memories/file2.txt"]
   """
-  @spec list_files(atom(), String.t()) :: [String.t()]
-  def list_files(registry, agent_id) do
-    GenServer.call(via_tuple(registry, agent_id), :list_files)
+  @spec list_files(String.t()) :: [String.t()]
+  def list_files(agent_id) do
+    GenServer.call(via_tuple(agent_id), :list_files)
   end
 
   @doc """
@@ -263,15 +254,15 @@ defmodule LangChain.Agents.FileSystemServer do
 
   ## Examples
 
-      iex> file_exists?(MyApp.Registry, "agent-123", "/notes.txt")
+      iex> file_exists?("agent-123", "/notes.txt")
       true
 
-      iex> file_exists?(MyApp.Registry, "agent-123", "/nonexistent.txt")
+      iex> file_exists?("agent-123", "/nonexistent.txt")
       false
   """
-  @spec file_exists?(atom(), String.t(), String.t()) :: boolean()
-  def file_exists?(registry, agent_id, path) do
-    GenServer.call(via_tuple(registry, agent_id), {:file_exists?, path})
+  @spec file_exists?(String.t(), String.t()) :: boolean()
+  def file_exists?(agent_id, path) do
+    GenServer.call(via_tuple(agent_id), {:file_exists?, path})
   end
 
   @doc """
@@ -279,9 +270,9 @@ defmodule LangChain.Agents.FileSystemServer do
 
   Returns map with various statistics about the filesystem state.
   """
-  @spec stats(atom(), String.t()) :: {:ok, map()}
-  def stats(registry, agent_id) do
-    GenServer.call(via_tuple(registry, agent_id), :stats)
+  @spec stats(String.t()) :: {:ok, map()}
+  def stats(agent_id) do
+    GenServer.call(via_tuple(agent_id), :stats)
   end
 
   # ============================================================================
@@ -423,7 +414,7 @@ defmodule LangChain.Agents.FileSystemServer do
     :ok
   end
 
-  defp via_tuple(registry, agent_id) do
-    AgentRegistry.via_tuple(registry, :file_system_server, agent_id)
+  defp via_tuple(agent_id) do
+    {:via, Registry, {LangChain.Agents.Registry, {:file_system_server, agent_id}}}
   end
 end

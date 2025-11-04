@@ -38,10 +38,6 @@ Mimic.copy(LangChain.Config)
 Mimic.copy(LangChain.ChatModels.ChatVertexAI)
 Mimic.copy(LangChain.ChatModels.ChatGoogleAI)
 Mimic.copy(LangChain.ChatModels.ChatGrok)
-
-# Agent related mocks
-Mimic.copy(LangChain.Agents.Agent)
-
 ExUnit.configure(capture_log: true, exclude: [live_call: true])
 
 ExUnit.start()

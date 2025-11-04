@@ -8,14 +8,13 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
   alias LangChain.Agents.FileSystem.FileSystemConfig
 
   @moduletag :tmp_dir
-  @test_registry LangChain.Test.Registry
 
   setup %{tmp_dir: tmp_dir} do
     agent_id = "test_agent_#{System.unique_integer([:positive])}"
 
     # Start registry for this test if not already started
     # Using start_supervised ensures proper cleanup
-    case start_supervised({Registry, keys: :unique, name: @test_registry}) do
+    case start_supervised({Registry, keys: :unique, name: LangChain.Agents.Registry}) do
       {:ok, _pid} -> :ok
       {:error, {:already_started, _pid}} -> :ok
     end
@@ -24,7 +23,7 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
       # Cleanup any running FileSystemServer
       # Wrap in try-catch because Registry might be gone already during cleanup
       try do
-        via_tuple = {:via, Registry, {@test_registry, {:file_system_server, agent_id}}}
+        via_tuple = {:via, Registry, {LangChain.Agents.Registry, {:file_system_server, agent_id}}}
 
         case GenServer.whereis(via_tuple) do
           nil -> :ok
@@ -37,7 +36,7 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
       end
     end)
 
-    %{agent_id: agent_id, tmp_dir: tmp_dir, registry: @test_registry}
+    %{agent_id: agent_id, tmp_dir: tmp_dir}
   end
 
   # Helper to create persistence config for tests
@@ -57,12 +56,12 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
   end
 
   describe "full persistence workflow" do
-    test "writes persist to disk after debounce", %{agent_id: agent_id, tmp_dir: tmp_dir, registry: registry} do
+    test "writes persist to disk after debounce", %{agent_id: agent_id, tmp_dir: tmp_dir} do
       config = make_config(Disk, "Memories", tmp_dir)
 
       {:ok, _pid} =
         FileSystemServer.start_link(
-          agent_id: agent_id, registry: registry,
+          agent_id: agent_id,
           persistence_configs: [config]
         )
 
@@ -70,7 +69,7 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
       # Write a file to persisted directory
       path = "/Memories/test.txt"
       content = "test content"
-      assert :ok = FileSystemServer.write_file(registry, agent_id, path, content)
+      assert :ok = FileSystemServer.write_file(agent_id, path, content)
 
       # File should be in ETS immediately
       entry = get_entry(agent_id, path)
@@ -91,7 +90,7 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
       assert File.read!(disk_path) == content
     end
 
-    test "rapid writes batch into single persist", %{agent_id: agent_id, tmp_dir: tmp_dir, registry: registry} do
+    test "rapid writes batch into single persist", %{agent_id: agent_id, tmp_dir: tmp_dir} do
       # Track persistence calls
       test_pid = self()
 
@@ -122,7 +121,7 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
 
       {:ok, _pid} =
         FileSystemServer.start_link(
-          agent_id: agent_id, registry: registry,
+          agent_id: agent_id,
           persistence_configs: [config]
         )
 
@@ -130,7 +129,7 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
 
       # Write 10 times rapidly
       for i <- 1..10 do
-        FileSystemServer.write_file(registry, agent_id, path, "version #{i}")
+        FileSystemServer.write_file(agent_id, path, "version #{i}")
         Process.sleep(10)
       end
 
@@ -142,12 +141,12 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
       refute_received {:persisted, ^path, _time}
     end
 
-    test "memory files are not persisted", %{agent_id: agent_id, tmp_dir: tmp_dir, registry: registry} do
+    test "memory files are not persisted", %{agent_id: agent_id, tmp_dir: tmp_dir} do
       config = make_config(Disk, "Memories", tmp_dir)
 
       {:ok, _pid} =
         FileSystemServer.start_link(
-          agent_id: agent_id, registry: registry,
+          agent_id: agent_id,
           persistence_configs: [config]
         )
 
@@ -155,7 +154,7 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
       # Write to non-persisted directory
       path = "/scratch/temp.txt"
       content = "temporary content"
-      assert :ok = FileSystemServer.write_file(registry, agent_id, path, content)
+      assert :ok = FileSystemServer.write_file(agent_id, path, content)
 
       # File should be in ETS
       entry = get_entry(agent_id, path)
@@ -170,32 +169,32 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
       refute File.exists?(disk_path)
     end
 
-    test "flush_all persists immediately", %{agent_id: agent_id, tmp_dir: tmp_dir, registry: registry} do
+    test "flush_all persists immediately", %{agent_id: agent_id, tmp_dir: tmp_dir} do
       config = make_config(Disk, "Memories", tmp_dir, debounce_ms: 10000)
 
       {:ok, _pid} =
         FileSystemServer.start_link(
-          agent_id: agent_id, registry: registry,
+          agent_id: agent_id,
           persistence_configs: [config]
         )
 
       # Write files
-      FileSystemServer.write_file(registry, agent_id, "/Memories/file1.txt", "content1")
-      FileSystemServer.write_file(registry, agent_id, "/Memories/file2.txt", "content2")
-      FileSystemServer.write_file(registry, agent_id, "/Memories/file3.txt", "content3")
+      FileSystemServer.write_file(agent_id, "/Memories/file1.txt", "content1")
+      FileSystemServer.write_file(agent_id, "/Memories/file2.txt", "content2")
+      FileSystemServer.write_file(agent_id, "/Memories/file3.txt", "content3")
 
       # Verify they're dirty
-      {:ok, stats_before} = FileSystemServer.stats(registry, agent_id)
+      {:ok, stats_before} = FileSystemServer.stats(agent_id)
       assert stats_before.dirty_files == 3
 
       # Flush all
-      assert :ok = FileSystemServer.flush_all(registry, agent_id)
+      assert :ok = FileSystemServer.flush_all(agent_id)
 
       # Give time to process
       Process.sleep(100)
 
       # All should be clean now
-      {:ok, stats_after} = FileSystemServer.stats(registry, agent_id)
+      {:ok, stats_after} = FileSystemServer.stats(agent_id)
       assert stats_after.dirty_files == 0
 
       # All files should exist on disk
@@ -206,18 +205,18 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
       end
     end
 
-    test "termination flushes pending writes", %{agent_id: agent_id, tmp_dir: tmp_dir, registry: registry} do
+    test "termination flushes pending writes", %{agent_id: agent_id, tmp_dir: tmp_dir} do
       config = make_config(Disk, "Memories", tmp_dir, debounce_ms: 10000)
 
       {:ok, pid} =
         FileSystemServer.start_link(
-          agent_id: agent_id, registry: registry,
+          agent_id: agent_id,
           persistence_configs: [config]
         )
 
       # Write files with long debounce
-      FileSystemServer.write_file(registry, agent_id, "/Memories/file1.txt", "data1")
-      FileSystemServer.write_file(registry, agent_id, "/Memories/file2.txt", "data2")
+      FileSystemServer.write_file(agent_id, "/Memories/file1.txt", "data1")
+      FileSystemServer.write_file(agent_id, "/Memories/file2.txt", "data2")
 
       # Stop the server immediately (should flush on terminate)
       GenServer.stop(pid, :normal)
@@ -232,19 +231,19 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
       assert File.read!(disk_path2) == "data2"
     end
 
-    test "delete removes file from disk immediately", %{agent_id: agent_id, tmp_dir: tmp_dir, registry: registry} do
+    test "delete removes file from disk immediately", %{agent_id: agent_id, tmp_dir: tmp_dir} do
       config = make_config(Disk, "Memories", tmp_dir)
 
       {:ok, _pid} =
         FileSystemServer.start_link(
-          agent_id: agent_id, registry: registry,
+          agent_id: agent_id,
           persistence_configs: [config]
         )
 
 
       # Write and persist file
       path = "/Memories/delete_me.txt"
-      FileSystemServer.write_file(registry, agent_id, path, "content")
+      FileSystemServer.write_file(agent_id, path, "content")
 
       # Wait for persist
       Process.sleep(150)
@@ -253,10 +252,10 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
       assert File.exists?(disk_path)
 
       # Delete file
-      assert :ok = FileSystemServer.delete_file(registry, agent_id, path)
+      assert :ok = FileSystemServer.delete_file(agent_id, path)
 
       # Should be gone from ETS
-      assert !FileSystemServer.file_exists?(registry, agent_id, path)
+      assert !FileSystemServer.file_exists?(agent_id, path)
 
       # Should be gone from disk (no debounce on delete)
       refute File.exists?(disk_path)
@@ -265,7 +264,7 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
 
   describe "lazy loading" do
     test "indexes persisted files on startup without loading content", %{
-      agent_id: agent_id, registry: registry,
+      agent_id: agent_id,
       tmp_dir: tmp_dir
     } do
       # First: create server, write files, persist, then stop
@@ -273,12 +272,12 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
 
       {:ok, pid1} =
         FileSystemServer.start_link(
-          agent_id: agent_id, registry: registry,
+          agent_id: agent_id,
           persistence_configs: [config]
         )
 
-      FileSystemServer.write_file(registry, agent_id, "/Memories/file1.txt", "content1")
-      FileSystemServer.write_file(registry, agent_id, "/Memories/file2.txt", "content2")
+      FileSystemServer.write_file(agent_id, "/Memories/file1.txt", "content1")
+      FileSystemServer.write_file(agent_id, "/Memories/file2.txt", "content2")
 
       Process.sleep(150)
       GenServer.stop(pid1, :normal)
@@ -297,20 +296,20 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
 
   describe "custom memories directory" do
     test "uses custom memories_directory for persistence", %{
-      agent_id: agent_id, registry: registry,
+      agent_id: agent_id,
       tmp_dir: tmp_dir
     } do
       config = make_config(Disk, "persistent", tmp_dir)
 
       {:ok, _pid} =
         FileSystemServer.start_link(
-          agent_id: agent_id, registry: registry,
+          agent_id: agent_id,
           persistence_configs: [config]
         )
 
 
       # Files under /persistent/ should be persisted
-      FileSystemServer.write_file(registry, agent_id, "/persistent/data.txt", "persisted")
+      FileSystemServer.write_file(agent_id, "/persistent/data.txt", "persisted")
 
       entry = get_entry(agent_id, "/persistent/data.txt")
       assert entry.persistence == :persisted
@@ -322,7 +321,7 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
       assert File.read!(disk_path) == "persisted"
 
       # Files under /Memories/ should NOT be persisted with this config
-      FileSystemServer.write_file(registry, agent_id, "/Memories/temp.txt", "not persisted")
+      FileSystemServer.write_file(agent_id, "/Memories/temp.txt", "not persisted")
 
       entry2 = get_entry(agent_id, "/Memories/temp.txt")
       assert entry2.persistence == :memory
@@ -335,19 +334,19 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
   end
 
   describe "nested directory persistence" do
-    test "handles deeply nested file paths", %{agent_id: agent_id, tmp_dir: tmp_dir, registry: registry} do
+    test "handles deeply nested file paths", %{agent_id: agent_id, tmp_dir: tmp_dir} do
       config = make_config(Disk, "Memories", tmp_dir)
 
       {:ok, _pid} =
         FileSystemServer.start_link(
-          agent_id: agent_id, registry: registry,
+          agent_id: agent_id,
           persistence_configs: [config]
         )
 
       path = "/Memories/year/2024/month/10/day/30/log.txt"
       content = "deep nested content"
 
-      FileSystemServer.write_file(registry, agent_id, path, content)
+      FileSystemServer.write_file(agent_id, path, content)
 
       Process.sleep(150)
 
@@ -356,12 +355,12 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
       assert File.read!(disk_path) == content
     end
 
-    test "lists files from nested directories", %{agent_id: agent_id, tmp_dir: tmp_dir, registry: registry} do
+    test "lists files from nested directories", %{agent_id: agent_id, tmp_dir: tmp_dir} do
       config = make_config(Disk, "Memories", tmp_dir)
 
       {:ok, _pid} =
         FileSystemServer.start_link(
-          agent_id: agent_id, registry: registry,
+          agent_id: agent_id,
           persistence_configs: [config]
         )
 
@@ -373,7 +372,7 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
       ]
 
       for path <- files do
-        FileSystemServer.write_file(registry, agent_id, path, "content")
+        FileSystemServer.write_file(agent_id, path, "content")
       end
 
       Process.sleep(150)
@@ -391,14 +390,14 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
 
   describe "concurrent SubAgent simulation" do
     test "multiple writers (simulating SubAgents) don't lose data", %{
-      agent_id: agent_id, registry: registry,
+      agent_id: agent_id,
       tmp_dir: tmp_dir
     } do
       config = make_config(Disk, "Memories", tmp_dir)
 
       {:ok, _pid} =
         FileSystemServer.start_link(
-          agent_id: agent_id, registry: registry,
+          agent_id: agent_id,
           persistence_configs: [config]
         )
 
@@ -406,7 +405,7 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
       tasks =
         for i <- 1..10 do
           Task.async(fn ->
-            FileSystemServer.write_file(registry, agent_id, "/Memories/subagent_#{i}.txt", "result #{i}")
+            FileSystemServer.write_file(agent_id, "/Memories/subagent_#{i}.txt", "result #{i}")
           end)
         end
 
@@ -431,27 +430,27 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
   end
 
   describe "stats integration" do
-    test "stats reflect persistence state correctly", %{agent_id: agent_id, tmp_dir: tmp_dir, registry: registry} do
+    test "stats reflect persistence state correctly", %{agent_id: agent_id, tmp_dir: tmp_dir} do
       config = make_config(Disk, "Memories", tmp_dir)
 
       {:ok, _pid} =
         FileSystemServer.start_link(
-          agent_id: agent_id, registry: registry,
+          agent_id: agent_id,
           persistence_configs: [config]
         )
 
       # Initial state
-      {:ok, stats} = FileSystemServer.stats(registry, agent_id)
+      {:ok, stats} = FileSystemServer.stats(agent_id)
       assert stats.total_files == 0
       assert stats.dirty_files == 0
 
       # Write files
-      FileSystemServer.write_file(registry, agent_id, "/scratch/temp.txt", "temp")
-      FileSystemServer.write_file(registry, agent_id, "/Memories/persist1.txt", "data1")
-      FileSystemServer.write_file(registry, agent_id, "/Memories/persist2.txt", "data2")
+      FileSystemServer.write_file(agent_id, "/scratch/temp.txt", "temp")
+      FileSystemServer.write_file(agent_id, "/Memories/persist1.txt", "data1")
+      FileSystemServer.write_file(agent_id, "/Memories/persist2.txt", "data2")
 
       # Check stats before persist
-      {:ok, stats_before} = FileSystemServer.stats(registry, agent_id)
+      {:ok, stats_before} = FileSystemServer.stats(agent_id)
       assert stats_before.total_files == 3
       assert stats_before.memory_files == 1
       assert stats_before.persisted_files == 2
@@ -461,14 +460,14 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
       Process.sleep(150)
 
       # Check stats after persist
-      {:ok, stats_after} = FileSystemServer.stats(registry, agent_id)
+      {:ok, stats_after} = FileSystemServer.stats(agent_id)
       assert stats_after.total_files == 3
       assert stats_after.dirty_files == 0
     end
   end
 
   describe "error handling" do
-    test "continues operation after persist failure", %{agent_id: agent_id, tmp_dir: tmp_dir, registry: registry} do
+    test "continues operation after persist failure", %{agent_id: agent_id, tmp_dir: tmp_dir} do
       defmodule FailingPersistence do
         @behaviour LangChain.Agents.FileSystem.Persistence
 
@@ -485,13 +484,13 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
 
       {:ok, pid} =
         FileSystemServer.start_link(
-          agent_id: agent_id, registry: registry,
+          agent_id: agent_id,
           persistence_configs: [config]
         )
 
 
       # Write should succeed (ETS write)
-      assert :ok = FileSystemServer.write_file(registry, agent_id, "/Memories/file.txt", "content")
+      assert :ok = FileSystemServer.write_file(agent_id, "/Memories/file.txt", "content")
 
       # File should be in ETS
       entry = get_entry(agent_id, "/Memories/file.txt")

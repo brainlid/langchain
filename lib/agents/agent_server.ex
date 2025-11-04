@@ -94,7 +94,7 @@ defmodule LangChain.Agents.AgentServer do
   use GenServer
   require Logger
 
-  alias LangChain.Agents.{Agent, AgentRegistry, State}
+  alias LangChain.Agents.{Agent, State}
 
   @typedoc "Server reference for calls"
   @type server :: pid() | atom() | {:global, term()} | {:via, module(), term()}
@@ -133,48 +133,24 @@ defmodule LangChain.Agents.AgentServer do
   ## Options
 
   - `:agent` - The Agent struct (required)
-  - `:registry` - Registry module name for process registration (optional, defaults to LangChain.Agents.Registry)
   - `:initial_state` - Initial State (default: empty state)
   - `:pubsub` - PubSub module to use (default: Phoenix.PubSub if available, nil otherwise)
   - `:pubsub_name` - Name of the PubSub instance (default: :langchain_pubsub)
+  - `:name` - Server name registration
   - `:id` - Unique identifier for the server (default: auto-generated)
 
   ## Examples
 
       {:ok, pid} = AgentServer.start_link(
         agent: agent,
-        initial_state: state
-      )
-
-      {:ok, pid} = AgentServer.start_link(
-        agent: agent,
-        registry: MyApp.AgentRegistry,
-        initial_state: state
+        initial_state: state,
+        name: :my_agent
       )
   """
   def start_link(opts) do
-    agent = Keyword.fetch!(opts, :agent)
-    agent_id = agent.agent_id
-    registry = Keyword.get(opts, :registry, AgentRegistry.default_registry())
-
-    # Remove explicit :name option if present, use registry-based naming
-    {_name, opts} = Keyword.pop(opts, :name)
-
-    name = AgentRegistry.via_tuple(registry, :agent_server, agent_id)
+    {name, opts} = Keyword.pop(opts, :name, __MODULE__)
 
     GenServer.start_link(__MODULE__, opts, name: name)
-  end
-
-  @doc """
-  Get the AgentServer PID for an agent.
-
-  ## Examples
-
-      pid = AgentServer.whereis(MyApp.Registry, "agent-123")
-  """
-  @spec whereis(atom(), String.t()) :: pid() | nil
-  def whereis(registry, agent_id) do
-    AgentRegistry.whereis(registry, :agent_server, agent_id)
   end
 
   @doc """
@@ -205,18 +181,9 @@ defmodule LangChain.Agents.AgentServer do
 
   ## Examples
 
-      # Using server reference (pid, name, via tuple)
       :ok = AgentServer.execute(pid)
-
-      # Using registry and agent_id
-      :ok = AgentServer.execute(MyApp.Registry, "agent-123")
   """
   @spec execute(server()) :: :ok | {:error, term()}
-  @spec execute(atom(), String.t()) :: :ok | {:error, term()}
-  def execute(registry, agent_id) when is_atom(registry) and is_binary(agent_id) do
-    execute(AgentRegistry.via_tuple(registry, :agent_server, agent_id))
-  end
-
   def execute(server) do
     GenServer.call(server, :execute, :infinity)
   end
@@ -226,7 +193,7 @@ defmodule LangChain.Agents.AgentServer do
 
   ## Parameters
 
-  - `server` - The server process (or registry + agent_id)
+  - `server` - The server process
   - `decisions` - List of decision maps from human reviewer (see `Agent.resume/3`)
 
   ## Examples
@@ -237,19 +204,9 @@ defmodule LangChain.Agents.AgentServer do
         %{type: :reject}
       ]
 
-      # Using server reference
       :ok = AgentServer.resume(pid, decisions)
-
-      # Using registry and agent_id
-      :ok = AgentServer.resume(MyApp.Registry, "agent-123", decisions)
   """
   @spec resume(server(), list(map())) :: :ok | {:error, term()}
-  @spec resume(atom(), String.t(), list(map())) :: :ok | {:error, term()}
-  def resume(registry, agent_id, decisions)
-      when is_atom(registry) and is_binary(agent_id) and is_list(decisions) do
-    resume(AgentRegistry.via_tuple(registry, :agent_server, agent_id), decisions)
-  end
-
   def resume(server, decisions) when is_list(decisions) do
     GenServer.call(server, {:resume, decisions}, :infinity)
   end

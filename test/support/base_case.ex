@@ -6,9 +6,6 @@ defmodule LangChain.BaseCase do
 
   use ExUnit.CaseTemplate
 
-  # Default test registry used across all tests
-  @test_registry LangChain.Test.Registry
-
   using do
     quote do
       alias LangChain.Message
@@ -16,9 +13,6 @@ defmodule LangChain.BaseCase do
 
       # Import conveniences for testing with AI models
       import LangChain.BaseCase
-
-      # Make test registry available to all tests
-      @test_registry LangChain.Test.Registry
 
       @doc """
       Helper function for loading an image as base64 encoded text.
@@ -29,15 +23,5 @@ defmodule LangChain.BaseCase do
         |> :base64.encode()
       end
     end
-  end
-
-  setup do
-    # Ensure the test registry is started
-    case Registry.start_link(keys: :unique, name: @test_registry) do
-      {:ok, _pid} -> :ok
-      {:error, {:already_started, _pid}} -> :ok
-    end
-
-    :ok
   end
 end

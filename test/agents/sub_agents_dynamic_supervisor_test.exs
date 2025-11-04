@@ -3,12 +3,10 @@ defmodule LangChain.Agents.SubAgentsDynamicSupervisorTest do
 
   alias LangChain.Agents.SubAgentsDynamicSupervisor
 
-  @registry_name LangChain.Test.Registry
-
   setup do
     # Start a test registry for this test
     {:ok, _registry} =
-      start_supervised({Registry, keys: :unique, name: @registry_name})
+      start_supervised({Registry, keys: :unique, name: LangChain.Agents.Registry})
 
     :ok
   end
@@ -17,27 +15,27 @@ defmodule LangChain.Agents.SubAgentsDynamicSupervisorTest do
     test "starts supervisor with agent_id" do
       agent_id = "test-agent-#{System.unique_integer([:positive])}"
 
-      assert {:ok, sup_pid} = SubAgentsDynamicSupervisor.start_link(agent_id: agent_id, registry: @registry_name)
+      assert {:ok, sup_pid} = SubAgentsDynamicSupervisor.start_link(agent_id: agent_id)
       assert Process.alive?(sup_pid)
 
       # Verify it's registered
-      assert SubAgentsDynamicSupervisor.whereis(@registry_name, agent_id) == sup_pid
+      assert SubAgentsDynamicSupervisor.whereis(agent_id) == sup_pid
 
       # Clean up
       DynamicSupervisor.stop(sup_pid)
     end
 
-    test "starts with registry-based naming" do
+    test "starts with custom name" do
       agent_id = "test-agent-#{System.unique_integer([:positive])}"
+      name = :"custom_name_#{System.unique_integer([:positive])}"
 
       assert {:ok, sup_pid} =
                SubAgentsDynamicSupervisor.start_link(
                  agent_id: agent_id,
-                 registry: @registry_name
+                 name: name
                )
 
-      assert Process.alive?(sup_pid)
-      assert SubAgentsDynamicSupervisor.whereis(@registry_name, agent_id) == sup_pid
+      assert Process.whereis(name) == sup_pid
 
       # Clean up
       DynamicSupervisor.stop(sup_pid)
@@ -53,12 +51,12 @@ defmodule LangChain.Agents.SubAgentsDynamicSupervisorTest do
       agent_id_1 = "test-agent-1-#{System.unique_integer([:positive])}"
       agent_id_2 = "test-agent-2-#{System.unique_integer([:positive])}"
 
-      {:ok, sup_pid_1} = SubAgentsDynamicSupervisor.start_link(agent_id: agent_id_1, registry: @registry_name)
-      {:ok, sup_pid_2} = SubAgentsDynamicSupervisor.start_link(agent_id: agent_id_2, registry: @registry_name)
+      {:ok, sup_pid_1} = SubAgentsDynamicSupervisor.start_link(agent_id: agent_id_1)
+      {:ok, sup_pid_2} = SubAgentsDynamicSupervisor.start_link(agent_id: agent_id_2)
 
       assert sup_pid_1 != sup_pid_2
-      assert SubAgentsDynamicSupervisor.whereis(@registry_name, agent_id_1) == sup_pid_1
-      assert SubAgentsDynamicSupervisor.whereis(@registry_name, agent_id_2) == sup_pid_2
+      assert SubAgentsDynamicSupervisor.whereis(agent_id_1) == sup_pid_1
+      assert SubAgentsDynamicSupervisor.whereis(agent_id_2) == sup_pid_2
 
       # Clean up
       DynamicSupervisor.stop(sup_pid_1)
@@ -66,13 +64,13 @@ defmodule LangChain.Agents.SubAgentsDynamicSupervisorTest do
     end
   end
 
-  describe "whereis/2" do
+  describe "whereis/1" do
     test "returns pid when supervisor exists" do
       agent_id = "test-agent-#{System.unique_integer([:positive])}"
 
-      {:ok, sup_pid} = SubAgentsDynamicSupervisor.start_link(agent_id: agent_id, registry: @registry_name)
+      {:ok, sup_pid} = SubAgentsDynamicSupervisor.start_link(agent_id: agent_id)
 
-      assert SubAgentsDynamicSupervisor.whereis(@registry_name, agent_id) == sup_pid
+      assert SubAgentsDynamicSupervisor.whereis(agent_id) == sup_pid
 
       # Clean up
       DynamicSupervisor.stop(sup_pid)
@@ -81,21 +79,21 @@ defmodule LangChain.Agents.SubAgentsDynamicSupervisorTest do
     test "returns nil when supervisor does not exist" do
       agent_id = "nonexistent-agent-#{System.unique_integer([:positive])}"
 
-      assert SubAgentsDynamicSupervisor.whereis(@registry_name, agent_id) == nil
+      assert SubAgentsDynamicSupervisor.whereis(agent_id) == nil
     end
 
     test "returns nil after supervisor stops" do
       agent_id = "test-agent-#{System.unique_integer([:positive])}"
 
-      {:ok, sup_pid} = SubAgentsDynamicSupervisor.start_link(agent_id: agent_id, registry: @registry_name)
-      assert SubAgentsDynamicSupervisor.whereis(@registry_name, agent_id) == sup_pid
+      {:ok, sup_pid} = SubAgentsDynamicSupervisor.start_link(agent_id: agent_id)
+      assert SubAgentsDynamicSupervisor.whereis(agent_id) == sup_pid
 
       DynamicSupervisor.stop(sup_pid)
 
       # Give it time to stop
       Process.sleep(50)
 
-      assert SubAgentsDynamicSupervisor.whereis(@registry_name, agent_id) == nil
+      assert SubAgentsDynamicSupervisor.whereis(agent_id) == nil
     end
   end
 
@@ -103,7 +101,7 @@ defmodule LangChain.Agents.SubAgentsDynamicSupervisorTest do
     test "can start and stop children dynamically" do
       agent_id = "test-agent-#{System.unique_integer([:positive])}"
 
-      {:ok, sup_pid} = SubAgentsDynamicSupervisor.start_link(agent_id: agent_id, registry: @registry_name)
+      {:ok, sup_pid} = SubAgentsDynamicSupervisor.start_link(agent_id: agent_id)
 
       # Initially no children
       assert DynamicSupervisor.count_children(sup_pid) == %{
@@ -142,7 +140,7 @@ defmodule LangChain.Agents.SubAgentsDynamicSupervisorTest do
     test "uses :one_for_one strategy (child crash doesn't affect other children)" do
       agent_id = "test-agent-#{System.unique_integer([:positive])}"
 
-      {:ok, sup_pid} = SubAgentsDynamicSupervisor.start_link(agent_id: agent_id, registry: @registry_name)
+      {:ok, sup_pid} = SubAgentsDynamicSupervisor.start_link(agent_id: agent_id)
 
       # Start two children
       child_spec = %{
@@ -178,11 +176,11 @@ defmodule LangChain.Agents.SubAgentsDynamicSupervisorTest do
     test "supervisor is properly registered in Registry" do
       agent_id = "test-agent-#{System.unique_integer([:positive])}"
 
-      {:ok, sup_pid} = SubAgentsDynamicSupervisor.start_link(agent_id: agent_id, registry: @registry_name)
+      {:ok, sup_pid} = SubAgentsDynamicSupervisor.start_link(agent_id: agent_id)
 
       # Check Registry lookup
       assert [{^sup_pid, _}] =
-               Registry.lookup(@registry_name, {:sub_agents_supervisor, agent_id})
+               Registry.lookup(LangChain.Agents.Registry, {:sub_agents_supervisor, agent_id})
 
       # Clean up
       DynamicSupervisor.stop(sup_pid)
@@ -191,14 +189,14 @@ defmodule LangChain.Agents.SubAgentsDynamicSupervisorTest do
     test "supervisor is unregistered after stop" do
       agent_id = "test-agent-#{System.unique_integer([:positive])}"
 
-      {:ok, sup_pid} = SubAgentsDynamicSupervisor.start_link(agent_id: agent_id, registry: @registry_name)
+      {:ok, sup_pid} = SubAgentsDynamicSupervisor.start_link(agent_id: agent_id)
       DynamicSupervisor.stop(sup_pid)
 
       # Give it time to stop
       Process.sleep(50)
 
       # Should not be in Registry anymore
-      assert [] = Registry.lookup(@registry_name, {:sub_agents_supervisor, agent_id})
+      assert [] = Registry.lookup(LangChain.Agents.Registry, {:sub_agents_supervisor, agent_id})
     end
   end
 end

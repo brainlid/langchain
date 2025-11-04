@@ -57,12 +57,11 @@ defmodule LangChain.Agents.Agent do
     field :tools, {:array, :any}, default: [], virtual: true
     field :middleware, {:array, :any}, default: [], virtual: true
     field :name, :string
-    field :registry, :any, virtual: true
   end
 
   @type t :: %Agent{}
 
-  @create_fields [:agent_id, :model, :system_prompt, :tools, :middleware, :name, :registry]
+  @create_fields [:agent_id, :model, :system_prompt, :tools, :middleware, :name]
   @required_fields [:agent_id, :model]
 
   @doc """
@@ -368,10 +367,7 @@ defmodule LangChain.Agents.Agent do
       {LangChain.Agents.Middleware.TodoList, Keyword.get(opts, :todo_opts, [])},
       # Filesystem middleware for mock file operations
       {LangChain.Agents.Middleware.FileSystem,
-       Keyword.merge(
-         [agent_id: agent_id, registry: Keyword.get(opts, :registry)],
-         Keyword.get(opts, :filesystem_opts, [])
-       )},
+       Keyword.merge([agent_id: agent_id], Keyword.get(opts, :filesystem_opts, []))},
       # Summarization middleware for managing conversation length
       {LangChain.Agents.Middleware.Summarization,
        Keyword.merge([model: model], Keyword.get(opts, :summarization_opts, []))},
@@ -481,7 +477,7 @@ defmodule LangChain.Agents.Agent do
 
   defp build_chain(agent, messages, state) do
     # Wrap tools to capture state updates and pass the current state
-    wrapped_tools = wrap_tools_for_state_capture(agent, state)
+    wrapped_tools = wrap_tools_for_state_capture(agent.tools, state)
 
     # Add system message if we have a system prompt
     messages_with_system =
@@ -506,8 +502,8 @@ defmodule LangChain.Agents.Agent do
     error -> {:error, "Failed to build chain: #{inspect(error)}"}
   end
 
-  defp wrap_tools_for_state_capture(%Agent{} = agent, initial_state) do
-    Enum.map(agent.tools, fn %Function{} = tool ->
+  defp wrap_tools_for_state_capture(tools, initial_state) do
+    Enum.map(tools, fn %Function{} = tool ->
       # Wrap the original function to handle state updates
       original_fn = tool.function
 
@@ -515,12 +511,8 @@ defmodule LangChain.Agents.Agent do
         # Get the most recent state from context, or use initial state
         current_state = get_in(context, [:state]) || initial_state
 
-        # Call the original function with updated context that includes state, registry, and agent_id
-        context_with_state =
-          (context || %{})
-          |> Map.put(:state, current_state)
-          |> Map.put(:registry, agent.registry)
-          |> Map.put(:agent_id, agent.agent_id)
+        # Call the original function with updated context that includes state
+        context_with_state = Map.put(context || %{}, :state, current_state)
 
         case original_fn.(args, context_with_state) do
           # Tool returned state update

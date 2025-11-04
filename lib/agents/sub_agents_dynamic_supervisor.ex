@@ -30,15 +30,13 @@ defmodule LangChain.Agents.SubAgentsDynamicSupervisor do
 
   use DynamicSupervisor
 
-  alias LangChain.Agents.AgentRegistry
-
   @doc """
   Start the SubAgentsDynamicSupervisor.
 
   ## Options
 
   - `:agent_id` - The parent agent's ID (required)
-  - `:registry` - Registry module name for process registration (optional, defaults to LangChain.Agents.Registry)
+  - `:name` - Supervisor name registration (optional)
 
   ## Examples
 
@@ -46,16 +44,13 @@ defmodule LangChain.Agents.SubAgentsDynamicSupervisor do
 
       {:ok, pid} = SubAgentsDynamicSupervisor.start_link(
         agent_id: "agent-123",
-        registry: MyApp.AgentRegistry
+        name: {:via, Registry, {MyRegistry, :subagents_sup}}
       )
   """
   @spec start_link(keyword()) :: Supervisor.on_start()
   def start_link(opts) do
     agent_id = Keyword.fetch!(opts, :agent_id)
-    registry = Keyword.get(opts, :registry, AgentRegistry.default_registry())
-
-    {_name, _opts} = Keyword.pop(opts, :name)
-    name = via_tuple(registry, agent_id)
+    {name, _opts} = Keyword.pop(opts, :name, via_tuple(agent_id))
 
     DynamicSupervisor.start_link(__MODULE__, opts, name: name)
   end
@@ -67,11 +62,14 @@ defmodule LangChain.Agents.SubAgentsDynamicSupervisor do
 
   ## Examples
 
-      pid = SubAgentsDynamicSupervisor.whereis(MyApp.Registry, "agent-123")
+      pid = SubAgentsDynamicSupervisor.whereis("agent-123")
   """
-  @spec whereis(atom(), String.t()) :: pid() | nil
-  def whereis(registry, agent_id) do
-    AgentRegistry.whereis(registry, :sub_agents_supervisor, agent_id)
+  @spec whereis(String.t()) :: pid() | nil
+  def whereis(agent_id) do
+    case Registry.lookup(LangChain.Agents.Registry, {:sub_agents_supervisor, agent_id}) do
+      [{pid, _}] -> pid
+      [] -> nil
+    end
   end
 
   @impl true
@@ -81,7 +79,7 @@ defmodule LangChain.Agents.SubAgentsDynamicSupervisor do
 
   # Private helpers
 
-  defp via_tuple(registry, agent_id) do
-    AgentRegistry.via_tuple(registry, :sub_agents_supervisor, agent_id)
+  defp via_tuple(agent_id) do
+    {:via, Registry, {LangChain.Agents.Registry, {:sub_agents_supervisor, agent_id}}}
   end
 end
