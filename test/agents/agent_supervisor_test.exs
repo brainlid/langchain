@@ -11,14 +11,6 @@ defmodule LangChain.Agents.AgentSupervisorTest do
   setup :set_mimic_global
   setup :verify_on_exit!
 
-  setup do
-    # Start a test registry for this test
-    {:ok, _registry} =
-      start_supervised({Registry, keys: :unique, name: LangChain.Agents.Registry})
-
-    :ok
-  end
-
   # Helper to create a mock model
   defp mock_model do
     ChatAnthropic.new!(%{
@@ -93,6 +85,7 @@ defmodule LangChain.Agents.AgentSupervisorTest do
 
     test "starts supervisor with initial state" do
       agent = create_test_agent()
+      agent_id = agent.agent_id
       initial_state = State.new!(%{messages: [Message.new_user!("Hello")]})
 
       assert {:ok, sup_pid} =
@@ -105,8 +98,10 @@ defmodule LangChain.Agents.AgentSupervisorTest do
       children = Supervisor.which_children(sup_pid)
       {_, agent_server_pid, _, _} = Enum.find(children, fn {id, _, _, _} -> id == AgentServer end)
 
-      # Verify initial state was passed
-      state = AgentServer.get_state(agent_server_pid)
+      assert agent_server_pid != nil
+
+      # Verify initial state was passed using agent_id
+      state = AgentServer.get_state(agent_id)
       assert length(state.messages) == 1
 
       # Clean up
@@ -300,6 +295,7 @@ defmodule LangChain.Agents.AgentSupervisorTest do
 
     test "can access AgentServer from supervisor children" do
       agent = create_test_agent()
+      agent_id = agent.agent_id
 
       {:ok, sup_pid} = AgentSupervisor.start_link(agent: agent)
 
@@ -310,8 +306,8 @@ defmodule LangChain.Agents.AgentSupervisorTest do
       assert agent_server_pid != nil
       assert Process.alive?(agent_server_pid)
 
-      # Should be able to interact with AgentServer
-      assert :idle == AgentServer.get_status(agent_server_pid)
+      # Should be able to interact with AgentServer using agent_id
+      assert :idle == AgentServer.get_status(agent_id)
 
       # Clean up
       Supervisor.stop(sup_pid)

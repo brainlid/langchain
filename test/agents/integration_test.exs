@@ -14,9 +14,7 @@ defmodule LangChain.Agents.IntegrationTest do
       # Create a mock ChatOpenAI model
       model = ChatOpenAI.new!(%{model: "gpt-4", stream: false, temperature: 0})
 
-      # Start the Registry for FileSystemServer
-      {:ok, _registry} =
-        start_supervised({Registry, keys: :unique, name: LangChain.Agents.Registry})
+      # Note: Registry for FileSystemServer is started globally in test_helper.exs
 
       {:ok, model: model}
     end

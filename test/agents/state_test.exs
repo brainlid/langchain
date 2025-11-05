@@ -12,7 +12,6 @@ defmodule LangChain.Agents.StateTest do
       assert state.messages == []
       assert state.todos == []
       assert state.metadata == %{}
-      assert state.middleware_state == %{}
     end
 
     test "creates a state with provided attributes" do
@@ -85,15 +84,6 @@ defmodule LangChain.Agents.StateTest do
       assert merged.metadata.nested.x == 1
       assert merged.metadata.nested.y == 3
       assert merged.metadata.nested.z == 4
-    end
-
-    test "merges middleware_state" do
-      left = State.new!(%{middleware_state: %{m1: "a"}})
-      right = State.new!(%{middleware_state: %{m2: "b"}})
-
-      merged = State.merge_states(left, right)
-
-      assert merged.middleware_state == %{m1: "a", m2: "b"}
     end
   end
 
@@ -363,6 +353,42 @@ defmodule LangChain.Agents.StateTest do
 
       updated = State.set_todos(state, [])
       assert updated.todos == []
+    end
+  end
+
+  describe "reset/1" do
+    test "clears messages and todos" do
+      state = State.new!(%{
+        messages: [Message.new_user!("test")],
+        todos: [%{id: "1", content: "task", status: :pending}],
+        metadata: %{config: "value", other: "data"}
+      })
+
+      reset_state = State.reset(state)
+
+      assert reset_state.messages == []
+      assert reset_state.todos == []
+      assert reset_state.metadata == %{config: "value", other: "data"}
+    end
+
+    test "preserves metadata" do
+      state = State.new!(%{
+        messages: [Message.new_user!("hi")],
+        metadata: %{important: "keep this"}
+      })
+
+      reset_state = State.reset(state)
+
+      assert reset_state.metadata == %{important: "keep this"}
+    end
+
+    test "works with empty state" do
+      state = State.new!()
+      reset_state = State.reset(state)
+
+      assert reset_state.messages == []
+      assert reset_state.todos == []
+      assert reset_state.metadata == %{}
     end
   end
 end

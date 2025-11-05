@@ -736,21 +736,6 @@ defmodule LangChain.Agents.SubAgentTest do
 
       assert subagent_state.metadata == parent_state.metadata
     end
-
-    test "inherits middleware_state from parent" do
-      parent_state =
-        State.new!(%{
-          middleware_state: %{some_middleware: %{config: "value"}}
-        })
-
-      subagent_state =
-        SubAgent.prepare_subagent_state(
-          "Do something",
-          parent_state
-        )
-
-      assert subagent_state.middleware_state == parent_state.middleware_state
-    end
   end
 
   describe "SubAgent.extract_subagent_result/2" do

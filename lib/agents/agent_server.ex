@@ -41,48 +41,53 @@ defmodule LangChain.Agents.AgentServer do
         messages: [Message.new_user!("Write a hello world program")]
       })
 
-      {:ok, pid} = AgentServer.start_link(
+      {:ok, _pid} = AgentServer.start_link(
         agent: agent,
         initial_state: initial_state,
-        name: {:global, :my_agent}
+        name: AgentServer.get_name("my-agent-1")
       )
 
       # Subscribe to events
-      AgentServer.subscribe(pid)
+      AgentServer.subscribe("my-agent-1")
 
       # Execute the agent
-      :ok = AgentServer.execute(pid)
+      :ok = AgentServer.execute("my-agent-1")
 
       # Listen for events
       receive do
         {:todo_created, todo} -> IO.inspect(todo, label: "New Todo")
-        {:file_added, path, _content} -> IO.puts("File created: \#{path}")
         {:status_changed, :completed, final_state} -> IO.puts("Done!")
       end
 
       # Get current state
-      state = AgentServer.get_state(pid)
+      state = AgentServer.get_state("my-agent-1")
 
   ## Human-in-the-Loop Example
 
       # Configure agent with interrupts
       {:ok, agent} = Agent.new(
+        agent_id: "my-agent-1",
         model: model,
         interrupt_on: %{"write_file" => true}
       )
 
-      {:ok, pid} = AgentServer.start_link(agent: agent, initial_state: state)
-      AgentServer.subscribe(pid)
+      {:ok, _pid} = AgentServer.start_link(
+        agent: agent,
+        initial_state: state,
+        name: AgentServer.get_name("my-agent-1")
+      )
+
+      AgentServer.subscribe("my-agent-1")
 
       # Execute
-      AgentServer.execute(pid)
+      AgentServer.execute("my-agent-1")
 
       # Wait for interrupt
       receive do
         {:status_changed, :interrupted, interrupt_data} ->
           # Display interrupt_data.action_requests to user
           decisions = get_user_decisions(interrupt_data)
-          AgentServer.resume(pid, decisions)
+          AgentServer.resume("my-agent-1", decisions)
       end
 
       # Wait for completion
@@ -96,8 +101,7 @@ defmodule LangChain.Agents.AgentServer do
 
   alias LangChain.Agents.{Agent, State}
 
-  @typedoc "Server reference for calls"
-  @type server :: pid() | atom() | {:global, term()} | {:via, module(), term()}
+  @registry LangChain.Agents.Registry
 
   @typedoc "Status of the agent server"
   @type status :: :idle | :running | :interrupted | :completed | :error
@@ -154,16 +158,35 @@ defmodule LangChain.Agents.AgentServer do
   end
 
   @doc """
+  Get the name of the AgentServer process for a specific agent.
+
+  ## Examples
+
+      name = AgentServer.get_name("my-agent-1")
+      GenServer.call(name, :get_status)
+  """
+  @spec get_name(String.t()) :: {:via, Registry, {Registry, String.t()}}
+  def get_name(agent_id) when is_binary(agent_id) do
+    {:via, Registry, {@registry, {:agent_server, agent_id}}}
+  end
+
+  @doc """
   Subscribe to events from this AgentServer.
 
   The calling process will receive messages for all events broadcast by this server.
 
   Returns `:ok` on success or `{:error, reason}` if PubSub is not configured.
+
+  ## Examples
+
+      AgentServer.subscribe("my-agent-1")
   """
-  @spec subscribe(server()) :: :ok | {:error, term()}
-  def subscribe(server) do
-    case GenServer.call(server, :get_pubsub_info) do
+  @spec subscribe(String.t()) :: :ok | {:error, term()}
+  def subscribe(agent_id) do
+    case GenServer.call(get_name(agent_id), :get_pubsub_info) do
       {pubsub, pubsub_name, topic} ->
+        # subscribe the client process executing this request to the pubsub
+        # topic the server is using for broadcasting events
         pubsub.subscribe(pubsub_name, topic)
 
       nil ->
@@ -181,11 +204,11 @@ defmodule LangChain.Agents.AgentServer do
 
   ## Examples
 
-      :ok = AgentServer.execute(pid)
+      :ok = AgentServer.execute("my-agent-1")
   """
-  @spec execute(server()) :: :ok | {:error, term()}
-  def execute(server) do
-    GenServer.call(server, :execute, :infinity)
+  @spec execute(String.t()) :: :ok | {:error, term()}
+  def execute(agent_id) do
+    GenServer.call(get_name(agent_id), :execute, :infinity)
   end
 
   @doc """
@@ -193,7 +216,7 @@ defmodule LangChain.Agents.AgentServer do
 
   ## Parameters
 
-  - `server` - The server process
+  - `agent_id` - The agent identifier
   - `decisions` - List of decision maps from human reviewer (see `Agent.resume/3`)
 
   ## Examples
@@ -204,31 +227,39 @@ defmodule LangChain.Agents.AgentServer do
         %{type: :reject}
       ]
 
-      :ok = AgentServer.resume(pid, decisions)
+      :ok = AgentServer.resume("my-agent-1", decisions)
   """
-  @spec resume(server(), list(map())) :: :ok | {:error, term()}
-  def resume(server, decisions) when is_list(decisions) do
-    GenServer.call(server, {:resume, decisions}, :infinity)
+  @spec resume(String.t(), list(map())) :: :ok | {:error, term()}
+  def resume(agent_id, decisions) when is_list(decisions) do
+    GenServer.call(get_name(agent_id), {:resume, decisions}, :infinity)
   end
 
   @doc """
   Get the current state of the agent.
 
   Returns the current State struct.
+
+  ## Examples
+
+      state = AgentServer.get_state("my-agent-1")
   """
-  @spec get_state(server()) :: State.t()
-  def get_state(server) do
-    GenServer.call(server, :get_state)
+  @spec get_state(String.t()) :: State.t()
+  def get_state(agent_id) do
+    GenServer.call(get_name(agent_id), :get_state)
   end
 
   @doc """
   Get the current status of the server.
 
   Returns one of: `:idle`, `:running`, `:interrupted`, `:completed`, `:error`
+
+  ## Examples
+
+      status = AgentServer.get_status("my-agent-1")
   """
-  @spec get_status(server()) :: status()
-  def get_status(server) do
-    GenServer.call(server, :get_status)
+  @spec get_status(String.t()) :: status()
+  def get_status(agent_id) do
+    GenServer.call(get_name(agent_id), :get_status)
   end
 
   @doc """
@@ -239,10 +270,65 @@ defmodule LangChain.Agents.AgentServer do
   - `:state` - Current State
   - `:interrupt_data` - Interrupt data if status is `:interrupted`
   - `:error` - Error reason if status is `:error`
+
+  ## Examples
+
+      info = AgentServer.get_info("my-agent-1")
   """
-  @spec get_info(server()) :: map()
-  def get_info(server) do
-    GenServer.call(server, :get_info)
+  @spec get_info(String.t()) :: map()
+  def get_info(agent_id) do
+    GenServer.call(get_name(agent_id), :get_info)
+  end
+
+  @doc """
+  Add a message to the agent's state and transition to idle if completed.
+
+  This is useful for conversational interfaces where you want to add a new user
+  message after the agent has completed a previous execution.
+
+  Returns `:ok` on success.
+
+  ## Examples
+
+      # After agent completes
+      :ok = AgentServer.add_message("my-agent-1", Message.new_user!("What's next?"))
+      :ok = AgentServer.execute("my-agent-1")
+  """
+  @spec add_message(String.t(), LangChain.Message.t()) :: :ok
+  def add_message(agent_id, %LangChain.Message{} = message) do
+    GenServer.call(get_name(agent_id), {:add_message, message})
+  end
+
+  @doc """
+  Reset the agent's state and filesystem to start fresh.
+
+  This clears:
+  - All messages
+  - All TODOs
+  - Middleware state
+  - Memory-only files (completely removed)
+  - In-memory modifications to persisted files (discarded)
+
+  This preserves:
+  - Metadata (configuration)
+  - Persisted files (reverted to pristine state from storage)
+
+  Status transitions:
+  - `:completed` or `:error` → `:idle` (ready for new execution)
+  - Other statuses remain unchanged
+
+  Returns `:ok` on success.
+
+  ## Examples
+
+      # After agent completes or encounters error
+      :ok = AgentServer.reset("my-agent-1")
+      # Now you can execute again with clean state
+      :ok = AgentServer.execute("my-agent-1")
+  """
+  @spec reset(String.t()) :: :ok
+  def reset(agent_id) do
+    GenServer.call(get_name(agent_id), :reset)
   end
 
   @doc """
@@ -250,11 +336,11 @@ defmodule LangChain.Agents.AgentServer do
 
   ## Examples
 
-      :ok = AgentServer.stop(pid)
+      :ok = AgentServer.stop("my-agent-1")
   """
-  @spec stop(server()) :: :ok
-  def stop(server) do
-    GenServer.stop(server)
+  @spec stop(String.t()) :: :ok
+  def stop(agent_id) do
+    GenServer.stop(get_name(agent_id))
   end
 
   ## Server Callbacks
@@ -358,6 +444,62 @@ defmodule LangChain.Agents.AgentServer do
     }
 
     {:reply, info, server_state}
+  end
+
+  @impl true
+  def handle_call({:add_message, message}, _from, server_state) do
+    # Add message to the state
+    new_state = State.add_message(server_state.state, message)
+
+    # Transition to idle if we were completed/error to allow new execution
+    new_status =
+      case server_state.status do
+        :completed -> :idle
+        :error -> :idle
+        status -> status
+      end
+
+    updated_server_state = %{
+      server_state
+      | state: new_state,
+        status: new_status,
+        error: nil
+    }
+
+    {:reply, :ok, updated_server_state}
+  end
+
+  @impl true
+  def handle_call(:reset, _from, server_state) do
+    # Reset the filesystem first (clears memory files, unloads persisted files)
+    agent_id = server_state.agent.agent_id
+    :ok = LangChain.Agents.FileSystemServer.reset(agent_id)
+
+    # Reset the agent state (clears messages, todos)
+    reset_state = State.reset(server_state.state)
+
+    # Transition to idle if we were completed/error
+    new_status =
+      case server_state.status do
+        :completed -> :idle
+        :error -> :idle
+        status -> status
+      end
+
+    # Broadcast status change if status changed
+    if new_status != server_state.status do
+      broadcast_event(server_state, {:status_changed, new_status, nil})
+    end
+
+    updated_server_state = %{
+      server_state
+      | state: reset_state,
+        status: new_status,
+        error: nil,
+        interrupt_data: nil
+    }
+
+    {:reply, :ok, updated_server_state}
   end
 
   @impl true

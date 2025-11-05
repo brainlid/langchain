@@ -6,10 +6,7 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
   alias LangChain.Agents.State
 
   setup_all do
-    # Start registry once for all tests
-    {:ok, _registry} =
-      start_supervised({Registry, keys: :unique, name: LangChain.Agents.Registry})
-
+    # Note: Registry is started globally in test_helper.exs
     :ok
   end
 

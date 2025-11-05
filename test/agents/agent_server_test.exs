@@ -25,6 +25,10 @@ defmodule LangChain.Agents.AgentServerTest do
 
   # Helper to create a simple agent
   defp create_test_agent(opts \\ []) do
+    # Generate unique agent_id if not provided
+    agent_id = Keyword.get(opts, :agent_id, "test-agent-#{System.unique_integer([:positive])}")
+    opts = Keyword.put(opts, :agent_id, agent_id)
+
     Agent.new!(
       Keyword.merge(
         [
@@ -41,28 +45,36 @@ defmodule LangChain.Agents.AgentServerTest do
   describe "start_link/1" do
     test "starts server with agent and initial state" do
       agent = create_test_agent()
+      agent_id = agent.agent_id
       initial_state = State.new!(%{messages: [Message.new_user!("Hello")]})
 
       assert {:ok, pid} =
                AgentServer.start_link(
                  agent: agent,
                  initial_state: initial_state,
+                 name: AgentServer.get_name(agent_id),
                  pubsub: nil
                )
 
       assert Process.alive?(pid)
 
-      # Verify state is accessible
-      state = AgentServer.get_state(pid)
+      # Verify state is accessible using agent_id
+      state = AgentServer.get_state(agent_id)
       assert length(state.messages) == 1
     end
 
     test "starts server with default empty state" do
       agent = create_test_agent()
+      agent_id = agent.agent_id
 
-      assert {:ok, pid} = AgentServer.start_link(agent: agent, pubsub: nil)
+      assert {:ok, _pid} =
+               AgentServer.start_link(
+                 agent: agent,
+                 name: AgentServer.get_name(agent_id),
+                 pubsub: nil
+               )
 
-      state = AgentServer.get_state(pid)
+      state = AgentServer.get_state(agent_id)
       assert state.messages == []
     end
 
@@ -81,22 +93,35 @@ defmodule LangChain.Agents.AgentServerTest do
 
     test "initializes with idle status" do
       agent = create_test_agent()
+      agent_id = agent.agent_id
 
-      {:ok, pid} = AgentServer.start_link(agent: agent, pubsub: nil)
+      {:ok, _pid} =
+               AgentServer.start_link(
+                 agent: agent,
+                 name: AgentServer.get_name(agent_id),
+                 pubsub: nil
+               )
 
-      assert AgentServer.get_status(pid) == :idle
+      assert AgentServer.get_status(agent_id) == :idle
     end
   end
 
   describe "get_state/1" do
     test "returns current state" do
       agent = create_test_agent()
+      agent_id = agent.agent_id
       msg = Message.new_user!("Test")
       initial_state = State.new!(%{messages: [msg]})
 
-      {:ok, pid} = AgentServer.start_link(agent: agent, initial_state: initial_state, pubsub: nil)
+      {:ok, _pid} =
+        AgentServer.start_link(
+          agent: agent,
+          initial_state: initial_state,
+          name: AgentServer.get_name(agent_id),
+          pubsub: nil
+        )
 
-      state = AgentServer.get_state(pid)
+      state = AgentServer.get_state(agent_id)
       assert length(state.messages) == 1
       assert hd(state.messages) == msg
     end
@@ -105,20 +130,34 @@ defmodule LangChain.Agents.AgentServerTest do
   describe "get_status/1" do
     test "returns current status" do
       agent = create_test_agent()
-      {:ok, pid} = AgentServer.start_link(agent: agent, pubsub: nil)
+      agent_id = agent.agent_id
 
-      assert AgentServer.get_status(pid) == :idle
+      {:ok, _pid} =
+        AgentServer.start_link(
+          agent: agent,
+          name: AgentServer.get_name(agent_id),
+          pubsub: nil
+        )
+
+      assert AgentServer.get_status(agent_id) == :idle
     end
   end
 
   describe "get_info/1" do
     test "returns comprehensive server info" do
       agent = create_test_agent()
+      agent_id = agent.agent_id
       initial_state = State.new!(%{messages: [Message.new_user!("Test")]})
 
-      {:ok, pid} = AgentServer.start_link(agent: agent, initial_state: initial_state, pubsub: nil)
+      {:ok, _pid} =
+        AgentServer.start_link(
+          agent: agent,
+          initial_state: initial_state,
+          name: AgentServer.get_name(agent_id),
+          pubsub: nil
+        )
 
-      info = AgentServer.get_info(pid)
+      info = AgentServer.get_info(agent_id)
 
       assert info.status == :idle
       assert info.state.messages == initial_state.messages
@@ -131,10 +170,11 @@ defmodule LangChain.Agents.AgentServerTest do
     setup do
       # Mock the Agent.execute to avoid real LLM calls
       agent = create_test_agent()
-      {:ok, agent: agent}
+      agent_id = agent.agent_id
+      {:ok, agent: agent, agent_id: agent_id}
     end
 
-    test "executes agent successfully", %{agent: agent} do
+    test "executes agent successfully", %{agent: agent, agent_id: agent_id} do
       initial_state = State.new!(%{messages: [Message.new_user!("Hello")]})
 
       Agent
@@ -144,19 +184,25 @@ defmodule LangChain.Agents.AgentServerTest do
         {:ok, new_state}
       end)
 
-      {:ok, pid} = AgentServer.start_link(agent: agent, initial_state: initial_state, pubsub: nil)
+      {:ok, _pid} =
+        AgentServer.start_link(
+          agent: agent,
+          initial_state: initial_state,
+          name: AgentServer.get_name(agent_id),
+          pubsub: nil
+        )
 
-      assert :ok = AgentServer.execute(pid)
+      assert :ok = AgentServer.execute(agent_id)
 
       # Wait for execution to complete
       Process.sleep(50)
 
-      assert AgentServer.get_status(pid) == :completed
-      state = AgentServer.get_state(pid)
+      assert AgentServer.get_status(agent_id) == :completed
+      state = AgentServer.get_state(agent_id)
       assert length(state.messages) == 2
     end
 
-    test "transitions to running status immediately", %{agent: agent} do
+    test "transitions to running status immediately", %{agent: agent, agent_id: agent_id} do
       initial_state = State.new!(%{messages: [Message.new_user!("Hello")]})
 
       Agent
@@ -165,14 +211,20 @@ defmodule LangChain.Agents.AgentServerTest do
         {:ok, state}
       end)
 
-      {:ok, pid} = AgentServer.start_link(agent: agent, initial_state: initial_state, pubsub: nil)
+      {:ok, _pid} =
+        AgentServer.start_link(
+          agent: agent,
+          initial_state: initial_state,
+          name: AgentServer.get_name(agent_id),
+          pubsub: nil
+        )
 
-      assert :ok = AgentServer.execute(pid)
+      assert :ok = AgentServer.execute(agent_id)
       # Should immediately be running
-      assert AgentServer.get_status(pid) == :running
+      assert AgentServer.get_status(agent_id) == :running
     end
 
-    test "returns error if not idle", %{agent: agent} do
+    test "returns error if not idle", %{agent: agent, agent_id: agent_id} do
       initial_state = State.new!(%{messages: [Message.new_user!("Hello")]})
 
       Agent
@@ -181,16 +233,22 @@ defmodule LangChain.Agents.AgentServerTest do
         {:ok, state}
       end)
 
-      {:ok, pid} = AgentServer.start_link(agent: agent, initial_state: initial_state, pubsub: nil)
+      {:ok, _pid} =
+        AgentServer.start_link(
+          agent: agent,
+          initial_state: initial_state,
+          name: AgentServer.get_name(agent_id),
+          pubsub: nil
+        )
 
       # First execution succeeds
-      assert :ok = AgentServer.execute(pid)
+      assert :ok = AgentServer.execute(agent_id)
 
       # Second execution while running fails
-      assert {:error, _} = AgentServer.execute(pid)
+      assert {:error, _} = AgentServer.execute(agent_id)
     end
 
-    test "handles agent execution error", %{agent: agent} do
+    test "handles agent execution error", %{agent: agent, agent_id: agent_id} do
       initial_state = State.new!(%{messages: [Message.new_user!("Hello")]})
 
       Agent
@@ -198,19 +256,25 @@ defmodule LangChain.Agents.AgentServerTest do
         {:error, "Something went wrong"}
       end)
 
-      {:ok, pid} = AgentServer.start_link(agent: agent, initial_state: initial_state, pubsub: nil)
+      {:ok, _pid} =
+        AgentServer.start_link(
+          agent: agent,
+          initial_state: initial_state,
+          name: AgentServer.get_name(agent_id),
+          pubsub: nil
+        )
 
-      assert :ok = AgentServer.execute(pid)
+      assert :ok = AgentServer.execute(agent_id)
 
       # Wait for execution to complete
       Process.sleep(50)
 
-      assert AgentServer.get_status(pid) == :error
-      info = AgentServer.get_info(pid)
+      assert AgentServer.get_status(agent_id) == :error
+      info = AgentServer.get_info(agent_id)
       assert info.error == "Something went wrong"
     end
 
-    test "handles agent interrupt", %{agent: agent} do
+    test "handles agent interrupt", %{agent: agent, agent_id: agent_id} do
       initial_state = State.new!(%{messages: [Message.new_user!("Write file")]})
 
       interrupt_data = %{
@@ -225,15 +289,21 @@ defmodule LangChain.Agents.AgentServerTest do
         {:interrupt, state, interrupt_data}
       end)
 
-      {:ok, pid} = AgentServer.start_link(agent: agent, initial_state: initial_state, pubsub: nil)
+      {:ok, _pid} =
+        AgentServer.start_link(
+          agent: agent,
+          initial_state: initial_state,
+          name: AgentServer.get_name(agent_id),
+          pubsub: nil
+        )
 
-      assert :ok = AgentServer.execute(pid)
+      assert :ok = AgentServer.execute(agent_id)
 
       # Wait for execution to complete
       Process.sleep(50)
 
-      assert AgentServer.get_status(pid) == :interrupted
-      info = AgentServer.get_info(pid)
+      assert AgentServer.get_status(agent_id) == :interrupted
+      info = AgentServer.get_info(agent_id)
       assert info.interrupt_data == interrupt_data
     end
   end
@@ -241,6 +311,7 @@ defmodule LangChain.Agents.AgentServerTest do
   describe "resume/2" do
     setup do
       agent = create_test_agent()
+      agent_id = agent.agent_id
 
       initial_state = State.new!(%{messages: [Message.new_user!("Write file")]})
 
@@ -257,14 +328,21 @@ defmodule LangChain.Agents.AgentServerTest do
         {:interrupt, state, interrupt_data}
       end)
 
-      {:ok, pid} = AgentServer.start_link(agent: agent, initial_state: initial_state, pubsub: nil)
-      :ok = AgentServer.execute(pid)
+      {:ok, _pid} =
+        AgentServer.start_link(
+          agent: agent,
+          initial_state: initial_state,
+          name: AgentServer.get_name(agent_id),
+          pubsub: nil
+        )
+
+      :ok = AgentServer.execute(agent_id)
       Process.sleep(50)
 
-      {:ok, agent: agent, pid: pid}
+      {:ok, agent: agent, agent_id: agent_id}
     end
 
-    test "resumes execution after interrupt", %{agent: agent, pid: pid} do
+    test "resumes execution after interrupt", %{agent: agent, agent_id: agent_id} do
       decisions = [%{type: :approve}]
 
       Agent
@@ -273,27 +351,34 @@ defmodule LangChain.Agents.AgentServerTest do
         {:ok, new_state}
       end)
 
-      assert :ok = AgentServer.resume(pid, decisions)
+      assert :ok = AgentServer.resume(agent_id, decisions)
 
       # Wait for resume to complete
       Process.sleep(50)
 
-      assert AgentServer.get_status(pid) == :completed
+      assert AgentServer.get_status(agent_id) == :completed
     end
 
-    test "returns error if not interrupted", %{agent: _agent, pid: setup_pid} do
+    test "returns error if not interrupted", %{agent: _agent, agent_id: setup_agent_id} do
       # Stop the server from setup first since it uses the default name
-      GenServer.stop(setup_pid, :normal)
+      :ok = AgentServer.stop(setup_agent_id)
 
       # Create a new idle server
       agent = create_test_agent()
-      {:ok, pid} = AgentServer.start_link(agent: agent, pubsub: nil)
+      new_agent_id = agent.agent_id
+
+      {:ok, _pid} =
+        AgentServer.start_link(
+          agent: agent,
+          name: AgentServer.get_name(new_agent_id),
+          pubsub: nil
+        )
 
       decisions = [%{type: :approve}]
-      assert {:error, _} = AgentServer.resume(pid, decisions)
+      assert {:error, _} = AgentServer.resume(new_agent_id, decisions)
     end
 
-    test "handles resume error", %{agent: agent, pid: pid} do
+    test "handles resume error", %{agent: agent, agent_id: agent_id} do
       decisions = [%{type: :approve}]
 
       Agent
@@ -301,13 +386,13 @@ defmodule LangChain.Agents.AgentServerTest do
         {:error, "Resume failed"}
       end)
 
-      assert :ok = AgentServer.resume(pid, decisions)
+      assert :ok = AgentServer.resume(agent_id, decisions)
 
       # Wait for resume to complete
       Process.sleep(50)
 
-      assert AgentServer.get_status(pid) == :error
-      info = AgentServer.get_info(pid)
+      assert AgentServer.get_status(agent_id) == :error
+      info = AgentServer.get_info(agent_id)
       assert info.error == "Resume failed"
     end
   end
@@ -319,30 +404,32 @@ defmodule LangChain.Agents.AgentServerTest do
       {:ok, _} = start_supervised({Phoenix.PubSub, name: pubsub_name})
 
       agent = create_test_agent()
+      agent_id = agent.agent_id
       initial_state = State.new!()
 
-      {:ok, pid} =
+      {:ok, _pid} =
         AgentServer.start_link(
           agent: agent,
           initial_state: initial_state,
+          name: AgentServer.get_name(agent_id),
           pubsub: Phoenix.PubSub,
           pubsub_name: pubsub_name,
           id: "test_agent_#{:erlang.unique_integer([:positive])}"
         )
 
       # Subscribe to events
-      :ok = AgentServer.subscribe(pid)
+      :ok = AgentServer.subscribe(agent_id)
 
-      {:ok, agent: agent, pid: pid, pubsub_name: pubsub_name}
+      {:ok, agent: agent, agent_id: agent_id, pubsub_name: pubsub_name}
     end
 
-    test "broadcasts status changes", %{agent: agent, pid: pid} do
+    test "broadcasts status changes", %{agent: agent, agent_id: agent_id} do
       Agent
       |> expect(:execute, fn ^agent, state ->
         {:ok, state}
       end)
 
-      :ok = AgentServer.execute(pid)
+      :ok = AgentServer.execute(agent_id)
 
       # Should receive running status
       assert_receive {:status_changed, :running, nil}, 100
@@ -354,7 +441,7 @@ defmodule LangChain.Agents.AgentServerTest do
     # NOTE: File events are NOT broadcast by AgentServer anymore
     # Files are managed by FileSystemServer which has its own event handling
 
-    test "broadcasts todo created event", %{agent: agent, pid: pid} do
+    test "broadcasts todo created event", %{agent: agent, agent_id: agent_id} do
       Agent
       |> expect(:execute, fn ^agent, state ->
         todo = Todo.new!(%{content: "Write tests", status: :pending})
@@ -362,19 +449,19 @@ defmodule LangChain.Agents.AgentServerTest do
         {:ok, new_state}
       end)
 
-      :ok = AgentServer.execute(pid)
+      :ok = AgentServer.execute(agent_id)
 
       assert_receive {:status_changed, :running, nil}, 100
       assert_receive {:todo_created, todo}, 200
       assert todo.content == "Write tests"
     end
 
-    test "broadcasts todo updated event", %{agent: agent, pid: pid} do
+    test "broadcasts todo updated event", %{agent: agent, agent_id: agent_id} do
       # Set initial todo
       todo = Todo.new!(%{id: "test_id", content: "Write tests", status: :pending})
       initial_state = State.new!() |> State.put_todo(todo)
 
-      :sys.replace_state(pid, fn server_state ->
+      :sys.replace_state(GenServer.whereis(AgentServer.get_name(agent_id)), fn server_state ->
         %{server_state | state: initial_state}
       end)
 
@@ -385,19 +472,19 @@ defmodule LangChain.Agents.AgentServerTest do
         {:ok, new_state}
       end)
 
-      :ok = AgentServer.execute(pid)
+      :ok = AgentServer.execute(agent_id)
 
       assert_receive {:status_changed, :running, nil}, 100
       assert_receive {:todo_updated, updated_todo}, 200
       assert updated_todo.status == :completed
     end
 
-    test "broadcasts todo deleted event", %{agent: agent, pid: pid} do
+    test "broadcasts todo deleted event", %{agent: agent, agent_id: agent_id} do
       # Set initial todo
       todo = Todo.new!(%{id: "test_id", content: "Write tests", status: :pending})
       initial_state = State.new!() |> State.put_todo(todo)
 
-      :sys.replace_state(pid, fn server_state ->
+      :sys.replace_state(GenServer.whereis(AgentServer.get_name(agent_id)), fn server_state ->
         %{server_state | state: initial_state}
       end)
 
@@ -407,13 +494,13 @@ defmodule LangChain.Agents.AgentServerTest do
         {:ok, new_state}
       end)
 
-      :ok = AgentServer.execute(pid)
+      :ok = AgentServer.execute(agent_id)
 
       assert_receive {:status_changed, :running, nil}, 100
       assert_receive {:todo_deleted, "test_id"}, 200
     end
 
-    test "broadcasts interrupt status with data", %{agent: agent, pid: pid} do
+    test "broadcasts interrupt status with data", %{agent: agent, agent_id: agent_id} do
       interrupt_data = %{
         action_requests: [%{tool_name: "write_file"}],
         review_configs: %{}
@@ -424,19 +511,19 @@ defmodule LangChain.Agents.AgentServerTest do
         {:interrupt, state, interrupt_data}
       end)
 
-      :ok = AgentServer.execute(pid)
+      :ok = AgentServer.execute(agent_id)
 
       assert_receive {:status_changed, :running, nil}, 100
       assert_receive {:status_changed, :interrupted, ^interrupt_data}, 200
     end
 
-    test "broadcasts error status", %{agent: agent, pid: pid} do
+    test "broadcasts error status", %{agent: agent, agent_id: agent_id} do
       Agent
       |> expect(:execute, fn ^agent, _state ->
         {:error, "Test error"}
       end)
 
-      :ok = AgentServer.execute(pid)
+      :ok = AgentServer.execute(agent_id)
 
       assert_receive {:status_changed, :running, nil}, 100
       assert_receive {:status_changed, :error, "Test error"}, 200
@@ -449,10 +536,17 @@ defmodule LangChain.Agents.AgentServerTest do
   describe "stop/1" do
     test "stops the server gracefully" do
       agent = create_test_agent()
-      {:ok, pid} = AgentServer.start_link(agent: agent, pubsub: nil)
+      agent_id = agent.agent_id
+
+      {:ok, pid} =
+        AgentServer.start_link(
+          agent: agent,
+          name: AgentServer.get_name(agent_id),
+          pubsub: nil
+        )
 
       assert Process.alive?(pid)
-      assert :ok = AgentServer.stop(pid)
+      assert :ok = AgentServer.stop(agent_id)
       refute Process.alive?(pid)
     end
   end

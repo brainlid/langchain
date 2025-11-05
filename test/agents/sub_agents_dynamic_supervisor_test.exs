@@ -4,10 +4,7 @@ defmodule LangChain.Agents.SubAgentsDynamicSupervisorTest do
   alias LangChain.Agents.SubAgentsDynamicSupervisor
 
   setup do
-    # Start a test registry for this test
-    {:ok, _registry} =
-      start_supervised({Registry, keys: :unique, name: LangChain.Agents.Registry})
-
+    # Note: Registry is started globally in test_helper.exs
     :ok
   end
 

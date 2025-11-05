@@ -331,6 +331,46 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
   end
 
   @doc """
+  Reset the filesystem to pristine persisted state.
+
+  This clears:
+  - All memory-only files (completely removed)
+  - All in-memory modifications to persisted files (discarded)
+  - All dirty flags (no persistence of pending changes)
+  - All debounce timers (pending writes cancelled)
+
+  Then re-indexes all persisted files from storage backends, ensuring:
+  - Fresh metadata from storage (picks up any external changes)
+  - Files marked as unloaded (will lazy-load on next access)
+  - Latest list of persisted files (includes files created during execution)
+
+  Uses the existing `index_persisted_files/1` code path for consistency.
+
+  ## Returns
+
+  Updated state with reset filesystem.
+
+  ## Examples
+
+      iex> state = FileSystemState.reset(state)
+  """
+  @spec reset(t()) :: t()
+  def reset(%FileSystemState{} = state) do
+    # Cancel all debounce timers (discard pending writes)
+    Enum.each(state.debounce_timers, fn {_path, timer_ref} ->
+      Process.cancel_timer(timer_ref)
+    end)
+
+    # Clear all files and timers
+    cleared_state = %{state | files: %{}, debounce_timers: %{}}
+
+    # Re-index persisted files from storage backends
+    # This reuses the existing tested code path from initialization
+    # and picks up the latest state from storage
+    index_persisted_files(cleared_state)
+  end
+
+  @doc """
   Loads a file's content from persistence into ETS.
 
   Called by FileSystemServer when a file needs to be lazy-loaded.

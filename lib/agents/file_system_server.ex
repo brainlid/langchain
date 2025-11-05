@@ -75,7 +75,7 @@ defmodule LangChain.Agents.FileSystemServer do
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
     agent_id = Keyword.fetch!(opts, :agent_id)
-    GenServer.start_link(__MODULE__, opts, name: via_tuple(agent_id))
+    GenServer.start_link(__MODULE__, opts, name: get_name(agent_id))
   end
 
   @doc """
@@ -87,6 +87,13 @@ defmodule LangChain.Agents.FileSystemServer do
       [{pid, _}] -> pid
       [] -> nil
     end
+  end
+
+  @doc """
+  Get the name of the FileSystemServer process for a specific agent.
+  """
+  def get_name(agent_id) do
+    {:via, Registry, {LangChain.Agents.Registry, {:file_system_server, agent_id}}}
   end
 
   @doc """
@@ -109,7 +116,7 @@ defmodule LangChain.Agents.FileSystemServer do
   """
   @spec write_file(String.t(), String.t(), String.t(), keyword()) :: :ok | {:error, term()}
   def write_file(agent_id, path, content, opts \\ []) do
-    GenServer.call(via_tuple(agent_id), {:write_file, path, content, opts})
+    GenServer.call(get_name(agent_id), {:write_file, path, content, opts})
   end
 
   @doc """
@@ -131,7 +138,7 @@ defmodule LangChain.Agents.FileSystemServer do
   """
   @spec read_file(String.t(), String.t()) :: {:ok, String.t()} | {:error, term()}
   def read_file(agent_id, path) do
-    GenServer.call(via_tuple(agent_id), {:read_file, path})
+    GenServer.call(get_name(agent_id), {:read_file, path})
   end
 
   @doc """
@@ -141,7 +148,7 @@ defmodule LangChain.Agents.FileSystemServer do
   """
   @spec delete_file(String.t(), String.t()) :: :ok | {:error, term()}
   def delete_file(agent_id, path) do
-    GenServer.call(via_tuple(agent_id), {:delete_file, path})
+    GenServer.call(get_name(agent_id), {:delete_file, path})
   end
 
   @doc """
@@ -171,7 +178,7 @@ defmodule LangChain.Agents.FileSystemServer do
   """
   @spec register_persistence(String.t(), FileSystemConfig.t()) :: :ok | {:error, term()}
   def register_persistence(agent_id, %FileSystemConfig{} = config) do
-    GenServer.call(via_tuple(agent_id), {:register_persistence, config})
+    GenServer.call(get_name(agent_id), {:register_persistence, config})
   end
 
   @doc """
@@ -206,7 +213,7 @@ defmodule LangChain.Agents.FileSystemServer do
   end
 
   def register_files(agent_id, file_entries) when is_list(file_entries) do
-    GenServer.call(via_tuple(agent_id), {:register_files, file_entries})
+    GenServer.call(get_name(agent_id), {:register_files, file_entries})
   end
 
   @doc """
@@ -221,7 +228,7 @@ defmodule LangChain.Agents.FileSystemServer do
   """
   @spec get_persistence_configs(String.t()) :: %{String.t() => FileSystemConfig.t()}
   def get_persistence_configs(agent_id) do
-    GenServer.call(via_tuple(agent_id), :get_persistence_configs)
+    GenServer.call(get_name(agent_id), :get_persistence_configs)
   end
 
   @doc """
@@ -231,7 +238,30 @@ defmodule LangChain.Agents.FileSystemServer do
   """
   @spec flush_all(String.t()) :: :ok
   def flush_all(agent_id) do
-    GenServer.call(via_tuple(agent_id), :flush_all)
+    GenServer.call(get_name(agent_id), :flush_all)
+  end
+
+  @doc """
+  Reset the filesystem to pristine persisted state.
+
+  This operation:
+  - Removes all memory-only files (not persisted)
+  - Unloads all persisted files (discards in-memory modifications)
+  - Cancels all pending debounce timers (discards unsaved changes)
+
+  **Result**: Next read will reload persisted files from storage in their original state.
+
+  This is useful when resetting an agent to start fresh without carrying over
+  transient in-memory file modifications.
+
+  ## Examples
+
+      iex> FileSystemServer.reset("agent-123")
+      :ok
+  """
+  @spec reset(String.t()) :: :ok
+  def reset(agent_id) do
+    GenServer.call(get_name(agent_id), :reset)
   end
 
   @doc """
@@ -246,7 +276,7 @@ defmodule LangChain.Agents.FileSystemServer do
   """
   @spec list_files(String.t()) :: [String.t()]
   def list_files(agent_id) do
-    GenServer.call(via_tuple(agent_id), :list_files)
+    GenServer.call(get_name(agent_id), :list_files)
   end
 
   @doc """
@@ -262,7 +292,7 @@ defmodule LangChain.Agents.FileSystemServer do
   """
   @spec file_exists?(String.t(), String.t()) :: boolean()
   def file_exists?(agent_id, path) do
-    GenServer.call(via_tuple(agent_id), {:file_exists?, path})
+    GenServer.call(get_name(agent_id), {:file_exists?, path})
   end
 
   @doc """
@@ -272,7 +302,7 @@ defmodule LangChain.Agents.FileSystemServer do
   """
   @spec stats(String.t()) :: {:ok, map()}
   def stats(agent_id) do
-    GenServer.call(via_tuple(agent_id), :stats)
+    GenServer.call(get_name(agent_id), :stats)
   end
 
   # ============================================================================
@@ -402,6 +432,12 @@ defmodule LangChain.Agents.FileSystemServer do
   end
 
   @impl true
+  def handle_call(:reset, _from, state) do
+    new_state = FileSystemState.reset(state)
+    {:reply, :ok, new_state}
+  end
+
+  @impl true
   def handle_info({:persist_file, path}, state) do
     new_state = FileSystemState.persist_file(state, path)
     {:noreply, new_state}
@@ -412,9 +448,5 @@ defmodule LangChain.Agents.FileSystemServer do
     # Flush all pending writes before terminating
     FileSystemState.flush_all(state)
     :ok
-  end
-
-  defp via_tuple(agent_id) do
-    {:via, Registry, {LangChain.Agents.Registry, {:file_system_server, agent_id}}}
   end
 end

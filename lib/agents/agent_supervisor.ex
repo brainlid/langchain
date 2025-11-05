@@ -88,7 +88,7 @@ defmodule LangChain.Agents.AgentSupervisor do
 
       {:ok, sup_pid} = AgentSupervisor.start_link(
         agent: agent,
-        name: {:via, Registry, {MyRegistry, :agent_sup}}
+        name: AgentSupervisor.get_name("agent-123")
       )
   """
   @spec start_link(keyword()) :: Supervisor.on_start()
@@ -134,7 +134,9 @@ defmodule LangChain.Agents.AgentSupervisor do
          agent: agent,
          initial_state: initial_state,
          pubsub: pubsub,
-         pubsub_name: pubsub_name
+         pubsub_name: pubsub_name,
+         id: agent_id,
+         name: AgentServer.get_name(agent_id)
        ]
        |> Enum.reject(fn {_k, v} -> is_nil(v) end)},
 

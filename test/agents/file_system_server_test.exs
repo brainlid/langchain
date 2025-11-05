@@ -27,11 +27,8 @@ defmodule LangChain.Agents.FileSystemServerTest do
   end
 
   setup do
-    # Start a test registry for this test
+    # Note: Registry is started globally in test_helper.exs
     agent_id = "test_agent_#{System.unique_integer([:positive])}"
-
-    {:ok, _registry} =
-      start_supervised({Registry, keys: :unique, name: LangChain.Agents.Registry})
 
     on_exit(fn ->
       # Cleanup any running FileSystemServer

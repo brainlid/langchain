@@ -38,6 +38,10 @@ Mimic.copy(LangChain.Config)
 Mimic.copy(LangChain.ChatModels.ChatVertexAI)
 Mimic.copy(LangChain.ChatModels.ChatGoogleAI)
 Mimic.copy(LangChain.ChatModels.ChatGrok)
+
+# Start the Agents Registry for tests
+{:ok, _} = Registry.start_link(keys: :unique, name: LangChain.Agents.Registry)
+
 ExUnit.configure(capture_log: true, exclude: [live_call: true])
 
 ExUnit.start()

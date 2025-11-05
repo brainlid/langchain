@@ -1,12 +1,11 @@
 defmodule LangChain.Agents.State do
   @moduledoc """
-  Agent state structure with support for middleware state.
+  Agent state structure for managing agent execution context.
 
   The state holds the complete context for an agent execution including:
   - Message history (list of `LangChain.Message` structs)
   - TODO list
   - Metadata
-  - Middleware-specific state
 
   **Note**: Files are managed separately by `FileSystemServer` and are not part of
   the agent's internal state. The FileSystemServer provides persistent storage with
@@ -19,7 +18,6 @@ defmodule LangChain.Agents.State do
   - **messages**: Appends new messages to existing list
   - **todos**: Replaces with new todos (merge handled by TodoList middleware)
   - **metadata**: Deep merges metadata maps
-  - **middleware_state**: Merges middleware-specific state
   """
 
   use Ecto.Schema
@@ -32,7 +30,6 @@ defmodule LangChain.Agents.State do
     field :messages, {:array, :any}, default: [], virtual: true
     field :todos, {:array, :map}, default: []
     field :metadata, :map, default: %{}
-    field :middleware_state, :map, default: %{}
   end
 
   @type t :: %State{}
@@ -42,7 +39,7 @@ defmodule LangChain.Agents.State do
   """
   def new(attrs \\ %{}) do
     %State{}
-    |> cast(attrs, [:messages, :todos, :metadata, :middleware_state])
+    |> cast(attrs, [:messages, :todos, :metadata])
     |> apply_action(:insert)
   end
 
@@ -66,7 +63,6 @@ defmodule LangChain.Agents.State do
   - **messages**: Concatenates lists (left + right)
   - **todos**: Uses right if present, otherwise left
   - **metadata**: Deep merges maps
-  - **middleware_state**: Merges maps with right side winning
 
   ## Examples
 
@@ -81,8 +77,7 @@ defmodule LangChain.Agents.State do
     %State{
       messages: merge_messages(left.messages, right.messages),
       todos: merge_todos(left.todos, right.todos),
-      metadata: deep_merge_maps(left.metadata, right.metadata),
-      middleware_state: Map.merge(left.middleware_state, right.middleware_state)
+      metadata: deep_merge_maps(left.metadata, right.metadata)
     }
   end
 
@@ -220,5 +215,42 @@ defmodule LangChain.Agents.State do
   """
   def set_todos(%State{} = state, todos) when is_list(todos) do
     %{state | todos: todos}
+  end
+
+  @doc """
+  Reset the state to a clean slate.
+
+  Clears:
+  - All messages
+  - All TODOs
+
+  Preserves:
+  - Metadata (which may contain configuration)
+
+  **Note**: This function only resets the Agent's state structure. File state is managed
+  separately by FileSystemServer and must be reset through AgentServer.reset/1 which
+  coordinates the full reset process.
+
+  ## Examples
+
+      state = State.new!(%{
+        messages: [msg1, msg2],
+        todos: [todo1],
+        metadata: %{config: "value"}
+      })
+
+      reset_state = State.reset(state)
+      # reset_state has:
+      # - messages: []
+      # - todos: []
+      # - metadata: %{config: "value"} (preserved)
+  """
+  @spec reset(t()) :: t()
+  def reset(%State{} = state) do
+    %State{
+      messages: [],
+      todos: [],
+      metadata: state.metadata
+    }
   end
 end

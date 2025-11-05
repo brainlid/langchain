@@ -283,7 +283,7 @@ defmodule LangChain.Agents.SubAgent do
 
   defp merge_custom_state_fields(state, state_updates) do
     # Merge any custom fields that aren't standard State fields
-    standard_fields = [:messages, :todos, :metadata, :middleware_state]
+    standard_fields = [:messages, :todos, :metadata]
 
     state_updates
     |> Enum.reject(fn {key, _} -> key in standard_fields end)

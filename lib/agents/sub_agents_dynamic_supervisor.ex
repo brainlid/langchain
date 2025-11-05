@@ -30,6 +30,8 @@ defmodule LangChain.Agents.SubAgentsDynamicSupervisor do
 
   use DynamicSupervisor
 
+  @registry LangChain.Agents.Registry
+
   @doc """
   Start the SubAgentsDynamicSupervisor.
 
@@ -44,7 +46,7 @@ defmodule LangChain.Agents.SubAgentsDynamicSupervisor do
 
       {:ok, pid} = SubAgentsDynamicSupervisor.start_link(
         agent_id: "agent-123",
-        name: {:via, Registry, {MyRegistry, :subagents_sup}}
+        name: SubAgentsDynamicSupervisor.get_name("agent-123")
       )
   """
   @spec start_link(keyword()) :: Supervisor.on_start()
@@ -66,20 +68,26 @@ defmodule LangChain.Agents.SubAgentsDynamicSupervisor do
   """
   @spec whereis(String.t()) :: pid() | nil
   def whereis(agent_id) do
-    case Registry.lookup(LangChain.Agents.Registry, {:sub_agents_supervisor, agent_id}) do
+    case Registry.lookup(@registry, {:sub_agents_supervisor, agent_id}) do
       [{pid, _}] -> pid
       [] -> nil
     end
   end
 
+  @doc """
+  Get the name of the SubAgentsDynamicSupervisor process for a specific agent.
+
+  ## Examples
+
+      name = SubAgentsDynamicSupervisor.get_name("agent-123")
+      # => {:via, Registry, {LangChain.Agents.Registry, {:sub_agents_supervisor, "agent-123"}}}
+  """
+  def get_name(agent_id) do
+    {:via, Registry, {@registry, {:sub_agents_supervisor, agent_id}}}
+  end
+
   @impl true
   def init(_opts) do
     DynamicSupervisor.init(strategy: :one_for_one)
-  end
-
-  # Private helpers
-
-  defp via_tuple(agent_id) do
-    {:via, Registry, {LangChain.Agents.Registry, {:sub_agents_supervisor, agent_id}}}
   end
 end

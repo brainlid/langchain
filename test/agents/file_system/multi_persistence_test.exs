@@ -12,11 +12,7 @@ defmodule LangChain.Agents.FileSystem.MultiPersistenceTest do
   setup %{tmp_dir: tmp_dir} do
     agent_id = "test_agent_#{System.unique_integer([:positive])}"
 
-    # Start registry for this test
-    case start_supervised({Registry, keys: :unique, name: LangChain.Agents.Registry}) do
-      {:ok, _pid} -> :ok
-      {:error, {:already_started, _pid}} -> :ok
-    end
+    # Note: Registry is started globally in test_helper.exs
 
     on_exit(fn ->
       # Cleanup any running FileSystemServer

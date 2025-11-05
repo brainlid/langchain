@@ -12,27 +12,19 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
   setup %{tmp_dir: tmp_dir} do
     agent_id = "test_agent_#{System.unique_integer([:positive])}"
 
-    # Start registry for this test if not already started
-    # Using start_supervised ensures proper cleanup
-    case start_supervised({Registry, keys: :unique, name: LangChain.Agents.Registry}) do
-      {:ok, _pid} -> :ok
-      {:error, {:already_started, _pid}} -> :ok
-    end
+    # Note: Registry is started globally in test_helper.exs
 
     on_exit(fn ->
       # Cleanup any running FileSystemServer
       # Wrap in try-catch because Registry might be gone already during cleanup
       try do
-        via_tuple = {:via, Registry, {LangChain.Agents.Registry, {:file_system_server, agent_id}}}
-
-        case GenServer.whereis(via_tuple) do
+        case FileSystemServer.whereis(agent_id) do
           nil -> :ok
-          pid when is_pid(pid) -> GenServer.stop(pid, :normal)
+          pid -> GenServer.stop(pid, :normal)
         end
       rescue
         ArgumentError -> :ok
-      catch
-        :exit, _ -> :ok
+      catch :exit, _ -> :ok
       end
     end)
 

@@ -284,4 +284,149 @@ defmodule LangChain.Agents.FileSystem.FileSystemStateTest do
       assert stats.dirty_files == 2
     end
   end
+
+  describe "reset/1" do
+    setup do
+      agent_id = "test_agent_#{System.unique_integer([:positive])}"
+      {:ok, state} = FileSystemState.new(agent_id: agent_id)
+      %{state: state}
+    end
+
+    test "removes memory-only files", %{state: state} do
+      # Write memory files
+      {:ok, state} = FileSystemState.write_file(state, "/scratch/temp1.txt", "temp data 1", [])
+      {:ok, state} = FileSystemState.write_file(state, "/scratch/temp2.txt", "temp data 2", [])
+
+      # Verify files exist
+      assert Map.has_key?(state.files, "/scratch/temp1.txt")
+      assert Map.has_key?(state.files, "/scratch/temp2.txt")
+
+      # Reset
+      reset_state = FileSystemState.reset(state)
+
+      # Memory files should be gone
+      refute Map.has_key?(reset_state.files, "/scratch/temp1.txt")
+      refute Map.has_key?(reset_state.files, "/scratch/temp2.txt")
+      assert reset_state.files == %{}
+    end
+
+    test "cancels all debounce timers", %{state: state} do
+      defmodule TestPersistence8 do
+        @behaviour LangChain.Agents.FileSystem.Persistence
+
+        def write_to_storage(_entry, _opts), do: :ok
+        def load_from_storage(_entry, _opts), do: {:error, :enoent}
+        def delete_from_storage(_entry, _opts), do: :ok
+        def list_persisted_files(_agent_id, _opts), do: {:ok, []}
+      end
+
+      state = add_persistence_config(state, TestPersistence8)
+
+      # Write a persisted file, which will create a debounce timer
+      {:ok, state} = FileSystemState.write_file(state, "/Memories/file.txt", "data", [])
+
+      # Verify timer exists
+      assert Map.has_key?(state.debounce_timers, "/Memories/file.txt")
+      timer_ref = state.debounce_timers["/Memories/file.txt"]
+      assert is_reference(timer_ref)
+
+      # Reset
+      reset_state = FileSystemState.reset(state)
+
+      # Timers should be cleared
+      assert reset_state.debounce_timers == %{}
+    end
+
+    test "re-indexes persisted files from storage", %{state: state} do
+      defmodule TestPersistence9 do
+        @behaviour LangChain.Agents.FileSystem.Persistence
+
+        def write_to_storage(_entry, _opts), do: :ok
+        def load_from_storage(_entry, _opts), do: {:error, :enoent}
+        def delete_from_storage(_entry, _opts), do: :ok
+
+        # Simulate files existing in storage
+        def list_persisted_files(_agent_id, _opts) do
+          {:ok, ["/Memories/existing1.txt", "/Memories/existing2.txt"]}
+        end
+      end
+
+      state = add_persistence_config(state, TestPersistence9)
+
+      # Initially, the files should be indexed from storage
+      assert Map.has_key?(state.files, "/Memories/existing1.txt")
+      assert Map.has_key?(state.files, "/Memories/existing2.txt")
+
+      # Add some memory files
+      {:ok, state} = FileSystemState.write_file(state, "/scratch/temp.txt", "temp", [])
+
+      # Reset
+      reset_state = FileSystemState.reset(state)
+
+      # Memory files should be gone
+      refute Map.has_key?(reset_state.files, "/scratch/temp.txt")
+
+      # Persisted files should still be indexed (but unloaded)
+      assert Map.has_key?(reset_state.files, "/Memories/existing1.txt")
+      assert Map.has_key?(reset_state.files, "/Memories/existing2.txt")
+
+      # Files should be marked as unloaded
+      entry1 = reset_state.files["/Memories/existing1.txt"]
+      assert entry1.loaded == false
+      assert entry1.dirty == false
+    end
+
+    test "works with empty filesystem", %{state: state} do
+      # Reset empty state
+      reset_state = FileSystemState.reset(state)
+
+      assert reset_state.files == %{}
+      assert reset_state.debounce_timers == %{}
+      assert reset_state.agent_id == state.agent_id
+      assert reset_state.persistence_configs == state.persistence_configs
+    end
+
+    test "clears dirty flags and unloads modified persisted files", %{state: state} do
+      defmodule TestPersistence10 do
+        @behaviour LangChain.Agents.FileSystem.Persistence
+
+        def write_to_storage(_entry, _opts), do: :ok
+
+        def load_from_storage(_entry, _opts) do
+          # Return original content from storage
+          {:ok, "original content from storage"}
+        end
+
+        def delete_from_storage(_entry, _opts), do: :ok
+
+        def list_persisted_files(_agent_id, _opts) do
+          {:ok, ["/Memories/file.txt"]}
+        end
+      end
+
+      state = add_persistence_config(state, TestPersistence10)
+
+      # The file is indexed from storage
+      assert Map.has_key?(state.files, "/Memories/file.txt")
+
+      # Modify the file (this would load and mark it dirty)
+      {:ok, state} = FileSystemState.write_file(state, "/Memories/file.txt", "modified", [])
+
+      # Verify it's dirty and loaded
+      entry = state.files["/Memories/file.txt"]
+      assert entry.dirty == true
+      assert entry.loaded == true
+      assert entry.content == "modified"
+
+      # Reset
+      reset_state = FileSystemState.reset(state)
+
+      # File should still be indexed (persisted), but unloaded and not dirty
+      assert Map.has_key?(reset_state.files, "/Memories/file.txt")
+      reset_entry = reset_state.files["/Memories/file.txt"]
+      assert reset_entry.loaded == false
+      assert reset_entry.dirty == false
+      # Content would be nil since it's unloaded
+    end
+  end
 end
