@@ -374,14 +374,91 @@ defmodule LangChain.ChatModels.ChatPerplexityTest do
     end
   end
 
-  describe "do_process_response/2" do
+  describe "do_process_response/3" do
     setup do
       model = ChatPerplexity.new!(%{model: @test_model})
       %{model: model}
     end
 
+    test "captures full response data in processed_content", %{model: model} do
+      response_data = %{
+        "id" => "cmpl-123",
+        "model" => "sonar-pro",
+        "created" => 1_234_567_890,
+        "usage" => %{
+          "prompt_tokens" => 10,
+          "completion_tokens" => 15,
+          "total_tokens" => 25
+        },
+        "object" => "chat.completion",
+        "citations" => ["https://example.com/article1", "https://example.com/article2"],
+        "search_results" => [
+          %{
+            "title" => "Article 1",
+            "url" => "https://example.com/article1",
+            "date" => "2023-12-25"
+          },
+          %{
+            "title" => "Article 2",
+            "url" => "https://example.com/article2",
+            "date" => "2023-12-26"
+          }
+        ],
+        "choices" => [
+          %{
+            "finish_reason" => "stop",
+            "message" => %{
+              "content" => "This is a test response.",
+              "role" => "assistant"
+            },
+            "index" => 0
+          }
+        ]
+      }
+
+      result = ChatPerplexity.do_process_response(model, response_data, [])
+
+      assert %Message{} = result
+      assert result.role == :assistant
+      assert result.content == [ContentPart.text!("This is a test response.")]
+      assert result.status == :complete
+
+      # Verify the full response data is captured in processed_content
+      assert result.processed_content.id == "cmpl-123"
+      assert result.processed_content.model == "sonar-pro"
+      assert result.processed_content.created == 1_234_567_890
+
+      assert result.processed_content.usage == %{
+               "prompt_tokens" => 10,
+               "completion_tokens" => 15,
+               "total_tokens" => 25
+             }
+
+      assert result.processed_content.citations == [
+               "https://example.com/article1",
+               "https://example.com/article2"
+             ]
+
+      assert length(result.processed_content.search_results) == 2
+      assert List.first(result.processed_content.search_results)["title"] == "Article 1"
+    end
+
     test "handles tool call responses", %{model: model} do
-      response = %{
+      tools = [
+        %LangChain.Function{
+          name: "calculator",
+          description: "A basic calculator"
+        }
+      ]
+
+      response_data = %{
+        "id" => "cmpl-tool-123",
+        "model" => "sonar-pro",
+        "created" => 1_234_567_890,
+        "usage" => %{"prompt_tokens" => 10, "completion_tokens" => 15, "total_tokens" => 25},
+        "object" => "chat.completion",
+        "citations" => [],
+        "search_results" => [],
         "choices" => [
           %{
             "finish_reason" => "stop",
@@ -404,7 +481,7 @@ defmodule LangChain.ChatModels.ChatPerplexityTest do
         ]
       }
 
-      result = ChatPerplexity.do_process_response(model, response["choices"] |> List.first())
+      result = ChatPerplexity.do_process_response(model, response_data, tools)
 
       assert %Message{} = result
       assert result.role == :assistant
@@ -420,46 +497,81 @@ defmodule LangChain.ChatModels.ChatPerplexityTest do
       assert args["operation"] == "+"
       assert args["x"] == 5
       assert args["y"] == 3
+
+      # Verify full response data is captured
+      assert result.processed_content.id == "cmpl-tool-123"
+      assert result.processed_content.model == "sonar-pro"
+      assert result.processed_content.citations == []
+      assert result.processed_content.search_results == []
     end
 
     test "handles regular message responses", %{model: model} do
-      response = %{
-        "message" => %{"content" => "Hello!"},
-        "finish_reason" => "stop",
-        "index" => 1
+      response_data = %{
+        "id" => "cmpl-regular-123",
+        "model" => "sonar-pro",
+        "created" => 1_234_567_890,
+        "usage" => %{"prompt_tokens" => 5, "completion_tokens" => 3, "total_tokens" => 8},
+        "object" => "chat.completion",
+        "citations" => [],
+        "search_results" => [],
+        "choices" => [
+          %{
+            "message" => %{"content" => "Hello!", "role" => "assistant"},
+            "finish_reason" => "stop",
+            "index" => 1
+          }
+        ]
       }
 
-      assert %Message{} = message = ChatPerplexity.do_process_response(model, response)
+      assert %Message{} = message = ChatPerplexity.do_process_response(model, response_data, [])
       assert message.role == :assistant
       assert message.content == [ContentPart.text!("Hello!")]
       assert message.index == 1
       assert message.status == :complete
+
+      # Verify full response data is captured
+      assert message.processed_content.id == "cmpl-regular-123"
+      assert message.processed_content.citations == []
     end
 
     test "returns skip when given an empty choices list", %{model: model} do
-      assert :skip == ChatPerplexity.do_process_response(model, %{"choices" => []})
+      assert :skip == ChatPerplexity.do_process_response(model, %{"choices" => []}, [])
     end
 
     test "handles error from server that the max length has been reached", %{model: model} do
-      response = %{
-        "finish_reason" => "length",
-        "index" => 0,
-        "message" => %{
-          "content" => "Some of the response that was abruptly",
-          "role" => "assistant"
-        }
+      response_data = %{
+        "id" => "cmpl-length-123",
+        "model" => "sonar-pro",
+        "created" => 1_234_567_890,
+        "usage" => %{"prompt_tokens" => 100, "completion_tokens" => 50, "total_tokens" => 150},
+        "object" => "chat.completion",
+        "citations" => [],
+        "search_results" => [],
+        "choices" => [
+          %{
+            "finish_reason" => "length",
+            "index" => 0,
+            "message" => %{
+              "content" => "Some of the response that was abruptly",
+              "role" => "assistant"
+            }
+          }
+        ]
       }
 
-      assert %Message{} = struct = ChatPerplexity.do_process_response(model, response)
+      assert %Message{} = struct = ChatPerplexity.do_process_response(model, response_data, [])
       assert struct.role == :assistant
       assert struct.content == [ContentPart.text!("Some of the response that was abruptly")]
       assert struct.index == 0
       assert struct.status == :length
+
+      # Verify full response data is captured
+      assert struct.processed_content.id == "cmpl-length-123"
     end
 
     test "handles json parse error from server", %{model: model} do
       {:error, %LangChainError{} = error} =
-        ChatPerplexity.do_process_response(model, {:error, %Jason.DecodeError{}})
+        ChatPerplexity.do_process_response(model, {:error, %Jason.DecodeError{}}, [])
 
       assert error.type == "invalid_json"
       assert "Received invalid JSON: " <> _ = error.message
@@ -467,7 +579,7 @@ defmodule LangChain.ChatModels.ChatPerplexityTest do
 
     test "handles unexpected response", %{model: model} do
       {:error, %LangChainError{} = error} =
-        ChatPerplexity.do_process_response(model, "unexpected")
+        ChatPerplexity.do_process_response(model, "unexpected", [])
 
       assert error.type == nil
       assert error.message == "Unexpected response"
