@@ -321,7 +321,13 @@ defmodule LangChain.Agents.AgentServer do
   """
   @spec add_message(String.t(), LangChain.Message.t()) :: :ok
   def add_message(agent_id, %LangChain.Message{} = message) do
-    GenServer.call(get_name(agent_id), {:add_message, message})
+    case GenServer.call(get_name(agent_id), {:add_message, message}) do
+      :ok ->
+        execute(agent_id)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
   @doc """
