@@ -52,7 +52,7 @@ defmodule LangChain.Agents.SubAgentsDynamicSupervisor do
   @spec start_link(keyword()) :: Supervisor.on_start()
   def start_link(opts) do
     agent_id = Keyword.fetch!(opts, :agent_id)
-    {name, _opts} = Keyword.pop(opts, :name, via_tuple(agent_id))
+    {name, _opts} = Keyword.pop(opts, :name, get_name(agent_id))
 
     DynamicSupervisor.start_link(__MODULE__, opts, name: name)
   end

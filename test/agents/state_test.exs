@@ -358,11 +358,12 @@ defmodule LangChain.Agents.StateTest do
 
   describe "reset/1" do
     test "clears messages and todos" do
-      state = State.new!(%{
-        messages: [Message.new_user!("test")],
-        todos: [%{id: "1", content: "task", status: :pending}],
-        metadata: %{config: "value", other: "data"}
-      })
+      state =
+        State.new!(%{
+          messages: [Message.new_user!("test")],
+          todos: [%{id: "1", content: "task", status: :pending}],
+          metadata: %{config: "value", other: "data"}
+        })
 
       reset_state = State.reset(state)
 
@@ -372,10 +373,11 @@ defmodule LangChain.Agents.StateTest do
     end
 
     test "preserves metadata" do
-      state = State.new!(%{
-        messages: [Message.new_user!("hi")],
-        metadata: %{important: "keep this"}
-      })
+      state =
+        State.new!(%{
+          messages: [Message.new_user!("hi")],
+          metadata: %{important: "keep this"}
+        })
 
       reset_state = State.reset(state)
 

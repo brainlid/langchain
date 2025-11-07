@@ -13,10 +13,17 @@ defmodule LangChain.Agents.FileSystemServer do
   `:rest_for_one` strategy. This ensures that if AgentServer crashes,
   FileSystemServer survives and preserves all filesystem state.
 
+  ## Graceful Shutdown
+
+  FileSystemServer traps exits to ensure graceful shutdown. When the process
+  terminates (via supervisor shutdown or any other reason), it automatically
+  flushes all pending debounced writes to persistence before terminating.
+
   ## Configuration
 
   - `:agent_id` - Agent identifier (required)
-  - `:persistence_configs` - List of FileSystemConfig structs (optional, default: [])
+  - `:persistence_configs` - List of FileSystemConfig structs (optional,
+    default: [])
 
   ## Examples
 
@@ -311,6 +318,9 @@ defmodule LangChain.Agents.FileSystemServer do
 
   @impl true
   def init(opts) do
+    # Trap exits to ensure terminate/2 is called for graceful shutdown
+    Process.flag(:trap_exit, true)
+
     case FileSystemState.new(opts) do
       {:ok, state} ->
         agent_id = state.agent_id

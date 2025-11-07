@@ -96,11 +96,11 @@ defmodule LangChain.Agents.AgentServerTest do
       agent_id = agent.agent_id
 
       {:ok, _pid} =
-               AgentServer.start_link(
-                 agent: agent,
-                 name: AgentServer.get_name(agent_id),
-                 pubsub: nil
-               )
+        AgentServer.start_link(
+          agent: agent,
+          name: AgentServer.get_name(agent_id),
+          pubsub: nil
+        )
 
       assert AgentServer.get_status(agent_id) == :idle
     end
@@ -548,6 +548,204 @@ defmodule LangChain.Agents.AgentServerTest do
       assert Process.alive?(pid)
       assert :ok = AgentServer.stop(agent_id)
       refute Process.alive?(pid)
+    end
+  end
+
+  describe "inactivity timeout" do
+    test "initializes with default 5 minute timeout" do
+      agent = create_test_agent()
+      agent_id = agent.agent_id
+
+      {:ok, _pid} =
+        AgentServer.start_link(
+          agent: agent,
+          name: AgentServer.get_name(agent_id),
+          pubsub: nil
+        )
+
+      status = AgentServer.get_inactivity_status(agent_id)
+      assert status.inactivity_timeout == 300_000
+      assert status.timer_active == true
+      assert status.last_activity_at != nil
+    end
+
+    test "accepts custom timeout value" do
+      agent = create_test_agent()
+      agent_id = agent.agent_id
+
+      {:ok, _pid} =
+        AgentServer.start_link(
+          agent: agent,
+          name: AgentServer.get_name(agent_id),
+          pubsub: nil,
+          inactivity_timeout: 600_000
+        )
+
+      status = AgentServer.get_inactivity_status(agent_id)
+      assert status.inactivity_timeout == 600_000
+      assert status.timer_active == true
+    end
+
+    test "can disable timeout with nil" do
+      agent = create_test_agent()
+      agent_id = agent.agent_id
+
+      {:ok, _pid} =
+        AgentServer.start_link(
+          agent: agent,
+          name: AgentServer.get_name(agent_id),
+          pubsub: nil,
+          inactivity_timeout: nil
+        )
+
+      status = AgentServer.get_inactivity_status(agent_id)
+      assert status.inactivity_timeout == nil
+      assert status.timer_active == false
+    end
+
+    test "can disable timeout with :infinity" do
+      agent = create_test_agent()
+      agent_id = agent.agent_id
+
+      {:ok, _pid} =
+        AgentServer.start_link(
+          agent: agent,
+          name: AgentServer.get_name(agent_id),
+          pubsub: nil,
+          inactivity_timeout: :infinity
+        )
+
+      status = AgentServer.get_inactivity_status(agent_id)
+      assert status.inactivity_timeout == :infinity
+      assert status.timer_active == false
+    end
+
+    test "resets timer on execute" do
+      agent = create_test_agent()
+      agent_id = agent.agent_id
+
+      Agent
+      |> expect(:execute, fn ^agent, state ->
+        # Simulate slow execution
+        Process.sleep(50)
+        {:ok, state}
+      end)
+
+      {:ok, _pid} =
+        AgentServer.start_link(
+          agent: agent,
+          name: AgentServer.get_name(agent_id),
+          pubsub: nil,
+          inactivity_timeout: 1_000
+        )
+
+      # Get initial status
+      status1 = AgentServer.get_inactivity_status(agent_id)
+      initial_time = status1.last_activity_at
+
+      # Wait a bit
+      Process.sleep(50)
+
+      # Execute - should reset timer
+      :ok = AgentServer.execute(agent_id)
+      Process.sleep(100)
+
+      # Check that activity time was updated
+      status2 = AgentServer.get_inactivity_status(agent_id)
+      assert DateTime.compare(status2.last_activity_at, initial_time) == :gt
+    end
+
+    test "resets timer on add_message" do
+      agent = create_test_agent()
+      agent_id = agent.agent_id
+
+      {:ok, _pid} =
+        AgentServer.start_link(
+          agent: agent,
+          name: AgentServer.get_name(agent_id),
+          pubsub: nil,
+          inactivity_timeout: 1_000
+        )
+
+      # Get initial status
+      status1 = AgentServer.get_inactivity_status(agent_id)
+      initial_time = status1.last_activity_at
+
+      # Wait a bit
+      Process.sleep(50)
+
+      # Add message - should reset timer
+      :ok = AgentServer.add_message(agent_id, Message.new_user!("Hello"))
+
+      # Check that activity time was updated
+      status2 = AgentServer.get_inactivity_status(agent_id)
+      assert DateTime.compare(status2.last_activity_at, initial_time) == :gt
+    end
+
+    # Note: The reset timer test is in agent_supervisor_test.exs where FileSystemServer is available
+
+    test "time_since_activity increases over time" do
+      agent = create_test_agent()
+      agent_id = agent.agent_id
+
+      {:ok, _pid} =
+        AgentServer.start_link(
+          agent: agent,
+          name: AgentServer.get_name(agent_id),
+          pubsub: nil,
+          inactivity_timeout: 10_000
+        )
+
+      # Get initial time
+      status1 = AgentServer.get_inactivity_status(agent_id)
+      time1 = status1.time_since_activity
+
+      # Wait a bit
+      Process.sleep(100)
+
+      # Check that time has increased
+      status2 = AgentServer.get_inactivity_status(agent_id)
+      time2 = status2.time_since_activity
+
+      assert time2 > time1
+      assert time2 >= 100
+    end
+
+    test "broadcasts shutdown event when timeout triggers" do
+      # Start a test PubSub
+      pubsub_name = :"test_pubsub_#{:erlang.unique_integer([:positive])}"
+      {:ok, _} = start_supervised({Phoenix.PubSub, name: pubsub_name})
+
+      agent = create_test_agent()
+      agent_id = agent.agent_id
+
+      # Short timeout for testing
+      {:ok, pid} =
+        AgentServer.start_link(
+          agent: agent,
+          name: AgentServer.get_name(agent_id),
+          pubsub: Phoenix.PubSub,
+          pubsub_name: pubsub_name,
+          id: agent_id,
+          inactivity_timeout: 100
+        )
+
+      # Subscribe to events
+      :ok = AgentServer.subscribe(agent_id)
+
+      # Monitor the process
+      _ref = Process.monitor(pid)
+
+      # Wait for timeout and shutdown event
+      assert_receive {:agent_shutdown, shutdown_data}, 500
+      assert shutdown_data.agent_id == agent_id
+      assert shutdown_data.reason == :inactivity
+      assert shutdown_data.last_activity_at != nil
+      assert shutdown_data.shutdown_at != nil
+
+      # Note: The actual shutdown happens at AgentSupervisor level,
+      # so the process might not die in this standalone test
+      # But the event should still be broadcast
     end
   end
 end

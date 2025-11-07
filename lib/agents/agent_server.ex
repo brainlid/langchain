@@ -99,7 +99,9 @@ defmodule LangChain.Agents.AgentServer do
   use GenServer
   require Logger
 
-  alias LangChain.Agents.{Agent, State}
+  alias LangChain.Agents.Agent
+  alias LangChain.Agents.State
+  alias LangChain.Agents.AgentSupervisor
 
   @registry LangChain.Agents.Registry
 
@@ -115,7 +117,11 @@ defmodule LangChain.Agents.AgentServer do
       :pubsub,
       :topic,
       :interrupt_data,
-      :error
+      :error,
+      :inactivity_timeout,
+      :inactivity_timer_ref,
+      :last_activity_at,
+      :shutdown_delay
     ]
 
     @type t :: %__MODULE__{
@@ -125,7 +131,11 @@ defmodule LangChain.Agents.AgentServer do
             pubsub: module() | nil,
             topic: String.t(),
             interrupt_data: map() | nil,
-            error: term() | nil
+            error: term() | nil,
+            inactivity_timeout: pos_integer() | nil | :infinity,
+            inactivity_timer_ref: reference() | nil,
+            last_activity_at: DateTime.t() | nil,
+            shutdown_delay: pos_integer() | nil
           }
   end
 
@@ -142,6 +152,9 @@ defmodule LangChain.Agents.AgentServer do
   - `:pubsub_name` - Name of the PubSub instance (default: :langchain_pubsub)
   - `:name` - Server name registration
   - `:id` - Unique identifier for the server (default: auto-generated)
+  - `:inactivity_timeout` - Timeout in milliseconds for automatic shutdown due to inactivity (default: 300_000 - 5 minutes)
+    Set to `nil` or `:infinity` to disable automatic shutdown
+  - `:shutdown_delay` - Delay in milliseconds to allow the supervisor to gracefully stop all children (default: 5000)
 
   ## Examples
 
@@ -149,6 +162,18 @@ defmodule LangChain.Agents.AgentServer do
         agent: agent,
         initial_state: state,
         name: :my_agent
+      )
+
+      # With custom inactivity timeout
+      {:ok, pid} = AgentServer.start_link(
+        agent: agent,
+        inactivity_timeout: 600_000  # 10 minutes
+      )
+
+      # Disable automatic shutdown
+      {:ok, pid} = AgentServer.start_link(
+        agent: agent,
+        inactivity_timeout: nil
       )
   """
   def start_link(opts) do
@@ -332,6 +357,30 @@ defmodule LangChain.Agents.AgentServer do
   end
 
   @doc """
+  Get the current inactivity status of an agent.
+
+  Returns a map with:
+  - `:inactivity_timeout` - Configured timeout in milliseconds (or nil/:infinity)
+  - `:last_activity_at` - DateTime of last activity
+  - `:timer_active` - Boolean indicating if timer is currently running
+  - `:time_since_activity` - Milliseconds since last activity (or nil if no activity yet)
+
+  ## Examples
+
+      status = AgentServer.get_inactivity_status("my-agent-1")
+      # => %{
+      #   inactivity_timeout: 300_000,
+      #   last_activity_at: ~U[2025-11-06 10:15:30.123Z],
+      #   timer_active: true,
+      #   time_since_activity: 45_000
+      # }
+  """
+  @spec get_inactivity_status(String.t()) :: map()
+  def get_inactivity_status(agent_id) do
+    GenServer.call(get_name(agent_id), :get_inactivity_status)
+  end
+
+  @doc """
   Stop the AgentServer.
 
   ## Examples
@@ -347,11 +396,18 @@ defmodule LangChain.Agents.AgentServer do
 
   @impl true
   def init(opts) do
+    # Trap exits to ensure terminate/2 is called for graceful shutdown
+    Process.flag(:trap_exit, true)
+
     agent = Keyword.fetch!(opts, :agent)
-    initial_state = Keyword.get(opts, :initial_state, State.new!())
+    initial_state = Keyword.get(opts, :initial_state) || State.new!()
+    # allow pubsub to be explicitly set to nil to disable it
     pubsub = Keyword.get(opts, :pubsub, default_pubsub())
-    pubsub_name = Keyword.get(opts, :pubsub_name, :langchain_pubsub)
-    id = Keyword.get(opts, :id, generate_id())
+    pubsub_name = Keyword.get(opts, :pubsub_name) || :langchain_pubsub
+    id = Keyword.get(opts, :id) || generate_id()
+    # allow a nil value to disable the timeout
+    inactivity_timeout = Keyword.get(opts, :inactivity_timeout, 300_000)
+    shutdown_delay = Keyword.get(opts, :shutdown_delay, 5_000)
 
     topic = "agent_server:#{id}"
 
@@ -362,8 +418,15 @@ defmodule LangChain.Agents.AgentServer do
       pubsub: if(pubsub, do: {pubsub, pubsub_name}, else: nil),
       topic: topic,
       interrupt_data: nil,
-      error: nil
+      error: nil,
+      inactivity_timeout: inactivity_timeout,
+      inactivity_timer_ref: nil,
+      last_activity_at: DateTime.utc_now(),
+      shutdown_delay: shutdown_delay
     }
+
+    # Start the inactivity timer
+    server_state = reset_inactivity_timer(server_state)
 
     {:ok, server_state}
   end
@@ -388,6 +451,9 @@ defmodule LangChain.Agents.AgentServer do
     new_state = %{server_state | status: :running}
     broadcast_event(new_state, {:status_changed, :running, nil})
 
+    # Reset inactivity timer on execution start
+    new_state = reset_inactivity_timer(new_state)
+
     # Start async execution
     task =
       Task.async(fn ->
@@ -409,6 +475,9 @@ defmodule LangChain.Agents.AgentServer do
     # Transition back to running
     new_state = %{server_state | status: :running, interrupt_data: nil}
     broadcast_event(new_state, {:status_changed, :running, nil})
+
+    # Reset inactivity timer on resume
+    new_state = reset_inactivity_timer(new_state)
 
     # Resume execution async
     task =
@@ -466,6 +535,9 @@ defmodule LangChain.Agents.AgentServer do
         error: nil
     }
 
+    # Reset inactivity timer on user message
+    updated_server_state = reset_inactivity_timer(updated_server_state)
+
     {:reply, :ok, updated_server_state}
   end
 
@@ -499,7 +571,22 @@ defmodule LangChain.Agents.AgentServer do
         interrupt_data: nil
     }
 
+    # Reset activity timer
+    updated_server_state = reset_inactivity_timer(updated_server_state)
+
     {:reply, :ok, updated_server_state}
+  end
+
+  @impl true
+  def handle_call(:get_inactivity_status, _from, server_state) do
+    status = %{
+      inactivity_timeout: server_state.inactivity_timeout,
+      last_activity_at: server_state.last_activity_at,
+      timer_active: !is_nil(server_state.inactivity_timer_ref),
+      time_since_activity: time_since(server_state.last_activity_at)
+    }
+
+    {:reply, status, server_state}
   end
 
   @impl true
@@ -525,6 +612,58 @@ defmodule LangChain.Agents.AgentServer do
     broadcast_event(new_state, {:status_changed, :error, reason})
 
     {:noreply, Map.delete(new_state, :task)}
+  end
+
+  @impl true
+  def handle_info({:EXIT, _pid, :normal}, server_state) do
+    # Process exited normally (we trap exits), this is expected when shutting
+    # down for inactivity
+    {:noreply, server_state}
+  end
+
+  @impl true
+  def handle_info(:inactivity_timeout, server_state) do
+    agent_id = server_state.agent.agent_id
+    Logger.info("Agent #{agent_id} shutting down due to inactivity")
+
+    # Broadcast shutdown event
+    broadcast_event(
+      server_state,
+      {:agent_shutdown,
+       %{
+         agent_id: agent_id,
+         reason: :inactivity,
+         last_activity_at: server_state.last_activity_at,
+         shutdown_at: DateTime.utc_now()
+       }}
+    )
+
+    # Stop the parent AgentSupervisor, which will stop all children
+    case AgentSupervisor.stop(agent_id, server_state.shutdown_delay) do
+      :ok ->
+        Logger.debug("AgentSupervisor for agent #{agent_id} acknowledged shutdown request")
+
+      {:error, :not_found} ->
+        Logger.warning("AgentSupervisor for agent #{agent_id} was not found, stopping self")
+    end
+
+    # Let the supervisor tree shutdown take care of it
+    {:noreply, server_state}
+  end
+
+  @impl true
+  def terminate(reason, server_state) do
+    Logger.debug("AgentServer terminating: #{inspect(reason)}")
+
+    # Cancel timer if present
+    cancel_inactivity_timer(server_state)
+
+    # FileSystemServer traps exits and will flush_all in its own terminate/2
+
+    # SubAgentsDynamicSupervisor will be stopped by AgentSupervisor
+    # due to rest_for_one strategy
+
+    :ok
   end
 
   ## Private Functions
@@ -573,6 +712,9 @@ defmodule LangChain.Agents.AgentServer do
 
     broadcast_event(updated_state, {:status_changed, :completed, new_state})
 
+    # Reset activity timer after completion
+    updated_state = reset_inactivity_timer(updated_state)
+
     {:noreply, Map.delete(updated_state, :task)}
   end
 
@@ -586,6 +728,9 @@ defmodule LangChain.Agents.AgentServer do
 
     broadcast_event(updated_state, {:status_changed, :interrupted, interrupt_data})
 
+    # Reset activity timer after interrupt
+    updated_state = reset_inactivity_timer(updated_state)
+
     {:noreply, Map.delete(updated_state, :task)}
   end
 
@@ -597,6 +742,9 @@ defmodule LangChain.Agents.AgentServer do
     }
 
     broadcast_event(updated_state, {:status_changed, :error, reason})
+
+    # Reset activity timer after error
+    updated_state = reset_inactivity_timer(updated_state)
 
     {:noreply, Map.delete(updated_state, :task)}
   end
@@ -661,5 +809,53 @@ defmodule LangChain.Agents.AgentServer do
     :crypto.strong_rand_bytes(16)
     |> Base.url_encode64(padding: false)
     |> String.slice(0, 22)
+  end
+
+  ## Inactivity Timer Management
+
+  # Reset the inactivity timer
+  defp reset_inactivity_timer(state) do
+    # Cancel existing timer if present
+    state = cancel_inactivity_timer(state)
+
+    # Don't schedule if timeout is nil or :infinity
+    case state.inactivity_timeout do
+      nil ->
+        state
+
+      :infinity ->
+        state
+
+      timeout when is_integer(timeout) and timeout > 0 ->
+        timer_ref = Process.send_after(self(), :inactivity_timeout, timeout)
+
+        %{state | inactivity_timer_ref: timer_ref, last_activity_at: DateTime.utc_now()}
+
+      _ ->
+        state
+    end
+  end
+
+  # Cancel the current timer
+  defp cancel_inactivity_timer(%ServerState{inactivity_timer_ref: nil} = state), do: state
+
+  defp cancel_inactivity_timer(%ServerState{inactivity_timer_ref: ref} = state) do
+    Process.cancel_timer(ref)
+
+    # Flush the message if it was already sent
+    receive do
+      :inactivity_timeout -> :ok
+    after
+      0 -> :ok
+    end
+
+    %{state | inactivity_timer_ref: nil}
+  end
+
+  # Calculate time since last activity in milliseconds
+  defp time_since(nil), do: nil
+
+  defp time_since(datetime) do
+    DateTime.diff(DateTime.utc_now(), datetime, :millisecond)
   end
 end

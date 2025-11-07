@@ -24,7 +24,8 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
         end
       rescue
         ArgumentError -> :ok
-      catch :exit, _ -> :ok
+      catch
+        :exit, _ -> :ok
       end
     end)
 
@@ -56,7 +57,6 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
           agent_id: agent_id,
           persistence_configs: [config]
         )
-
 
       # Write a file to persisted directory
       path = "/Memories/test.txt"
@@ -141,7 +141,6 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
           agent_id: agent_id,
           persistence_configs: [config]
         )
-
 
       # Write to non-persisted directory
       path = "/scratch/temp.txt"
@@ -232,7 +231,6 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
           persistence_configs: [config]
         )
 
-
       # Write and persist file
       path = "/Memories/delete_me.txt"
       FileSystemServer.write_file(agent_id, path, "content")
@@ -298,7 +296,6 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
           agent_id: agent_id,
           persistence_configs: [config]
         )
-
 
       # Files under /persistent/ should be persisted
       FileSystemServer.write_file(agent_id, "/persistent/data.txt", "persisted")
@@ -479,7 +476,6 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
           agent_id: agent_id,
           persistence_configs: [config]
         )
-
 
       # Write should succeed (ETS write)
       assert :ok = FileSystemServer.write_file(agent_id, "/Memories/file.txt", "content")

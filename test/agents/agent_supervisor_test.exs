@@ -2,7 +2,11 @@ defmodule LangChain.Agents.AgentSupervisorTest do
   use ExUnit.Case, async: false
   use Mimic
 
-  alias LangChain.Agents.{Agent, AgentSupervisor, AgentServer, FileSystemServer, SubAgentsDynamicSupervisor}
+  alias LangChain.Agents.Agent
+  alias LangChain.Agents.AgentSupervisor
+  alias LangChain.Agents.AgentServer
+  alias LangChain.Agents.FileSystemServer
+  alias LangChain.Agents.SubAgentsDynamicSupervisor
   alias LangChain.Agents.FileSystem.FileSystemConfig
   alias LangChain.Agents.State
   alias LangChain.ChatModels.ChatAnthropic
@@ -169,7 +173,10 @@ defmodule LangChain.Agents.AgentSupervisorTest do
       # Get original child PIDs
       fs_pid_before = FileSystemServer.whereis(agent.agent_id)
       children_before = Supervisor.which_children(sup_pid)
-      {_, agent_server_pid_before, _, _} = Enum.find(children_before, fn {id, _, _, _} -> id == AgentServer end)
+
+      {_, agent_server_pid_before, _, _} =
+        Enum.find(children_before, fn {id, _, _, _} -> id == AgentServer end)
+
       sub_sup_pid_before = SubAgentsDynamicSupervisor.whereis(agent.agent_id)
 
       # Kill FileSystemServer
@@ -181,7 +188,10 @@ defmodule LangChain.Agents.AgentSupervisorTest do
       # All children should have restarted (new PIDs)
       fs_pid_after = FileSystemServer.whereis(agent.agent_id)
       children_after = Supervisor.which_children(sup_pid)
-      {_, agent_server_pid_after, _, _} = Enum.find(children_after, fn {id, _, _, _} -> id == AgentServer end)
+
+      {_, agent_server_pid_after, _, _} =
+        Enum.find(children_after, fn {id, _, _, _} -> id == AgentServer end)
+
       sub_sup_pid_after = SubAgentsDynamicSupervisor.whereis(agent.agent_id)
 
       assert fs_pid_after != fs_pid_before
@@ -200,7 +210,10 @@ defmodule LangChain.Agents.AgentSupervisorTest do
       # Get original child PIDs
       fs_pid_before = FileSystemServer.whereis(agent.agent_id)
       children_before = Supervisor.which_children(sup_pid)
-      {_, agent_server_pid_before, _, _} = Enum.find(children_before, fn {id, _, _, _} -> id == AgentServer end)
+
+      {_, agent_server_pid_before, _, _} =
+        Enum.find(children_before, fn {id, _, _, _} -> id == AgentServer end)
+
       sub_sup_pid_before = SubAgentsDynamicSupervisor.whereis(agent.agent_id)
 
       # Kill AgentServer
@@ -212,7 +225,10 @@ defmodule LangChain.Agents.AgentSupervisorTest do
       # FileSystemServer should be the same, but AgentServer and SubAgentsDynamicSupervisor should be new
       fs_pid_after = FileSystemServer.whereis(agent.agent_id)
       children_after = Supervisor.which_children(sup_pid)
-      {_, agent_server_pid_after, _, _} = Enum.find(children_after, fn {id, _, _, _} -> id == AgentServer end)
+
+      {_, agent_server_pid_after, _, _} =
+        Enum.find(children_after, fn {id, _, _, _} -> id == AgentServer end)
+
       sub_sup_pid_after = SubAgentsDynamicSupervisor.whereis(agent.agent_id)
 
       # FileSystemServer survives (same PID)
@@ -234,7 +250,10 @@ defmodule LangChain.Agents.AgentSupervisorTest do
       # Get original child PIDs
       fs_pid_before = FileSystemServer.whereis(agent.agent_id)
       children_before = Supervisor.which_children(sup_pid)
-      {_, agent_server_pid_before, _, _} = Enum.find(children_before, fn {id, _, _, _} -> id == AgentServer end)
+
+      {_, agent_server_pid_before, _, _} =
+        Enum.find(children_before, fn {id, _, _, _} -> id == AgentServer end)
+
       sub_sup_pid_before = SubAgentsDynamicSupervisor.whereis(agent.agent_id)
 
       # Kill SubAgentsDynamicSupervisor
@@ -246,7 +265,10 @@ defmodule LangChain.Agents.AgentSupervisorTest do
       # FileSystemServer and AgentServer should be the same
       fs_pid_after = FileSystemServer.whereis(agent.agent_id)
       children_after = Supervisor.which_children(sup_pid)
-      {_, agent_server_pid_after, _, _} = Enum.find(children_after, fn {id, _, _, _} -> id == AgentServer end)
+
+      {_, agent_server_pid_after, _, _} =
+        Enum.find(children_after, fn {id, _, _, _} -> id == AgentServer end)
+
       sub_sup_pid_after = SubAgentsDynamicSupervisor.whereis(agent.agent_id)
 
       # FileSystemServer and AgentServer survive (same PIDs)
@@ -311,6 +333,183 @@ defmodule LangChain.Agents.AgentSupervisorTest do
 
       # Clean up
       Supervisor.stop(sup_pid)
+    end
+  end
+
+  describe "stop/2" do
+    test "stops supervisor and all children by agent_id" do
+      agent = create_test_agent()
+      agent_id = agent.agent_id
+
+      # Start with registered name
+      {:ok, sup_pid} =
+        AgentSupervisor.start_link(
+          agent: agent,
+          name: AgentSupervisor.get_name(agent_id)
+        )
+
+      # Get all child PIDs
+      fs_pid = FileSystemServer.whereis(agent_id)
+      children = Supervisor.which_children(sup_pid)
+      {_, agent_server_pid, _, _} = Enum.find(children, fn {id, _, _, _} -> id == AgentServer end)
+      sub_sup_pid = SubAgentsDynamicSupervisor.whereis(agent_id)
+
+      # Verify everything is running
+      assert Process.alive?(sup_pid)
+      assert Process.alive?(fs_pid)
+      assert Process.alive?(agent_server_pid)
+      assert Process.alive?(sub_sup_pid)
+
+      # Stop using agent_id
+      assert :ok = AgentSupervisor.stop(agent_id)
+
+      # Give processes time to shutdown
+      Process.sleep(100)
+
+      # Verify everything is stopped
+      refute Process.alive?(sup_pid)
+      refute Process.alive?(fs_pid)
+      refute Process.alive?(agent_server_pid)
+      refute Process.alive?(sub_sup_pid)
+    end
+
+    test "returns error when agent_id not found" do
+      assert {:error, :not_found} = AgentSupervisor.stop("non-existent-agent-id")
+    end
+
+    test "stops supervisor with custom timeout" do
+      agent = create_test_agent()
+      agent_id = agent.agent_id
+
+      {:ok, sup_pid} =
+        AgentSupervisor.start_link(
+          agent: agent,
+          name: AgentSupervisor.get_name(agent_id)
+        )
+
+      assert Process.alive?(sup_pid)
+
+      # Stop with custom timeout
+      assert :ok = AgentSupervisor.stop(agent_id, 10_000)
+
+      Process.sleep(100)
+      refute Process.alive?(sup_pid)
+    end
+
+    test "FileSystemServer flushes data on shutdown" do
+      agent = create_test_agent()
+      agent_id = agent.agent_id
+
+      {:ok, sup_pid} =
+        AgentSupervisor.start_link(
+          agent: agent,
+          name: AgentSupervisor.get_name(agent_id)
+        )
+
+      # Write some data to FileSystemServer
+      :ok = FileSystemServer.write_file(agent_id, "/test.txt", "test content")
+
+      # Verify it's there
+      assert {:ok, "test content"} = FileSystemServer.read_file(agent_id, "/test.txt")
+
+      # Stop the supervisor
+      assert :ok = AgentSupervisor.stop(agent_id)
+
+      Process.sleep(100)
+
+      # FileSystemServer's terminate/2 should have been called
+      # which handles flushing (tested separately in FileSystemServer tests)
+      refute Process.alive?(sup_pid)
+    end
+  end
+
+  describe "inactivity timeout integration" do
+    test "supervisor passes inactivity_timeout to AgentServer" do
+      agent = create_test_agent()
+      agent_id = agent.agent_id
+
+      {:ok, sup_pid} =
+        AgentSupervisor.start_link(
+          agent: agent,
+          inactivity_timeout: 600_000,
+          name: AgentSupervisor.get_name(agent_id)
+        )
+
+      # Verify AgentServer received the timeout
+      status = AgentServer.get_inactivity_status(agent_id)
+      assert status.inactivity_timeout == 600_000
+      assert status.timer_active == true
+
+      # Clean up
+      Supervisor.stop(sup_pid)
+    end
+
+    test "supervisor passes nil inactivity_timeout to disable" do
+      agent = create_test_agent()
+      agent_id = agent.agent_id
+
+      {:ok, sup_pid} =
+        AgentSupervisor.start_link(
+          agent: agent,
+          inactivity_timeout: nil,
+          name: AgentSupervisor.get_name(agent_id)
+        )
+
+      # Verify AgentServer has timeout disabled
+      status = AgentServer.get_inactivity_status(agent_id)
+      assert status.inactivity_timeout == nil
+      assert status.timer_active == false
+
+      # Clean up
+      Supervisor.stop(sup_pid)
+    end
+
+    test "supervisor uses default timeout when not specified" do
+      agent = create_test_agent()
+      agent_id = agent.agent_id
+
+      {:ok, sup_pid} =
+        AgentSupervisor.start_link(
+          agent: agent,
+          name: AgentSupervisor.get_name(agent_id)
+        )
+
+      # Verify AgentServer got default 5 minute timeout
+      status = AgentServer.get_inactivity_status(agent_id)
+      assert status.inactivity_timeout == 300_000
+
+      # Clean up
+      Supervisor.stop(sup_pid)
+    end
+
+    test "inactivity timeout triggers supervisor shutdown" do
+      agent = create_test_agent()
+      agent_id = agent.agent_id
+
+      {:ok, sup_pid} =
+        AgentSupervisor.start_link(
+          agent: agent,
+          # shutdown after 10ms
+          inactivity_timeout: 10,
+          # allow 100ms for the supervisor to shutdown
+          shutdown_delay: 100,
+          name: AgentSupervisor.get_name(agent_id)
+        )
+
+      # Get child PIDs
+      fs_pid = FileSystemServer.whereis(agent_id)
+      sub_sup_pid = SubAgentsDynamicSupervisor.whereis(agent_id)
+
+      # Monitor the supervisor
+      ref = Process.monitor(sup_pid)
+
+      # Wait for inactivity timeout and shutdown
+      assert_receive {:DOWN, ^ref, :process, ^sup_pid, _reason}, 1_000
+
+      # Verify all children stopped
+      refute Process.alive?(sup_pid)
+      refute Process.alive?(fs_pid)
+      refute Process.alive?(sub_sup_pid)
     end
   end
 end

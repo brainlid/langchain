@@ -107,7 +107,6 @@ defmodule LangChain.Agents.FileSystemServerTest do
     end
   end
 
-
   describe "write_file/4" do
     test "writes a memory file", %{agent_id: agent_id} do
       {:ok, pid} = FileSystemServer.start_link(agent_id: agent_id)
@@ -298,7 +297,6 @@ defmodule LangChain.Agents.FileSystemServerTest do
           agent_id: agent_id,
           persistence_configs: [config]
         )
-
 
       path = "/Memories/file.txt"
       FileSystemServer.write_file(agent_id, path, "data")
@@ -526,7 +524,6 @@ defmodule LangChain.Agents.FileSystemServerTest do
           persistence_configs: [config]
         )
 
-
       # Files under /persistent/ should be persisted
       FileSystemServer.write_file(agent_id, "/persistent/file.txt", "data")
       entry = get_entry(agent_id, "/persistent/file.txt")
@@ -687,7 +684,6 @@ defmodule LangChain.Agents.FileSystemServerTest do
           agent_id: agent_id,
           persistence_configs: [config]
         )
-
 
       # File should be indexed but NOT loaded
       entry = get_entry(agent_id, "/Memories/data.txt")

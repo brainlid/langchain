@@ -22,6 +22,7 @@ defmodule LangChain.Agents.AgentSupervisor do
   - `:initial_state` - Initial State for AgentServer (optional)
   - `:pubsub` - PubSub module for AgentServer (optional)
   - `:pubsub_name` - PubSub instance name (optional)
+  - `:shutdown_delay` - Delay in milliseconds to allow the supervisor to gracefully stop all children (optional, default: 5000)
 
   ## Examples
 
@@ -67,6 +68,41 @@ defmodule LangChain.Agents.AgentSupervisor do
   alias LangChain.Agents.SubAgentsDynamicSupervisor
   alias LangChain.Agents.State
 
+  @registry LangChain.Agents.Registry
+
+  @doc """
+  Get the name of the AgentSupervisor process for a specific agent.
+
+  ## Examples
+
+      name = AgentSupervisor.get_name("my-agent-1")
+      AgentSupervisor.stop(name)
+  """
+  @spec get_name(String.t()) :: {:via, Registry, {Registry, String.t()}}
+  def get_name(agent_id) when is_binary(agent_id) do
+    {:via, Registry, {@registry, {:agent_supervisor, agent_id}}}
+  end
+
+  @doc """
+  Stop the AgentSupervisor.
+
+  ## Examples
+
+      AgentSupervisor.stop("my-agent-1")
+      AgentSupervisor.stop("my-agent-1", 10_000) # 10 second timeout
+
+  """
+  @spec stop(String.t(), timeout()) :: :ok | {:error, :not_found}
+  def stop(agent_id, timeout \\ 5_000) do
+    case Registry.lookup(@registry, {:agent_supervisor, agent_id}) do
+      [{pid, _}] when is_pid(pid) ->
+        Supervisor.stop(pid, :normal, timeout)
+
+      [] ->
+        {:error, :not_found}
+    end
+  end
+
   @doc """
   Start the AgentSupervisor.
 
@@ -77,7 +113,10 @@ defmodule LangChain.Agents.AgentSupervisor do
   - `:initial_state` - Initial State for AgentServer (optional)
   - `:pubsub` - PubSub module for AgentServer (optional)
   - `:pubsub_name` - PubSub instance name (optional)
+  - `:inactivity_timeout` - Timeout in milliseconds for automatic shutdown (optional, default: 300_000 - 5 minutes)
+    Set to `nil` or `:infinity` to disable automatic shutdown
   - `:name` - Supervisor name registration (optional)
+  - `:shutdown_delay` - Delay in milliseconds to allow the supervisor to gracefully stop all children (optional, default: 5000)
 
   ## Examples
 
@@ -89,6 +128,18 @@ defmodule LangChain.Agents.AgentSupervisor do
       {:ok, sup_pid} = AgentSupervisor.start_link(
         agent: agent,
         name: AgentSupervisor.get_name("agent-123")
+      )
+
+      # With custom inactivity timeout
+      {:ok, sup_pid} = AgentSupervisor.start_link(
+        agent: agent,
+        inactivity_timeout: 600_000  # 10 minutes
+      )
+
+      # Disable automatic shutdown
+      {:ok, sup_pid} = AgentSupervisor.start_link(
+        agent: agent,
+        inactivity_timeout: nil
       )
   """
   @spec start_link(keyword()) :: Supervisor.on_start()
@@ -106,6 +157,8 @@ defmodule LangChain.Agents.AgentSupervisor do
     initial_state = Keyword.get(config, :initial_state, State.new!())
     pubsub = Keyword.get(config, :pubsub)
     pubsub_name = Keyword.get(config, :pubsub_name)
+    inactivity_timeout = Keyword.get(config, :inactivity_timeout, 300_000)
+    shutdown_delay = Keyword.get(config, :shutdown_delay, 5000)
 
     # Validate agent
     unless is_struct(agent, Agent) do
@@ -135,10 +188,11 @@ defmodule LangChain.Agents.AgentSupervisor do
          initial_state: initial_state,
          pubsub: pubsub,
          pubsub_name: pubsub_name,
+         inactivity_timeout: inactivity_timeout,
+         shutdown_delay: shutdown_delay,
          id: agent_id,
          name: AgentServer.get_name(agent_id)
-       ]
-       |> Enum.reject(fn {_k, v} -> is_nil(v) end)},
+       ]},
 
       # 3. SubAgentsDynamicSupervisor - for spawning sub-agents
       {SubAgentsDynamicSupervisor, agent_id: agent_id}

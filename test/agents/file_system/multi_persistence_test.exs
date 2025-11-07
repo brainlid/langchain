@@ -274,7 +274,6 @@ defmodule LangChain.Agents.FileSystem.MultiPersistenceTest do
           persistence_configs: [config]
         )
 
-
       # File should be indexed but NOT loaded
       entry = get_entry(agent_id, "/data/existing.txt")
       assert entry.persistence == :persisted
