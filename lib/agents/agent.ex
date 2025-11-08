@@ -241,9 +241,11 @@ defmodule LangChain.Agents.Agent do
           Logger.error("Agent execution failed: \#{inspect(err)}")
       end
   """
-  def execute(%Agent{} = agent, %State{} = state) do
+  def execute(%Agent{} = agent, %State{} = state, opts \\ []) do
+    callbacks = Keyword.get(opts, :callbacks)
+
     with {:ok, prepared_state} <- apply_before_model_hooks(state, agent.middleware),
-         {:ok, response_state} <- execute_model(agent, prepared_state),
+         {:ok, response_state} <- execute_model(agent, prepared_state, callbacks),
          result <- apply_after_model_hooks(response_state, agent.middleware) do
       result
     end
@@ -300,7 +302,7 @@ defmodule LangChain.Agents.Agent do
 
       {:ok, final_state} = Agent.resume(agent, state, decisions)
   """
-  def resume(%Agent{} = agent, %State{} = state, decisions) when is_list(decisions) do
+  def resume(%Agent{} = agent, %State{} = state, decisions, _opts \\ []) when is_list(decisions) do
     # Find the HumanInTheLoop middleware in the stack
     hitl_middleware =
       Enum.find(agent.middleware, fn {module, _config} ->
@@ -317,6 +319,7 @@ defmodule LangChain.Agents.Agent do
           {:ok, updated_state} ->
             # Continue execution - skip before_model and execute_model phases
             # Just run remaining after_model hooks if needed
+            # Note: callbacks from opts would be used when AgentServer continues execution
             {:ok, updated_state}
 
           {:error, reason} ->
@@ -457,9 +460,9 @@ defmodule LangChain.Agents.Agent do
     end)
   end
 
-  defp execute_model(%Agent{} = agent, %State{} = state) do
+  defp execute_model(%Agent{} = agent, %State{} = state, callbacks) do
     with {:ok, langchain_messages} <- validate_messages(state.messages),
-         {:ok, chain} <- build_chain(agent, langchain_messages, state),
+         {:ok, chain} <- build_chain(agent, langchain_messages, state, callbacks),
          {:ok, executed_chain} <- execute_chain(chain),
          {:ok, updated_state} <- extract_state_from_chain(executed_chain, state) do
       {:ok, updated_state}
@@ -475,7 +478,7 @@ defmodule LangChain.Agents.Agent do
     end
   end
 
-  defp build_chain(agent, messages, state) do
+  defp build_chain(agent, messages, state, callbacks) do
     # Wrap tools to capture state updates and pass the current state
     wrapped_tools = wrap_tools_for_state_capture(agent.tools, state)
 
@@ -496,6 +499,7 @@ defmodule LangChain.Agents.Agent do
         custom_context: %{state: state}
       })
       |> LLMChain.add_messages(messages_with_system)
+      |> maybe_add_callbacks(callbacks)
 
     {:ok, chain}
   rescue
@@ -531,6 +535,16 @@ defmodule LangChain.Agents.Agent do
       end
 
       %Function{tool | function: wrapped_fn}
+    end)
+  end
+
+  # Helper to conditionally add callbacks to chain
+  defp maybe_add_callbacks(chain, nil), do: chain
+  defp maybe_add_callbacks(chain, []), do: chain
+
+  defp maybe_add_callbacks(chain, callbacks) when is_list(callbacks) do
+    Enum.reduce(callbacks, chain, fn callback, acc ->
+      LLMChain.add_callback(acc, callback)
     end)
   end
 

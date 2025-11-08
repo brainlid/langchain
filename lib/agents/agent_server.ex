@@ -23,6 +23,12 @@ defmodule LangChain.Agents.AgentServer do
   - `{:status_changed, :completed, final_state}` - Execution completed successfully
   - `{:status_changed, :error, reason}` - Execution failed
 
+  ### LLM Streaming Events
+  - `{:llm_deltas, [%MessageDelta{}]}` - Streaming tokens/deltas received (list of deltas)
+  - `{:llm_message, %Message{}}` - Complete message received from LLM
+  - `{:llm_token_usage, %TokenUsage{}}` - Token usage information
+  - `{:tool_response, %Message{}}` - Tool execution result (optional)
+
   **Note**: File events are NOT broadcast by AgentServer. Files are managed by
   `FileSystemServer` which provides its own event handling mechanism.
 
@@ -720,8 +726,43 @@ defmodule LangChain.Agents.AgentServer do
 
   ## Private Functions
 
+  @doc false
+  # Build callback handlers that forward LLM events via PubSub
+  defp build_llm_callbacks(%ServerState{} = server_state) do
+    [
+      %{
+        # Callback for streaming deltas (tokens as they arrive)
+        on_llm_new_delta: fn _chain, deltas ->
+          # deltas is a list of MessageDelta structs
+          # Some LLM services return blocks of deltas at once, so we broadcast
+          # the entire list in a single PubSub message for efficiency
+          broadcast_event(server_state, {:llm_deltas, deltas})
+        end,
+
+        # Callback for complete messages
+        on_llm_new_message: fn _chain, message ->
+          broadcast_event(server_state, {:llm_message, message})
+        end,
+
+        # Callback for token usage information
+        on_llm_token_usage: fn _chain, usage ->
+          broadcast_event(server_state, {:llm_token_usage, usage})
+        end,
+
+        # Callback for tool responses (optional - for debugging)
+        on_tool_response_created: fn _chain, message ->
+          broadcast_event(server_state, {:tool_response, message})
+        end
+      }
+    ]
+  end
+
   defp execute_agent(%ServerState{} = server_state) do
-    case Agent.execute(server_state.agent, server_state.state) do
+    # Build callback handlers that will forward events via PubSub
+    callbacks = build_llm_callbacks(server_state)
+
+    # Execute agent with callbacks
+    case Agent.execute(server_state.agent, server_state.state, callbacks: callbacks) do
       {:ok, new_state} ->
         # Broadcast state changes
         broadcast_state_changes(server_state, new_state)
@@ -738,7 +779,10 @@ defmodule LangChain.Agents.AgentServer do
   end
 
   defp resume_agent(server_state, decisions) do
-    case Agent.resume(server_state.agent, server_state.state, decisions) do
+    # Build callbacks for resume execution as well
+    callbacks = build_llm_callbacks(server_state)
+
+    case Agent.resume(server_state.agent, server_state.state, decisions, callbacks: callbacks) do
       {:ok, new_state} ->
         # Broadcast state changes
         broadcast_state_changes(server_state, new_state)

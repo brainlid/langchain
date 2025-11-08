@@ -178,7 +178,7 @@ defmodule LangChain.Agents.AgentServerTest do
       initial_state = State.new!(%{messages: [Message.new_user!("Hello")]})
 
       Agent
-      |> expect(:execute, fn ^agent, state ->
+      |> expect(:execute, fn ^agent, state, _opts ->
         # Simulate adding an assistant response
         new_state = State.add_message(state, Message.new_assistant!(%{content: "Hi there!"}))
         {:ok, new_state}
@@ -252,7 +252,7 @@ defmodule LangChain.Agents.AgentServerTest do
       initial_state = State.new!(%{messages: [Message.new_user!("Hello")]})
 
       Agent
-      |> expect(:execute, fn ^agent, _state ->
+      |> expect(:execute, fn ^agent, _state, _opts ->
         {:error, "Something went wrong"}
       end)
 
@@ -285,7 +285,7 @@ defmodule LangChain.Agents.AgentServerTest do
       }
 
       Agent
-      |> expect(:execute, fn ^agent, state ->
+      |> expect(:execute, fn ^agent, state, _opts ->
         {:interrupt, state, interrupt_data}
       end)
 
@@ -324,7 +324,7 @@ defmodule LangChain.Agents.AgentServerTest do
 
       # Mock execute to return interrupt
       Agent
-      |> expect(:execute, fn ^agent, state ->
+      |> expect(:execute, fn ^agent, state, _opts ->
         {:interrupt, state, interrupt_data}
       end)
 
@@ -346,7 +346,7 @@ defmodule LangChain.Agents.AgentServerTest do
       decisions = [%{type: :approve}]
 
       Agent
-      |> expect(:resume, fn ^agent, state, ^decisions ->
+      |> expect(:resume, fn ^agent, state, ^decisions, _opts ->
         new_state = State.add_message(state, Message.new_assistant!(%{content: "Done"}))
         {:ok, new_state}
       end)
@@ -382,7 +382,7 @@ defmodule LangChain.Agents.AgentServerTest do
       decisions = [%{type: :approve}]
 
       Agent
-      |> expect(:resume, fn ^agent, _state, ^decisions ->
+      |> expect(:resume, fn ^agent, _state, ^decisions, _opts ->
         {:error, "Resume failed"}
       end)
 
@@ -425,7 +425,7 @@ defmodule LangChain.Agents.AgentServerTest do
 
     test "broadcasts status changes", %{agent: agent, agent_id: agent_id} do
       Agent
-      |> expect(:execute, fn ^agent, state ->
+      |> expect(:execute, fn ^agent, state, _opts ->
         {:ok, state}
       end)
 
@@ -443,7 +443,7 @@ defmodule LangChain.Agents.AgentServerTest do
 
     test "broadcasts todos updated event when todo created", %{agent: agent, agent_id: agent_id} do
       Agent
-      |> expect(:execute, fn ^agent, state ->
+      |> expect(:execute, fn ^agent, state, _opts ->
         todo = Todo.new!(%{content: "Write tests", status: :pending})
         new_state = State.put_todo(state, todo)
         {:ok, new_state}
@@ -467,7 +467,7 @@ defmodule LangChain.Agents.AgentServerTest do
       end)
 
       Agent
-      |> expect(:execute, fn ^agent, state ->
+      |> expect(:execute, fn ^agent, state, _opts ->
         updated_todo = Todo.new!(%{id: "test_id", content: "Write tests", status: :completed})
         new_state = State.put_todo(state, updated_todo)
         {:ok, new_state}
@@ -492,7 +492,7 @@ defmodule LangChain.Agents.AgentServerTest do
       end)
 
       Agent
-      |> expect(:execute, fn ^agent, state ->
+      |> expect(:execute, fn ^agent, state, _opts ->
         new_state = State.delete_todo(state, "test_id")
         {:ok, new_state}
       end)
@@ -511,7 +511,7 @@ defmodule LangChain.Agents.AgentServerTest do
       }
 
       Agent
-      |> expect(:execute, fn ^agent, state ->
+      |> expect(:execute, fn ^agent, state, _opts ->
         {:interrupt, state, interrupt_data}
       end)
 
@@ -523,7 +523,7 @@ defmodule LangChain.Agents.AgentServerTest do
 
     test "broadcasts error status", %{agent: agent, agent_id: agent_id} do
       Agent
-      |> expect(:execute, fn ^agent, _state ->
+      |> expect(:execute, fn ^agent, _state, _opts ->
         {:error, "Test error"}
       end)
 
@@ -629,7 +629,7 @@ defmodule LangChain.Agents.AgentServerTest do
       agent_id = agent.agent_id
 
       Agent
-      |> expect(:execute, fn ^agent, state ->
+      |> expect(:execute, fn ^agent, state, _opts ->
         # Simulate slow execution
         Process.sleep(50)
         {:ok, state}
