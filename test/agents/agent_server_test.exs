@@ -441,7 +441,7 @@ defmodule LangChain.Agents.AgentServerTest do
     # NOTE: File events are NOT broadcast by AgentServer anymore
     # Files are managed by FileSystemServer which has its own event handling
 
-    test "broadcasts todo created event", %{agent: agent, agent_id: agent_id} do
+    test "broadcasts todos updated event when todo created", %{agent: agent, agent_id: agent_id} do
       Agent
       |> expect(:execute, fn ^agent, state ->
         todo = Todo.new!(%{content: "Write tests", status: :pending})
@@ -452,11 +452,12 @@ defmodule LangChain.Agents.AgentServerTest do
       :ok = AgentServer.execute(agent_id)
 
       assert_receive {:status_changed, :running, nil}, 100
-      assert_receive {:todo_created, todo}, 200
-      assert todo.content == "Write tests"
+      assert_receive {:todos_updated, todos}, 200
+      assert length(todos) == 1
+      assert hd(todos).content == "Write tests"
     end
 
-    test "broadcasts todo updated event", %{agent: agent, agent_id: agent_id} do
+    test "broadcasts todos updated event when todo status changes", %{agent: agent, agent_id: agent_id} do
       # Set initial todo
       todo = Todo.new!(%{id: "test_id", content: "Write tests", status: :pending})
       initial_state = State.new!() |> State.put_todo(todo)
@@ -475,11 +476,13 @@ defmodule LangChain.Agents.AgentServerTest do
       :ok = AgentServer.execute(agent_id)
 
       assert_receive {:status_changed, :running, nil}, 100
-      assert_receive {:todo_updated, updated_todo}, 200
-      assert updated_todo.status == :completed
+      assert_receive {:todos_updated, todos}, 200
+      assert length(todos) == 1
+      assert hd(todos).status == :completed
+      assert hd(todos).id == "test_id"
     end
 
-    test "broadcasts todo deleted event", %{agent: agent, agent_id: agent_id} do
+    test "broadcasts todos updated event when todo deleted", %{agent: agent, agent_id: agent_id} do
       # Set initial todo
       todo = Todo.new!(%{id: "test_id", content: "Write tests", status: :pending})
       initial_state = State.new!() |> State.put_todo(todo)
@@ -497,7 +500,8 @@ defmodule LangChain.Agents.AgentServerTest do
       :ok = AgentServer.execute(agent_id)
 
       assert_receive {:status_changed, :running, nil}, 100
-      assert_receive {:todo_deleted, "test_id"}, 200
+      assert_receive {:todos_updated, todos}, 200
+      assert length(todos) == 0
     end
 
     test "broadcasts interrupt status with data", %{agent: agent, agent_id: agent_id} do
