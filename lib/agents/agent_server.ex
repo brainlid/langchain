@@ -591,13 +591,6 @@ defmodule LangChain.Agents.AgentServer do
         status -> status
       end
 
-    # Broadcast status change if status changed
-    if new_status != server_state.status do
-      broadcast_event(server_state, {:status_changed, new_status, nil})
-    end
-
-    broadcast_state_changes(server_state, reset_state)
-
     updated_server_state = %{
       server_state
       | state: reset_state,
@@ -605,6 +598,13 @@ defmodule LangChain.Agents.AgentServer do
         error: nil,
         interrupt_data: nil
     }
+
+    # Broadcast status change if status changed
+    if new_status != server_state.status do
+      broadcast_event(server_state, {:status_changed, new_status, nil})
+    end
+
+    broadcast_state_changes(server_state, reset_state)
 
     # Reset activity timer
     updated_server_state = reset_inactivity_timer(updated_server_state)
