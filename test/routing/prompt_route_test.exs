@@ -60,7 +60,11 @@ defmodule LangChain.Routing.PromptRouteTest do
   describe "get_selected/2" do
     setup do
       routes = [
-        PromptRoute.new!(%{name: "blog", description: "Drafting a blog post", chain: %LLMChain{}}),
+        PromptRoute.new!(%{
+          name: "blog",
+          description: "Drafting a blog post",
+          chain: %LLMChain{}
+        }),
         PromptRoute.new!(%{name: "memo", description: "Drafting a memo", chain: %LLMChain{}})
       ]
 
