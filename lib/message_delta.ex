@@ -173,6 +173,42 @@ defmodule LangChain.MessageDelta do
   end
 
   @doc """
+  Merges a list of `MessageDelta`s into an accumulated `MessageDelta`. This is
+  useful for UI applications that accumulate deltas as they are received from
+  a streaming LLM response.
+
+  The first argument is the accumulated delta (or `nil` if no deltas have been
+  processed yet). The second argument is a list of new deltas to merge in.
+
+  ## Examples
+
+      iex> accumulated = nil
+      iex> batch_1 = [
+      ...>   %LangChain.MessageDelta{content: "Hello", role: :assistant},
+      ...>   %LangChain.MessageDelta{content: " world", role: :assistant}
+      ...> ]
+      iex> accumulated = LangChain.MessageDelta.merge_deltas(accumulated, batch_1)
+      iex> batch_2 = [
+      ...>   %LangChain.MessageDelta{content: "!", role: :assistant, status: :complete}
+      ...> ]
+      iex> result = LangChain.MessageDelta.merge_deltas(accumulated, batch_2)
+      iex> result
+      %LangChain.MessageDelta{
+        content: nil,
+        merged_content: [%LangChain.Message.ContentPart{type: :text, content: "Hello world!"}],
+        status: :complete,
+        role: :assistant
+      }
+
+  """
+  @spec merge_deltas(nil | t(), [t()]) :: t()
+  def merge_deltas(accumulated_delta, deltas) when is_list(deltas) do
+    deltas
+    |> List.flatten()
+    |> Enum.reduce(accumulated_delta, &merge_delta(&2, &1))
+  end
+
+  @doc """
   Merges a list of `MessageDelta`s into a single `MessageDelta`. The deltas
   are merged in order, with each delta being merged into the result of the
   previous merge.
@@ -195,9 +231,7 @@ defmodule LangChain.MessageDelta do
   """
   @spec merge_deltas([t()]) :: t()
   def merge_deltas(deltas) when is_list(deltas) do
-    # we accumulate the deltas into the first argument which we call the
-    # "primary". Then each successive delta is merged into the primary.
-    Enum.reduce(deltas, nil, &merge_delta(&2, &1))
+    merge_deltas(nil, deltas)
   end
 
   # Clear the content field after merging into merged_content
