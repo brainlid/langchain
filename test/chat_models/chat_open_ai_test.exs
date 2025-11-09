@@ -1721,7 +1721,8 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
         end
       }
 
-      %ChatOpenAI{} = chat =
+      %ChatOpenAI{} =
+        chat =
         ChatOpenAI.new!(%{seed: 0, stream: true, receive_timeout: 50})
 
       chat = %ChatOpenAI{chat | callbacks: [handler]}
