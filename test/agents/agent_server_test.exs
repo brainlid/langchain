@@ -457,7 +457,10 @@ defmodule LangChain.Agents.AgentServerTest do
       assert hd(todos).content == "Write tests"
     end
 
-    test "broadcasts todos updated event when todo status changes", %{agent: agent, agent_id: agent_id} do
+    test "broadcasts todos updated event when todo status changes", %{
+      agent: agent,
+      agent_id: agent_id
+    } do
       # Set initial todo
       todo = Todo.new!(%{id: "test_id", content: "Write tests", status: :pending})
       initial_state = State.new!() |> State.put_todo(todo)

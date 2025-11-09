@@ -420,6 +420,35 @@ defmodule LangChain.Agents.AgentServer do
   end
 
   @doc """
+  Set the complete message list for the agent.
+
+  This replaces the entire message list and broadcasts individual `{:llm_message, message}`
+  events for each message, allowing UI synchronization.
+
+  Useful for:
+  - Thread restoration (restoring persisted messages)
+  - Testing scenarios (setting sample messages)
+  - Bulk message updates
+
+  ## Parameters
+
+  - `agent_id` - The agent identifier
+  - `messages` - List of Message structs
+
+  ## Examples
+
+      messages = [
+        Message.new_system!("You are helpful"),
+        Message.new_user!("Hello")
+      ]
+      :ok = AgentServer.set_messages("my-agent-1", messages)
+  """
+  @spec set_messages(String.t(), list(LangChain.Message.t())) :: :ok
+  def set_messages(agent_id, messages) when is_list(messages) do
+    GenServer.call(get_name(agent_id), {:set_messages, messages})
+  end
+
+  @doc """
   Stop the AgentServer.
 
   ## Examples
@@ -648,6 +677,23 @@ defmodule LangChain.Agents.AgentServer do
   end
 
   @impl true
+  def handle_call({:set_messages, messages}, _from, server_state) do
+    # Update state with new messages
+    new_state = State.set_messages(server_state.state, messages)
+
+    # Broadcast complete snapshot of current messages
+    broadcast_messages(server_state, new_state)
+
+    # Update server state
+    updated_server_state = %{server_state | state: new_state}
+
+    # Reset inactivity timer on message update
+    updated_server_state = reset_inactivity_timer(updated_server_state)
+
+    {:reply, :ok, updated_server_state}
+  end
+
+  @impl true
   def handle_info({ref, result}, server_state) when is_reference(ref) do
     # Task completed
     Process.demonitor(ref, [:flush])
@@ -850,6 +896,13 @@ defmodule LangChain.Agents.AgentServer do
   defp broadcast_todos(%ServerState{} = server_state, %State{} = new_state) do
     # Broadcast complete snapshot of current TODOs
     broadcast_event(server_state, {:todos_updated, new_state.todos})
+  end
+
+  defp broadcast_messages(%ServerState{} = server_state, %State{} = new_state) do
+    # Broadcast individual messages using the existing {:llm_message, message} event
+    Enum.each(new_state.messages, fn message ->
+      broadcast_event(server_state, {:llm_message, message})
+    end)
   end
 
   defp broadcast_event(%ServerState{} = server_state, event) do

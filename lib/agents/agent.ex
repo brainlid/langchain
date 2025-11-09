@@ -302,7 +302,8 @@ defmodule LangChain.Agents.Agent do
 
       {:ok, final_state} = Agent.resume(agent, state, decisions)
   """
-  def resume(%Agent{} = agent, %State{} = state, decisions, _opts \\ []) when is_list(decisions) do
+  def resume(%Agent{} = agent, %State{} = state, decisions, _opts \\ [])
+      when is_list(decisions) do
     # Find the HumanInTheLoop middleware in the stack
     hitl_middleware =
       Enum.find(agent.middleware, fn {module, _config} ->
@@ -495,9 +496,10 @@ defmodule LangChain.Agents.Agent do
     chain =
       LLMChain.new!(%{
         llm: agent.model,
-        tools: wrapped_tools,
-        custom_context: %{state: state}
+        custom_context: %{state: state},
+        verbose: true
       })
+      |> LLMChain.add_tools(wrapped_tools)
       |> LLMChain.add_messages(messages_with_system)
       |> maybe_add_callbacks(callbacks)
 
@@ -553,8 +555,11 @@ defmodule LangChain.Agents.Agent do
       {:ok, updated_chain} ->
         {:ok, updated_chain}
 
+      {:error, _chain, %LangChainError{} = reason} ->
+        {:error, reason.message}
+
       {:error, _chain, reason} ->
-        {:error, "Chain execution failed: #{inspect(reason)}"}
+        {:error, "Agent execution failed: #{inspect(reason)}"}
     end
   end
 

@@ -218,6 +218,30 @@ defmodule LangChain.Agents.State do
   end
 
   @doc """
+  Replace all messages.
+
+  Useful for:
+  - Thread restoration (restoring persisted messages)
+  - Testing scenarios (setting sample messages)
+  - Bulk message updates
+
+  ## Parameters
+
+  - `state` - The current State struct
+  - `messages` - List of Message structs
+
+  ## Examples
+
+      messages = [
+        Message.new_user!("Hello")
+      ]
+      state = State.set_messages(state, messages)
+  """
+  def set_messages(%State{} = state, messages) when is_list(messages) do
+    %{state | messages: messages}
+  end
+
+  @doc """
   Reset the state to a clean slate.
 
   Clears:
