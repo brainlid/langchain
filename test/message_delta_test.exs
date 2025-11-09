@@ -1012,6 +1012,278 @@ defmodule LangChain.MessageDeltaTest do
     end
   end
 
+  describe "merge_deltas/2" do
+    test "merges a batch of deltas starting from nil" do
+      batch = [
+        %MessageDelta{content: "Hello", role: :assistant},
+        %MessageDelta{content: " world", role: :assistant},
+        %MessageDelta{content: "!", role: :assistant}
+      ]
+
+      result = MessageDelta.merge_deltas(nil, batch)
+
+      assert result == %MessageDelta{
+               content: nil,
+               merged_content: [ContentPart.text!("Hello world!")],
+               role: :assistant,
+               status: :incomplete
+             }
+    end
+
+    test "accumulates deltas across multiple batches" do
+      accumulated = nil
+
+      batch_1 = [
+        %MessageDelta{content: "Hello", role: :assistant},
+        %MessageDelta{content: " world", role: :assistant}
+      ]
+
+      accumulated = MessageDelta.merge_deltas(accumulated, batch_1)
+
+      assert accumulated.merged_content == [ContentPart.text!("Hello world")]
+
+      batch_2 = [
+        %MessageDelta{content: "!", role: :assistant},
+        %MessageDelta{content: " How", role: :assistant}
+      ]
+
+      accumulated = MessageDelta.merge_deltas(accumulated, batch_2)
+
+      assert accumulated.merged_content == [ContentPart.text!("Hello world! How")]
+
+      batch_3 = [
+        %MessageDelta{content: " are you?", role: :assistant, status: :complete}
+      ]
+
+      result = MessageDelta.merge_deltas(accumulated, batch_3)
+
+      assert result == %MessageDelta{
+               content: nil,
+               merged_content: [ContentPart.text!("Hello world! How are you?")],
+               role: :assistant,
+               status: :complete
+             }
+    end
+
+    test "handles nested lists (flattening)" do
+      accumulated = nil
+
+      # Simulate what OpenAI might return - nested lists
+      batch = [
+        [
+          %MessageDelta{content: "Hello", role: :assistant},
+          %MessageDelta{content: " world", role: :assistant}
+        ],
+        [
+          %MessageDelta{content: "!", role: :assistant, status: :complete}
+        ]
+      ]
+
+      result = MessageDelta.merge_deltas(accumulated, batch)
+
+      assert result == %MessageDelta{
+               content: nil,
+               merged_content: [ContentPart.text!("Hello world!")],
+               role: :assistant,
+               status: :complete
+             }
+    end
+
+    test "handles tool calls across batches" do
+      accumulated = nil
+
+      batch_1 = [
+        %MessageDelta{content: "", role: :assistant},
+        %MessageDelta{
+          content: nil,
+          role: :assistant,
+          tool_calls: [
+            %ToolCall{
+              status: :incomplete,
+              type: :function,
+              call_id: "call_123",
+              name: "get_weather",
+              arguments: nil,
+              index: 0
+            }
+          ]
+        }
+      ]
+
+      accumulated = MessageDelta.merge_deltas(accumulated, batch_1)
+
+      batch_2 = [
+        %MessageDelta{
+          content: nil,
+          role: :assistant,
+          tool_calls: [
+            %ToolCall{
+              status: :incomplete,
+              type: :function,
+              call_id: nil,
+              name: nil,
+              arguments: "{\"city\":",
+              index: 0
+            }
+          ]
+        },
+        %MessageDelta{
+          content: nil,
+          role: :assistant,
+          tool_calls: [
+            %ToolCall{
+              status: :incomplete,
+              type: :function,
+              call_id: nil,
+              name: nil,
+              arguments: " \"Portland\"}",
+              index: 0
+            }
+          ]
+        }
+      ]
+
+      accumulated = MessageDelta.merge_deltas(accumulated, batch_2)
+
+      batch_3 = [
+        %MessageDelta{content: "", role: :assistant, status: :complete}
+      ]
+
+      result = MessageDelta.merge_deltas(accumulated, batch_3)
+
+      assert result == %MessageDelta{
+               content: nil,
+               merged_content: [],
+               role: :assistant,
+               status: :complete,
+               tool_calls: [
+                 %ToolCall{
+                   status: :incomplete,
+                   type: :function,
+                   call_id: "call_123",
+                   name: "get_weather",
+                   arguments: "{\"city\": \"Portland\"}",
+                   index: 0
+                 }
+               ]
+             }
+    end
+
+    test "handles thinking and text content parts across batches" do
+      accumulated = nil
+
+      batch_1 = [
+        %MessageDelta{content: [], role: :assistant},
+        %MessageDelta{
+          content: %ContentPart{type: :thinking, content: "Let me think", options: nil},
+          role: :assistant,
+          index: 0
+        }
+      ]
+
+      accumulated = MessageDelta.merge_deltas(accumulated, batch_1)
+
+      batch_2 = [
+        %MessageDelta{
+          content: %ContentPart{type: :thinking, content: " about this", options: nil},
+          role: :assistant,
+          index: 0
+        },
+        %MessageDelta{
+          content: %ContentPart{type: :text, content: "Here's my answer", options: nil},
+          role: :assistant,
+          index: 1
+        }
+      ]
+
+      result = MessageDelta.merge_deltas(accumulated, batch_2)
+
+      assert result == %MessageDelta{
+               content: nil,
+               merged_content: [
+                 %ContentPart{type: :thinking, content: "Let me think about this", options: nil},
+                 %ContentPart{type: :text, content: "Here's my answer", options: nil}
+               ],
+               role: :assistant,
+               status: :incomplete,
+               index: 1
+             }
+    end
+
+    test "accumulates token usage across batches" do
+      accumulated = nil
+
+      batch_1 = [
+        %MessageDelta{
+          content: "Hello",
+          role: :assistant,
+          metadata: %{
+            usage: %LangChain.TokenUsage{input: 10, output: 5}
+          }
+        }
+      ]
+
+      accumulated = MessageDelta.merge_deltas(accumulated, batch_1)
+
+      batch_2 = [
+        %MessageDelta{
+          content: " world",
+          role: :assistant,
+          metadata: %{
+            usage: %LangChain.TokenUsage{input: 5, output: 10}
+          }
+        }
+      ]
+
+      result = MessageDelta.merge_deltas(accumulated, batch_2)
+
+      assert result.metadata.usage.input == 15
+      assert result.metadata.usage.output == 15
+    end
+
+    test "handles empty batch list" do
+      accumulated = %MessageDelta{
+        content: nil,
+        merged_content: [ContentPart.text!("Hello")],
+        role: :assistant
+      }
+
+      result = MessageDelta.merge_deltas(accumulated, [])
+
+      assert result == accumulated
+    end
+
+    test "preserves status updates across batches" do
+      accumulated = nil
+
+      batch_1 = [
+        %MessageDelta{content: "Hello", role: :assistant, status: :incomplete}
+      ]
+
+      accumulated = MessageDelta.merge_deltas(accumulated, batch_1)
+      assert accumulated.status == :incomplete
+
+      batch_2 = [
+        %MessageDelta{content: " world", role: :assistant, status: :complete}
+      ]
+
+      result = MessageDelta.merge_deltas(accumulated, batch_2)
+      assert result.status == :complete
+    end
+
+    test "handles length status" do
+      accumulated = nil
+
+      batch = [
+        %MessageDelta{content: "Hello world", role: :assistant, status: :length}
+      ]
+
+      result = MessageDelta.merge_deltas(accumulated, batch)
+
+      assert result.status == :length
+    end
+  end
+
   describe "to_message/1" do
     test "transform a merged and complete MessageDelta to a Message" do
       # :assistant content type
