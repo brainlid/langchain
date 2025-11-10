@@ -117,6 +117,7 @@ defmodule LangChain.Agents.Middleware.FileSystem do
 
   require Logger
   alias LangChain.Function
+  alias LangChain.Agents.FileSystemServer
 
   @system_prompt """
   ## Filesystem Tools
@@ -202,6 +203,7 @@ defmodule LangChain.Agents.Middleware.FileSystem do
   # Tool builders
 
   defp build_ls_tool(config) do
+    IO.inspect config, label: "BUILD_LS_TOOL CONFIG"
     default_description = """
     Lists files in the filesystem, optionally filtering by pattern or directory.
 
@@ -350,19 +352,17 @@ defmodule LangChain.Agents.Middleware.FileSystem do
   # Tool execution functions
 
   defp execute_ls_tool(args, _context, config) do
+    IO.inspect config, label: "EXECUTE LS TOOL CONFIG"
     pattern = get_arg(args, "pattern")
 
     # List all files using FileSystemServer (reads directly from ETS)
-    all_files = LangChain.Agents.FileSystemServer.list_files(config.agent_id)
+    all_files = FileSystemServer.list_files(config.agent_id)
 
     # Apply pattern filtering
     filtered_files = filter_by_pattern(all_files, pattern)
 
-    # Sort for consistency (already sorted by FileSystemServer, but ensure it)
-    sorted_files = Enum.sort(filtered_files)
-
     message =
-      if Enum.empty?(sorted_files) do
+      if Enum.empty?(filtered_files) do
         if pattern do
           "No files match pattern: #{pattern}"
         else
@@ -370,7 +370,7 @@ defmodule LangChain.Agents.Middleware.FileSystem do
         end
       else
         header = if pattern, do: "Files matching '#{pattern}':\n", else: "Files:\n"
-        header <> Enum.join(sorted_files, "\n")
+        header <> Enum.join(filtered_files, "\n")
       end
 
     {:ok, message}
@@ -387,7 +387,7 @@ defmodule LangChain.Agents.Middleware.FileSystem do
     # Validate path
     with {:ok, normalized_path} <- validate_path(file_path) do
       # Read file using FileSystemServer (handles lazy loading automatically)
-      case LangChain.Agents.FileSystemServer.read_file(config.agent_id, normalized_path) do
+      case FileSystemServer.read_file(config.agent_id, normalized_path) do
         {:ok, content} ->
           format_file_content(content, normalized_path, offset, limit)
 
@@ -458,12 +458,12 @@ defmodule LangChain.Agents.Middleware.FileSystem do
         # Validate path
         with {:ok, normalized_path} <- validate_path(file_path) do
           # Check if file already exists (overwrite protection)
-          if LangChain.Agents.FileSystemServer.file_exists?(config.agent_id, normalized_path) do
+          if FileSystemServer.file_exists?(config.agent_id, normalized_path) do
             {:error,
              "File already exists: #{normalized_path}. Use edit_file to modify existing files."}
           else
             # Write file using FileSystemServer
-            case LangChain.Agents.FileSystemServer.write_file(
+            case FileSystemServer.write_file(
                    config.agent_id,
                    normalized_path,
                    content
@@ -498,7 +498,7 @@ defmodule LangChain.Agents.Middleware.FileSystem do
         # Validate path
         with {:ok, normalized_path} <- validate_path(file_path) do
           # Read current content using FileSystemServer
-          case LangChain.Agents.FileSystemServer.read_file(config.agent_id, normalized_path) do
+          case FileSystemServer.read_file(config.agent_id, normalized_path) do
             {:ok, content} ->
               perform_edit(
                 config.agent_id,
@@ -556,7 +556,7 @@ defmodule LangChain.Agents.Middleware.FileSystem do
   end
 
   defp write_edit(agent_id, file_path, updated_content, success_message) do
-    case LangChain.Agents.FileSystemServer.write_file(agent_id, file_path, updated_content) do
+    case FileSystemServer.write_file(agent_id, file_path, updated_content) do
       :ok ->
         {:ok, success_message}
 
@@ -564,6 +564,8 @@ defmodule LangChain.Agents.Middleware.FileSystem do
         {:error, "Failed to save edit: #{inspect(reason)}"}
     end
   end
+
+  defp get_arg(nil = _args, _key), do: nil
 
   defp get_arg(args, key) when is_map(args) do
     args[key] || args[String.to_atom(key)]

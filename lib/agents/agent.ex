@@ -46,7 +46,6 @@ defmodule LangChain.Agents.Agent do
   alias LangChain.Agents.State
   alias LangChain.LangChainError
   alias LangChain.Message
-  alias LangChain.Function
   alias LangChain.Chains.LLMChain
 
   @primary_key false
@@ -480,9 +479,6 @@ defmodule LangChain.Agents.Agent do
   end
 
   defp build_chain(agent, messages, state, callbacks) do
-    # Wrap tools to capture state updates and pass the current state
-    wrapped_tools = wrap_tools_for_state_capture(agent.tools, state)
-
     # Add system message if we have a system prompt
     messages_with_system =
       case agent.system_prompt do
@@ -499,45 +495,13 @@ defmodule LangChain.Agents.Agent do
         custom_context: %{state: state},
         verbose: true
       })
-      |> LLMChain.add_tools(wrapped_tools)
+      |> LLMChain.add_tools(agent.tools)
       |> LLMChain.add_messages(messages_with_system)
       |> maybe_add_callbacks(callbacks)
 
     {:ok, chain}
   rescue
     error -> {:error, "Failed to build chain: #{inspect(error)}"}
-  end
-
-  defp wrap_tools_for_state_capture(tools, initial_state) do
-    Enum.map(tools, fn %Function{} = tool ->
-      # Wrap the original function to handle state updates
-      original_fn = tool.function
-
-      wrapped_fn = fn args, context ->
-        # Get the most recent state from context, or use initial state
-        current_state = get_in(context, [:state]) || initial_state
-
-        # Call the original function with updated context that includes state
-        context_with_state = Map.put(context || %{}, :state, current_state)
-
-        case original_fn.(args, context_with_state) do
-          # Tool returned state update
-          {:ok, result, %State{} = updated_state} ->
-            # Store the state in processed_content
-            {:ok, result, updated_state}
-
-          # Standard tool result
-          {:ok, result} ->
-            {:ok, result}
-
-          # Tool error
-          {:error, reason} ->
-            {:error, reason}
-        end
-      end
-
-      %Function{tool | function: wrapped_fn}
-    end)
   end
 
   # Helper to conditionally add callbacks to chain
