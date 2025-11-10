@@ -528,13 +528,8 @@ defmodule LangChain.Agents.Agent do
   end
 
   defp extract_state_from_chain(chain, original_state) do
-    # Get only non-tool messages (assistant and potentially user messages from the exchange)
-    # Tool messages are internal to the chain execution
-    new_messages =
-      chain.exchanged_messages
-      |> Enum.reject(&(&1.role == :tool))
-
-    # Extract any state updates from tool results
+    # Extract any state updates from tool results (used by middleware like TodoList)
+    # Some tools return State objects as processed_content to update agent state
     state_updates =
       chain.exchanged_messages
       |> Enum.filter(&(&1.role == :tool))
@@ -551,10 +546,10 @@ defmodule LangChain.Agents.Agent do
         end
       end)
 
-    # Start with the original state and add new messages
-    updated_state = State.add_messages(original_state, new_messages)
+    # Start with the original state and add all messages including tool results
+    updated_state = State.add_messages(original_state, chain.exchanged_messages)
 
-    # Merge in any state updates from tools
+    # Merge in any state updates from tools (e.g., todo list updates)
     final_state =
       Enum.reduce(state_updates, updated_state, fn state_update, acc ->
         State.merge_states(acc, state_update)
