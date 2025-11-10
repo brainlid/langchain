@@ -203,7 +203,6 @@ defmodule LangChain.Agents.Middleware.FileSystem do
   # Tool builders
 
   defp build_ls_tool(config) do
-    IO.inspect config, label: "BUILD_LS_TOOL CONFIG"
     default_description = """
     Lists files in the filesystem, optionally filtering by pattern or directory.
 
@@ -352,7 +351,6 @@ defmodule LangChain.Agents.Middleware.FileSystem do
   # Tool execution functions
 
   defp execute_ls_tool(args, _context, config) do
-    IO.inspect config, label: "EXECUTE LS TOOL CONFIG"
     pattern = get_arg(args, "pattern")
 
     # List all files using FileSystemServer (reads directly from ETS)
