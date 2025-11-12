@@ -2198,6 +2198,22 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       assert result == expected
     end
 
+    test "turns a file ContentPart into the expected JSON format" do
+      expected = %{
+        "type" => "document",
+        "source" => %{
+          "data" => "pdf_base64_data",
+          "type" => "base64",
+          "media_type" => "application/pdf"
+        }
+      }
+
+      result =
+        ChatAnthropic.content_part_for_api(ContentPart.file!("pdf_base64_data", media: :pdf))
+
+      assert result == expected
+    end
+
     test "turns image ContentPart's media_type into the expected value" do
       assert %{"source" => %{"media_type" => "image/png"}} =
                ChatAnthropic.content_part_for_api(
@@ -2217,6 +2233,13 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       assert %{"source" => %{"media_type" => "image/webp"}} =
                ChatAnthropic.content_part_for_api(
                  ContentPart.image!("image_base64_data", media: "image/webp")
+               )
+    end
+
+    test "turns file ContentPart's media_type into the expected value" do
+      assert %{"source" => %{"media_type" => "application/pdf"}} =
+               ChatAnthropic.content_part_for_api(
+                 ContentPart.file!("pdf_base64_data", media: :pdf)
                )
     end
 
