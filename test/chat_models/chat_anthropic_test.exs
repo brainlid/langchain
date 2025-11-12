@@ -3222,7 +3222,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       last_content1 = List.last(last_msg1["content"])
       assert last_content1["cache_control"] == %{"type" => "ephemeral"}
 
-      # Second turn - cache should move to the new last user message
+      # Second turn - with default count=3, both user messages should have cache_control
       messages_turn2 = [
         Message.new_user!("First question"),
         Message.new_assistant!("First answer"),
@@ -3231,17 +3231,212 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 
       data2 = ChatAnthropic.for_api(anthropic, messages_turn2, [])
 
-      # The last user message should have cache_control
+      # Both user messages should have cache_control (since count=3 and only 2 user messages)
       last_msg2 = List.last(data2.messages)
       assert last_msg2["role"] == "user"
       last_content2 = List.last(last_msg2["content"])
       assert last_content2["cache_control"] == %{"type" => "ephemeral"}
 
-      # The first user message should NOT have cache_control
       first_msg2 = Enum.at(data2.messages, 0)
       assert first_msg2["role"] == "user"
       first_content2 = List.last(first_msg2["content"])
-      refute Map.has_key?(first_content2, "cache_control")
+      assert first_content2["cache_control"] == %{"type" => "ephemeral"}
+    end
+
+    test "supports custom count for cache breakpoints" do
+      # Test with count: 1 - only last user message
+      anthropic_1 = ChatAnthropic.new!(%{cache_messages: %{enabled: true, count: 1}})
+
+      messages = [
+        Message.new_user!("First"),
+        Message.new_assistant!("Response 1"),
+        Message.new_user!("Second"),
+        Message.new_assistant!("Response 2"),
+        Message.new_user!("Third")
+      ]
+
+      data = ChatAnthropic.for_api(anthropic_1, messages, [])
+
+      # Get all user messages
+      user_messages = Enum.filter(data.messages, fn msg -> msg["role"] == "user" end)
+      assert length(user_messages) == 3
+
+      # Only the last user message should have cache_control
+      first_user = Enum.at(user_messages, 0)
+      first_content = List.last(first_user["content"])
+      refute Map.has_key?(first_content, "cache_control")
+
+      second_user = Enum.at(user_messages, 1)
+      second_content = List.last(second_user["content"])
+      refute Map.has_key?(second_content, "cache_control")
+
+      last_user = Enum.at(user_messages, 2)
+      last_content = List.last(last_user["content"])
+      assert last_content["cache_control"] == %{"type" => "ephemeral"}
+    end
+
+    test "supports count: 2 for cache breakpoints" do
+      anthropic = ChatAnthropic.new!(%{cache_messages: %{enabled: true, count: 2}})
+
+      messages = [
+        Message.new_user!("First"),
+        Message.new_assistant!("Response 1"),
+        Message.new_user!("Second"),
+        Message.new_assistant!("Response 2"),
+        Message.new_user!("Third"),
+        Message.new_assistant!("Response 3"),
+        Message.new_user!("Fourth")
+      ]
+
+      data = ChatAnthropic.for_api(anthropic, messages, [])
+
+      # Get all user messages
+      user_messages = Enum.filter(data.messages, fn msg -> msg["role"] == "user" end)
+      assert length(user_messages) == 4
+
+      # First two user messages should NOT have cache_control
+      first_user = Enum.at(user_messages, 0)
+      first_content = List.last(first_user["content"])
+      refute Map.has_key?(first_content, "cache_control")
+
+      second_user = Enum.at(user_messages, 1)
+      second_content = List.last(second_user["content"])
+      refute Map.has_key?(second_content, "cache_control")
+
+      # Last two user messages SHOULD have cache_control
+      third_user = Enum.at(user_messages, 2)
+      third_content = List.last(third_user["content"])
+      assert third_content["cache_control"] == %{"type" => "ephemeral"}
+
+      fourth_user = Enum.at(user_messages, 3)
+      fourth_content = List.last(fourth_user["content"])
+      assert fourth_content["cache_control"] == %{"type" => "ephemeral"}
+    end
+
+    test "defaults to count: 3 for cache breakpoints" do
+      anthropic = ChatAnthropic.new!(%{cache_messages: %{enabled: true}})
+
+      messages = [
+        Message.new_user!("First"),
+        Message.new_assistant!("Response 1"),
+        Message.new_user!("Second"),
+        Message.new_assistant!("Response 2"),
+        Message.new_user!("Third"),
+        Message.new_assistant!("Response 3"),
+        Message.new_user!("Fourth"),
+        Message.new_assistant!("Response 4"),
+        Message.new_user!("Fifth")
+      ]
+
+      data = ChatAnthropic.for_api(anthropic, messages, [])
+
+      # Get all user messages
+      user_messages = Enum.filter(data.messages, fn msg -> msg["role"] == "user" end)
+      assert length(user_messages) == 5
+
+      # First two user messages should NOT have cache_control
+      first_user = Enum.at(user_messages, 0)
+      first_content = List.last(first_user["content"])
+      refute Map.has_key?(first_content, "cache_control")
+
+      second_user = Enum.at(user_messages, 1)
+      second_content = List.last(second_user["content"])
+      refute Map.has_key?(second_content, "cache_control")
+
+      # Last three user messages SHOULD have cache_control (default count=3)
+      third_user = Enum.at(user_messages, 2)
+      third_content = List.last(third_user["content"])
+      assert third_content["cache_control"] == %{"type" => "ephemeral"}
+
+      fourth_user = Enum.at(user_messages, 3)
+      fourth_content = List.last(fourth_user["content"])
+      assert fourth_content["cache_control"] == %{"type" => "ephemeral"}
+
+      fifth_user = Enum.at(user_messages, 4)
+      fifth_content = List.last(fifth_user["content"])
+      assert fifth_content["cache_control"] == %{"type" => "ephemeral"}
+    end
+
+    test "limits count to maximum of 4 breakpoints" do
+      anthropic = ChatAnthropic.new!(%{cache_messages: %{enabled: true, count: 10}})
+
+      messages = [
+        Message.new_user!("First"),
+        Message.new_assistant!("Response 1"),
+        Message.new_user!("Second"),
+        Message.new_assistant!("Response 2"),
+        Message.new_user!("Third"),
+        Message.new_assistant!("Response 3"),
+        Message.new_user!("Fourth"),
+        Message.new_assistant!("Response 4"),
+        Message.new_user!("Fifth"),
+        Message.new_assistant!("Response 5"),
+        Message.new_user!("Sixth")
+      ]
+
+      data = ChatAnthropic.for_api(anthropic, messages, [])
+
+      # Get all user messages
+      user_messages = Enum.filter(data.messages, fn msg -> msg["role"] == "user" end)
+      assert length(user_messages) == 6
+
+      # First two user messages should NOT have cache_control
+      first_user = Enum.at(user_messages, 0)
+      first_content = List.last(first_user["content"])
+      refute Map.has_key?(first_content, "cache_control")
+
+      second_user = Enum.at(user_messages, 1)
+      second_content = List.last(second_user["content"])
+      refute Map.has_key?(second_content, "cache_control")
+
+      # Last four user messages SHOULD have cache_control (clamped to max of 4)
+      third_user = Enum.at(user_messages, 2)
+      third_content = List.last(third_user["content"])
+      assert third_content["cache_control"] == %{"type" => "ephemeral"}
+
+      fourth_user = Enum.at(user_messages, 3)
+      fourth_content = List.last(fourth_user["content"])
+      assert fourth_content["cache_control"] == %{"type" => "ephemeral"}
+
+      fifth_user = Enum.at(user_messages, 4)
+      fifth_content = List.last(fifth_user["content"])
+      assert fifth_content["cache_control"] == %{"type" => "ephemeral"}
+
+      sixth_user = Enum.at(user_messages, 5)
+      sixth_content = List.last(sixth_user["content"])
+      assert sixth_content["cache_control"] == %{"type" => "ephemeral"}
+    end
+
+    test "count works with TTL configuration" do
+      anthropic = ChatAnthropic.new!(%{cache_messages: %{enabled: true, count: 2, ttl: "1h"}})
+
+      messages = [
+        Message.new_user!("First"),
+        Message.new_assistant!("Response 1"),
+        Message.new_user!("Second"),
+        Message.new_assistant!("Response 2"),
+        Message.new_user!("Third")
+      ]
+
+      data = ChatAnthropic.for_api(anthropic, messages, [])
+
+      # Get all user messages
+      user_messages = Enum.filter(data.messages, fn msg -> msg["role"] == "user" end)
+      assert length(user_messages) == 3
+
+      # First user message should NOT have cache_control
+      first_user = Enum.at(user_messages, 0)
+      first_content = List.last(first_user["content"])
+      refute Map.has_key?(first_content, "cache_control")
+
+      # Last two user messages SHOULD have cache_control with TTL
+      second_user = Enum.at(user_messages, 1)
+      second_content = List.last(second_user["content"])
+      assert second_content["cache_control"] == %{"type" => "ephemeral", "ttl" => "1h"}
+
+      third_user = Enum.at(user_messages, 2)
+      third_content = List.last(third_user["content"])
+      assert third_content["cache_control"] == %{"type" => "ephemeral", "ttl" => "1h"}
     end
   end
 
