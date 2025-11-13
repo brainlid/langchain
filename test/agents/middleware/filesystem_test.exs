@@ -22,7 +22,7 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
     test "initializes with agent_id", %{agent_id: agent_id} do
       assert {:ok, config} = FileSystem.init(agent_id: agent_id)
       assert config.agent_id == agent_id
-      assert config.enabled_tools == ["ls", "read_file", "write_file", "edit_file"]
+      assert config.enabled_tools == ["ls", "read_file", "write_file", "edit_file", "delete_file"]
       assert config.custom_tool_descriptions == %{}
     end
 

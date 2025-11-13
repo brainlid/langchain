@@ -7,6 +7,7 @@ defmodule LangChain.Agents.Middleware.FileSystem do
   - `read_file`: Read file contents with line numbers and pagination
   - `write_file`: Create or overwrite files
   - `edit_file`: Make targeted edits with string replacement
+  - `delete_file`: Delete files from the filesystem
 
   ## Usage
 
@@ -37,7 +38,7 @@ defmodule LangChain.Agents.Middleware.FileSystem do
         ]
       )
 
-  Available tools: `"ls"`, `"read_file"`, `"write_file"`, `"edit_file"`
+  Available tools: `"ls"`, `"read_file"`, `"write_file"`, `"edit_file"`, `"delete_file"`
 
   ### Custom Tool Descriptions
 
@@ -127,6 +128,7 @@ defmodule LangChain.Agents.Middleware.FileSystem do
   - `read_file`: Read file contents with line numbers and pagination
   - `write_file`: Create new files (cannot overwrite existing files)
   - `edit_file`: Modify existing files with string replacement
+  - `delete_file`: Delete files from the filesystem
 
   ## File Organization
 
@@ -165,7 +167,13 @@ defmodule LangChain.Agents.Middleware.FileSystem do
       agent_id: agent_id,
       # Tool configuration
       enabled_tools:
-        Keyword.get(opts, :enabled_tools, ["ls", "read_file", "write_file", "edit_file"]),
+        Keyword.get(opts, :enabled_tools, [
+          "ls",
+          "read_file",
+          "write_file",
+          "edit_file",
+          "delete_file"
+        ]),
       custom_tool_descriptions: Keyword.get(opts, :custom_tool_descriptions, %{})
     }
 
@@ -183,11 +191,18 @@ defmodule LangChain.Agents.Middleware.FileSystem do
       "ls" => build_ls_tool(config),
       "read_file" => build_read_file_tool(config),
       "write_file" => build_write_file_tool(config),
-      "edit_file" => build_edit_file_tool(config)
+      "edit_file" => build_edit_file_tool(config),
+      "delete_file" => build_delete_file_tool(config)
     }
 
     enabled_tools =
-      Map.get(config, :enabled_tools, ["ls", "read_file", "write_file", "edit_file"])
+      Map.get(config, :enabled_tools, [
+        "ls",
+        "read_file",
+        "write_file",
+        "edit_file",
+        "delete_file"
+      ])
 
     enabled_tools
     |> Enum.map(fn tool_name -> Map.get(all_tools, tool_name) end)
@@ -345,6 +360,33 @@ defmodule LangChain.Agents.Middleware.FileSystem do
         required: ["file_path", "old_string", "new_string"]
       },
       function: fn args, context -> execute_edit_file_tool(args, context, config) end
+    })
+  end
+
+  defp build_delete_file_tool(config) do
+    default_description = """
+    Delete a file from the filesystem.
+
+    Removes the file from both memory and persistence (if applicable).
+    Files in read-only directories cannot be deleted.
+    """
+
+    description = get_custom_description(config, "delete_file", default_description)
+
+    Function.new!(%{
+      name: "delete_file",
+      description: description,
+      parameters_schema: %{
+        type: "object",
+        properties: %{
+          file_path: %{
+            type: "string",
+            description: "Path to the file to delete"
+          }
+        },
+        required: ["file_path"]
+      },
+      function: fn args, context -> execute_delete_file_tool(args, context, config) end
     })
   end
 
@@ -512,6 +554,33 @@ defmodule LangChain.Agents.Middleware.FileSystem do
 
             {:error, reason} ->
               {:error, "Failed to read file: #{inspect(reason)}"}
+          end
+        else
+          {:error, reason} -> {:error, reason}
+        end
+    end
+  rescue
+    e ->
+      {:error, "Filesystem not available: #{Exception.message(e)}"}
+  end
+
+  defp execute_delete_file_tool(args, _context, config) do
+    file_path = get_arg(args, "file_path")
+
+    cond do
+      is_nil(file_path) ->
+        {:error, "file_path is required"}
+
+      true ->
+        # Validate path
+        with {:ok, normalized_path} <- validate_path(file_path) do
+          # Delete file using FileSystemServer
+          case FileSystemServer.delete_file(config.agent_id, normalized_path) do
+            :ok ->
+              {:ok, "File deleted successfully: #{normalized_path}"}
+
+            {:error, reason} ->
+              {:error, "Failed to delete file: #{inspect(reason)}"}
           end
         else
           {:error, reason} -> {:error, reason}
