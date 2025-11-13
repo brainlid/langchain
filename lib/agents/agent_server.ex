@@ -25,7 +25,7 @@ defmodule LangChain.Agents.AgentServer do
 
   ### LLM Streaming Events
   - `{:llm_deltas, [%MessageDelta{}]}` - Streaming tokens/deltas received (list of deltas)
-  - `{:llm_message, %Message{}}` - Complete message received from LLM
+  - `{:llm_message, %Message{}}` - Complete message received and processed from LLM
   - `{:llm_token_usage, %TokenUsage{}}` - Token usage information
   - `{:tool_response, %Message{}}` - Tool execution result (optional)
 
@@ -515,6 +515,9 @@ defmodule LangChain.Agents.AgentServer do
 
   @impl true
   def handle_call(:execute, _from, %ServerState{status: :idle} = server_state) do
+    # Build callback handlers that will forward events via PubSub
+    callbacks = build_llm_callbacks(server_state)
+
     # Transition to running
     new_state = %{server_state | status: :running}
     broadcast_event(new_state, {:status_changed, :running, nil})
@@ -525,7 +528,7 @@ defmodule LangChain.Agents.AgentServer do
     # Start async execution
     task =
       Task.async(fn ->
-        execute_agent(new_state)
+        execute_agent(new_state, callbacks)
       end)
 
     # Store task reference if needed, or just let it run
@@ -541,13 +544,18 @@ defmodule LangChain.Agents.AgentServer do
   @impl true
   def handle_call({:resume, decisions}, _from, %ServerState{status: :interrupted} = server_state) do
     # Transition back to running
-    new_state = %{server_state | status: :running, interrupt_data: nil}
+    new_state = %{
+      server_state
+      | status: :running,
+        interrupt_data: nil
+    }
+
     broadcast_event(new_state, {:status_changed, :running, nil})
 
     # Reset inactivity timer on resume
     new_state = reset_inactivity_timer(new_state)
 
-    # Resume execution async
+    # Resume execution async (callbacks are built in resume_agent)
     task =
       Task.async(fn ->
         resume_agent(new_state, decisions)
@@ -726,6 +734,13 @@ defmodule LangChain.Agents.AgentServer do
   end
 
   @impl true
+  def handle_info({:llm_deltas, _deltas}, server_state) do
+    # Deltas are broadcast via on_llm_new_delta callback in build_llm_callbacks
+    # No need to process them here - the client (chat_live.ex) will handle merging
+    {:noreply, server_state}
+  end
+
+  @impl true
   def handle_info(:inactivity_timeout, server_state) do
     agent_id = server_state.agent.agent_id
     Logger.info("Agent #{agent_id} shutting down due to inactivity")
@@ -775,38 +790,33 @@ defmodule LangChain.Agents.AgentServer do
   @doc false
   # Build callback handlers that forward LLM events via PubSub
   defp build_llm_callbacks(%ServerState{} = server_state) do
-    [
-      %{
-        # Callback for streaming deltas (tokens as they arrive)
-        on_llm_new_delta: fn _chain, deltas ->
-          # deltas is a list of MessageDelta structs
-          # Some LLM services return blocks of deltas at once, so we broadcast
-          # the entire list in a single PubSub message for efficiency
-          broadcast_event(server_state, {:llm_deltas, deltas})
-        end,
+    %{
+      # Callback for streaming deltas (tokens as they arrive)
+      on_llm_new_delta: fn _chain, deltas ->
+        # deltas is a list of MessageDelta structs
+        # Some LLM services return blocks of deltas at once, so we broadcast
+        # the entire list in a single PubSub message for efficiency
+        broadcast_event(server_state, {:llm_deltas, deltas})
+      end,
 
-        # Callback for complete messages
-        on_llm_new_message: fn _chain, message ->
-          broadcast_event(server_state, {:llm_message, message})
-        end,
+      # Callback for complete message (either through delta or non-streamed messages)
+      on_message_processed: fn _chain, message ->
+        broadcast_event(server_state, {:llm_message, message})
+      end,
 
-        # Callback for token usage information
-        on_llm_token_usage: fn _chain, usage ->
-          broadcast_event(server_state, {:llm_token_usage, usage})
-        end,
+      # Callback for token usage information
+      on_llm_token_usage: fn _chain, usage ->
+        broadcast_event(server_state, {:llm_token_usage, usage})
+      end,
 
-        # Callback for tool responses
-        on_tool_response_created: fn _chain, message ->
-          broadcast_event(server_state, {:tool_response, message})
-        end
-      }
-    ]
+      # Callback for tool responses
+      on_tool_response_created: fn _chain, message ->
+        broadcast_event(server_state, {:tool_response, message})
+      end
+    }
   end
 
-  defp execute_agent(%ServerState{} = server_state) do
-    # Build callback handlers that will forward events via PubSub
-    callbacks = build_llm_callbacks(server_state)
-
+  defp execute_agent(%ServerState{} = server_state, callbacks) do
     # Execute agent with callbacks
     case Agent.execute(server_state.agent, server_state.state, callbacks: callbacks) do
       {:ok, new_state} ->
@@ -908,7 +918,7 @@ defmodule LangChain.Agents.AgentServer do
   defp broadcast_event(%ServerState{} = server_state, event) do
     case server_state.pubsub do
       {pubsub, pubsub_name} ->
-        # Use broadcast_from to avoid sending to self
+        # Use "broadcast_from" to avoid sending to self
         pubsub.broadcast_from(pubsub_name, self(), server_state.topic, event)
 
       nil ->

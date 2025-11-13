@@ -493,7 +493,7 @@ defmodule LangChain.Agents.Agent do
       LLMChain.new!(%{
         llm: agent.model,
         custom_context: %{state: state},
-        verbose: true
+        # verbose: true
       })
       |> LLMChain.add_tools(agent.tools)
       |> LLMChain.add_messages(messages_with_system)
@@ -506,12 +506,9 @@ defmodule LangChain.Agents.Agent do
 
   # Helper to conditionally add callbacks to chain
   defp maybe_add_callbacks(chain, nil), do: chain
-  defp maybe_add_callbacks(chain, []), do: chain
 
-  defp maybe_add_callbacks(chain, callbacks) when is_list(callbacks) do
-    Enum.reduce(callbacks, chain, fn callback, acc ->
-      LLMChain.add_callback(acc, callback)
-    end)
+  defp maybe_add_callbacks(chain, callbacks) when is_map(callbacks) do
+    LLMChain.add_callback(chain, callbacks)
   end
 
   defp execute_chain(chain) do
