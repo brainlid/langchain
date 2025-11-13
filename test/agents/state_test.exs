@@ -63,14 +63,14 @@ defmodule LangChain.Agents.StateTest do
       assert Enum.at(merged.todos, 0).id == "2"
     end
 
-    test "keeps left todos if right is empty" do
+    test "replaces todos with empty list when right is empty (allows clearing)" do
       left = State.new!(%{todos: [%{id: "1", content: "task"}]})
       right = State.new!(%{todos: []})
 
       merged = State.merge_states(left, right)
 
-      assert length(merged.todos) == 1
-      assert Enum.at(merged.todos, 0).id == "1"
+      # Empty list on right should replace and clear the todos
+      assert merged.todos == []
     end
 
     test "deep merges metadata" do

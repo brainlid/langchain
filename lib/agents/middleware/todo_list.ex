@@ -173,7 +173,8 @@ defmodule LangChain.Agents.Middleware.TodoList do
 
         # Return only the state changes (todos), not messages
         state_delta = %State{todos: updated_state.todos}
-        {:ok, format_response(parsed_todos, merge), state_delta}
+        # Use updated_state.todos (after auto-cleanup) for response message
+        {:ok, format_response(updated_state.todos, merge), state_delta}
 
       {:error, reason} ->
         {:error, "Failed to parse TODOs: #{reason}"}
@@ -275,15 +276,21 @@ defmodule LangChain.Agents.Middleware.TodoList do
   end
 
   defp format_response(todos, merge) do
-    mode = if merge, do: "merged", else: "replaced"
-    count = length(todos)
+    case todos do
+      [] ->
+        "TODO list cleared - all tasks completed"
 
-    summary =
-      todos
-      |> Enum.group_by(& &1.status)
-      |> Enum.map(fn {status, items} -> "#{length(items)} #{status}" end)
-      |> Enum.join(", ")
+      _ ->
+        mode = if merge, do: "merged", else: "replaced"
+        count = Enum.count(todos)
 
-    "Successfully #{mode} #{count} TODO(s): #{summary}"
+        summary =
+          todos
+          |> Enum.group_by(& &1.status)
+          |> Enum.map(fn {status, items} -> "#{length(items)} #{status}" end)
+          |> Enum.join(", ")
+
+        "Successfully #{mode} #{count} TODO(s): #{summary}"
+    end
   end
 end

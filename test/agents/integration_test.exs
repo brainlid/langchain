@@ -270,9 +270,8 @@ defmodule LangChain.Agents.IntegrationTest do
       {:ok, final_state} = Agent.execute(agent, initial_state)
 
       # Verify both state updates occurred
-      assert length(final_state.todos) == 1
-      todo = List.first(final_state.todos)
-      assert todo.status == :completed
+      # When all todos are completed, the list is auto-cleared
+      assert final_state.todos == []
 
       # Verify file was created using FileSystemServer
       files = FileSystemServer.list_files(agent.agent_id)

@@ -279,10 +279,12 @@ defmodule LangChain.Agents.Middleware.TodoListTest do
         ]
       }
 
-      {:ok, _msg, updated_state} = tool.function.(params, %{state: state})
+      {:ok, msg, updated_state} = tool.function.(params, %{state: state})
 
       # List should be cleared since all todos are completed
       assert updated_state.todos == []
+      # Message should indicate list was cleared
+      assert msg == "TODO list cleared - all tasks completed"
     end
 
     test "clears todo list when all todos marked as completed in merge mode" do
@@ -297,10 +299,12 @@ defmodule LangChain.Agents.Middleware.TodoListTest do
         todos: [%{"id" => "1", "content" => "Task 1", "status" => "completed"}]
       }
 
-      {:ok, _msg, updated_state} = tool.function.(params, %{state: state})
+      {:ok, msg, updated_state} = tool.function.(params, %{state: state})
 
       # List should be cleared since all todos are completed
       assert updated_state.todos == []
+      # Message should indicate list was cleared
+      assert msg == "TODO list cleared - all tasks completed"
     end
 
     test "keeps todo list when not all todos are completed" do
@@ -353,10 +357,12 @@ defmodule LangChain.Agents.Middleware.TodoListTest do
         todos: [%{"id" => "2", "content" => "Task 2", "status" => "completed"}]
       }
 
-      {:ok, _msg, updated_state} = tool.function.(params, %{state: state})
+      {:ok, msg, updated_state} = tool.function.(params, %{state: state})
 
       # List should be cleared immediately
       assert updated_state.todos == []
+      # Message should indicate list was cleared
+      assert msg == "TODO list cleared - all tasks completed"
     end
   end
 end

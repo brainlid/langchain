@@ -96,7 +96,8 @@ defmodule LangChain.Agents.State do
   defp merge_messages(_left, right) when is_list(right), do: right
   defp merge_messages(_left, _right), do: []
 
-  defp merge_todos(_left, right) when is_list(right) and right != [], do: right
+  # Replace todos with right if right is a list (even if empty - allows clearing)
+  defp merge_todos(_left, right) when is_list(right), do: right
   defp merge_todos(left, _right) when is_list(left), do: left
   defp merge_todos(_left, _right), do: []
 
