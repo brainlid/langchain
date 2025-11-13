@@ -166,7 +166,11 @@ defmodule LangChain.Agents.Middleware.TodoList do
     # Parse TODO data from tool call
     case parse_todos(todos_data) do
       {:ok, parsed_todos} ->
-        updated_state = update_todos(context.state, parsed_todos, merge)
+        updated_state =
+          context.state
+          |> update_todos(parsed_todos, merge)
+          |> clear_if_all_completed()
+
         # Return only the state changes (todos), not messages
         state_delta = %State{todos: updated_state.todos}
         {:ok, format_response(parsed_todos, merge), state_delta}
@@ -247,6 +251,18 @@ defmodule LangChain.Agents.Middleware.TodoList do
       |> Enum.sort_by(& &1.id)
 
     %{state | todos: todos_list}
+  end
+
+  defp clear_if_all_completed(%State{todos: []} = state), do: state
+
+  defp clear_if_all_completed(%State{todos: todos} = state) do
+    all_completed? = Enum.all?(todos, fn todo -> todo.status == :completed end)
+
+    if all_completed? do
+      %{state | todos: []}
+    else
+      state
+    end
   end
 
   defp ensure_todo_struct(%Todo{} = todo), do: todo

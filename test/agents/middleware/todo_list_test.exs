@@ -264,4 +264,99 @@ defmodule LangChain.Agents.Middleware.TodoListTest do
       assert length(completed_todos) == 1
     end
   end
+
+  describe "auto-cleanup when all todos completed" do
+    test "clears todo list when all todos marked as completed in replace mode" do
+      state = State.new!()
+      [tool] = TodoList.tools(nil)
+
+      # Create todos with all completed
+      params = %{
+        merge: false,
+        todos: [
+          %{"id" => "1", "content" => "Task 1", "status" => "completed"},
+          %{"id" => "2", "content" => "Task 2", "status" => "completed"}
+        ]
+      }
+
+      {:ok, _msg, updated_state} = tool.function.(params, %{state: state})
+
+      # List should be cleared since all todos are completed
+      assert updated_state.todos == []
+    end
+
+    test "clears todo list when all todos marked as completed in merge mode" do
+      # Start with one pending todo
+      existing = Todo.new!(%{id: "1", content: "Task 1", status: :pending})
+      state = State.new!(%{todos: [existing]})
+      [tool] = TodoList.tools(nil)
+
+      # Update the todo to completed
+      params = %{
+        merge: true,
+        todos: [%{"id" => "1", "content" => "Task 1", "status" => "completed"}]
+      }
+
+      {:ok, _msg, updated_state} = tool.function.(params, %{state: state})
+
+      # List should be cleared since all todos are completed
+      assert updated_state.todos == []
+    end
+
+    test "keeps todo list when not all todos are completed" do
+      state = State.new!()
+      [tool] = TodoList.tools(nil)
+
+      # Create todos with mixed status
+      params = %{
+        merge: false,
+        todos: [
+          %{"id" => "1", "content" => "Task 1", "status" => "completed"},
+          %{"id" => "2", "content" => "Task 2", "status" => "pending"}
+        ]
+      }
+
+      {:ok, _msg, updated_state} = tool.function.(params, %{state: state})
+
+      # List should NOT be cleared since not all are completed
+      assert length(updated_state.todos) == 2
+    end
+
+    test "keeps todo list when todos have in_progress status" do
+      state = State.new!()
+      [tool] = TodoList.tools(nil)
+
+      params = %{
+        merge: false,
+        todos: [
+          %{"id" => "1", "content" => "Task 1", "status" => "completed"},
+          %{"id" => "2", "content" => "Task 2", "status" => "in_progress"}
+        ]
+      }
+
+      {:ok, _msg, updated_state} = tool.function.(params, %{state: state})
+
+      # List should NOT be cleared
+      assert length(updated_state.todos) == 2
+    end
+
+    test "clears list immediately after completing final todo via merge" do
+      # Start with two todos, one completed and one pending
+      todo1 = Todo.new!(%{id: "1", content: "Task 1", status: :completed})
+      todo2 = Todo.new!(%{id: "2", content: "Task 2", status: :pending})
+      state = State.new!(%{todos: [todo1, todo2]})
+      [tool] = TodoList.tools(nil)
+
+      # Complete the final pending todo
+      params = %{
+        merge: true,
+        todos: [%{"id" => "2", "content" => "Task 2", "status" => "completed"}]
+      }
+
+      {:ok, _msg, updated_state} = tool.function.(params, %{state: state})
+
+      # List should be cleared immediately
+      assert updated_state.todos == []
+    end
+  end
 end
