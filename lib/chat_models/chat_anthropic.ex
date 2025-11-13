@@ -1694,6 +1694,31 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     }
   end
 
+  def content_part_for_api(%ContentPart{type: :file} = part) do
+    media =
+      case Keyword.fetch!(part.options || [], :media) do
+        :pdf ->
+          "application/pdf"
+
+        value when is_binary(value) ->
+          value
+
+        other ->
+          message = "Received unsupported media type for ContentPart: #{inspect(other)}"
+          Logger.error(message)
+          raise LangChainError, message
+      end
+
+    %{
+      "type" => "document",
+      "source" => %{
+        "type" => "base64",
+        "data" => part.content,
+        "media_type" => media
+      }
+    }
+  end
+
   def content_part_for_api(%ContentPart{type: :image_url} = _part) do
     raise LangChainError, "Anthropic does not support image_url"
   end
