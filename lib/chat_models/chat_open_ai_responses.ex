@@ -541,6 +541,16 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
 
   def content_part_for_api(
         %ChatOpenAIResponses{} = _model,
+        %ContentPart{type: :file_url} = part
+      ) do
+    %{
+      "type" => "input_file",
+      "file_url" => part.content
+    }
+  end
+
+  def content_part_for_api(
+        %ChatOpenAIResponses{} = _model,
         %ContentPart{type: :file, options: opts} = part
       ) do
     case Keyword.get(opts, :type, :base64) do

@@ -454,6 +454,23 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
       assert part["type"] == "input_file"
       assert part["file_id"] == "file-123"
     end
+
+    test "converts file_url to input_file" do
+      model = ChatOpenAIResponses.new!(%{"model" => @test_model})
+
+      file_url =
+        LangChain.Message.ContentPart.new!(%{
+          type: :file_url,
+          content: "https://example.com/document.pdf"
+        })
+
+      msg = LangChain.Message.new_user!([file_url])
+
+      api = ChatOpenAIResponses.for_api(model, msg)
+      [part] = api["content"]
+      assert part["type"] == "input_file"
+      assert part["file_url"] == "https://example.com/document.pdf"
+    end
   end
 
   describe "for_api/1 tool calls and results" do
