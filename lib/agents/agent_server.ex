@@ -57,6 +57,9 @@ defmodule LangChain.Agents.AgentServer do
       # Execute the agent
       :ok = AgentServer.execute("my-agent-1")
 
+      # Cancel execution if needed
+      :ok = AgentServer.cancel("my-agent-1")
+
       # Listen for events
       receive do
         {:todos_updated, todos} -> IO.inspect(todos, label: "Current TODOs")
@@ -125,7 +128,8 @@ defmodule LangChain.Agents.AgentServer do
       :inactivity_timeout,
       :inactivity_timer_ref,
       :last_activity_at,
-      :shutdown_delay
+      :shutdown_delay,
+      :task
     ]
 
     @type t :: %__MODULE__{
@@ -139,7 +143,8 @@ defmodule LangChain.Agents.AgentServer do
             inactivity_timeout: pos_integer() | nil | :infinity,
             inactivity_timer_ref: reference() | nil,
             last_activity_at: DateTime.t() | nil,
-            shutdown_delay: pos_integer() | nil
+            shutdown_delay: pos_integer() | nil,
+            task: Task.t() | nil
           }
   end
 
@@ -238,6 +243,21 @@ defmodule LangChain.Agents.AgentServer do
   @spec execute(String.t()) :: :ok | {:error, term()}
   def execute(agent_id) do
     GenServer.call(get_name(agent_id), :execute, :infinity)
+  end
+
+  @doc """
+  Cancel a running LLM task.
+
+  Stops the currently executing agent task and transitions the server to completed status.
+  Returns `{:error, reason}` if the server is not running (no task to cancel).
+
+  ## Examples
+
+      :ok = AgentServer.cancel("my-agent-1")
+  """
+  @spec cancel(String.t()) :: :ok | {:error, term()}
+  def cancel(agent_id) do
+    GenServer.call(get_name(agent_id), :cancel)
   end
 
   @doc """
@@ -539,6 +559,28 @@ defmodule LangChain.Agents.AgentServer do
   @impl true
   def handle_call(:execute, _from, server_state) do
     {:reply, {:error, "Cannot execute, server is in state: #{server_state.status}"}, server_state}
+  end
+
+  @impl true
+  def handle_call(:cancel, _from, %ServerState{status: :running, task: task} = server_state)
+      when not is_nil(task) do
+    # Shutdown the running task
+    Task.shutdown(task, :brutal_kill)
+
+    # Transition to completed status
+    new_state = %{server_state | status: :completed}
+    broadcast_event(new_state, {:status_changed, :completed, server_state.state})
+
+    # Reset inactivity timer after cancellation
+    new_state = reset_inactivity_timer(new_state)
+
+    {:reply, :ok, Map.put(new_state, :task, nil)}
+  end
+
+  @impl true
+  def handle_call(:cancel, _from, server_state) do
+    {:reply, {:error, "Cannot cancel, server is not running (status: #{server_state.status})"},
+     server_state}
   end
 
   @impl true

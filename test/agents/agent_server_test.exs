@@ -308,6 +308,85 @@ defmodule LangChain.Agents.AgentServerTest do
     end
   end
 
+  describe "cancel/1" do
+    test "cancels a running task" do
+      agent = create_test_agent()
+      agent_id = agent.agent_id
+      initial_state = State.new!(%{messages: [Message.new_user!("Hello")]})
+
+      # Mock execute to take a long time so we can cancel it
+      Agent
+      |> expect(:execute, fn ^agent, state, _opts ->
+        Process.sleep(1_000)
+        {:ok, state}
+      end)
+
+      {:ok, _pid} =
+        AgentServer.start_link(
+          agent: agent,
+          initial_state: initial_state,
+          name: AgentServer.get_name(agent_id),
+          pubsub: nil
+        )
+
+      # Start execution
+      assert :ok = AgentServer.execute(agent_id)
+      assert AgentServer.get_status(agent_id) == :running
+
+      # Pause briefly to let the task spin up
+      Process.sleep(50)
+      # Cancel it
+      assert :ok = AgentServer.cancel(agent_id)
+
+      # Should be completed now
+      assert AgentServer.get_status(agent_id) == :completed
+    end
+
+    test "returns error when not running" do
+      agent = create_test_agent()
+      agent_id = agent.agent_id
+
+      {:ok, _pid} =
+        AgentServer.start_link(
+          agent: agent,
+          name: AgentServer.get_name(agent_id),
+          pubsub: nil
+        )
+
+      # Server is idle, cannot cancel
+      assert {:error, msg} = AgentServer.cancel(agent_id)
+      assert msg == "Cannot cancel, server is not running (status: idle)"
+    end
+
+    test "returns error when already completed" do
+      agent = create_test_agent()
+      agent_id = agent.agent_id
+      initial_state = State.new!(%{messages: [Message.new_user!("Hello")]})
+
+      Agent
+      |> expect(:execute, fn ^agent, state, _opts ->
+        {:ok, state}
+      end)
+
+      {:ok, _pid} =
+        AgentServer.start_link(
+          agent: agent,
+          initial_state: initial_state,
+          name: AgentServer.get_name(agent_id),
+          pubsub: nil
+        )
+
+      # Execute and wait for completion
+      assert :ok = AgentServer.execute(agent_id)
+      Process.sleep(50)
+      assert AgentServer.get_status(agent_id) == :completed
+
+      # Try to cancel - should fail
+      assert {:error, msg} = AgentServer.cancel(agent_id)
+      assert msg == "Cannot cancel, server is not running (status: completed)"
+    end
+  end
+
   describe "resume/2" do
     setup do
       agent = create_test_agent()
@@ -536,8 +615,26 @@ defmodule LangChain.Agents.AgentServerTest do
       assert_receive {:status_changed, :error, "Test error"}, 200
     end
 
-    # NOTE: File events are NOT broadcast by AgentServer anymore
-    # Files are managed by FileSystemServer
+    test "broadcasts completed status when task is cancelled", %{agent: agent, agent_id: agent_id} do
+      Agent
+      |> expect(:execute, fn ^agent, state, _opts ->
+        Process.sleep(1_000)
+        {:ok, state}
+      end)
+
+      :ok = AgentServer.execute(agent_id)
+
+      # Should receive running status
+      assert_receive {:status_changed, :running, nil}, 100
+
+      # let the task spin up
+      Process.sleep(20)
+      # Cancel the task
+      :ok = AgentServer.cancel(agent_id)
+
+      # Should receive completed status
+      assert_receive {:status_changed, :completed, _state}, 100
+    end
   end
 
   describe "stop/1" do

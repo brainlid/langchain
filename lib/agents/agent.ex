@@ -492,7 +492,7 @@ defmodule LangChain.Agents.Agent do
     chain =
       LLMChain.new!(%{
         llm: agent.model,
-        custom_context: %{state: state},
+        custom_context: %{state: state}
         # verbose: true
       })
       |> LLMChain.add_tools(agent.tools)
