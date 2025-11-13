@@ -807,11 +807,6 @@ defmodule LangChain.Agents.AgentServer do
       # Callback for token usage information
       on_llm_token_usage: fn _chain, usage ->
         broadcast_event(server_state, {:llm_token_usage, usage})
-      end,
-
-      # Callback for tool responses
-      on_tool_response_created: fn _chain, message ->
-        broadcast_event(server_state, {:tool_response, message})
       end
     }
   end
