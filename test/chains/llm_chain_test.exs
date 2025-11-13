@@ -2262,6 +2262,7 @@ defmodule LangChain.Chains.LLMChainTest do
          } do
       test_pid = self()
 
+      # verifies that on_message_processed also receives tool result responses
       handler = %{
         on_message_processed: fn _chain, tool_msg ->
           send(test_pid, {:message_processed_callback_fired, tool_msg})
