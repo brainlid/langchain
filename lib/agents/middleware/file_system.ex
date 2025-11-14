@@ -8,6 +8,7 @@ defmodule LangChain.Agents.Middleware.FileSystem do
   - `write_file`: Create or overwrite files
   - `edit_file`: Make targeted edits with string replacement
   - `search_text`: Search for text patterns within files or across all files
+  - `edit_lines`: Replace a range of lines by line number
   - `delete_file`: Delete files from the filesystem
 
   ## Usage
@@ -39,7 +40,7 @@ defmodule LangChain.Agents.Middleware.FileSystem do
         ]
       )
 
-  Available tools: `"ls"`, `"read_file"`, `"write_file"`, `"edit_file"`, `"search_text"`, `"delete_file"`
+  Available tools: `"ls"`, `"read_file"`, `"write_file"`, `"edit_file"`, `"search_text"`, `"edit_lines"`, `"delete_file"`
 
   ### Custom Tool Descriptions
 
@@ -130,6 +131,7 @@ defmodule LangChain.Agents.Middleware.FileSystem do
   - `write_file`: Create new files (cannot overwrite existing files)
   - `edit_file`: Modify existing files with string replacement
   - `search_text`: Search for text patterns in specific files or across all files
+  - `edit_lines`: Replace a block of lines by line number range
   - `delete_file`: Delete files from the filesystem
 
   ## File Organization
@@ -149,7 +151,9 @@ defmodule LangChain.Agents.Middleware.FileSystem do
 
   - Always use `ls` first to see available files
   - Read files before editing to understand content
-  - Use `edit_file` for modifications, `write_file` only for new files
+  - Use `edit_file` for small, targeted edits with string replacement
+  - Use `edit_lines` for large block replacements (more efficient with tokens)
+  - Use `write_file` only for new files
   - Provide sufficient context in `old_string` to ensure unique matches
   - Group related files in the same directory
 
@@ -175,6 +179,7 @@ defmodule LangChain.Agents.Middleware.FileSystem do
           "write_file",
           "edit_file",
           "search_text",
+          "edit_lines",
           "delete_file"
         ]),
       custom_tool_descriptions: Keyword.get(opts, :custom_tool_descriptions, %{})
@@ -196,6 +201,7 @@ defmodule LangChain.Agents.Middleware.FileSystem do
       "write_file" => build_write_file_tool(config),
       "edit_file" => build_edit_file_tool(config),
       "search_text" => build_search_text_tool(config),
+      "edit_lines" => build_edit_lines_tool(config),
       "delete_file" => build_delete_file_tool(config)
     }
 
@@ -206,6 +212,7 @@ defmodule LangChain.Agents.Middleware.FileSystem do
         "write_file",
         "edit_file",
         "search_text",
+        "edit_lines",
         "delete_file"
       ])
 
@@ -429,7 +436,8 @@ defmodule LangChain.Agents.Middleware.FileSystem do
           },
           "file_path" => %{
             "type" => "string",
-            "description" => "Optional: specific file to search. If omitted, searches all loaded files."
+            "description" =>
+              "Optional: specific file to search. If omitted, searches all loaded files."
           },
           "case_sensitive" => %{
             "type" => "boolean",
@@ -450,6 +458,65 @@ defmodule LangChain.Agents.Middleware.FileSystem do
         "required" => ["pattern"]
       },
       function: fn args, context -> execute_search_text_tool(args, context, config) end
+    })
+  end
+
+  defp build_edit_lines_tool(config) do
+    default_description = """
+    Edit a file by replacing a range of lines with new content.
+
+    This tool is more efficient than edit_file for replacing large blocks of text,
+    such as rewriting multiple paragraphs or sections. It uses line numbers instead
+    of string matching, making it more reliable for large edits.
+
+    Line numbers are 1-based (matching read_file output) and the range is inclusive
+    (both start_line and end_line are replaced).
+
+    Usage:
+    - First use read_file to see the file with line numbers
+    - Identify the start_line and end_line you want to replace
+    - Provide new_content to replace those lines
+    - The tool will replace lines [start_line, end_line] inclusive
+
+    Examples:
+    - Replace lines 10-15: edit_lines(file_path: "/doc.txt", start_line: 10, end_line: 15, new_content: "new text")
+    - Replace single line: edit_lines(file_path: "/doc.txt", start_line: 42, end_line: 42, new_content: "new line")
+    - Replace large block: edit_lines(file_path: "/story.txt", start_line: 120, end_line: 135, new_content: "...")
+
+    Best practices:
+    - Use read_file first to verify line numbers
+    - For small, targeted edits, use edit_file instead
+    - For large block replacements, this tool is more efficient
+    """
+
+    description = get_custom_description(config, "edit_lines", default_description)
+
+    Function.new!(%{
+      name: "edit_lines",
+      description: description,
+      parameters_schema: %{
+        type: "object",
+        properties: %{
+          file_path: %{
+            type: "string",
+            description: "Path to the file to edit"
+          },
+          start_line: %{
+            type: "integer",
+            description: "Starting line number (1-based, inclusive)"
+          },
+          end_line: %{
+            type: "integer",
+            description: "Ending line number (1-based, inclusive)"
+          },
+          new_content: %{
+            type: "string",
+            description: "New content to replace the line range. Can be multi-line."
+          }
+        },
+        required: ["file_path", "start_line", "end_line", "new_content"]
+      },
+      function: fn args, context -> execute_edit_lines_tool(args, context, config) end
     })
   end
 
@@ -688,6 +755,52 @@ defmodule LangChain.Agents.Middleware.FileSystem do
       {:error, "Search failed: #{Exception.message(e)}"}
   end
 
+  defp execute_edit_lines_tool(args, _context, config) do
+    file_path = get_arg(args, "file_path")
+    start_line = get_integer_arg(args, "start_line", nil)
+    end_line = get_integer_arg(args, "end_line", nil)
+    new_content = get_arg(args, "new_content")
+
+    cond do
+      is_nil(file_path) ->
+        {:error, "file_path is required"}
+
+      is_nil(start_line) or is_nil(end_line) ->
+        {:error, "start_line and end_line are required"}
+
+      is_nil(new_content) ->
+        {:error, "new_content is required"}
+
+      start_line < 1 ->
+        {:error, "start_line must be >= 1 (line numbers are 1-based)"}
+
+      end_line < start_line ->
+        {:error, "end_line must be >= start_line"}
+
+      true ->
+        with {:ok, normalized_path} <- validate_path(file_path),
+             {:ok, content} <- FileSystemServer.read_file(config.agent_id, normalized_path) do
+          perform_line_edit(
+            config.agent_id,
+            normalized_path,
+            content,
+            start_line,
+            end_line,
+            new_content
+          )
+        else
+          {:error, :enoent} ->
+            {:error, "File not found: #{file_path}"}
+
+          {:error, reason} ->
+            {:error, "Failed to read file: #{inspect(reason)}"}
+        end
+    end
+  rescue
+    e ->
+      {:error, "Edit failed: #{Exception.message(e)}"}
+  end
+
   defp search_single_file(agent_id, file_path, regex, context_lines, max_results) do
     with {:ok, normalized_path} <- validate_path(file_path),
          {:ok, content} <- FileSystemServer.read_file(agent_id, normalized_path) do
@@ -897,6 +1010,48 @@ defmodule LangChain.Agents.Middleware.FileSystem do
 
       {:error, reason} ->
         {:error, "Failed to save edit: #{inspect(reason)}"}
+    end
+  end
+
+  defp perform_line_edit(agent_id, file_path, content, start_line, end_line, new_content) do
+    lines = String.split(content, "\n")
+    total_lines = length(lines)
+
+    # Convert to 0-based for Enum operations
+    start_idx = start_line - 1
+    end_idx = end_line - 1
+
+    cond do
+      start_idx >= total_lines ->
+        {:error, "start_line #{start_line} is beyond file length (#{total_lines} lines)"}
+
+      end_idx >= total_lines ->
+        {:error, "end_line #{end_line} is beyond file length (#{total_lines} lines)"}
+
+      true ->
+        # Extract the lines being replaced (for confirmation message)
+        replaced_lines = Enum.slice(lines, start_idx, end_idx - start_idx + 1)
+        lines_replaced_count = length(replaced_lines)
+
+        # Build the new file content
+        before = Enum.slice(lines, 0, start_idx)
+        after_lines = Enum.slice(lines, end_idx + 1, total_lines - end_idx - 1)
+
+        # Split new_content into lines (preserving the newlines)
+        new_lines = String.split(new_content, "\n")
+
+        updated_lines = before ++ new_lines ++ after_lines
+        updated_content = Enum.join(updated_lines, "\n")
+
+        # Write the updated content
+        case FileSystemServer.write_file(agent_id, file_path, updated_content) do
+          :ok ->
+            {:ok,
+             "File edited successfully: #{file_path}\nReplaced #{lines_replaced_count} lines (#{start_line}-#{end_line})"}
+
+          {:error, reason} ->
+            {:error, "Failed to save edit: #{inspect(reason)}"}
+        end
     end
   end
 

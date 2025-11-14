@@ -134,8 +134,8 @@ defmodule LangChain.Agents.AgentTest do
 
       {:ok, agent} = Agent.new(model: mock_model(), tools: [tool])
 
-      # Now includes custom tool + write_todos (TodoList) + 5 filesystem tools (ls, read_file, write_file, edit_file)
-      assert length(agent.tools) == 7
+      # Now includes custom tool + write_todos (TodoList) + 7 filesystem tools (ls, read_file, write_file, edit_file, search_text, edit_lines, delete_file)
+      assert length(agent.tools) == 9
       tool_names = Enum.map(agent.tools, & &1.name)
       assert "custom_tool" in tool_names
       assert "write_todos" in tool_names
@@ -193,8 +193,8 @@ defmodule LangChain.Agents.AgentTest do
           middleware: [TestMiddleware1, TestMiddleware2]
         )
 
-      # write_todos + 5 filesystem tools + tool1 + tool2 = 8
-      assert length(agent.tools) == 8
+      # write_todos + 7 filesystem tools + tool1 + tool2 = 10
+      assert length(agent.tools) == 10
       tool_names = Enum.map(agent.tools, & &1.name)
       assert "write_todos" in tool_names
       assert "ls" in tool_names
@@ -217,8 +217,8 @@ defmodule LangChain.Agents.AgentTest do
           middleware: [TestMiddleware1]
         )
 
-      # user_tool + write_todos + 5 filesystem tools + tool1 = 7
-      assert length(agent.tools) == 8
+      # user_tool + write_todos + 7 filesystem tools + tool1 = 10
+      assert length(agent.tools) == 10
       tool_names = Enum.map(agent.tools, & &1.name)
       assert "write_todos" in tool_names
       assert "user_tool" in tool_names
@@ -390,8 +390,8 @@ defmodule LangChain.Agents.AgentTest do
       assert agent.system_prompt =~ "math assistant"
       assert agent.system_prompt =~ "logging"
       assert agent.system_prompt =~ "validation"
-      # calculator + write_todos + 5 filesystem tools + tool1 + tool2 = 9
-      assert length(agent.tools) == 9
+      # calculator + write_todos + 7 filesystem tools + tool1 + tool2 = 11
+      assert length(agent.tools) == 11
 
       # Execute
       initial_state = State.new!(%{messages: [Message.new_user!("What is 2+2?")]})
