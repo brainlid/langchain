@@ -398,7 +398,7 @@ defmodule LangChain.Agents.FileSystemServer do
   def handle_call({:load_file, path}, _from, state) do
     case FileSystemState.load_file(state, path) do
       {:ok, new_state} ->
-        # Return :ok WITHOUT the file content (client will read from ETS)
+        # Return :ok WITHOUT the file content
         {:reply, :ok, new_state}
 
       {:error, reason, state} ->

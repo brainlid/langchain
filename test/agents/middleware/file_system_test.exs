@@ -413,14 +413,10 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
       args = %{"pattern" => "TODO", "file_path" => "/test.txt"}
       {:ok, result} = search_tool.function.(args, %{})
 
-      IO.inspect result
-
-      # Verify results
+      # Verify results - line numbers should be formatted like read_file (padded to 6 chars, tab separator)
       assert result =~ "File: /test.txt"
-      assert result =~ "Line 3:"
-      assert result =~ "TODO: Add feature"
-      assert result =~ "Line 5:"
-      assert result =~ "TODO: Fix bug"
+      assert result =~ "     3\tTODO: Add feature"
+      assert result =~ "     5\tTODO: Fix bug"
     end
 
     test "returns no matches when pattern not found", %{agent_id: agent_id} do
@@ -451,10 +447,10 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
       args = %{"pattern" => "hello", "file_path" => "/test.txt", "case_sensitive" => false}
       {:ok, result} = search_tool.function.(args, %{})
 
-      # Should match all three lines
-      assert result =~ "Line 1:"
-      assert result =~ "Line 2:"
-      assert result =~ "Line 3:"
+      # Should match all three lines (padded line numbers with tab separator)
+      assert result =~ "     1\tHello World"
+      assert result =~ "     2\thello world"
+      assert result =~ "     3\tHELLO WORLD"
     end
 
     test "handles case-sensitive search", %{agent_id: agent_id} do
@@ -471,9 +467,9 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
       {:ok, result} = search_tool.function.(args, %{})
 
       # Should only match line 2
-      refute result =~ "Line 1:"
-      assert result =~ "Line 2:"
-      refute result =~ "Line 3:"
+      refute result =~ "     1\tHello World"
+      assert result =~ "     2\thello world"
+      refute result =~ "     3\tHELLO WORLD"
     end
 
     test "supports regex patterns", %{agent_id: agent_id} do
@@ -491,12 +487,10 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
       args = %{"pattern" => "error\\d+", "file_path" => "/test.txt"}
       {:ok, result} = search_tool.function.(args, %{})
 
-      assert result =~ "Line 1:"
-      assert result =~ "error123"
-      assert result =~ "Line 3:"
-      assert result =~ "error789"
-      refute result =~ "Line 2:"
-      refute result =~ "warning"
+      assert result =~ "     1\terror123"
+      assert result =~ "     3\terror789"
+      refute result =~ "     2\twarning456"
+      refute result =~ "     4\tinfo"
     end
 
     test "returns error for invalid regex pattern", %{agent_id: agent_id} do
@@ -525,11 +519,11 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
   describe "search_text tool - context lines" do
     test "includes context lines before and after matches", %{agent_id: agent_id} do
       FileSystemServer.write_file(agent_id, "/test.txt", """
-      Line 1: Before context 1
-      Line 2: Before context 2
-      Line 3: MATCH HERE
-      Line 4: After context 1
-      Line 5: After context 2
+      Before context 1
+      Before context 2
+      MATCH HERE
+      After context 1
+      After context 2
       """)
 
       {:ok, config} = FileSystem.init(agent_id: agent_id)
@@ -538,20 +532,20 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
       args = %{"pattern" => "MATCH", "file_path" => "/test.txt", "context_lines" => 2}
       {:ok, result} = search_tool.function.(args, %{})
 
-      # Verify main match
-      assert result =~ "Line 3: MATCH HERE"
+      # Verify main match (padded line number with tab separator)
+      assert result =~ "     3\tMATCH HERE"
 
-      # Verify context lines (marked with |)
-      assert result =~ "| Line 1: Before context 1"
-      assert result =~ "| Line 2: Before context 2"
-      assert result =~ "| Line 4: After context 1"
-      assert result =~ "| Line 5: After context 2"
+      # Verify context lines (marked with | and have line numbers)
+      assert result =~ "     1 |\tBefore context 1"
+      assert result =~ "     2 |\tBefore context 2"
+      assert result =~ "     4 |\tAfter context 1"
+      assert result =~ "     5 |\tAfter context 2"
     end
 
     test "handles context at file boundaries", %{agent_id: agent_id} do
       FileSystemServer.write_file(agent_id, "/test.txt", """
-      Line 1: MATCH at start
-      Line 2: After
+      MATCH at start
+      After
       """)
 
       {:ok, config} = FileSystem.init(agent_id: agent_id)
@@ -561,8 +555,8 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
       args = %{"pattern" => "MATCH", "file_path" => "/test.txt", "context_lines" => 2}
       {:ok, result} = search_tool.function.(args, %{})
 
-      assert result =~ "Line 1: MATCH at start"
-      assert result =~ "| Line 2: After"
+      assert result =~ "     1\tMATCH at start"
+      assert result =~ "     2 |\tAfter"
     end
   end
 
@@ -570,17 +564,17 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
     test "searches across all files when no file_path specified", %{agent_id: agent_id} do
       # Create multiple files
       FileSystemServer.write_file(agent_id, "/file1.txt", """
-      Line 1: TODO in file 1
-      Line 2: Normal line
+      TODO in file 1
+      Normal line
       """)
 
       FileSystemServer.write_file(agent_id, "/file2.txt", """
-      Line 1: Normal line
-      Line 2: TODO in file 2
+      Normal line
+      TODO in file 2
       """)
 
       FileSystemServer.write_file(agent_id, "/file3.txt", """
-      Line 1: No match here
+      No match here
       """)
 
       {:ok, config} = FileSystem.init(agent_id: agent_id)
@@ -592,9 +586,9 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
 
       # Should find matches in both file1 and file2
       assert result =~ "File: /file1.txt"
-      assert result =~ "TODO in file 1"
+      assert result =~ "     1\tTODO in file 1"
       assert result =~ "File: /file2.txt"
-      assert result =~ "TODO in file 2"
+      assert result =~ "     2\tTODO in file 2"
       refute result =~ "file3.txt"
     end
 
@@ -748,11 +742,9 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
       args = %{"pattern" => "TODO", "file_path" => "/project.md"}
       {:ok, search_result} = search_tool.function.(args, %{})
 
-      # Verify we found the TODOs
-      assert search_result =~ "Line 7:"
-      assert search_result =~ "TODO: Complete this section"
-      assert search_result =~ "Line 13:"
-      assert search_result =~ "TODO: Add examples"
+      # Verify we found the TODOs (line numbers padded to 6 chars with tab separator)
+      assert search_result =~ "     7\tTODO: Complete this section"
+      assert search_result =~ "    13\tTODO: Add examples"
 
       # Now read the file to get more context
       read_tool = Enum.find(tools, fn tool -> tool.name == "read_file" end)
@@ -785,12 +777,12 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
       args = %{"pattern" => "error", "case_sensitive" => false}
       {:ok, result} = search_tool.function.(args, %{})
 
-      # Should find matches in both files
+      # Should find matches in both files (with padded line numbers)
       assert result =~ "/config.json"
-      assert result =~ "error_log"
+      assert result =~ "     2\t  \"error_log\": true,"
       assert result =~ "/app.log"
-      assert result =~ "ERROR: Connection failed"
-      assert result =~ "ERROR: Timeout occurred"
+      assert result =~ "     2\t2024-01-01 10:05:00 ERROR: Connection failed"
+      assert result =~ "     4\t2024-01-01 10:15:00 ERROR: Timeout occurred"
     end
   end
 end

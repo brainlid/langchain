@@ -458,7 +458,7 @@ defmodule LangChain.Agents.Middleware.FileSystem do
   defp execute_ls_tool(args, _context, config) do
     pattern = get_arg(args, "pattern")
 
-    # List all files using FileSystemServer (reads directly from ETS)
+    # List all files using FileSystemServer
     all_files = FileSystemServer.list_files(config.agent_id)
 
     # Apply pattern filtering
@@ -806,20 +806,51 @@ defmodule LangChain.Agents.Middleware.FileSystem do
   end
 
   defp format_match(%{line_number: line_num, line: line, context: nil}) do
-    "  Line #{line_num}: #{line}"
+    # Format line number the same way as format_file_content (6 chars padded, tab separator)
+    formatted_line_num = String.pad_leading(Integer.to_string(line_num), 6)
+    "#{formatted_line_num}\t#{line}"
   end
 
   defp format_match(%{line_number: line_num, line: line, context: context}) do
+    # Format context lines with line numbers
     before =
-      if context.before, do: Enum.map(context.before, &"    | #{&1}") |> Enum.join("\n"), else: ""
+      if context.before do
+        context.before
+        |> Enum.with_index()
+        |> Enum.map(fn {ctx_line, idx} ->
+          # Calculate line number for context line
+          ctx_line_num = line_num - length(context.before) + idx
+          formatted_num = String.pad_leading(Integer.to_string(ctx_line_num), 6)
+          "#{formatted_num} |\t#{ctx_line}"
+        end)
+        |> Enum.join("\n")
+      else
+        ""
+      end
 
     after_ctx =
-      if context.after, do: Enum.map(context.after, &"    | #{&1}") |> Enum.join("\n"), else: ""
+      if context.after do
+        context.after
+        |> Enum.with_index()
+        |> Enum.map(fn {ctx_line, idx} ->
+          # Calculate line number for context line
+          ctx_line_num = line_num + idx + 1
+          formatted_num = String.pad_leading(Integer.to_string(ctx_line_num), 6)
+          "#{formatted_num} |\t#{ctx_line}"
+        end)
+        |> Enum.join("\n")
+      else
+        ""
+      end
+
+    # Format the matching line
+    formatted_line_num = String.pad_leading(Integer.to_string(line_num), 6)
+    match_line = "#{formatted_line_num}\t#{line}"
 
     lines =
       [
         before,
-        "  Line #{line_num}: #{line}",
+        match_line,
         after_ctx
       ]
       |> Enum.reject(&(&1 == ""))
