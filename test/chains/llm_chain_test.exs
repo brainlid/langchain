@@ -2570,7 +2570,10 @@ defmodule LangChain.Chains.LLMChainTest do
       assert %Message{role: :tool} = updated_chain.last_message
       [%ToolResult{} = result] = updated_chain.last_message.tool_results
 
-      assert result.content == [ContentPart.text!("Tool call 'fail_if_called' was rejected by a human reviewer.")]
+      assert result.content == [
+               ContentPart.text!("Tool call 'fail_if_called' was rejected by a human reviewer.")
+             ]
+
       assert result.tool_call_id == "call_789"
       # Critical: reject is NOT an error (to prevent retries)
       assert result.is_error == false
@@ -2636,7 +2639,10 @@ defmodule LangChain.Chains.LLMChainTest do
       assert result2.is_error == false
 
       # Third tool rejected without execution
-      assert result3.content == [ContentPart.text!("Tool call 'delete_database' was rejected by a human reviewer.")]
+      assert result3.content == [
+               ContentPart.text!("Tool call 'delete_database' was rejected by a human reviewer.")
+             ]
+
       assert result3.is_error == false
     end
 

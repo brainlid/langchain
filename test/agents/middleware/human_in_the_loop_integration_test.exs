@@ -280,7 +280,9 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopIntegrationTest do
           # Should have tool result message AND final assistant message
           # User + Assistant (tool call) + Tool result + Assistant (final) = 4
           assert length(resumed_state.messages) == 4
-          assert [_user, _assistant_with_tools, tool_msg, final_assistant] = resumed_state.messages
+
+          assert [_user, _assistant_with_tools, tool_msg, final_assistant] =
+                   resumed_state.messages
 
           # Check tool result message
           assert tool_msg.role == :tool
@@ -410,7 +412,9 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopIntegrationTest do
 
       # Execute to get interrupt
       initial_state = State.new!(%{messages: [Message.new_user!("Write file")]})
-      assert {:interrupt, interrupted_state, _interrupt_data} = Agent.execute(agent, initial_state)
+
+      assert {:interrupt, interrupted_state, _interrupt_data} =
+               Agent.execute(agent, initial_state)
 
       # Try to edit when only approve/reject allowed
       decisions = [%{type: :edit, arguments: %{"path" => "new.txt"}}]

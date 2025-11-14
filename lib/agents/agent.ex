@@ -340,7 +340,12 @@ defmodule LangChain.Agents.Agent do
     end
   end
 
-  defp execute_approved_tools_and_update_state(%Agent{} = agent, %State{} = state, decisions, opts) do
+  defp execute_approved_tools_and_update_state(
+         %Agent{} = agent,
+         %State{} = state,
+         decisions,
+         opts
+       ) do
     callbacks = Keyword.get(opts, :callbacks)
 
     # Rebuild chain to access tools and execute tool calls with decisions
@@ -386,7 +391,8 @@ defmodule LangChain.Agents.Agent do
 
           # Use LLMChain's API to execute tool calls with full decisions
           # This handles tool execution, callbacks, and adding the tool result message
-          updated_chain = LLMChain.execute_tool_calls_with_decisions(chain, all_tool_calls, full_decisions)
+          updated_chain =
+            LLMChain.execute_tool_calls_with_decisions(chain, all_tool_calls, full_decisions)
 
           # Extract the NEW tool result message that was added to the chain
           # (the last message in the chain's exchanged_messages)

@@ -284,7 +284,8 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoop do
     interrupt_data = state.interrupt_data
 
     if is_nil(interrupt_data) do
-      {:error, "No interrupt data found in state. Cannot process decisions without interrupt context."}
+      {:error,
+       "No interrupt data found in state. Cannot process decisions without interrupt context."}
     else
       hitl_tool_call_ids = Map.get(interrupt_data, :hitl_tool_call_ids, [])
 
@@ -296,7 +297,11 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoop do
         # Validate each decision against action_requests
         action_requests = Map.get(interrupt_data, :action_requests, [])
 
-        case validate_decisions_against_action_requests(action_requests, decisions, interrupt_data) do
+        case validate_decisions_against_action_requests(
+               action_requests,
+               decisions,
+               interrupt_data
+             ) do
           :ok -> {:ok, state}
           {:error, _reason} = error -> error
         end
