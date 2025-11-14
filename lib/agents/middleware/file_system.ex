@@ -7,6 +7,7 @@ defmodule LangChain.Agents.Middleware.FileSystem do
   - `read_file`: Read file contents with line numbers and pagination
   - `write_file`: Create or overwrite files
   - `edit_file`: Make targeted edits with string replacement
+  - `search_text`: Search for text patterns within files or across all files
   - `delete_file`: Delete files from the filesystem
 
   ## Usage
@@ -38,7 +39,7 @@ defmodule LangChain.Agents.Middleware.FileSystem do
         ]
       )
 
-  Available tools: `"ls"`, `"read_file"`, `"write_file"`, `"edit_file"`, `"delete_file"`
+  Available tools: `"ls"`, `"read_file"`, `"write_file"`, `"edit_file"`, `"search_text"`, `"delete_file"`
 
   ### Custom Tool Descriptions
 
@@ -128,6 +129,7 @@ defmodule LangChain.Agents.Middleware.FileSystem do
   - `read_file`: Read file contents with line numbers and pagination
   - `write_file`: Create new files (cannot overwrite existing files)
   - `edit_file`: Modify existing files with string replacement
+  - `search_text`: Search for text patterns in specific files or across all files
   - `delete_file`: Delete files from the filesystem
 
   ## File Organization
@@ -172,6 +174,7 @@ defmodule LangChain.Agents.Middleware.FileSystem do
           "read_file",
           "write_file",
           "edit_file",
+          "search_text",
           "delete_file"
         ]),
       custom_tool_descriptions: Keyword.get(opts, :custom_tool_descriptions, %{})
@@ -192,6 +195,7 @@ defmodule LangChain.Agents.Middleware.FileSystem do
       "read_file" => build_read_file_tool(config),
       "write_file" => build_write_file_tool(config),
       "edit_file" => build_edit_file_tool(config),
+      "search_text" => build_search_text_tool(config),
       "delete_file" => build_delete_file_tool(config)
     }
 
@@ -201,6 +205,7 @@ defmodule LangChain.Agents.Middleware.FileSystem do
         "read_file",
         "write_file",
         "edit_file",
+        "search_text",
         "delete_file"
       ])
 
@@ -387,6 +392,64 @@ defmodule LangChain.Agents.Middleware.FileSystem do
         required: ["file_path"]
       },
       function: fn args, context -> execute_delete_file_tool(args, context, config) end
+    })
+  end
+
+  defp build_search_text_tool(config) do
+    default_description = """
+    Search for text patterns within files.
+
+    Can search within a specific file or across all loaded files.
+    Returns matches with line numbers and optional context lines.
+
+    Usage:
+    - Provide pattern (required) - text or regex to search for
+    - Provide file_path (optional) - if omitted, searches all files
+    - Set case_sensitive (optional, default: true)
+    - Set context_lines (optional, default: 0) - lines before/after to show
+    - Set max_results (optional, default: 50) - limit number of results
+
+    Examples:
+    - Search single file: search_text(pattern: "TODO", file_path: "/notes.txt")
+    - Search all files: search_text(pattern: "important", case_sensitive: false)
+    - With context: search_text(pattern: "error", context_lines: 2)
+    """
+
+    description = get_custom_description(config, "search_text", default_description)
+
+    Function.new!(%{
+      name: "search_text",
+      description: description,
+      parameters_schema: %{
+        "type" => "object",
+        "properties" => %{
+          "pattern" => %{
+            "type" => "string",
+            "description" => "Text or regex pattern to search for"
+          },
+          "file_path" => %{
+            "type" => "string",
+            "description" => "Optional: specific file to search. If omitted, searches all loaded files."
+          },
+          "case_sensitive" => %{
+            "type" => "boolean",
+            "description" => "Whether the search should be case-sensitive",
+            "default" => true
+          },
+          "context_lines" => %{
+            "type" => "integer",
+            "description" => "Number of lines before and after each match to show",
+            "default" => 0
+          },
+          "max_results" => %{
+            "type" => "integer",
+            "description" => "Maximum number of matches to return",
+            "default" => 50
+          }
+        },
+        "required" => ["pattern"]
+      },
+      function: fn args, context -> execute_search_text_tool(args, context, config) end
     })
   end
 
@@ -591,6 +654,180 @@ defmodule LangChain.Agents.Middleware.FileSystem do
       {:error, "Filesystem not available: #{Exception.message(e)}"}
   end
 
+  defp execute_search_text_tool(args, _context, config) do
+    pattern = get_arg(args, "pattern")
+    file_path = get_arg(args, "file_path")
+    case_sensitive = get_boolean_arg(args, "case_sensitive", true)
+    context_lines = get_integer_arg(args, "context_lines", 0)
+    max_results = get_integer_arg(args, "max_results", 50)
+
+    cond do
+      is_nil(pattern) ->
+        {:error, "pattern is required"}
+
+      true ->
+        # Compile regex pattern with inline flags for case-insensitive search
+        pattern_with_flags = if case_sensitive, do: pattern, else: "(?i)#{pattern}"
+
+        case Regex.compile(pattern_with_flags) do
+          {:ok, regex} ->
+            if file_path do
+              # Search single file
+              search_single_file(config.agent_id, file_path, regex, context_lines, max_results)
+            else
+              # Search all files
+              search_all_files(config.agent_id, regex, context_lines, max_results)
+            end
+
+          {:error, _reason} ->
+            {:error, "Invalid regex pattern: #{pattern}"}
+        end
+    end
+  rescue
+    e ->
+      {:error, "Search failed: #{Exception.message(e)}"}
+  end
+
+  defp search_single_file(agent_id, file_path, regex, context_lines, max_results) do
+    with {:ok, normalized_path} <- validate_path(file_path),
+         {:ok, content} <- FileSystemServer.read_file(agent_id, normalized_path) do
+      {matches, truncated} = find_matches_in_content(content, regex, context_lines, max_results)
+      format_search_results([{normalized_path, matches}], max_results, truncated)
+    else
+      {:error, :enoent} ->
+        {:error, "File not found: #{file_path}"}
+
+      {:error, reason} ->
+        {:error, "Failed to search file: #{inspect(reason)}"}
+    end
+  end
+
+  defp search_all_files(agent_id, regex, context_lines, max_results) do
+    all_files = FileSystemServer.list_files(agent_id)
+
+    # Search each file and collect matches, tracking total matches
+    {results, _total_matches, any_truncated} =
+      all_files
+      |> Enum.reduce({[], 0, false}, fn file_path, {acc, match_count, truncated} ->
+        # Calculate remaining limit for this file
+        remaining = max_results - match_count
+
+        if remaining <= 0 do
+          # Already hit limit, stop collecting
+          {acc, match_count, truncated}
+        else
+          case FileSystemServer.read_file(agent_id, file_path) do
+            {:ok, content} ->
+              {matches, file_truncated} =
+                find_matches_in_content(content, regex, context_lines, remaining)
+
+              if Enum.empty?(matches) do
+                {acc, match_count, truncated}
+              else
+                {[{file_path, matches} | acc], match_count + length(matches),
+                 truncated or file_truncated}
+              end
+
+            {:error, _} ->
+              {acc, match_count, truncated}
+          end
+        end
+      end)
+
+    results = Enum.reverse(results)
+    format_search_results(results, max_results, any_truncated)
+  end
+
+  defp find_matches_in_content(content, regex, context_lines, max_results) do
+    lines = String.split(content, "\n")
+
+    # Collect up to max_results + 1 to detect truncation
+    matches =
+      lines
+      |> Enum.with_index(1)
+      |> Enum.reduce([], fn {line, line_num}, acc ->
+        if length(acc) > max_results do
+          acc
+        else
+          if Regex.match?(regex, line) do
+            match_info = %{
+              line_number: line_num,
+              line: line,
+              context: extract_context(lines, line_num - 1, context_lines)
+            }
+
+            [match_info | acc]
+          else
+            acc
+          end
+        end
+      end)
+      |> Enum.reverse()
+
+    # Return matches and truncation flag
+    if length(matches) > max_results do
+      {Enum.take(matches, max_results), true}
+    else
+      {matches, false}
+    end
+  end
+
+  defp extract_context(lines, zero_based_line_num, context_lines) do
+    if context_lines > 0 do
+      start_idx = max(0, zero_based_line_num - context_lines)
+      end_idx = min(length(lines) - 1, zero_based_line_num + context_lines)
+
+      %{
+        before: Enum.slice(lines, start_idx, zero_based_line_num - start_idx),
+        after: Enum.slice(lines, zero_based_line_num + 1, end_idx - zero_based_line_num)
+      }
+    else
+      nil
+    end
+  end
+
+  defp format_search_results(results, max_results, truncated) do
+    if Enum.empty?(results) or Enum.all?(results, fn {_, matches} -> Enum.empty?(matches) end) do
+      {:ok, "No matches found"}
+    else
+      formatted =
+        results
+        |> Enum.flat_map(fn {file_path, matches} ->
+          file_header = ["", "File: #{file_path}"]
+          match_lines = Enum.map(matches, &format_match/1)
+          file_header ++ match_lines
+        end)
+        |> Enum.join("\n")
+
+      footer = if truncated, do: "\n\n(Results truncated at #{max_results} matches)", else: ""
+
+      {:ok, formatted <> footer}
+    end
+  end
+
+  defp format_match(%{line_number: line_num, line: line, context: nil}) do
+    "  Line #{line_num}: #{line}"
+  end
+
+  defp format_match(%{line_number: line_num, line: line, context: context}) do
+    before =
+      if context.before, do: Enum.map(context.before, &"    | #{&1}") |> Enum.join("\n"), else: ""
+
+    after_ctx =
+      if context.after, do: Enum.map(context.after, &"    | #{&1}") |> Enum.join("\n"), else: ""
+
+    lines =
+      [
+        before,
+        "  Line #{line_num}: #{line}",
+        after_ctx
+      ]
+      |> Enum.reject(&(&1 == ""))
+      |> Enum.join("\n")
+
+    lines
+  end
+
   defp perform_edit(agent_id, file_path, content, old_string, new_string, replace_all) do
     # Split to count occurrences
     parts = String.split(content, old_string, parts: :infinity)
@@ -635,7 +872,11 @@ defmodule LangChain.Agents.Middleware.FileSystem do
   defp get_arg(nil = _args, _key), do: nil
 
   defp get_arg(args, key) when is_map(args) do
-    args[key] || args[String.to_atom(key)]
+    # Use Map.get to avoid issues with false values
+    case Map.get(args, key) do
+      nil -> Map.get(args, String.to_atom(key))
+      value -> value
+    end
   end
 
   defp get_boolean_arg(args, key, default) when is_map(args) do
@@ -644,6 +885,15 @@ defmodule LangChain.Agents.Middleware.FileSystem do
       val when is_boolean(val) -> val
       "true" -> true
       "false" -> false
+      _ -> default
+    end
+  end
+
+  defp get_integer_arg(args, key, default) when is_map(args) do
+    case get_arg(args, key) do
+      nil -> default
+      val when is_integer(val) -> val
+      val when is_binary(val) -> String.to_integer(val)
       _ -> default
     end
   end
