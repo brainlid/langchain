@@ -174,9 +174,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoop do
   @behaviour LangChain.Agents.Middleware
 
   alias LangChain.Agents.State
-  alias LangChain.Message
   alias LangChain.Message.ToolCall
-  alias LangChain.Message.ToolResult
 
   @type interrupt_config :: %{
           allowed_decisions: [atom()]
@@ -194,7 +192,8 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoop do
 
   @type interrupt_data :: %{
           action_requests: [action_request()],
-          review_configs: %{String.t() => interrupt_config()}
+          review_configs: %{String.t() => interrupt_config()},
+          hitl_tool_call_ids: [String.t()]
         }
 
   @type decision :: %{
@@ -214,10 +213,39 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoop do
   @impl true
   def after_model(%State{} = state, config) do
     # Check if the last message is an assistant message with tool calls
+    case check_for_interrupt(state, config) do
+      {:interrupt, interrupt_data} ->
+        # Store interrupt_data in state for later use during resume
+        state_with_interrupt_data = %{state | interrupt_data: interrupt_data}
+        {:interrupt, state_with_interrupt_data, interrupt_data}
+
+      :continue ->
+        {:ok, state}
+    end
+  end
+
+  @doc """
+  Check if the current state requires an interrupt for human approval.
+
+  This can be called before tool execution to determine if we need to pause
+  and wait for human decisions.
+
+  ## Parameters
+
+  - `state` - The current agent state
+  - `config` - Middleware configuration with interrupt_on map
+
+  ## Returns
+
+  - `{:interrupt, interrupt_data}` - If tools need approval
+  - `:continue` - If no approval needed
+  """
+  def check_for_interrupt(%State{} = state, config) do
+    # Check if the last message is an assistant message with tool calls
     case get_last_assistant_message_with_tools(state.messages) do
       nil ->
         # No tool calls to intercept
-        {:ok, state}
+        :continue
 
       assistant_message ->
         # Check if any tool calls require human approval
@@ -225,19 +253,20 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoop do
         interrupt_requests = collect_interrupt_requests(tool_calls, config.interrupt_on)
 
         if interrupt_requests == [] do
-          {:ok, state}
+          :continue
         else
           # Generate interrupt
           interrupt_data = build_interrupt_data(interrupt_requests, config.interrupt_on)
-          {:interrupt, state, interrupt_data}
+          {:interrupt, interrupt_data}
         end
     end
   end
 
   @doc """
-  Process human decisions and update state with tool results or modifications.
+  Validate human decisions against tool calls.
 
-  This is called by Agent.resume/3 to apply human decisions to interrupted tool calls.
+  This is called by Agent.resume/3 to validate decisions before executing tools.
+  The actual tool execution happens in LLMChain.execute_tool_calls_with_decisions/3.
 
   ## Parameters
 
@@ -247,26 +276,31 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoop do
 
   ## Returns
 
-  - `{:ok, updated_state}` - State with decisions applied
-  - `{:error, reason}` - Invalid decisions or other error
+  - `{:ok, state}` - Decisions are valid (state unchanged)
+  - `{:error, reason}` - Invalid decisions
   """
-  def process_decisions(%State{} = state, decisions, config) when is_list(decisions) do
-    # Get the assistant message with tool calls
-    case get_last_assistant_message_with_tools(state.messages) do
-      nil ->
-        {:error, "No tool calls found to process decisions for"}
+  def process_decisions(%State{} = state, decisions, _config) when is_list(decisions) do
+    # Get interrupt_data from state to determine which tools need HITL
+    interrupt_data = state.interrupt_data
 
-      assistant_message ->
-        tool_calls = assistant_message.tool_calls || []
+    if is_nil(interrupt_data) do
+      {:error, "No interrupt data found in state. Cannot process decisions without interrupt context."}
+    else
+      hitl_tool_call_ids = Map.get(interrupt_data, :hitl_tool_call_ids, [])
 
-        # Validate decision count matches tool call count
-        if length(decisions) != length(tool_calls) do
-          {:error,
-           "Decision count (#{length(decisions)}) does not match tool call count (#{length(tool_calls)})"}
-        else
-          # Process each decision
-          apply_decisions(state, tool_calls, decisions, config)
+      # Validate decision count matches HITL tool count (not all tools)
+      if length(decisions) != length(hitl_tool_call_ids) do
+        {:error,
+         "Decision count (#{length(decisions)}) does not match HITL tool count (#{length(hitl_tool_call_ids)})"}
+      else
+        # Validate each decision against action_requests
+        action_requests = Map.get(interrupt_data, :action_requests, [])
+
+        case validate_decisions_against_action_requests(action_requests, decisions, interrupt_data) do
+          :ok -> {:ok, state}
+          {:error, _reason} = error -> error
         end
+      end
     end
   end
 
@@ -293,10 +327,26 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoop do
   defp normalize_interrupt_config(_), do: %{}
 
   defp get_last_assistant_message_with_tools(messages) do
+    # Get all tool call IDs that already have results
+    executed_tool_call_ids =
+      messages
+      |> Enum.filter(&(&1.role == :tool))
+      |> Enum.flat_map(fn msg -> msg.tool_results || [] end)
+      |> Enum.map(& &1.tool_call_id)
+      |> MapSet.new()
+
+    # Find the last assistant message that has tool calls without results
     messages
     |> Enum.reverse()
     |> Enum.find(fn msg ->
-      msg.role == :assistant && msg.tool_calls != nil && msg.tool_calls != []
+      if msg.role == :assistant && msg.tool_calls != nil && msg.tool_calls != [] do
+        # Check if any of the tool calls haven't been executed yet
+        Enum.any?(msg.tool_calls, fn tc ->
+          not MapSet.member?(executed_tool_call_ids, tc.call_id)
+        end)
+      else
+        false
+      end
     end)
   end
 
@@ -330,35 +380,28 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoop do
       |> Enum.uniq_by(fn {tool_name, _} -> tool_name end)
       |> Map.new()
 
+    # Track which tool call IDs require HITL decisions
+    hitl_tool_call_ids = Enum.map(tool_calls, & &1.call_id)
+
     %{
       action_requests: action_requests,
-      review_configs: review_configs
+      review_configs: review_configs,
+      hitl_tool_call_ids: hitl_tool_call_ids
     }
   end
 
-  defp apply_decisions(state, tool_calls, decisions, config) do
-    # Pair tool calls with decisions
+  defp validate_decisions_against_action_requests(action_requests, decisions, interrupt_data) do
+    # Pair action requests with decisions and add index
     paired =
-      Enum.zip(tool_calls, decisions)
+      Enum.zip(action_requests, decisions)
       |> Enum.with_index()
 
+    review_configs = Map.get(interrupt_data, :review_configs, %{})
+
     # Validate each decision
-    with :ok <- validate_decisions(paired, config.interrupt_on) do
-      # Apply decisions and build tool results
-      results = build_tool_results(paired)
-
-      # Add tool result message to state
-      tool_message = Message.new_tool_result!(%{tool_results: results})
-      updated_state = State.add_message(state, tool_message)
-
-      {:ok, updated_state}
-    end
-  end
-
-  defp validate_decisions(paired_decisions, interrupt_on) do
-    Enum.reduce_while(paired_decisions, :ok, fn {{%ToolCall{name: tool_name}, decision}, index},
-                                                _ ->
-      tool_config = Map.get(interrupt_on, tool_name, %{allowed_decisions: @default_decisions})
+    Enum.reduce_while(paired, :ok, fn {{action_req, decision}, index}, _ ->
+      tool_name = action_req.tool_name
+      tool_config = Map.get(review_configs, tool_name, %{allowed_decisions: @default_decisions})
       allowed = tool_config.allowed_decisions || @default_decisions
 
       cond do
@@ -379,41 +422,6 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoop do
 
         true ->
           {:cont, :ok}
-      end
-    end)
-  end
-
-  defp build_tool_results(paired_decisions) do
-    Enum.map(paired_decisions, fn {{%ToolCall{} = tc, decision}, _index} ->
-      case decision.type do
-        :approve ->
-          # Create a synthetic "approved" result
-          # In a real implementation, tools would be executed here
-          ToolResult.new!(%{
-            tool_call_id: tc.call_id,
-            name: tc.name,
-            content:
-              "Tool call '#{tc.name}' (#{tc.call_id}) was approved for execution with arguments: #{inspect(tc.arguments)}"
-          })
-
-        :edit ->
-          # Use edited arguments
-          edited_args = Map.get(decision, :arguments, %{})
-
-          ToolResult.new!(%{
-            tool_call_id: tc.call_id,
-            name: tc.name,
-            content:
-              "Tool call '#{tc.name}' (#{tc.call_id}) was approved for execution with edited arguments: #{inspect(edited_args)}"
-          })
-
-        :reject ->
-          # Create rejection result
-          ToolResult.new!(%{
-            tool_call_id: tc.call_id,
-            name: tc.name,
-            content: "Tool call '#{tc.name}' (#{tc.call_id}) was rejected by human reviewer."
-          })
       end
     end)
   end

@@ -1,19 +1,112 @@
 defmodule LangChain.Agents.Middleware.HumanInTheLoopIntegrationTest do
   use ExUnit.Case, async: true
+  use Mimic
 
   alias LangChain.Agents.Agent
   alias LangChain.Agents.State
   alias LangChain.Message
+  alias LangChain.Message.ToolCall
   alias LangChain.Function
   alias LangChain.ChatModels.ChatAnthropic
 
+  setup :verify_on_exit!
+
   defp create_test_model do
-    # Create a simple model for testing
-    # In real tests, this would be mocked
     ChatAnthropic.new!(%{
       model: "claude-3-5-sonnet-20241022",
-      temperature: 0
+      temperature: 0,
+      stream: false
     })
+  end
+
+  defp mock_llm_with_tool_call(tool_name, tool_args) do
+    # Mock the LLM to return a message with a tool call on first call,
+    # then a final message without tool calls on subsequent calls
+    tool_call =
+      ToolCall.new!(%{
+        call_id: "test_call_#{:rand.uniform(10000)}",
+        name: tool_name,
+        arguments: tool_args
+      })
+
+    response_with_tool =
+      Message.new_assistant!(%{
+        content: "I'll use the tool.",
+        tool_calls: [tool_call]
+      })
+
+    final_response =
+      Message.new_assistant!(%{
+        content: "Done! I've completed the task."
+      })
+
+    ChatAnthropic
+    |> stub(:call, fn _model, messages, _tools ->
+      # Check if there's a tool result message in the conversation
+      # If yes, this is the second call (after tool execution), return final message
+      # If no, this is the first call, return tool call
+      has_tool_result =
+        Enum.any?(messages, fn msg ->
+          case msg do
+            %{role: :tool} -> true
+            _ -> false
+          end
+        end)
+
+      if has_tool_result do
+        {:ok, [final_response]}
+      else
+        {:ok, [response_with_tool]}
+      end
+    end)
+
+    tool_call
+  end
+
+  defp mock_llm_with_multiple_tool_calls(tool_specs) do
+    # Mock the LLM to return multiple tool calls on first call,
+    # then a final message without tool calls on subsequent calls
+    tool_calls =
+      Enum.map(tool_specs, fn {tool_name, tool_args} ->
+        ToolCall.new!(%{
+          call_id: "test_call_#{:rand.uniform(10000)}",
+          name: tool_name,
+          arguments: tool_args
+        })
+      end)
+
+    response_with_tools =
+      Message.new_assistant!(%{
+        content: "I'll use multiple tools.",
+        tool_calls: tool_calls
+      })
+
+    final_response =
+      Message.new_assistant!(%{
+        content: "Done! I've completed all the tasks."
+      })
+
+    ChatAnthropic
+    |> stub(:call, fn _model, messages, _tools ->
+      # Check if there's a tool result message in the conversation
+      # If yes, this is the second call (after tool execution), return final message
+      # If no, this is the first call, return tool calls
+      has_tool_result =
+        Enum.any?(messages, fn msg ->
+          case msg do
+            %{role: :tool} -> true
+            _ -> false
+          end
+        end)
+
+      if has_tool_result do
+        {:ok, [final_response]}
+      else
+        {:ok, [response_with_tools]}
+      end
+    end)
+
+    tool_calls
   end
 
   defp create_write_file_tool do
@@ -142,47 +235,68 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopIntegrationTest do
       end
     end
 
-    test "agent resume processes decisions correctly" do
+    test "agent execute returns interrupt, resume processes decisions and executes tools" do
+      # Mock LLM to return a tool call
+      tool_call =
+        mock_llm_with_tool_call("write_file", %{
+          "path" => "output.txt",
+          "content" => "Data"
+        })
+
       {:ok, agent} =
         Agent.new(
           model: create_test_model(),
           tools: [create_write_file_tool()],
           interrupt_on: %{
             "write_file" => true
-          }
+          },
+          replace_default_middleware: true,
+          middleware: [
+            {LangChain.Agents.Middleware.HumanInTheLoop, [interrupt_on: %{"write_file" => true}]}
+          ]
         )
 
-      # Create interrupted state
-      tool_call =
-        LangChain.Message.ToolCall.new!(%{
-          call_id: "call_456",
-          name: "write_file",
-          arguments: %{"path" => "output.txt", "content" => "Data"}
-        })
+      # Create initial state with user message
+      initial_state = State.new!(%{messages: [Message.new_user!("Save the data")]})
 
-      messages = [
-        Message.new_user!("Save the data"),
-        Message.new_assistant!(%{tool_calls: [tool_call]})
-      ]
+      # Execute should return interrupt WITHOUT executing tools
+      result = Agent.execute(agent, initial_state)
 
-      interrupted_state = State.new!(%{messages: messages})
+      assert {:interrupt, interrupted_state, interrupt_data} = result
 
-      # Resume with approval decision
+      # Verify interrupt data
+      assert %{action_requests: [action], review_configs: _configs} = interrupt_data
+      assert action.tool_name == "write_file"
+      assert action.arguments == %{"path" => "output.txt", "content" => "Data"}
+
+      # Tool should NOT have been executed yet
+      # (we can't easily verify this without tracking, but the interrupt proves it)
+
+      # Now resume with approval decision
       decisions = [%{type: :approve}]
 
       case Agent.resume(agent, interrupted_state, decisions) do
         {:ok, resumed_state} ->
-          # Should have tool result message added
-          assert length(resumed_state.messages) == 3
-          assert [_user, _assistant, tool_msg] = resumed_state.messages
+          # Should have tool result message AND final assistant message
+          # User + Assistant (tool call) + Tool result + Assistant (final) = 4
+          assert length(resumed_state.messages) == 4
+          assert [_user, _assistant_with_tools, tool_msg, final_assistant] = resumed_state.messages
+
+          # Check tool result message
           assert tool_msg.role == :tool
           assert [result] = tool_msg.tool_results
-          assert result.tool_call_id == "call_456"
+          assert result.tool_call_id == tool_call.call_id
           assert result.name == "write_file"
 
-          # Content is stored as ContentParts
+          # Content is the actual tool output (not placeholder)
           assert [%Message.ContentPart{content: content}] = result.content
-          assert content =~ "approved for execution"
+          assert content =~ "File written: output.txt"
+
+          # Check final assistant message (no tool calls)
+          assert final_assistant.role == :assistant
+          assert final_assistant.tool_calls == [] || final_assistant.tool_calls == nil
+          assert [%Message.ContentPart{content: final_content}] = final_assistant.content
+          assert final_content =~ "Done"
 
         {:error, reason} ->
           flunk("Resume failed: #{inspect(reason)}")
@@ -190,28 +304,31 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopIntegrationTest do
     end
 
     test "agent resume handles edit decision" do
+      # Mock LLM to return a tool call
+      tool_call =
+        mock_llm_with_tool_call("write_file", %{
+          "path" => "draft.txt",
+          "content" => "Original"
+        })
+
       {:ok, agent} =
         Agent.new(
           model: create_test_model(),
           tools: [create_write_file_tool()],
           interrupt_on: %{
             "write_file" => %{allowed_decisions: [:approve, :edit, :reject]}
-          }
+          },
+          replace_default_middleware: true,
+          middleware: [
+            {LangChain.Agents.Middleware.HumanInTheLoop,
+             [interrupt_on: %{"write_file" => %{allowed_decisions: [:approve, :edit, :reject]}}]}
+          ]
         )
 
-      tool_call =
-        LangChain.Message.ToolCall.new!(%{
-          call_id: "call_789",
-          name: "write_file",
-          arguments: %{"path" => "draft.txt", "content" => "Original"}
-        })
+      initial_state = State.new!(%{messages: [Message.new_user!("Create draft")]})
 
-      messages = [
-        Message.new_user!("Create draft"),
-        Message.new_assistant!(%{tool_calls: [tool_call]})
-      ]
-
-      interrupted_state = State.new!(%{messages: messages})
+      # Execute should return interrupt
+      {:interrupt, interrupted_state, _interrupt_data} = Agent.execute(agent, initial_state)
 
       # Resume with edit decision
       decisions = [
@@ -223,58 +340,65 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopIntegrationTest do
 
       assert {:ok, resumed_state} = Agent.resume(agent, interrupted_state, decisions)
 
-      assert [_user, _assistant, tool_msg] = resumed_state.messages
+      # Should have tool result + final assistant message
+      assert length(resumed_state.messages) == 4
+      assert [_user, _assistant, tool_msg, _final] = resumed_state.messages
       [result] = tool_msg.tool_results
 
-      assert result.tool_call_id == "call_789"
+      assert result.tool_call_id == tool_call.call_id
 
-      # Content is stored as ContentParts
+      # Content is the actual tool output with EDITED arguments
       assert [%Message.ContentPart{content: content}] = result.content
-      assert content =~ "edited arguments"
-      assert content =~ "final.txt"
-      assert content =~ "Edited"
+      assert content =~ "File written: final.txt"
     end
 
     test "agent resume handles reject decision" do
+      # Mock LLM to return a tool call
+      tool_call =
+        mock_llm_with_tool_call("write_file", %{
+          "path" => "sensitive.txt",
+          "content" => "Secret"
+        })
+
       {:ok, agent} =
         Agent.new(
           model: create_test_model(),
           tools: [create_write_file_tool()],
           interrupt_on: %{
             "write_file" => true
-          }
+          },
+          replace_default_middleware: true,
+          middleware: [
+            {LangChain.Agents.Middleware.HumanInTheLoop, [interrupt_on: %{"write_file" => true}]}
+          ]
         )
 
-      tool_call =
-        LangChain.Message.ToolCall.new!(%{
-          call_id: "call_reject",
-          name: "write_file",
-          arguments: %{"path" => "sensitive.txt"}
-        })
+      initial_state = State.new!(%{messages: [Message.new_user!("Write sensitive file")]})
 
-      messages = [
-        Message.new_user!("Write sensitive file"),
-        Message.new_assistant!(%{tool_calls: [tool_call]})
-      ]
-
-      interrupted_state = State.new!(%{messages: messages})
+      # Execute should return interrupt
+      {:interrupt, interrupted_state, _interrupt_data} = Agent.execute(agent, initial_state)
 
       # Resume with reject decision
       decisions = [%{type: :reject}]
 
       assert {:ok, resumed_state} = Agent.resume(agent, interrupted_state, decisions)
 
-      assert [_user, _assistant, tool_msg] = resumed_state.messages
+      # Should have tool result + final assistant message
+      assert length(resumed_state.messages) == 4
+      assert [_user, _assistant, tool_msg, _final] = resumed_state.messages
       [result] = tool_msg.tool_results
 
-      assert result.tool_call_id == "call_reject"
+      assert result.tool_call_id == tool_call.call_id
 
-      # Content is stored as ContentParts
+      # Content shows rejection (tool was NOT executed)
       assert [%Message.ContentPart{content: content}] = result.content
-      assert content =~ "rejected by human reviewer"
+      assert content =~ "rejected by a human reviewer"
     end
 
     test "agent resume returns error for invalid decisions" do
+      # Mock LLM to return a tool call
+      mock_llm_with_tool_call("write_file", %{"path" => "test.txt", "content" => "data"})
+
       {:ok, agent} =
         Agent.new(
           model: create_test_model(),
@@ -284,19 +408,9 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopIntegrationTest do
           }
         )
 
-      tool_call =
-        LangChain.Message.ToolCall.new!(%{
-          call_id: "call_invalid",
-          name: "write_file",
-          arguments: %{"path" => "test.txt"}
-        })
-
-      messages = [
-        Message.new_user!("Write file"),
-        Message.new_assistant!(%{tool_calls: [tool_call]})
-      ]
-
-      interrupted_state = State.new!(%{messages: messages})
+      # Execute to get interrupt
+      initial_state = State.new!(%{messages: [Message.new_user!("Write file")]})
+      assert {:interrupt, interrupted_state, _interrupt_data} = Agent.execute(agent, initial_state)
 
       # Try to edit when only approve/reject allowed
       decisions = [%{type: :edit, arguments: %{"path" => "new.txt"}}]
@@ -368,35 +482,30 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopIntegrationTest do
     end
 
     test "multiple tool calls with mixed decisions" do
+      # Mock LLM to return multiple tool calls
+      [tool_call1, tool_call2] =
+        mock_llm_with_multiple_tool_calls([
+          {"write_file", %{"path" => "file1.txt", "content" => "Data 1"}},
+          {"write_file", %{"path" => "file2.txt", "content" => "Data 2"}}
+        ])
+
       {:ok, agent} =
         Agent.new(
           model: create_test_model(),
           tools: [create_write_file_tool()],
           interrupt_on: %{
             "write_file" => true
-          }
+          },
+          replace_default_middleware: true,
+          middleware: [
+            {LangChain.Agents.Middleware.HumanInTheLoop, [interrupt_on: %{"write_file" => true}]}
+          ]
         )
 
-      tool_call1 =
-        LangChain.Message.ToolCall.new!(%{
-          call_id: "call_1",
-          name: "write_file",
-          arguments: %{"path" => "file1.txt", "content" => "Data 1"}
-        })
+      initial_state = State.new!(%{messages: [Message.new_user!("Write both files")]})
 
-      tool_call2 =
-        LangChain.Message.ToolCall.new!(%{
-          call_id: "call_2",
-          name: "write_file",
-          arguments: %{"path" => "file2.txt", "content" => "Data 2"}
-        })
-
-      messages = [
-        Message.new_user!("Write both files"),
-        Message.new_assistant!(%{tool_calls: [tool_call1, tool_call2]})
-      ]
-
-      interrupted_state = State.new!(%{messages: messages})
+      # Execute should return interrupt
+      {:interrupt, interrupted_state, _interrupt_data} = Agent.execute(agent, initial_state)
 
       # Approve first, edit second
       decisions = [
@@ -406,22 +515,24 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopIntegrationTest do
 
       assert {:ok, resumed_state} = Agent.resume(agent, interrupted_state, decisions)
 
-      assert [_user, _assistant, tool_msg] = resumed_state.messages
+      # Should have tool result + final assistant message
+      assert length(resumed_state.messages) == 4
+      assert [_user, _assistant, tool_msg, _final] = resumed_state.messages
       assert length(tool_msg.tool_results) == 2
 
       [result1, result2] = tool_msg.tool_results
 
-      assert result1.tool_call_id == "call_1"
+      assert result1.tool_call_id == tool_call1.call_id
 
-      # Content is stored as ContentParts
+      # First tool executed with original arguments
       assert [%Message.ContentPart{content: content1}] = result1.content
-      assert content1 =~ "approved"
+      assert content1 =~ "File written: file1.txt"
 
-      assert result2.tool_call_id == "call_2"
+      assert result2.tool_call_id == tool_call2.call_id
 
+      # Second tool executed with EDITED arguments
       assert [%Message.ContentPart{content: content2}] = result2.content
-      assert content2 =~ "edited"
-      assert content2 =~ "modified.txt"
+      assert content2 =~ "File written: modified.txt"
     end
   end
 

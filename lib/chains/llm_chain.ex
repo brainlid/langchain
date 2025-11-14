@@ -1323,6 +1323,114 @@ defmodule LangChain.Chains.LLMChain do
   end
 
   @doc """
+  Execute tool calls with human decisions (approve, edit, reject).
+
+  This is used for Human-in-the-Loop workflows where tool calls need human approval
+  before execution. Each decision controls how the corresponding tool call is handled:
+
+  - `:approve` - Execute the tool with original arguments
+  - `:edit` - Execute the tool with modified arguments from the decision
+  - `:reject` - Create an error result without executing the tool
+
+  Returns the updated chain with tool results added and callbacks fired.
+
+  ## Parameters
+
+    * `chain` - The LLMChain instance
+    * `tool_calls` - List of ToolCall structs to execute
+    * `decisions` - List of decision maps, one per tool call. Each decision must have:
+      - `:type` - One of `:approve`, `:edit`, or `:reject`
+      - `:arguments` - (optional, required for `:edit`) The modified arguments map
+
+  ## Examples
+
+      decisions = [
+        %{type: :approve},
+        %{type: :edit, arguments: %{"path" => "modified.txt"}},
+        %{type: :reject}
+      ]
+
+      updated_chain = LLMChain.execute_tool_calls_with_decisions(chain, tool_calls, decisions)
+  """
+  @spec execute_tool_calls_with_decisions(t(), [ToolCall.t()], [map()]) :: t()
+  def execute_tool_calls_with_decisions(%LLMChain{} = chain, tool_calls, decisions)
+      when is_list(tool_calls) and is_list(decisions) do
+    use_context = chain.custom_context
+    verbose = chain.verbose
+
+    # Execute each tool based on its decision
+    results =
+      tool_calls
+      |> Enum.zip(decisions)
+      |> Enum.map(fn {tool_call, decision} ->
+        case decision.type do
+          :approve ->
+            # Execute with original arguments
+            case chain._tool_map[tool_call.name] do
+              %Function{} = func ->
+                execute_tool_call(tool_call, func, verbose: verbose, context: use_context)
+
+              nil ->
+                ToolResult.new!(%{
+                  tool_call_id: tool_call.call_id,
+                  name: tool_call.name,
+                  content: "Tool '#{tool_call.name}' not found",
+                  is_error: true
+                })
+            end
+
+          :edit ->
+            # Execute with edited arguments
+            edited_args = Map.get(decision, :arguments, %{})
+
+            case chain._tool_map[tool_call.name] do
+              %Function{} = func ->
+                edited_call = %{tool_call | arguments: edited_args}
+                execute_tool_call(edited_call, func, verbose: verbose, context: use_context)
+
+              nil ->
+                ToolResult.new!(%{
+                  tool_call_id: tool_call.call_id,
+                  name: tool_call.name,
+                  content: "Tool '#{tool_call.name}' not found",
+                  is_error: true
+                })
+            end
+
+          :reject ->
+            # Create rejection result without executing
+            ToolResult.new!(%{
+              tool_call_id: tool_call.call_id,
+              name: tool_call.name,
+              content: "Tool call '#{tool_call.name}' was rejected by a human reviewer.",
+              is_error: false
+            })
+        end
+      end)
+
+    # Create tool result message
+    result_message = Message.new_tool_result!(%{content: nil, tool_results: results})
+
+    # Add to chain
+    updated_chain = LLMChain.add_message(chain, result_message)
+
+    # Update failure counter based on errors
+    updated_chain =
+      if Message.tool_had_errors?(result_message) do
+        LLMChain.increment_current_failure_count(updated_chain)
+      else
+        LLMChain.reset_current_failure_count(updated_chain)
+      end
+
+    # Fire callbacks (same as execute_tool_calls does)
+    if chain.verbose, do: IO.inspect(result_message, label: "TOOL RESULTS")
+
+    updated_chain
+    |> fire_callback_and_return(:on_message_processed, [result_message])
+    |> fire_callback_and_return(:on_tool_response_created, [result_message])
+  end
+
+  @doc """
   Execute the tool call with the tool. Returns the tool's message response.
   """
   @spec execute_tool_call(ToolCall.t(), Function.t(), Keyword.t()) :: ToolResult.t()

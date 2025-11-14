@@ -146,9 +146,17 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
         }
       }
 
-      assert {:interrupt, ^state, interrupt_data} = HumanInTheLoop.after_model(state, config)
+      assert {:interrupt, state_with_interrupt_data, interrupt_data} =
+               HumanInTheLoop.after_model(state, config)
 
-      assert %{action_requests: [action], review_configs: review_configs} = interrupt_data
+      # State should have interrupt_data populated
+      assert state_with_interrupt_data.interrupt_data == interrupt_data
+
+      assert %{
+               action_requests: [action],
+               review_configs: review_configs,
+               hitl_tool_call_ids: hitl_ids
+             } = interrupt_data
 
       assert action == %{
                tool_call_id: "call_123",
@@ -157,6 +165,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
              }
 
       assert review_configs["write_file"] == %{allowed_decisions: [:approve, :edit, :reject]}
+      assert hitl_ids == ["call_123"]
     end
 
     test "generates interrupt for multiple tool calls" do
@@ -188,9 +197,18 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
         }
       }
 
-      assert {:interrupt, ^state, interrupt_data} = HumanInTheLoop.after_model(state, config)
+      assert {:interrupt, state_with_interrupt_data, interrupt_data} =
+               HumanInTheLoop.after_model(state, config)
 
-      assert %{action_requests: actions, review_configs: review_configs} = interrupt_data
+      # State should have interrupt_data populated
+      assert state_with_interrupt_data.interrupt_data == interrupt_data
+
+      assert %{
+               action_requests: actions,
+               review_configs: review_configs,
+               hitl_tool_call_ids: hitl_ids
+             } = interrupt_data
+
       assert length(actions) == 2
 
       assert Enum.at(actions, 0) == %{
@@ -207,6 +225,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
 
       assert review_configs["write_file"] == %{allowed_decisions: [:approve, :reject]}
       assert review_configs["delete_file"] == %{allowed_decisions: [:approve, :reject]}
+      assert hitl_ids == ["call_1", "call_2"]
     end
 
     test "generates interrupt only for configured tools" do
@@ -238,11 +257,169 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
         }
       }
 
-      assert {:interrupt, ^state, interrupt_data} = HumanInTheLoop.after_model(state, config)
+      assert {:interrupt, state_with_interrupt_data, interrupt_data} =
+               HumanInTheLoop.after_model(state, config)
 
       # Should only interrupt for write_file
-      assert %{action_requests: [action]} = interrupt_data
+      assert %{action_requests: [action], hitl_tool_call_ids: hitl_ids} = interrupt_data
       assert action.tool_name == "write_file"
+      assert action.tool_call_id == "call_2"
+
+      # hitl_tool_call_ids should only contain write_file's ID
+      assert hitl_ids == ["call_2"]
+
+      # interrupt_data should be stored in state
+      assert state_with_interrupt_data.interrupt_data == interrupt_data
+    end
+
+    test "mixed tools: HITL first, non-HITL last" do
+      tool_call1 =
+        ToolCall.new!(%{
+          call_id: "call_1",
+          name: "delete_file",
+          arguments: %{"path" => "old.txt"}
+        })
+
+      tool_call2 =
+        ToolCall.new!(%{
+          call_id: "call_2",
+          name: "read_file",
+          arguments: %{"path" => "test.txt"}
+        })
+
+      tool_call3 =
+        ToolCall.new!(%{
+          call_id: "call_3",
+          name: "write_file",
+          arguments: %{"path" => "output.txt"}
+        })
+
+      messages = [
+        Message.new_user!("Process files"),
+        Message.new_assistant!(%{tool_calls: [tool_call1, tool_call2, tool_call3]})
+      ]
+
+      state = State.new!(%{messages: messages})
+
+      config = %{
+        interrupt_on: %{
+          "delete_file" => %{allowed_decisions: [:approve, :reject]},
+          "write_file" => %{allowed_decisions: [:approve, :edit, :reject]}
+          # read_file not configured - should execute without approval
+        }
+      }
+
+      assert {:interrupt, state_with_interrupt_data, interrupt_data} =
+               HumanInTheLoop.after_model(state, config)
+
+      # Should interrupt for delete_file and write_file only
+      assert %{action_requests: actions, hitl_tool_call_ids: hitl_ids} = interrupt_data
+      assert length(actions) == 2
+      assert Enum.at(actions, 0).tool_name == "delete_file"
+      assert Enum.at(actions, 1).tool_name == "write_file"
+
+      # hitl_tool_call_ids should contain both HITL tool IDs
+      assert hitl_ids == ["call_1", "call_3"]
+
+      # interrupt_data should be stored in state
+      assert state_with_interrupt_data.interrupt_data == interrupt_data
+    end
+
+    test "mixed tools: non-HITL first, HITL last" do
+      tool_call1 =
+        ToolCall.new!(%{
+          call_id: "call_1",
+          name: "read_file",
+          arguments: %{"path" => "test.txt"}
+        })
+
+      tool_call2 =
+        ToolCall.new!(%{
+          call_id: "call_2",
+          name: "delete_file",
+          arguments: %{"path" => "old.txt"}
+        })
+
+      messages = [
+        Message.new_user!("Process file"),
+        Message.new_assistant!(%{tool_calls: [tool_call1, tool_call2]})
+      ]
+
+      state = State.new!(%{messages: messages})
+
+      config = %{
+        interrupt_on: %{
+          "delete_file" => %{allowed_decisions: [:approve, :reject]}
+          # read_file not configured
+        }
+      }
+
+      assert {:interrupt, state_with_interrupt_data, interrupt_data} =
+               HumanInTheLoop.after_model(state, config)
+
+      # Should only interrupt for delete_file
+      assert %{action_requests: [action], hitl_tool_call_ids: hitl_ids} = interrupt_data
+      assert action.tool_name == "delete_file"
+      assert action.tool_call_id == "call_2"
+
+      # hitl_tool_call_ids should only contain delete_file's ID
+      assert hitl_ids == ["call_2"]
+
+      # interrupt_data should be stored in state
+      assert state_with_interrupt_data.interrupt_data == interrupt_data
+    end
+
+    test "mixed tools: non-HITL in the middle" do
+      tool_call1 =
+        ToolCall.new!(%{
+          call_id: "call_1",
+          name: "write_file",
+          arguments: %{"path" => "output1.txt"}
+        })
+
+      tool_call2 =
+        ToolCall.new!(%{
+          call_id: "call_2",
+          name: "read_file",
+          arguments: %{"path" => "test.txt"}
+        })
+
+      tool_call3 =
+        ToolCall.new!(%{
+          call_id: "call_3",
+          name: "delete_file",
+          arguments: %{"path" => "old.txt"}
+        })
+
+      messages = [
+        Message.new_user!("Process files"),
+        Message.new_assistant!(%{tool_calls: [tool_call1, tool_call2, tool_call3]})
+      ]
+
+      state = State.new!(%{messages: messages})
+
+      config = %{
+        interrupt_on: %{
+          "write_file" => %{allowed_decisions: [:approve, :edit, :reject]},
+          "delete_file" => %{allowed_decisions: [:approve, :reject]}
+          # read_file not configured
+        }
+      }
+
+      assert {:interrupt, state_with_interrupt_data, interrupt_data} =
+               HumanInTheLoop.after_model(state, config)
+
+      # Should interrupt for write_file and delete_file
+      assert %{action_requests: actions, hitl_tool_call_ids: hitl_ids} = interrupt_data
+      assert length(actions) == 2
+      assert Enum.at(actions, 0).tool_name == "write_file"
+      assert Enum.at(actions, 1).tool_name == "delete_file"
+
+      # hitl_tool_call_ids should contain both HITL tool IDs
+      assert hitl_ids == ["call_1", "call_3"]
+
+      # interrupt_data should be stored in state
+      assert state_with_interrupt_data.interrupt_data == interrupt_data
     end
 
     test "uses last assistant message with tool calls" do
@@ -275,11 +452,16 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
         }
       }
 
-      assert {:interrupt, ^state, interrupt_data} = HumanInTheLoop.after_model(state, config)
+      assert {:interrupt, state_with_interrupt_data, interrupt_data} =
+               HumanInTheLoop.after_model(state, config)
+
+      # State should have interrupt_data populated
+      assert state_with_interrupt_data.interrupt_data == interrupt_data
 
       # Should only use the last assistant message's tool call
-      assert %{action_requests: [action]} = interrupt_data
+      assert %{action_requests: [action], hitl_tool_call_ids: hitl_ids} = interrupt_data
       assert action.tool_call_id == "call_new"
+      assert hitl_ids == ["call_new"]
     end
   end
 
@@ -304,7 +486,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
         Message.new_assistant!(%{tool_calls: [tool_call1, tool_call2]})
       ]
 
-      state = State.new!(%{messages: messages})
+      initial_state = State.new!(%{messages: messages})
 
       config = %{
         interrupt_on: %{
@@ -313,93 +495,58 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
         }
       }
 
+      # Populate interrupt_data by calling after_model
+      {:interrupt, state, _interrupt_data} = HumanInTheLoop.after_model(initial_state, config)
+
       %{state: state, config: config}
     end
 
-    test "processes approve decision", %{state: state, config: config} do
+    test "validates approve decisions", %{state: state, config: config} do
       decisions = [
         %{type: :approve},
         %{type: :approve}
       ]
 
-      assert {:ok, updated_state} = HumanInTheLoop.process_decisions(state, decisions, config)
+      assert {:ok, ^state} = HumanInTheLoop.process_decisions(state, decisions, config)
 
-      # Should have added tool result message
-      assert [_user, _assistant, tool_message] = updated_state.messages
-      assert tool_message.role == :tool
-      assert length(tool_message.tool_results) == 2
-
-      [result1, result2] = tool_message.tool_results
-
-      assert result1.tool_call_id == "call_1"
-      assert result1.name == "write_file"
-
-      # Content is stored as ContentParts
-      assert [%Message.ContentPart{content: content1}] = result1.content
-      assert content1 =~ "approved for execution"
-
-      assert result2.tool_call_id == "call_2"
-      assert result2.name == "delete_file"
+      # State should be unchanged - no tool result message added
+      assert [_user, _assistant] = state.messages
     end
 
-    test "processes edit decision", %{state: state, config: config} do
+    test "validates edit decision", %{state: state, config: config} do
       decisions = [
         %{type: :edit, arguments: %{"path" => "modified.txt", "content" => "Modified"}},
         %{type: :approve}
       ]
 
-      assert {:ok, updated_state} = HumanInTheLoop.process_decisions(state, decisions, config)
+      assert {:ok, ^state} = HumanInTheLoop.process_decisions(state, decisions, config)
 
-      assert [_user, _assistant, tool_message] = updated_state.messages
-      [result1, _result2] = tool_message.tool_results
-
-      assert result1.tool_call_id == "call_1"
-      assert result1.name == "write_file"
-
-      # Content is stored as ContentParts
-      assert [%Message.ContentPart{content: content1}] = result1.content
-      assert content1 =~ "edited arguments"
-      assert content1 =~ "modified.txt"
+      # State should be unchanged - no tool result message added
+      assert [_user, _assistant] = state.messages
     end
 
-    test "processes reject decision", %{state: state, config: config} do
+    test "validates reject decision", %{state: state, config: config} do
       decisions = [
         %{type: :reject},
         %{type: :approve}
       ]
 
-      assert {:ok, updated_state} = HumanInTheLoop.process_decisions(state, decisions, config)
+      assert {:ok, ^state} = HumanInTheLoop.process_decisions(state, decisions, config)
 
-      assert [_user, _assistant, tool_message] = updated_state.messages
-      [result1, _result2] = tool_message.tool_results
-
-      assert result1.tool_call_id == "call_1"
-      assert result1.name == "write_file"
-
-      # Content is stored as ContentParts
-      assert [%Message.ContentPart{content: content1}] = result1.content
-      assert content1 =~ "rejected by human reviewer"
+      # State should be unchanged - no tool result message added
+      assert [_user, _assistant] = state.messages
     end
 
-    test "processes mixed decisions", %{state: state, config: config} do
+    test "validates mixed decisions", %{state: state, config: config} do
       decisions = [
         %{type: :edit, arguments: %{"path" => "new.txt"}},
         %{type: :reject}
       ]
 
-      assert {:ok, updated_state} = HumanInTheLoop.process_decisions(state, decisions, config)
+      assert {:ok, ^state} = HumanInTheLoop.process_decisions(state, decisions, config)
 
-      assert [_user, _assistant, tool_message] = updated_state.messages
-      assert length(tool_message.tool_results) == 2
-
-      [result1, result2] = tool_message.tool_results
-
-      # Content is stored as ContentParts
-      assert [%Message.ContentPart{content: content1}] = result1.content
-      assert content1 =~ "edited arguments"
-
-      assert [%Message.ContentPart{content: content2}] = result2.content
-      assert content2 =~ "rejected"
+      # State should be unchanged - no tool result message added
+      assert [_user, _assistant] = state.messages
     end
 
     test "returns error when decision count mismatches tool call count", %{
@@ -459,12 +606,46 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
       decisions = [%{type: :approve}]
 
       assert {:error, reason} = HumanInTheLoop.process_decisions(state, decisions, config)
-      assert reason =~ "No tool calls found"
+      assert reason =~ "No interrupt data found"
     end
 
-    test "uses default decisions when tool not in config", %{state: state} do
+    test "uses default decisions when tool not in config" do
+      tool_call1 =
+        ToolCall.new!(%{
+          call_id: "call_1",
+          name: "write_file",
+          arguments: %{"path" => "file1.txt", "content" => "Hello"}
+        })
+
+      tool_call2 =
+        ToolCall.new!(%{
+          call_id: "call_2",
+          name: "delete_file",
+          arguments: %{"path" => "old.txt"}
+        })
+
+      messages = [
+        Message.new_user!("Update files"),
+        Message.new_assistant!(%{tool_calls: [tool_call1, tool_call2]})
+      ]
+
+      initial_state = State.new!(%{messages: messages})
+
       # Config doesn't include write_file or delete_file
       config = %{interrupt_on: %{}}
+
+      # Manually populate interrupt_data with default decisions
+      # Since config is empty, we need to simulate what would happen if tools were configured
+      interrupt_data = %{
+        action_requests: [
+          %{tool_call_id: "call_1", tool_name: "write_file", arguments: %{}},
+          %{tool_call_id: "call_2", tool_name: "delete_file", arguments: %{}}
+        ],
+        review_configs: %{},
+        hitl_tool_call_ids: ["call_1", "call_2"]
+      }
+
+      state = %{initial_state | interrupt_data: interrupt_data}
 
       decisions = [
         %{type: :approve},
@@ -475,8 +656,41 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
       assert {:ok, _updated_state} = HumanInTheLoop.process_decisions(state, decisions, config)
     end
 
-    test "validates against default decisions when tool not in config", %{state: state} do
+    test "validates against default decisions when tool not in config" do
+      tool_call1 =
+        ToolCall.new!(%{
+          call_id: "call_1",
+          name: "write_file",
+          arguments: %{"path" => "file1.txt", "content" => "Hello"}
+        })
+
+      tool_call2 =
+        ToolCall.new!(%{
+          call_id: "call_2",
+          name: "delete_file",
+          arguments: %{"path" => "old.txt"}
+        })
+
+      messages = [
+        Message.new_user!("Update files"),
+        Message.new_assistant!(%{tool_calls: [tool_call1, tool_call2]})
+      ]
+
+      initial_state = State.new!(%{messages: messages})
+
       config = %{interrupt_on: %{}}
+
+      # Manually populate interrupt_data with default decisions
+      interrupt_data = %{
+        action_requests: [
+          %{tool_call_id: "call_1", tool_name: "write_file", arguments: %{}},
+          %{tool_call_id: "call_2", tool_name: "delete_file", arguments: %{}}
+        ],
+        review_configs: %{},
+        hitl_tool_call_ids: ["call_1", "call_2"]
+      }
+
+      state = %{initial_state | interrupt_data: interrupt_data}
 
       # Try an invalid decision type
       decisions = [
@@ -486,6 +700,266 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
 
       assert {:error, reason} = HumanInTheLoop.process_decisions(state, decisions, config)
       assert reason =~ "not allowed"
+    end
+  end
+
+  describe "process_decisions/3 with mixed tools" do
+    test "validates decisions for HITL tools only (non-HITL first)" do
+      tool_call1 =
+        ToolCall.new!(%{
+          call_id: "call_1",
+          name: "read_file",
+          arguments: %{"path" => "test.txt"}
+        })
+
+      tool_call2 =
+        ToolCall.new!(%{
+          call_id: "call_2",
+          name: "write_file",
+          arguments: %{"path" => "output.txt"}
+        })
+
+      messages = [
+        Message.new_user!("Process file"),
+        Message.new_assistant!(%{tool_calls: [tool_call1, tool_call2]})
+      ]
+
+      state = State.new!(%{messages: messages})
+
+      config = %{
+        interrupt_on: %{
+          "write_file" => %{allowed_decisions: [:approve, :edit, :reject]}
+          # read_file not configured - should not require decision
+        }
+      }
+
+      # Simulate the interrupt flow to populate interrupt_data
+      {:interrupt, state_with_interrupt_data, _interrupt_data} =
+        HumanInTheLoop.after_model(state, config)
+
+      # Only need 1 decision for write_file (not 2 for all tools)
+      decisions = [
+        %{type: :approve}
+      ]
+
+      assert {:ok, _state} =
+               HumanInTheLoop.process_decisions(state_with_interrupt_data, decisions, config)
+    end
+
+    test "validates decisions for HITL tools only (non-HITL last)" do
+      tool_call1 =
+        ToolCall.new!(%{
+          call_id: "call_1",
+          name: "delete_file",
+          arguments: %{"path" => "old.txt"}
+        })
+
+      tool_call2 =
+        ToolCall.new!(%{
+          call_id: "call_2",
+          name: "read_file",
+          arguments: %{"path" => "test.txt"}
+        })
+
+      messages = [
+        Message.new_user!("Process file"),
+        Message.new_assistant!(%{tool_calls: [tool_call1, tool_call2]})
+      ]
+
+      state = State.new!(%{messages: messages})
+
+      config = %{
+        interrupt_on: %{
+          "delete_file" => %{allowed_decisions: [:approve, :reject]}
+          # read_file not configured
+        }
+      }
+
+      # Simulate the interrupt flow
+      {:interrupt, state_with_interrupt_data, _interrupt_data} =
+        HumanInTheLoop.after_model(state, config)
+
+      # Only need 1 decision for delete_file
+      decisions = [
+        %{type: :approve}
+      ]
+
+      assert {:ok, _state} =
+               HumanInTheLoop.process_decisions(state_with_interrupt_data, decisions, config)
+    end
+
+    test "validates decisions for HITL tools only (non-HITL in middle)" do
+      tool_call1 =
+        ToolCall.new!(%{
+          call_id: "call_1",
+          name: "write_file",
+          arguments: %{"path" => "output1.txt"}
+        })
+
+      tool_call2 =
+        ToolCall.new!(%{
+          call_id: "call_2",
+          name: "read_file",
+          arguments: %{"path" => "test.txt"}
+        })
+
+      tool_call3 =
+        ToolCall.new!(%{
+          call_id: "call_3",
+          name: "delete_file",
+          arguments: %{"path" => "old.txt"}
+        })
+
+      messages = [
+        Message.new_user!("Process files"),
+        Message.new_assistant!(%{tool_calls: [tool_call1, tool_call2, tool_call3]})
+      ]
+
+      state = State.new!(%{messages: messages})
+
+      config = %{
+        interrupt_on: %{
+          "write_file" => %{allowed_decisions: [:approve, :edit, :reject]},
+          "delete_file" => %{allowed_decisions: [:approve, :reject]}
+          # read_file not configured
+        }
+      }
+
+      # Simulate the interrupt flow
+      {:interrupt, state_with_interrupt_data, _interrupt_data} =
+        HumanInTheLoop.after_model(state, config)
+
+      # Need 2 decisions for write_file and delete_file (not 3 for all tools)
+      decisions = [
+        %{type: :approve},
+        %{type: :reject}
+      ]
+
+      assert {:ok, _state} =
+               HumanInTheLoop.process_decisions(state_with_interrupt_data, decisions, config)
+    end
+
+    test "returns error when decision count exceeds HITL tool count" do
+      tool_call1 =
+        ToolCall.new!(%{
+          call_id: "call_1",
+          name: "read_file",
+          arguments: %{"path" => "test.txt"}
+        })
+
+      tool_call2 =
+        ToolCall.new!(%{
+          call_id: "call_2",
+          name: "write_file",
+          arguments: %{"path" => "output.txt"}
+        })
+
+      messages = [
+        Message.new_user!("Process file"),
+        Message.new_assistant!(%{tool_calls: [tool_call1, tool_call2]})
+      ]
+
+      state = State.new!(%{messages: messages})
+
+      config = %{
+        interrupt_on: %{
+          "write_file" => %{allowed_decisions: [:approve, :reject]}
+        }
+      }
+
+      # Simulate the interrupt flow
+      {:interrupt, state_with_interrupt_data, _interrupt_data} =
+        HumanInTheLoop.after_model(state, config)
+
+      # Providing 2 decisions when only 1 HITL tool
+      decisions = [
+        %{type: :approve},
+        %{type: :approve}
+      ]
+
+      assert {:error, reason} =
+               HumanInTheLoop.process_decisions(state_with_interrupt_data, decisions, config)
+
+      assert reason =~ "Decision count (2) does not match HITL tool count (1)"
+    end
+
+    test "returns error when decision count is less than HITL tool count" do
+      tool_call1 =
+        ToolCall.new!(%{
+          call_id: "call_1",
+          name: "write_file",
+          arguments: %{"path" => "output1.txt"}
+        })
+
+      tool_call2 =
+        ToolCall.new!(%{
+          call_id: "call_2",
+          name: "read_file",
+          arguments: %{"path" => "test.txt"}
+        })
+
+      tool_call3 =
+        ToolCall.new!(%{
+          call_id: "call_3",
+          name: "delete_file",
+          arguments: %{"path" => "old.txt"}
+        })
+
+      messages = [
+        Message.new_user!("Process files"),
+        Message.new_assistant!(%{tool_calls: [tool_call1, tool_call2, tool_call3]})
+      ]
+
+      state = State.new!(%{messages: messages})
+
+      config = %{
+        interrupt_on: %{
+          "write_file" => %{allowed_decisions: [:approve, :edit, :reject]},
+          "delete_file" => %{allowed_decisions: [:approve, :reject]}
+        }
+      }
+
+      # Simulate the interrupt flow
+      {:interrupt, state_with_interrupt_data, _interrupt_data} =
+        HumanInTheLoop.after_model(state, config)
+
+      # Providing only 1 decision when 2 HITL tools
+      decisions = [
+        %{type: :approve}
+      ]
+
+      assert {:error, reason} =
+               HumanInTheLoop.process_decisions(state_with_interrupt_data, decisions, config)
+
+      assert reason =~ "Decision count (1) does not match HITL tool count (2)"
+    end
+
+    test "returns error when interrupt_data is missing" do
+      tool_call =
+        ToolCall.new!(%{
+          call_id: "call_1",
+          name: "write_file",
+          arguments: %{"path" => "output.txt"}
+        })
+
+      messages = [
+        Message.new_user!("Write file"),
+        Message.new_assistant!(%{tool_calls: [tool_call]})
+      ]
+
+      # State without interrupt_data
+      state = State.new!(%{messages: messages})
+
+      config = %{
+        interrupt_on: %{
+          "write_file" => %{allowed_decisions: [:approve, :reject]}
+        }
+      }
+
+      decisions = [%{type: :approve}]
+
+      assert {:error, reason} = HumanInTheLoop.process_decisions(state, decisions, config)
+      assert reason =~ "No interrupt data found in state"
     end
   end
 end

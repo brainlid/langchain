@@ -881,6 +881,11 @@ defmodule LangChain.Agents.AgentServer do
         broadcast_state_changes(server_state, new_state)
         {:ok, new_state}
 
+      {:interrupt, interrupted_state, interrupt_data} ->
+        # Another interrupt occurred during resume
+        broadcast_state_changes(server_state, interrupted_state)
+        {:interrupt, interrupted_state, interrupt_data}
+
       {:error, reason} ->
         {:error, reason}
     end

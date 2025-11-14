@@ -2472,6 +2472,433 @@ defmodule LangChain.Chains.LLMChainTest do
     end
   end
 
+  describe "execute_tool_calls_with_decisions/3" do
+    test "executes single tool call with approve decision", %{hello_world: hello_world} do
+      chain =
+        LLMChain.new!(%{
+          llm: ChatOpenAI.new!(%{stream: false}),
+          custom_context: %{count: 1}
+        })
+        |> LLMChain.add_tools(hello_world)
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Say hello!"))
+
+      tool_calls = [
+        ToolCall.new!(%{
+          call_id: "call_123",
+          name: "hello_world",
+          arguments: %{}
+        })
+      ]
+
+      decisions = [%{type: :approve}]
+
+      updated_chain = LLMChain.execute_tool_calls_with_decisions(chain, tool_calls, decisions)
+
+      assert %Message{role: :tool} = updated_chain.last_message
+      [%ToolResult{} = result] = updated_chain.last_message.tool_results
+
+      assert result.content == [ContentPart.text!("Hello world!")]
+      assert result.tool_call_id == "call_123"
+      assert result.is_error == false
+    end
+
+    test "executes tool call with edit decision using modified arguments", %{greet: greet} do
+      chain =
+        LLMChain.new!(%{
+          llm: ChatOpenAI.new!(%{stream: false}),
+          custom_context: %{count: 1}
+        })
+        |> LLMChain.add_tools(greet)
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Greet someone"))
+
+      tool_calls = [
+        ToolCall.new!(%{
+          call_id: "call_456",
+          name: "greet",
+          arguments: %{"name" => "Alice"}
+        })
+      ]
+
+      # Edit decision with modified arguments
+      decisions = [%{type: :edit, arguments: %{"name" => "Bob"}}]
+
+      updated_chain = LLMChain.execute_tool_calls_with_decisions(chain, tool_calls, decisions)
+
+      assert %Message{role: :tool} = updated_chain.last_message
+      [%ToolResult{} = result] = updated_chain.last_message.tool_results
+
+      # Should greet "Bob" (edited) not "Alice" (original)
+      assert result.content == [ContentPart.text!("Hi Bob!")]
+      assert result.tool_call_id == "call_456"
+      assert result.is_error == false
+    end
+
+    test "creates rejection result for reject decision without executing tool" do
+      # Create a tool that would fail if executed
+      fail_if_called =
+        Function.new!(%{
+          name: "fail_if_called",
+          description: "This should not be called",
+          function: fn _args, _context ->
+            raise "This tool should not have been executed!"
+          end
+        })
+
+      chain =
+        LLMChain.new!(%{
+          llm: ChatOpenAI.new!(%{stream: false}),
+          custom_context: %{count: 1}
+        })
+        |> LLMChain.add_tools(fail_if_called)
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Do something"))
+
+      tool_calls = [
+        ToolCall.new!(%{
+          call_id: "call_789",
+          name: "fail_if_called",
+          arguments: %{}
+        })
+      ]
+
+      decisions = [%{type: :reject}]
+
+      updated_chain = LLMChain.execute_tool_calls_with_decisions(chain, tool_calls, decisions)
+
+      assert %Message{role: :tool} = updated_chain.last_message
+      [%ToolResult{} = result] = updated_chain.last_message.tool_results
+
+      assert result.content == [ContentPart.text!("Tool call 'fail_if_called' was rejected by a human reviewer.")]
+      assert result.tool_call_id == "call_789"
+      # Critical: reject is NOT an error (to prevent retries)
+      assert result.is_error == false
+    end
+
+    test "handles multiple tool calls with mixed decisions", %{
+      hello_world: hello_world,
+      greet: greet
+    } do
+      fail_if_called =
+        Function.new!(%{
+          name: "delete_database",
+          description: "Dangerous operation",
+          function: fn _args, _context ->
+            raise "Should not execute rejected tool!"
+          end
+        })
+
+      chain =
+        LLMChain.new!(%{
+          llm: ChatOpenAI.new!(%{stream: false}),
+          custom_context: %{count: 1}
+        })
+        |> LLMChain.add_tools([hello_world, greet, fail_if_called])
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Do multiple things"))
+
+      tool_calls = [
+        ToolCall.new!(%{
+          call_id: "call_1",
+          name: "hello_world",
+          arguments: %{}
+        }),
+        ToolCall.new!(%{
+          call_id: "call_2",
+          name: "greet",
+          arguments: %{"name" => "Alice"}
+        }),
+        ToolCall.new!(%{
+          call_id: "call_3",
+          name: "delete_database",
+          arguments: %{}
+        })
+      ]
+
+      decisions = [
+        %{type: :approve},
+        %{type: :edit, arguments: %{"name" => "Charlie"}},
+        %{type: :reject}
+      ]
+
+      updated_chain = LLMChain.execute_tool_calls_with_decisions(chain, tool_calls, decisions)
+
+      assert %Message{role: :tool} = updated_chain.last_message
+      [result1, result2, result3] = updated_chain.last_message.tool_results
+
+      # First tool approved and executed
+      assert result1.content == [ContentPart.text!("Hello world!")]
+      assert result1.is_error == false
+
+      # Second tool edited and executed with new arguments
+      assert result2.content == [ContentPart.text!("Hi Charlie!")]
+      assert result2.is_error == false
+
+      # Third tool rejected without execution
+      assert result3.content == [ContentPart.text!("Tool call 'delete_database' was rejected by a human reviewer.")]
+      assert result3.is_error == false
+    end
+
+    test "returns error result when tool not found with approve decision" do
+      chain =
+        LLMChain.new!(%{
+          llm: ChatOpenAI.new!(%{stream: false}),
+          custom_context: %{count: 1}
+        })
+        # Note: No tools added
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Do something"))
+
+      tool_calls = [
+        ToolCall.new!(%{
+          call_id: "call_404",
+          name: "nonexistent_tool",
+          arguments: %{}
+        })
+      ]
+
+      decisions = [%{type: :approve}]
+
+      updated_chain = LLMChain.execute_tool_calls_with_decisions(chain, tool_calls, decisions)
+
+      assert %Message{role: :tool} = updated_chain.last_message
+      [%ToolResult{} = result] = updated_chain.last_message.tool_results
+
+      assert result.content == [ContentPart.text!("Tool 'nonexistent_tool' not found")]
+      assert result.is_error == true
+      # Failure count should increment for actual errors
+      assert updated_chain.current_failure_count == 1
+    end
+
+    test "returns error result when tool not found with edit decision" do
+      chain =
+        LLMChain.new!(%{
+          llm: ChatOpenAI.new!(%{stream: false}),
+          custom_context: %{count: 1}
+        })
+        # Note: No tools added
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Do something"))
+
+      tool_calls = [
+        ToolCall.new!(%{
+          call_id: "call_404",
+          name: "missing_tool",
+          arguments: %{"original" => "value"}
+        })
+      ]
+
+      decisions = [%{type: :edit, arguments: %{"edited" => "value"}}]
+
+      updated_chain = LLMChain.execute_tool_calls_with_decisions(chain, tool_calls, decisions)
+
+      assert %Message{role: :tool} = updated_chain.last_message
+      [%ToolResult{} = result] = updated_chain.last_message.tool_results
+
+      assert result.content == [ContentPart.text!("Tool 'missing_tool' not found")]
+      assert result.is_error == true
+      assert updated_chain.current_failure_count == 1
+    end
+
+    test "fires callbacks for tool result message", %{hello_world: hello_world} do
+      test_pid = self()
+
+      handler = %{
+        on_message_processed: fn _chain, tool_msg ->
+          send(test_pid, {:message_processed_callback_fired, tool_msg})
+        end,
+        on_tool_response_created: fn _chain, tool_msg ->
+          send(test_pid, {:response_created_callback_fired, tool_msg})
+        end
+      }
+
+      chain =
+        LLMChain.new!(%{
+          llm: ChatOpenAI.new!(%{stream: false}),
+          custom_context: %{count: 1}
+        })
+        |> LLMChain.add_tools(hello_world)
+        |> LLMChain.add_callback(handler)
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Say hello"))
+
+      tool_calls = [
+        ToolCall.new!(%{
+          call_id: "call_cb",
+          name: "hello_world",
+          arguments: %{}
+        })
+      ]
+
+      decisions = [%{type: :approve}]
+
+      updated_chain = LLMChain.execute_tool_calls_with_decisions(chain, tool_calls, decisions)
+
+      # Verify callbacks were fired
+      assert_receive {:message_processed_callback_fired, callback_message}
+      assert %Message{role: :tool} = callback_message
+
+      assert_receive {:response_created_callback_fired, callback_message}
+      assert %Message{role: :tool} = callback_message
+
+      # Verify the result
+      [%ToolResult{} = result] = updated_chain.last_message.tool_results
+      assert result.content == [ContentPart.text!("Hello world!")]
+    end
+
+    test "resets failure count on successful execution", %{hello_world: hello_world} do
+      chain =
+        LLMChain.new!(%{
+          llm: ChatOpenAI.new!(%{stream: false}),
+          custom_context: %{count: 1}
+        })
+        |> LLMChain.add_tools(hello_world)
+        |> LLMChain.increment_current_failure_count()
+        |> LLMChain.increment_current_failure_count()
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Say hello"))
+
+      assert chain.current_failure_count == 2
+
+      tool_calls = [
+        ToolCall.new!(%{
+          call_id: "call_reset",
+          name: "hello_world",
+          arguments: %{}
+        })
+      ]
+
+      decisions = [%{type: :approve}]
+
+      updated_chain = LLMChain.execute_tool_calls_with_decisions(chain, tool_calls, decisions)
+
+      # Failure count should be reset after successful execution
+      assert updated_chain.current_failure_count == 0
+    end
+
+    test "does not increment failure count for rejected tool calls", %{hello_world: hello_world} do
+      chain =
+        LLMChain.new!(%{
+          llm: ChatOpenAI.new!(%{stream: false}),
+          custom_context: %{count: 1}
+        })
+        |> LLMChain.add_tools(hello_world)
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Say hello"))
+
+      assert chain.current_failure_count == 0
+
+      tool_calls = [
+        ToolCall.new!(%{
+          call_id: "call_reject_no_error",
+          name: "hello_world",
+          arguments: %{}
+        })
+      ]
+
+      decisions = [%{type: :reject}]
+
+      updated_chain = LLMChain.execute_tool_calls_with_decisions(chain, tool_calls, decisions)
+
+      # Rejection should NOT increment failure count (that's the key fix)
+      assert updated_chain.current_failure_count == 0
+
+      [%ToolResult{} = result] = updated_chain.last_message.tool_results
+      assert result.is_error == false
+    end
+
+    test "increments failure count when tool execution raises exception" do
+      error_function =
+        Function.new!(%{
+          name: "explode",
+          description: "Raises an exception",
+          function: fn _args, _context -> raise RuntimeError, "Boom!" end
+        })
+
+      chain =
+        LLMChain.new!(%{
+          llm: ChatOpenAI.new!(%{stream: false}),
+          custom_context: %{count: 1}
+        })
+        |> LLMChain.add_tools(error_function)
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Explode"))
+
+      assert chain.current_failure_count == 0
+
+      tool_calls = [
+        ToolCall.new!(%{
+          call_id: "call_error",
+          name: "explode",
+          arguments: %{}
+        })
+      ]
+
+      decisions = [%{type: :approve}]
+
+      updated_chain = LLMChain.execute_tool_calls_with_decisions(chain, tool_calls, decisions)
+
+      # Exception should increment failure count
+      assert updated_chain.current_failure_count == 1
+
+      [%ToolResult{} = result] = updated_chain.last_message.tool_results
+      assert result.is_error == true
+      [content_part] = result.content
+      assert content_part.content =~ "ERROR: (RuntimeError) Boom!"
+    end
+
+    test "increments failure count only for mixed results with actual errors", %{
+      hello_world: hello_world,
+      greet: greet
+    } do
+      chain =
+        LLMChain.new!(%{
+          llm: ChatOpenAI.new!(%{stream: false}),
+          custom_context: %{count: 1}
+        })
+        |> LLMChain.add_tools([hello_world, greet])
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Do multiple things"))
+
+      assert chain.current_failure_count == 0
+
+      tool_calls = [
+        ToolCall.new!(%{
+          call_id: "call_1",
+          name: "hello_world",
+          arguments: %{}
+        }),
+        ToolCall.new!(%{
+          call_id: "call_2",
+          name: "greet",
+          arguments: %{"name" => "Alice"}
+        }),
+        ToolCall.new!(%{
+          call_id: "call_3",
+          name: "nonexistent",
+          arguments: %{}
+        })
+      ]
+
+      decisions = [
+        %{type: :approve},
+        %{type: :reject},
+        %{type: :approve}
+      ]
+
+      updated_chain = LLMChain.execute_tool_calls_with_decisions(chain, tool_calls, decisions)
+
+      # Should increment because third tool has is_error: true (tool not found)
+      assert updated_chain.current_failure_count == 1
+
+      [result1, result2, result3] = updated_chain.last_message.tool_results
+      assert result1.is_error == false
+      assert result2.is_error == false
+      assert result3.is_error == true
+    end
+  end
+
   describe "add_callback/2" do
     test "appends a callback handler to the list", %{chat: chat} do
       handler1 = %{on_message_processed: fn _chain, _msg -> IO.puts("PROCESSED 1!") end}

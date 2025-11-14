@@ -243,10 +243,19 @@ defmodule LangChain.Agents.Agent do
   def execute(%Agent{} = agent, %State{} = state, opts \\ []) do
     callbacks = Keyword.get(opts, :callbacks)
 
-    with {:ok, prepared_state} <- apply_before_model_hooks(state, agent.middleware),
-         {:ok, response_state} <- execute_model(agent, prepared_state, callbacks),
-         result <- apply_after_model_hooks(response_state, agent.middleware) do
-      result
+    with {:ok, prepared_state} <- apply_before_model_hooks(state, agent.middleware) do
+      case execute_model(agent, prepared_state, callbacks) do
+        {:ok, response_state} ->
+          # Normal completion - run after_model hooks
+          apply_after_model_hooks(response_state, agent.middleware)
+
+        {:interrupt, interrupted_state, interrupt_data} ->
+          # Interrupt from execute_model - return immediately without after_model hooks
+          {:interrupt, interrupted_state, interrupt_data}
+
+        {:error, reason} ->
+          {:error, reason}
+      end
     end
   end
 
@@ -301,7 +310,7 @@ defmodule LangChain.Agents.Agent do
 
       {:ok, final_state} = Agent.resume(agent, state, decisions)
   """
-  def resume(%Agent{} = agent, %State{} = state, decisions, _opts \\ [])
+  def resume(%Agent{} = agent, %State{} = state, decisions, opts \\ [])
       when is_list(decisions) do
     # Find the HumanInTheLoop middleware in the stack
     hitl_middleware =
@@ -314,17 +323,82 @@ defmodule LangChain.Agents.Agent do
         {:error, "Agent does not have HumanInTheLoop middleware configured"}
 
       {module, config} ->
-        # Process the decisions through the middleware
+        # Validate decisions first
         case module.process_decisions(state, decisions, config) do
-          {:ok, updated_state} ->
-            # Continue execution - skip before_model and execute_model phases
-            # Just run remaining after_model hooks if needed
-            # Note: callbacks from opts would be used when AgentServer continues execution
-            {:ok, updated_state}
+          {:ok, ^state} ->
+            # Validation passed, now execute the approved/edited tools
+            execute_approved_tools_and_update_state(
+              agent,
+              state,
+              decisions,
+              opts
+            )
 
           {:error, reason} ->
             {:error, reason}
         end
+    end
+  end
+
+  defp execute_approved_tools_and_update_state(%Agent{} = agent, %State{} = state, decisions, opts) do
+    callbacks = Keyword.get(opts, :callbacks)
+
+    # Rebuild chain to access tools and execute tool calls with decisions
+    with {:ok, langchain_messages} <- validate_messages(state.messages),
+         {:ok, chain} <- build_chain(agent, langchain_messages, state, callbacks) do
+      # Get the assistant message with tool calls
+      assistant_msg =
+        Enum.reverse(state.messages)
+        |> Enum.find(fn msg ->
+          msg.role == :assistant && msg.tool_calls != nil && msg.tool_calls != []
+        end)
+
+      case assistant_msg do
+        nil ->
+          {:error, "No tool calls found in state"}
+
+        %{tool_calls: all_tool_calls} ->
+          # Get interrupt_data from state to determine which tools need HITL
+          interrupt_data = state.interrupt_data || %{}
+          hitl_tool_call_ids = Map.get(interrupt_data, :hitl_tool_call_ids, [])
+          action_requests = Map.get(interrupt_data, :action_requests, [])
+
+          # Build decisions map indexed by tool_call_id
+          decisions_by_id =
+            action_requests
+            |> Enum.zip(decisions)
+            |> Map.new(fn {action_req, decision} ->
+              {action_req.tool_call_id, decision}
+            end)
+
+          # Build full decisions array matching ALL tool calls
+          # Auto-approve non-HITL tools, use human decisions for HITL tools
+          full_decisions =
+            Enum.map(all_tool_calls, fn tc ->
+              if tc.call_id in hitl_tool_call_ids do
+                # Use human decision for HITL tool
+                Map.fetch!(decisions_by_id, tc.call_id)
+              else
+                # Auto-approve non-HITL tool
+                %{type: :approve}
+              end
+            end)
+
+          # Use LLMChain's API to execute tool calls with full decisions
+          # This handles tool execution, callbacks, and adding the tool result message
+          updated_chain = LLMChain.execute_tool_calls_with_decisions(chain, all_tool_calls, full_decisions)
+
+          # Extract the NEW tool result message that was added to the chain
+          # (the last message in the chain's exchanged_messages)
+          tool_result_message = List.last(updated_chain.exchanged_messages)
+
+          # Add the tool result message to our state
+          state_with_results = State.add_message(state, tool_result_message)
+
+          # Continue agent execution with the tool results
+          # This allows the LLM to respond to the tool results
+          execute(agent, state_with_results, opts)
+      end
     end
   end
 
@@ -463,9 +537,26 @@ defmodule LangChain.Agents.Agent do
   defp execute_model(%Agent{} = agent, %State{} = state, callbacks) do
     with {:ok, langchain_messages} <- validate_messages(state.messages),
          {:ok, chain} <- build_chain(agent, langchain_messages, state, callbacks),
-         {:ok, executed_chain} <- execute_chain(chain),
-         {:ok, updated_state} <- extract_state_from_chain(executed_chain, state) do
-      {:ok, updated_state}
+         result <- execute_chain(chain, agent.middleware) do
+      case result do
+        {:ok, executed_chain} ->
+          extract_state_from_chain(executed_chain, state)
+
+        {:interrupt, interrupted_chain, interrupt_data} ->
+          # Tool calls need human approval - return interrupt with current state
+          case extract_state_from_chain(interrupted_chain, state) do
+            {:ok, interrupted_state} ->
+              # Add interrupt_data to state so it's available during resume
+              state_with_interrupt_data = %{interrupted_state | interrupt_data: interrupt_data}
+              {:interrupt, state_with_interrupt_data, interrupt_data}
+
+            {:error, reason} ->
+              {:error, reason}
+          end
+
+        {:error, reason} ->
+          {:error, reason}
+      end
     end
   end
 
@@ -511,16 +602,56 @@ defmodule LangChain.Agents.Agent do
     LLMChain.add_callback(chain, callbacks)
   end
 
-  defp execute_chain(chain) do
-    case LLMChain.run(chain, mode: :while_needs_response) do
-      {:ok, updated_chain} ->
-        {:ok, updated_chain}
+  defp execute_chain(chain, middleware) do
+    # Check if we should use HITL execution mode
+    if has_middleware?(middleware, LangChain.Agents.Middleware.HumanInTheLoop) do
+      execute_chain_with_hitl(chain, middleware)
+    else
+      # Normal execution without interrupts
+      case LLMChain.run(chain, mode: :while_needs_response) do
+        {:ok, updated_chain} ->
+          {:ok, updated_chain}
 
-      {:error, _chain, %LangChainError{} = reason} ->
-        {:error, reason.message}
+        {:error, _chain, %LangChainError{} = reason} ->
+          {:error, reason.message}
+
+        {:error, _chain, reason} ->
+          {:error, "Agent execution failed: #{inspect(reason)}"}
+      end
+    end
+  end
+
+  defp execute_chain_with_hitl(chain, middleware) do
+    # Custom execution loop that checks for interrupts BEFORE executing tools
+    # 1. Call LLM to get a response
+    # 2. Check if response contains tool calls that need approval
+    # 3. If yes, return interrupt WITHOUT executing tools
+    # 4. If no, execute tools and continue loop
+
+    case LLMChain.run(chain) do
+      {:ok, chain_after_llm} ->
+        # Check if we have tool calls that need approval
+        case check_for_interrupts(chain_after_llm, middleware) do
+          {:interrupt, interrupt_data} ->
+            # Stop here - don't execute tools yet
+            {:interrupt, chain_after_llm, interrupt_data}
+
+          :continue ->
+            # No interrupt needed - execute tools and continue
+            chain_after_tools = LLMChain.execute_tool_calls(chain_after_llm)
+
+            # Check if we need to continue (needs_response)
+            if chain_after_tools.needs_response do
+              # Continue the loop
+              execute_chain_with_hitl(chain_after_tools, middleware)
+            else
+              # Done
+              {:ok, chain_after_tools}
+            end
+        end
 
       {:error, _chain, reason} ->
-        {:error, "Agent execution failed: #{inspect(reason)}"}
+        {:error, reason}
     end
   end
 
@@ -555,5 +686,43 @@ defmodule LangChain.Agents.Agent do
     {:ok, final_state}
   rescue
     error -> {:error, "Failed to extract state: #{inspect(error)}"}
+  end
+
+  # HITL (Human-in-the-Loop) helper functions
+
+  defp has_middleware?(middleware_list, target_module) do
+    Enum.any?(middleware_list, fn {module, _config} ->
+      module == target_module
+    end)
+  end
+
+  defp check_for_interrupts(chain, middleware_list) do
+    # Convert chain to state for middleware inspection
+    # We only need the messages for HITL to check tool calls
+    state = %State{
+      messages: chain.exchanged_messages,
+      metadata: %{}
+    }
+
+    # Find the HumanInTheLoop middleware
+    hitl_middleware =
+      Enum.find(middleware_list, fn {module, _config} ->
+        module == LangChain.Agents.Middleware.HumanInTheLoop
+      end)
+
+    case hitl_middleware do
+      nil ->
+        :continue
+
+      {module, config} ->
+        # Check if there are any tool calls that need approval
+        case module.check_for_interrupt(state, config) do
+          {:interrupt, interrupt_data} ->
+            {:interrupt, interrupt_data}
+
+          :continue ->
+            :continue
+        end
+    end
   end
 end

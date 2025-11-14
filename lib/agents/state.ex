@@ -30,6 +30,8 @@ defmodule LangChain.Agents.State do
     field :messages, {:array, :any}, default: [], virtual: true
     field :todos, {:array, :map}, default: []
     field :metadata, :map, default: %{}
+    # Interrupt data for HumanInTheLoop middleware
+    field :interrupt_data, :map, default: nil, virtual: true
   end
 
   @type t :: %State{}
@@ -39,7 +41,7 @@ defmodule LangChain.Agents.State do
   """
   def new(attrs \\ %{}) do
     %State{}
-    |> cast(attrs, [:messages, :todos, :metadata])
+    |> cast(attrs, [:messages, :todos, :metadata, :interrupt_data])
     |> apply_action(:insert)
   end
 
@@ -77,7 +79,8 @@ defmodule LangChain.Agents.State do
     %State{
       messages: merge_messages(left.messages, right.messages),
       todos: merge_todos(left.todos, right.todos),
-      metadata: deep_merge_maps(left.metadata, right.metadata)
+      metadata: deep_merge_maps(left.metadata, right.metadata),
+      interrupt_data: right.interrupt_data || left.interrupt_data
     }
   end
 
