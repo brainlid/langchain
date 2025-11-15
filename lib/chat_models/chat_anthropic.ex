@@ -842,7 +842,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     |> Req.post(
       into:
         Utils.handle_stream_fn(
-          anthropic,
+          Map.take(anthropic, [:stream]),
           &decode_stream(anthropic, &1),
           &do_process_response(anthropic, &1)
         )
@@ -863,11 +863,6 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         )
 
         data
-
-      # The error tuple was successfully received from the API. Unwrap it and
-      # return it as an error.
-      {:ok, {:error, %LangChainError{} = error}} ->
-        {:error, error}
 
       {:error, %Req.TransportError{reason: :timeout} = err} ->
         {:error,
@@ -1406,7 +1401,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   @doc """
   Convert a LangChain structure to the expected map of data for the Anthropic API.
   """
-  @spec for_api(Message.t() | ContentPart.t() | Function.t()) ::
+  @spec for_api(ToolCall.t() | ToolResult.t()) ::
           %{String.t() => any()} | no_return()
   # def for_api(%Message{role: :assistant, tool_calls: calls} = msg)
   #     when is_list(calls) and calls != [] do
