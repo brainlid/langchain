@@ -2243,6 +2243,23 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
                )
     end
 
+    test "turns a file_url ContentPart into the expected JSON format" do
+      expected = %{
+        "type" => "document",
+        "source" => %{
+          "type" => "url",
+          "url" => "https://example.com/myfile.pdf"
+        }
+      }
+
+      result =
+        ChatAnthropic.content_part_for_api(
+          ContentPart.file_url!("https://example.com/myfile.pdf")
+        )
+
+      assert result == expected
+    end
+
     test "cache_control: true uses default settings" do
       part = ContentPart.text!("content", cache_control: true)
 
