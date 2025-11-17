@@ -284,6 +284,11 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
     field :parallel_tool_calls, :boolean
 
+    # Optional fields to only add on supported APIs
+    field :logprobs, :boolean
+
+    field :top_logprobs, :integer
+
     # A list of maps for callback handlers (treated as internal)
     field :callbacks, {:array, :map}, default: []
 
@@ -325,6 +330,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     :user,
     :tool_choice,
     :parallel_tool_calls,
+    :logprobs,
+    :top_logprobs,
     :verbose_api,
     :req_config
   ]
@@ -377,6 +384,18 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     |> validate_number(:frequency_penalty, greater_than_or_equal_to: -2, less_than_or_equal_to: 2)
     |> validate_number(:n, greater_than_or_equal_to: 1)
     |> validate_number(:receive_timeout, greater_than_or_equal_to: 0)
+    |> validate_top_logprobs_requires_logprobs()
+  end
+
+  defp validate_top_logprobs_requires_logprobs(changeset) do
+    logprobs = get_field(changeset, :logprobs)
+    top_logprobs = get_field(changeset, :top_logprobs)
+
+    if top_logprobs && !logprobs do
+      add_error(changeset, :top_logprobs, "requires logprobs to be enabled")
+    else
+      changeset
+    end
   end
 
   @doc """
@@ -422,6 +441,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(openai, tools))
     |> Utils.conditionally_add_to_map(:tool_choice, get_tool_choice(openai))
     |> Utils.conditionally_add_to_map(:parallel_tool_calls, openai.parallel_tool_calls)
+    |> Utils.conditionally_add_to_map(:logprobs, openai.logprobs)
+    |> Utils.conditionally_add_to_map(:top_logprobs, openai.top_logprobs)
   end
 
   defp get_tools_for_api(%_{} = _model, nil), do: []
@@ -1000,11 +1021,13 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         :skip
 
       %{"choices" => choices} ->
+        logprobs = extract_response_logprobs(data)
         # process each response individually. Return a list of all processed
         # choices. If we received TokenUsage, attach it to each returned item.
         # Merging will work out later.
         choices
         |> Enum.map(&do_process_response(model, &1))
+        |> Enum.map(&put_in(&1.metadata, %{logprobs: logprobs}))
         |> Enum.map(&TokenUsage.set(&1, token_usage))
     end
   end
@@ -1049,7 +1072,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           nil
       end
 
-    # more explicitly interpret the role. We treat a "function_call" as a a role
+    # more explicitly interpret the role. We treat a "function_call" as a role
     # while OpenAI addresses it as an "assistant". Technically, they are correct
     # that the assistant is issuing the function_call.
     role =
@@ -1186,6 +1209,20 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   def do_process_response(_model, other) do
     Logger.error("Trying to process an unexpected response. #{inspect(other)}")
     {:error, LangChainError.exception(message: "Unexpected response", original: other)}
+  end
+
+  defp extract_response_logprobs(response_data) do
+    # Add logprobs information from choices (include even if nil)
+    case Map.get(response_data, "choices") do
+      choices when is_list(choices) ->
+        case choices do
+          [single_choice] -> Map.get(single_choice, "logprobs")
+          multiple_choices -> Enum.map(multiple_choices, &Map.get(&1, "logprobs"))
+        end
+
+      _ ->
+        nil
+    end
   end
 
   defp finish_reason_to_status(nil), do: :incomplete
