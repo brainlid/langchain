@@ -385,6 +385,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     |> validate_number(:n, greater_than_or_equal_to: 1)
     |> validate_number(:receive_timeout, greater_than_or_equal_to: 0)
     |> validate_top_logprobs_requires_logprobs()
+    |> validate_number(:top_logprobs, greater_than_or_equal_to: 0, less_than_or_equal_to: 20)
   end
 
   defp validate_top_logprobs_requires_logprobs(changeset) do
