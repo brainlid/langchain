@@ -479,6 +479,10 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     # Can include TTL: %{enabled: true, ttl: "1h"} or %{enabled: true, ttl: "5m"}
     # Set to %{enabled: false} or nil to disable automatic message caching.
     field :cache_messages, :map
+
+    # Req options (as a map) to merge into the request.
+    # https://hexdocs.pm/req/Req.html#new/1-options
+    field :req_config, :map, default: %{}
   end
 
   @type t :: %ChatAnthropic{}
@@ -498,7 +502,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     :tool_choice,
     :beta_headers,
     :verbose_api,
-    :cache_messages
+    :cache_messages,
+    :req_config
   ]
   @required_fields [:endpoint, :model]
 
@@ -747,6 +752,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         retry_delay: fn attempt -> 300 * attempt end,
         aws_sigv4: aws_sigv4_opts(anthropic.bedrock)
       )
+      |> Req.merge(anthropic.req_config |> Keyword.new())
 
     req
     |> Req.post()
@@ -839,6 +845,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       aws_sigv4: aws_sigv4_opts(anthropic.bedrock),
       retry: :transient
     )
+    |> Req.merge(anthropic.req_config |> Keyword.new())
     |> Req.post(
       into:
         Utils.handle_stream_fn(
