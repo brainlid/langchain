@@ -1376,7 +1376,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
         {:error, RuntimeError.exception("Something went wrong")}
       end)
 
-      model = ChatAnthropic.new!(%{stream: true, model: @test_model, req_config: %{retry: false}})
+      model = ChatAnthropic.new!(%{stream: true, model: @test_model, req_opts: [retry: false]})
 
       assert {:error, %LangChainError{message: error_message}} =
                ChatAnthropic.call(model, "prompt", [])
@@ -1392,7 +1392,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
       end)
 
       model =
-        ChatAnthropic.new!(%{stream: false, model: @test_model, req_config: %{retry: false}})
+        ChatAnthropic.new!(%{stream: false, model: @test_model, req_opts: [retry: false]})
 
       assert {:error, %LangChainError{message: error_message}} =
                ChatAnthropic.call(model, "prompt", [])
