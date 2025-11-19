@@ -647,7 +647,8 @@ defmodule LangChain.ChatModels.ChatGrok do
         {:error,
          LangChainError.exception(
            type: :unexpected_response,
-           message: "Unexpected response: #{inspect(other)}"
+           message: "Unexpected response: #{inspect(other)}",
+           original: other
          )}
     end
   end
