@@ -1369,6 +1369,37 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
       assert tool_call.arguments == %{"value" => "test value"}
     end
 
+    test "merges req_opts into the request (streaming)" do
+      expect(Req, :post, fn req_struct, _opts ->
+        assert req_struct.options.retry == false
+
+        {:error, RuntimeError.exception("Something went wrong")}
+      end)
+
+      model = ChatAnthropic.new!(%{stream: true, model: @test_model, req_opts: [retry: false]})
+
+      assert {:error, %LangChainError{message: error_message}} =
+               ChatAnthropic.call(model, "prompt", [])
+
+      assert error_message =~ "Something went wrong"
+    end
+
+    test "merges req_opts into the request (non-streaming)" do
+      expect(Req, :post, fn req_struct ->
+        assert req_struct.options.retry == false
+
+        {:error, RuntimeError.exception("Something went wrong")}
+      end)
+
+      model =
+        ChatAnthropic.new!(%{stream: false, model: @test_model, req_opts: [retry: false]})
+
+      assert {:error, %LangChainError{message: error_message}} =
+               ChatAnthropic.call(model, "prompt", [])
+
+      assert error_message =~ "Something went wrong"
+    end
+
     test "returns error tuple when receiving overloaded_error" do
       # Made NOT LIVE here
       expect(Req, :post, fn _req_struct, _opts ->
