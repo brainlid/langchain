@@ -1450,9 +1450,14 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
         assert_received {:fired_response_headers, response_headers}
 
         assert %{
-                 "connection" => ["keep-alive"],
-                 "content-type" => ["application/vnd.amazon.eventstream"]
+                 "connection" => ["keep-alive"]
                } = response_headers
+
+        if api == :anthropic_bedrock do
+          assert response_headers["content-type"] == ["application/vnd.amazon.eventstream"]
+        else
+          assert response_headers["content-type"] == ["text/event-stream; charset=utf-8"]
+        end
       end
     end
   end
