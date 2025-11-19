@@ -3032,7 +3032,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
                "api_version" => "2023-06-01",
                "top_k" => nil,
                "top_p" => nil,
-               "beta_headers" => ["tools-2024-04-04", "structured-outputs-2025-11-13"],
+               "beta_headers" => ["structured-outputs-2025-11-13"],
                "module" => "Elixir.LangChain.ChatModels.ChatAnthropic",
                "version" => 1
              }
@@ -3085,11 +3085,9 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       ChatAnthropic.call(model, "prompt", [])
     end
 
-    test "defaults to tools-2024-04-04 when beta_headers is not provided" do
+    test "defaults to structured-outputs-2025-11-13 when beta_headers is not provided" do
       expect(Req, :post, fn req_struct, _opts ->
-        assert req_struct.headers["anthropic-beta"] == [
-                 "tools-2024-04-04,structured-outputs-2025-11-13"
-               ]
+        assert req_struct.headers["anthropic-beta"] == ["structured-outputs-2025-11-13"]
       end)
 
       model = ChatAnthropic.new!(%{stream: true, model: @test_model})

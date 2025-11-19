@@ -467,9 +467,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     field :tool_choice, :map
 
     # Beta headers
-    # https://docs.anthropic.com/claude/docs/tool-use - requires tools-2024-04-04 header during beta
-    field :beta_headers, {:array, :string},
-      default: ["tools-2024-04-04", "structured-outputs-2025-11-13"]
+    # https://docs.claude.com/en/docs/build-with-claude/structured-outputs - for strict tool use
+    field :beta_headers, {:array, :string}, default: ["structured-outputs-2025-11-13"]
 
     # Additional level of raw api request and response data
     field :verbose_api, :boolean, default: false
