@@ -18,7 +18,8 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
   alias LangChain.LangChainError
   alias LangChain.Utils.BedrockStreamDecoder
 
-  @test_model "claude-3-5-sonnet-20241022"
+  @test_model "claude-haiku-4-5"
+  @sonnet_4_5 "claude-sonnet-4-5"
   @bedrock_test_model "anthropic.claude-3-5-sonnet-20241022-v2:0"
   @claude_3_7 "claude-3-7-sonnet-20250219"
   @apis [:anthropic, :anthropic_bedrock]
@@ -306,7 +307,8 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
                      },
                      "required" => ["person"],
                      "type" => "object"
-                   }
+                   },
+                   "strict" => false
                  }
                ]
     end
@@ -1333,11 +1335,11 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
     end
 
     @tag live_call: true, live_anthropic: true
-    test "handles tool_call with text content response when NOT streaming" do
+    test "handles strict tool_call with text content response when NOT streaming" do
       chat =
         ChatAnthropic.new!(%{
           stream: false,
-          model: @claude_3_7,
+          model: @sonnet_4_5,
           verbose_api: false
         })
 
@@ -1352,8 +1354,14 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
           [
             Function.new!(%{
               name: "do_thing",
-              parameters: [FunctionParam.new!(%{type: :string, name: "value", required: true})],
-              function: fn _args, _context -> :ok end
+              parameters_schema: %{
+                "type" => "object",
+                "properties" => %{"value" => %{"type" => "string"}},
+                "required" => ["value"],
+                "additionalProperties" => false
+              },
+              function: fn _args, _context -> :ok end,
+              strict: true
             })
           ]
         )
@@ -2288,7 +2296,8 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 
       assert output == %{
                "name" => "do_something",
-               "input_schema" => %{"properties" => %{}, "type" => "object"}
+               "input_schema" => %{"properties" => %{}, "type" => "object"},
+               "strict" => false
              }
 
       # with no parameters but has description
@@ -2305,7 +2314,8 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       assert output == %{
                "name" => "do_something",
                "description" => "Does something",
-               "input_schema" => %{"properties" => %{}, "type" => "object"}
+               "input_schema" => %{"properties" => %{}, "type" => "object"},
+               "strict" => false
              }
 
       # with parameters
@@ -2345,7 +2355,8 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
                    }
                  },
                  "required" => ["person"]
-               }
+               },
+               "strict" => false
              }
     end
 
@@ -2363,7 +2374,28 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       assert output == %{
                "name" => "do_something",
                "input_schema" => %{"properties" => %{}, "type" => "object"},
-               "cache_control" => %{"type" => "ephemeral"}
+               "cache_control" => %{"type" => "ephemeral"},
+               "strict" => false
+             }
+    end
+
+    test "supports strict mode on the function definition" do
+      json_schema = %{"properties" => %{}, "type" => "object", "additionalProperties" => false}
+
+      tool =
+        Function.new!(%{
+          name: "do_something",
+          parameters_schema: json_schema,
+          function: fn _args, _context -> :ok end,
+          strict: true
+        })
+
+      output = ChatAnthropic.function_for_api(tool)
+
+      assert output == %{
+               "name" => "do_something",
+               "input_schema" => json_schema,
+               "strict" => true
              }
     end
 
@@ -2376,7 +2408,8 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       assert result == %{
                "name" => "hello_world",
                #  NOTE: Sends the required empty parameter definition when none set
-               "input_schema" => %{"properties" => %{}, "type" => "object"}
+               "input_schema" => %{"properties" => %{}, "type" => "object"},
+               "strict" => false
              }
     end
 
@@ -2408,7 +2441,8 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       assert result == %{
                "name" => "say_hi",
                "description" => "Provide a friendly greeting.",
-               "input_schema" => params_def
+               "input_schema" => params_def,
+               "strict" => false
              }
     end
   end
@@ -2998,7 +3032,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
                "api_version" => "2023-06-01",
                "top_k" => nil,
                "top_p" => nil,
-               "beta_headers" => ["tools-2024-04-04"],
+               "beta_headers" => ["tools-2024-04-04", "structured-outputs-2025-11-13"],
                "module" => "Elixir.LangChain.ChatModels.ChatAnthropic",
                "version" => 1
              }
@@ -3053,7 +3087,9 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 
     test "defaults to tools-2024-04-04 when beta_headers is not provided" do
       expect(Req, :post, fn req_struct, _opts ->
-        assert req_struct.headers["anthropic-beta"] == ["tools-2024-04-04"]
+        assert req_struct.headers["anthropic-beta"] == [
+                 "tools-2024-04-04,structured-outputs-2025-11-13"
+               ]
       end)
 
       model = ChatAnthropic.new!(%{stream: true, model: @test_model})

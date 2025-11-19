@@ -468,7 +468,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
     # Beta headers
     # https://docs.anthropic.com/claude/docs/tool-use - requires tools-2024-04-04 header during beta
-    field :beta_headers, {:array, :string}, default: ["tools-2024-04-04"]
+    field :beta_headers, {:array, :string},
+      default: ["tools-2024-04-04", "structured-outputs-2025-11-13"]
 
     # Additional level of raw api request and response data
     field :verbose_api, :boolean, default: false
@@ -1496,7 +1497,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     # I'm here
     %{
       "name" => fun.name,
-      "input_schema" => get_parameters(fun)
+      "input_schema" => get_parameters(fun),
+      "strict" => fun.strict
     }
     |> Utils.conditionally_add_to_map("description", fun.description)
     |> Utils.conditionally_add_to_map("cache_control", get_cache_control_setting(fun.options))
