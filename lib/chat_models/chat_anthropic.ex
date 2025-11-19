@@ -1499,6 +1499,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       "input_schema" => get_parameters(fun)
     }
     |> then(fn map ->
+      # Don't add the strict flag when fun.strict is nil or false.
+      # Sending strict: false to models that don't support strict tools causes an error.
       if fun.strict do
         Map.put(map, "strict", fun.strict)
       else
