@@ -1452,7 +1452,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
 
         assert %{
                  "connection" => ["keep-alive"],
-                 "content-type" => ["text/event-stream; charset=utf-8"]
+                 "content-type" => ["application/vnd.amazon.eventstream"]
                } = response_headers
       end
     end
