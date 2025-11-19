@@ -1496,9 +1496,15 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     # I'm here
     %{
       "name" => fun.name,
-      "input_schema" => get_parameters(fun),
-      "strict" => fun.strict
+      "input_schema" => get_parameters(fun)
     }
+    |> then(fn map ->
+      if fun.strict do
+        Map.put(map, "strict", fun.strict)
+      else
+        map
+      end
+    end)
     |> Utils.conditionally_add_to_map("description", fun.description)
     |> Utils.conditionally_add_to_map("cache_control", get_cache_control_setting(fun.options))
   end

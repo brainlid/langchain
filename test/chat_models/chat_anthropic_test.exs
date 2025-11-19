@@ -307,8 +307,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
                      },
                      "required" => ["person"],
                      "type" => "object"
-                   },
-                   "strict" => false
+                   }
                  }
                ]
     end
@@ -2296,8 +2295,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 
       assert output == %{
                "name" => "do_something",
-               "input_schema" => %{"properties" => %{}, "type" => "object"},
-               "strict" => false
+               "input_schema" => %{"properties" => %{}, "type" => "object"}
              }
 
       # with no parameters but has description
@@ -2314,8 +2312,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       assert output == %{
                "name" => "do_something",
                "description" => "Does something",
-               "input_schema" => %{"properties" => %{}, "type" => "object"},
-               "strict" => false
+               "input_schema" => %{"properties" => %{}, "type" => "object"}
              }
 
       # with parameters
@@ -2355,8 +2352,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
                    }
                  },
                  "required" => ["person"]
-               },
-               "strict" => false
+               }
              }
     end
 
@@ -2374,8 +2370,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       assert output == %{
                "name" => "do_something",
                "input_schema" => %{"properties" => %{}, "type" => "object"},
-               "cache_control" => %{"type" => "ephemeral"},
-               "strict" => false
+               "cache_control" => %{"type" => "ephemeral"}
              }
     end
 
@@ -2408,8 +2403,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       assert result == %{
                "name" => "hello_world",
                #  NOTE: Sends the required empty parameter definition when none set
-               "input_schema" => %{"properties" => %{}, "type" => "object"},
-               "strict" => false
+               "input_schema" => %{"properties" => %{}, "type" => "object"}
              }
     end
 
@@ -2441,8 +2435,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       assert result == %{
                "name" => "say_hi",
                "description" => "Provide a friendly greeting.",
-               "input_schema" => params_def,
-               "strict" => false
+               "input_schema" => params_def
              }
     end
   end
