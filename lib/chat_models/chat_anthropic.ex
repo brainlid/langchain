@@ -467,8 +467,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     field :tool_choice, :map
 
     # Beta headers
-    # https://docs.anthropic.com/claude/docs/tool-use - requires tools-2024-04-04 header during beta
-    field :beta_headers, {:array, :string}, default: ["tools-2024-04-04"]
+    # https://docs.claude.com/en/docs/build-with-claude/structured-outputs - for strict tool use
+    field :beta_headers, {:array, :string}, default: ["structured-outputs-2025-11-13"]
 
     # Additional level of raw api request and response data
     field :verbose_api, :boolean, default: false
@@ -1505,6 +1505,15 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       "name" => fun.name,
       "input_schema" => get_parameters(fun)
     }
+    |> then(fn map ->
+      # Don't add the strict flag when fun.strict is nil or false.
+      # Sending strict: false to models that don't support strict tools causes an error.
+      if fun.strict do
+        Map.put(map, "strict", fun.strict)
+      else
+        map
+      end
+    end)
     |> Utils.conditionally_add_to_map("description", fun.description)
     |> Utils.conditionally_add_to_map("cache_control", get_cache_control_setting(fun.options))
   end
