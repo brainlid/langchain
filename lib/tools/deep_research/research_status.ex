@@ -17,6 +17,15 @@ defmodule LangChain.Tools.DeepResearch.ResearchStatus do
           progress_info: map() | nil
         }
 
+  @type precast_t() :: %__MODULE__{
+          id: String.t() | nil,
+          status: String.t() | nil,
+          created_at: integer() | nil,
+          error_message: String.t() | nil,
+          error_code: String.t() | nil,
+          progress_info: map() | nil
+        }
+
   @primary_key false
   embedded_schema do
     field :id, :string
@@ -32,7 +41,7 @@ defmodule LangChain.Tools.DeepResearch.ResearchStatus do
   @doc """
   Creates a changeset for research status.
   """
-  @spec changeset(__MODULE__.t(), map()) :: Ecto.Changeset.t()
+  @spec changeset(__MODULE__.precast_t(), map()) :: Ecto.Changeset.t()
   def changeset(status \\ %__MODULE__{}, attrs) do
     status
     |> cast(attrs, [:id, :status, :created_at, :error_message, :error_code, :progress_info])

@@ -700,7 +700,7 @@ defmodule LangChain.ChatModels.ChatOrq do
     |> Req.post(
       into:
         Utils.handle_stream_fn(
-          orq,
+          Map.take(orq, [:stream]),
           &decode_stream/1,
           &do_process_response(orq, &1)
         )
@@ -744,7 +744,7 @@ defmodule LangChain.ChatModels.ChatOrq do
   # Parse responses (compatible with OpenAI-like shapes used by orq)
   @doc false
   @spec do_process_response(
-          %{:callbacks => [map()]},
+          t(),
           data :: %{String.t() => any()} | {:error, any()}
         ) ::
           :skip
@@ -752,7 +752,7 @@ defmodule LangChain.ChatModels.ChatOrq do
           | [Message.t()]
           | MessageDelta.t()
           | [MessageDelta.t()]
-          | {:error, String.t()}
+          | {:error, LangChainError.t()}
   def do_process_response(model, %{"choices" => _choices} = data) do
     token_usage = get_token_usage(data)
 

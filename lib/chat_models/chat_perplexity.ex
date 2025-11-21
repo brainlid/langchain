@@ -427,7 +427,7 @@ defmodule LangChain.ChatModels.ChatPerplexity do
     |> Req.post(
       into:
         Utils.handle_stream_fn(
-          perplexity,
+          Map.take(perplexity, [:stream]),
           &decode_stream/1,
           &process_stream_chunk(perplexity, &1)
         )

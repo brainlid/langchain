@@ -876,7 +876,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     |> Req.post(
       into:
         Utils.handle_stream_fn(
-          openai,
+          Map.take(openai, [:stream]),
           &decode_stream/1,
           &do_process_response(openai, &1)
         )
@@ -979,7 +979,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   # Parse a new message response
   @doc false
   @spec do_process_response(
-          %{:callbacks => [map()]},
+          t(),
           data :: %{String.t() => any()} | {:error, any()}
         ) ::
           :skip
@@ -987,7 +987,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           | [Message.t()]
           | MessageDelta.t()
           | [MessageDelta.t()]
-          | {:error, String.t()}
+          | {:error, LangChainError.t()}
   def do_process_response(model, %{"choices" => _choices} = data) do
     token_usage = get_token_usage(data)
 
