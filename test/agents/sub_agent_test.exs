@@ -1,10 +1,10 @@
 defmodule LangChain.Agents.SubAgentTest do
   use ExUnit.Case, async: true
 
-  alias LangChain.Agents.{SubAgent, Agent, State, Todo}
+  alias LangChain.Agents.SubAgent
+  alias LangChain.Agents.Agent
   alias LangChain.Function
   alias LangChain.ChatModels.ChatAnthropic
-  alias LangChain.Message
 
   # Import SubAgent structs directly to avoid module name conflicts
   alias LangChain.Agents.SubAgent.Config, as: SubAgentConfig
@@ -29,15 +29,15 @@ defmodule LangChain.Agents.SubAgentTest do
 
   # Helper to create a test agent
   defp test_agent do
-    Agent.new!(
+    Agent.new!(%{
       model: test_model(),
       system_prompt: "Test agent",
       replace_default_middleware: true,
       middleware: []
-    )
+    })
   end
 
-  describe "SubAgent.SubAgentConfig.new/1" do
+  describe "SubAgentConfig.new/1" do
     test "creates config with required fields" do
       attrs = %{
         name: "test-agent",
@@ -197,7 +197,7 @@ defmodule LangChain.Agents.SubAgentTest do
     end
   end
 
-  describe "SubAgent.SubAgentConfig.new!/1" do
+  describe "SubAgentConfig.new!/1" do
     test "returns config on success" do
       attrs = %{
         name: "test",
@@ -222,7 +222,7 @@ defmodule LangChain.Agents.SubAgentTest do
     end
   end
 
-  describe "SubAgent.SubAgentCompiled.new/1" do
+  describe "SubAgentCompiled.new/1" do
     test "creates compiled config with required fields" do
       agent = test_agent()
 
@@ -304,7 +304,7 @@ defmodule LangChain.Agents.SubAgentTest do
     end
   end
 
-  describe "SubAgent.SubAgentCompiled.new!/1" do
+  describe "SubAgentCompiled.new!/1" do
     test "returns compiled on success" do
       attrs = %{
         name: "test",
@@ -327,7 +327,108 @@ defmodule LangChain.Agents.SubAgentTest do
     end
   end
 
-  describe "SubAgent.build_registry/3" do
+  describe "SubAgentCompiled initial_messages" do
+    test "creates compiled with initial_messages" do
+      agent = test_agent()
+
+      messages = [
+        LangChain.Message.new_user!("Test question"),
+        LangChain.Message.new_assistant!("Test response")
+      ]
+
+      attrs = %{
+        name: "test",
+        description: "Test",
+        agent: agent,
+        initial_messages: messages
+      }
+
+      assert {:ok, compiled} = SubAgentCompiled.new(attrs)
+      assert length(compiled.initial_messages) == 2
+      assert Enum.at(compiled.initial_messages, 0).role == :user
+      assert Enum.at(compiled.initial_messages, 1).role == :assistant
+    end
+
+    test "defaults initial_messages to empty list when not provided" do
+      attrs = %{
+        name: "test",
+        description: "Test",
+        agent: test_agent()
+      }
+
+      assert {:ok, compiled} = SubAgentCompiled.new(attrs)
+      assert compiled.initial_messages == []
+    end
+
+    test "treats nil initial_messages as empty list" do
+      attrs = %{
+        name: "test",
+        description: "Test",
+        agent: test_agent(),
+        initial_messages: nil
+      }
+
+      assert {:ok, compiled} = SubAgentCompiled.new(attrs)
+      assert compiled.initial_messages == []
+    end
+
+    test "validates initial_messages must be list of Message structs" do
+      attrs = %{
+        name: "test",
+        description: "Test",
+        agent: test_agent(),
+        initial_messages: ["not a message"]
+      }
+
+      assert {:error, changeset} = SubAgentCompiled.new(attrs)
+      assert %{initial_messages: ["must be a list of Message structs"]} = errors_on(changeset)
+    end
+
+    test "validates initial_messages must be a list" do
+      attrs = %{
+        name: "test",
+        description: "Test",
+        agent: test_agent(),
+        initial_messages: "not a list"
+      }
+
+      assert {:error, changeset} = SubAgentCompiled.new(attrs)
+      errors = errors_on(changeset)
+
+      # Should have an error on initial_messages field (Ecto returns "is invalid" for type mismatch)
+      assert errors[:initial_messages]
+      assert is_list(errors[:initial_messages])
+      assert length(errors[:initial_messages]) > 0
+    end
+
+    test "accepts empty list for initial_messages" do
+      attrs = %{
+        name: "test",
+        description: "Test",
+        agent: test_agent(),
+        initial_messages: []
+      }
+
+      assert {:ok, compiled} = SubAgentCompiled.new(attrs)
+      assert compiled.initial_messages == []
+    end
+
+    test "validates mixed list with non-Message items" do
+      message = LangChain.Message.new_user!("Valid message")
+
+      attrs = %{
+        name: "test",
+        description: "Test",
+        agent: test_agent(),
+        initial_messages: [message, "not a message"]
+      }
+
+      assert {:error, changeset} = SubAgentCompiled.new(attrs)
+      assert %{initial_messages: ["must be a list of Message structs"]} = errors_on(changeset)
+    end
+  end
+
+  describe "build_agent_map/3" do
     test "builds registry from Config subagents" do
       model = test_model()
       middleware = []
@@ -347,7 +448,7 @@ defmodule LangChain.Agents.SubAgentTest do
         })
       ]
 
-      assert {:ok, registry} = SubAgent.build_registry(configs, model, middleware)
+      assert {:ok, registry} = SubAgent.build_agent_map(configs, model, middleware)
       assert map_size(registry) == 2
       assert %Agent{} = registry["agent1"]
       assert %Agent{} = registry["agent2"]
@@ -358,28 +459,41 @@ defmodule LangChain.Agents.SubAgentTest do
       agent1 = test_agent()
       agent2 = test_agent()
 
-      configs = [
+      compiled1 =
         SubAgentCompiled.new!(%{
           name: "custom1",
           description: "Custom 1",
           agent: agent1
-        }),
+        })
+
+      compiled2 =
         SubAgentCompiled.new!(%{
           name: "custom2",
           description: "Custom 2",
           agent: agent2
         })
-      ]
 
-      assert {:ok, registry} = SubAgent.build_registry(configs, model, [])
+      configs = [compiled1, compiled2]
+
+      assert {:ok, registry} = SubAgent.build_agent_map(configs, model, [])
       assert map_size(registry) == 2
-      assert registry["custom1"] == agent1
-      assert registry["custom2"] == agent2
+      # Registry now stores entire Compiled struct to preserve metadata
+      assert %SubAgentCompiled{} = registry["custom1"]
+      assert registry["custom1"].agent == agent1
+      assert %SubAgentCompiled{} = registry["custom2"]
+      assert registry["custom2"].agent == agent2
     end
 
     test "builds registry from mixed Config and Compiled" do
       model = test_model()
       pre_built = test_agent()
+
+      compiled_config =
+        SubAgentCompiled.new!(%{
+          name: "compiled",
+          description: "Compiled agent",
+          agent: pre_built
+        })
 
       configs = [
         SubAgentConfig.new!(%{
@@ -388,17 +502,15 @@ defmodule LangChain.Agents.SubAgentTest do
           system_prompt: "Dynamic",
           tools: [test_tool()]
         }),
-        SubAgentCompiled.new!(%{
-          name: "compiled",
-          description: "Compiled agent",
-          agent: pre_built
-        })
+        compiled_config
       ]
 
-      assert {:ok, registry} = SubAgent.build_registry(configs, model, [])
+      assert {:ok, registry} = SubAgent.build_agent_map(configs, model, [])
       assert map_size(registry) == 2
       assert %Agent{} = registry["dynamic"]
-      assert registry["compiled"] == pre_built
+      # Registry now stores entire Compiled struct
+      assert %SubAgentCompiled{} = registry["compiled"]
+      assert registry["compiled"].agent == pre_built
     end
 
     test "Config subagent uses default model when not specified" do
@@ -413,7 +525,7 @@ defmodule LangChain.Agents.SubAgentTest do
         })
       ]
 
-      assert {:ok, registry} = SubAgent.build_registry(configs, model, [])
+      assert {:ok, registry} = SubAgent.build_agent_map(configs, model, [])
       agent = registry["agent"]
       assert agent.model == model
     end
@@ -432,7 +544,7 @@ defmodule LangChain.Agents.SubAgentTest do
         })
       ]
 
-      assert {:ok, registry} = SubAgent.build_registry(configs, default_model, [])
+      assert {:ok, registry} = SubAgent.build_agent_map(configs, default_model, [])
       agent = registry["agent"]
       assert agent.model == custom_model
     end
@@ -450,7 +562,7 @@ defmodule LangChain.Agents.SubAgentTest do
         })
       ]
 
-      assert {:ok, registry} = SubAgent.build_registry(configs, model, [])
+      assert {:ok, registry} = SubAgent.build_agent_map(configs, model, [])
       agent = registry["agent"]
       # Middleware should be appended
       assert Enum.any?(agent.middleware, fn
@@ -473,19 +585,19 @@ defmodule LangChain.Agents.SubAgentTest do
         })
       ]
 
-      assert {:error, reason} = SubAgent.build_registry(configs, model, [])
+      assert {:error, reason} = SubAgent.build_agent_map(configs, model, [])
       assert reason =~ "Failed to build subagent registry"
     end
 
     test "handles empty configs list" do
       model = test_model()
 
-      assert {:ok, registry} = SubAgent.build_registry([], model, [])
+      assert {:ok, registry} = SubAgent.build_agent_map([], model, [])
       assert registry == %{}
     end
   end
 
-  describe "SubAgent.build_registry!/3" do
+  describe "build_agent_map!/3" do
     test "returns registry on success" do
       model = test_model()
 
@@ -498,7 +610,7 @@ defmodule LangChain.Agents.SubAgentTest do
         })
       ]
 
-      registry = SubAgent.build_registry!(configs, model, [])
+      registry = SubAgent.build_agent_map!(configs, model, [])
       assert is_map(registry)
       assert map_size(registry) == 1
     end
@@ -516,12 +628,12 @@ defmodule LangChain.Agents.SubAgentTest do
       ]
 
       assert_raise LangChain.LangChainError, fn ->
-        SubAgent.build_registry!(configs, model, [])
+        SubAgent.build_agent_map!(configs, model, [])
       end
     end
   end
 
-  describe "SubAgent.build_descriptions/1" do
+  describe "build_descriptions/1" do
     test "builds descriptions map from configs" do
       configs = [
         SubAgentConfig.new!(%{
@@ -587,7 +699,7 @@ defmodule LangChain.Agents.SubAgentTest do
     end
   end
 
-  describe "SubAgent.subagent_middleware_stack/2" do
+  describe "subagent_middleware_stack/2" do
     test "filters out SubAgent middleware from defaults" do
       default_middleware = [
         {LangChain.Agents.Middleware.TodoList, []},
@@ -659,251 +771,294 @@ defmodule LangChain.Agents.SubAgentTest do
     end
   end
 
-  describe "SubAgent.excluded_state_keys/0" do
-    test "returns the list of excluded state keys" do
-      keys = SubAgent.excluded_state_keys()
-      assert :messages in keys
-      assert :todos in keys
-      assert length(keys) == 2
-    end
-  end
+  describe "new_from_config/1" do
+    test "creates SubAgent with proper initialization" do
+      agent_config = test_agent()
 
-  describe "SubAgent.prepare_subagent_state/2" do
-    test "creates fresh conversation with task description" do
-      parent_state =
-        State.new!(%{
-          messages: [
-            Message.new_user!("Original task"),
-            Message.new_assistant!("Response")
-          ],
-          files: %{"data.txt" => "content"},
-          todos: [Todo.new!(%{content: "Parent todo"})]
-        })
+      parent_state = %{messages: []}
 
-      subagent_state =
-        SubAgent.prepare_subagent_state(
-          "Research renewable energy",
-          parent_state
+      subagent =
+        SubAgent.new_from_config(
+          parent_agent_id: "test-parent",
+          instructions: "Do something",
+          agent_config: agent_config,
+          parent_state: parent_state
         )
 
-      # Fresh conversation with single user message
-      assert length(subagent_state.messages) == 1
-      assert [msg] = subagent_state.messages
-      assert msg.role == :user
-      # Content can be string or list of ContentParts
-      content_text =
-        case msg.content do
-          text when is_binary(text) -> text
-          [%{content: text} | _] -> text
-          _ -> ""
-        end
-
-      assert content_text =~ "renewable energy"
+      assert %SubAgent{} = subagent
+      assert subagent.status == :idle
+      assert subagent.parent_agent_id == "test-parent"
+      assert String.starts_with?(subagent.id, "test-parent-sub-")
+      assert subagent.chain != nil
+      assert subagent.interrupt_on == %{}
     end
 
-    # NOTE: Files are now managed by FileSystemServer, not State
-    # So SubAgents automatically share the parent's filesystem via the shared FileSystemServer
-
-    test "starts with empty todos" do
-      parent_state =
-        State.new!(%{
-          todos: [
-            Todo.new!(%{content: "Parent todo 1"}),
-            Todo.new!(%{content: "Parent todo 2"})
+    test "stores interrupt_on from agent_config middleware" do
+      agent_config =
+        Agent.new!(%{
+          model: test_model(),
+          system_prompt: "Test",
+          replace_default_middleware: true,
+          middleware: [
+            {LangChain.Agents.Middleware.HumanInTheLoop,
+             [interrupt_on: %{"dangerous_tool" => true}]}
           ]
         })
 
-      subagent_state =
-        SubAgent.prepare_subagent_state(
-          "Do something",
-          parent_state
+      subagent =
+        SubAgent.new_from_config(
+          parent_agent_id: "test",
+          instructions: "Task",
+          agent_config: agent_config,
+          parent_state: %{messages: []}
         )
 
-      assert subagent_state.todos == []
-    end
-
-    test "inherits metadata from parent" do
-      parent_state =
-        State.new!(%{
-          metadata: %{key: "value", nested: %{data: 123}}
-        })
-
-      subagent_state =
-        SubAgent.prepare_subagent_state(
-          "Do something",
-          parent_state
-        )
-
-      assert subagent_state.metadata == parent_state.metadata
+      # HumanInTheLoop middleware transforms true into a config map
+      assert subagent.interrupt_on == %{
+               "dangerous_tool" => %{allowed_decisions: [:approve, :edit, :reject]}
+             }
     end
   end
 
-  describe "SubAgent.extract_subagent_result/2" do
-    test "extracts final message from result state" do
-      result_state =
-        State.new!(%{
-          messages: [
-            Message.new_user!("Task"),
-            Message.new_assistant!("Intermediate"),
-            Message.new_assistant!("Final result")
+  describe "new_from_compiled/1" do
+    test "creates SubAgent from compiled agent" do
+      compiled_agent = test_agent()
+
+      subagent =
+        SubAgent.new_from_compiled(
+          parent_agent_id: "test-parent",
+          instructions: "Do something",
+          compiled_agent: compiled_agent,
+          parent_state: %{messages: []}
+        )
+
+      assert %SubAgent{} = subagent
+      assert subagent.status == :idle
+      assert subagent.parent_agent_id == "test-parent"
+      assert subagent.chain != nil
+    end
+
+    test "stores interrupt_on from compiled_agent middleware" do
+      compiled_agent =
+        Agent.new!(%{
+          model: test_model(),
+          system_prompt: "Test",
+          replace_default_middleware: true,
+          middleware: [
+            {LangChain.Agents.Middleware.HumanInTheLoop, [interrupt_on: %{"write_file" => true}]}
           ]
         })
 
-      result = SubAgent.extract_subagent_result(result_state)
+      subagent =
+        SubAgent.new_from_compiled(
+          parent_agent_id: "test",
+          instructions: "Task",
+          compiled_agent: compiled_agent,
+          parent_state: %{messages: []}
+        )
 
-      content_text =
-        case result.final_message.content do
-          text when is_binary(text) -> text
-          [%{content: text} | _] -> text
-          _ -> ""
-        end
-
-      assert content_text == "Final result"
-    end
-
-    test "excludes messages from state updates" do
-      result_state =
-        State.new!(%{
-          messages: [Message.new_assistant!("Final")],
-          metadata: %{key: "value"}
-        })
-
-      result = SubAgent.extract_subagent_result(result_state)
-
-      refute Map.has_key?(result.state_updates, :messages)
-      assert result.state_updates[:metadata] == %{key: "value"}
-    end
-
-    test "excludes todos from state updates" do
-      result_state =
-        State.new!(%{
-          messages: [Message.new_assistant!("Final")],
-          todos: [Todo.new!(%{content: "SubAgent todo"})]
-        })
-
-      result = SubAgent.extract_subagent_result(result_state)
-
-      refute Map.has_key?(result.state_updates, :todos)
-    end
-
-    # NOTE: Files are now managed by FileSystemServer, not State
-    # File changes are automatically persisted to the shared FileSystemServer
-
-    test "includes metadata in state updates" do
-      result_state =
-        State.new!(%{
-          messages: [Message.new_assistant!("Final")],
-          metadata: %{computed: true, value: 42}
-        })
-
-      result = SubAgent.extract_subagent_result(result_state)
-
-      assert result.state_updates[:metadata] == %{computed: true, value: 42}
-    end
-
-    test "includes tool_call_id when provided" do
-      result_state =
-        State.new!(%{
-          messages: [Message.new_assistant!("Final")]
-        })
-
-      result = SubAgent.extract_subagent_result(result_state, "call_123")
-
-      assert result.tool_call_id == "call_123"
-    end
-
-    test "handles nil tool_call_id" do
-      result_state =
-        State.new!(%{
-          messages: [Message.new_assistant!("Final")]
-        })
-
-      result = SubAgent.extract_subagent_result(result_state)
-
-      assert result.tool_call_id == nil
-    end
-  end
-
-  describe "SubAgent.merge_subagent_result/2" do
-    # NOTE: Files are now managed by FileSystemServer, not State
-    # File merging happens automatically through the shared FileSystemServer
-
-    test "deep merges metadata" do
-      parent_state =
-        State.new!(%{
-          metadata: %{step: 1, parent_key: "value"}
-        })
-
-      subagent_result = %{
-        final_message: Message.new_assistant!("Done"),
-        state_updates: %{
-          metadata: %{step: 2, subagent_key: "new"}
-        }
-      }
-
-      merged = SubAgent.merge_subagent_result(parent_state, subagent_result)
-
-      assert merged.metadata == %{
-               step: 2,
-               parent_key: "value",
-               subagent_key: "new"
+      # HumanInTheLoop middleware transforms true into a config map
+      assert subagent.interrupt_on == %{
+               "write_file" => %{allowed_decisions: [:approve, :edit, :reject]}
              }
     end
 
-    test "preserves parent messages" do
-      parent_state =
-        State.new!(%{
-          messages: [
-            Message.new_user!("Parent task"),
-            Message.new_assistant!("Parent response")
-          ]
-        })
+    test "includes initial_messages in chain when provided" do
+      compiled_agent = test_agent()
 
-      subagent_result = %{
-        final_message: Message.new_assistant!("SubAgent result"),
-        state_updates: %{}
-      }
+      initial_messages = [
+        LangChain.Message.new_user!("Previous question"),
+        LangChain.Message.new_assistant!("Previous answer")
+      ]
 
-      merged = SubAgent.merge_subagent_result(parent_state, subagent_result)
+      subagent =
+        SubAgent.new_from_compiled(
+          parent_agent_id: "test-parent",
+          instructions: "New task",
+          compiled_agent: compiled_agent,
+          initial_messages: initial_messages,
+          parent_state: %{messages: []}
+        )
 
-      # Parent messages unchanged
-      assert length(merged.messages) == 2
-      assert merged.messages == parent_state.messages
+      assert %SubAgent{} = subagent
+      # Chain should contain: system message + initial_messages + user instruction
+      # Exact count depends on system_prompt (may be nil or present)
+      assert length(subagent.chain.messages) >= 3
+
+      # Verify initial messages are included in chain (check for content match)
+      # Extract text content from messages (content is a list of ContentPart structs)
+      message_texts =
+        Enum.flat_map(subagent.chain.messages, fn msg ->
+          Enum.map(msg.content, fn
+            %LangChain.Message.ContentPart{type: :text, content: text} -> text
+            _ -> ""
+          end)
+        end)
+
+      assert "Previous question" in message_texts
+      assert "Previous answer" in message_texts
+      assert "New task" in message_texts
     end
 
-    test "preserves parent todos" do
-      parent_state =
-        State.new!(%{
-          todos: [Todo.new!(%{content: "Parent todo"})]
-        })
+    test "works with empty initial_messages list" do
+      compiled_agent = test_agent()
 
-      subagent_result = %{
-        final_message: Message.new_assistant!("Done"),
-        state_updates: %{}
-      }
+      subagent =
+        SubAgent.new_from_compiled(
+          parent_agent_id: "test-parent",
+          instructions: "Task",
+          compiled_agent: compiled_agent,
+          initial_messages: [],
+          parent_state: %{messages: []}
+        )
 
-      merged = SubAgent.merge_subagent_result(parent_state, subagent_result)
+      assert %SubAgent{} = subagent
+      assert subagent.chain != nil
+    end
+  end
 
-      assert length(merged.todos) == 1
-      assert merged.todos == parent_state.todos
+  describe "SubAgent status checks" do
+    test "can_execute?/1 returns true for idle SubAgent" do
+      agent_config = test_agent()
+
+      subagent =
+        SubAgent.new_from_config(
+          parent_agent_id: "test",
+          instructions: "Task",
+          agent_config: agent_config,
+          parent_state: %{messages: []}
+        )
+
+      assert SubAgent.can_execute?(subagent)
     end
 
-    # NOTE: Files are now managed by FileSystemServer, not State
+    test "can_execute?/1 returns false for non-idle SubAgent" do
+      agent_config = test_agent()
 
-    test "handles missing metadata in state updates" do
-      parent_state =
-        State.new!(%{
-          metadata: %{key: "value"}
-        })
+      subagent =
+        SubAgent.new_from_config(
+          parent_agent_id: "test",
+          instructions: "Task",
+          agent_config: agent_config,
+          parent_state: %{messages: []}
+        )
 
-      subagent_result = %{
-        final_message: Message.new_assistant!("Done"),
-        state_updates: %{}
+      running_subagent = %{subagent | status: :running}
+      refute SubAgent.can_execute?(running_subagent)
+    end
+
+    test "can_resume?/1 returns true for interrupted SubAgent" do
+      agent_config = test_agent()
+
+      subagent =
+        SubAgent.new_from_config(
+          parent_agent_id: "test",
+          instructions: "Task",
+          agent_config: agent_config,
+          parent_state: %{messages: []}
+        )
+
+      interrupted_subagent = %{
+        subagent
+        | status: :interrupted,
+          interrupt_data: %{action_requests: [], hitl_tool_call_ids: []}
       }
 
-      merged = SubAgent.merge_subagent_result(parent_state, subagent_result)
+      assert SubAgent.can_resume?(interrupted_subagent)
+    end
 
-      assert merged.metadata == %{key: "value"}
+    test "can_resume?/1 returns false for non-interrupted SubAgent" do
+      agent_config = test_agent()
+
+      subagent =
+        SubAgent.new_from_config(
+          parent_agent_id: "test",
+          instructions: "Task",
+          agent_config: agent_config,
+          parent_state: %{messages: []}
+        )
+
+      refute SubAgent.can_resume?(subagent)
+    end
+
+    test "is_terminal?/1 returns true for completed SubAgent" do
+      agent_config = test_agent()
+
+      subagent =
+        SubAgent.new_from_config(
+          parent_agent_id: "test",
+          instructions: "Task",
+          agent_config: agent_config,
+          parent_state: %{messages: []}
+        )
+
+      completed_subagent = %{subagent | status: :completed}
+      assert SubAgent.is_terminal?(completed_subagent)
+    end
+
+    test "is_terminal?/1 returns true for error SubAgent" do
+      agent_config = test_agent()
+
+      subagent =
+        SubAgent.new_from_config(
+          parent_agent_id: "test",
+          instructions: "Task",
+          agent_config: agent_config,
+          parent_state: %{messages: []}
+        )
+
+      error_subagent = %{subagent | status: :error, error: "test error"}
+      assert SubAgent.is_terminal?(error_subagent)
+    end
+
+    test "is_terminal?/1 returns false for non-terminal SubAgent" do
+      agent_config = test_agent()
+
+      subagent =
+        SubAgent.new_from_config(
+          parent_agent_id: "test",
+          instructions: "Task",
+          agent_config: agent_config,
+          parent_state: %{messages: []}
+        )
+
+      refute SubAgent.is_terminal?(subagent)
+    end
+  end
+
+  describe "execute/1" do
+    test "returns error for non-idle SubAgent" do
+      agent_config = test_agent()
+
+      subagent =
+        SubAgent.new_from_config(
+          parent_agent_id: "test",
+          instructions: "Task",
+          agent_config: agent_config,
+          parent_state: %{messages: []}
+        )
+
+      running_subagent = %{subagent | status: :running}
+
+      assert {:error, {:invalid_status, :running, :expected_idle}} =
+               SubAgent.execute(running_subagent)
+    end
+  end
+
+  describe "resume/2" do
+    test "returns error for non-interrupted SubAgent" do
+      agent_config = test_agent()
+
+      subagent =
+        SubAgent.new_from_config(
+          parent_agent_id: "test",
+          instructions: "Task",
+          agent_config: agent_config,
+          parent_state: %{messages: []}
+        )
+
+      assert {:error, {:invalid_status, :idle, :expected_interrupted}} =
+               SubAgent.resume(subagent, [])
     end
   end
 
@@ -911,7 +1066,15 @@ defmodule LangChain.Agents.SubAgentTest do
   defp errors_on(changeset) do
     Ecto.Changeset.traverse_errors(changeset, fn {msg, opts} ->
       Enum.reduce(opts, msg, fn {key, value}, acc ->
-        String.replace(acc, "%{#{key}}", to_string(value))
+        # Use inspect for complex types that don't implement String.Chars
+        str_value =
+          if is_binary(value) or is_number(value) or is_atom(value) do
+            to_string(value)
+          else
+            inspect(value)
+          end
+
+        String.replace(acc, "%{#{key}}", str_value)
       end)
     end)
   end

@@ -157,10 +157,15 @@ defmodule LangChain.Agents.Middleware do
     {module, opts}
   end
 
+  def normalize({module, opts}) when is_atom(module) and is_map(opts) do
+    # Convert map to keyword list for consistency
+    {module, Map.to_list(opts)}
+  end
+
   def normalize(middleware) do
     raise ArgumentError,
           "Invalid middleware specification: #{inspect(middleware)}. " <>
-            "Expected module or {module, opts} tuple."
+            "Expected module or {module, opts} tuple with list or map options."
   end
 
   @doc """

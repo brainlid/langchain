@@ -149,8 +149,10 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopIntegrationTest do
     test "agent includes HITL middleware when interrupt_on is configured" do
       {:ok, agent} =
         Agent.new(
-          model: create_test_model(),
-          tools: [create_write_file_tool()],
+          %{
+            model: create_test_model(),
+            tools: [create_write_file_tool()]
+          },
           interrupt_on: %{
             "write_file" => true
           }
@@ -164,11 +166,11 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopIntegrationTest do
 
     test "agent excludes HITL middleware when interrupt_on is nil" do
       {:ok, agent} =
-        Agent.new(
+        Agent.new(%{
           model: create_test_model(),
           tools: [create_write_file_tool()]
           # No interrupt_on configured
-        )
+        })
 
       # Check that HITL middleware is NOT in the stack
       refute Enum.any?(agent.middleware, fn {module, _config} ->
@@ -180,8 +182,10 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopIntegrationTest do
     test "agent handles interrupt return from execute" do
       {:ok, agent} =
         Agent.new(
-          model: create_test_model(),
-          tools: [create_write_file_tool()],
+          %{
+            model: create_test_model(),
+            tools: [create_write_file_tool()]
+          },
           interrupt_on: %{
             "write_file" => %{allowed_decisions: [:approve, :reject]}
           }
@@ -245,15 +249,18 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopIntegrationTest do
 
       {:ok, agent} =
         Agent.new(
-          model: create_test_model(),
-          tools: [create_write_file_tool()],
+          %{
+            model: create_test_model(),
+            tools: [create_write_file_tool()],
+            middleware: [
+              {LangChain.Agents.Middleware.HumanInTheLoop,
+               [interrupt_on: %{"write_file" => true}]}
+            ]
+          },
           interrupt_on: %{
             "write_file" => true
           },
-          replace_default_middleware: true,
-          middleware: [
-            {LangChain.Agents.Middleware.HumanInTheLoop, [interrupt_on: %{"write_file" => true}]}
-          ]
+          replace_default_middleware: true
         )
 
       # Create initial state with user message
@@ -315,16 +322,18 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopIntegrationTest do
 
       {:ok, agent} =
         Agent.new(
-          model: create_test_model(),
-          tools: [create_write_file_tool()],
+          %{
+            model: create_test_model(),
+            tools: [create_write_file_tool()],
+            middleware: [
+              {LangChain.Agents.Middleware.HumanInTheLoop,
+               [interrupt_on: %{"write_file" => %{allowed_decisions: [:approve, :edit, :reject]}}]}
+            ]
+          },
           interrupt_on: %{
             "write_file" => %{allowed_decisions: [:approve, :edit, :reject]}
           },
-          replace_default_middleware: true,
-          middleware: [
-            {LangChain.Agents.Middleware.HumanInTheLoop,
-             [interrupt_on: %{"write_file" => %{allowed_decisions: [:approve, :edit, :reject]}}]}
-          ]
+          replace_default_middleware: true
         )
 
       initial_state = State.new!(%{messages: [Message.new_user!("Create draft")]})
@@ -364,15 +373,18 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopIntegrationTest do
 
       {:ok, agent} =
         Agent.new(
-          model: create_test_model(),
-          tools: [create_write_file_tool()],
+          %{
+            model: create_test_model(),
+            tools: [create_write_file_tool()],
+            middleware: [
+              {LangChain.Agents.Middleware.HumanInTheLoop,
+               [interrupt_on: %{"write_file" => true}]}
+            ]
+          },
           interrupt_on: %{
             "write_file" => true
           },
-          replace_default_middleware: true,
-          middleware: [
-            {LangChain.Agents.Middleware.HumanInTheLoop, [interrupt_on: %{"write_file" => true}]}
-          ]
+          replace_default_middleware: true
         )
 
       initial_state = State.new!(%{messages: [Message.new_user!("Write sensitive file")]})
@@ -403,8 +415,10 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopIntegrationTest do
 
       {:ok, agent} =
         Agent.new(
-          model: create_test_model(),
-          tools: [create_write_file_tool()],
+          %{
+            model: create_test_model(),
+            tools: [create_write_file_tool()]
+          },
           interrupt_on: %{
             "write_file" => %{allowed_decisions: [:approve, :reject]}
           }
@@ -425,11 +439,11 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopIntegrationTest do
 
     test "agent resume returns error when HITL not configured" do
       {:ok, agent} =
-        Agent.new(
+        Agent.new(%{
           model: create_test_model(),
           tools: [create_write_file_tool()]
           # No interrupt_on
-        )
+        })
 
       messages = [Message.new_user!("Hello")]
       state = State.new!(%{messages: messages})
@@ -443,8 +457,10 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopIntegrationTest do
     test "selective interruption - only configured tools interrupt" do
       {:ok, agent} =
         Agent.new(
-          model: create_test_model(),
-          tools: [create_write_file_tool(), create_read_file_tool()],
+          %{
+            model: create_test_model(),
+            tools: [create_write_file_tool(), create_read_file_tool()]
+          },
           interrupt_on: %{
             "write_file" => true
             # read_file not configured - should not interrupt
@@ -495,15 +511,18 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopIntegrationTest do
 
       {:ok, agent} =
         Agent.new(
-          model: create_test_model(),
-          tools: [create_write_file_tool()],
+          %{
+            model: create_test_model(),
+            tools: [create_write_file_tool()],
+            middleware: [
+              {LangChain.Agents.Middleware.HumanInTheLoop,
+               [interrupt_on: %{"write_file" => true}]}
+            ]
+          },
           interrupt_on: %{
             "write_file" => true
           },
-          replace_default_middleware: true,
-          middleware: [
-            {LangChain.Agents.Middleware.HumanInTheLoop, [interrupt_on: %{"write_file" => true}]}
-          ]
+          replace_default_middleware: true
         )
 
       initial_state = State.new!(%{messages: [Message.new_user!("Write both files")]})
@@ -543,21 +562,23 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopIntegrationTest do
   describe "configuration validation" do
     test "accepts valid interrupt_on map" do
       assert {:ok, _agent} =
-               Agent.new(
+               Agent.new(%{
                  model: create_test_model(),
                  tools: [create_write_file_tool()],
                  interrupt_on: %{
                    "write_file" => true,
                    "delete_file" => %{allowed_decisions: [:approve, :reject]}
                  }
-               )
+               })
     end
 
     test "handles empty interrupt_on map" do
       assert {:ok, agent} =
                Agent.new(
-                 model: create_test_model(),
-                 tools: [create_write_file_tool()],
+                 %{
+                   model: create_test_model(),
+                   tools: [create_write_file_tool()]
+                 },
                  interrupt_on: %{}
                )
 
@@ -569,11 +590,11 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopIntegrationTest do
 
     test "handles nil interrupt_on by not adding middleware" do
       assert {:ok, agent} =
-               Agent.new(
+               Agent.new(%{
                  model: create_test_model(),
                  tools: [create_write_file_tool()],
                  interrupt_on: nil
-               )
+               })
 
       refute Enum.any?(agent.middleware, fn {module, _config} ->
                module == LangChain.Agents.Middleware.HumanInTheLoop

@@ -8,11 +8,11 @@ defmodule LangChain.Agents.Agent do
   ## Basic Usage
 
       # Create agent with default middleware
-      {:ok, agent} = Agent.new(
+      {:ok, agent} = Agent.new(%{
         agent_id: "my-agent-1",
         model: ChatAnthropic.new!(%{model: "claude-3-5-sonnet-20241022"}),
         system_prompt: "You are a helpful assistant."
-      )
+      })
 
       # Execute with messages
       state = State.new!(%{messages: [%{role: "user", content: "Hello!"}]})
@@ -21,20 +21,20 @@ defmodule LangChain.Agents.Agent do
   ## Middleware Composition
 
       # Append custom middleware to defaults
-      {:ok, agent} = Agent.new(
+      {:ok, agent} = Agent.new(%{
         middleware: [MyCustomMiddleware]
-      )
+      })
 
       # Customize default middleware
-      {:ok, agent} = Agent.new(
+      {:ok, agent} = Agent.new(%{
         filesystem_opts: [long_term_memory: true]
-      )
+      })
 
       # Provide complete middleware stack
-      {:ok, agent} = Agent.new(
+      {:ok, agent} = Agent.new(%{
         replace_default_middleware: true,
         middleware: [{MyMiddleware, []}]
-      )
+      })
   """
 
   use Ecto.Schema
@@ -66,25 +66,23 @@ defmodule LangChain.Agents.Agent do
   @doc """
   Create a new DeepAgent.
 
-  ## Options
+  ## Attributes
 
-  - `:agent_id` - Unique identifier for the agent (required)
+  - `:agent_id` - Unique identifier for the agent (optional, auto-generated if not provided)
   - `:model` - LangChain ChatModel struct (required)
   - `:system_prompt` - Base system instructions (default: "")
   - `:tools` - Additional tools beyond middleware (default: [])
   - `:middleware` - List of middleware modules/configs (default: [])
-  - `:replace_default_middleware` - If true, use only provided middleware (default: false)
   - `:name` - Agent name for identification (default: nil)
-  - `:interrupt_on` - Map of tool names to interrupt configuration (default: nil)
 
-  ### Middleware-specific options
+  ## Options
 
-  These options customize the default middleware when `replace_default_middleware` is false:
-
+  - `:replace_default_middleware` - If true, use only provided middleware (default: false)
   - `:todo_opts` - Options for TodoList middleware
   - `:filesystem_opts` - Options for Filesystem middleware
   - `:summarization_opts` - Options for Summarization middleware (e.g., `[max_tokens_before_summary: 150_000, messages_to_keep: 8]`)
   - `:subagent_opts` - Options for SubAgent middleware
+  - `:interrupt_on` - Map of tool names to interrupt configuration (default: nil)
 
   ### Human-in-the-loop configuration
 
@@ -107,24 +105,26 @@ defmodule LangChain.Agents.Agent do
   ## Examples
 
       # Basic agent
-      {:ok, agent} = Agent.new(
+      {:ok, agent} = Agent.new(%{
         agent_id: "basic-agent",
         model: ChatAnthropic.new!(%{model: "claude-3-5-sonnet-20241022"}),
         system_prompt: "You are helpful."
-      )
+      })
 
       # With custom tools
-      {:ok, agent} = Agent.new(
+      {:ok, agent} = Agent.new(%{
         agent_id: "tool-agent",
         model: model,
         tools: [write_file_tool, search_tool]
-      )
+      })
 
       # With human-in-the-loop for file operations
       {:ok, agent} = Agent.new(
-        agent_id: "hitl-agent",
-        model: model,
-        tools: [write_file_tool, delete_file_tool],
+        %{
+          agent_id: "hitl-agent",
+          model: model,
+          tools: [write_file_tool, delete_file_tool]
+        },
         interrupt_on: %{
           "write_file" => true,  # Require approval for writes
           "delete_file" => %{allowed_decisions: [:approve, :reject]}  # No edit for deletes
@@ -148,43 +148,30 @@ defmodule LangChain.Agents.Agent do
 
       # With custom middleware configuration
       {:ok, agent} = Agent.new(
-        agent_id: "custom-middleware-agent",
-        model: model,
+        %{
+          agent_id: "custom-middleware-agent",
+          model: model
+        },
         filesystem_opts: [long_term_memory: true]
       )
   """
-  def new(opts \\ []) do
-    # Generate agent_id if not provided
-    agent_id = Keyword.get(opts, :agent_id, generate_agent_id())
-
-    # Add agent_id to opts for middleware initialization
-    opts_with_agent_id = Keyword.put(opts, :agent_id, agent_id)
-
-    with {:ok, model} <- validate_model(opts),
-         {:ok, middleware_list} <- build_middleware_list(opts_with_agent_id),
-         {:ok, initialized_middleware} <- initialize_middleware(middleware_list),
-         {:ok, system_prompt} <- assemble_system_prompt(opts, initialized_middleware),
-         {:ok, all_tools} <- collect_tools(opts, initialized_middleware) do
-      attrs = %{
-        agent_id: agent_id,
-        model: model,
-        system_prompt: system_prompt,
-        tools: all_tools,
-        middleware: initialized_middleware,
-        name: Keyword.get(opts, :name)
-      }
-
-      %Agent{}
-      |> changeset(attrs)
-      |> apply_action(:insert)
-    end
+  def new(attrs \\ %{}, opts \\ []) do
+    %Agent{}
+    |> cast(attrs, @create_fields)
+    |> put_agent_id_if_missing()
+    |> validate_required(@required_fields)
+    |> put_default_system_prompt()
+    |> build_and_initialize_middleware(opts)
+    |> assemble_full_system_prompt()
+    |> collect_all_tools()
+    |> apply_action(:insert)
   end
 
   @doc """
   Create a new DeepAgent, raising on error.
   """
-  def new!(opts \\ []) do
-    case new(opts) do
+  def new!(attrs \\ %{}, opts \\ []) do
+    case new(attrs, opts) do
       {:ok, agent} -> agent
       {:error, changeset} -> raise LangChainError, changeset
     end
@@ -204,6 +191,147 @@ defmodule LangChain.Agents.Agent do
       nil -> put_change(changeset, :system_prompt, "")
       _ -> changeset
     end
+  end
+
+  defp put_agent_id_if_missing(changeset) do
+    case get_field(changeset, :agent_id) do
+      nil -> put_change(changeset, :agent_id, generate_agent_id())
+      _ -> changeset
+    end
+  end
+
+  defp build_and_initialize_middleware(changeset, opts) do
+    # Build middleware list
+    replace_defaults = Keyword.get(opts, :replace_default_middleware, false)
+    user_middleware = get_field(changeset, :middleware) || []
+
+    middleware_list =
+      case replace_defaults do
+        false ->
+          # Append user middleware to defaults
+          model = get_field(changeset, :model)
+          agent_id = get_field(changeset, :agent_id)
+          build_default_middleware(model, agent_id, opts) ++ user_middleware
+
+        true ->
+          # Use only user-provided middleware
+          user_middleware
+      end
+
+    # Initialize middleware
+    case initialize_middleware_list(middleware_list) do
+      {:ok, initialized} ->
+        put_change(changeset, :middleware, initialized)
+
+      {:error, reason} ->
+        add_error(changeset, :middleware, "initialization failed: #{inspect(reason)}")
+    end
+  end
+
+  @doc """
+  Build the default middleware stack.
+
+  This is a utility function that can be used to build the default middleware
+  stack with custom options. Useful when you want to customize middleware
+  configuration or when building subagents.
+
+  ## Parameters
+
+  - `model` - The LangChain ChatModel struct
+  - `agent_id` - The agent's unique identifier
+  - `opts` - Keyword list of middleware options
+
+  ## Options
+
+  - `:todo_opts` - Options for TodoList middleware
+  - `:filesystem_opts` - Options for Filesystem middleware
+  - `:summarization_opts` - Options for Summarization middleware
+  - `:subagent_opts` - Options for SubAgent middleware
+  - `:interrupt_on` - Map of tool names to interrupt configuration
+
+  ## Examples
+
+      middleware = Agent.build_default_middleware(
+        model,
+        "agent-123",
+        filesystem_opts: [long_term_memory: true],
+        interrupt_on: %{"write_file" => true}
+      )
+  """
+  def build_default_middleware(model, agent_id, opts \\ []) do
+    # Build middleware stack Note: SubAgent middleware accesses parent
+    # middleware/tools via runtime context, not via init configuration. See
+    # execute_loop/3 where custom_context is set.
+    base_middleware = [
+      # TodoList middleware for task management
+      {LangChain.Agents.Middleware.TodoList, Keyword.get(opts, :todo_opts, [])},
+      # Filesystem middleware for mock file operations
+      {LangChain.Agents.Middleware.FileSystem,
+       Keyword.merge([agent_id: agent_id], Keyword.get(opts, :filesystem_opts, []))},
+      # SubAgent middleware for delegating to specialized sub-agents
+      {LangChain.Agents.Middleware.SubAgent,
+       Keyword.merge(
+         [agent_id: agent_id, model: model],
+         Keyword.get(opts, :subagent_opts, [])
+       )},
+      # Summarization middleware for managing conversation length
+      {LangChain.Agents.Middleware.Summarization,
+       Keyword.merge([model: model], Keyword.get(opts, :summarization_opts, []))},
+      # PatchToolCalls middleware to fix dangling tool calls
+      {LangChain.Agents.Middleware.PatchToolCalls, []}
+    ]
+
+    # Conditionally add HumanInTheLoop middleware if interrupt_on is configured
+    case Keyword.get(opts, :interrupt_on) do
+      nil ->
+        base_middleware
+
+      interrupt_on when is_map(interrupt_on) ->
+        base_middleware ++
+          [{LangChain.Agents.Middleware.HumanInTheLoop, [interrupt_on: interrupt_on]}]
+    end
+  end
+
+  defp initialize_middleware_list(middleware_list) do
+    try do
+      initialized =
+        middleware_list
+        |> Enum.map(&Middleware.init_middleware/1)
+
+      {:ok, initialized}
+    rescue
+      e -> {:error, Exception.message(e)}
+    end
+  end
+
+  defp assemble_full_system_prompt(changeset) do
+    base_prompt = get_field(changeset, :system_prompt) || ""
+    initialized_middleware = get_field(changeset, :middleware) || []
+
+    middleware_prompts =
+      initialized_middleware
+      |> Enum.map(&Middleware.get_system_prompt/1)
+      |> Enum.reject(&(&1 == ""))
+
+    full_prompt =
+      [base_prompt | middleware_prompts]
+      |> Enum.reject(&(&1 == ""))
+      |> Enum.join("\n\n")
+
+    put_change(changeset, :system_prompt, full_prompt)
+  end
+
+  defp collect_all_tools(changeset) do
+    base_tools = get_field(changeset, :tools) || []
+    initialized_middleware = get_field(changeset, :middleware) || []
+
+    middleware_tools =
+      initialized_middleware
+      |> Enum.flat_map(&Middleware.get_tools/1)
+
+    all_tools = base_tools ++ middleware_tools
+
+    put_change(changeset, :tools, all_tools)
   end
 
   @doc """
@@ -415,103 +543,6 @@ defmodule LangChain.Agents.Agent do
     ("agent_" <> :crypto.strong_rand_bytes(16)) |> Base.url_encode64(padding: false)
   end
 
-  defp validate_model(opts) do
-    case Keyword.get(opts, :model) do
-      nil -> {:error, "Model is required"}
-      model -> {:ok, model}
-    end
-  end
-
-  defp build_middleware_list(opts) do
-    replace_defaults = Keyword.get(opts, :replace_default_middleware, false)
-    user_middleware = Keyword.get(opts, :middleware, [])
-
-    middleware =
-      case replace_defaults do
-        false ->
-          # Append user middleware to defaults
-          default_middleware(opts) ++ user_middleware
-
-        true ->
-          # Use only user-provided middleware
-          user_middleware
-      end
-
-    {:ok, middleware}
-  end
-
-  defp default_middleware(opts) do
-    model = Keyword.get(opts, :model)
-    agent_id = Keyword.get(opts, :agent_id)
-
-    # Build default middleware stack
-    base_middleware = [
-      # TodoList middleware for task management
-      {LangChain.Agents.Middleware.TodoList, Keyword.get(opts, :todo_opts, [])},
-      # Filesystem middleware for mock file operations
-      {LangChain.Agents.Middleware.FileSystem,
-       Keyword.merge([agent_id: agent_id], Keyword.get(opts, :filesystem_opts, []))},
-      # Summarization middleware for managing conversation length
-      {LangChain.Agents.Middleware.Summarization,
-       Keyword.merge([model: model], Keyword.get(opts, :summarization_opts, []))},
-      # PatchToolCalls middleware to fix dangling tool calls
-      {LangChain.Agents.Middleware.PatchToolCalls, []}
-    ]
-
-    # Conditionally add HumanInTheLoop middleware if interrupt_on is configured
-    middleware_with_hitl =
-      case Keyword.get(opts, :interrupt_on) do
-        nil ->
-          base_middleware
-
-        interrupt_on when is_map(interrupt_on) ->
-          base_middleware ++
-            [{LangChain.Agents.Middleware.HumanInTheLoop, [interrupt_on: interrupt_on]}]
-      end
-
-    middleware_with_hitl
-  end
-
-  defp initialize_middleware(middleware_list) do
-    try do
-      initialized =
-        middleware_list
-        |> Enum.map(&Middleware.init_middleware/1)
-
-      {:ok, initialized}
-    rescue
-      e -> {:error, Exception.message(e)}
-    end
-  end
-
-  defp assemble_system_prompt(opts, initialized_middleware) do
-    base_prompt = Keyword.get(opts, :system_prompt, "")
-
-    middleware_prompts =
-      initialized_middleware
-      |> Enum.map(&Middleware.get_system_prompt/1)
-      |> Enum.reject(&(&1 == ""))
-
-    full_prompt =
-      [base_prompt | middleware_prompts]
-      |> Enum.reject(&(&1 == ""))
-      |> Enum.join("\n\n")
-
-    {:ok, full_prompt}
-  end
-
-  defp collect_tools(opts, initialized_middleware) do
-    base_tools = Keyword.get(opts, :tools, [])
-
-    middleware_tools =
-      initialized_middleware
-      |> Enum.flat_map(&Middleware.get_tools/1)
-
-    all_tools = base_tools ++ middleware_tools
-
-    {:ok, all_tools}
-  end
-
   defp apply_before_model_hooks(state, middleware) do
     Enum.reduce_while(middleware, {:ok, state}, fn mw, {:ok, current_state} ->
       case Middleware.apply_before_model(current_state, mw) do
@@ -589,7 +620,12 @@ defmodule LangChain.Agents.Agent do
     chain =
       LLMChain.new!(%{
         llm: agent.model,
-        custom_context: %{state: state}
+        custom_context: %{
+          state: state,
+          # Make parent agent's middleware and tools available to tools (e.g., SubAgent middleware)
+          parent_middleware: agent.middleware,
+          parent_tools: agent.tools
+        }
         # verbose: true
       })
       |> LLMChain.add_tools(agent.tools)

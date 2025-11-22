@@ -62,10 +62,10 @@ defmodule LangChain.Agents.IntegrationTest do
 
       # Create agent with TodoList middleware
       {:ok, agent} =
-        Agent.new(
+        Agent.new(%{
           model: model,
           system_prompt: "You are a helpful assistant."
-        )
+        })
 
       # Initial state with user message
       initial_state =
@@ -147,11 +147,11 @@ defmodule LangChain.Agents.IntegrationTest do
 
       # Create agent with Filesystem middleware
       {:ok, agent} =
-        Agent.new(
+        Agent.new(%{
           agent_id: agent_id,
           model: model,
           system_prompt: "You are a helpful assistant."
-        )
+        })
 
       # Initial state with user message
       initial_state =
@@ -256,7 +256,7 @@ defmodule LangChain.Agents.IntegrationTest do
       {:ok, _fs_pid} = FileSystemServer.start_link(agent_id: agent_id)
 
       # Create agent
-      {:ok, agent} = Agent.new(agent_id: agent_id, model: model)
+      {:ok, agent} = Agent.new(%{agent_id: agent_id, model: model})
 
       # Initial state
       initial_state =
@@ -328,7 +328,7 @@ defmodule LangChain.Agents.IntegrationTest do
       # Start FileSystemServer first (before creating agent)
       {:ok, _fs_pid} = FileSystemServer.start_link(agent_id: agent_id)
 
-      {:ok, agent} = Agent.new(agent_id: agent_id, model: model)
+      {:ok, agent} = Agent.new(%{agent_id: agent_id, model: model})
 
       initial_state =
         State.new!(%{

@@ -30,14 +30,14 @@ defmodule LangChain.Agents.AgentServerTest do
     opts = Keyword.put(opts, :agent_id, agent_id)
 
     Agent.new!(
-      Keyword.merge(
-        [
+      Map.merge(
+        %{
           model: mock_model(),
           system_prompt: "Test agent",
           replace_default_middleware: true,
           middleware: []
-        ],
-        opts
+        },
+        Enum.into(opts, %{})
       )
     )
   end

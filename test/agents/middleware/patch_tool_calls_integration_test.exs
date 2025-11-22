@@ -14,10 +14,10 @@ defmodule LangChain.Agents.Middleware.PatchToolCallsIntegrationTest do
       model = ChatAnthropic.new!(%{model: "claude-3-5-sonnet-20241022", stream: false})
 
       {:ok, agent} =
-        Agent.new(
+        Agent.new(%{
           model: model,
           system_prompt: "You are a helpful assistant."
-        )
+        })
 
       {:ok, agent: agent}
     end
@@ -117,13 +117,13 @@ defmodule LangChain.Agents.Middleware.PatchToolCallsIntegrationTest do
       model = ChatAnthropic.new!(%{model: "claude-3-5-sonnet-20241022", stream: false})
 
       {:ok, agent} =
-        Agent.new(
+        Agent.new(%{
           model: model,
           replace_default_middleware: true,
           middleware: [
             LangChain.Agents.Middleware.PatchToolCalls
           ]
-        )
+        })
 
       tool_call =
         ToolCall.new!(%{

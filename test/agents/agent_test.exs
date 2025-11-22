@@ -101,7 +101,7 @@ defmodule LangChain.Agents.AgentTest do
 
   describe "new/1" do
     test "creates agent with required model" do
-      assert {:ok, agent} = Agent.new(model: mock_model())
+      assert {:ok, agent} = Agent.new(%{model: mock_model()})
       assert %Agent{} = agent
       assert agent.model != nil
       # System prompt now includes TodoList middleware prompt
@@ -109,18 +109,19 @@ defmodule LangChain.Agents.AgentTest do
     end
 
     test "requires model parameter" do
-      assert {:error, "Model is required"} = Agent.new()
+      {:error, changeset} = Agent.new(%{})
+      assert {"can't be blank", _} = changeset.errors[:model]
     end
 
     test "creates agent with system prompt" do
-      {:ok, agent} = Agent.new(model: mock_model(), system_prompt: "You are helpful.")
+      {:ok, agent} = Agent.new(%{model: mock_model(), system_prompt: "You are helpful."})
       # System prompt includes user prompt + TodoList middleware
       assert agent.system_prompt =~ "You are helpful"
       assert agent.system_prompt =~ "write_todos"
     end
 
     test "creates agent with custom name" do
-      {:ok, agent} = Agent.new(model: mock_model(), name: "my-agent")
+      {:ok, agent} = Agent.new(%{model: mock_model(), name: "my-agent"})
       assert agent.name == "my-agent"
     end
 
@@ -132,27 +133,28 @@ defmodule LangChain.Agents.AgentTest do
           function: fn _args, _params -> {:ok, "result"} end
         })
 
-      {:ok, agent} = Agent.new(model: mock_model(), tools: [tool])
+      {:ok, agent} = Agent.new(%{model: mock_model(), tools: [tool]})
 
-      # Now includes custom tool + write_todos (TodoList) + 7 filesystem tools (ls, read_file, write_file, edit_file, search_text, edit_lines, delete_file)
-      assert length(agent.tools) == 9
+      # Now includes custom tool + write_todos (TodoList) + 7 filesystem tools (ls, read_file, write_file, edit_file, search_text, edit_lines, delete_file) + SubAgents
+      assert length(agent.tools) == 10
       tool_names = Enum.map(agent.tools, & &1.name)
       assert "custom_tool" in tool_names
       assert "write_todos" in tool_names
       assert "ls" in tool_names
       assert "read_file" in tool_names
+      assert "task" in tool_names
     end
   end
 
   describe "new!/1" do
     test "creates agent successfully" do
-      agent = Agent.new!(model: mock_model())
+      agent = Agent.new!(%{model: mock_model()})
       assert %Agent{} = agent
     end
 
     test "raises on error" do
       assert_raise LangChain.LangChainError, fn ->
-        Agent.new!()
+        Agent.new!(%{})
       end
     end
   end
@@ -161,25 +163,25 @@ defmodule LangChain.Agents.AgentTest do
     test "appends user middleware to defaults" do
       # Defaults include TodoList, Filesystem, Summarization, and PatchToolCalls
       {:ok, agent} =
-        Agent.new(
+        Agent.new(%{
           model: mock_model(),
           middleware: [TestMiddleware1]
-        )
+        })
 
-      # Default middleware (TodoList + Filesystem + Summarization + PatchToolCalls) + TestMiddleware1 = 5
-      assert length(agent.middleware) == 5
+      # Default middleware (TodoList + Filesystem + SubAgents + Summarization + PatchToolCalls) + TestMiddleware1 = 6
+      assert length(agent.middleware) == 6
     end
 
     test "collects system prompts from middleware" do
       {:ok, agent} =
-        Agent.new(
+        Agent.new(%{
           model: mock_model(),
           system_prompt: "Base prompt",
           middleware: [
             {TestMiddleware1, [name: "first"]},
             {TestMiddleware2, [name: "second"]}
           ]
-        )
+        })
 
       assert agent.system_prompt =~ "Base prompt"
       assert agent.system_prompt =~ "Prompt from first"
@@ -188,18 +190,19 @@ defmodule LangChain.Agents.AgentTest do
 
     test "collects tools from middleware" do
       {:ok, agent} =
-        Agent.new(
+        Agent.new(%{
           model: mock_model(),
           middleware: [TestMiddleware1, TestMiddleware2]
-        )
+        })
 
-      # write_todos + 7 filesystem tools + tool1 + tool2 = 10
-      assert length(agent.tools) == 10
+      # write_todos + 7 filesystem tools + tool1 + tool2 + SubAgents = 11
+      assert length(agent.tools) == 11
       tool_names = Enum.map(agent.tools, & &1.name)
       assert "write_todos" in tool_names
       assert "ls" in tool_names
       assert "tool1" in tool_names
       assert "tool2" in tool_names
+      assert "task" in tool_names
     end
 
     test "combines user tools with middleware tools" do
@@ -211,20 +214,21 @@ defmodule LangChain.Agents.AgentTest do
         })
 
       {:ok, agent} =
-        Agent.new(
+        Agent.new(%{
           model: mock_model(),
           tools: [user_tool],
           middleware: [TestMiddleware1]
-        )
+        })
 
       # user_tool + write_todos + 7 filesystem tools + tool1 = 10
-      assert length(agent.tools) == 10
+      assert length(agent.tools) == 11
       tool_names = Enum.map(agent.tools, & &1.name)
       assert "write_todos" in tool_names
       assert "user_tool" in tool_names
       assert "tool1" in tool_names
       assert "ls" in tool_names
       assert "delete_file" in tool_names
+      assert "task" in tool_names
     end
   end
 
@@ -232,9 +236,11 @@ defmodule LangChain.Agents.AgentTest do
     test "uses only provided middleware when replace_default_middleware is true" do
       {:ok, agent} =
         Agent.new(
-          model: mock_model(),
-          replace_default_middleware: true,
-          middleware: [TestMiddleware1]
+          %{
+            model: mock_model(),
+            middleware: [TestMiddleware1]
+          },
+          replace_default_middleware: true
         )
 
       assert length(agent.middleware) == 1
@@ -245,9 +251,11 @@ defmodule LangChain.Agents.AgentTest do
     test "empty middleware when replace_default_middleware is true and no middleware provided" do
       {:ok, agent} =
         Agent.new(
-          model: mock_model(),
-          replace_default_middleware: true,
-          middleware: []
+          %{
+            model: mock_model(),
+            middleware: []
+          },
+          replace_default_middleware: true
         )
 
       assert agent.middleware == []
@@ -268,10 +276,10 @@ defmodule LangChain.Agents.AgentTest do
 
     test "executes with empty middleware" do
       {:ok, agent} =
-        Agent.new(
+        Agent.new(%{
           model: mock_model(),
           replace_default_middleware: true
-        )
+        })
 
       initial_state = State.new!(%{messages: [Message.new_user!("Hello")]})
 
@@ -284,13 +292,13 @@ defmodule LangChain.Agents.AgentTest do
 
     test "applies before_model hooks in order" do
       {:ok, agent} =
-        Agent.new(
+        Agent.new(%{
           model: mock_model(),
           middleware: [
             {TestMiddleware1, [name: "first"]},
             {TestMiddleware2, [name: "second"]}
           ]
-        )
+        })
 
       initial_state = State.new!(%{messages: [Message.new_user!("Test")]})
 
@@ -300,13 +308,13 @@ defmodule LangChain.Agents.AgentTest do
 
     test "applies after_model hooks in reverse order" do
       {:ok, agent} =
-        Agent.new(
+        Agent.new(%{
           model: mock_model(),
           middleware: [
             {TestMiddleware1, [name: "first"]},
             {TestMiddleware2, [name: "second"]}
           ]
-        )
+        })
 
       initial_state = State.new!(%{messages: [Message.new_user!("Test")]})
 
@@ -317,10 +325,10 @@ defmodule LangChain.Agents.AgentTest do
 
     test "returns error if before_model hook fails" do
       {:ok, agent} =
-        Agent.new(
+        Agent.new(%{
           model: mock_model(),
           middleware: [ErrorMiddleware]
-        )
+        })
 
       initial_state = State.new!(%{messages: [Message.new_user!("Test")]})
 
@@ -329,13 +337,13 @@ defmodule LangChain.Agents.AgentTest do
 
     test "state flows through all hooks" do
       {:ok, agent} =
-        Agent.new(
+        Agent.new(%{
           model: mock_model(),
           middleware: [
             {TestMiddleware1, [name: "mw1"]},
             {TestMiddleware2, [name: "mw2"]}
           ]
-        )
+        })
 
       initial_state = State.new!(%{messages: [Message.new_user!("Test")]})
 
@@ -374,7 +382,7 @@ defmodule LangChain.Agents.AgentTest do
         })
 
       {:ok, agent} =
-        Agent.new(
+        Agent.new(%{
           model: mock_model(),
           name: "math-agent",
           system_prompt: "You are a math assistant.",
@@ -383,15 +391,15 @@ defmodule LangChain.Agents.AgentTest do
             {TestMiddleware1, [name: "logging"]},
             {TestMiddleware2, [name: "validation"]}
           ]
-        )
+        })
 
       # Verify agent structure
       assert agent.name == "math-agent"
       assert agent.system_prompt =~ "math assistant"
       assert agent.system_prompt =~ "logging"
       assert agent.system_prompt =~ "validation"
-      # calculator + write_todos + 7 filesystem tools + tool1 + tool2 = 11
-      assert length(agent.tools) == 11
+      # calculator + write_todos + 7 filesystem tools + tool1 + tool2 + SubAgents = 12
+      assert length(agent.tools) == 12
 
       # Execute
       initial_state = State.new!(%{messages: [Message.new_user!("What is 2+2?")]})
@@ -405,11 +413,11 @@ defmodule LangChain.Agents.AgentTest do
 
     test "agent with no middleware works correctly" do
       {:ok, agent} =
-        Agent.new(
+        Agent.new(%{
           model: mock_model(),
           system_prompt: "Simple agent",
           replace_default_middleware: true
-        )
+        })
 
       initial_state = State.new!(%{messages: [Message.new_user!("Hi")]})
       assert {:ok, result_state} = Agent.execute(agent, initial_state)
@@ -423,7 +431,7 @@ defmodule LangChain.Agents.AgentTest do
 
   describe "TodoList middleware integration" do
     test "agents include TodoList middleware by default" do
-      {:ok, agent} = Agent.new(model: mock_model())
+      {:ok, agent} = Agent.new(%{model: mock_model()})
 
       # Should have TodoList middleware in the stack
       assert length(agent.middleware) > 0
@@ -436,9 +444,11 @@ defmodule LangChain.Agents.AgentTest do
     test "TodoList middleware can be excluded" do
       {:ok, agent} =
         Agent.new(
-          model: mock_model(),
-          replace_default_middleware: true,
-          middleware: []
+          %{
+            model: mock_model(),
+            middleware: []
+          },
+          replace_default_middleware: true
         )
 
       # No middleware
@@ -447,7 +457,7 @@ defmodule LangChain.Agents.AgentTest do
     end
 
     test "system prompt includes TODO instructions" do
-      {:ok, agent} = Agent.new(model: mock_model())
+      {:ok, agent} = Agent.new(%{model: mock_model()})
 
       assert agent.system_prompt =~ "write_todos"
     end

@@ -25,13 +25,13 @@ defmodule LangChain.Agents.AgentSupervisorTest do
 
   # Helper to create a test agent
   defp create_test_agent(agent_id \\ "test-agent-#{System.unique_integer([:positive])}") do
-    Agent.new!(
+    Agent.new!(%{
       agent_id: agent_id,
       model: mock_model(),
       system_prompt: "Test agent",
       replace_default_middleware: true,
       middleware: []
-    )
+    })
   end
 
   describe "start_link/1" do
