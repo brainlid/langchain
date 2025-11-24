@@ -295,6 +295,9 @@ defmodule LangChain.Function do
         text when is_binary(text) ->
           {:ok, text}
 
+        parts when is_list(parts) ->
+          {:ok, parts}
+
         other ->
           Logger.error(
             "Function #{function.name} unexpectedly returned #{inspect(other)}. Expect a string. Unable to present as response to LLM."
