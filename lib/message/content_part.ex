@@ -168,6 +168,14 @@ defmodule LangChain.Message.ContentPart do
     new!(%{type: :file_url, content: content, options: opts})
   end
 
+  @doc """
+  Create a new ContentPart that contains thinking text. Raises an exception if not valid.
+  """
+  @spec thinking!(String.t(), Keyword.t()) :: t() | no_return()
+  def thinking!(content, opts \\ []) do
+    new!(%{type: :thinking, content: content, options: opts})
+  end
+
   @doc false
   def changeset(message, attrs) do
     message

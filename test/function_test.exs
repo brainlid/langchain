@@ -4,6 +4,7 @@ defmodule LangChain.FunctionTest do
   doctest LangChain.Function
 
   alias LangChain.Function
+  alias LangChain.Message.ContentPart
 
   defp hello_world(_args, _context) do
     "Hello world!"
@@ -139,11 +140,33 @@ defmodule LangChain.FunctionTest do
 
       assert result ==
                {:error,
-                "ERROR: (RuntimeError) fake exception at test/function_test.exs:13: LangChain.FunctionTest.returns_context/2"}
+                "ERROR: (RuntimeError) fake exception at test/function_test.exs:14: LangChain.FunctionTest.returns_context/2"}
 
       # returns an error when anything else is returned
       result = Function.execute(function, %{}, %{result: 123})
       assert result == {:error, "An unexpected response was returned from the tool."}
+    end
+
+    test "handles multi-part responses from tools" do
+      # Simulate a tool that returns an image with text metadata
+      image_tool = fn _args, _context ->
+        [
+          ContentPart.text!("Generated visualization of sales data"),
+          ContentPart.image!("base64encodedimagedata==", media: :jpg)
+        ]
+      end
+
+      function = Function.new!(%{name: "generate_chart", function: image_tool})
+      result = Function.execute(function, %{}, %{})
+
+      assert {:ok, parts} = result
+      assert is_list(parts)
+      assert length(parts) == 2
+
+      assert %ContentPart{type: :text, content: "Generated visualization of sales data"} =
+               Enum.at(parts, 0)
+
+      assert %ContentPart{type: :image, content: "base64encodedimagedata=="} = Enum.at(parts, 1)
     end
   end
 end
