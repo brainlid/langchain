@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.4.1
+
+### Added
+- **ChatDeepSeek**: Added DeepSeek chat model integration with reasoning_content support (#394, #407)
+- **ChatOpenAI**: Added strict tool use support (#301)
+- **ChatOpenAI**: Added support for file_url with link to file (#395)
+- **ChatAnthropic**: Added strict tool use support (#409)
+- **ChatAnthropic**: Added support for file_url (#404)
+- **ChatAnthropic**: Added PDF reading support via Anthropic API (#403)
+- **ChatAnthropic**: Added `cache_messages` option to improve cache utilization (#398)
+- **ChatAnthropic**: Added `req_opts` option for custom Req configuration (#408)
+- **MessageDelta**: Added `MessageDelta.merge_deltas/2` function for merging multiple deltas (#401)
+- **ChatAnthropic**: Added `disable_parallel_tool_use` tool_choice pass-through (#390)
+- **Core**: Added multi-part tool responses support (#410)
+
+### Changed
+- **ChatOpenAI**: Enhanced OpenAI responses API (#391)
+- **Dependencies**: Updated gettext requirement to `~> 1.0` (#393, #399)
+- **Documentation**: Updated README install instructions
+
+### Fixed
+- **Core**: Fixed compiler typing warnings
+
+---
+
 ## v0.4.0
 
 ### Added
