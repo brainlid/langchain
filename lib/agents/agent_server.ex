@@ -38,7 +38,7 @@ defmodule LangChain.Agents.AgentServer do
       {:ok, agent} = Agent.new(
         agent_id: "my-agent-1",
         model: model,
-        system_prompt: "You are a helpful assistant."
+        base_system_prompt: "You are a helpful assistant."
       )
 
       initial_state = State.new!(%{
@@ -109,6 +109,7 @@ defmodule LangChain.Agents.AgentServer do
   alias LangChain.Agents.Agent
   alias LangChain.Agents.State
   alias LangChain.Agents.AgentSupervisor
+  alias LangChain.Persistence.StateSerializer
 
   @registry LangChain.Agents.Registry
 
@@ -480,6 +481,83 @@ defmodule LangChain.Agents.AgentServer do
     GenServer.stop(get_name(agent_id))
   end
 
+  @doc """
+  Export the current agent state to a serializable format.
+
+  This can be persisted to a database and later used to restore the agent
+  to its exact state. The exported state uses string keys (not atoms) for
+  compatibility with JSON/JSONB storage.
+
+  Returns a map with string keys containing:
+  - `"version"` - Serialization format version
+  - `"agent_id"` - The agent identifier
+  - `"state"` - The agent's state (messages, todos, metadata)
+  - `"agent_config"` - The agent's configuration
+  - `"serialized_at"` - ISO8601 timestamp
+
+  ## Examples
+
+      state = AgentServer.export_state("my-agent-1")
+      # Save to database
+      MyApp.Conversations.save_agent_state(conversation_id, state)
+  """
+  @spec export_state(String.t()) :: map()
+  def export_state(agent_id) do
+    GenServer.call(get_name(agent_id), :export_state)
+  end
+
+  @doc """
+  Restore agent state from a previously exported state.
+
+  This updates an already-running agent to restore its state from a
+  previously serialized format. The state should be a map with string
+  keys (as returned by `export_state/1`).
+
+  Returns `:ok` on success or `{:error, reason}` on failure.
+
+  ## Examples
+
+      # Load from database
+      {:ok, persisted_state} = MyApp.Conversations.load_agent_state(conversation_id)
+
+      # Restore into existing agent
+      :ok = AgentServer.restore_state("my-agent-1", persisted_state)
+  """
+  @spec restore_state(String.t(), map()) :: :ok | {:error, term()}
+  def restore_state(agent_id, persisted_state) when is_map(persisted_state) do
+    GenServer.call(get_name(agent_id), {:restore_state, persisted_state})
+  end
+
+  @doc """
+  Start a new AgentServer with restored state.
+
+  This is the preferred way to resume a conversation from persisted state.
+  The persisted_state should be a map with string keys (as returned by
+  `export_state/1`).
+
+  ## Options
+
+  All standard `start_link/1` options are supported, plus the state is
+  restored from the persisted_state parameter.
+
+  ## Examples
+
+      # Load from database
+      {:ok, persisted_state} = MyApp.Conversations.load_agent_state(conversation_id)
+
+      # Start agent with restored state
+      {:ok, pid} = AgentServer.start_link_from_state(
+        persisted_state,
+        name: AgentServer.get_name("my-agent-1")
+      )
+  """
+  @spec start_link_from_state(map(), keyword()) :: GenServer.on_start()
+  def start_link_from_state(persisted_state, opts \\ []) when is_map(persisted_state) do
+    # Add a marker to opts to indicate this is a restore operation
+    opts = Keyword.put(opts, :restore_from, persisted_state)
+    start_link(opts)
+  end
+
   ## Server Callbacks
 
   @impl true
@@ -487,6 +565,19 @@ defmodule LangChain.Agents.AgentServer do
     # Trap exits to ensure terminate/2 is called for graceful shutdown
     Process.flag(:trap_exit, true)
 
+    # Check if we're restoring from persisted state
+    case Keyword.get(opts, :restore_from) do
+      nil ->
+        # Normal initialization
+        init_fresh(opts)
+
+      persisted_state ->
+        # Restore from persisted state
+        init_from_persisted(persisted_state, opts)
+    end
+  end
+
+  defp init_fresh(opts) do
     agent = Keyword.fetch!(opts, :agent)
     initial_state = Keyword.get(opts, :initial_state) || State.new!()
     # allow pubsub to be explicitly set to nil to disable it
@@ -517,6 +608,43 @@ defmodule LangChain.Agents.AgentServer do
     server_state = reset_inactivity_timer(server_state)
 
     {:ok, server_state}
+  end
+
+  defp init_from_persisted(persisted_state, opts) do
+    # Deserialize the persisted state
+    case StateSerializer.deserialize_server_state(persisted_state) do
+      {:ok, {agent, state}} ->
+        # Use the restored agent and state, but allow opts to override
+        pubsub = Keyword.get(opts, :pubsub, default_pubsub())
+        pubsub_name = Keyword.get(opts, :pubsub_name) || :langchain_pubsub
+        id = Keyword.get(opts, :id) || agent.agent_id
+        inactivity_timeout = Keyword.get(opts, :inactivity_timeout, 300_000)
+        shutdown_delay = Keyword.get(opts, :shutdown_delay, 5_000)
+
+        topic = "agent_server:#{id}"
+
+        server_state = %ServerState{
+          agent: agent,
+          state: state,
+          status: :idle,
+          pubsub: if(pubsub, do: {pubsub, pubsub_name}, else: nil),
+          topic: topic,
+          interrupt_data: nil,
+          error: nil,
+          inactivity_timeout: inactivity_timeout,
+          inactivity_timer_ref: nil,
+          last_activity_at: DateTime.utc_now(),
+          shutdown_delay: shutdown_delay
+        }
+
+        # Start the inactivity timer
+        server_state = reset_inactivity_timer(server_state)
+
+        {:ok, server_state}
+
+      {:error, reason} ->
+        {:stop, {:restore_failed, reason}}
+    end
   end
 
   @impl true
@@ -741,6 +869,46 @@ defmodule LangChain.Agents.AgentServer do
     updated_server_state = reset_inactivity_timer(updated_server_state)
 
     {:reply, :ok, updated_server_state}
+  end
+
+  @impl true
+  def handle_call(:export_state, _from, server_state) do
+    # Serialize the current state using StateSerializer
+    serialized =
+      StateSerializer.serialize_server_state(
+        server_state.agent,
+        server_state.state
+      )
+
+    {:reply, serialized, server_state}
+  end
+
+  @impl true
+  def handle_call({:restore_state, persisted_state}, _from, server_state) do
+    # Deserialize the persisted state
+    case StateSerializer.deserialize_server_state(persisted_state) do
+      {:ok, {agent, state}} ->
+        # Update the server state with restored agent and state
+        updated_server_state = %{
+          server_state
+          | agent: agent,
+            state: state,
+            status: :idle,
+            error: nil,
+            interrupt_data: nil
+        }
+
+        # Broadcast state changes to subscribers
+        broadcast_state_changes(server_state, state)
+
+        # Reset inactivity timer after restore
+        updated_server_state = reset_inactivity_timer(updated_server_state)
+
+        {:reply, :ok, updated_server_state}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, server_state}
+    end
   end
 
   @impl true

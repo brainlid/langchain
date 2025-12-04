@@ -30,7 +30,7 @@ defmodule LangChain.Agents.AgentSupervisor do
       {:ok, agent} = Agent.new(
         agent_id: "my-agent",
         model: model,
-        system_prompt: "You are a helpful assistant."
+        base_system_prompt: "You are a helpful assistant."
       )
 
       {:ok, sup_pid} = AgentSupervisor.start_link(agent: agent)

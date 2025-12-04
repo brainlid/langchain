@@ -86,9 +86,9 @@ defmodule LangChain.Agents.TodoTest do
       map = Todo.to_map(todo)
 
       assert map == %{
-               id: "123",
-               content: "Task",
-               status: "in_progress"
+               "id" => "123",
+               "content" => "Task",
+               "status" => "in_progress"
              }
     end
 
@@ -96,7 +96,7 @@ defmodule LangChain.Agents.TodoTest do
       for status <- [:pending, :in_progress, :completed, :cancelled] do
         todo = Todo.new!(%{content: "Task", status: status})
         map = Todo.to_map(todo)
-        assert map.status == Atom.to_string(status)
+        assert map["status"] == Atom.to_string(status)
       end
     end
   end

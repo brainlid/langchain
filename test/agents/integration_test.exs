@@ -64,7 +64,7 @@ defmodule LangChain.Agents.IntegrationTest do
       {:ok, agent} =
         Agent.new(%{
           model: model,
-          system_prompt: "You are a helpful assistant."
+          base_system_prompt: "You are a helpful assistant."
         })
 
       # Initial state with user message
@@ -150,7 +150,7 @@ defmodule LangChain.Agents.IntegrationTest do
         Agent.new(%{
           agent_id: agent_id,
           model: model,
-          system_prompt: "You are a helpful assistant."
+          base_system_prompt: "You are a helpful assistant."
         })
 
       # Initial state with user message

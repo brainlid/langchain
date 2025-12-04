@@ -11,7 +11,7 @@ defmodule LangChain.Agents.Agent do
       {:ok, agent} = Agent.new(%{
         agent_id: "my-agent-1",
         model: ChatAnthropic.new!(%{model: "claude-3-5-sonnet-20241022"}),
-        system_prompt: "You are a helpful assistant."
+        base_system_prompt: "You are a helpful assistant."
       })
 
       # Execute with messages
@@ -52,7 +52,8 @@ defmodule LangChain.Agents.Agent do
   embedded_schema do
     field :agent_id, :string
     field :model, :any, virtual: true
-    field :system_prompt, :string
+    field :base_system_prompt, :string
+    field :assembled_system_prompt, :string
     field :tools, {:array, :any}, default: [], virtual: true
     field :middleware, {:array, :any}, default: [], virtual: true
     field :name, :string
@@ -60,7 +61,15 @@ defmodule LangChain.Agents.Agent do
 
   @type t :: %Agent{}
 
-  @create_fields [:agent_id, :model, :system_prompt, :tools, :middleware, :name]
+  @create_fields [
+    :agent_id,
+    :model,
+    :base_system_prompt,
+    :assembled_system_prompt,
+    :tools,
+    :middleware,
+    :name
+  ]
   @required_fields [:agent_id, :model]
 
   @doc """
@@ -70,7 +79,7 @@ defmodule LangChain.Agents.Agent do
 
   - `:agent_id` - Unique identifier for the agent (optional, auto-generated if not provided)
   - `:model` - LangChain ChatModel struct (required)
-  - `:system_prompt` - Base system instructions (default: "")
+  - `:base_system_prompt` - Base system instructions
   - `:tools` - Additional tools beyond middleware (default: [])
   - `:middleware` - List of middleware modules/configs (default: [])
   - `:name` - Agent name for identification (default: nil)
@@ -108,7 +117,7 @@ defmodule LangChain.Agents.Agent do
       {:ok, agent} = Agent.new(%{
         agent_id: "basic-agent",
         model: ChatAnthropic.new!(%{model: "claude-3-5-sonnet-20241022"}),
-        system_prompt: "You are helpful."
+        base_system_prompt: "You are helpful."
       })
 
       # With custom tools
@@ -160,7 +169,6 @@ defmodule LangChain.Agents.Agent do
     |> cast(attrs, @create_fields)
     |> put_agent_id_if_missing()
     |> validate_required(@required_fields)
-    |> put_default_system_prompt()
     |> build_and_initialize_middleware(opts)
     |> assemble_full_system_prompt()
     |> collect_all_tools()
@@ -182,15 +190,6 @@ defmodule LangChain.Agents.Agent do
     agent
     |> cast(attrs, @create_fields)
     |> validate_required(@required_fields)
-    |> put_default_system_prompt()
-  end
-
-  defp put_default_system_prompt(changeset) do
-    # Ensure system_prompt is never nil - default to empty string
-    case get_field(changeset, :system_prompt) do
-      nil -> put_change(changeset, :system_prompt, "")
-      _ -> changeset
-    end
   end
 
   defp put_agent_id_if_missing(changeset) do
@@ -204,18 +203,19 @@ defmodule LangChain.Agents.Agent do
     # Build middleware list
     replace_defaults = Keyword.get(opts, :replace_default_middleware, false)
     user_middleware = get_field(changeset, :middleware) || []
+    model = get_field(changeset, :model)
+    agent_id = get_field(changeset, :agent_id)
 
     middleware_list =
       case replace_defaults do
         false ->
-          # Append user middleware to defaults
-          model = get_field(changeset, :model)
-          agent_id = get_field(changeset, :agent_id)
-          build_default_middleware(model, agent_id, opts) ++ user_middleware
+          # Append user middleware to defaults (inject agent_id and model)
+          build_default_middleware(model, agent_id, opts) ++
+            inject_agent_context(user_middleware, agent_id, model)
 
         true ->
-          # Use only user-provided middleware
-          user_middleware
+          # Use only user-provided middleware (inject agent_id and model)
+          inject_agent_context(user_middleware, agent_id, model)
       end
 
     # Initialize middleware
@@ -226,6 +226,28 @@ defmodule LangChain.Agents.Agent do
       {:error, reason} ->
         add_error(changeset, :middleware, "initialization failed: #{inspect(reason)}")
     end
+  end
+
+  # Inject agent_id and model into user middleware configurations
+  defp inject_agent_context(middleware_list, agent_id, model) do
+    Enum.map(middleware_list, fn
+      # Module without options - inject agent_id and model
+      module when is_atom(module) ->
+        {module, [agent_id: agent_id, model: model]}
+
+      # Module with options - merge agent_id and model
+      {module, opts} when is_list(opts) ->
+        {module, Keyword.merge([agent_id: agent_id, model: model], opts)}
+
+      # Module with map options - merge agent_id and model
+      {module, opts} when is_map(opts) ->
+        merged = Map.merge(%{agent_id: agent_id, model: model}, opts)
+        {module, Map.to_list(merged)}
+
+      # Pass through anything else as-is
+      other ->
+        other
+    end)
   end
 
   @doc """
@@ -305,7 +327,7 @@ defmodule LangChain.Agents.Agent do
   end
 
   defp assemble_full_system_prompt(changeset) do
-    base_prompt = get_field(changeset, :system_prompt) || ""
+    base_prompt = get_field(changeset, :base_system_prompt) || ""
     initialized_middleware = get_field(changeset, :middleware) || []
 
     middleware_prompts =
@@ -318,7 +340,7 @@ defmodule LangChain.Agents.Agent do
       |> Enum.reject(&(&1 == ""))
       |> Enum.join("\n\n")
 
-    put_change(changeset, :system_prompt, full_prompt)
+    put_change(changeset, :assembled_system_prompt, full_prompt)
   end
 
   defp collect_all_tools(changeset) do
@@ -609,7 +631,7 @@ defmodule LangChain.Agents.Agent do
   defp build_chain(agent, messages, state, callbacks) do
     # Add system message if we have a system prompt
     messages_with_system =
-      case agent.system_prompt do
+      case agent.assembled_system_prompt do
         prompt when is_binary(prompt) and prompt != "" ->
           [Message.new_system!(prompt) | messages]
 

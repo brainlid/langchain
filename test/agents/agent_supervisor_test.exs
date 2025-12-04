@@ -28,7 +28,7 @@ defmodule LangChain.Agents.AgentSupervisorTest do
     Agent.new!(%{
       agent_id: agent_id,
       model: mock_model(),
-      system_prompt: "Test agent",
+      base_system_prompt: "Test agent",
       replace_default_middleware: true,
       middleware: []
     })
@@ -151,7 +151,7 @@ defmodule LangChain.Agents.AgentSupervisorTest do
       invalid_agent = %Agent{
         agent_id: nil,
         model: mock_model(),
-        system_prompt: "Test"
+        base_system_prompt: "Test"
       }
 
       # The supervisor will exit when start_link fails

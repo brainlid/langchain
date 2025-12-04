@@ -184,7 +184,7 @@ defmodule LangChain.Agents.SubAgent do
     sub_agent_id = "#{parent_agent_id}-sub-#{:erlang.unique_integer([:positive])}"
 
     # Build the chain with system prompt + user message
-    messages = build_initial_messages(agent_config.system_prompt, instructions)
+    messages = build_initial_messages(agent_config.assembled_system_prompt, instructions)
 
     chain =
       LLMChain.new!(%{llm: agent_config.model})
@@ -239,7 +239,7 @@ defmodule LangChain.Agents.SubAgent do
     sub_agent_id = "#{parent_agent_id}-sub-#{:erlang.unique_integer([:positive])}"
 
     # Build chain with optional initial messages + instructions
-    system_messages = build_initial_messages(compiled_agent.system_prompt, nil)
+    system_messages = build_initial_messages(compiled_agent.assembled_system_prompt, nil)
     user_message = Message.new_user!(instructions)
     all_messages = system_messages ++ initial_messages ++ [user_message]
 
@@ -815,7 +815,7 @@ defmodule LangChain.Agents.SubAgent do
     LangChain.Agents.Agent.new!(
       %{
         model: model,
-        system_prompt: config.system_prompt,
+        base_system_prompt: config.system_prompt,
         tools: config.tools,
         middleware: middleware
       },

@@ -245,9 +245,101 @@ defmodule LangChain.Agents.Middleware.SubAgent do
     end
   end
 
-  ## Starting New SubAgent
+  @doc """
+  Starts and executes a new SubAgent to delegate work.
 
-  defp start_subagent(instructions, subagent_type, args, context, config) do
+  This function allows custom tools and middleware to spawn SubAgents for
+  delegating complex, multi-step tasks, similar to how the built-in `task` tool
+  works. The SubAgent runs as an isolated, supervised process with its own
+  conversation context.
+
+  ## Parameters
+
+  - `instructions` - Detailed instructions for what the SubAgent should
+    accomplish. Be specific about the task, expected output, and any context
+    needed.
+
+  - `subagent_type` - The name/type of SubAgent to use. Must match a configured
+    SubAgent name (from middleware init) or "general-purpose" for dynamic
+    SubAgents.
+
+  - `args` - Full arguments map containing:
+    - `"instructions"` (required) - Same as instructions parameter
+    - `"subagent_type"` (required) - Same as subagent_type parameter
+    - `"system_prompt"` (optional) - Custom system prompt for general-purpose
+      SubAgents
+
+  - `context` - Tool execution context map containing:
+    - `:agent_id` - Parent agent ID
+    - `:state` - Parent agent state
+    - `:parent_middleware` - Parent middleware list (for general-purpose
+      SubAgents)
+    - `:resume_info` - Resume information if continuing interrupted SubAgent
+
+  - `config` - Middleware configuration map containing:
+    - `:agent_map` - Map of subagent_type -> Agent struct
+    - `:descriptions` - Map of subagent_type -> description string
+    - `:agent_id` - Parent agent ID
+    - `:model` - Model configuration
+
+  ## Returns
+
+  - `{:ok, result}` - SubAgent completed successfully, returns final message
+    content
+  - `{:interrupt, interrupt_data}` - SubAgent hit HITL interrupt, needs approval
+  - `{:error, reason}` - Failed to start or execute SubAgent
+
+  ## Example
+
+  Using from a custom tool function:
+
+      def my_research_tool_function(args, context) do
+        # Build config from middleware state
+        subagent_config = %{
+          agent_map: context.subagent_map,
+          descriptions: context.subagent_descriptions,
+          agent_id: context.agent_id,
+          model: context.model
+        }
+
+        # Prepare arguments
+        task_args = %{
+          "instructions" => "Research quantum computing developments",
+          "subagent_type" => "researcher"
+        }
+
+        # Start SubAgent
+        case SubAgent.start_subagent(
+          "Research quantum computing developments",
+          "researcher",
+          task_args,
+          context,
+          subagent_config
+        ) do
+          {:ok, result} ->
+            {:ok, "Research complete: " <> result}
+
+          {:interrupt, interrupt_data} ->
+            # Propagate interrupt to parent
+            {:interrupt, interrupt_data}
+
+          {:error, reason} ->
+            {:error, "Failed to research: " <> reason}
+        end
+      end
+
+  ## Notes
+
+  - SubAgents run in isolated process contexts with their own conversation
+    history
+  - Parent only sees final result, not intermediate reasoning (token efficient)
+  - HITL interrupts from SubAgents automatically propagate to parent
+  - For "general-purpose" type, tools and middleware are inherited from parent
+  - SubAgents are supervised and cleaned up automatically
+  """
+  @spec start_subagent(String.t(), String.t(), map(), map(), map()) ::
+          {:ok, String.t()} | {:interrupt, map()} | {:error, String.t()}
+  def start_subagent(instructions, subagent_type, args, context, config) do
     Logger.debug("Starting SubAgent: #{subagent_type}")
 
     # Get agent from lookup map
@@ -337,7 +429,7 @@ defmodule LangChain.Agents.Middleware.SubAgent do
           LangChain.Agents.Agent.new!(
             %{
               model: config.model,
-              system_prompt: system_prompt,
+              base_system_prompt: system_prompt,
               middleware: filtered_middleware
             },
             replace_default_middleware: true,

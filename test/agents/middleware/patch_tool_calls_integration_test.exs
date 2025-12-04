@@ -16,7 +16,7 @@ defmodule LangChain.Agents.Middleware.PatchToolCallsIntegrationTest do
       {:ok, agent} =
         Agent.new(%{
           model: model,
-          system_prompt: "You are a helpful assistant."
+          base_system_prompt: "You are a helpful assistant."
         })
 
       {:ok, agent: agent}

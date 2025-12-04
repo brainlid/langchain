@@ -85,13 +85,13 @@ defmodule LangChain.Agents.Todo do
 
       todo = Todo.new!(%{content: "Task"})
       map = Todo.to_map(todo)
-      # => %{id: "...", content: "Task", status: "pending"}
+      # => %{"id" => "...", "content" => "Task", "status" => "pending"}
   """
   def to_map(%Todo{} = todo) do
     %{
-      id: todo.id,
-      content: todo.content,
-      status: Atom.to_string(todo.status)
+      "id" => todo.id,
+      "content" => todo.content,
+      "status" => Atom.to_string(todo.status)
     }
   end
 

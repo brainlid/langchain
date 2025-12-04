@@ -105,7 +105,7 @@ defmodule LangChain.Agents.AgentTest do
       assert %Agent{} = agent
       assert agent.model != nil
       # System prompt now includes TodoList middleware prompt
-      assert agent.system_prompt =~ "write_todos"
+      assert agent.assembled_system_prompt =~ "write_todos"
     end
 
     test "requires model parameter" do
@@ -114,10 +114,10 @@ defmodule LangChain.Agents.AgentTest do
     end
 
     test "creates agent with system prompt" do
-      {:ok, agent} = Agent.new(%{model: mock_model(), system_prompt: "You are helpful."})
+      {:ok, agent} = Agent.new(%{model: mock_model(), base_system_prompt: "You are helpful."})
       # System prompt includes user prompt + TodoList middleware
-      assert agent.system_prompt =~ "You are helpful"
-      assert agent.system_prompt =~ "write_todos"
+      assert agent.assembled_system_prompt =~ "You are helpful"
+      assert agent.assembled_system_prompt =~ "write_todos"
     end
 
     test "creates agent with custom name" do
@@ -176,16 +176,16 @@ defmodule LangChain.Agents.AgentTest do
       {:ok, agent} =
         Agent.new(%{
           model: mock_model(),
-          system_prompt: "Base prompt",
+          base_system_prompt: "Base prompt",
           middleware: [
             {TestMiddleware1, [name: "first"]},
             {TestMiddleware2, [name: "second"]}
           ]
         })
 
-      assert agent.system_prompt =~ "Base prompt"
-      assert agent.system_prompt =~ "Prompt from first"
-      assert agent.system_prompt =~ "Another prompt from second"
+      assert agent.assembled_system_prompt =~ "Base prompt"
+      assert agent.assembled_system_prompt =~ "Prompt from first"
+      assert agent.assembled_system_prompt =~ "Another prompt from second"
     end
 
     test "collects tools from middleware" do
@@ -260,7 +260,7 @@ defmodule LangChain.Agents.AgentTest do
 
       assert agent.middleware == []
       assert agent.tools == []
-      assert agent.system_prompt == ""
+      assert agent.assembled_system_prompt == ""
     end
   end
 
@@ -385,7 +385,7 @@ defmodule LangChain.Agents.AgentTest do
         Agent.new(%{
           model: mock_model(),
           name: "math-agent",
-          system_prompt: "You are a math assistant.",
+          base_system_prompt: "You are a math assistant.",
           tools: [custom_tool],
           middleware: [
             {TestMiddleware1, [name: "logging"]},
@@ -395,9 +395,9 @@ defmodule LangChain.Agents.AgentTest do
 
       # Verify agent structure
       assert agent.name == "math-agent"
-      assert agent.system_prompt =~ "math assistant"
-      assert agent.system_prompt =~ "logging"
-      assert agent.system_prompt =~ "validation"
+      assert agent.assembled_system_prompt =~ "math assistant"
+      assert agent.assembled_system_prompt =~ "logging"
+      assert agent.assembled_system_prompt =~ "validation"
       # calculator + write_todos + 7 filesystem tools + tool1 + tool2 + SubAgents = 12
       assert length(agent.tools) == 12
 
@@ -415,7 +415,7 @@ defmodule LangChain.Agents.AgentTest do
       {:ok, agent} =
         Agent.new(%{
           model: mock_model(),
-          system_prompt: "Simple agent",
+          base_system_prompt: "Simple agent",
           replace_default_middleware: true
         })
 
@@ -459,7 +459,7 @@ defmodule LangChain.Agents.AgentTest do
     test "system prompt includes TODO instructions" do
       {:ok, agent} = Agent.new(%{model: mock_model()})
 
-      assert agent.system_prompt =~ "write_todos"
+      assert agent.assembled_system_prompt =~ "write_todos"
     end
   end
 end

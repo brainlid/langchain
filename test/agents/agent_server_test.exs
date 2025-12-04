@@ -33,7 +33,7 @@ defmodule LangChain.Agents.AgentServerTest do
       Map.merge(
         %{
           model: mock_model(),
-          system_prompt: "Test agent",
+          base_system_prompt: "Test agent",
           replace_default_middleware: true,
           middleware: []
         },
