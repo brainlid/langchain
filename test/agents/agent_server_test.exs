@@ -637,6 +637,107 @@ defmodule LangChain.Agents.AgentServerTest do
     end
   end
 
+  describe "restore_state/2" do
+    test "restores state into a running agent" do
+      # Create and start an agent with initial state
+      agent = create_test_agent()
+      agent_id = agent.agent_id
+      initial_msg = Message.new_user!("Initial message")
+      initial_state = State.new!(%{messages: [initial_msg]})
+
+      {:ok, _pid} =
+        AgentServer.start_link(
+          agent: agent,
+          initial_state: initial_state,
+          name: AgentServer.get_name(agent_id),
+          pubsub: nil
+        )
+
+      # Export the initial state
+      exported_state = AgentServer.export_state(agent_id)
+
+      # Modify the state by adding a new message
+      new_msg = Message.new_user!("New message")
+      :ok = AgentServer.add_message(agent_id, new_msg)
+
+      # Verify the state was modified
+      current_state = AgentServer.get_state(agent_id)
+      assert length(current_state.messages) == 2
+
+      # Restore the exported state
+      assert :ok = AgentServer.restore_state(agent_id, exported_state)
+
+      # Verify the state was restored to the initial state
+      restored_state = AgentServer.get_state(agent_id)
+      assert length(restored_state.messages) == 1
+
+      first_msg = Enum.at(restored_state.messages, 0)
+      assert [%LangChain.Message.ContentPart{content: "Initial message"}] = first_msg.content
+
+      # Verify agent is in idle status after restore
+      assert AgentServer.get_status(agent_id) == :idle
+
+      # Clean up
+      :ok = AgentServer.stop(agent_id)
+    end
+
+    test "handles restore errors gracefully" do
+      agent = create_test_agent()
+      agent_id = agent.agent_id
+
+      {:ok, pid} =
+        AgentServer.start_link(
+          agent: agent,
+          name: AgentServer.get_name(agent_id),
+          pubsub: nil
+        )
+
+      # Monitor the process to detect if it crashes
+      ref = Process.monitor(pid)
+
+      # Try to restore with invalid state (model with missing required field)
+      # This will cause deserialization to fail
+      invalid_state = %{
+        "version" => 1,
+        "state" => %{"messages" => [], "todos" => [], "metadata" => %{}},
+        "agent_config" => %{
+          "base_system_prompt" => "test",
+          "model" => %{
+            "module" => "Elixir.LangChain.ChatModels.ChatAnthropic"
+            # Missing required "model" field - will cause deserialization error
+          }
+        }
+      }
+
+      # Trap exits to catch GenServer crash
+      Process.flag(:trap_exit, true)
+
+      # The GenServer will crash during the call
+      result =
+        try do
+          AgentServer.restore_state(agent_id, invalid_state)
+        catch
+          :exit, {:noproc, _} ->
+            # GenServer crashed and is no longer running
+            {:error, :server_crashed}
+
+          :exit, {{%RuntimeError{}, _}, _} ->
+            # GenServer crashed with RuntimeError
+            {:error, :deserialization_failed}
+        end
+
+      # Verify we got an error or the process died
+      case result do
+        {:error, _} ->
+          assert true
+
+        _ ->
+          # Wait for process to die
+          assert_receive {:DOWN, ^ref, :process, ^pid, _reason}, 100
+      end
+    end
+  end
+
   describe "stop/1" do
     test "stops the server gracefully" do
       agent = create_test_agent()
@@ -652,6 +753,107 @@ defmodule LangChain.Agents.AgentServerTest do
       assert Process.alive?(pid)
       assert :ok = AgentServer.stop(agent_id)
       refute Process.alive?(pid)
+    end
+  end
+
+  describe "start_link_from_state/2" do
+    test "restores agent from serialized state" do
+      # Create and start an agent with some initial state
+      agent = create_test_agent()
+      original_agent_id = agent.agent_id
+      user_msg = Message.new_user!("Hello, how are you?")
+      assistant_msg = Message.new_assistant!(%{content: "I'm doing great!"})
+      initial_state = State.new!(%{messages: [user_msg, assistant_msg]})
+
+      {:ok, _pid} =
+        AgentServer.start_link(
+          agent: agent,
+          initial_state: initial_state,
+          name: AgentServer.get_name(original_agent_id),
+          pubsub: nil
+        )
+
+      # Export the state using the public API
+      exported_state = AgentServer.export_state(original_agent_id)
+
+      # Verify the exported state has the expected structure
+      assert exported_state["version"] == 1
+      assert exported_state["state"] != nil
+      assert exported_state["agent_config"] != nil
+      assert exported_state["serialized_at"] != nil
+
+      # Stop the original agent
+      :ok = AgentServer.stop(original_agent_id)
+
+      # Restore the state with a new agent_id
+      new_agent_id = "restored-agent-#{System.unique_integer([:positive])}"
+
+      {:ok, _pid} =
+        AgentServer.start_link_from_state(
+          exported_state,
+          agent_id: new_agent_id,
+          pubsub: nil
+        )
+
+      # Verify the agent started and is in idle status
+      assert AgentServer.get_status(new_agent_id) == :idle
+
+      # Export the restored state and verify it matches the original
+      restored_exported_state = AgentServer.export_state(new_agent_id)
+
+      # Compare the state portions (messages, todos, metadata)
+      assert restored_exported_state["state"]["messages"] == exported_state["state"]["messages"]
+      assert restored_exported_state["state"]["todos"] == exported_state["state"]["todos"]
+      assert restored_exported_state["state"]["metadata"] == exported_state["state"]["metadata"]
+
+      # Verify agent_config was preserved (except agent_id which is now different)
+      assert restored_exported_state["agent_config"]["model"] ==
+               exported_state["agent_config"]["model"]
+
+      assert restored_exported_state["agent_config"]["base_system_prompt"] ==
+               exported_state["agent_config"]["base_system_prompt"]
+
+      # Clean up
+      :ok = AgentServer.stop(new_agent_id)
+    end
+
+    test "handles deserialization errors gracefully" do
+      # Try to restore with invalid persisted state (missing model entirely)
+      # This will cause Agent.new to fail validation
+      invalid_state = %{
+        "version" => 1,
+        "state" => %{"messages" => [], "todos" => [], "metadata" => %{}},
+        "agent_config" => %{
+          "base_system_prompt" => "test"
+          # Missing "model" key entirely - will cause Agent.new to fail
+        }
+      }
+
+      new_agent_id = "invalid-restore-#{System.unique_integer([:positive])}"
+
+      # The GenServer will exit during init, which GenServer.start_link catches
+      # In this case, we'll trap exits to handle it gracefully in the test
+      Process.flag(:trap_exit, true)
+
+      result =
+        AgentServer.start_link_from_state(
+          invalid_state,
+          agent_id: new_agent_id,
+          name: AgentServer.get_name(new_agent_id),
+          pubsub: nil
+        )
+
+      # When init returns {:stop, reason}, start_link returns {:error, reason}
+      # or we might receive an EXIT message
+      case result do
+        {:error, _reason} ->
+          # GenServer successfully returned an error
+          assert true
+
+        {:ok, pid} ->
+          # If it somehow started, wait for EXIT message
+          assert_receive {:EXIT, ^pid, _reason}, 100
+      end
     end
   end
 

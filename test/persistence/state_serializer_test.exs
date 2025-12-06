@@ -32,14 +32,16 @@ defmodule LangChain.Persistence.StateSerializerTest do
 
       result = StateSerializer.serialize_server_state(agent, state)
 
-      # Check that result has string keys and correct values
+      # Check that result has string keys and correct values (agent_id NOT included)
       assert %{
                "version" => 1,
-               "agent_id" => "agent-123",
                "state" => _state_data,
                "agent_config" => _agent_config,
                "serialized_at" => _serialized_at
              } = result
+
+      # agent_id should NOT be in the serialized state
+      refute Map.has_key?(result, "agent_id")
 
       # Check state has string keys
       assert %{"messages" => messages, "todos" => todos, "metadata" => metadata} =
@@ -122,7 +124,6 @@ defmodule LangChain.Persistence.StateSerializerTest do
       # Create a serialized state with string keys (as would come from JSONB)
       serialized = %{
         "version" => 1,
-        "agent_id" => "agent-123",
         "state" => %{
           "messages" => [
             %{"role" => "user", "content" => "Hello", "status" => "complete"},
@@ -138,19 +139,17 @@ defmodule LangChain.Persistence.StateSerializerTest do
           "metadata" => %{"session_id" => "session-1"}
         },
         "agent_config" => %{
-          "agent_id" => "agent-123",
           "model" => %{
             "module" => "Elixir.LangChain.ChatModels.ChatOpenAI",
             "model" => "gpt-4"
           },
           "base_system_prompt" => "You are helpful",
-          "tools" => [],
           "middleware" => []
         },
         "serialized_at" => "2025-11-29T10:30:00Z"
       }
 
-      {:ok, {agent, state}} = StateSerializer.deserialize_server_state(serialized)
+      {:ok, {agent, state}} = StateSerializer.deserialize_server_state(serialized, "agent-123")
 
       # Check agent
       assert agent.agent_id == "agent-123"
@@ -176,7 +175,6 @@ defmodule LangChain.Persistence.StateSerializerTest do
     test "deserializes messages with tool calls" do
       serialized = %{
         "version" => 1,
-        "agent_id" => "agent-123",
         "state" => %{
           "messages" => [
             %{
@@ -198,18 +196,16 @@ defmodule LangChain.Persistence.StateSerializerTest do
           "metadata" => %{}
         },
         "agent_config" => %{
-          "agent_id" => "agent-123",
           "model" => %{
             "module" => "Elixir.LangChain.ChatModels.ChatOpenAI",
             "model" => "gpt-4"
           },
-          "tools" => [],
           "middleware" => []
         },
         "serialized_at" => "2025-11-29T10:30:00Z"
       }
 
-      {:ok, {_agent, state}} = StateSerializer.deserialize_server_state(serialized)
+      {:ok, {_agent, state}} = StateSerializer.deserialize_server_state(serialized, "agent-123")
 
       assert [message] = state.messages
       assert message.role == :assistant
@@ -225,25 +221,22 @@ defmodule LangChain.Persistence.StateSerializerTest do
 
     test "handles missing version field" do
       serialized = %{
-        "agent_id" => "agent-123",
         "state" => %{
           "messages" => [],
           "todos" => [],
           "metadata" => %{}
         },
         "agent_config" => %{
-          "agent_id" => "agent-123",
           "model" => %{
             "module" => "Elixir.LangChain.ChatModels.ChatOpenAI",
             "model" => "gpt-4"
           },
-          "tools" => [],
           "middleware" => []
         }
       }
 
       # Should still work (assumes version 1)
-      {:ok, {agent, state}} = StateSerializer.deserialize_server_state(serialized)
+      {:ok, {agent, state}} = StateSerializer.deserialize_server_state(serialized, "agent-123")
 
       assert agent.agent_id == "agent-123"
       assert state.messages == []
@@ -277,9 +270,9 @@ defmodule LangChain.Persistence.StateSerializerTest do
       # Serialize
       serialized = StateSerializer.serialize_server_state(agent, state)
 
-      # Deserialize
+      # Deserialize (must provide agent_id)
       {:ok, {restored_agent, restored_state}} =
-        StateSerializer.deserialize_server_state(serialized)
+        StateSerializer.deserialize_server_state(serialized, "agent-123")
 
       # Compare agent
       assert restored_agent.agent_id == agent.agent_id
@@ -346,9 +339,9 @@ defmodule LangChain.Persistence.StateSerializerTest do
       # Serialize
       serialized = StateSerializer.serialize_server_state(agent, state)
 
-      # Deserialize
+      # Deserialize (must provide agent_id)
       {:ok, {_restored_agent, restored_state}} =
-        StateSerializer.deserialize_server_state(serialized)
+        StateSerializer.deserialize_server_state(serialized, "agent-123")
 
       # Check messages
       assert [restored_msg1, restored_msg2, restored_msg3, restored_msg4] =
@@ -421,7 +414,6 @@ defmodule LangChain.Persistence.StateSerializerTest do
           }
         },
         "agent_config" => %{
-          "agent_id" => "agent-123",
           "model" => %{
             "module" => "Elixir.LangChain.ChatModels.ChatOpenAI",
             "model" => "gpt-4"
@@ -430,8 +422,8 @@ defmodule LangChain.Persistence.StateSerializerTest do
         "serialized_at" => "2025-11-29T10:30:00Z"
       }
 
-      # Should deserialize successfully
-      {:ok, {agent, state}} = StateSerializer.deserialize_server_state(jsonb_data)
+      # Should deserialize successfully (must provide agent_id)
+      {:ok, {agent, state}} = StateSerializer.deserialize_server_state(jsonb_data, "agent-123")
 
       assert agent.agent_id == "agent-123"
       assert [_message] = state.messages

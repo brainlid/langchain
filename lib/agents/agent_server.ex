@@ -9,9 +9,66 @@ defmodule LangChain.Agents.AgentServer do
   - Event broadcasting for UI updates
   - Human-in-the-loop interrupt handling
 
+  ## Understanding agent_id
+
+  The `agent_id` is a **runtime identifier** used for process management and
+  inter-process communication. It serves several critical purposes:
+
+  ### Process Registration
+  The `agent_id` is used to construct a Registry key via `get_name(agent_id)`,
+  which returns a `:via` tuple for GenServer registration:
+  - Format: `{:via, Registry, {LangChain.Agents.Registry, {:agent_server,
+    agent_id}}}`
+  - Ensures only one AgentServer process exists per agent_id
+  - Enables process lookup without maintaining PIDs
+
+  ### PubSub Topics
+  The `agent_id` forms the basis for PubSub topic construction:
+  - Topic format: `"agent_server:\#{agent_id}"`
+  - External clients subscribe using: `AgentServer.subscribe(agent_id)`
+  - Events broadcast include: status changes, LLM deltas, todos updates
+
+  ### Middleware Context
+  The `agent_id` is passed to middleware during initialization, enabling:
+  - Coordination with agent-specific services (FileSystemServer,
+    SubAgentsDynamicSupervisor)
+  - Parent-child relationship establishment in SubAgent hierarchies
+  - Per-agent resource isolation (virtual filesystems, etc.)
+
+  ### Supervision Tree Coordination
+  The `agent_id` flows through the entire supervision tree via AgentSupervisor,
+  ensuring all child processes (FileSystemServer, AgentServer,
+  SubAgentsDynamicSupervisor) are coordinated under the same agent context.
+
+  ### What agent_id IS NOT
+
+  **Not Part of Conversation State**: The `agent_id` is NOT included in
+  serialized state (via `export_state/1`). It's a runtime identifier, not
+  conversation data. This separation provides important benefits:
+
+  - **Flexibility**: Restore the same conversation state under a different
+    `agent_id`
+  - **State Cloning**: Clone conversations for testing or forking scenarios
+  - **Clean Architecture**: Clear separation between runtime identity and data
+
+  When restoring state via `start_link_from_state/2`, you must provide the
+  `agent_id` as a parameter. This enables use cases like:
+
+      # Restore with same agent_id
+      AgentServer.start_link_from_state(saved_state, agent_id: "conversation-123")
+
+      # Clone conversation with different agent_id
+      AgentServer.start_link_from_state(saved_state, agent_id: "conversation-123-fork")
+
+  The `agent_id` can be any value that makes sense for your application:
+  - Database conversation IDs: `"conv_a1b2c3d4"`
+  - User-scoped identifiers: `"user-\#{user_id}-session-\#{session_id}"`
+  - Randomly generated GUIDs: `UUID.uuid4()`
+  - Application-defined values: `"demo-agent-001"`
+
   ## Events
 
-  The server broadcasts events on the topic `"agent_server:\#{server_id}"`:
+  The server broadcasts events on the topic `"agent_server:\#{agent_id}"`:
 
   ### Todo Events
   - `{:todos_updated, todos}` - Complete snapshot of current TODO list
@@ -20,12 +77,15 @@ defmodule LangChain.Agents.AgentServer do
   - `{:status_changed, :idle, nil}` - Server ready for work
   - `{:status_changed, :running, nil}` - Agent executing
   - `{:status_changed, :interrupted, interrupt_data}` - Awaiting human decision
-  - `{:status_changed, :completed, final_state}` - Execution completed successfully
+  - `{:status_changed, :completed, final_state}` - Execution completed
+    successfully
   - `{:status_changed, :error, reason}` - Execution failed
 
   ### LLM Streaming Events
-  - `{:llm_deltas, [%MessageDelta{}]}` - Streaming tokens/deltas received (list of deltas)
-  - `{:llm_message, %Message{}}` - Complete message received and processed from LLM
+  - `{:llm_deltas, [%MessageDelta{}]}` - Streaming tokens/deltas received (list
+    of deltas)
+  - `{:llm_message, %Message{}}` - Complete message received and processed from
+    LLM
   - `{:llm_token_usage, %TokenUsage{}}` - Token usage information
   - `{:tool_response, %Message{}}` - Tool execution result (optional)
 
@@ -65,9 +125,6 @@ defmodule LangChain.Agents.AgentServer do
         {:todos_updated, todos} -> IO.inspect(todos, label: "Current TODOs")
         {:status_changed, :completed, final_state} -> IO.puts("Done!")
       end
-
-      # Get current state
-      state = AgentServer.get_state("my-agent-1")
 
   ## Human-in-the-Loop Example
 
@@ -160,18 +217,24 @@ defmodule LangChain.Agents.AgentServer do
   - `:initial_state` - Initial State (default: empty state)
   - `:pubsub` - PubSub module to use (default: Phoenix.PubSub if available, nil otherwise)
   - `:pubsub_name` - Name of the PubSub instance (default: :langchain_pubsub)
-  - `:name` - Server name registration
-  - `:id` - Unique identifier for the server (default: auto-generated)
+  - `:name` - Server name registration (optional, defaults to `get_name(agent.agent_id)`)
   - `:inactivity_timeout` - Timeout in milliseconds for automatic shutdown due to inactivity (default: 300_000 - 5 minutes)
     Set to `nil` or `:infinity` to disable automatic shutdown
   - `:shutdown_delay` - Delay in milliseconds to allow the supervisor to gracefully stop all children (default: 5000)
 
   ## Examples
 
+      # Start with automatic name (recommended)
+      {:ok, pid} = AgentServer.start_link(
+        agent: agent,
+        initial_state: state
+      )
+
+      # Start with explicit name (advanced use cases)
       {:ok, pid} = AgentServer.start_link(
         agent: agent,
         initial_state: state,
-        name: :my_agent
+        name: :my_custom_name
       )
 
       # With custom inactivity timeout
@@ -187,7 +250,23 @@ defmodule LangChain.Agents.AgentServer do
       )
   """
   def start_link(opts) do
-    {name, opts} = Keyword.pop(opts, :name, __MODULE__)
+    # Determine default name from agent or restore_agent_id
+    default_name =
+      cond do
+        # When restoring from state, use restore_agent_id
+        Keyword.has_key?(opts, :restore_agent_id) ->
+          get_name(Keyword.get(opts, :restore_agent_id))
+
+        # When starting fresh, use agent's agent_id
+        agent = Keyword.get(opts, :agent) ->
+          get_name(agent.agent_id)
+
+        # Fallback
+        true ->
+          __MODULE__
+      end
+
+    {name, opts} = Keyword.pop(opts, :name, default_name)
 
     GenServer.start_link(__MODULE__, opts, name: name)
   end
@@ -284,15 +363,8 @@ defmodule LangChain.Agents.AgentServer do
     GenServer.call(get_name(agent_id), {:resume, decisions}, :infinity)
   end
 
-  @doc """
-  Get the current state of the agent.
-
-  Returns the current State struct.
-
-  ## Examples
-
-      state = AgentServer.get_state("my-agent-1")
-  """
+  # The `get_state/1` function is available to aid in testing and not intended as a general public API.
+  @doc false
   @spec get_state(String.t()) :: State.t()
   def get_state(agent_id) do
     GenServer.call(get_name(agent_id), :get_state)
@@ -484,16 +556,21 @@ defmodule LangChain.Agents.AgentServer do
   @doc """
   Export the current agent state to a serializable format.
 
-  This can be persisted to a database and later used to restore the agent
-  to its exact state. The exported state uses string keys (not atoms) for
-  compatibility with JSON/JSONB storage.
+  This can be persisted to a database and later used to restore the agent to its
+  exact state. The exported state uses string keys (not atoms) for compatibility
+  with JSON/JSONB storage.
 
   Returns a map with string keys containing:
   - `"version"` - Serialization format version
-  - `"agent_id"` - The agent identifier
   - `"state"` - The agent's state (messages, todos, metadata)
-  - `"agent_config"` - The agent's configuration
+  - `"agent_config"` - The agent's configuration (excluding agent_id)
   - `"serialized_at"` - ISO8601 timestamp
+
+  Note: The `agent_id` is NOT included in the exported state. The agent_id is a
+  runtime identifier and must be provided when restoring via
+  `start_link_from_state/2`. This design allows you to restore the same
+  conversation state under a different agent_id, enabling use cases like state
+  cloning and conversation forking.
 
   ## Examples
 
@@ -535,26 +612,47 @@ defmodule LangChain.Agents.AgentServer do
   The persisted_state should be a map with string keys (as returned by
   `export_state/1`).
 
+  The `agent_id` will be used as the runtime identifier for this agent,
+  enabling process registration and PubSub topic setup. You can restore
+  the same conversation state under a different agent_id, which is useful
+  for state cloning or conversation forking.
+
   ## Options
 
-  All standard `start_link/1` options are supported, plus the state is
-  restored from the persisted_state parameter.
+  - `:agent_id` - The runtime identifier for this agent (required)
+  - `:pubsub` - PubSub module to use (default: Phoenix.PubSub if available)
+  - `:pubsub_name` - Name of the PubSub instance (default: :langchain_pubsub)
+  - `:name` - Server name registration (optional, defaults to `get_name(agent_id)`)
+  - `:inactivity_timeout` - Timeout in milliseconds (default: 300_000)
+  - `:shutdown_delay` - Delay in milliseconds (default: 5000)
 
   ## Examples
 
-      # Load from database
+      # Load from database and restore with same agent_id
       {:ok, persisted_state} = MyApp.Conversations.load_agent_state(conversation_id)
 
-      # Start agent with restored state
       {:ok, pid} = AgentServer.start_link_from_state(
         persisted_state,
-        name: AgentServer.get_name("my-agent-1")
+        agent_id: "my-agent-1"
+      )
+
+      # Clone conversation state with a different agent_id
+      {:ok, pid} = AgentServer.start_link_from_state(
+        persisted_state,
+        agent_id: "my-agent-clone"
       )
   """
   @spec start_link_from_state(map(), keyword()) :: GenServer.on_start()
   def start_link_from_state(persisted_state, opts \\ []) when is_map(persisted_state) do
+    # agent_id is required in opts
+    agent_id = Keyword.fetch!(opts, :agent_id)
+
     # Add a marker to opts to indicate this is a restore operation
-    opts = Keyword.put(opts, :restore_from, persisted_state)
+    opts =
+      opts
+      |> Keyword.put(:restore_from, persisted_state)
+      |> Keyword.put(:restore_agent_id, agent_id)
+
     start_link(opts)
   end
 
@@ -583,12 +681,11 @@ defmodule LangChain.Agents.AgentServer do
     # allow pubsub to be explicitly set to nil to disable it
     pubsub = Keyword.get(opts, :pubsub, default_pubsub())
     pubsub_name = Keyword.get(opts, :pubsub_name) || :langchain_pubsub
-    id = Keyword.get(opts, :id) || generate_id()
     # allow a nil value to disable the timeout
     inactivity_timeout = Keyword.get(opts, :inactivity_timeout, 300_000)
     shutdown_delay = Keyword.get(opts, :shutdown_delay, 5_000)
 
-    topic = "agent_server:#{id}"
+    topic = "agent_server:#{agent.agent_id}"
 
     server_state = %ServerState{
       agent: agent,
@@ -611,17 +708,22 @@ defmodule LangChain.Agents.AgentServer do
   end
 
   defp init_from_persisted(persisted_state, opts) do
-    # Deserialize the persisted state
-    case StateSerializer.deserialize_server_state(persisted_state) do
+    # Get the agent_id from opts (required)
+    agent_id = Keyword.fetch!(opts, :restore_agent_id)
+    custom_tools = Keyword.get(opts, :custom_tools, %{})
+
+    # Deserialize the persisted state with the provided agent_id
+    case StateSerializer.deserialize_server_state(persisted_state, agent_id,
+           custom_tools: custom_tools
+         ) do
       {:ok, {agent, state}} ->
         # Use the restored agent and state, but allow opts to override
         pubsub = Keyword.get(opts, :pubsub, default_pubsub())
         pubsub_name = Keyword.get(opts, :pubsub_name) || :langchain_pubsub
-        id = Keyword.get(opts, :id) || agent.agent_id
         inactivity_timeout = Keyword.get(opts, :inactivity_timeout, 300_000)
         shutdown_delay = Keyword.get(opts, :shutdown_delay, 5_000)
 
-        topic = "agent_server:#{id}"
+        topic = "agent_server:#{agent.agent_id}"
 
         server_state = %ServerState{
           agent: agent,
@@ -885,8 +987,11 @@ defmodule LangChain.Agents.AgentServer do
 
   @impl true
   def handle_call({:restore_state, persisted_state}, _from, server_state) do
-    # Deserialize the persisted state
-    case StateSerializer.deserialize_server_state(persisted_state) do
+    # Use the current agent_id when restoring state
+    agent_id = server_state.agent.agent_id
+
+    # Deserialize the persisted state with the current agent_id
+    case StateSerializer.deserialize_server_state(persisted_state, agent_id) do
       {:ok, {agent, state}} ->
         # Update the server state with restored agent and state
         updated_server_state = %{
@@ -1140,12 +1245,6 @@ defmodule LangChain.Agents.AgentServer do
   defp default_pubsub do
     # Try to use Phoenix.PubSub if available
     Code.ensure_loaded?(Phoenix.PubSub) && Phoenix.PubSub
-  end
-
-  defp generate_id do
-    :crypto.strong_rand_bytes(16)
-    |> Base.url_encode64(padding: false)
-    |> String.slice(0, 22)
   end
 
   ## Inactivity Timer Management

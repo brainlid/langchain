@@ -33,7 +33,6 @@ defmodule LangChain.Agents.AgentServerPersistenceTest do
         AgentServer.start_link(
           agent: agent,
           initial_state: state,
-          name: AgentServer.get_name("export-test-1"),
           pubsub: nil
         )
 
@@ -43,16 +42,17 @@ defmodule LangChain.Agents.AgentServerPersistenceTest do
       # Check structure
       assert is_map(exported)
       assert Map.has_key?(exported, "version")
-      assert Map.has_key?(exported, "agent_id")
       assert Map.has_key?(exported, "state")
       assert Map.has_key?(exported, "agent_config")
       assert Map.has_key?(exported, "serialized_at")
+
+      # agent_id should NOT be in exported state
+      refute Map.has_key?(exported, "agent_id")
 
       # Check all keys are strings
       assert all_keys_are_strings?(exported)
 
       # Check content
-      assert exported["agent_id"] == "export-test-1"
       assert [_, _] = exported["state"]["messages"]
       assert [_] = exported["state"]["todos"]
 
@@ -67,7 +67,6 @@ defmodule LangChain.Agents.AgentServerPersistenceTest do
       {:ok, _pid} =
         AgentServer.start_link(
           agent: agent,
-          name: AgentServer.get_name("export-test-2"),
           pubsub: nil
         )
 
@@ -95,14 +94,12 @@ defmodule LangChain.Agents.AgentServerPersistenceTest do
       {:ok, _pid} =
         AgentServer.start_link(
           agent: agent,
-          name: AgentServer.get_name("restore-test-1"),
           pubsub: nil
         )
 
-      # Create exported state to restore
+      # Create exported state to restore (no agent_id in state)
       exported_state = %{
         "version" => 1,
-        "agent_id" => "restore-test-1",
         "state" => %{
           "messages" => [
             %{"role" => "user", "content" => "Restored message"}
@@ -117,13 +114,11 @@ defmodule LangChain.Agents.AgentServerPersistenceTest do
           "metadata" => %{"restored" => true}
         },
         "agent_config" => %{
-          "agent_id" => "restore-test-1",
           "model" => %{
             "module" => "Elixir.LangChain.ChatModels.ChatOpenAI",
             "model" => "gpt-4"
           },
-          "system_prompt" => "Restored prompt",
-          "tools" => [],
+          "base_system_prompt" => "Restored prompt",
           "middleware" => []
         },
         "serialized_at" => "2025-11-29T10:30:00Z"
@@ -153,14 +148,12 @@ defmodule LangChain.Agents.AgentServerPersistenceTest do
       {:ok, _pid} =
         AgentServer.start_link(
           agent: agent,
-          name: AgentServer.get_name("restore-test-2"),
           pubsub: nil
         )
 
       # Try to restore invalid state
       invalid_state = %{
         "version" => 1,
-        "agent_id" => "restore-test-2",
         "state" => %{
           "messages" => "not a list",
           # Invalid - should be list
@@ -178,10 +171,9 @@ defmodule LangChain.Agents.AgentServerPersistenceTest do
 
   describe "start_link_from_state/2" do
     test "starts agent server with restored state" do
-      # Create exported state
+      # Create exported state (no agent_id)
       exported_state = %{
         "version" => 1,
-        "agent_id" => "from-state-test-1",
         "state" => %{
           "messages" => [
             %{"role" => "user", "content" => "Hello"},
@@ -197,24 +189,21 @@ defmodule LangChain.Agents.AgentServerPersistenceTest do
           "metadata" => %{"session_id" => "restored-session"}
         },
         "agent_config" => %{
-          "agent_id" => "from-state-test-1",
           "model" => %{
             "module" => "Elixir.LangChain.ChatModels.ChatOpenAI",
             "model" => "gpt-4"
           },
-          "system_prompt" => "You are a helpful assistant",
-          "temperature" => 0.8,
-          "tools" => [],
+          "base_system_prompt" => "You are a helpful assistant",
           "middleware" => []
         },
         "serialized_at" => "2025-11-29T10:30:00Z"
       }
 
-      # Start from state
+      # Start from state - agent_id is now required
       {:ok, pid} =
         AgentServer.start_link_from_state(
           exported_state,
-          name: AgentServer.get_name("from-state-test-1"),
+          agent_id: "from-state-test-1",
           pubsub: nil
         )
 
@@ -222,7 +211,7 @@ defmodule LangChain.Agents.AgentServerPersistenceTest do
 
       # Verify state was restored
       state = AgentServer.get_state("from-state-test-1")
-      assert [message1, message2] = state.messages
+      assert [message1, _message2] = state.messages
       assert [%ContentPart{} = content_part | _] = message1.content
       assert content_part.content == "Hello"
 
@@ -241,7 +230,6 @@ defmodule LangChain.Agents.AgentServerPersistenceTest do
     test "fails to start with invalid state data" do
       invalid_state = %{
         "version" => 1,
-        "agent_id" => "from-state-test-2",
         "state" => %{
           "messages" => []
         }
@@ -254,7 +242,7 @@ defmodule LangChain.Agents.AgentServerPersistenceTest do
       result =
         AgentServer.start_link_from_state(
           invalid_state,
-          name: AgentServer.get_name("from-state-test-2"),
+          agent_id: "from-state-test-2",
           pubsub: nil
         )
 
@@ -292,13 +280,11 @@ defmodule LangChain.Agents.AgentServerPersistenceTest do
         AgentServer.start_link(
           agent: agent,
           initial_state: original_state,
-          name: AgentServer.get_name("roundtrip-test-1"),
           pubsub: nil
         )
 
       # Export state
       exported = AgentServer.export_state("roundtrip-test-1")
-      IO.inspect exported
 
       # Stop original server
       AgentServer.stop("roundtrip-test-1")
@@ -306,15 +292,11 @@ defmodule LangChain.Agents.AgentServerPersistenceTest do
       # Small delay to ensure process is stopped
       Process.sleep(50)
 
-      #TODO: The export includes the name of the agent. That means we can start it from state without providing the name. The name will be re-built from the saved state. The question is, does the name matter? It doesn't need to be persisted and it doesn't need to match when restored. The name is important for the system when running only.
-
-      #TODO: The name of the agent could be a database ID for the conversation, a randomly generated GUID, or some application defined value. It doesn't matter. Don't serialize is or restore it. Don't make it backward compatible either.
-
-      # Start new server from exported state
+      # Start new server from exported state with the same agent_id
       {:ok, _pid} =
         AgentServer.start_link_from_state(
           exported,
-          name: AgentServer.get_name("roundtrip-test-1"),
+          agent_id: "roundtrip-test-1",
           pubsub: nil
         )
 
@@ -366,7 +348,6 @@ defmodule LangChain.Agents.AgentServerPersistenceTest do
         AgentServer.start_link(
           agent: agent,
           initial_state: state,
-          name: AgentServer.get_name("continue-test-1"),
           pubsub: nil
         )
 
@@ -391,6 +372,74 @@ defmodule LangChain.Agents.AgentServerPersistenceTest do
       assert content_part.content == "First message"
 
       AgentServer.stop("continue-test-1")
+    end
+
+    test "restore state under different agent_id (state cloning)" do
+      {:ok, model} = ChatOpenAI.new(%{model: "gpt-4", api_key: "test-key"})
+
+      {:ok, agent} =
+        Agent.new(%{
+          agent_id: "original-agent",
+          model: model,
+          base_system_prompt: "Original prompt"
+        })
+
+      msg1 = Message.new_user!("Hello from original")
+      msg2 = Message.new_assistant!(%{content: "Response from original"})
+
+      {:ok, todo} = Todo.new(%{content: "Original task", status: :in_progress})
+
+      state =
+        State.new!(%{
+          messages: [msg1, msg2],
+          todos: [todo],
+          metadata: %{original: true}
+        })
+
+      # Start original server
+      {:ok, _pid} =
+        AgentServer.start_link(
+          agent: agent,
+          initial_state: state,
+          pubsub: nil
+        )
+
+      # Export state
+      exported = AgentServer.export_state("original-agent")
+
+      # Start a DIFFERENT agent with the SAME state (cloning)
+      {:ok, _pid} =
+        AgentServer.start_link_from_state(
+          exported,
+          agent_id: "cloned-agent",
+          pubsub: nil
+        )
+
+      # Verify original and cloned have same state
+      original_state = AgentServer.get_state("original-agent")
+      cloned_state = AgentServer.get_state("cloned-agent")
+
+      # Check messages match
+      assert length(original_state.messages) == length(cloned_state.messages)
+
+      # Check todos match
+      assert length(original_state.todos) == length(cloned_state.todos)
+      assert hd(cloned_state.todos).content == "Original task"
+
+      # Check metadata (note: boolean true becomes string "true" after serialization)
+      assert cloned_state.metadata["original"] == "true"
+
+      # Verify they're separate processes by confirming both are accessible
+      # and have independent statuses
+      original_status = AgentServer.get_status("original-agent")
+      cloned_status = AgentServer.get_status("cloned-agent")
+
+      assert original_status == :idle
+      assert cloned_status == :idle
+
+      # Cleanup
+      AgentServer.stop("original-agent")
+      AgentServer.stop("cloned-agent")
     end
   end
 

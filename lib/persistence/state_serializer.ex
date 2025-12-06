@@ -19,6 +19,7 @@ defmodule LangChain.Persistence.StateSerializer do
   The serialized state includes a version field that allows for future
   migrations of the state format. The current version is 1.
   """
+  require Logger
 
   alias LangChain.Agents.{State, Agent, Todo}
   alias LangChain.Message
@@ -35,11 +36,15 @@ defmodule LangChain.Persistence.StateSerializer do
   Serializes AgentServer state to a map with string keys.
 
   Returns a map with string keys suitable for storage in JSONB columns.
+
+  Note: The `agent_id` is NOT included in the serialized state. The agent_id
+  is a runtime identifier used for process registration and PubSub topics, not
+  part of the conversation state. When restoring state, you must provide the
+  agent_id to `deserialize_server_state/2` or `AgentServer.start_link_from_state/2`.
   """
   def serialize_server_state(%Agent{} = agent, %State{} = state) do
     %{
       "version" => @current_version,
-      "agent_id" => agent.agent_id,
       "state" => serialize_state(state),
       "agent_config" => serialize_agent_config(agent),
       "serialized_at" => DateTime.utc_now() |> DateTime.to_iso8601()
@@ -49,13 +54,23 @@ defmodule LangChain.Persistence.StateSerializer do
   @doc """
   Deserializes a map with string keys into AgentServer state components.
 
+  The `agent_id` parameter is required and will be used as the runtime identifier
+  for the agent. This allows you to restore the same conversation state under a
+  different agent_id, enabling use cases like state cloning and conversation forking.
+
   Returns `{:ok, {agent, state}}` on success or `{:error, reason}` on failure.
+
+  ## Parameters
+
+  - `data` - The serialized state map (as returned by `serialize_server_state/2`)
+  - `agent_id` - The runtime identifier for this agent (used for process registration and PubSub)
 
   ## Options
 
   - `:custom_tools` - Map of tool name to LangChain.Function struct for custom tools
   """
-  def deserialize_server_state(data, opts \\ []) when is_map(data) do
+  def deserialize_server_state(data, agent_id, opts \\ [])
+      when is_map(data) and is_binary(agent_id) do
     # Handle version migration if needed
     data = maybe_migrate(data)
 
@@ -63,7 +78,7 @@ defmodule LangChain.Persistence.StateSerializer do
 
     with {:ok, state} <- deserialize_state(data["state"]),
          {:ok, agent} <-
-           deserialize_agent_config(data["agent_config"], data["agent_id"], custom_tools) do
+           deserialize_agent_config(data["agent_config"], agent_id, custom_tools) do
       {:ok, {agent, state}}
     else
       {:error, reason} -> {:error, reason}
@@ -289,7 +304,6 @@ defmodule LangChain.Persistence.StateSerializer do
       |> Enum.map(& &1.name)
 
     %{
-      "agent_id" => agent.agent_id,
       "model" => serialize_model(agent.model),
       "base_system_prompt" => agent.base_system_prompt,
       "custom_tool_names" => custom_tool_names,
@@ -305,9 +319,6 @@ defmodule LangChain.Persistence.StateSerializer do
   end
 
   defp deserialize_agent_config(data, agent_id, custom_tools) when is_map(data) do
-    require Logger
-
-    # Handle backward compatibility - if base_system_prompt not present, use system_prompt
     base_prompt = data["base_system_prompt"] || ""
 
     # Lookup custom tools by name
@@ -330,7 +341,7 @@ defmodule LangChain.Persistence.StateSerializer do
     base_tools = Enum.map(resolved_tools, fn name -> Map.get(custom_tools, name) end)
 
     attrs = %{
-      agent_id: agent_id || data["agent_id"],
+      agent_id: agent_id,
       model: deserialize_model(data["model"]),
       base_system_prompt: base_prompt,
       tools: base_tools,
