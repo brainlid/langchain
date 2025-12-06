@@ -3,16 +3,8 @@ defmodule LangChain.Agents.AgentServerPersistenceTest do
 
   alias LangChain.Agents.{Agent, AgentServer, State, Todo}
   alias LangChain.Message
+  alias LangChain.Message.ContentPart
   alias LangChain.ChatModels.ChatOpenAI
-
-  @registry LangChain.Agents.Registry
-
-  setup do
-    # Start the registry if not already started
-    start_supervised!({Registry, keys: :unique, name: @registry})
-
-    :ok
-  end
 
   describe "export_state/1" do
     test "exports current agent state with string keys" do
@@ -22,11 +14,11 @@ defmodule LangChain.Agents.AgentServerPersistenceTest do
         Agent.new(%{
           agent_id: "export-test-1",
           model: model,
-          system_prompt: "You are helpful"
+          base_system_prompt: "You are helpful"
         })
 
-      {:ok, msg1} = Message.new_user!("Hello")
-      {:ok, msg2} = Message.new_assistant!(%{content: "Hi there"})
+      msg1 = Message.new_user!("Hello")
+      msg2 = Message.new_assistant!(%{content: "Hi there"})
 
       {:ok, todo} = Todo.new(%{content: "Task 1", status: :in_progress})
 
@@ -61,8 +53,8 @@ defmodule LangChain.Agents.AgentServerPersistenceTest do
 
       # Check content
       assert exported["agent_id"] == "export-test-1"
-      assert length(exported["state"]["messages"]) == 2
-      assert length(exported["state"]["todos"]) == 1
+      assert [_, _] = exported["state"]["messages"]
+      assert [_] = exported["state"]["todos"]
 
       # Cleanup
       AgentServer.stop("export-test-1")
@@ -97,7 +89,7 @@ defmodule LangChain.Agents.AgentServerPersistenceTest do
         Agent.new(%{
           agent_id: "restore-test-1",
           model: model,
-          system_prompt: "Initial prompt"
+          base_system_prompt: "Initial prompt"
         })
 
       {:ok, _pid} =
@@ -142,11 +134,12 @@ defmodule LangChain.Agents.AgentServerPersistenceTest do
 
       # Verify state was restored
       restored_state = AgentServer.get_state("restore-test-1")
-      assert length(restored_state.messages) == 1
-      assert hd(restored_state.messages).content == "Restored message"
+      assert [message] = restored_state.messages
+      assert [%ContentPart{} = content_part | _] = message.content
+      assert content_part.content == "Restored message"
 
-      assert length(restored_state.todos) == 1
-      assert hd(restored_state.todos).content == "Restored task"
+      assert [todo] = restored_state.todos
+      assert todo.content == "Restored task"
 
       assert restored_state.metadata["restored"] == true
 
@@ -229,11 +222,12 @@ defmodule LangChain.Agents.AgentServerPersistenceTest do
 
       # Verify state was restored
       state = AgentServer.get_state("from-state-test-1")
-      assert length(state.messages) == 2
-      assert hd(state.messages).content == "Hello"
+      assert [message1, message2] = state.messages
+      assert [%ContentPart{} = content_part | _] = message1.content
+      assert content_part.content == "Hello"
 
-      assert length(state.todos) == 1
-      assert hd(state.todos).content == "Task from state"
+      assert [todo] = state.todos
+      assert todo.content == "Task from state"
 
       assert state.metadata["session_id"] == "restored-session"
 
@@ -254,6 +248,9 @@ defmodule LangChain.Agents.AgentServerPersistenceTest do
         # Missing agent_config
       }
 
+      # Trap exits to handle the crash gracefully
+      Process.flag(:trap_exit, true)
+
       result =
         AgentServer.start_link_from_state(
           invalid_state,
@@ -261,7 +258,7 @@ defmodule LangChain.Agents.AgentServerPersistenceTest do
           pubsub: nil
         )
 
-      assert {:error, _reason} = result
+      assert {:error, {:restore_failed, _reason}} = result
     end
   end
 
@@ -273,11 +270,11 @@ defmodule LangChain.Agents.AgentServerPersistenceTest do
         Agent.new(%{
           agent_id: "roundtrip-test-1",
           model: model,
-          system_prompt: "Original prompt"
+          base_system_prompt: "Original prompt"
         })
 
-      {:ok, msg1} = Message.new_user!("User message")
-      {:ok, msg2} = Message.new_assistant!(%{content: "Assistant response"})
+      msg1 = Message.new_user!("User message")
+      msg2 = Message.new_assistant!(%{content: "Assistant response"})
 
       {:ok, todo1} = Todo.new(%{content: "Task 1", status: :in_progress})
 
@@ -301,12 +298,17 @@ defmodule LangChain.Agents.AgentServerPersistenceTest do
 
       # Export state
       exported = AgentServer.export_state("roundtrip-test-1")
+      IO.inspect exported
 
       # Stop original server
       AgentServer.stop("roundtrip-test-1")
 
       # Small delay to ensure process is stopped
       Process.sleep(50)
+
+      #TODO: The export includes the name of the agent. That means we can start it from state without providing the name. The name will be re-built from the saved state. The question is, does the name matter? It doesn't need to be persisted and it doesn't need to match when restored. The name is important for the system when running only.
+
+      #TODO: The name of the agent could be a database ID for the conversation, a randomly generated GUID, or some application defined value. It doesn't matter. Don't serialize is or restore it. Don't make it backward compatible either.
 
       # Start new server from exported state
       {:ok, _pid} =
@@ -320,6 +322,7 @@ defmodule LangChain.Agents.AgentServerPersistenceTest do
       restored_state = AgentServer.get_state("roundtrip-test-1")
 
       # Compare messages
+      assert [_, _] = restored_state.messages
       assert length(restored_state.messages) == length(original_state.messages)
 
       Enum.zip(restored_state.messages, original_state.messages)
@@ -329,7 +332,7 @@ defmodule LangChain.Agents.AgentServerPersistenceTest do
       end)
 
       # Compare todos
-      assert length(restored_state.todos) == length(original_state.todos)
+      assert [_, _] = restored_state.todos
 
       Enum.zip(restored_state.todos, original_state.todos)
       |> Enum.each(fn {restored, original} ->
@@ -351,10 +354,10 @@ defmodule LangChain.Agents.AgentServerPersistenceTest do
         Agent.new(%{
           agent_id: "continue-test-1",
           model: model,
-          system_prompt: "You are helpful"
+          base_system_prompt: "You are helpful"
         })
 
-      {:ok, msg1} = Message.new_user!("First message")
+      msg1 = Message.new_user!("First message")
 
       state = State.new!(%{messages: [msg1]})
 
@@ -371,20 +374,21 @@ defmodule LangChain.Agents.AgentServerPersistenceTest do
       exported = AgentServer.export_state("continue-test-1")
 
       # Add another message
-      {:ok, msg2} = Message.new_user!("Second message")
+      msg2 = Message.new_user!("Second message")
       :ok = AgentServer.add_message("continue-test-1", msg2)
 
       # Get updated state
       updated_state = AgentServer.get_state("continue-test-1")
-      assert length(updated_state.messages) == 2
+      assert [_, _] = updated_state.messages
 
       # Restore to previous state
       :ok = AgentServer.restore_state("continue-test-1", exported)
 
       # Verify we're back to previous state
       restored_state = AgentServer.get_state("continue-test-1")
-      assert length(restored_state.messages) == 1
-      assert hd(restored_state.messages).content == "First message"
+      assert [message] = restored_state.messages
+      assert [content_part | _] = message.content
+      assert content_part.content == "First message"
 
       AgentServer.stop("continue-test-1")
     end
