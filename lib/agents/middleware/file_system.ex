@@ -156,6 +156,7 @@ defmodule LangChain.Agents.Middleware.FileSystem do
   - Use `write_file` only for new files
   - Provide sufficient context in `old_string` to ensure unique matches
   - Group related files in the same directory
+  - Never `delete_file` without first using `ls` to locate it
 
   ## Persistence Behavior
 
