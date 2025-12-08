@@ -238,8 +238,8 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
     else
       case Map.get(state.files, path) do
         nil ->
-          # File doesn't exist, that's OK
-          {:ok, state}
+          # File doesn't exist
+          {:error, "File not found", state}
 
         %FileEntry{persistence: :persisted} = entry ->
           # Cancel any pending timer
