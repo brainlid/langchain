@@ -235,6 +235,11 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
 
     field :callbacks, {:array, :map}, default: []
     field :verbose_api, :boolean, default: false
+
+    # Req options to merge into the request.
+    # Refer to `https://hexdocs.pm/req/Req.html#new/1-options` for
+    # `Req.new` supported set of options.
+    field :req_config, :map, default: %{}
   end
 
   @type t :: %ChatOpenAIResponses{}
@@ -256,7 +261,8 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     :top_p,
     :truncation,
     :user,
-    :verbose_api
+    :verbose_api,
+    :req_config
   ]
   @required_fields [:endpoint, :model]
 
@@ -716,6 +722,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     req
     |> maybe_add_org_id_header()
     |> maybe_add_proj_id_header()
+    |> Req.merge(openai.req_config |> Keyword.new())
     |> Req.post()
     # parse the body and return it as parsed structs
     |> case do
@@ -782,6 +789,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     )
     |> maybe_add_org_id_header()
     |> maybe_add_proj_id_header()
+    |> Req.merge(openai.req_config |> Keyword.new())
     |> Req.post(
       into: Utils.handle_stream_fn(openai, &decode_stream/1, &do_process_response(openai, &1))
     )

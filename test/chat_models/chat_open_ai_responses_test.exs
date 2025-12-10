@@ -1,5 +1,6 @@
 defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
   use LangChain.BaseCase
+  use Mimic
 
   doctest LangChain.ChatModels.ChatOpenAIResponses
   alias LangChain.ChatModels.ChatOpenAIResponses
@@ -906,6 +907,42 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
       assert restored.temperature == original.temperature
       assert restored.endpoint == original.endpoint
       assert restored.reasoning.effort == original.reasoning.effort
+    end
+  end
+
+  describe "req_config" do
+    test "merges req_config into the request (non-streaming)" do
+      expect(Req, :post, fn req_struct ->
+        # assert retry value from req_config
+        assert req_struct.options.retry == false
+
+        {:error, RuntimeError.exception("Something went wrong")}
+      end)
+
+      model =
+        ChatOpenAIResponses.new!(%{
+          stream: false,
+          model: @test_model,
+          req_config: %{retry: false}
+        })
+
+      assert {:error, _} = ChatOpenAIResponses.call(model, "prompt", [])
+      verify!()
+    end
+
+    test "merges req_config into the request (streaming)" do
+      expect(Req, :post, fn req_struct, _opts ->
+        # assert retry value from req_config
+        assert req_struct.options.retry == false
+
+        {:error, RuntimeError.exception("Something went wrong")}
+      end)
+
+      model =
+        ChatOpenAIResponses.new!(%{stream: true, model: @test_model, req_config: %{retry: false}})
+
+      assert {:error, _} = ChatOpenAIResponses.call(model, "prompt", [])
+      verify!()
     end
   end
 end
