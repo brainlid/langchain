@@ -1,0 +1,43 @@
+defmodule <%= @repo %>.Migrations.Create<%= Macro.camelize(@table_prefix) %>Persistence do
+  use Ecto.Migration
+
+  def change do
+    # Conversations table
+    create table(:<%= @table_prefix %>conversations) do
+<%= if @owner_type != "none" do %>      add :<%= @owner_field %>, references(:<%= @owner_type %>s, on_delete: :delete_all), null: false
+<% end %>      add :title, :string
+      add :version, :integer, default: 1, null: false
+      add :metadata, :map, default: %{}
+
+      timestamps(type: :utc_datetime_usec)
+    end
+
+<%= if @owner_type != "none" do %>    create index(:<%= @table_prefix %>conversations, [:<%= @owner_field %>])
+<% end %>    create index(:<%= @table_prefix %>conversations, [:updated_at])
+
+    # Agent states table (one per conversation)
+    create table(:<%= @table_prefix %>agent_states) do
+      add :conversation_id, references(:<%= @table_prefix %>conversations, on_delete: :delete_all), null: false
+      add :state_data, :map, null: false
+      add :version, :integer, null: false
+
+      timestamps(type: :utc_datetime_usec)
+    end
+
+    create unique_index(:<%= @table_prefix %>agent_states, [:conversation_id])
+
+    # Display messages table (multi-content type support)
+    create table(:<%= @table_prefix %>display_messages) do
+      add :conversation_id, references(:<%= @table_prefix %>conversations, on_delete: :delete_all), null: false
+      add :message_type, :string, null: false  # "user", "assistant", "tool", "system"
+      add :content, :map, null: false  # JSONB storage for flexible content
+      add :content_type, :string, null: false, default: "text"  # Content type for rendering
+      add :metadata, :map, default: %{}
+
+      timestamps(type: :utc_datetime_usec, updated_at: false)
+    end
+
+    create index(:<%= @table_prefix %>display_messages, [:conversation_id, :inserted_at])
+    create index(:<%= @table_prefix %>display_messages, [:content_type])  # For filtering by content type
+  end
+end

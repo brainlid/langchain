@@ -1,0 +1,51 @@
+defmodule <%= @context_module %>.Conversation do
+  @moduledoc """
+  Schema for conversations.
+
+  A conversation represents a series of interactions between a user and an AI agent.
+  """
+
+  use Ecto.Schema
+  import Ecto.Changeset
+
+  alias __MODULE__
+  alias <%= @context_module %>.AgentState
+  alias <%= @context_module %>.DisplayMessage
+
+  @primary_key {:id, :binary_id, autogenerate: true}
+  @foreign_key_type :binary_id
+
+  schema "<%= @table_prefix %>conversations" do
+<%= if @owner_type != "none" do %>    belongs_to :<%= @owner_type %>, <%= @owner_module %>, foreign_key: :<%= @owner_field %>
+<% end %>    has_one :agent_state, AgentState
+    has_many :display_messages, DisplayMessage
+
+    field :title, :string
+    field :version, :integer, default: 1
+    field :metadata, :map, default: %{}
+
+    timestamps(type: :utc_datetime_usec)
+  end
+
+  @doc false
+  def create_changeset(owner_id, attrs) do
+    %Conversation{}
+    |> cast(attrs, [:title, :version, :metadata])
+    |> put_change(:<%= @owner_field %>, owner_id)
+    |> common_validations()
+  end
+
+  @doc false
+  def changeset(%Conversation{} = conversation, attrs) do
+    conversation
+    |> cast(attrs, [:title, :version, :metadata])
+    |> common_validations()
+  end
+
+  defp common_validations(changeset) do
+    changeset
+    |> validate_required([:<%= @owner_field %>])
+    |> validate_length(:title, max: 255)
+    |> foreign_key_constraint(:<%= @owner_field %>)
+  end
+end

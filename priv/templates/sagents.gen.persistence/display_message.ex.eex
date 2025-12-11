@@ -1,0 +1,111 @@
+defmodule <%= @context_module %>.DisplayMessage do
+  @moduledoc """
+  Schema for display messages with multi-content type support.
+
+  Stores user-facing messages for display in the UI.
+  These are separate from the full agent state for efficient querying.
+
+  ## Content Types
+
+  The `content_type` field determines how the message content should be rendered:
+
+  - `"text"` - Standard text content (default)
+  - `"thinking"` - AI reasoning/thought process
+  - `"image"` - Image content (URL or base64 data)
+  - `"file_reference"` - Reference to a file
+  - `"structured_data"` - Structured/formatted data (tables, JSON, etc.)
+  - `"notification"` - System/UI notification
+  - `"error"` - Error message
+
+  ## Content Structure
+
+  The `content` field is a map (JSONB) with structure depending on `content_type`.
+  **IMPORTANT**: All content keys are strings (not atoms) because of JSONB storage.
+
+  Examples:
+  - Text: `%{"text" => "message"}`
+  - Image: `%{"url" => "path"}` or `%{"data" => "base64...", "mime_type" => "image/png"}`
+  - File: `%{"path" => "/path", "name" => "report.pdf"}`
+  """
+
+  use Ecto.Schema
+  import Ecto.Changeset
+
+  alias __MODULE__
+  alias <%= @context_module %>.Conversation
+
+  @primary_key {:id, :binary_id, autogenerate: true}
+  @foreign_key_type :binary_id
+
+  # Valid content types
+  @content_types ~w(text thinking image file_reference structured_data notification error)
+
+  schema "<%= @table_prefix %>display_messages" do
+    belongs_to :conversation, Conversation
+
+    field :message_type, :string  # "user", "assistant", "tool", "system"
+    field :content, :map          # Flexible JSONB storage
+    field :content_type, :string  # Type of content for rendering
+    field :metadata, :map, default: %{}
+
+    timestamps(type: :utc_datetime_usec, updated_at: false)
+  end
+
+  @doc false
+  def create_changeset(conversation_id, attrs) do
+    %DisplayMessage{}
+    |> cast(attrs, [:message_type, :content, :content_type, :metadata])
+    |> put_change(:conversation_id, conversation_id)
+    |> common_validations()
+  end
+
+  @doc false
+  def changeset(%DisplayMessage{} = message, attrs) do
+    message
+    |> cast(attrs, [:message_type, :content, :content_type, :metadata])
+    |> common_validations()
+  end
+
+  defp common_validations(changeset) do
+    changeset
+    |> validate_required([:conversation_id, :message_type, :content, :content_type])
+    |> validate_inclusion(:content_type, @content_types)
+    |> validate_content_structure()
+    |> foreign_key_constraint(:conversation_id)
+  end
+
+  # Validate content structure based on content_type
+  # NOTE: content keys are strings (from JSONB), not atoms
+  defp validate_content_structure(changeset) do
+    content_type = get_field(changeset, :content_type)
+    content = get_field(changeset, :content)
+
+    case {content_type, content} do
+      {"text", %{"text" => _}} -> changeset
+      {"thinking", %{"text" => _}} -> changeset
+      {"image", %{"url" => _}} -> changeset
+      {"image", %{"data" => _, "mime_type" => _}} -> changeset
+      {"file_reference", %{"path" => _, "name" => _}} -> changeset
+      {"structured_data", %{"format" => _, "data" => _}} -> changeset
+      {"notification", %{"text" => _}} -> changeset
+      {"error", %{"text" => _}} -> changeset
+      {nil, _} -> changeset  # Allow nil during build
+      _ -> add_error(changeset, :content, "invalid structure for content_type #{content_type}")
+    end
+  end
+
+  @doc """
+  Returns the text representation of any content type for searching/indexing.
+  NOTE: content keys are strings (from JSONB), not atoms
+  """
+  def to_text(%__MODULE__{content_type: "text", content: %{"text" => text}}), do: text
+  def to_text(%__MODULE__{content_type: "thinking", content: %{"text" => text}}), do: text
+  def to_text(%__MODULE__{content_type: "image", content: content}) do
+    Map.get(content, "caption") || Map.get(content, "alt_text") || ""
+  end
+  def to_text(%__MODULE__{content_type: "file_reference", content: %{"name" => name}}), do: "File: #{name}"
+  def to_text(%__MODULE__{content_type: "structured_data", content: content}), do: "Data: #{Map.get(content, "format", "")}"
+  def to_text(%__MODULE__{content_type: "notification", content: %{"text" => text}}), do: text
+  def to_text(%__MODULE__{content_type: "error", content: %{"text" => text}}), do: text
+  def to_text(_), do: ""
+end
