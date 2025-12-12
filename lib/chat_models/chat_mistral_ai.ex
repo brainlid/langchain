@@ -264,19 +264,37 @@ defmodule LangChain.ChatModels.ChatMistralAI do
   end
 
   # ToolResult => stand-alone message with "role: :tool"
+  # Content is normalized to a list of ContentParts during ToolResult creation,
+  # but we handle both cases defensively. Mistral expects a string, not a list.
   def for_api(%_{} = _model, %ToolResult{type: :function} = result) do
+    content =
+      case result.content do
+        content when is_list(content) -> ContentPart.parts_to_string(content)
+        content when is_binary(content) -> content
+        nil -> ""
+      end
+
     %{
       "role" => :tool,
       "tool_call_id" => result.tool_call_id,
-      "content" => result.content
+      "content" => content
     }
   end
 
   # When an assistant message has go-betweens for tool results, for example
+  # Content is normalized to a list of ContentParts during ToolResult creation,
+  # but we handle both cases defensively. Mistral expects a string, not a list.
   def for_api(%_{} = _model, %Message{role: :tool, tool_results: [result | _]} = _msg) do
+    content =
+      case result.content do
+        content when is_list(content) -> ContentPart.parts_to_string(content)
+        content when is_binary(content) -> content
+        nil -> ""
+      end
+
     %{
       "role" => "tool",
-      "content" => result.content,
+      "content" => content,
       "tool_call_id" => result.tool_call_id
     }
   end

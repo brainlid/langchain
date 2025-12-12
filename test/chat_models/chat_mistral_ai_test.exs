@@ -6,6 +6,7 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
   alias LangChain.MessageDelta
   alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
+  alias LangChain.Message.ToolResult
   alias LangChain.LangChainError
   alias LangChain.TokenUsage
   alias LangChain.Function
@@ -88,6 +89,53 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
       assert get_in(data, [:messages, Access.at(0), "content"]) == user_message
       assert get_in(data, [:messages, Access.at(1), "role"]) == :assistant
       assert get_in(data, [:messages, Access.at(1), "content"]) == assistant_message
+    end
+
+    test "converts ToolResult with string content correctly", %{mistral_ai: mistral_ai} do
+      tool_result = ToolResult.new!(%{tool_call_id: "call_123", content: "Hello World!"})
+
+      result = ChatMistralAI.for_api(mistral_ai, tool_result)
+
+      assert result == %{
+               "role" => :tool,
+               "tool_call_id" => "call_123",
+               "content" => "Hello World!"
+             }
+    end
+
+    test "converts ToolResult with ContentParts to string", %{mistral_ai: mistral_ai} do
+      tool_result =
+        ToolResult.new!(%{
+          tool_call_id: "call_456",
+          content: [ContentPart.text!("Result: 42"), ContentPart.text!(" and more")]
+        })
+
+      result = ChatMistralAI.for_api(mistral_ai, tool_result)
+
+      # ContentPart.parts_to_string/1 joins parts with "\n\n"
+      assert result == %{
+               "role" => :tool,
+               "tool_call_id" => "call_456",
+               "content" => "Result: 42\n\n and more"
+             }
+    end
+
+    test "converts Message with tool role and ContentParts to string", %{mistral_ai: mistral_ai} do
+      tool_result =
+        ToolResult.new!(%{
+          tool_call_id: "call_789",
+          content: [ContentPart.text!("Tool executed successfully")]
+        })
+
+      message = Message.new_tool_result!(%{tool_results: [tool_result]})
+
+      result = ChatMistralAI.for_api(mistral_ai, message)
+
+      assert result == %{
+               "role" => "tool",
+               "tool_call_id" => "call_789",
+               "content" => "Tool executed successfully"
+             }
     end
   end
 
