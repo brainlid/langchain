@@ -26,6 +26,51 @@ defmodule <%= @context_module %>.DisplayMessage do
   - Text: `%{"text" => "message"}`
   - Image: `%{"url" => "path"}` or `%{"data" => "base64...", "mime_type" => "image/png"}`
   - File: `%{"path" => "/path", "name" => "report.pdf"}`
+
+  ## Sequence Field (Message-Local Ordering)
+
+  The `sequence` field (integer, default 0) ensures correct ordering of multiple content parts
+  within a single message. It is **message-local**, not conversation-wide.
+
+  ### When to Use Sequence:
+
+  - **Single-part messages**: Always use `sequence: 0` (default)
+    - User messages
+    - Simple assistant text responses
+    - Individual tool results
+
+  - **Multi-part messages**: Use `sequence: 0, 1, 2, ...` for each part
+    - Assistant thinking (sequence: 0) + text response (sequence: 1)
+    - Text (sequence: 0) + image (sequence: 1)
+    - Multiple tool calls arriving together
+
+  ### Example:
+
+      # Single assistant message with multiple content parts
+      # (all created within microseconds)
+
+      # Part 0: Thinking block
+      %DisplayMessage{sequence: 0, content_type: "thinking", ...}
+
+      # Part 1: Text response
+      %DisplayMessage{sequence: 1, content_type: "text", ...}
+
+      # Part 2: Image
+      %DisplayMessage{sequence: 2, content_type: "image", ...}
+
+      # Next user message (resets to 0)
+      %DisplayMessage{sequence: 0, content_type: "text", ...}
+
+  ### Querying:
+
+  Always order by both timestamp and sequence:
+
+      from m in DisplayMessage,
+        where: m.conversation_id == ^conversation_id,
+        order_by: [asc: m.inserted_at, asc: m.sequence]
+
+  This guarantees deterministic ordering even when multiple messages share
+  the same microsecond timestamp.
   """
 
   use Ecto.Schema
@@ -43,9 +88,10 @@ defmodule <%= @context_module %>.DisplayMessage do
   schema "<%= @table_prefix %>display_messages" do
     belongs_to :conversation, Conversation
 
-    field :message_type, :string  # "user", "assistant", "tool", "system"
-    field :content, :map          # Flexible JSONB storage
-    field :content_type, :string  # Type of content for rendering
+    field :message_type, :string            # "user", "assistant", "tool", "system"
+    field :content, :map                    # Flexible JSONB storage
+    field :content_type, :string            # Type of content for rendering
+    field :sequence, :integer, default: 0   # Message-local ordering (0-based, resets per message)
     field :metadata, :map, default: %{}
 
     timestamps(type: :utc_datetime_usec, updated_at: false)
@@ -54,7 +100,7 @@ defmodule <%= @context_module %>.DisplayMessage do
   @doc false
   def create_changeset(conversation_id, attrs) do
     %DisplayMessage{}
-    |> cast(attrs, [:message_type, :content, :content_type, :metadata])
+    |> cast(attrs, [:message_type, :content, :content_type, :sequence, :metadata])
     |> put_change(:conversation_id, conversation_id)
     |> common_validations()
   end
@@ -62,7 +108,7 @@ defmodule <%= @context_module %>.DisplayMessage do
   @doc false
   def changeset(%DisplayMessage{} = message, attrs) do
     message
-    |> cast(attrs, [:message_type, :content, :content_type, :metadata])
+    |> cast(attrs, [:message_type, :content, :content_type, :sequence, :metadata])
     |> common_validations()
   end
 
@@ -70,6 +116,7 @@ defmodule <%= @context_module %>.DisplayMessage do
     changeset
     |> validate_required([:conversation_id, :message_type, :content, :content_type])
     |> validate_inclusion(:content_type, @content_types)
+    |> validate_number(:sequence, greater_than_or_equal_to: 0)
     |> validate_content_structure()
     |> foreign_key_constraint(:conversation_id)
   end
