@@ -57,6 +57,8 @@ defmodule LangChain.Agents.Agent do
     field :tools, {:array, :any}, default: [], virtual: true
     field :middleware, {:array, :any}, default: [], virtual: true
     field :name, :string
+    field :title_chat_model, :any, virtual: true
+    field :title_fallbacks, {:array, :any}, default: [], virtual: true
   end
 
   @type t :: %Agent{}
@@ -68,7 +70,9 @@ defmodule LangChain.Agents.Agent do
     :assembled_system_prompt,
     :tools,
     :middleware,
-    :name
+    :name,
+    :title_chat_model,
+    :title_fallbacks
   ]
   @required_fields [:agent_id, :model]
 
@@ -83,6 +87,8 @@ defmodule LangChain.Agents.Agent do
   - `:tools` - Additional tools beyond middleware (default: [])
   - `:middleware` - List of middleware modules/configs (default: [])
   - `:name` - Agent name for identification (default: nil)
+  - `:title_chat_model` - ChatModel for conversation title generation (default: nil)
+  - `:title_fallbacks` - List of fallback ChatModels for title generation (default: [])
 
   ## Options
 

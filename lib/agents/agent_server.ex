@@ -167,6 +167,7 @@ defmodule LangChain.Agents.AgentServer do
   alias LangChain.Agents.State
   alias LangChain.Agents.AgentSupervisor
   alias LangChain.Persistence.StateSerializer
+  alias LangChain.Chains.TextToTitleChain
 
   @registry LangChain.Agents.Registry
 
@@ -876,6 +877,21 @@ defmodule LangChain.Agents.AgentServer do
         status -> status
       end
 
+    # Generate conversation title if this is a user message and we haven't generated one yet
+    new_state =
+      if message.role == :user && !State.get_metadata(new_state, "title_generated") do
+        # Mark that we're generating a title
+        marked_state = State.put_metadata(new_state, "title_generated", true)
+
+        # Extract user text and spawn title generation
+        user_text = LangChain.Message.ContentPart.parts_to_string(message.content)
+        maybe_generate_conversation_title(server_state, user_text)
+
+        marked_state
+      else
+        new_state
+      end
+
     updated_server_state = %{
       server_state
       | state: new_state,
@@ -1293,5 +1309,70 @@ defmodule LangChain.Agents.AgentServer do
 
   defp time_since(datetime) do
     DateTime.diff(DateTime.utc_now(), datetime, :millisecond)
+  end
+
+  ## Title Generation Functions
+
+  # Maybe generate conversation title if PubSub is configured and title LLM is configured
+  defp maybe_generate_conversation_title(server_state, user_text) do
+    if server_state.pubsub && has_title_chat_model_config?(server_state) do
+      spawn_title_generation_task(server_state, user_text)
+    end
+
+    :ok
+  end
+
+  # Check if title LLM configuration exists in agent config
+  defp has_title_chat_model_config?(server_state) do
+    server_state.agent.title_chat_model != nil
+  end
+
+  # Spawn async task to generate title
+  defp spawn_title_generation_task(server_state, user_text) do
+    agent_id = server_state.agent.agent_id
+    {pubsub_module, pubsub_name} = server_state.pubsub
+    topic = server_state.topic
+
+    Task.start(fn ->
+      try do
+        title = generate_title_with_llm(server_state, user_text)
+
+        # Broadcast title update via PubSub with agent_id
+        pubsub_module.broadcast(
+          pubsub_name,
+          topic,
+          {:conversation_title_generated, title, agent_id}
+        )
+
+        Logger.debug("Generated title for agent #{agent_id}: #{title}")
+      rescue
+        error ->
+          Logger.error(
+            "Failed to generate conversation title for agent #{agent_id}: #{inspect(error)}"
+          )
+      end
+    end)
+  end
+
+  # Generate title using LLM from agent configuration
+  defp generate_title_with_llm(server_state, user_text) do
+    # Get LLM and fallback from agent config
+    title_chat_model = server_state.agent.title_chat_model
+    fallbacks = server_state.agent.title_fallbacks || []
+
+    # Build TextToTitleChain configuration
+    chain_config = %{
+      llm: title_chat_model,
+      input_text: user_text,
+      examples: [
+        "Develop character sheet for Sam",
+        "Create podcast show notes for episode 10",
+        "Implement user authentication system"
+      ]
+    }
+
+    chain_config
+    |> TextToTitleChain.new!()
+    |> TextToTitleChain.evaluate(with_fallbacks: fallbacks)
   end
 end
