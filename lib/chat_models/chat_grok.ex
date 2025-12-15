@@ -744,11 +744,13 @@ defmodule LangChain.ChatModels.ChatGrok do
 
   defp parse_tool_calls(tool_calls) when is_list(tool_calls) do
     Enum.map(tool_calls, fn tool_call ->
-      %ToolCall{
+      ToolCall.new!(%{
+        status: :complete,
+        type: :function,
         call_id: tool_call["id"],
         name: tool_call["function"]["name"],
         arguments: tool_call["function"]["arguments"]
-      }
+      })
     end)
   end
 
