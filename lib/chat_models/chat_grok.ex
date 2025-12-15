@@ -243,7 +243,7 @@ defmodule LangChain.ChatModels.ChatGrok do
     base_params =
       %{
         model: grok.model,
-        messages: messages |> Enum.map(&for_api_message/1),
+        messages: messages |> Enum.flat_map(&for_api_message/1),
         stream: grok.stream
       }
       |> Utils.conditionally_add_to_map(:max_tokens, grok.max_tokens)
@@ -460,7 +460,7 @@ defmodule LangChain.ChatModels.ChatGrok do
       type: "function",
       function: %{
         name: tool_call.name,
-        arguments: tool_call.arguments
+        arguments: Jason.encode!(tool_call.arguments)
       }
     }
   end
