@@ -354,10 +354,7 @@ defmodule LangChain.ChatModels.ChatGrok do
   Convert a LangChain structure to the expected xAI API format.
   """
   def for_api_message(%Message{role: :system} = message) do
-    %{
-      role: "system",
-      content: get_content_string(message)
-    }
+    [%{role: "system", content: get_content_string(message)}]
   end
 
   def for_api_message(%Message{role: :user} = message) do
@@ -367,27 +364,21 @@ defmodule LangChain.ChatModels.ChatGrok do
           text
 
         content_parts when is_list(content_parts) ->
-          # If it's just a single text part, extract the text
           case content_parts do
             [%ContentPart{type: :text, content: text}] -> text
             _ -> Enum.map(content_parts, &format_content_part_for_api/1)
           end
       end
 
-    %{
-      role: "user",
-      content: content
-    }
+    [%{role: "user", content: content}]
   end
 
   def for_api_message(%Message{role: :assistant} = message) do
-    base = %{
-      role: "assistant"
-    }
+    base = %{role: "assistant"}
 
-    base
-    |> maybe_add_content(message)
-    |> maybe_add_tool_calls(message)
+    [base
+     |> maybe_add_content(message)
+     |> maybe_add_tool_calls(message)]
   end
 
   def for_api_message(%Message{role: :tool, tool_results: tool_results} = _message)
