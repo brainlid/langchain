@@ -433,7 +433,6 @@ defmodule LangChain.ChatModels.ChatMistralAI do
         do_api_request(mistralai, messages, tools, retry_count - 1)
 
       other ->
-        Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
         other
     end
   end
@@ -482,8 +481,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
         Logger.debug(fn -> "Connection closed: retry count = #{inspect(retry_count)}" end)
         do_api_request(mistralai, messages, tools, retry_count - 1)
 
-      other ->
-        Logger.error("Unhandled and unexpected response from streamed call. #{inspect(other)}")
+      _other ->
         {:error, LangChainError.exception(type: "unexpected_response", message: "Unexpected")}
     end
   end
@@ -642,8 +640,6 @@ defmodule LangChain.ChatModels.ChatMistralAI do
         call
 
       {:error, %Ecto.Changeset{} = changeset} ->
-        reason = Utils.changeset_error_to_string(changeset)
-        Logger.error("Failed to process ToolCall. Reason: #{reason}")
         {:error, LangChainError.exception(changeset)}
     end
   end
@@ -664,27 +660,22 @@ defmodule LangChain.ChatModels.ChatMistralAI do
         call
 
       {:error, %Ecto.Changeset{} = changeset} ->
-        reason = Utils.changeset_error_to_string(changeset)
-        Logger.error("Failed to process ToolCall. Reason: #{reason}")
         {:error, LangChainError.exception(changeset)}
     end
   end
 
   def do_process_response(_model, %{"error" => %{"message" => reason}} = response) do
-    Logger.error("Received error from Mistral API: #{inspect(reason)}")
     {:error, LangChainError.exception(message: reason, original: response)}
   end
 
   def do_process_response(_model, {:error, %Jason.DecodeError{} = response}) do
     error_message = "Received invalid JSON: #{inspect(response)}"
-    Logger.error(error_message)
 
     {:error,
      LangChainError.exception(type: "invalid_json", message: error_message, original: response)}
   end
 
   def do_process_response(_model, other) do
-    Logger.error("Trying to process an unexpected response from Mistral: #{inspect(other)}")
 
     {:error,
      LangChainError.exception(

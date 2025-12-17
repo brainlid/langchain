@@ -166,17 +166,14 @@ defmodule LangChain.Tools.DeepResearch do
               {:ok, format_research_result(result)}
 
             {:error, reason} ->
-              Logger.error("Deep research failed: #{inspect(reason)}")
               {:error, "Deep research failed: #{reason}"}
           end
 
         {:error, reason} ->
-          Logger.error("Failed to create deep research request: #{inspect(reason)}")
           {:error, "Failed to start research: #{reason}"}
       end
     rescue
       err ->
-        Logger.error("Deep research tool encountered an exception: #{inspect(err)}")
         {:error, "Deep research tool error: #{Exception.message(err)}"}
     end
   end

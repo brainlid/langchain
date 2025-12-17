@@ -66,8 +66,6 @@ defmodule LangChain.Images do
         {:error, "Failed with server error 500"}
 
       {:error, reason} ->
-        # Handle error
-        Logger.error("Failed to download image: #{inspect(reason)}")
         {:error, reason}
     end
   end
@@ -105,10 +103,6 @@ defmodule LangChain.Images do
         {:error, "Part of path is not a directory"}
 
       {:error, reason} ->
-        Logger.error(
-          "Failed to save base64 image to file #{inspect(target_path)}. Reason: #{inspect(reason)}"
-        )
-
         {:error, "Unrecognized error reason encountered: #{inspect(reason)}"}
     end
   end

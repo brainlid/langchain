@@ -632,9 +632,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           "data:image/webp;base64,"
 
         other ->
-          message = "Received unsupported media type for ContentPart: #{inspect(other)}"
-          Logger.error(message)
-          raise LangChainError, message
+          raise LangChainError,
+                "Received unsupported media type for ContentPart: #{inspect(other)}"
       end
 
     detail_option = Keyword.get(part.options, :detail, nil)
@@ -842,7 +841,6 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         do_api_request(openai, messages, tools, retry_count - 1)
 
       other ->
-        Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
         other
     end
   end
@@ -903,11 +901,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         Logger.debug(fn -> "Connection closed: retry count = #{inspect(retry_count)}" end)
         do_api_request(openai, messages, tools, retry_count - 1)
 
-      other ->
-        Logger.error(
-          "Unhandled and unexpected response from streamed post call. #{inspect(other)}"
-        )
-
+      _other ->
         {:error,
          LangChainError.exception(type: "unexpected_response", message: "Unexpected response")}
     end
@@ -1090,8 +1084,6 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         call
 
       {:error, %Ecto.Changeset{} = changeset} ->
-        reason = Utils.changeset_error_to_string(changeset)
-        Logger.error("Failed to process ToolCall for a function. Reason: #{reason}")
         {:error, LangChainError.exception(changeset)}
     end
   end
@@ -1117,8 +1109,6 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         call
 
       {:error, %Ecto.Changeset{} = changeset} ->
-        reason = Utils.changeset_error_to_string(changeset)
-        Logger.error("Failed to process ToolCall for a function. Reason: #{reason}")
         {:error, LangChainError.exception(changeset)}
     end
   end
@@ -1155,10 +1145,6 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
         "unsupported_value" ->
           if String.contains?(reason, "does not support 'system' with this model") do
-            Logger.error(
-              "This model requires 'reasoning_mode' to be enabled. Reason: #{inspect(reason)}"
-            )
-
             # return the API error type as the exception type information
             error_data["type"]
           end
@@ -1167,25 +1153,21 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           nil
       end
 
-    Logger.error("Received error from API: #{inspect(reason)}")
     {:error, LangChainError.exception(type: type, message: reason, original: response)}
   end
 
   def do_process_response(_model, %{"error" => %{"message" => reason}} = response) do
-    Logger.error("Received error from API: #{inspect(reason)}")
     {:error, LangChainError.exception(message: reason, original: response)}
   end
 
   def do_process_response(_model, {:error, %Jason.DecodeError{} = response}) do
     error_message = "Received invalid JSON: #{inspect(response)}"
-    Logger.error(error_message)
 
     {:error,
      LangChainError.exception(type: "invalid_json", message: error_message, original: response)}
   end
 
   def do_process_response(_model, other) do
-    Logger.error("Trying to process an unexpected response. #{inspect(other)}")
     {:error, LangChainError.exception(message: "Unexpected response", original: other)}
   end
 

@@ -232,11 +232,7 @@ defmodule LangChain.Chains.SummarizeConversationChain do
           # and assistant messages, keep the # of messages to keep.
           splice_messages_with_summary(summarizer, to_summarize, summary)
 
-        {:error, _summarizer_chain, reason} ->
-          Logger.error(
-            "SummarizeConversationChain failed. Reason: #{inspect(reason)}. Returning original chain"
-          )
-
+        {:error, _summarizer_chain, _reason} ->
           to_summarize
       end
     else

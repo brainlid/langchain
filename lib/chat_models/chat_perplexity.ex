@@ -379,7 +379,6 @@ defmodule LangChain.ChatModels.ChatPerplexity do
 
         case do_process_response(perplexity, data, tools) do
           {:error, %LangChainError{} = reason} ->
-            Logger.error("Error processing response: #{inspect(reason)}")
             {:error, reason}
 
           result ->
@@ -407,7 +406,6 @@ defmodule LangChain.ChatModels.ChatPerplexity do
         do_api_request(perplexity, messages, tools, retry_count - 1)
 
       other ->
-        Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
         other
     end
   end
@@ -447,7 +445,6 @@ defmodule LangChain.ChatModels.ChatPerplexity do
         do_api_request(perplexity, messages, tools, retry_count - 1)
 
       other ->
-        Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
         other
     end
   end
@@ -575,12 +572,10 @@ defmodule LangChain.ChatModels.ChatPerplexity do
   end
 
   def do_process_response(_model, %{"error" => %{"message" => reason, "type" => type}}) do
-    Logger.error("Received error from API: #{inspect(reason)}")
     {:error, LangChainError.exception(type: type, message: reason)}
   end
 
   def do_process_response(_model, %{"error" => %{"message" => reason}}) do
-    Logger.error("Received error from API: #{inspect(reason)}")
     {:error, LangChainError.exception(message: reason)}
   end
 
@@ -727,14 +722,12 @@ defmodule LangChain.ChatModels.ChatPerplexity do
 
   def do_process_response(_model, {:error, %Jason.DecodeError{} = response}) do
     error_message = "Received invalid JSON: #{inspect(response)}"
-    Logger.error(error_message)
 
     {:error,
      LangChainError.exception(type: "invalid_json", message: error_message, original: response)}
   end
 
-  def do_process_response(_model, other) do
-    Logger.error("Trying to process an unexpected response. #{inspect(other)}")
+  def do_process_response(_model, _other) do
     {:error, LangChainError.exception(message: "Unexpected response")}
   end
 

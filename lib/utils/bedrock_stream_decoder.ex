@@ -17,8 +17,7 @@ defmodule LangChain.Utils.BedrockStreamDecoder do
         chunks = [response | chunks]
         finish_or_decode_remaining(chunks, remaining)
 
-      {:error, error} ->
-        Logger.error("Failed to decode Bedrock chunk: #{inspect(error)}")
+      {:error, _error} ->
         finish(chunks, combined_data)
     end
   end

@@ -269,7 +269,6 @@ defmodule LangChain.PromptTemplate do
 
         {key, other}, _acc ->
           msg = "Unsupported `composed_of` entry for #{inspect(key)}: #{inspect(other)}"
-          Logger.error(msg)
           raise LangChainError, msg
       end)
 

@@ -662,7 +662,6 @@ defmodule LangChain.ChatModels.ChatDeepSeek do
         end
 
       other ->
-        Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
         other
     end
   end
@@ -760,11 +759,7 @@ defmodule LangChain.ChatModels.ChatDeepSeek do
              )}
         end
 
-      other ->
-        Logger.error(
-          "Unhandled and unexpected response from streamed post call. #{inspect(other)}"
-        )
-
+      _other ->
         {:error,
          LangChainError.exception(type: "unexpected_response", message: "Unexpected response")}
     end
@@ -819,7 +814,6 @@ defmodule LangChain.ChatModels.ChatDeepSeek do
   end
 
   defp parse_combined_data(_incomplete, _json, done, depth) when depth >= 10 do
-    Logger.error("Stream parsing recursion limit exceeded: depth = #{depth}")
     {done, ""}
   end
 
@@ -956,8 +950,6 @@ defmodule LangChain.ChatModels.ChatDeepSeek do
         call
 
       {:error, %Ecto.Changeset{} = changeset} ->
-        reason = Utils.changeset_error_to_string(changeset)
-        Logger.error("Failed to process ToolCall for a function. Reason: #{reason}")
         {:error, LangChainError.exception(changeset)}
     end
   end
@@ -1000,8 +992,6 @@ defmodule LangChain.ChatModels.ChatDeepSeek do
             call
 
           {:error, %Ecto.Changeset{} = changeset} ->
-            reason = Utils.changeset_error_to_string(changeset)
-            Logger.error("Failed to process ToolCall for a function. Reason: #{reason}")
             {:error, LangChainError.exception(changeset)}
         end
     end
@@ -1057,25 +1047,21 @@ defmodule LangChain.ChatModels.ChatDeepSeek do
         _other -> nil
       end
 
-    Logger.error("Received error from API: #{inspect(reason)}")
     {:error, LangChainError.exception(type: type, message: reason, original: response)}
   end
 
   def do_process_response(_model, %{"error" => %{"message" => reason}} = response) do
-    Logger.error("Received error from API: #{inspect(reason)}")
     {:error, LangChainError.exception(message: reason, original: response)}
   end
 
   def do_process_response(_model, {:error, %Jason.DecodeError{} = response}) do
     error_message = "Received invalid JSON: #{inspect(response)}"
-    Logger.error(error_message)
 
     {:error,
      LangChainError.exception(type: "invalid_json", message: error_message, original: response)}
   end
 
   def do_process_response(_model, other) do
-    Logger.error("Trying to process an unexpected response. #{inspect(other)}")
     {:error, LangChainError.exception(message: "Unexpected response", original: other)}
   end
 
