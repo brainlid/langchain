@@ -92,6 +92,12 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     # selected using temperature sampling.
     field :top_k, :float, default: 1.0
 
+    # Configure thinking budget and whether to include thought summaries (content type `:thinking`).
+    # See https://docs.cloud.google.com/vertex-ai/generative-ai/docs/thinking
+    #
+    # Config reference: https://docs.cloud.google.com/vertex-ai/generative-ai/docs/reference/rest/v1/projects.locations.evaluationRuns#ThinkingConfig
+    field :thinking_config, :map, default: nil
+
     # Duration in seconds for the response to be received. When streaming a very
     # lengthy response, a longer time limit may be required. However, when it
     # goes on too long by itself, it tends to hallucinate more.
@@ -116,6 +122,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     :temperature,
     :top_p,
     :top_k,
+    :thinking_config,
     :receive_timeout,
     :stream,
     :json_response
@@ -170,24 +177,30 @@ defmodule LangChain.ChatModels.ChatVertexAI do
       |> List.flatten()
       |> List.wrap()
 
+    response_mime_type =
+      case vertex_ai.json_response do
+        true ->
+          "application/json"
+
+        false ->
+          nil
+      end
+
+    generation_config_params =
+      %{
+        "temperature" => vertex_ai.temperature,
+        "topP" => vertex_ai.top_p,
+        "topK" => vertex_ai.top_k
+      }
+      |> Utils.conditionally_add_to_map("thinkingConfig", vertex_ai.thinking_config)
+      |> Utils.conditionally_add_to_map("response_mime_type", response_mime_type)
+
     req =
       %{
         "contents" => messages_for_api,
-        "generationConfig" => %{
-          "temperature" => vertex_ai.temperature,
-          "topP" => vertex_ai.top_p,
-          "topK" => vertex_ai.top_k
-        }
+        "generationConfig" => generation_config_params
       }
       |> Utils.conditionally_add_to_map("system_instruction", for_api(sys_instructions))
-
-    req =
-      if vertex_ai.json_response do
-        req
-        |> put_in(["generationConfig", "response_mime_type"], "application/json")
-      else
-        req
-      end
 
     if functions && not Enum.empty?(functions) do
       req
@@ -246,6 +259,13 @@ defmodule LangChain.ChatModels.ChatVertexAI do
 
   defp for_api(%ContentPart{type: :text} = part) do
     %{"text" => part.content}
+  end
+
+  defp for_api(%ContentPart{type: :thinking}) do
+    # The thinking parts are only thought summaries and are not meant to be
+    # included in future generation requests.
+    # See https://docs.cloud.google.com/vertex-ai/generative-ai/docs/thinking#thought-summaries
+    []
   end
 
   defp for_api(%ContentPart{type: :image} = part) do
@@ -769,6 +789,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
         :temperature,
         :top_p,
         :top_k,
+        :thinking_config,
         :receive_timeout,
         :json_response,
         :stream
