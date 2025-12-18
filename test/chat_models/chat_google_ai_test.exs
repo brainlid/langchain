@@ -125,10 +125,9 @@ defmodule ChatModels.ChatGoogleAITest do
 
     test "generated a map containing response_mime_type and response_schema", %{params: params} do
       google_ai =
-        ChatGoogleAI.new!(
-          params
-          |> Map.merge(%{"json_response" => true, "json_schema" => %{"type" => "object"}})
-        )
+        params
+        |> Map.merge(%{"json_response" => true, "json_schema" => %{"type" => "object"}})
+        |> ChatGoogleAI.new!()
 
       data = ChatGoogleAI.for_api(google_ai, [], [])
 
@@ -793,7 +792,7 @@ defmodule ChatModels.ChatGoogleAITest do
 
   describe "serialize_config/2" do
     test "does not include the API key or callbacks" do
-      model = ChatGoogleAI.new!(%{model: "gpt-4o"})
+      model = ChatGoogleAI.new!(%{model: @test_model})
       result = ChatGoogleAI.serialize_config(model)
       assert result["version"] == 1
       refute Map.has_key?(result, "api_key")
