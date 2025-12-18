@@ -789,6 +789,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
         :temperature,
         :top_p,
         :top_k,
+        :thinking_config,
         :receive_timeout,
         :json_response,
         :stream
