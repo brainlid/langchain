@@ -220,7 +220,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     # Reasoning options for gpt-5 and o-series models
     embeds_one(:reasoning, ReasoningOptions)
     # omit service_tier because chat_open_ai also omits it
-    # omit store, but set it explicitly to false later to keep statelessness. the API will default true unless we set it
+    field :store, :boolean, default: false
     field :stream, :boolean, default: false
     field :temperature, :float, default: nil
     field :json_response, :boolean, default: false
@@ -253,6 +253,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     :include,
     :max_output_tokens,
     :previous_response_id,
+    :store,
     :stream,
     :temperature,
     :json_response,
@@ -327,7 +328,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     %{
       model: openai.model,
       stream: openai.stream,
-      store: false,
+      store: if(openai.previous_response_id, do: true, else: openai.store),
       input:
         messages
         |> Enum.reduce([], fn m, acc ->
