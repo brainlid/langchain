@@ -910,6 +910,103 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
     end
   end
 
+  describe "previous_response_id" do
+    test "accepts previous_response_id in new/1" do
+      {:ok, model} =
+        ChatOpenAIResponses.new(%{
+          "model" => @test_model,
+          "previous_response_id" => "resp_abc123"
+        })
+
+      assert model.previous_response_id == "resp_abc123"
+    end
+
+    test "includes previous_response_id in API request when set" do
+      model =
+        ChatOpenAIResponses.new!(%{
+          "model" => @test_model,
+          "previous_response_id" => "resp_previous_123"
+        })
+
+      api_data = ChatOpenAIResponses.for_api(model, [], [])
+      assert api_data.previous_response_id == "resp_previous_123"
+    end
+
+    test "omits previous_response_id from API request when nil" do
+      model = ChatOpenAIResponses.new!(%{"model" => @test_model})
+
+      api_data = ChatOpenAIResponses.for_api(model, [], [])
+      refute Map.has_key?(api_data, :previous_response_id)
+    end
+
+    test "extracts response_id from completed response and adds to metadata" do
+      model = ChatOpenAIResponses.new!(%{"model" => @test_model})
+
+      response = %{
+        "id" => "resp_new_456",
+        "status" => "completed",
+        "output" => [
+          %{
+            "type" => "message",
+            "content" => [%{"type" => "output_text", "text" => "Hello!"}]
+          }
+        ]
+      }
+
+      result = ChatOpenAIResponses.do_process_response(model, response)
+      assert %LangChain.Message{} = result
+      assert result.metadata.response_id == "resp_new_456"
+    end
+
+    test "extracts response_id from streaming response.completed event" do
+      model = ChatOpenAIResponses.new!(%{"model" => @test_model})
+
+      completed_event = %{
+        "type" => "response.completed",
+        "response" => %{
+          "id" => "resp_stream_789",
+          "usage" => %{"input_tokens" => 10, "output_tokens" => 5}
+        }
+      }
+
+      result = ChatOpenAIResponses.do_process_response(model, completed_event)
+      assert %LangChain.MessageDelta{} = result
+      assert result.metadata.response_id == "resp_stream_789"
+    end
+
+    test "conversation continuity pattern: response_id becomes previous_response_id" do
+      # First call - no previous_response_id
+      model1 = ChatOpenAIResponses.new!(%{"model" => @test_model})
+      api_data1 = ChatOpenAIResponses.for_api(model1, [], [])
+      refute Map.has_key?(api_data1, :previous_response_id)
+
+      # Simulate response with id
+      response1 = %{
+        "id" => "resp_first_call",
+        "status" => "completed",
+        "output" => [
+          %{
+            "type" => "message",
+            "content" => [%{"type" => "output_text", "text" => "First response"}]
+          }
+        ]
+      }
+
+      message1 = ChatOpenAIResponses.do_process_response(model1, response1)
+      assert message1.metadata.response_id == "resp_first_call"
+
+      # Second call - use response_id from first call as previous_response_id
+      model2 =
+        ChatOpenAIResponses.new!(%{
+          "model" => @test_model,
+          "previous_response_id" => message1.metadata.response_id
+        })
+
+      api_data2 = ChatOpenAIResponses.for_api(model2, [], [])
+      assert api_data2.previous_response_id == "resp_first_call"
+    end
+  end
+
   describe "req_config" do
     test "merges req_config into the request (non-streaming)" do
       expect(Req, :post, fn req_struct ->
