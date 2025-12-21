@@ -322,7 +322,8 @@ defmodule LangChain.Agents.FileSystemServerTest do
     test "deletes non-existent file returns ok", %{agent_id: agent_id} do
       {:ok, _pid} = FileSystemServer.start_link(agent_id: agent_id)
 
-      assert {:error, "File not found"} = FileSystemServer.delete_file(agent_id, "/nonexistent.txt")
+      assert {:error, "File not found"} =
+               FileSystemServer.delete_file(agent_id, "/nonexistent.txt")
     end
   end
 

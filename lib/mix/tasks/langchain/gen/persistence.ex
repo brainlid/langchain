@@ -81,7 +81,9 @@ defmodule Mix.Tasks.Sagents.Gen.Persistence do
   end
 
   defp parse_context!([]) do
-    Mix.raise("Context module is required. Example: mix sagents.gen.persistence MyApp.Conversations")
+    Mix.raise(
+      "Context module is required. Example: mix sagents.gen.persistence MyApp.Conversations"
+    )
   end
 
   defp build_config(context_module, opts) do
@@ -137,7 +139,10 @@ defmodule Mix.Tasks.Sagents.Gen.Persistence do
 
   defp infer_owner_module(app, "user"), do: "#{app_module(app)}.Accounts.User"
   defp infer_owner_module(app, "account"), do: "#{app_module(app)}.Accounts.Account"
-  defp infer_owner_module(app, "organization"), do: "#{app_module(app)}.Organizations.Organization"
+
+  defp infer_owner_module(app, "organization"),
+    do: "#{app_module(app)}.Organizations.Organization"
+
   defp infer_owner_module(app, "org"), do: "#{app_module(app)}.Organizations.Organization"
   defp infer_owner_module(app, "team"), do: "#{app_module(app)}.Teams.Team"
   defp infer_owner_module(_app, "none"), do: nil

@@ -491,8 +491,7 @@ defmodule LangChain.Agents.AgentServerTest do
           agent: agent,
           initial_state: initial_state,
           name: AgentServer.get_name(agent_id),
-          pubsub: Phoenix.PubSub,
-          pubsub_name: pubsub_name,
+          pubsub: {Phoenix.PubSub, pubsub_name},
           id: "test_agent_#{:erlang.unique_integer([:positive])}"
         )
 
@@ -1030,8 +1029,7 @@ defmodule LangChain.Agents.AgentServerTest do
         AgentServer.start_link(
           agent: agent,
           name: AgentServer.get_name(agent_id),
-          pubsub: Phoenix.PubSub,
-          pubsub_name: pubsub_name,
+          pubsub: {Phoenix.PubSub, pubsub_name},
           id: agent_id,
           inactivity_timeout: 100
         )

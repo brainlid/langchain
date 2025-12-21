@@ -25,10 +25,11 @@ defmodule Mix.Sagents.Gen.Persistence.Schema do
   end
 
   defp schema_path(config, filename) do
-    context_dir = config.context_module
-    |> String.split(".")
-    |> Enum.map(&Macro.underscore/1)
-    |> Path.join()
+    context_dir =
+      config.context_module
+      |> String.split(".")
+      |> Enum.map(&Macro.underscore/1)
+      |> Path.join()
 
     Path.join(["lib", context_dir, "#{filename}.ex"])
   end

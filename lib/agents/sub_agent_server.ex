@@ -186,7 +186,7 @@ defmodule LangChain.Agents.SubAgentServer do
   ## Parameters
 
   - `sub_agent_id` - The SubAgent identifier
-  - `decisions` - List of decision maps from human reviewer (see `Agent.resume/3`)
+  - `decisions` - List of decision maps from human reviewer (see `LangChain.Agent.resume/3`)
 
   ## Examples
 

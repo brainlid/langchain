@@ -1,8 +1,10 @@
-defmodule LangChain.Agents.Middleware.PatchToolCallsIntegrationTest do
+defmodule PatchToolCallsIntegrationTest do
   use ExUnit.Case, async: true
 
   alias LangChain.Agents.Agent
   alias LangChain.Agents.State
+  alias LangChain.Agents.MiddlewareEntry
+  alias LangChain.Agents.Middleware.PatchToolCalls
   alias LangChain.Message
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult
@@ -26,9 +28,9 @@ defmodule LangChain.Agents.Middleware.PatchToolCallsIntegrationTest do
       # Verify PatchToolCalls is in the middleware list
       middleware_modules =
         agent.middleware
-        |> Enum.map(fn {module, _config} -> module end)
+        |> Enum.map(fn %MiddlewareEntry{module: module} -> module end)
 
-      assert LangChain.Agents.Middleware.PatchToolCalls in middleware_modules
+      assert PatchToolCalls in middleware_modules
     end
 
     test "patches dangling tool calls during agent execution", %{agent: agent} do
@@ -121,7 +123,7 @@ defmodule LangChain.Agents.Middleware.PatchToolCallsIntegrationTest do
           model: model,
           replace_default_middleware: true,
           middleware: [
-            LangChain.Agents.Middleware.PatchToolCalls
+            PatchToolCalls
           ]
         })
 

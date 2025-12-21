@@ -528,11 +528,15 @@ defmodule LangChain.Agents.SubAgent do
   # Extract interrupt_on configuration from middleware list
   defp extract_interrupt_on_from_middleware(middleware) when is_list(middleware) do
     Enum.find_value(middleware, %{}, fn
-      {LangChain.Agents.Middleware.HumanInTheLoop, opts} when is_map(opts) ->
-        Map.get(opts, :interrupt_on)
-
-      {LangChain.Agents.Middleware.HumanInTheLoop, opts} when is_list(opts) ->
-        Keyword.get(opts, :interrupt_on)
+      %LangChain.Agents.MiddlewareEntry{
+        module: LangChain.Agents.Middleware.HumanInTheLoop,
+        config: config
+      } ->
+        cond do
+          is_map(config) -> Map.get(config, :interrupt_on)
+          is_list(config) -> Keyword.get(config, :interrupt_on)
+          true -> nil
+        end
 
       _ ->
         nil

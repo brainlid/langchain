@@ -1237,9 +1237,7 @@ defmodule LangChain.Agents.AgentServer do
 
   @impl true
   def handle_info({:middleware_message, middleware_id, message}, server_state) do
-    Logger.debug(
-      "Received middleware message for #{inspect(middleware_id)}: #{inspect(message)}"
-    )
+    Logger.debug("Received middleware message for #{inspect(middleware_id)}: #{inspect(message)}")
 
     # Emit telemetry event
     :telemetry.execute(
@@ -1456,7 +1454,6 @@ defmodule LangChain.Agents.AgentServer do
         :ok
     end
   end
-
 
   ## Inactivity Timer Management
 

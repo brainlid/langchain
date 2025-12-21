@@ -5,6 +5,7 @@ defmodule LangChain.Agents.AgentTest do
   alias LangChain.Agents.{Agent, Middleware, State}
   alias LangChain.ChatModels.ChatAnthropic
   alias LangChain.Message
+  alias LangChain.Agents.MiddlewareEntry
 
   # Test middleware for composition testing
 
@@ -244,7 +245,7 @@ defmodule LangChain.Agents.AgentTest do
         )
 
       assert length(agent.middleware) == 1
-      {module, _config} = hd(agent.middleware)
+      %MiddlewareEntry{module: module} = hd(agent.middleware)
       assert module == TestMiddleware1
     end
 

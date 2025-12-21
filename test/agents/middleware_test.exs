@@ -2,6 +2,7 @@ defmodule LangChain.Agents.MiddlewareTest do
   use ExUnit.Case, async: true
 
   alias LangChain.Agents.Middleware
+  alias LangChain.Agents.MiddlewareEntry
 
   # Test middleware implementations
 
@@ -95,16 +96,22 @@ defmodule LangChain.Agents.MiddlewareTest do
 
   describe "init_middleware/1" do
     test "initializes middleware with bare module" do
-      {module, config} = Middleware.init_middleware(MinimalMiddleware)
+      %MiddlewareEntry{module: module, config: config, id: id} =
+        Middleware.init_middleware(MinimalMiddleware)
+
       assert module == MinimalMiddleware
-      assert config == []
+      assert config == %{}
+      assert id == MinimalMiddleware
     end
 
     test "initializes middleware with options" do
-      {module, config} = Middleware.init_middleware({FullMiddleware, [name: "custom"]})
+      %MiddlewareEntry{module: module, config: config, id: id} =
+        Middleware.init_middleware({FullMiddleware, [name: "custom"]})
+
       assert module == FullMiddleware
       assert config.name == "custom"
       assert config.enabled == true
+      assert id == FullMiddleware
     end
 
     test "raises on initialization failure" do

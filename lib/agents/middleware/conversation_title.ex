@@ -233,7 +233,10 @@ defmodule LangChain.Agents.Middleware.ConversationTitle do
       rescue
         error ->
           stacktrace = __STACKTRACE__
-          Logger.error("Title generation task failed: #{inspect(error)}\n#{Exception.format_stacktrace(stacktrace)}")
+
+          Logger.error(
+            "Title generation task failed: #{inspect(error)}\n#{Exception.format_stacktrace(stacktrace)}"
+          )
 
           # Emit telemetry for failure
           :telemetry.execute(
@@ -243,19 +246,32 @@ defmodule LangChain.Agents.Middleware.ConversationTitle do
           )
 
           # Send failure message back to AgentServer
-          send(server_pid, {:middleware_message, middleware_id, {:title_generation_failed, error}})
+          send(
+            server_pid,
+            {:middleware_message, middleware_id, {:title_generation_failed, error}}
+          )
       catch
         kind, reason ->
           stacktrace = __STACKTRACE__
-          Logger.error("Title generation task crashed (#{kind}): #{inspect(reason)}\n#{Exception.format_stacktrace(stacktrace)}")
+
+          Logger.error(
+            "Title generation task crashed (#{kind}): #{inspect(reason)}\n#{Exception.format_stacktrace(stacktrace)}"
+          )
 
           :telemetry.execute(
             [:middleware, :task, :failed],
             %{count: 1},
-            %{middleware: middleware_id, task_type: :title_generation, error: "#{kind}: #{inspect(reason)}"}
+            %{
+              middleware: middleware_id,
+              task_type: :title_generation,
+              error: "#{kind}: #{inspect(reason)}"
+            }
           )
 
-          send(server_pid, {:middleware_message, middleware_id, {:title_generation_failed, {kind, reason}}})
+          send(
+            server_pid,
+            {:middleware_message, middleware_id, {:title_generation_failed, {kind, reason}}}
+          )
       end
     end)
   end

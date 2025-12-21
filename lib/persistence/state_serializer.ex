@@ -375,12 +375,12 @@ defmodule LangChain.Persistence.StateSerializer do
     end
   end
 
-  defp serialize_middleware({module, opts}) when is_atom(module) do
+  defp serialize_middleware(%LangChain.Agents.MiddlewareEntry{module: module, config: config}) do
     serialized_opts =
       cond do
-        is_map(opts) -> serialize_map_to_string_keys(opts)
-        is_list(opts) -> opts
-        true -> %{}
+        is_map(config) -> serialize_map_to_string_keys(config)
+        is_list(config) -> config
+        true -> []
       end
 
     %{
@@ -391,7 +391,15 @@ defmodule LangChain.Persistence.StateSerializer do
 
   defp deserialize_middleware(%{"module" => module_name} = data) do
     module = String.to_existing_atom(module_name)
-    opts = data["opts"] || %{}
+    opts = data["opts"] || []
+    # Convert map to keyword list with atom keys if needed
+    opts =
+      if is_map(opts) do
+        Enum.map(opts, fn {k, v} -> {String.to_existing_atom(k), v} end)
+      else
+        opts
+      end
+
     {module, opts}
   end
 

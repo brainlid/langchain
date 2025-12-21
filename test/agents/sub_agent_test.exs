@@ -3,6 +3,7 @@ defmodule LangChain.Agents.SubAgentTest do
 
   alias LangChain.Agents.SubAgent
   alias LangChain.Agents.Agent
+  alias LangChain.Agents.MiddlewareEntry
   alias LangChain.Function
   alias LangChain.ChatModels.ChatAnthropic
 
@@ -566,7 +567,7 @@ defmodule LangChain.Agents.SubAgentTest do
       agent = registry["agent"]
       # Middleware should be appended
       assert Enum.any?(agent.middleware, fn
-               {CustomMiddleware, _} -> true
+               %MiddlewareEntry{module: CustomMiddleware} -> true
                _ -> false
              end)
     end

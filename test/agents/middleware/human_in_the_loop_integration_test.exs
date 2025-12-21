@@ -3,6 +3,8 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopIntegrationTest do
   use Mimic
 
   alias LangChain.Agents.Agent
+  alias LangChain.Agents.Middleware.HumanInTheLoop
+  alias LangChain.Agents.MiddlewareEntry
   alias LangChain.Agents.State
   alias LangChain.Message
   alias LangChain.Message.ToolCall
@@ -159,8 +161,8 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopIntegrationTest do
         )
 
       # Check that HITL middleware is in the stack
-      assert Enum.any?(agent.middleware, fn {module, _config} ->
-               module == LangChain.Agents.Middleware.HumanInTheLoop
+      assert Enum.any?(agent.middleware, fn %MiddlewareEntry{module: module} ->
+               module == HumanInTheLoop
              end)
     end
 
@@ -173,8 +175,8 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopIntegrationTest do
         })
 
       # Check that HITL middleware is NOT in the stack
-      refute Enum.any?(agent.middleware, fn {module, _config} ->
-               module == LangChain.Agents.Middleware.HumanInTheLoop
+      refute Enum.any?(agent.middleware, fn %MiddlewareEntry{module: module} ->
+               module == HumanInTheLoop
              end)
     end
 
@@ -253,8 +255,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopIntegrationTest do
             model: create_test_model(),
             tools: [create_write_file_tool()],
             middleware: [
-              {LangChain.Agents.Middleware.HumanInTheLoop,
-               [interrupt_on: %{"write_file" => true}]}
+              {HumanInTheLoop, [interrupt_on: %{"write_file" => true}]}
             ]
           },
           interrupt_on: %{
@@ -326,7 +327,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopIntegrationTest do
             model: create_test_model(),
             tools: [create_write_file_tool()],
             middleware: [
-              {LangChain.Agents.Middleware.HumanInTheLoop,
+              {HumanInTheLoop,
                [interrupt_on: %{"write_file" => %{allowed_decisions: [:approve, :edit, :reject]}}]}
             ]
           },
@@ -377,8 +378,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopIntegrationTest do
             model: create_test_model(),
             tools: [create_write_file_tool()],
             middleware: [
-              {LangChain.Agents.Middleware.HumanInTheLoop,
-               [interrupt_on: %{"write_file" => true}]}
+              {HumanInTheLoop, [interrupt_on: %{"write_file" => true}]}
             ]
           },
           interrupt_on: %{
@@ -515,8 +515,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopIntegrationTest do
             model: create_test_model(),
             tools: [create_write_file_tool()],
             middleware: [
-              {LangChain.Agents.Middleware.HumanInTheLoop,
-               [interrupt_on: %{"write_file" => true}]}
+              {HumanInTheLoop, [interrupt_on: %{"write_file" => true}]}
             ]
           },
           interrupt_on: %{
@@ -583,8 +582,8 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopIntegrationTest do
                )
 
       # HITL middleware should still be added even with empty config
-      assert Enum.any?(agent.middleware, fn {module, _config} ->
-               module == LangChain.Agents.Middleware.HumanInTheLoop
+      assert Enum.any?(agent.middleware, fn %MiddlewareEntry{module: module} ->
+               module == HumanInTheLoop
              end)
     end
 
@@ -596,8 +595,8 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopIntegrationTest do
                  interrupt_on: nil
                })
 
-      refute Enum.any?(agent.middleware, fn {module, _config} ->
-               module == LangChain.Agents.Middleware.HumanInTheLoop
+      refute Enum.any?(agent.middleware, fn %MiddlewareEntry{module: module} ->
+               module == HumanInTheLoop
              end)
     end
   end
