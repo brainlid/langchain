@@ -10,6 +10,11 @@ defmodule LangChain.Agents.SubAgentIntegrationTest do
   use Mimic
 
   alias LangChain.Agents.{Agent, SubAgent, State}
+  alias LangChain.Agents.MiddlewareEntry
+  alias LangChain.Agents.Middleware.TodoList
+  alias LangChain.Agents.Middleware.FileSystem
+  alias LangChain.Agents.Middleware.SubAgent
+  alias LangChain.Agents.Middleware.HumanInTheLoop
   alias LangChain.ChatModels.ChatAnthropic
   alias LangChain.Chains.LLMChain
   alias LangChain.Function
@@ -72,8 +77,11 @@ defmodule LangChain.Agents.SubAgentIntegrationTest do
 
       # Verify SubAgent middleware is present
       assert Enum.any?(agent.middleware, fn
-               {LangChain.Agents.Middleware.SubAgent, _} -> true
-               _ -> false
+               %MiddlewareEntry{module: SubAgent} ->
+                 true
+
+               _ ->
+                 false
              end)
 
       # Verify task tool is available
@@ -100,9 +108,9 @@ defmodule LangChain.Agents.SubAgentIntegrationTest do
       model = test_model()
 
       default_middleware = [
-        {LangChain.Agents.Middleware.TodoList, []},
-        {LangChain.Agents.Middleware.SubAgent, []},
-        {LangChain.Agents.Middleware.FileSystem, [agent_id: "parent"]}
+        {TodoList, []},
+        {SubAgent, []},
+        {FileSystem, [agent_id: "parent"]}
       ]
 
       {:ok, registry} = SubAgent.build_agent_map([subagent_config], model, default_middleware)
@@ -111,15 +119,20 @@ defmodule LangChain.Agents.SubAgentIntegrationTest do
 
       # Verify SubAgent middleware is NOT in the worker's middleware
       refute Enum.any?(worker_agent.middleware, fn
-               {LangChain.Agents.Middleware.SubAgent, _} -> true
-               LangChain.Agents.Middleware.SubAgent -> true
-               _ -> false
+               %MiddlewareEntry{module: SubAgent} ->
+                 true
+
+               _ ->
+                 false
              end)
 
       # But other middleware should be present
       assert Enum.any?(worker_agent.middleware, fn
-               {LangChain.Agents.Middleware.TodoList, _} -> true
-               _ -> false
+               %MiddlewareEntry{module: TodoList} ->
+                 true
+
+               _ ->
+                 false
              end)
     end
   end

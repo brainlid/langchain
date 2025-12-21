@@ -7,6 +7,8 @@ defmodule LangChain.Agents.Middleware.SubAgentTest do
   alias LangChain.Agents.SubAgent
   alias LangChain.Agents.SubAgentsDynamicSupervisor
   alias LangChain.Agents.State
+  alias LangChain.Agents.Middleware.TodoList
+  alias LangChain.Agents.Middleware.FileSystem
   alias LangChain.ChatModels.ChatAnthropic
   alias LangChain.Function
   alias LangChain.Message
@@ -490,24 +492,23 @@ defmodule LangChain.Agents.Middleware.SubAgentTest do
       assert {:ok, _result} = task_tool.function.(args, context)
     end
 
-    test "normalizes middleware with map options when creating dynamic subagent" do
+    test "handles middleware with keyword list options when creating dynamic subagent" do
       model = test_model()
-      # Create middleware with map options (as they appear at runtime)
-      middleware_with_maps = [
-        {LangChain.Agents.Middleware.TodoList, %{agent_id: "test"}},
-        {LangChain.Agents.Middleware.FileSystem,
-         %{
+      # Create middleware with keyword list options
+      middleware_list = [
+        {TodoList, [agent_id: "test"]},
+        {FileSystem,
+         [
            agent_id: "test",
            custom_tool_descriptions: %{},
            enabled_tools: ["read_file", "write_file"]
-         }}
+         ]}
       ]
 
       # Filter middleware (simulating what happens in start_dynamic_subagent)
-      filtered_middleware = SubAgent.subagent_middleware_stack(middleware_with_maps, [])
+      filtered_middleware = SubAgent.subagent_middleware_stack(middleware_list, [])
 
-      # Should successfully create agent with map-based middleware options
-      # This verifies that Middleware.normalize/1 accepts maps
+      # Should successfully create agent with keyword list middleware options
       assert {:ok, agent} =
                Agent.new(
                  %{
