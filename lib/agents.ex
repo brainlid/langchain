@@ -103,12 +103,12 @@ defmodule LangChain.Agents do
   @doc """
   Create a new DeepAgent with default middleware stack.
 
-  This is a convenience function that delegates to `Agent.new/1` with
+  This is a convenience function that delegates to `LangChain.Agent.new/1` with
   sensible defaults for common use cases.
 
   ## Options
 
-  All options from `Agent.new/1` are supported. Common options:
+  All options from `LangChain.Agent.new/1` are supported. Common options:
 
   - `:model` - LangChain ChatModel struct (required)
   - `:system_prompt` - Base system instructions

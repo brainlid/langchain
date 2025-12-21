@@ -26,6 +26,8 @@ defmodule LangChain.Agents.State do
 
   @primary_key false
   embedded_schema do
+    # Agent identifier (set automatically by AgentServer during initialization)
+    field :agent_id, :string
     # List of LangChain.Message structs
     field :messages, {:array, :any}, default: [], virtual: true
     field :todos, {:array, :map}, default: []
@@ -41,7 +43,7 @@ defmodule LangChain.Agents.State do
   """
   def new(attrs \\ %{}) do
     %State{}
-    |> cast(attrs, [:messages, :todos, :metadata, :interrupt_data])
+    |> cast(attrs, [:agent_id, :messages, :todos, :metadata, :interrupt_data])
     |> apply_action(:insert)
   end
 
@@ -77,6 +79,7 @@ defmodule LangChain.Agents.State do
 
   def merge_states(%State{} = left, %State{} = right) do
     %State{
+      agent_id: left.agent_id || right.agent_id,
       messages: merge_messages(left.messages, right.messages),
       todos: merge_todos(left.todos, right.todos),
       metadata: deep_merge_maps(left.metadata, right.metadata),
@@ -276,6 +279,7 @@ defmodule LangChain.Agents.State do
   @spec reset(t()) :: t()
   def reset(%State{} = state) do
     %State{
+      agent_id: state.agent_id,
       messages: [],
       todos: [],
       metadata: state.metadata

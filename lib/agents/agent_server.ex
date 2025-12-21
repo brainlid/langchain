@@ -92,6 +92,16 @@ defmodule LangChain.Agents.AgentServer do
   **Note**: File events are NOT broadcast by AgentServer. Files are managed by
   `FileSystemServer` which provides its own event handling mechanism.
 
+  ## Debug Events
+
+  When debug PubSub is configured, additional debug events are broadcast on the
+  topic `"agent_server:debug:\#{agent_id}"`. These events provide deeper insight
+  into agent execution for debugging and monitoring purposes:
+
+  ### Middleware Debug Events
+  - `{:agent_state_update, state}` - Middleware state update with
+    full state snapshot
+
   ## Usage
 
       # Start a server
@@ -166,8 +176,9 @@ defmodule LangChain.Agents.AgentServer do
   alias LangChain.Agents.Agent
   alias LangChain.Agents.State
   alias LangChain.Agents.AgentSupervisor
+  alias LangChain.Agents.Middleware
+  alias LangChain.Agents.MiddlewareEntry
   alias LangChain.Persistence.StateSerializer
-  alias LangChain.Chains.TextToTitleChain
 
   @registry LangChain.Agents.Registry
 
@@ -182,28 +193,34 @@ defmodule LangChain.Agents.AgentServer do
       :status,
       :pubsub,
       :topic,
+      :debug_pubsub,
+      :debug_topic,
       :interrupt_data,
       :error,
       :inactivity_timeout,
       :inactivity_timer_ref,
       :last_activity_at,
       :shutdown_delay,
-      :task
+      :task,
+      :middleware_registry
     ]
 
     @type t :: %__MODULE__{
             agent: Agent.t(),
             state: State.t(),
             status: :idle | :running | :interrupted | :completed | :error,
-            pubsub: module() | nil,
+            pubsub: {module(), atom()} | nil,
             topic: String.t(),
+            debug_pubsub: {module(), atom()} | nil,
+            debug_topic: String.t() | nil,
             interrupt_data: map() | nil,
             error: term() | nil,
             inactivity_timeout: pos_integer() | nil | :infinity,
             inactivity_timer_ref: reference() | nil,
             last_activity_at: DateTime.t() | nil,
             shutdown_delay: pos_integer() | nil,
-            task: Task.t() | nil
+            task: Task.t() | nil,
+            middleware_registry: %{(atom() | String.t()) => MiddlewareEntry.t()}
           }
   end
 
@@ -216,8 +233,10 @@ defmodule LangChain.Agents.AgentServer do
 
   - `:agent` - The Agent struct (required)
   - `:initial_state` - Initial State (default: empty state)
-  - `:pubsub` - PubSub module to use (default: Phoenix.PubSub if available, nil otherwise)
-  - `:pubsub_name` - Name of the PubSub instance (default: :langchain_pubsub)
+  - `:pubsub` - PubSub configuration as `{module(), atom()}` tuple or `nil` to disable (default: nil)
+    Example: `{Phoenix.PubSub, :my_app_pubsub}`
+  - `:debug_pubsub` - Optional separate PubSub for debug events as `{module(), atom()}` or `nil` (default: nil)
+    Example: `{Phoenix.PubSub, :my_debug_pubsub}`
   - `:name` - Server name registration (optional, defaults to `get_name(agent.agent_id)`)
   - `:inactivity_timeout` - Timeout in milliseconds for automatic shutdown due to inactivity (default: 300_000 - 5 minutes)
     Set to `nil` or `:infinity` to disable automatic shutdown
@@ -229,6 +248,13 @@ defmodule LangChain.Agents.AgentServer do
       {:ok, pid} = AgentServer.start_link(
         agent: agent,
         initial_state: state
+      )
+
+      # With PubSub enabled
+      {:ok, pid} = AgentServer.start_link(
+        agent: agent,
+        initial_state: state,
+        pubsub: {Phoenix.PubSub, :my_app_pubsub}
       )
 
       # Start with explicit name (advanced use cases)
@@ -248,6 +274,13 @@ defmodule LangChain.Agents.AgentServer do
       {:ok, pid} = AgentServer.start_link(
         agent: agent,
         inactivity_timeout: nil
+      )
+
+      # Enable debug pubsub
+      {:ok, pid} = AgentServer.start_link(
+        agent: agent,
+        pubsub: {Phoenix.PubSub, :my_app_pubsub},
+        debug_pubsub: {Phoenix.PubSub, :my_debug_pubsub}
       )
   """
   def start_link(opts) do
@@ -286,6 +319,40 @@ defmodule LangChain.Agents.AgentServer do
   end
 
   @doc """
+  Get the pid of the AgentServer process for a specific agent.
+
+  ## Examples
+
+      pid = AgentServer.get_pit("my-agent-1")
+      send(pid, message)
+  """
+  @spec get_pid(String.t()) :: pid() | {atom(), node()} | nil
+  def get_pid(agent_id) when is_binary(agent_id) do
+    agent_id
+    |> get_name()
+    |> GenServer.whereis()
+  end
+
+  @doc """
+  Send the AgentServer a message intended to be processed by a middleware
+  handler. This is a mechanism for a middleware to send itself a message, as any
+  message processed by a middleware must be designed to be handled.
+  """
+  @spec send_middleware_message(String.t(), term(), term()) :: :ok
+  def send_middleware_message(agent_id, middleware_id, message) do
+    agent_id
+    |> get_pid()
+    |> case do
+      pid when is_pid(pid) ->
+        send(pid, {:middleware_message, middleware_id, message})
+        :ok
+
+      _other ->
+        :ok
+    end
+  end
+
+  @doc """
   Subscribe to events from this AgentServer.
 
   The calling process will receive messages for all events broadcast by this server.
@@ -307,6 +374,46 @@ defmodule LangChain.Agents.AgentServer do
       nil ->
         {:error, :no_pubsub}
     end
+  end
+
+  @doc """
+  Subscribe to debug events from this AgentServer.
+
+  The calling process will receive messages for all debug events broadcast by this server.
+  Debug events provide additional debugging insight into what the agent is doing, such as
+  middleware state updates.
+
+  Returns `:ok` on success or `{:error, reason}` if debug PubSub is not configured.
+
+  ## Examples
+
+      AgentServer.subscribe_debug("my-agent-1")
+  """
+  @spec subscribe_debug(String.t()) :: :ok | {:error, term()}
+  def subscribe_debug(agent_id) do
+    case GenServer.call(get_name(agent_id), :get_debug_pubsub_info) do
+      {debug_pubsub, debug_pubsub_name, debug_topic} ->
+        # subscribe the client process executing this request to the debug pubsub
+        # topic the server is using for broadcasting debug events
+        debug_pubsub.subscribe(debug_pubsub_name, debug_topic)
+
+      nil ->
+        {:error, :no_debug_pubsub}
+    end
+  end
+
+  @doc """
+  Request the AgentServer to publish an specific PubSub message or event.
+
+  Designed to make it easier for a middleware desiring to publish messages to
+  the Agent's PubSub.
+
+  A PubSub message is only broadcast if the AgentServer is configured with
+  PubSub.
+  """
+  @spec publish_event_from(String.t(), term()) :: :ok
+  def publish_event_from(agent_id, event) do
+    GenServer.cast(get_name(agent_id), {:publish_event, event})
   end
 
   @doc """
@@ -347,7 +454,7 @@ defmodule LangChain.Agents.AgentServer do
   ## Parameters
 
   - `agent_id` - The agent identifier
-  - `decisions` - List of decision maps from human reviewer (see `Agent.resume/3`)
+  - `decisions` - List of decision maps from human reviewer (see `LangChain.Agents.Agent.resume/3`)
 
   ## Examples
 
@@ -621,8 +728,8 @@ defmodule LangChain.Agents.AgentServer do
   ## Options
 
   - `:agent_id` - The runtime identifier for this agent (required)
-  - `:pubsub` - PubSub module to use (default: Phoenix.PubSub if available)
-  - `:pubsub_name` - Name of the PubSub instance (default: :langchain_pubsub)
+  - `:pubsub` - PubSub configuration as `{module(), atom()}` tuple or `nil` (default: nil)
+  - `:debug_pubsub` - Optional separate PubSub for debug events as `{module(), atom()}` or `nil` (default: nil)
   - `:name` - Server name registration (optional, defaults to `get_name(agent_id)`)
   - `:inactivity_timeout` - Timeout in milliseconds (default: 300_000)
   - `:shutdown_delay` - Delay in milliseconds (default: 5000)
@@ -634,13 +741,23 @@ defmodule LangChain.Agents.AgentServer do
 
       {:ok, pid} = AgentServer.start_link_from_state(
         persisted_state,
-        agent_id: "my-agent-1"
+        agent_id: "my-agent-1",
+        pubsub: {Phoenix.PubSub, :my_app_pubsub}
       )
 
       # Clone conversation state with a different agent_id
       {:ok, pid} = AgentServer.start_link_from_state(
         persisted_state,
-        agent_id: "my-agent-clone"
+        agent_id: "my-agent-clone",
+        pubsub: {Phoenix.PubSub, :my_app_pubsub}
+      )
+
+      # Restore with debug pubsub enabled
+      {:ok, pid} = AgentServer.start_link_from_state(
+        persisted_state,
+        agent_id: "my-agent-1",
+        pubsub: {Phoenix.PubSub, :my_app_pubsub},
+        debug_pubsub: {Phoenix.PubSub, :my_debug_pubsub}
       )
   """
   @spec start_link_from_state(map(), keyword()) :: GenServer.on_start()
@@ -679,33 +796,8 @@ defmodule LangChain.Agents.AgentServer do
   defp init_fresh(opts) do
     agent = Keyword.fetch!(opts, :agent)
     initial_state = Keyword.get(opts, :initial_state) || State.new!()
-    # allow pubsub to be explicitly set to nil to disable it
-    pubsub = Keyword.get(opts, :pubsub, default_pubsub())
-    pubsub_name = Keyword.get(opts, :pubsub_name) || :langchain_pubsub
-    # allow a nil value to disable the timeout
-    inactivity_timeout = Keyword.get(opts, :inactivity_timeout, 300_000)
-    shutdown_delay = Keyword.get(opts, :shutdown_delay, 5_000)
 
-    topic = "agent_server:#{agent.agent_id}"
-
-    server_state = %ServerState{
-      agent: agent,
-      state: initial_state,
-      status: :idle,
-      pubsub: if(pubsub, do: {pubsub, pubsub_name}, else: nil),
-      topic: topic,
-      interrupt_data: nil,
-      error: nil,
-      inactivity_timeout: inactivity_timeout,
-      inactivity_timer_ref: nil,
-      last_activity_at: DateTime.utc_now(),
-      shutdown_delay: shutdown_delay
-    }
-
-    # Start the inactivity timer
-    server_state = reset_inactivity_timer(server_state)
-
-    {:ok, server_state}
+    build_server_state(agent, initial_state, opts)
   end
 
   defp init_from_persisted(persisted_state, opts) do
@@ -718,36 +810,64 @@ defmodule LangChain.Agents.AgentServer do
            custom_tools: custom_tools
          ) do
       {:ok, {agent, state}} ->
-        # Use the restored agent and state, but allow opts to override
-        pubsub = Keyword.get(opts, :pubsub, default_pubsub())
-        pubsub_name = Keyword.get(opts, :pubsub_name) || :langchain_pubsub
-        inactivity_timeout = Keyword.get(opts, :inactivity_timeout, 300_000)
-        shutdown_delay = Keyword.get(opts, :shutdown_delay, 5_000)
-
-        topic = "agent_server:#{agent.agent_id}"
-
-        server_state = %ServerState{
-          agent: agent,
-          state: state,
-          status: :idle,
-          pubsub: if(pubsub, do: {pubsub, pubsub_name}, else: nil),
-          topic: topic,
-          interrupt_data: nil,
-          error: nil,
-          inactivity_timeout: inactivity_timeout,
-          inactivity_timer_ref: nil,
-          last_activity_at: DateTime.utc_now(),
-          shutdown_delay: shutdown_delay
-        }
-
-        # Start the inactivity timer
-        server_state = reset_inactivity_timer(server_state)
-
-        {:ok, server_state}
+        build_server_state(agent, state, opts)
 
       {:error, reason} ->
         {:stop, {:restore_failed, reason}}
     end
+  end
+
+  # Build ServerState from agent, state, and opts
+  # This is the shared logic used by both init_fresh/1 and init_from_persisted/2
+  defp build_server_state(agent, state, opts) do
+    # Ensure agent_id is set in the state
+    state = %{state | agent_id: agent.agent_id}
+
+    # Get pubsub configuration as {module(), atom()} tuple or nil
+    # Expected format: pubsub: {Phoenix.PubSub, :my_app_pubsub}
+    pubsub = Keyword.get(opts, :pubsub)
+
+    # Get debug_pubsub configuration as {module(), atom()} tuple or nil
+    # Expected format: debug_pubsub: {Phoenix.PubSub, :my_debug_pubsub}
+    debug_pubsub = Keyword.get(opts, :debug_pubsub)
+
+    # allow a nil value to disable the timeout
+    inactivity_timeout = Keyword.get(opts, :inactivity_timeout, 300_000)
+    shutdown_delay = Keyword.get(opts, :shutdown_delay, 5_000)
+
+    topic = "agent_server:#{agent.agent_id}"
+    debug_topic = if debug_pubsub, do: "agent_server:debug:#{agent.agent_id}", else: nil
+
+    # Build list of MiddlewareEntry structs
+    middleware_entries = build_middleware_entries(agent.middleware)
+
+    # Build registry map for O(1) message routing
+    middleware_registry = Map.new(middleware_entries, fn entry -> {entry.id, entry} end)
+
+    # Update agent with middleware entries
+    updated_agent = %{agent | middleware: middleware_entries}
+
+    server_state = %ServerState{
+      agent: updated_agent,
+      state: state,
+      status: :idle,
+      pubsub: pubsub,
+      topic: topic,
+      debug_pubsub: debug_pubsub,
+      debug_topic: debug_topic,
+      interrupt_data: nil,
+      error: nil,
+      inactivity_timeout: inactivity_timeout,
+      inactivity_timer_ref: nil,
+      last_activity_at: DateTime.utc_now(),
+      shutdown_delay: shutdown_delay,
+      middleware_registry: middleware_registry
+    }
+
+    # Start the inactivity timer
+    server_state = reset_inactivity_timer(server_state)
+
+    {:ok, server_state}
   end
 
   @impl true
@@ -756,6 +876,20 @@ defmodule LangChain.Agents.AgentServer do
       case server_state.pubsub do
         {pubsub, pubsub_name} ->
           {pubsub, pubsub_name, server_state.topic}
+
+        nil ->
+          nil
+      end
+
+    {:reply, result, server_state}
+  end
+
+  @impl true
+  def handle_call(:get_debug_pubsub_info, _from, server_state) do
+    result =
+      case server_state.debug_pubsub do
+        {debug_pubsub, debug_pubsub_name} ->
+          {debug_pubsub, debug_pubsub_name, server_state.debug_topic}
 
         nil ->
           nil
@@ -877,21 +1011,6 @@ defmodule LangChain.Agents.AgentServer do
         status -> status
       end
 
-    # Generate conversation title if this is a user message and we haven't generated one yet
-    new_state =
-      if message.role == :user && !State.get_metadata(new_state, "title_generated") do
-        # Mark that we're generating a title
-        marked_state = State.put_metadata(new_state, "title_generated", true)
-
-        # Extract user text and spawn title generation
-        user_text = LangChain.Message.ContentPart.parts_to_string(message.content)
-        maybe_generate_conversation_title(server_state, user_text)
-
-        marked_state
-      else
-        new_state
-      end
-
     updated_server_state = %{
       server_state
       | state: new_state,
@@ -901,6 +1020,9 @@ defmodule LangChain.Agents.AgentServer do
 
     # Reset inactivity timer on user message
     updated_server_state = reset_inactivity_timer(updated_server_state)
+
+    # Broadcast debug event for state update
+    broadcast_debug_event(updated_server_state, {:agent_state_update, new_state})
 
     {:reply, :ok, updated_server_state}
   end
@@ -969,6 +1091,9 @@ defmodule LangChain.Agents.AgentServer do
     # Reset inactivity timer on todo update
     updated_server_state = reset_inactivity_timer(updated_server_state)
 
+    # Broadcast debug event for state update
+    broadcast_debug_event(updated_server_state, {:agent_state_update, new_state})
+
     {:reply, :ok, updated_server_state}
   end
 
@@ -985,6 +1110,9 @@ defmodule LangChain.Agents.AgentServer do
 
     # Reset inactivity timer on message update
     updated_server_state = reset_inactivity_timer(updated_server_state)
+
+    # Broadcast debug event for state update
+    broadcast_debug_event(updated_server_state, {:agent_state_update, new_state})
 
     {:reply, :ok, updated_server_state}
   end
@@ -1030,6 +1158,12 @@ defmodule LangChain.Agents.AgentServer do
       {:error, reason} ->
         {:reply, {:error, reason}, server_state}
     end
+  end
+
+  @impl true
+  def handle_cast({:publish_event, event}, server_state) do
+    broadcast_event(server_state, event)
+    {:noreply, server_state}
   end
 
   @impl true
@@ -1098,6 +1232,52 @@ defmodule LangChain.Agents.AgentServer do
     end
 
     # Let the supervisor tree shutdown take care of it
+    {:noreply, server_state}
+  end
+
+  @impl true
+  def handle_info({:middleware_message, middleware_id, message}, server_state) do
+    Logger.debug(
+      "Received middleware message for #{inspect(middleware_id)}: #{inspect(message)}"
+    )
+
+    # Emit telemetry event
+    :telemetry.execute(
+      [:langchain, :middleware, :message, :received],
+      %{count: 1},
+      %{middleware_id: middleware_id, agent_id: server_state.agent.agent_id}
+    )
+
+    # Look up middleware from registry
+    case Map.get(server_state.middleware_registry, middleware_id) do
+      nil ->
+        Logger.warning("Received message for unknown middleware: #{inspect(middleware_id)}")
+        {:noreply, server_state}
+
+      entry ->
+        # Call handle_message on the middleware
+        case Middleware.apply_handle_message(message, server_state.state, entry) do
+          {:ok, updated_state} ->
+            # Update server state
+            new_server_state = %{server_state | state: updated_state}
+            # if debug pubsub is enabled, it will be notified.
+            broadcast_debug_event(new_server_state, {:agent_state_update, updated_state})
+            {:noreply, new_server_state}
+
+          {:error, reason} ->
+            Logger.error(
+              "Error handling middleware message for #{inspect(middleware_id)}: #{inspect(reason)}"
+            )
+
+            {:noreply, server_state}
+        end
+    end
+  end
+
+  @impl true
+  def handle_info(msg, server_state) do
+    # Catch-all for unexpected messages (log at debug level to avoid noise)
+    Logger.debug("AgentServer received unexpected message: #{inspect(msg)}")
     {:noreply, server_state}
   end
 
@@ -1193,6 +1373,9 @@ defmodule LangChain.Agents.AgentServer do
     # Reset activity timer after completion
     updated_state = reset_inactivity_timer(updated_state)
 
+    # Broadcast debug event for state update
+    broadcast_debug_event(updated_state, {:agent_state_update, new_state})
+
     {:noreply, Map.delete(updated_state, :task)}
   end
 
@@ -1208,6 +1391,9 @@ defmodule LangChain.Agents.AgentServer do
 
     # Reset activity timer after interrupt
     updated_state = reset_inactivity_timer(updated_state)
+
+    # Broadcast debug event for state update
+    broadcast_debug_event(updated_state, {:agent_state_update, interrupted_state})
 
     {:noreply, Map.delete(updated_state, :task)}
   end
@@ -1258,10 +1444,19 @@ defmodule LangChain.Agents.AgentServer do
     end
   end
 
-  defp default_pubsub do
-    # Try to use Phoenix.PubSub if available
-    Code.ensure_loaded?(Phoenix.PubSub) && Phoenix.PubSub
+  # Does not broadcast if debug_pubsub is `nil`
+  defp broadcast_debug_event(%ServerState{} = server_state, event) do
+    case server_state.debug_pubsub do
+      {debug_pubsub, debug_pubsub_name} ->
+        # Use "broadcast_from" to avoid sending to self
+        debug_pubsub.broadcast_from(debug_pubsub_name, self(), server_state.debug_topic, event)
+
+      nil ->
+        # No debug PubSub configured
+        :ok
+    end
   end
+
 
   ## Inactivity Timer Management
 
@@ -1311,68 +1506,18 @@ defmodule LangChain.Agents.AgentServer do
     DateTime.diff(DateTime.utc_now(), datetime, :millisecond)
   end
 
-  ## Title Generation Functions
-
-  # Maybe generate conversation title if PubSub is configured and title LLM is configured
-  defp maybe_generate_conversation_title(server_state, user_text) do
-    if server_state.pubsub && has_title_chat_model_config?(server_state) do
-      spawn_title_generation_task(server_state, user_text)
-    end
-
-    :ok
+  # Returns the middleware entries list as-is.
+  #
+  # The agent's middleware list already contains MiddlewareEntry structs
+  # that were initialized by Middleware.init_middleware/1 during Agent.new/2.
+  #
+  # The list preserves order (needed for before_model/after_model hooks)
+  # A registry map can be built from this list for O(1) message routing
+  defp build_middleware_entries(middleware_list) when is_list(middleware_list) do
+    # Middleware entries are already properly initialized by Middleware.init_middleware/1
+    # Just return them as-is
+    middleware_list
   end
 
-  # Check if title LLM configuration exists in agent config
-  defp has_title_chat_model_config?(server_state) do
-    server_state.agent.title_chat_model != nil
-  end
-
-  # Spawn async task to generate title
-  defp spawn_title_generation_task(server_state, user_text) do
-    agent_id = server_state.agent.agent_id
-    {pubsub_module, pubsub_name} = server_state.pubsub
-    topic = server_state.topic
-
-    Task.start(fn ->
-      try do
-        title = generate_title_with_llm(server_state, user_text)
-
-        # Broadcast title update via PubSub with agent_id
-        pubsub_module.broadcast(
-          pubsub_name,
-          topic,
-          {:conversation_title_generated, title, agent_id}
-        )
-
-        Logger.debug("Generated title for agent #{agent_id}: #{title}")
-      rescue
-        error ->
-          Logger.error(
-            "Failed to generate conversation title for agent #{agent_id}: #{inspect(error)}"
-          )
-      end
-    end)
-  end
-
-  # Generate title using LLM from agent configuration
-  defp generate_title_with_llm(server_state, user_text) do
-    # Get LLM and fallback from agent config
-    title_chat_model = server_state.agent.title_chat_model
-    fallbacks = server_state.agent.title_fallbacks || []
-
-    # Build TextToTitleChain configuration
-    chain_config = %{
-      llm: title_chat_model,
-      input_text: user_text,
-      examples: [
-        "Develop character sheet for Sam",
-        "Create podcast show notes for episode 10",
-        "Implement user authentication system"
-      ]
-    }
-
-    chain_config
-    |> TextToTitleChain.new!()
-    |> TextToTitleChain.evaluate(with_fallbacks: fallbacks)
-  end
+  defp build_middleware_entries(_), do: []
 end

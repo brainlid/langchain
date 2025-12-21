@@ -47,6 +47,7 @@ defmodule LangChain.Agents.Agent do
   alias LangChain.LangChainError
   alias LangChain.Message
   alias LangChain.Chains.LLMChain
+  alias LangChain.Agents.MiddlewareEntry
 
   @primary_key false
   embedded_schema do
@@ -57,8 +58,6 @@ defmodule LangChain.Agents.Agent do
     field :tools, {:array, :any}, default: [], virtual: true
     field :middleware, {:array, :any}, default: [], virtual: true
     field :name, :string
-    field :title_chat_model, :any, virtual: true
-    field :title_fallbacks, {:array, :any}, default: [], virtual: true
   end
 
   @type t :: %Agent{}
@@ -70,9 +69,7 @@ defmodule LangChain.Agents.Agent do
     :assembled_system_prompt,
     :tools,
     :middleware,
-    :name,
-    :title_chat_model,
-    :title_fallbacks
+    :name
   ]
   @required_fields [:agent_id, :model]
 
@@ -87,8 +84,6 @@ defmodule LangChain.Agents.Agent do
   - `:tools` - Additional tools beyond middleware (default: [])
   - `:middleware` - List of middleware modules/configs (default: [])
   - `:name` - Agent name for identification (default: nil)
-  - `:title_chat_model` - ChatModel for conversation title generation (default: nil)
-  - `:title_fallbacks` - List of fallback ChatModels for title generation (default: [])
 
   ## Options
 
@@ -470,7 +465,7 @@ defmodule LangChain.Agents.Agent do
       when is_list(decisions) do
     # Find the HumanInTheLoop middleware in the stack
     hitl_middleware =
-      Enum.find(agent.middleware, fn {module, _config} ->
+      Enum.find(agent.middleware, fn %MiddlewareEntry{module: module} ->
         module == LangChain.Agents.Middleware.HumanInTheLoop
       end)
 
@@ -478,7 +473,7 @@ defmodule LangChain.Agents.Agent do
       nil ->
         {:error, "Agent does not have HumanInTheLoop middleware configured"}
 
-      {module, config} ->
+      %MiddlewareEntry{module: module, config: config} ->
         # Validate decisions first
         case module.process_decisions(state, decisions, config) do
           {:ok, ^state} ->
@@ -648,13 +643,14 @@ defmodule LangChain.Agents.Agent do
     chain =
       LLMChain.new!(%{
         llm: agent.model,
+        verbose: false,
+        # verbose: true,
         custom_context: %{
           state: state,
           # Make parent agent's middleware and tools available to tools (e.g., SubAgent middleware)
           parent_middleware: agent.middleware,
           parent_tools: agent.tools
         }
-        # verbose: true
       })
       |> LLMChain.add_tools(agent.tools)
       |> LLMChain.add_messages(messages_with_system)
@@ -761,7 +757,7 @@ defmodule LangChain.Agents.Agent do
   # HITL (Human-in-the-Loop) helper functions
 
   defp has_middleware?(middleware_list, target_module) do
-    Enum.any?(middleware_list, fn {module, _config} ->
+    Enum.any?(middleware_list, fn %MiddlewareEntry{module: module} ->
       module == target_module
     end)
   end
@@ -776,7 +772,7 @@ defmodule LangChain.Agents.Agent do
 
     # Find the HumanInTheLoop middleware
     hitl_middleware =
-      Enum.find(middleware_list, fn {module, _config} ->
+      Enum.find(middleware_list, fn %MiddlewareEntry{module: module} ->
         module == LangChain.Agents.Middleware.HumanInTheLoop
       end)
 
@@ -784,7 +780,7 @@ defmodule LangChain.Agents.Agent do
       nil ->
         :continue
 
-      {module, config} ->
+      %MiddlewareEntry{module: module, config: config} ->
         # Check if there are any tool calls that need approval
         case module.check_for_interrupt(state, config) do
           {:interrupt, interrupt_data} ->

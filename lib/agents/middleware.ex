@@ -54,6 +54,7 @@ defmodule LangChain.Agents.Middleware do
   - Tuple with options: `{MyMiddleware, [enabled: true]}`
   """
   alias LangChain.Agents.State
+  alias LangChain.Agents.MiddlewareEntry
 
   @type config :: keyword()
   @type middleware_config :: any()
@@ -66,7 +67,22 @@ defmodule LangChain.Agents.Middleware do
   Called once when the middleware is added to an agent. Returns configuration
   that will be passed to other callbacks.
 
-  Defaults to returning `{:ok, opts}` if not implemented.
+  ## Convention
+
+  - Input: `opts` as keyword list
+  - Output: `config` as map for efficient runtime access
+
+  Defaults to converting opts to a map if not implemented.
+
+  ## Example
+
+      def init(opts) do
+        config = %{
+          enabled: Keyword.get(opts, :enabled, true),
+          max_retries: Keyword.get(opts, :max_retries, 3)
+        }
+        {:ok, config}
+      end
   """
   @callback init(config) :: {:ok, middleware_config} | {:error, term()}
 
@@ -128,6 +144,49 @@ defmodule LangChain.Agents.Middleware do
   @callback after_model(State.t(), middleware_config) :: middleware_result()
 
   @doc """
+  Handle asynchronous messages sent to this middleware.
+
+  Middleware can spawn async tasks that send messages back to the AgentServer using
+  `send(server_pid, {:middleware_message, middleware_id, message})`. When such messages
+  are received, they are routed to this callback.
+
+  This enables patterns like:
+  - Spawning background processing tasks
+  - Receiving results from async operations
+  - Updating state based on external events
+
+  Defaults to `{:ok, state}` if not implemented.
+
+  ## Parameters
+
+  - `message` - The message payload sent from the async task
+  - `state` - The current `LangChain.Agents.State` struct
+  - `config` - The middleware configuration from `init/1`
+
+  ## Returns
+
+  - `{:ok, updated_state}` - Success with potentially modified state
+  - `{:ok, updated_state, opts}` - Success with options (e.g., `[broadcast: true]` to trigger state broadcast)
+  - `{:error, reason}` - Failure (logged but does not halt agent execution)
+
+  ## Example
+
+      def handle_message({:title_generated, title}, state, _config) do
+        updated_state = State.put_metadata(state, "conversation_title", title)
+        {:ok, updated_state, broadcast: true}
+      end
+
+      def handle_message({:title_generation_failed, reason}, state, _config) do
+        Logger.warning("Title generation failed: \#{inspect(reason)}")
+        {:ok, state}
+      end
+  """
+  @callback handle_message(message :: term(), State.t(), middleware_config) ::
+              {:ok, State.t()}
+              | {:ok, State.t(), keyword()}
+              | {:error, term()}
+
+  @doc """
   Provide the state schema module for this middleware.
 
   If the middleware needs to add fields to the agent state, it should
@@ -143,11 +202,16 @@ defmodule LangChain.Agents.Middleware do
     tools: 1,
     before_model: 2,
     after_model: 2,
+    handle_message: 3,
     state_schema: 0
   ]
 
   @doc """
   Normalize middleware specification to {module, config} tuple.
+
+  Accepts:
+  - Module atom: `MyMiddleware` -> `{MyMiddleware, []}`
+  - Tuple with keyword list: `{MyMiddleware, [key: value]}` -> `{MyMiddleware, [key: value]}`
   """
   def normalize(middleware) when is_atom(middleware) do
     {middleware, []}
@@ -165,11 +229,17 @@ defmodule LangChain.Agents.Middleware do
   def normalize(middleware) do
     raise ArgumentError,
           "Invalid middleware specification: #{inspect(middleware)}. " <>
-            "Expected module or {module, opts} tuple with list or map options."
+            "Expected module or {module, opts} tuple with keyword list options."
   end
 
   @doc """
   Initialize a middleware module with its configuration.
+  Returns a MiddlewareEntry struct.
+
+  ## Configuration Convention
+
+  - Input `opts` should be a keyword list
+  - Returned `config` should be a map for efficient runtime access
   """
   def init_middleware(middleware) do
     {module, opts} = normalize(middleware)
@@ -177,20 +247,36 @@ defmodule LangChain.Agents.Middleware do
     config =
       try do
         case module.init(opts) do
-          {:ok, config} -> config
-          {:error, reason} -> raise "Failed to initialize #{module}: #{inspect(reason)}"
+          {:ok, config} when is_map(config) ->
+            config
+
+          {:ok, config} when is_list(config) ->
+            # Convert keyword list to map for consistency
+            Map.new(config)
+
+          {:error, reason} ->
+            raise "Failed to initialize #{module}: #{inspect(reason)}"
         end
       rescue
-        UndefinedFunctionError -> opts
+        UndefinedFunctionError ->
+          # If no init/1, convert opts to map
+          Map.new(opts)
       end
 
-    {module, config}
+    # Determine middleware ID (use custom :id from config, or default to module name)
+    middleware_id = Map.get(config, :id, module)
+
+    %MiddlewareEntry{
+      id: middleware_id,
+      module: module,
+      config: config
+    }
   end
 
   @doc """
   Get system prompt from middleware.
   """
-  def get_system_prompt({module, config}) do
+  def get_system_prompt(%MiddlewareEntry{module: module, config: config}) do
     try do
       case module.system_prompt(config) do
         prompts when is_list(prompts) -> Enum.join(prompts, "\n\n")
@@ -204,7 +290,7 @@ defmodule LangChain.Agents.Middleware do
   @doc """
   Get tools from middleware.
   """
-  def get_tools({module, config}) do
+  def get_tools(%MiddlewareEntry{module: module, config: config}) do
     # Don't use function_exported? as it can return false positives
     # in test environments due to code reloading issues
     try do
@@ -220,16 +306,16 @@ defmodule LangChain.Agents.Middleware do
   ## Parameters
 
   - `state` - The current agent state
-  - `initialized_middleware` - Tuple of `{module, config}` from `init_middleware/1`
+  - `entry` - MiddlewareEntry struct with module and config
 
   ## Returns
 
   - `{:ok, updated_state}` - Success with potentially modified state
   - `{:error, reason}` - Error from middleware
   """
-  @spec apply_before_model(State.t(), {module(), middleware_config()}) ::
+  @spec apply_before_model(State.t(), LangChain.Agents.MiddlewareEntry.t()) ::
           middleware_result()
-  def apply_before_model(state, {module, config}) do
+  def apply_before_model(state, %MiddlewareEntry{module: module, config: config}) do
     try do
       module.before_model(state, config)
     rescue
@@ -243,18 +329,43 @@ defmodule LangChain.Agents.Middleware do
   ## Parameters
 
   - `state` - The current agent state (with LLM response)
-  - `initialized_middleware` - Tuple of `{module, config}` from `init_middleware/1`
+  - `entry` - MiddlewareEntry struct with module and config
 
   ## Returns
 
   - `{:ok, updated_state}` - Success with potentially modified state
   - `{:error, reason}` - Error from middleware
   """
-  @spec apply_after_model(State.t(), {module(), middleware_config()}) ::
+  @spec apply_after_model(State.t(), LangChain.Agents.MiddlewareEntry.t()) ::
           middleware_result()
-  def apply_after_model(state, {module, config}) do
+  def apply_after_model(state, %MiddlewareEntry{module: module, config: config}) do
     try do
       module.after_model(state, config)
+    rescue
+      UndefinedFunctionError -> {:ok, state}
+    end
+  end
+
+  @doc """
+  Apply handle_message callback from middleware.
+
+  ## Parameters
+
+  - `message` - The message payload to handle
+  - `state` - The current agent state
+  - `entry` - MiddlewareEntry struct with module and config
+
+  ## Returns
+
+  - `{:ok, updated_state}` - Success with potentially modified state
+  - `{:ok, updated_state, opts}` - Success with options
+  - `{:error, reason}` - Error from middleware
+  """
+  @spec apply_handle_message(term(), State.t(), LangChain.Agents.MiddlewareEntry.t()) ::
+          {:ok, State.t()} | {:ok, State.t(), keyword()} | {:error, term()}
+  def apply_handle_message(message, state, %MiddlewareEntry{module: module, config: config}) do
+    try do
+      module.handle_message(message, state, config)
     rescue
       UndefinedFunctionError -> {:ok, state}
     end

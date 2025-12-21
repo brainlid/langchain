@@ -20,8 +20,7 @@ defmodule LangChain.Agents.AgentSupervisor do
   - `:agent` - The Agent struct (required)
   - `:persistence_configs` - List of FileSystemConfig structs (optional, default: [])
   - `:initial_state` - Initial State for AgentServer (optional)
-  - `:pubsub` - PubSub module for AgentServer (optional)
-  - `:pubsub_name` - PubSub instance name (optional)
+  - `:pubsub` - PubSub configuration as `{module(), atom()}` tuple or `nil` (optional, default: nil)
   - `:shutdown_delay` - Delay in milliseconds to allow the supervisor to gracefully stop all children (optional, default: 5000)
 
   ## Examples
@@ -55,8 +54,7 @@ defmodule LangChain.Agents.AgentSupervisor do
       {:ok, sup_pid} = AgentSupervisor.start_link(
         agent: agent,
         initial_state: initial_state,
-        pubsub: Phoenix.PubSub,
-        pubsub_name: :my_app_pubsub
+        pubsub: {Phoenix.PubSub, :my_app_pubsub}
       )
   """
 
@@ -111,8 +109,8 @@ defmodule LangChain.Agents.AgentSupervisor do
   - `:agent` - The Agent struct (required)
   - `:persistence_configs` - List of FileSystemConfig structs (optional, default: [])
   - `:initial_state` - Initial State for AgentServer (optional)
-  - `:pubsub` - PubSub module for AgentServer (optional)
-  - `:pubsub_name` - PubSub instance name (optional)
+  - `:pubsub` - PubSub configuration as `{module(), atom()}` tuple or `nil` (optional, default: nil)
+  - `:debug_pubsub` - Optional debug PubSub configuration as `{module(), atom()}` or `nil` (optional, default: nil)
   - `:inactivity_timeout` - Timeout in milliseconds for automatic shutdown (optional, default: 300_000 - 5 minutes)
     Set to `nil` or `:infinity` to disable automatic shutdown
   - `:name` - Supervisor name registration (optional)
@@ -122,7 +120,8 @@ defmodule LangChain.Agents.AgentSupervisor do
 
       {:ok, sup_pid} = AgentSupervisor.start_link(
         agent: agent,
-        persistence_configs: [config]
+        persistence_configs: [config],
+        pubsub: {Phoenix.PubSub, :my_app_pubsub}
       )
 
       {:ok, sup_pid} = AgentSupervisor.start_link(
@@ -141,6 +140,13 @@ defmodule LangChain.Agents.AgentSupervisor do
         agent: agent,
         inactivity_timeout: nil
       )
+
+      # With debug pubsub
+      {:ok, sup_pid} = AgentSupervisor.start_link(
+        agent: agent,
+        pubsub: {Phoenix.PubSub, :my_app_pubsub},
+        debug_pubsub: {Phoenix.PubSub, :my_debug_pubsub}
+      )
   """
   @spec start_link(keyword()) :: Supervisor.on_start()
   def start_link(config) do
@@ -156,7 +162,7 @@ defmodule LangChain.Agents.AgentSupervisor do
     persistence_configs = Keyword.get(config, :persistence_configs, [])
     initial_state = Keyword.get(config, :initial_state, State.new!())
     pubsub = Keyword.get(config, :pubsub)
-    pubsub_name = Keyword.get(config, :pubsub_name)
+    debug_pubsub = Keyword.get(config, :debug_pubsub)
     inactivity_timeout = Keyword.get(config, :inactivity_timeout, 300_000)
     shutdown_delay = Keyword.get(config, :shutdown_delay, 5000)
 
@@ -172,6 +178,26 @@ defmodule LangChain.Agents.AgentSupervisor do
       raise ArgumentError, "Agent must have a valid agent_id"
     end
 
+    # Build AgentServer options
+    agent_server_opts = [
+      agent: agent,
+      initial_state: initial_state,
+      inactivity_timeout: inactivity_timeout,
+      shutdown_delay: shutdown_delay,
+      id: agent_id,
+      name: AgentServer.get_name(agent_id)
+    ]
+
+    # Add pubsub if provided
+    agent_server_opts =
+      if pubsub, do: Keyword.put(agent_server_opts, :pubsub, pubsub), else: agent_server_opts
+
+    # Add debug_pubsub if provided
+    agent_server_opts =
+      if debug_pubsub,
+        do: Keyword.put(agent_server_opts, :debug_pubsub, debug_pubsub),
+        else: agent_server_opts
+
     # Build child specifications
     children = [
       # 1. FileSystemServer - starts first, survives AgentServer crashes
@@ -182,17 +208,7 @@ defmodule LangChain.Agents.AgentSupervisor do
        ]},
 
       # 2. AgentServer - manages agent execution
-      {AgentServer,
-       [
-         agent: agent,
-         initial_state: initial_state,
-         pubsub: pubsub,
-         pubsub_name: pubsub_name,
-         inactivity_timeout: inactivity_timeout,
-         shutdown_delay: shutdown_delay,
-         id: agent_id,
-         name: AgentServer.get_name(agent_id)
-       ]},
+      {AgentServer, agent_server_opts},
 
       # 3. SubAgentsDynamicSupervisor - for spawning sub-agents
       {SubAgentsDynamicSupervisor, agent_id: agent_id}
