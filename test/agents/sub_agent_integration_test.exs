@@ -13,7 +13,7 @@ defmodule LangChain.Agents.SubAgentIntegrationTest do
   alias LangChain.Agents.MiddlewareEntry
   alias LangChain.Agents.Middleware.TodoList
   alias LangChain.Agents.Middleware.FileSystem
-  alias LangChain.Agents.Middleware.SubAgent
+  alias LangChain.Agents.Middleware.SubAgent, as: SubAgentMiddleware
   alias LangChain.Agents.Middleware.HumanInTheLoop
   alias LangChain.ChatModels.ChatAnthropic
   alias LangChain.Chains.LLMChain
@@ -77,7 +77,7 @@ defmodule LangChain.Agents.SubAgentIntegrationTest do
 
       # Verify SubAgent middleware is present
       assert Enum.any?(agent.middleware, fn
-               %MiddlewareEntry{module: SubAgent} ->
+               %MiddlewareEntry{module: SubAgentMiddleware} ->
                  true
 
                _ ->
@@ -109,7 +109,7 @@ defmodule LangChain.Agents.SubAgentIntegrationTest do
 
       default_middleware = [
         {TodoList, []},
-        {SubAgent, []},
+        {SubAgentMiddleware, []},
         {FileSystem, [agent_id: "parent"]}
       ]
 
@@ -146,8 +146,7 @@ defmodule LangChain.Agents.SubAgentIntegrationTest do
           system_prompt: "Test",
           replace_default_middleware: true,
           middleware: [
-            {LangChain.Agents.Middleware.HumanInTheLoop,
-             [interrupt_on: %{"dangerous_tool" => true}]}
+            {HumanInTheLoop, [interrupt_on: %{"dangerous_tool" => true}]}
           ]
         })
 
