@@ -41,7 +41,6 @@ defmodule LangChain.Callbacks do
               msg =
                 "Callback handler for #{inspect(callback_name)} raised an exception: #{LangChainError.format_exception(err, __STACKTRACE__, :short)}"
 
-              Logger.error(msg)
               raise LangChainError, msg
           end
 
@@ -49,7 +48,6 @@ defmodule LangChain.Callbacks do
           msg =
             "Unexpected callback handler. Callback #{inspect(callback_name)} was assigned #{inspect(other)}"
 
-          Logger.error(msg)
           raise LangChainError, msg
       end
     end)

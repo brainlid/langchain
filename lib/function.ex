@@ -298,19 +298,11 @@ defmodule LangChain.Function do
         parts when is_list(parts) ->
           {:ok, parts}
 
-        other ->
-          Logger.error(
-            "Function #{function.name} unexpectedly returned #{inspect(other)}. Expect a string. Unable to present as response to LLM."
-          )
-
+        _other ->
           {:error, "An unexpected response was returned from the tool."}
       end
     rescue
       err ->
-        Logger.error(
-          "Function! #{function.name} failed in execution. Exception: #{LangChainError.format_exception(err, __STACKTRACE__)}"
-        )
-
         {:error, "ERROR: #{LangChainError.format_exception(err, __STACKTRACE__, :short)}"}
     end
   end

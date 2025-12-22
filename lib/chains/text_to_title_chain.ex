@@ -202,8 +202,7 @@ You expertly summarize the User Text into a short title or phrase to represent a
         if chain.verbose, do: IO.inspect(title, label: "TITLE GENERATED")
         title
 
-      {:error, _chain, reason} ->
-        Logger.error("TextToTitleChain failed. Reason: #{inspect(reason)}. Returning DEFAULT")
+      {:error, _chain, _reason} ->
         chain.fallback_title
     end
   end

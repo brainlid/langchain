@@ -221,11 +221,6 @@ defmodule LangChain.Message do
             add_error(changeset, :content, "must be text or a list of ContentParts")
           end
         else
-          # only a user message can have ContentParts (except for ChatAnthropic system messages)
-          Logger.error(
-            "Invalid message content #{inspect(get_field(changeset, :content))} for role #{role}"
-          )
-
           add_error(changeset, :content, "is invalid for role #{role}")
         end
 

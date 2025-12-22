@@ -283,7 +283,6 @@ defmodule LangChain.Images.OpenAIImage do
         do_api_request(openai, retry_count - 1)
 
       other ->
-        Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
         other
     end
   end
@@ -318,9 +317,7 @@ defmodule LangChain.Images.OpenAIImage do
             metadata: %{"model" => request.model, "quality" => request.quality}
           })
 
-        other ->
-          message = "Unsupported image data response from OpenAI! #{inspect(other)}"
-          Logger.error(message)
+        _other ->
           nil
       end)
 
@@ -336,7 +333,6 @@ defmodule LangChain.Images.OpenAIImage do
           value
 
         other ->
-          Logger.error("Unhandled error code from API: #{inspect(other)}")
           other
       end
 

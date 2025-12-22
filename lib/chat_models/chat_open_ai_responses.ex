@@ -602,7 +602,6 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
 
         other ->
           message = "Received unsupported media type for ContentPart: #{inspect(other)}"
-          Logger.error(message)
           raise LangChainError, message
       end
 
@@ -768,7 +767,6 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         do_api_request(openai, messages, tools, retry_count - 1)
 
       other ->
-        Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
         other
     end
   end
@@ -816,11 +814,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         Logger.debug(fn -> "Connection closed: retry count = #{inspect(retry_count)}" end)
         do_api_request(openai, messages, tools, retry_count - 1)
 
-      other ->
-        Logger.error(
-          "Unhandled and unexpected response from streamed post call. #{inspect(other)}"
-        )
-
+      _other ->
         {:error,
          LangChainError.exception(type: "unexpected_response", message: "Unexpected response")}
     end
@@ -1146,20 +1140,17 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   end
 
   def do_process_response(_model, %{"error" => %{"message" => reason}}) do
-    Logger.error("Received error from API: #{inspect(reason)}")
     {:error, LangChainError.exception(message: reason)}
   end
 
   def do_process_response(_model, {:error, %Jason.DecodeError{} = response}) do
     error_message = "Received invalid JSON: #{inspect(response)}"
-    Logger.error(error_message)
 
     {:error,
      LangChainError.exception(type: "invalid_json", message: error_message, original: response)}
   end
 
-  def do_process_response(_model, other) do
-    Logger.error("Trying to process an unexpected response. #{inspect(other)}")
+  def do_process_response(_model, _other) do
     {:error, LangChainError.exception(message: "Unexpected response")}
   end
 
@@ -1226,8 +1217,6 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         call
 
       {:error, %Ecto.Changeset{} = changeset} ->
-        reason = Utils.changeset_error_to_string(changeset)
-        Logger.error("Failed to process ToolCall for a function. Reason: #{reason}")
         {:error, LangChainError.exception(changeset)}
     end
   end
@@ -1261,8 +1250,6 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         call
 
       {:error, %Ecto.Changeset{} = changeset} ->
-        reason = Utils.changeset_error_to_string(changeset)
-        Logger.error("Failed to process web_search_call. Reason: #{reason}")
         {:error, LangChainError.exception(changeset)}
     end
   end
