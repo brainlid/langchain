@@ -254,9 +254,7 @@ defmodule LangChain.Agents.State do
   Clears:
   - All messages
   - All TODOs
-
-  Preserves:
-  - Metadata (which may contain configuration)
+  - All metadata
 
   **Note**: This function only resets the Agent's state structure. File state is managed
   separately by FileSystemServer and must be reset through AgentServer.reset/1 which
@@ -274,7 +272,7 @@ defmodule LangChain.Agents.State do
       # reset_state has:
       # - messages: []
       # - todos: []
-      # - metadata: %{config: "value"} (preserved)
+      # - metadata: %{} (cleared)
   """
   @spec reset(t()) :: t()
   def reset(%State{} = state) do
@@ -282,7 +280,7 @@ defmodule LangChain.Agents.State do
       agent_id: state.agent_id,
       messages: [],
       todos: [],
-      metadata: state.metadata
+      metadata: %{}
     }
   end
 end
