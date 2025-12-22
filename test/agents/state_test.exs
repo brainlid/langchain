@@ -357,7 +357,7 @@ defmodule LangChain.Agents.StateTest do
   end
 
   describe "reset/1" do
-    test "clears messages and todos" do
+    test "clears messages, todos, and metadata" do
       state =
         State.new!(%{
           messages: [Message.new_user!("test")],
@@ -369,19 +369,7 @@ defmodule LangChain.Agents.StateTest do
 
       assert reset_state.messages == []
       assert reset_state.todos == []
-      assert reset_state.metadata == %{config: "value", other: "data"}
-    end
-
-    test "preserves metadata" do
-      state =
-        State.new!(%{
-          messages: [Message.new_user!("hi")],
-          metadata: %{important: "keep this"}
-        })
-
-      reset_state = State.reset(state)
-
-      assert reset_state.metadata == %{important: "keep this"}
+      assert reset_state.metadata == %{}
     end
 
     test "works with empty state" do

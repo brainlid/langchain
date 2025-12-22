@@ -338,8 +338,8 @@ defmodule LangChain.Agents.AgentServerTest do
       # Cancel it
       assert :ok = AgentServer.cancel(agent_id)
 
-      # Should be completed now
-      assert AgentServer.get_status(agent_id) == :completed
+      # Should be cancelled now
+      assert AgentServer.get_status(agent_id) == :cancelled
     end
 
     test "returns error when not running" do
@@ -614,7 +614,7 @@ defmodule LangChain.Agents.AgentServerTest do
       assert_receive {:status_changed, :error, "Test error"}, 200
     end
 
-    test "broadcasts completed status when task is cancelled", %{agent: agent, agent_id: agent_id} do
+    test "broadcasts cancelled status when task is cancelled", %{agent: agent, agent_id: agent_id} do
       Agent
       |> expect(:execute, fn ^agent, state, _opts ->
         Process.sleep(1_000)
@@ -631,8 +631,8 @@ defmodule LangChain.Agents.AgentServerTest do
       # Cancel the task
       :ok = AgentServer.cancel(agent_id)
 
-      # Should receive completed status
-      assert_receive {:status_changed, :completed, _state}, 100
+      # Should receive cancelled status
+      assert_receive {:status_changed, :cancelled, _state}, 100
     end
   end
 
