@@ -79,6 +79,7 @@ defmodule LangChain.Agents.AgentServer do
   - `{:status_changed, :interrupted, interrupt_data}` - Awaiting human decision
   - `{:status_changed, :completed, final_state}` - Execution completed
     successfully
+  - `{:status_changed, :cancelled, nil}` - Execution was cancelled by user
   - `{:status_changed, :error, reason}` - Execution failed
 
   ### LLM Streaming Events
@@ -183,7 +184,7 @@ defmodule LangChain.Agents.AgentServer do
   @registry LangChain.Agents.Registry
 
   @typedoc "Status of the agent server"
-  @type status :: :idle | :running | :interrupted | :completed | :error
+  @type status :: :idle | :running | :interrupted | :completed | :cancelled | :error
 
   defmodule ServerState do
     @moduledoc false
@@ -208,7 +209,7 @@ defmodule LangChain.Agents.AgentServer do
     @type t :: %__MODULE__{
             agent: Agent.t(),
             state: State.t(),
-            status: :idle | :running | :interrupted | :completed | :error,
+            status: :idle | :running | :interrupted | :completed | :cancelled | :error,
             pubsub: {module(), atom()} | nil,
             topic: String.t(),
             debug_pubsub: {module(), atom()} | nil,
@@ -550,7 +551,7 @@ defmodule LangChain.Agents.AgentServer do
   - Persisted files (reverted to pristine state from storage)
 
   Status transitions:
-  - `:completed` or `:error` → `:idle` (ready for new execution)
+  - `:completed`, `:error`, or `:cancelled` → `:idle` (ready for new execution)
   - Other statuses remain unchanged
 
   Returns `:ok` on success.
@@ -929,15 +930,21 @@ defmodule LangChain.Agents.AgentServer do
   @impl true
   def handle_call(:cancel, _from, %ServerState{status: :running, task: task} = server_state)
       when not is_nil(task) do
+    Logger.info("Cancelling agent execution for agent: #{server_state.agent.agent_id}")
+
     # Shutdown the running task
     Task.shutdown(task, :brutal_kill)
 
-    # Transition to completed status
-    new_state = %{server_state | status: :completed}
-    broadcast_event(new_state, {:status_changed, :completed, server_state.state})
+    # Transition to cancelled status (not completed)
+    # Note: We don't include the state in the broadcast because it may be in an
+    # inconsistent state after brutal task termination
+    new_state = %{server_state | status: :cancelled}
 
     # Reset inactivity timer after cancellation
     new_state = reset_inactivity_timer(new_state)
+
+    # Broadcast cancellation event
+    broadcast_event(new_state, {:status_changed, :cancelled, nil})
 
     {:reply, :ok, Map.put(new_state, :task, nil)}
   end
@@ -1003,11 +1010,12 @@ defmodule LangChain.Agents.AgentServer do
     # Add message to the state
     new_state = State.add_message(server_state.state, message)
 
-    # Transition to idle if we were completed/error to allow new execution
+    # Transition to idle if we were completed/error/cancelled to allow new execution
     new_status =
       case server_state.status do
         :completed -> :idle
         :error -> :idle
+        :cancelled -> :idle
         status -> status
       end
 
@@ -1036,11 +1044,12 @@ defmodule LangChain.Agents.AgentServer do
     # Reset the agent state (clears messages, todos)
     reset_state = State.reset(server_state.state)
 
-    # Transition to idle if we were completed/error
+    # Transition to idle if we were completed/error/cancelled
     new_status =
       case server_state.status do
         :completed -> :idle
         :error -> :idle
+        :cancelled -> :idle
         status -> status
       end
 
@@ -1171,7 +1180,13 @@ defmodule LangChain.Agents.AgentServer do
     # Task completed
     Process.demonitor(ref, [:flush])
 
-    handle_execution_result(result, server_state)
+    # If we're already cancelled, ignore the task result (race condition)
+    if server_state.status == :cancelled do
+      Logger.debug("Ignoring task result after cancellation (race condition)")
+      {:noreply, Map.delete(server_state, :task)}
+    else
+      handle_execution_result(result, server_state)
+    end
   end
 
   @impl true
@@ -1182,13 +1197,20 @@ defmodule LangChain.Agents.AgentServer do
 
   @impl true
   def handle_info({:DOWN, _ref, :process, _pid, reason}, server_state) do
-    # Task crashed
-    Logger.error("Agent execution task crashed: #{inspect(reason)}")
+    # Task crashed or was killed
+    # If status is already :cancelled, this is expected (brutal_kill side effect)
+    if server_state.status == :cancelled do
+      Logger.debug("Received :DOWN for cancelled task (expected): #{inspect(reason)}")
+      {:noreply, Map.delete(server_state, :task)}
+    else
+      # Unexpected crash
+      Logger.error("Agent execution task crashed: #{inspect(reason)}")
 
-    new_state = %{server_state | status: :error, error: reason}
-    broadcast_event(new_state, {:status_changed, :error, reason})
+      new_state = %{server_state | status: :error, error: reason}
+      broadcast_event(new_state, {:status_changed, :error, reason})
 
-    {:noreply, Map.delete(new_state, :task)}
+      {:noreply, Map.delete(new_state, :task)}
+    end
   end
 
   @impl true
