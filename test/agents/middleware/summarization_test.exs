@@ -105,8 +105,8 @@ defmodule LangChain.Agents.Middleware.SummarizationTest do
         max_tokens_before_summary: 10,
         # Keep 2 messages, would need to cut between assistant and tool
         messages_to_keep: 2,
-        token_counter: fn _ -> 1000 end,
-        summary_prompt: "Summarize"
+        summary_prompt: "Summarize",
+        token_counter: fn _ -> 1000 end
       }
 
       # Should keep all messages since we can't safely cut the assistant+tool pair
@@ -213,8 +213,8 @@ defmodule LangChain.Agents.Middleware.SummarizationTest do
         messages_to_keep: 3,
         # Would keep: assistant+tool+user (last 3)
         # Should cut before the assistant with tool_calls
-        token_counter: fn _ -> 1000 end,
-        summary_prompt: "Summarize"
+        summary_prompt: "Summarize",
+        token_counter: fn _ -> 1000 end
       }
 
       # Since we can't actually summarize without a model, we'll get an error
@@ -251,8 +251,8 @@ defmodule LangChain.Agents.Middleware.SummarizationTest do
         max_tokens_before_summary: 10,
         messages_to_keep: 2,
         # Keep last 2 messages
-        token_counter: fn _ -> 1000 end,
-        summary_prompt: "Summarize"
+        summary_prompt: "Summarize",
+        token_counter: fn _ -> 1000 end
       }
 
       assert {:ok, _result} = Summarization.before_model(state, config)

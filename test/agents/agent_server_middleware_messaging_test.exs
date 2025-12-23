@@ -39,19 +39,6 @@ defmodule LangChain.Agents.AgentServerMiddlewareMessagingTest do
     end
 
     @impl true
-    def handle_message({:test_message_with_broadcast, value}, state, config) do
-      # Update state and request broadcast
-      updated_state = State.put_metadata(state, "test_value", value)
-
-      # Notify test process
-      if config[:test_pid] do
-        send(config[:test_pid], {:middleware_handled_broadcast, value})
-      end
-
-      {:ok, updated_state, broadcast: true}
-    end
-
-    @impl true
     def handle_message({:test_error}, _state, _config) do
       {:error, :intentional_test_error}
     end
@@ -334,7 +321,7 @@ defmodule LangChain.Agents.AgentServerMiddlewareMessagingTest do
   end
 
   describe "middleware state broadcast" do
-    test "broadcasts state update when requested by middleware" do
+    test "broadcasts state update to debug channel on middleware state changes" do
       test_pid = self()
 
       middleware_specs = [
@@ -356,89 +343,17 @@ defmodule LangChain.Agents.AgentServerMiddlewareMessagingTest do
       # Subscribe to agent debug events
       Phoenix.PubSub.subscribe(:langchain_pubsub, "agent_server:debug:#{agent_id}")
 
-      # Send message that requests broadcast
+      # Send message that updates state
       send(
         server_pid,
-        {:middleware_message, TestMiddleware, {:test_message_with_broadcast, "broadcast_value"}}
+        {:middleware_message, TestMiddleware, {:test_message, "test_value"}}
       )
 
       # Wait for middleware to handle the message
-      assert_receive {:middleware_handled_broadcast, "broadcast_value"}, 1000
+      assert_receive {:middleware_handled, "test_value"}, 1000
 
-      # Should receive broadcast event on debug channel
+      # Should receive broadcast event on debug channel (all middleware state updates broadcast)
       assert_receive {:agent_state_update, TestMiddleware, _state}, 1000
-    end
-
-    test "does not broadcast when middleware doesn't request it" do
-      test_pid = self()
-
-      middleware_specs = [
-        {TestMiddleware, [test_pid: test_pid]}
-      ]
-
-      agent = create_test_agent_with_middleware(middleware_specs)
-      agent_id = agent.agent_id
-
-      # Start with PubSub enabled
-      {:ok, server_pid} =
-        AgentServer.start_link(
-          agent: agent,
-          name: AgentServer.get_name(agent_id),
-          pubsub: {Phoenix.PubSub, :langchain_pubsub}
-        )
-
-      # Subscribe to agent events
-      Phoenix.PubSub.subscribe(:langchain_pubsub, "agent_server:#{agent_id}")
-
-      # Send message that doesn't request broadcast
-      send(server_pid, {:middleware_message, TestMiddleware, {:test_message, "no_broadcast"}})
-
-      # Wait for middleware to handle the message
-      assert_receive {:middleware_handled, "no_broadcast"}, 1000
-
-      # Should NOT receive broadcast event
-      refute_receive {:agent_state_update, _, _}, 500
-    end
-
-    test "broadcasts conversation_title_generated for backward compatibility" do
-      middleware_specs = [
-        {TestMiddleware, []}
-      ]
-
-      agent = create_test_agent_with_middleware(middleware_specs)
-      agent_id = agent.agent_id
-
-      {:ok, server_pid} =
-        AgentServer.start_link(
-          agent: agent,
-          name: AgentServer.get_name(agent_id),
-          pubsub: {Phoenix.PubSub, :langchain_pubsub},
-          debug_pubsub: {Phoenix.PubSub, :langchain_pubsub}
-        )
-
-      # Subscribe to agent regular events
-      Phoenix.PubSub.subscribe(:langchain_pubsub, "agent_server:#{agent_id}")
-      # Subscribe to agent debug events
-      Phoenix.PubSub.subscribe(:langchain_pubsub, "agent_server:debug:#{agent_id}")
-
-      # Manually update state to include conversation_title, then send broadcast message
-      # First set the title in state
-      current_state = AgentServer.get_state(agent_id)
-      updated_state = State.put_metadata(current_state, "conversation_title", "Test Title")
-
-      :sys.replace_state(server_pid, fn server_state ->
-        %{server_state | state: updated_state}
-      end)
-
-      # Now send a message that triggers broadcast
-      send(
-        server_pid,
-        {:middleware_message, TestMiddleware, {:test_message_with_broadcast, "trigger"}}
-      )
-
-      # Should receive agent_state_update on debug channel and conversation_title_generated on regular channel
-      assert_receive {:agent_state_update, TestMiddleware, _state}, 1000
-      assert_receive {:conversation_title_generated, "Test Title", ^agent_id}, 1000
     end
   end
 end

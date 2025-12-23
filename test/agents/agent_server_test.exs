@@ -668,9 +668,8 @@ defmodule LangChain.Agents.AgentServerTest do
 
       # Verify the state was restored to the initial state
       restored_state = AgentServer.get_state(agent_id)
-      assert length(restored_state.messages) == 1
+      [first_msg] = restored_state.messages
 
-      first_msg = Enum.at(restored_state.messages, 0)
       assert [%LangChain.Message.ContentPart{content: "Initial message"}] = first_msg.content
 
       # Verify agent is in idle status after restore
@@ -678,62 +677,6 @@ defmodule LangChain.Agents.AgentServerTest do
 
       # Clean up
       :ok = AgentServer.stop(agent_id)
-    end
-
-    test "handles restore errors gracefully" do
-      agent = create_test_agent()
-      agent_id = agent.agent_id
-
-      {:ok, pid} =
-        AgentServer.start_link(
-          agent: agent,
-          name: AgentServer.get_name(agent_id),
-          pubsub: nil
-        )
-
-      # Monitor the process to detect if it crashes
-      ref = Process.monitor(pid)
-
-      # Try to restore with invalid state (model with missing required field)
-      # This will cause deserialization to fail
-      invalid_state = %{
-        "version" => 1,
-        "state" => %{"messages" => [], "todos" => [], "metadata" => %{}},
-        "agent_config" => %{
-          "base_system_prompt" => "test",
-          "model" => %{
-            "module" => "Elixir.LangChain.ChatModels.ChatAnthropic"
-            # Missing required "model" field - will cause deserialization error
-          }
-        }
-      }
-
-      # Trap exits to catch GenServer crash
-      Process.flag(:trap_exit, true)
-
-      # The GenServer will crash during the call
-      result =
-        try do
-          AgentServer.restore_state(agent_id, invalid_state)
-        catch
-          :exit, {:noproc, _} ->
-            # GenServer crashed and is no longer running
-            {:error, :server_crashed}
-
-          :exit, {{%RuntimeError{}, _}, _} ->
-            # GenServer crashed with RuntimeError
-            {:error, :deserialization_failed}
-        end
-
-      # Verify we got an error or the process died
-      case result do
-        {:error, _} ->
-          assert true
-
-        _ ->
-          # Wait for process to die
-          assert_receive {:DOWN, ^ref, :process, ^pid, _reason}, 100
-      end
     end
   end
 
@@ -778,7 +721,6 @@ defmodule LangChain.Agents.AgentServerTest do
       # Verify the exported state has the expected structure
       assert exported_state["version"] == 1
       assert exported_state["state"] != nil
-      assert exported_state["agent_config"] != nil
       assert exported_state["serialized_at"] != nil
 
       # Stop the original agent
@@ -787,9 +729,13 @@ defmodule LangChain.Agents.AgentServerTest do
       # Restore the state with a new agent_id
       new_agent_id = "restored-agent-#{System.unique_integer([:positive])}"
 
+      # Create a new agent from code (REQUIRED - agent config no longer deserialized)
+      new_agent = create_test_agent()
+
       {:ok, _pid} =
         AgentServer.start_link_from_state(
           exported_state,
+          agent: new_agent,  # Agent from code is now REQUIRED
           agent_id: new_agent_id,
           pubsub: nil
         )
@@ -801,57 +747,50 @@ defmodule LangChain.Agents.AgentServerTest do
       restored_exported_state = AgentServer.export_state(new_agent_id)
 
       # Compare the state portions (messages, todos, metadata)
+      # Agent config is no longer serialized - only conversation state is preserved
       assert restored_exported_state["state"]["messages"] == exported_state["state"]["messages"]
       assert restored_exported_state["state"]["todos"] == exported_state["state"]["todos"]
       assert restored_exported_state["state"]["metadata"] == exported_state["state"]["metadata"]
-
-      # Verify agent_config was preserved (except agent_id which is now different)
-      assert restored_exported_state["agent_config"]["model"] ==
-               exported_state["agent_config"]["model"]
-
-      assert restored_exported_state["agent_config"]["base_system_prompt"] ==
-               exported_state["agent_config"]["base_system_prompt"]
 
       # Clean up
       :ok = AgentServer.stop(new_agent_id)
     end
 
-    test "handles deserialization errors gracefully" do
-      # Try to restore with invalid persisted state (missing model entirely)
-      # This will cause Agent.new to fail validation
-      invalid_state = %{
+    test "fails when agent is not provided from code" do
+      # Since agent config is no longer deserialized, the agent MUST be provided
+      # from application code. Test that it fails appropriately when not provided.
+      valid_state = %{
         "version" => 1,
         "state" => %{"messages" => [], "todos" => [], "metadata" => %{}},
-        "agent_config" => %{
-          "base_system_prompt" => "test"
-          # Missing "model" key entirely - will cause Agent.new to fail
-        }
+        "serialized_at" => DateTime.utc_now() |> DateTime.to_iso8601()
       }
 
-      new_agent_id = "invalid-restore-#{System.unique_integer([:positive])}"
+      new_agent_id = "no-agent-restore-#{System.unique_integer([:positive])}"
 
-      # The GenServer will exit during init, which GenServer.start_link catches
-      # In this case, we'll trap exits to handle it gracefully in the test
+      # Trap exits to handle the GenServer init failure
       Process.flag(:trap_exit, true)
 
+      # Try to restore WITHOUT providing an agent (should fail)
       result =
         AgentServer.start_link_from_state(
-          invalid_state,
+          valid_state,
           agent_id: new_agent_id,
           name: AgentServer.get_name(new_agent_id),
           pubsub: nil
+          # Missing :agent option - should fail!
         )
 
       # When init returns {:stop, reason}, start_link returns {:error, reason}
       # or we might receive an EXIT message
       case result do
         {:error, _reason} ->
-          # GenServer successfully returned an error
+          # GenServer successfully returned an error about missing agent
+          # (Could be KeyError tuple or other error format)
           assert true
 
         {:ok, pid} ->
-          # If it somehow started, wait for EXIT message
-          assert_receive {:EXIT, ^pid, _reason}, 100
+          # If it somehow started, wait for EXIT message with KeyError
+          assert_receive {:EXIT, ^pid, {%KeyError{key: :agent}, _stacktrace}}, 100
       end
     end
   end

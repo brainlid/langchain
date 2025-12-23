@@ -166,14 +166,13 @@ defmodule LangChain.Agents.Middleware do
   ## Returns
 
   - `{:ok, updated_state}` - Success with potentially modified state
-  - `{:ok, updated_state, opts}` - Success with options (e.g., `[broadcast: true]` to trigger state broadcast)
   - `{:error, reason}` - Failure (logged but does not halt agent execution)
 
   ## Example
 
       def handle_message({:title_generated, title}, state, _config) do
         updated_state = State.put_metadata(state, "conversation_title", title)
-        {:ok, updated_state, broadcast: true}
+        {:ok, updated_state}
       end
 
       def handle_message({:title_generation_failed, reason}, state, _config) do
@@ -183,7 +182,6 @@ defmodule LangChain.Agents.Middleware do
   """
   @callback handle_message(message :: term(), State.t(), middleware_config) ::
               {:ok, State.t()}
-              | {:ok, State.t(), keyword()}
               | {:error, term()}
 
   @doc """
@@ -358,11 +356,10 @@ defmodule LangChain.Agents.Middleware do
   ## Returns
 
   - `{:ok, updated_state}` - Success with potentially modified state
-  - `{:ok, updated_state, opts}` - Success with options
   - `{:error, reason}` - Error from middleware
   """
   @spec apply_handle_message(term(), State.t(), LangChain.Agents.MiddlewareEntry.t()) ::
-          {:ok, State.t()} | {:ok, State.t(), keyword()} | {:error, term()}
+          {:ok, State.t()} | {:error, term()}
   def apply_handle_message(message, state, %MiddlewareEntry{module: module, config: config}) do
     try do
       module.handle_message(message, state, config)

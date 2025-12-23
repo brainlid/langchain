@@ -167,7 +167,9 @@ defmodule LangChain.Agents.Middleware.Summarization do
 
   @impl true
   def before_model(%State{messages: messages} = state, config) when is_list(messages) do
-    total_tokens = config.token_counter.(messages)
+    # Access the token counter directly from config
+    token_counter = config.token_counter
+    total_tokens = token_counter.(messages)
 
     if total_tokens >= config.max_tokens_before_summary do
       Logger.debug(

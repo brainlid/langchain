@@ -32,16 +32,13 @@ defmodule LangChain.Persistence.StateSerializerTest do
 
       result = StateSerializer.serialize_server_state(agent, state)
 
-      # Check that result has string keys and correct values (agent_id NOT included)
+      # Check that result has string keys and correct values
+      # Agent config is NOT serialized - only state
       assert %{
                "version" => 1,
                "state" => _state_data,
-               "agent_config" => _agent_config,
                "serialized_at" => _serialized_at
              } = result
-
-      # agent_id should NOT be in the serialized state
-      refute Map.has_key?(result, "agent_id")
 
       # Check state has string keys
       assert %{"messages" => messages, "todos" => todos, "metadata" => metadata} =
@@ -106,7 +103,7 @@ defmodule LangChain.Persistence.StateSerializerTest do
              } = serialized_call
     end
 
-    test "does not serialize API keys" do
+    test "does not serialize agent config (including API keys)" do
       {:ok, model} = ChatOpenAI.new(%{model: "gpt-4", api_key: "secret-key"})
       {:ok, agent} = Agent.new(%{agent_id: "agent-123", model: model})
 
@@ -114,8 +111,8 @@ defmodule LangChain.Persistence.StateSerializerTest do
 
       result = StateSerializer.serialize_server_state(agent, state)
 
-      # API key should not be present in serialized form
-      refute Map.has_key?(result["agent_config"]["model"], "api_key")
+      # Agent config (including API keys) should not be serialized at all
+      refute Map.has_key?(result, "agent_config")
     end
   end
 
@@ -149,14 +146,7 @@ defmodule LangChain.Persistence.StateSerializerTest do
         "serialized_at" => "2025-11-29T10:30:00Z"
       }
 
-      {:ok, {agent, state}} = StateSerializer.deserialize_server_state(serialized, "agent-123")
-
-      # Check agent
-      assert agent.agent_id == "agent-123"
-
-      # System prompt will be re-assembled with middleware, so just check it starts with base prompt
-      assert String.starts_with?(agent.assembled_system_prompt, "You are helpful")
-      assert agent.model.model == "gpt-4"
+      {:ok, state} = StateSerializer.deserialize_server_state(serialized, "agent-123")
 
       # Check state
       assert [first_msg, _second_msg] = state.messages
@@ -205,7 +195,7 @@ defmodule LangChain.Persistence.StateSerializerTest do
         "serialized_at" => "2025-11-29T10:30:00Z"
       }
 
-      {:ok, {_agent, state}} = StateSerializer.deserialize_server_state(serialized, "agent-123")
+      {:ok, state} = StateSerializer.deserialize_server_state(serialized, "agent-123")
 
       assert [message] = state.messages
       assert message.role == :assistant
@@ -236,9 +226,8 @@ defmodule LangChain.Persistence.StateSerializerTest do
       }
 
       # Should still work (assumes version 1)
-      {:ok, {agent, state}} = StateSerializer.deserialize_server_state(serialized, "agent-123")
+      {:ok, state} = StateSerializer.deserialize_server_state(serialized, "agent-123")
 
-      assert agent.agent_id == "agent-123"
       assert state.messages == []
     end
   end
@@ -271,15 +260,8 @@ defmodule LangChain.Persistence.StateSerializerTest do
       serialized = StateSerializer.serialize_server_state(agent, state)
 
       # Deserialize (must provide agent_id)
-      {:ok, {restored_agent, restored_state}} =
+      {:ok, restored_state} =
         StateSerializer.deserialize_server_state(serialized, "agent-123")
-
-      # Compare agent
-      assert restored_agent.agent_id == agent.agent_id
-
-      # System prompt will be re-assembled with middleware, so just check it starts with base prompt
-      assert String.starts_with?(restored_agent.assembled_system_prompt, "You are helpful")
-      assert restored_agent.model.model == agent.model.model
 
       # Compare state - pattern match to ensure same number of elements
       assert [_msg1, _msg2] = restored_state.messages
@@ -339,8 +321,8 @@ defmodule LangChain.Persistence.StateSerializerTest do
       # Serialize
       serialized = StateSerializer.serialize_server_state(agent, state)
 
-      # Deserialize (must provide agent_id)
-      {:ok, {_restored_agent, restored_state}} =
+      # Deserialize (agent is not deserialized, only state)
+      {:ok, restored_state} =
         StateSerializer.deserialize_server_state(serialized, "agent-123")
 
       # Check messages
@@ -423,9 +405,8 @@ defmodule LangChain.Persistence.StateSerializerTest do
       }
 
       # Should deserialize successfully (must provide agent_id)
-      {:ok, {agent, state}} = StateSerializer.deserialize_server_state(jsonb_data, "agent-123")
+      {:ok, state} = StateSerializer.deserialize_server_state(jsonb_data, "agent-123")
 
-      assert agent.agent_id == "agent-123"
       assert [_message] = state.messages
       # Metadata stays with string keys (from JSONB)
       assert state.metadata["string_key"] == "value"
