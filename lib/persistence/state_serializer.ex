@@ -14,6 +14,23 @@ defmodule LangChain.Persistence.StateSerializer do
   string keys, not atoms. For consistency, the serializer exports to string keys
   and expects string keys on import.
 
+  ## Agent Configuration vs Conversation State
+
+  StateSerializer follows the principle: **Code lives in code. Data lives in data.**
+
+  **What is serialized**:
+  - ✅ Conversation state: messages, todos, metadata
+
+  **What is NOT serialized**:
+  - ❌ Agent configuration: middleware, tools, model
+  - ❌ Runtime identifiers: agent_id
+
+  Agent capabilities (middleware, tools, model) are code-defined by your application.
+  When restoring a conversation, create the agent from your application code and
+  restore only the conversation state.
+
+  See `AgentServer` module documentation for complete restoration examples.
+
   ## Versioning
 
   The serialized state includes a version field that allows for future
@@ -42,46 +59,43 @@ defmodule LangChain.Persistence.StateSerializer do
   part of the conversation state. When restoring state, you must provide the
   agent_id to `deserialize_server_state/2` or `AgentServer.start_link_from_state/2`.
   """
-  def serialize_server_state(%Agent{} = agent, %State{} = state) do
+  def serialize_server_state(%Agent{} = _agent, %State{} = state) do
     %{
+      # Version stays at 1, but now only contains state
       "version" => @current_version,
       "state" => serialize_state(state),
-      "agent_config" => serialize_agent_config(agent),
       "serialized_at" => DateTime.utc_now() |> DateTime.to_iso8601()
     }
   end
 
   @doc """
-  Deserializes a map with string keys into AgentServer state components.
+  Deserializes a serialized state map back to a State struct.
 
-  The `agent_id` parameter is required and will be used as the runtime identifier
-  for the agent. This allows you to restore the same conversation state under a
-  different agent_id, enabling use cases like state cloning and conversation forking.
-
-  Returns `{:ok, {agent, state}}` on success or `{:error, reason}` on failure.
+  The agent configuration is NOT deserialized - agents must be created
+  from your application code. This function only restores conversation
+  state (messages, metadata).
 
   ## Parameters
 
-  - `data` - The serialized state map (as returned by `serialize_server_state/2`)
-  - `agent_id` - The runtime identifier for this agent (used for process registration and PubSub)
+  - `data` - The serialized state map (from JSONB or export)
+  - `agent_id` - The agent_id to use (NOT serialized, provided by you)
+  - `opts` - Options (currently unused, kept for compatibility)
 
-  ## Options
+  ## Returns
 
-  - `:custom_tools` - Map of tool name to LangChain.Function struct for custom tools
+  - `{:ok, state}` - Successfully deserialized state
+  - `{:error, reason}` - Deserialization failed
   """
-  def deserialize_server_state(data, agent_id, opts \\ [])
-      when is_map(data) and is_binary(agent_id) do
+  def deserialize_server_state(data, _agent_id, _opts \\ [])
+      when is_map(data) do
     # Handle version migration if needed
-    data = maybe_migrate(data)
+    case maybe_migrate(data) do
+      {:error, reason} ->
+        {:error, reason}
 
-    custom_tools = Keyword.get(opts, :custom_tools, %{})
-
-    with {:ok, state} <- deserialize_state(data["state"]),
-         {:ok, agent} <-
-           deserialize_agent_config(data["agent_config"], agent_id, custom_tools) do
-      {:ok, {agent, state}}
-    else
-      {:error, reason} -> {:error, reason}
+      migrated_data ->
+        # Only deserialize state, not agent config
+        deserialize_state(migrated_data["state"])
     end
   end
 
@@ -222,22 +236,47 @@ defmodule LangChain.Persistence.StateSerializer do
     %{
       "type" => to_string(part.type),
       "content" => part.content,
-      "options" => part.options || []
+      "options" => serialize_options(part.options)
     }
-    |> Enum.reject(fn {_k, v} -> is_nil(v) or v == [] end)
+    |> Enum.reject(fn {_k, v} -> is_nil(v) or v == [] or v == %{} end)
     |> Map.new()
   end
+
+  # Convert options keyword list to a map with string keys for JSON serialization
+  defp serialize_options(opts) when is_list(opts) and opts != [] do
+    # Check if it's a keyword list (list of 2-tuples with atom keys)
+    if Keyword.keyword?(opts) do
+      opts
+      |> Enum.map(fn {k, v} -> {to_string(k), v} end)
+      |> Map.new()
+    else
+      opts
+    end
+  end
+
+  defp serialize_options(opts) when is_map(opts), do: opts
+  defp serialize_options(_), do: %{}
 
   defp deserialize_content_part(part) when is_map(part) do
     case ContentPart.new(%{
            type: String.to_existing_atom(part["type"] || "text"),
            content: part["content"],
-           options: part["options"] || []
+           options: deserialize_options(part["options"])
          }) do
       {:ok, content_part} -> content_part
       {:error, _} -> raise "Failed to deserialize content part: #{inspect(part)}"
     end
   end
+
+  # Convert options map with string keys back to keyword list with atom keys
+  defp deserialize_options(opts) when is_map(opts) and map_size(opts) > 0 do
+    opts
+    |> Enum.map(fn {k, v} -> {String.to_atom(k), v} end)
+    |> Keyword.new()
+  end
+
+  defp deserialize_options(opts) when is_list(opts), do: opts
+  defp deserialize_options(_), do: []
 
   defp serialize_tool_call(%ToolCall{} = tool_call) do
     %{
@@ -289,119 +328,6 @@ defmodule LangChain.Persistence.StateSerializer do
     end
   end
 
-  defp serialize_agent_config(%Agent{} = agent) do
-    # Identify middleware tool names
-    middleware_tool_names =
-      agent.middleware
-      |> Enum.flat_map(&LangChain.Agents.Middleware.get_tools/1)
-      |> Enum.map(& &1.name)
-      |> MapSet.new()
-
-    # Extract custom tool names (not from middleware)
-    custom_tool_names =
-      agent.tools
-      |> Enum.reject(fn tool -> MapSet.member?(middleware_tool_names, tool.name) end)
-      |> Enum.map(& &1.name)
-
-    %{
-      "model" => serialize_model(agent.model),
-      "base_system_prompt" => agent.base_system_prompt,
-      "custom_tool_names" => custom_tool_names,
-      "middleware" => Enum.map(agent.middleware || [], &serialize_middleware/1),
-      "name" => agent.name
-    }
-    |> Enum.reject(fn {_k, v} -> is_nil(v) or v == [] end)
-    |> Map.new()
-  end
-
-  defp deserialize_agent_config(nil, agent_id, _custom_tools) do
-    {:error, "agent_config is nil for agent #{agent_id}"}
-  end
-
-  defp deserialize_agent_config(data, agent_id, custom_tools) when is_map(data) do
-    base_prompt = data["base_system_prompt"] || ""
-
-    # Lookup custom tools by name
-    custom_tool_names = data["custom_tool_names"] || []
-
-    {resolved_tools, missing_tools} =
-      Enum.split_with(custom_tool_names, fn name ->
-        Map.has_key?(custom_tools, name)
-      end)
-
-    # Log warning for missing tools
-    if missing_tools != [] do
-      Logger.warning(
-        "Agent #{agent_id} is missing custom tools: #{inspect(missing_tools)}. " <>
-          "Provide these via custom_tools option to restore full functionality."
-      )
-    end
-
-    # Get resolved tool structs
-    base_tools = Enum.map(resolved_tools, fn name -> Map.get(custom_tools, name) end)
-
-    attrs = %{
-      agent_id: agent_id,
-      model: deserialize_model(data["model"]),
-      base_system_prompt: base_prompt,
-      tools: base_tools,
-      middleware: Enum.map(data["middleware"] || [], &deserialize_middleware/1),
-      name: data["name"]
-    }
-
-    case Agent.new(attrs) do
-      {:ok, agent} -> {:ok, agent}
-      {:error, changeset} -> {:error, {:invalid_agent, changeset}}
-    end
-  end
-
-  defp serialize_model(model) when is_struct(model) do
-    %{
-      "module" => to_string(model.__struct__),
-      "model" => model.model
-      # Never serialize API keys
-    }
-  end
-
-  defp deserialize_model(%{"module" => module_name} = data) do
-    # Convert module string to actual module
-    module = String.to_existing_atom(module_name)
-
-    # Create a new model instance
-    # Note: API keys must be provided from config/environment
-    case apply(module, :new, [%{model: data["model"]}]) do
-      {:ok, model} -> model
-      {:error, _} -> raise "Failed to deserialize model: #{inspect(data)}"
-    end
-  end
-
-  defp serialize_middleware(%LangChain.Agents.MiddlewareEntry{module: module, config: config}) do
-    serialized_opts =
-      cond do
-        is_map(config) -> serialize_map_to_string_keys(config)
-        is_list(config) -> config
-        true -> []
-      end
-
-    %{
-      "module" => to_string(module),
-      "opts" => serialized_opts
-    }
-  end
-
-  defp deserialize_middleware(%{"module" => module_name} = data) do
-    module = String.to_existing_atom(module_name)
-    opts = data["opts"] || []
-    # Convert map to keyword list with atom keys if needed
-    opts =
-      if is_map(opts) do
-        Enum.map(opts, fn {k, v} -> {String.to_existing_atom(k), v} end)
-      else
-        opts
-      end
-
-    {module, opts}
-  end
 
   defp serialize_map_to_string_keys(map) when is_map(map) do
     Map.new(map, fn
@@ -420,6 +346,11 @@ defmodule LangChain.Persistence.StateSerializer do
   defp serialize_value(value) when is_map(value), do: serialize_map_to_string_keys(value)
   defp serialize_value(value) when is_list(value), do: Enum.map(value, &serialize_value/1)
   defp serialize_value(value) when is_atom(value) and not is_nil(value), do: to_string(value)
+
+  # Functions cannot be serialized to JSON - skip them
+  # They will need to be recreated during deserialization from config
+  defp serialize_value(value) when is_function(value), do: nil
+
   defp serialize_value(value), do: value
 
   defp maybe_add_string_field(map, _key, nil), do: map

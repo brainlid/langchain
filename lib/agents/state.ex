@@ -58,6 +58,32 @@ defmodule LangChain.Agents.State do
   end
 
   @doc """
+  Deserializes state data from export_state/1.
+
+  This is a convenience wrapper around StateSerializer.deserialize_state/1.
+
+  ## Examples
+
+      # Load from database
+      {:ok, state_data} = load_from_db(conversation_id)
+
+      # Deserialize
+      {:ok, state} = State.from_serialized(state_data["state"])
+
+  ## Parameters
+
+    - `data` - The serialized state map (the "state" field from export_state)
+
+  ## Returns
+
+    - `{:ok, state}` - Successfully deserialized
+    - `{:error, reason}` - Deserialization failed
+  """
+  def from_serialized(data) when is_map(data) do
+    LangChain.Persistence.StateSerializer.deserialize_state(data)
+  end
+
+  @doc """
   Merge two states together.
 
   This is used when combining state updates from tools, middleware, or subagents.

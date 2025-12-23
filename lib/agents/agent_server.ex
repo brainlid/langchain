@@ -663,23 +663,23 @@ defmodule LangChain.Agents.AgentServer do
   end
 
   @doc """
-  Export the current agent state to a serializable format.
+  Export the current conversation state to a serializable format.
 
-  This can be persisted to a database and later used to restore the agent to its
-  exact state. The exported state uses string keys (not atoms) for compatibility
+  This can be persisted to a database and later used to restore the conversation
+  state. The exported state uses string keys (not atoms) for compatibility
   with JSON/JSONB storage.
 
   Returns a map with string keys containing:
   - `"version"` - Serialization format version
-  - `"state"` - The agent's state (messages, todos, metadata)
-  - `"agent_config"` - The agent's configuration (excluding agent_id)
+  - `"state"` - The conversation state (messages, todos, metadata)
   - `"serialized_at"` - ISO8601 timestamp
 
-  Note: The `agent_id` is NOT included in the exported state. The agent_id is a
-  runtime identifier and must be provided when restoring via
-  `start_link_from_state/2`. This design allows you to restore the same
-  conversation state under a different agent_id, enabling use cases like state
-  cloning and conversation forking.
+  **What is NOT included**:
+  - Agent configuration (middleware, tools, model) - must come from application code
+  - `agent_id` - runtime identifier provided when restoring
+
+  This design allows you to restore the same conversation state under a different
+  agent_id, enabling use cases like state cloning and conversation forking.
 
   ## Examples
 
@@ -715,6 +715,38 @@ defmodule LangChain.Agents.AgentServer do
   end
 
   @doc """
+  Updates both the agent configuration and state.
+
+  This is the recommended way to restore a conversation:
+  1. Create agent from current code using your agent factory
+  2. Load state from database
+  3. Call this function to update the running AgentServer
+
+  ## Parameters
+
+  - `agent_id` - The agent server's identifier
+  - `agent` - The new agent configuration (from current code)
+  - `state` - The restored state (from database)
+
+  ## Examples
+
+      # Restore conversation
+      {:ok, agent} = MyApp.Agents.create_demo_agent(agent_id: "demo-123")
+      {:ok, state_data} = MyApp.Conversations.load_state(conversation_id)
+      {:ok, state} = LangChain.Agents.State.from_serialized(state_data["state"])
+
+      :ok = AgentServer.update_agent_and_state("demo-123", agent, state)
+
+  ## Returns
+
+  - `:ok` - Agent and state updated successfully
+  - `{:error, reason}` - If agent server is not running or update fails
+  """
+  def update_agent_and_state(agent_id, agent, state) do
+    GenServer.call(get_name(agent_id), {:update_agent_and_state, agent, state})
+  end
+
+  @doc """
   Start a new AgentServer with restored state.
 
   This is the preferred way to resume a conversation from persisted state.
@@ -726,9 +758,22 @@ defmodule LangChain.Agents.AgentServer do
   the same conversation state under a different agent_id, which is useful
   for state cloning or conversation forking.
 
+  ## Agent Configuration from Code
+
+  **REQUIRED**: You MUST provide the agent from your application code using the
+  `:agent` option. The persisted state contains ONLY conversation state (messages,
+  todos, metadata). Agent configuration (middleware, tools, model) comes from your
+  application code.
+
+  This design ensures:
+  - Library upgrades automatically benefit all conversations
+  - Code changes automatically apply to all conversations
+  - Per-user capabilities can be controlled via application logic
+
   ## Options
 
   - `:agent_id` - The runtime identifier for this agent (required)
+  - `:agent` - Agent struct from code (REQUIRED)
   - `:pubsub` - PubSub configuration as `{module(), atom()}` tuple or `nil` (default: nil)
   - `:debug_pubsub` - Optional separate PubSub for debug events as `{module(), atom()}` or `nil` (default: nil)
   - `:name` - Server name registration (optional, defaults to `get_name(agent_id)`)
@@ -737,28 +782,30 @@ defmodule LangChain.Agents.AgentServer do
 
   ## Examples
 
-      # Load from database and restore with same agent_id
+      # Standard restoration pattern
       {:ok, persisted_state} = MyApp.Conversations.load_agent_state(conversation_id)
 
+      # Agent from code (ALWAYS required)
+      {:ok, agent} = MyApp.Agents.create_agent(
+        agent_id: "my-agent-1",
+        model: model,
+        middleware: [TodoList, FileSystem, SubAgent]
+      )
+
+      # Start with restored state
       {:ok, pid} = AgentServer.start_link_from_state(
         persisted_state,
+        agent: agent,
         agent_id: "my-agent-1",
         pubsub: {Phoenix.PubSub, :my_app_pubsub}
       )
 
-      # Clone conversation state with a different agent_id
+      # Clone conversation with a different agent_id
       {:ok, pid} = AgentServer.start_link_from_state(
         persisted_state,
+        agent: agent,
         agent_id: "my-agent-clone",
         pubsub: {Phoenix.PubSub, :my_app_pubsub}
-      )
-
-      # Restore with debug pubsub enabled
-      {:ok, pid} = AgentServer.start_link_from_state(
-        persisted_state,
-        agent_id: "my-agent-1",
-        pubsub: {Phoenix.PubSub, :my_app_pubsub},
-        debug_pubsub: {Phoenix.PubSub, :my_debug_pubsub}
       )
   """
   @spec start_link_from_state(map(), keyword()) :: GenServer.on_start()
@@ -804,13 +851,14 @@ defmodule LangChain.Agents.AgentServer do
   defp init_from_persisted(persisted_state, opts) do
     # Get the agent_id from opts (required)
     agent_id = Keyword.fetch!(opts, :restore_agent_id)
-    custom_tools = Keyword.get(opts, :custom_tools, %{})
+    agent = Keyword.fetch!(opts, :agent)
 
-    # Deserialize the persisted state with the provided agent_id
-    case StateSerializer.deserialize_server_state(persisted_state, agent_id,
-           custom_tools: custom_tools
-         ) do
-      {:ok, {agent, state}} ->
+    # deserialize only conversation state
+    case StateSerializer.deserialize_state(persisted_state["state"]) do
+      {:ok, state} ->
+        # Update agent_id to match the runtime identifier
+        agent = %{agent | agent_id: agent_id}
+        state = %{state | agent_id: agent_id}
         build_server_state(agent, state, opts)
 
       {:error, reason} ->
@@ -1140,17 +1188,14 @@ defmodule LangChain.Agents.AgentServer do
 
   @impl true
   def handle_call({:restore_state, persisted_state}, _from, server_state) do
-    # Use the current agent_id when restoring state
-    agent_id = server_state.agent.agent_id
-
-    # Deserialize the persisted state with the current agent_id
-    case StateSerializer.deserialize_server_state(persisted_state, agent_id) do
-      {:ok, {agent, state}} ->
-        # Update the server state with restored agent and state
+    # Deserialize only conversation state (not agent config)
+    case StateSerializer.deserialize_state(persisted_state["state"]) do
+      {:ok, state} ->
+        # Update only the state, keep existing agent from code
+        # This function is for updating state in a running agent server
         updated_server_state = %{
           server_state
-          | agent: agent,
-            state: state,
+          | state: state,
             status: :idle,
             error: nil,
             interrupt_data: nil
@@ -1167,6 +1212,19 @@ defmodule LangChain.Agents.AgentServer do
       {:error, reason} ->
         {:reply, {:error, reason}, server_state}
     end
+  end
+
+  @impl true
+  def handle_call({:update_agent_and_state, new_agent, new_state}, _from, server_state) do
+    Logger.info("Updating agent configuration and state for #{new_agent.agent_id}")
+
+    # Update both agent and state atomically
+    updated_state = %{server_state | agent: new_agent, state: new_state}
+
+    # Broadcast state change event
+    broadcast_event(updated_state, {:state_restored, new_state})
+
+    {:reply, :ok, updated_state}
   end
 
   @impl true
@@ -1281,7 +1339,7 @@ defmodule LangChain.Agents.AgentServer do
             # Update server state
             new_server_state = %{server_state | state: updated_state}
             # if debug pubsub is enabled, it will be notified.
-            broadcast_debug_event(new_server_state, {:agent_state_update, updated_state})
+            broadcast_debug_event(new_server_state, {:agent_state_update, middleware_id, updated_state})
             {:noreply, new_server_state}
 
           {:error, reason} ->
