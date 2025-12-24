@@ -1,5 +1,5 @@
 defmodule PatchToolCallsIntegrationTest do
-  use ExUnit.Case, async: true
+  use LangChain.BaseCase, async: true
 
   alias LangChain.Agents.Agent
   alias LangChain.Agents.State

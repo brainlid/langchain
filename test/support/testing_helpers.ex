@@ -49,4 +49,11 @@ defmodule LangChain.TestingHelpers do
     state = :sys.get_state(pid)
     Map.get(state.files, path)
   end
+
+  @doc """
+  Generate a new, unique agent_id.
+  """
+  def new_agent_id() do
+    "test-agent-#{System.unique_integer()}"
+  end
 end

@@ -1,7 +1,5 @@
 defmodule LangChain.Agents.FileSystemServerTest do
-  use ExUnit.Case, async: true
-
-  import LangChain.TestingHelpers
+  use LangChain.BaseCase
 
   alias LangChain.Agents.FileSystemServer
   alias LangChain.Agents.FileSystem.FileEntry

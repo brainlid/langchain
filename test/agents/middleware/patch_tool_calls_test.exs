@@ -1,5 +1,5 @@
 defmodule LangChain.Agents.Middleware.PatchToolCallsTest do
-  use ExUnit.Case, async: true
+  use LangChain.BaseCase, async: true
 
   alias LangChain.Agents.Middleware.PatchToolCalls
   alias LangChain.Agents.State

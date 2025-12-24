@@ -77,8 +77,8 @@ defmodule LangChain.Persistence.StateSerializer do
 
   ## Parameters
 
-  - `data` - The serialized state map (from JSONB or export)
   - `agent_id` - The agent_id to use (NOT serialized, provided by you)
+  - `data` - The serialized state map (from JSONB or export)
   - `opts` - Options (currently unused, kept for compatibility)
 
   ## Returns
@@ -86,8 +86,8 @@ defmodule LangChain.Persistence.StateSerializer do
   - `{:ok, state}` - Successfully deserialized state
   - `{:error, reason}` - Deserialization failed
   """
-  def deserialize_server_state(data, _agent_id, _opts \\ [])
-      when is_map(data) do
+  def deserialize_server_state(agent_id, data, _opts \\ []) when is_binary(agent_id) and is_map(data)
+      when is_map(data) and is_binary(agent_id) do
     # Handle version migration if needed
     case maybe_migrate(data) do
       {:error, reason} ->
@@ -95,7 +95,7 @@ defmodule LangChain.Persistence.StateSerializer do
 
       migrated_data ->
         # Only deserialize state, not agent config
-        deserialize_state(migrated_data["state"])
+        deserialize_state(agent_id, migrated_data["state"])
     end
   end
 
@@ -113,9 +113,12 @@ defmodule LangChain.Persistence.StateSerializer do
   @doc """
   Deserializes a map with string keys into a State struct.
 
+  The `agent_id` must be provided as it is not part of the serialized data
+  (it's a runtime identifier for process registration and PubSub).
+
   Returns `{:ok, state}` on success or `{:error, reason}` on failure.
   """
-  def deserialize_state(data) when is_map(data) do
+  def deserialize_state(agent_id, data) when is_binary(agent_id) and is_map(data) do
     messages =
       case data["messages"] do
         messages when is_list(messages) ->
@@ -143,7 +146,7 @@ defmodule LangChain.Persistence.StateSerializer do
         _ -> %{}
       end
 
-    case State.new(%{messages: messages, todos: todos, metadata: metadata}) do
+    case State.new(%{agent_id: agent_id, messages: messages, todos: todos, metadata: metadata}) do
       {:ok, state} -> {:ok, state}
       {:error, changeset} -> {:error, {:invalid_state, changeset}}
     end

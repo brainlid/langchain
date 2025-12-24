@@ -1,5 +1,5 @@
 defmodule LangChain.Agents.StateTest do
-  use ExUnit.Case, async: true
+  use LangChain.BaseCase, async: true
 
   alias LangChain.Agents.State
   alias LangChain.Message
@@ -12,6 +12,7 @@ defmodule LangChain.Agents.StateTest do
       assert state.messages == []
       assert state.todos == []
       assert state.metadata == %{}
+      assert state.agent_id == nil
     end
 
     test "creates a state with provided attributes" do

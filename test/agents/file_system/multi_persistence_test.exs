@@ -1,7 +1,5 @@
 defmodule LangChain.Agents.FileSystem.MultiPersistenceTest do
-  use ExUnit.Case, async: false
-
-  import LangChain.TestingHelpers
+  use LangChain.BaseCase, async: false
 
   alias LangChain.Agents.FileSystemServer
   alias LangChain.Agents.FileSystem.FileSystemConfig

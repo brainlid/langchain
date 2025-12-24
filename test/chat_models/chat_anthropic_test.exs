@@ -4,7 +4,6 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
 
   doctest LangChain.ChatModels.ChatAnthropic
 
-  import LangChain.TestingHelpers
   alias LangChain.ChatModels.ChatAnthropic
   alias LangChain.Chains.LLMChain
   alias LangChain.Message

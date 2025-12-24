@@ -1,5 +1,5 @@
 defmodule LangChain.Agents.Middleware.SummarizationTest do
-  use ExUnit.Case, async: true
+  use LangChain.BaseCase, async: true
 
   alias LangChain.Agents.Middleware.Summarization
   alias LangChain.Agents.State

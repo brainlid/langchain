@@ -200,8 +200,21 @@ defmodule LangChain.Agents.Middleware.ConversationTitle do
     # Extract text from the last user message (the user's actual first message)
     user_text = extract_last_user_message_text(state)
 
-    # Get agent_id from state metadata for event broadcasting
+    # Get agent_id from state for event broadcasting
+    # This should always be present - if nil, it indicates improper state deserialization
     agent_id = state.agent_id
+
+    unless agent_id do
+      Logger.error("""
+      ConversationTitle middleware: state.agent_id is nil!
+      This indicates the state was not properly initialized or deserialized.
+      When deserializing state, ensure you call: State.from_serialized(agent_id, data)
+      """)
+
+      raise ArgumentError,
+            "state.agent_id is required for ConversationTitle middleware. " <>
+              "Ensure State.from_serialized(agent_id, data) is called when deserializing."
+    end
 
     # Emit telemetry for task spawn
     :telemetry.execute(
@@ -225,10 +238,8 @@ defmodule LangChain.Agents.Middleware.ConversationTitle do
         # Send success message back to AgentServer
         AgentServer.send_middleware_message(agent_id, middleware_id, {:title_generated, title})
 
-        #TODO: Should the broadcast happen here? Like this? Could expose a public broadcast helper function on AgentServer. All the broadcast functions are private currently.
 
-        # Also broadcast via PubSub for backward compatibility with LiveView
-        # Note: This happens in the task, not in handle_message, to match original behavior
+        # Publish the event
         AgentServer.publish_event_from(agent_id, {:conversation_title_generated, title, agent_id})
       rescue
         error ->

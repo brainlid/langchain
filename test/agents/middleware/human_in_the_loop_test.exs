@@ -1,5 +1,5 @@
 defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
-  use ExUnit.Case, async: true
+  use LangChain.BaseCase, async: true
 
   alias LangChain.Agents.Middleware.HumanInTheLoop
   alias LangChain.Agents.State

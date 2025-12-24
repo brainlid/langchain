@@ -1,5 +1,5 @@
 defmodule LangChain.Agents.AgentTest do
-  use ExUnit.Case, async: true
+  use LangChain.BaseCase, async: true
   use Mimic
 
   alias LangChain.Agents.{Agent, Middleware, State}

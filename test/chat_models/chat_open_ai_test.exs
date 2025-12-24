@@ -1,7 +1,6 @@
 defmodule LangChain.ChatModels.ChatOpenAITest do
   use LangChain.BaseCase
   import LangChain.Fixtures
-  import LangChain.TestingHelpers
 
   doctest LangChain.ChatModels.ChatOpenAI
   alias LangChain.ChatModels.ChatOpenAI

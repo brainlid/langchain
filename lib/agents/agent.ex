@@ -392,6 +392,9 @@ defmodule LangChain.Agents.Agent do
       end
   """
   def execute(%Agent{} = agent, %State{} = state, opts \\ []) do
+    # Ensure agent_id is set in state (library handles this automatically)
+    state = %{state | agent_id: agent.agent_id}
+
     callbacks = Keyword.get(opts, :callbacks)
 
     with {:ok, prepared_state} <- apply_before_model_hooks(state, agent.middleware) do
@@ -463,6 +466,9 @@ defmodule LangChain.Agents.Agent do
   """
   def resume(%Agent{} = agent, %State{} = state, decisions, opts \\ [])
       when is_list(decisions) do
+    # Ensure agent_id is set in state (library handles this automatically)
+    state = %{state | agent_id: agent.agent_id}
+
     # Find the HumanInTheLoop middleware in the stack
     hitl_middleware =
       Enum.find(agent.middleware, fn %MiddlewareEntry{module: module} ->

@@ -1,5 +1,5 @@
 defmodule LangChain.Agents.Middleware.HumanInTheLoopIntegrationTest do
-  use ExUnit.Case, async: true
+  use LangChain.BaseCase, async: true
   use Mimic
 
   alias LangChain.Agents.Agent

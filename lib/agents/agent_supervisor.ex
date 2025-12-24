@@ -157,14 +157,8 @@ defmodule LangChain.Agents.AgentSupervisor do
 
   @impl true
   def init(config) do
-    # Extract configuration
+    # Extract and validate agent first (before accessing agent_id)
     agent = Keyword.fetch!(config, :agent)
-    persistence_configs = Keyword.get(config, :persistence_configs, [])
-    initial_state = Keyword.get(config, :initial_state, State.new!())
-    pubsub = Keyword.get(config, :pubsub)
-    debug_pubsub = Keyword.get(config, :debug_pubsub)
-    inactivity_timeout = Keyword.get(config, :inactivity_timeout, 300_000)
-    shutdown_delay = Keyword.get(config, :shutdown_delay, 5000)
 
     # Validate agent
     unless is_struct(agent, Agent) do
@@ -177,6 +171,14 @@ defmodule LangChain.Agents.AgentSupervisor do
     unless is_binary(agent_id) and agent_id != "" do
       raise ArgumentError, "Agent must have a valid agent_id"
     end
+
+    # Extract remaining configuration (safe to use agent.agent_id)
+    persistence_configs = Keyword.get(config, :persistence_configs, [])
+    initial_state = Keyword.get(config, :initial_state, State.new!(%{agent_id: agent.agent_id}))
+    pubsub = Keyword.get(config, :pubsub)
+    debug_pubsub = Keyword.get(config, :debug_pubsub)
+    inactivity_timeout = Keyword.get(config, :inactivity_timeout, 300_000)
+    shutdown_delay = Keyword.get(config, :shutdown_delay, 5000)
 
     # Build AgentServer options
     agent_server_opts = [

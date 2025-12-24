@@ -11,6 +11,32 @@ defmodule LangChain.Agents.State do
   the agent's internal state. The FileSystemServer provides persistent storage with
   ETS and optional backend persistence (disk, database, S3, etc.).
 
+  ## agent_id Management (Automatic)
+
+  The `agent_id` field is a **runtime identifier** used for process registration and
+  coordination. You don't need to set it when creating states—the library
+  automatically injects it when you call `Agent.execute/2`, `Agent.resume/3`, or
+  start an `AgentServer`.
+
+  ### Why it's automatic
+
+  The `agent_id` flows from the Agent struct (which is configuration) to the State
+  (which is data). Making you synchronize them manually could be error-prone.
+
+  ### For middleware developers
+
+  When middleware receives state in hooks (`before_model`, `after_model`), the
+  `agent_id` will already be set. If you create new state structs in middleware,
+  copy the `agent_id` from the incoming state:
+
+      def after_model(state, config) do
+        updated_state = State.new!(%{
+          agent_id: state.agent_id,  # Copy from incoming state
+          messages: new_messages
+        })
+        {:ok, updated_state}
+      end
+
   ## State Merging
 
   State merging follows specific rules:
@@ -18,6 +44,7 @@ defmodule LangChain.Agents.State do
   - **messages**: Appends new messages to existing list
   - **todos**: Replaces with new todos (merge handled by TodoList middleware)
   - **metadata**: Deep merges metadata maps
+  - **agent_id**: Uses right if present, otherwise left (runtime identifier, not data)
   """
 
   use Ecto.Schema
@@ -40,6 +67,18 @@ defmodule LangChain.Agents.State do
 
   @doc """
   Create a new agent state.
+
+  Note: The `agent_id` field is optional when creating a state. The library
+  automatically injects it when the state is passed to Agent.execute or
+  AgentServer. This eliminates the need for manual agent_id synchronization.
+
+  ## Examples
+
+      # Create state without agent_id (recommended)
+      state = State.new!(%{messages: [message]})
+
+      # Library injects agent_id automatically
+      {:ok, result_state} = Agent.execute(agent, state)
   """
   def new(attrs \\ %{}) do
     %State{}
@@ -60,27 +99,32 @@ defmodule LangChain.Agents.State do
   @doc """
   Deserializes state data from export_state/1.
 
-  This is a convenience wrapper around StateSerializer.deserialize_state/1.
+  This is a convenience wrapper around StateSerializer.deserialize_state/2.
+
+  **Important**: The `agent_id` is NOT serialized (it's a runtime identifier),
+  so you MUST provide it when deserializing. This ensures the state can properly
+  interact with AgentServer and middleware that rely on the agent_id.
 
   ## Examples
 
       # Load from database
       {:ok, state_data} = load_from_db(conversation_id)
 
-      # Deserialize
-      {:ok, state} = State.from_serialized(state_data["state"])
+      # Deserialize with agent_id
+      {:ok, state} = State.from_serialized("my-agent-123", state_data["state"])
 
   ## Parameters
 
+    - `agent_id` - The agent_id to use for this state (required)
     - `data` - The serialized state map (the "state" field from export_state)
 
   ## Returns
 
-    - `{:ok, state}` - Successfully deserialized
+    - `{:ok, state}` - Successfully deserialized with agent_id set
     - `{:error, reason}` - Deserialization failed
   """
-  def from_serialized(data) when is_map(data) do
-    LangChain.Persistence.StateSerializer.deserialize_state(data)
+  def from_serialized(agent_id, data) when is_binary(agent_id) and is_map(data) do
+    LangChain.Persistence.StateSerializer.deserialize_state(agent_id, data)
   end
 
   @doc """

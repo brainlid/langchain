@@ -1,5 +1,5 @@
 defmodule LangChain.Agents.AgentServerTest do
-  use ExUnit.Case, async: false
+  use LangChain.BaseCase, async: false
   use Mimic
 
   alias LangChain.Agents.{Agent, AgentServer, State, Todo}
@@ -60,7 +60,7 @@ defmodule LangChain.Agents.AgentServerTest do
 
       # Verify state is accessible using agent_id
       state = AgentServer.get_state(agent_id)
-      assert length(state.messages) == 1
+      assert [_msg] = state.messages
     end
 
     test "starts server with default empty state" do

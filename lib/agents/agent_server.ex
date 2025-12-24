@@ -651,6 +651,16 @@ defmodule LangChain.Agents.AgentServer do
   end
 
   @doc """
+  Check if an agent is running.
+  """
+  def running?(agent_id) do
+    case get_pid(agent_id) do
+      nil -> false
+      _pid -> true
+    end
+  end
+
+  @doc """
   Stop the AgentServer.
 
   ## Examples
@@ -854,11 +864,11 @@ defmodule LangChain.Agents.AgentServer do
     agent = Keyword.fetch!(opts, :agent)
 
     # deserialize only conversation state
-    case StateSerializer.deserialize_state(persisted_state["state"]) do
+    # agent_id is not serialized, so we provide it when deserializing
+    case StateSerializer.deserialize_state(agent_id, persisted_state["state"]) do
       {:ok, state} ->
         # Update agent_id to match the runtime identifier
         agent = %{agent | agent_id: agent_id}
-        state = %{state | agent_id: agent_id}
         build_server_state(agent, state, opts)
 
       {:error, reason} ->
@@ -1189,7 +1199,10 @@ defmodule LangChain.Agents.AgentServer do
   @impl true
   def handle_call({:restore_state, persisted_state}, _from, server_state) do
     # Deserialize only conversation state (not agent config)
-    case StateSerializer.deserialize_state(persisted_state["state"]) do
+    # Get agent_id from the running agent
+    agent_id = server_state.agent.agent_id
+
+    case StateSerializer.deserialize_state(agent_id, persisted_state["state"]) do
       {:ok, state} ->
         # Update only the state, keep existing agent from code
         # This function is for updating state in a running agent server
@@ -1218,13 +1231,20 @@ defmodule LangChain.Agents.AgentServer do
   def handle_call({:update_agent_and_state, new_agent, new_state}, _from, server_state) do
     Logger.info("Updating agent configuration and state for #{new_agent.agent_id}")
 
-    # Update both agent and state atomically
-    updated_state = %{server_state | agent: new_agent, state: new_state}
+    # Validate that state has agent_id set (critical for middleware functionality)
+    unless new_state.agent_id do
+      error_msg = "State.agent_id is nil. When deserializing state, you must provide agent_id: State.from_serialized(agent_id, data)"
+      Logger.error(error_msg)
+      {:reply, {:error, error_msg}, server_state}
+    else
+      # Update both agent and state atomically
+      updated_state = %{server_state | agent: new_agent, state: new_state}
 
-    # Broadcast state change event
-    broadcast_event(updated_state, {:state_restored, new_state})
+      # Broadcast state change event
+      broadcast_event(updated_state, {:state_restored, new_state})
 
-    {:reply, :ok, updated_state}
+      {:reply, :ok, updated_state}
+    end
   end
 
   @impl true
