@@ -822,7 +822,11 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         )
 
         {:error,
-         LangChainError.exception(type: "unexpected_response", message: "Unexpected response")}
+         LangChainError.exception(
+           type: "unexpected_response",
+           message: "Unexpected response",
+           original: other
+         )}
     end
   end
 
@@ -1160,7 +1164,13 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
 
   def do_process_response(_model, other) do
     Logger.error("Trying to process an unexpected response. #{inspect(other)}")
-    {:error, LangChainError.exception(message: "Unexpected response")}
+
+    {:error,
+     LangChainError.exception(
+       type: "unexpected_response",
+       message: "Unexpected response",
+       original: other
+     )}
   end
 
   defp get_token_usage(%{"usage" => usage} = _response_body) when is_map(usage) do
