@@ -465,7 +465,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     |> Req.post(
       into:
         Utils.handle_stream_fn(
-          vertex_ai,
+          Map.take(vertex_ai, [:stream]),
           &ChatOpenAI.decode_stream/1,
           &do_process_response(vertex_ai, &1, MessageDelta)
         )
@@ -723,7 +723,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   @doc """
   Return the content parts for the message.
   """
-  @spec get_message_contents(MessageDelta.t() | Message.t()) :: [%{String.t() => any()}]
+  @spec get_message_contents(MessageDelta.t() | Message.t()) :: [%{String.t() => any()}] | nil
   def get_message_contents(%{content: content} = _message) when is_binary(content) do
     [%{"text" => content}]
   end

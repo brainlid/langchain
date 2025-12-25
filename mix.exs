@@ -18,6 +18,9 @@ defmodule LangChain.MixProject do
       docs: &docs/0,
       name: "LangChain",
       homepage_url: @source_url,
+      dialyzer: [
+        plt_add_apps: [:ex_unit]
+      ],
       description: """
       Elixir implementation of a LangChain style framework that lets Elixir projects integrate with and leverage LLMs.
       """
@@ -50,6 +53,7 @@ defmodule LangChain.MixProject do
       {:abacus, "~> 2.1.0", optional: true},
       {:nx, ">= 0.7.0", optional: true},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:mimic, "~> 1.8", only: :test}
     ]
   end
@@ -62,7 +66,13 @@ defmodule LangChain.MixProject do
   # See the documentation for `Mix` for more info on aliases.
   defp aliases do
     [
-      precommit: ["compile --warning-as-errors", "deps.unlock --unused", "format", "test"]
+      precommit: [
+        "compile --warning-as-errors",
+        "dialyzer",
+        "deps.unlock --unused",
+        "format",
+        "test"
+      ]
     ]
   end
 

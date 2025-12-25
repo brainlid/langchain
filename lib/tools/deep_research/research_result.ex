@@ -19,6 +19,17 @@ defmodule LangChain.Tools.DeepResearch.ResearchResult do
           tool_calls: [any()]
         }
 
+  @type precast_t() :: %__MODULE__{
+          id: String.t() | nil,
+          output_text: String.t() | nil,
+          model: String.t() | nil,
+          created_at: integer() | nil,
+          completion_time: integer() | nil,
+          sources: [any()],
+          usage: any() | nil,
+          tool_calls: [any()]
+        }
+
   @primary_key false
   embedded_schema do
     field :id, :string
@@ -53,7 +64,7 @@ defmodule LangChain.Tools.DeepResearch.ResearchResult do
   @doc """
   Creates a changeset for research result.
   """
-  @spec changeset(__MODULE__.t(), map()) :: Ecto.Changeset.t()
+  @spec changeset(__MODULE__.precast_t(), map()) :: Ecto.Changeset.t()
   def changeset(result \\ %__MODULE__{}, attrs) do
     result
     |> cast(attrs, [:id, :output_text, :model, :created_at, :completion_time])

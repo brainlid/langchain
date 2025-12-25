@@ -794,7 +794,12 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     |> maybe_add_proj_id_header()
     |> Req.merge(openai.req_config |> Keyword.new())
     |> Req.post(
-      into: Utils.handle_stream_fn(openai, &decode_stream/1, &do_process_response(openai, &1))
+      into:
+        Utils.handle_stream_fn(
+          Map.take(openai, [:stream]),
+          &decode_stream/1,
+          &do_process_response(openai, &1)
+        )
     )
     |> case do
       {:ok, %Req.Response{body: data} = response} ->
@@ -887,7 +892,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   # Parse a new message response
   @doc false
   @spec do_process_response(
-          %{:callbacks => [map()]},
+          t(),
           data :: %{String.t() => any()} | {:error, any()}
         ) ::
           :skip
@@ -895,7 +900,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
           | [Message.t()]
           | MessageDelta.t()
           | [MessageDelta.t()]
-          | {:error, String.t()}
+          | {:error, LangChainError.t()}
 
   # Complete Response with output lists
   def do_process_response(

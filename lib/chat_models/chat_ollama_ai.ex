@@ -524,7 +524,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
     |> Req.post(
       into:
         Utils.handle_stream_fn(
-          ollama_ai,
+          Map.take(ollama_ai, [:stream]),
           &ChatOpenAI.decode_stream/1,
           &do_process_response(ollama_ai, &1)
         )
