@@ -378,6 +378,29 @@ defmodule LangChain.Agents.AgentServer do
   end
 
   @doc """
+  Unsubscribe from events from this AgentServer.
+
+  The calling process will stop receiving messages broadcast by this server.
+
+  Returns `:ok` on success or `{:error, reason}` if PubSub is not configured.
+
+  ## Examples
+
+      AgentServer.unsubscribe("my-agent-1")
+  """
+  @spec unsubscribe(String.t()) :: :ok | {:error, term()}
+  def unsubscribe(agent_id) do
+    case GenServer.call(get_name(agent_id), :get_pubsub_info) do
+      {pubsub, pubsub_name, topic} ->
+        # unsubscribe the client process from the pubsub topic
+        pubsub.unsubscribe(pubsub_name, topic)
+
+      nil ->
+        {:error, :no_pubsub}
+    end
+  end
+
+  @doc """
   Subscribe to debug events from this AgentServer.
 
   The calling process will receive messages for all debug events broadcast by this server.
@@ -404,6 +427,29 @@ defmodule LangChain.Agents.AgentServer do
   end
 
   @doc """
+  Unsubscribe from debug events from this AgentServer.
+
+  The calling process will stop receiving debug messages broadcast by this server.
+
+  Returns `:ok` on success or `{:error, reason}` if debug PubSub is not configured.
+
+  ## Examples
+
+      AgentServer.unsubscribe_debug("my-agent-1")
+  """
+  @spec unsubscribe_debug(String.t()) :: :ok | {:error, term()}
+  def unsubscribe_debug(agent_id) do
+    case GenServer.call(get_name(agent_id), :get_debug_pubsub_info) do
+      {debug_pubsub, debug_pubsub_name, debug_topic} ->
+        # unsubscribe the client process from the debug pubsub topic
+        debug_pubsub.unsubscribe(debug_pubsub_name, debug_topic)
+
+      nil ->
+        {:error, :no_debug_pubsub}
+    end
+  end
+
+  @doc """
   Request the AgentServer to publish an specific PubSub message or event.
 
   Designed to make it easier for a middleware desiring to publish messages to
@@ -415,6 +461,129 @@ defmodule LangChain.Agents.AgentServer do
   @spec publish_event_from(String.t(), term()) :: :ok
   def publish_event_from(agent_id, event) do
     GenServer.cast(get_name(agent_id), {:publish_event, event})
+  end
+
+  @doc """
+  Lists all currently running agent processes.
+
+  Returns a list of agent_ids for all running AgentServer processes registered
+  in the LangChain.Agents.Registry.
+
+  ## Examples
+
+      AgentServer.list_running_agents()
+      # => ["conversation-1", "conversation-2", "user-123"]
+  """
+  @spec list_running_agents() :: [String.t()]
+  def list_running_agents do
+    Registry.select(LangChain.Agents.Registry, [
+      {{:agent_server, :"$1"}, :_, :_},
+      [],
+      [:"$1"]
+    ])
+  end
+
+  @doc """
+  Gets all running agents matching a glob pattern.
+
+  Supports wildcard patterns using `*` which matches any sequence of characters.
+
+  ## Examples
+
+      # Get all conversation agents
+      AgentServer.list_agents_matching("conversation-*")
+      # => ["conversation-1", "conversation-2", "conversation-123"]
+
+      # Get all user agents
+      AgentServer.list_agents_matching("user-*")
+      # => ["user-42", "user-99"]
+
+      # Get specific prefix
+      AgentServer.list_agents_matching("demo-*")
+      # => ["demo-agent-001"]
+  """
+  @spec list_agents_matching(String.t()) :: [String.t()]
+  def list_agents_matching(pattern) do
+    regex = pattern_to_regex(pattern)
+
+    list_running_agents()
+    |> Enum.filter(&Regex.match?(regex, &1))
+  end
+
+  @doc """
+  Gets count of currently running agents.
+
+  Returns the total number of AgentServer processes registered in the
+  LangChain.Agents.Registry.
+
+  ## Examples
+
+      AgentServer.agent_count()
+      # => 5
+  """
+  @spec agent_count() :: non_neg_integer()
+  def agent_count do
+    Registry.count(LangChain.Agents.Registry)
+  end
+
+  @doc """
+  Gets detailed information about a running agent.
+
+  Returns a map with agent status and state information, or `nil` if the agent
+  is not running.
+
+  ## Return Value
+
+  If the agent is running, returns a map containing:
+  - `:agent_id` - The agent identifier
+  - `:pid` - The process ID
+  - `:status` - Current execution status (`:idle`, `:running`, `:interrupted`, etc.)
+  - `:state` - Exported state snapshot
+  - `:message_count` - Number of messages in the state
+  - `:has_interrupt` - Boolean indicating if there's pending interrupt data
+
+  ## Examples
+
+      AgentServer.agent_info("conversation-1")
+      # => %{
+      #   agent_id: "conversation-1",
+      #   pid: #PID<0.1234.0>,
+      #   status: :idle,
+      #   state: %State{...},
+      #   message_count: 5,
+      #   has_interrupt: false
+      # }
+
+      AgentServer.agent_info("nonexistent")
+      # => nil
+  """
+  @spec agent_info(String.t()) :: map() | nil
+  def agent_info(agent_id) do
+    case get_pid(agent_id) do
+      nil ->
+        nil
+
+      pid ->
+        state = export_state(agent_id)
+        status = get_status(agent_id)
+
+        %{
+          agent_id: agent_id,
+          pid: pid,
+          status: status,
+          state: state,
+          message_count: length(state.messages),
+          has_interrupt: state.interrupt_data != nil
+        }
+    end
+  end
+
+  # Convert glob pattern to regex
+  # "conversation-*" -> ~r/^conversation-.*$/
+  defp pattern_to_regex(pattern) do
+    escaped = Regex.escape(pattern)
+    regex_str = String.replace(escaped, "\\*", ".*")
+    Regex.compile!("^#{regex_str}$")
   end
 
   @doc """

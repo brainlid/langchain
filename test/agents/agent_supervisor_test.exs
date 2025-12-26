@@ -423,6 +423,153 @@ defmodule LangChain.Agents.AgentSupervisorTest do
     end
   end
 
+  describe "start_link_sync/1" do
+    test "starts supervisor and waits for AgentServer to be ready" do
+      agent = create_test_agent()
+
+      assert {:ok, sup_pid} = AgentSupervisor.start_link_sync(agent: agent)
+      assert Process.alive?(sup_pid)
+
+      # AgentServer should be immediately accessible without any delays
+      assert AgentServer.get_pid(agent.agent_id) != nil
+      assert :idle == AgentServer.get_status(agent.agent_id)
+
+      # Verify all children are started
+      children = Supervisor.which_children(sup_pid)
+      assert length(children) == 3
+
+      # Clean up
+      Supervisor.stop(sup_pid)
+    end
+
+    test "allows immediate interaction with AgentServer after start_link_sync returns" do
+      agent = create_test_agent()
+
+      assert {:ok, sup_pid} = AgentSupervisor.start_link_sync(agent: agent)
+
+      # Should be able to interact with AgentServer immediately without race conditions
+      # These calls would fail if AgentServer wasn't registered yet
+      assert :idle == AgentServer.get_status(agent.agent_id)
+      state = AgentServer.get_state(agent.agent_id)
+      assert state.agent_id == agent.agent_id
+
+      # Should be able to add messages immediately
+      message = Message.new_user!("test")
+      assert :ok == AgentServer.add_message(agent.agent_id, message)
+
+      # Clean up
+      Supervisor.stop(sup_pid)
+    end
+
+    test "works with persistence configs" do
+      agent = create_test_agent()
+
+      config =
+        FileSystemConfig.new!(%{
+          base_directory: "TestDir",
+          persistence_module: LangChain.Agents.FileSystem.Persistence.Disk,
+          storage_opts: [path: "/tmp/test"]
+        })
+
+      assert {:ok, sup_pid} =
+               AgentSupervisor.start_link_sync(
+                 agent: agent,
+                 persistence_configs: [config]
+               )
+
+      # AgentServer should be ready immediately
+      assert AgentServer.get_pid(agent.agent_id) != nil
+
+      # FileSystemServer should have configs
+      fs_pid = FileSystemServer.whereis(agent.agent_id)
+      assert fs_pid != nil
+
+      configs = FileSystemServer.get_persistence_configs(agent.agent_id)
+      assert map_size(configs) == 1
+
+      # Clean up
+      Supervisor.stop(sup_pid)
+    end
+
+    test "works with custom startup timeout" do
+      agent = create_test_agent()
+
+      assert {:ok, sup_pid} =
+               AgentSupervisor.start_link_sync(
+                 agent: agent,
+                 startup_timeout: 10_000
+               )
+
+      assert Process.alive?(sup_pid)
+      assert AgentServer.get_pid(agent.agent_id) != nil
+
+      # Clean up
+      Supervisor.stop(sup_pid)
+    end
+
+    test "handles already started supervisor" do
+      agent = create_test_agent()
+      agent_id = agent.agent_id
+
+      # Start first time with registered name
+      {:ok, sup_pid1} =
+        AgentSupervisor.start_link_sync(
+          agent: agent,
+          name: AgentSupervisor.get_name(agent_id)
+        )
+
+      # Try to start again with same name
+      result =
+        AgentSupervisor.start_link_sync(
+          agent: agent,
+          name: AgentSupervisor.get_name(agent_id)
+        )
+
+      # Should handle already_started gracefully
+      case result do
+        {:ok, sup_pid2} ->
+          # Some supervisors return the existing pid
+          assert sup_pid1 == sup_pid2 or Process.alive?(sup_pid2)
+
+        {:error, {:already_started, sup_pid2}} ->
+          # Also acceptable - supervisor already running
+          assert sup_pid1 == sup_pid2
+      end
+
+      # AgentServer should still be accessible
+      assert AgentServer.get_pid(agent_id) != nil
+
+      # Clean up
+      Supervisor.stop(sup_pid1)
+    end
+
+    test "returns error if AgentServer fails to start within timeout" do
+      # This test verifies the timeout mechanism by using a very short timeout
+      # In normal conditions, agent starts quickly, but we can at least verify
+      # the error format is correct when we get a timeout
+      agent = create_test_agent()
+
+      # Use a ridiculously short timeout to potentially trigger timeout
+      # (though in practice the agent usually starts fast enough)
+      result =
+        AgentSupervisor.start_link_sync(
+          agent: agent,
+          startup_timeout: 1
+        )
+
+      case result do
+        {:ok, sup_pid} ->
+          # Agent started fast enough - still valid
+          assert Process.alive?(sup_pid)
+          Supervisor.stop(sup_pid)
+
+        {:error, {:agent_startup_timeout, agent_id}} ->
+          # Timeout occurred - verify error format
+          assert agent_id == agent.agent_id
+      end
+    end
+  end
+
   describe "inactivity timeout integration" do
     test "supervisor passes inactivity_timeout to AgentServer" do
       agent = create_test_agent()

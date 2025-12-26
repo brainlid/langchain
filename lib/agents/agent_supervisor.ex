@@ -155,6 +155,102 @@ defmodule LangChain.Agents.AgentSupervisor do
     Supervisor.start_link(__MODULE__, config, name: name)
   end
 
+  @doc """
+  Start the AgentSupervisor and wait for the AgentServer to be ready.
+
+  This is a synchronous version of `start_link/1` that waits for the AgentServer
+  child process to be fully registered before returning. This prevents race
+  conditions where callers try to interact with the AgentServer (e.g., subscribe,
+  add_message) before it's ready.
+
+  ## Why This Is Needed
+
+  When `start_link/1` returns successfully, the supervisor is running but its
+  children are still completing their initialization asynchronously. If you
+  immediately try to call `AgentServer.get_pid/1` or `AgentServer.subscribe/1`,
+  the AgentServer might not be registered yet, causing failures.
+
+  This function solves that by:
+  1. Starting the supervisor normally
+  2. Polling for the AgentServer to be registered with exponential backoff
+  3. Returning only when the AgentServer is confirmed ready
+
+  ## Use Cases
+
+  Use this function when you need immediate access to the AgentServer:
+  - Web request handlers that need to subscribe or send messages right away
+  - CLI tools that need synchronous agent startup
+  - Test setups that require the agent to be fully ready
+
+  Use regular `start_link/1` when:
+  - Startup timing isn't critical
+  - You can handle eventual consistency
+  - You're starting many agents in parallel
+
+  ## Options
+
+  Same as `start_link/1`, plus:
+  - `:startup_timeout` - Maximum time to wait for AgentServer readiness (default: 5000ms)
+
+  ## Examples
+
+      # Start and wait for agent to be ready
+      {:ok, sup_pid} = AgentSupervisor.start_link_sync(
+        agent: agent,
+        pubsub: {Phoenix.PubSub, :my_app_pubsub}
+      )
+
+      # Agent is guaranteed to be ready - safe to use immediately
+      :ok = AgentServer.subscribe(agent.agent_id)
+
+      # Custom startup timeout
+      {:ok, sup_pid} = AgentSupervisor.start_link_sync(
+        agent: agent,
+        startup_timeout: 10_000
+      )
+
+  ## Returns
+
+  - `{:ok, supervisor_pid}` - Supervisor started and AgentServer is ready
+  - `{:error, {:agent_startup_timeout, agent_id}}` - AgentServer failed to become ready
+  - `{:error, reason}` - Supervisor failed to start
+  """
+  @spec start_link_sync(keyword()) :: {:ok, pid()} | {:error, term()}
+  def start_link_sync(config) do
+    # Extract startup_timeout before passing to start_link
+    {startup_timeout, config} = Keyword.pop(config, :startup_timeout, 5_000)
+
+    # Get agent_id for waiting
+    agent = Keyword.fetch!(config, :agent)
+    agent_id = agent.agent_id
+
+    # Start supervisor normally
+    case start_link(config) do
+      {:ok, sup_pid} ->
+        # Wait for AgentServer to be ready
+        case wait_for_agent_ready(agent_id, startup_timeout) do
+          :ok ->
+            {:ok, sup_pid}
+
+          {:error, :timeout} ->
+            {:error, {:agent_startup_timeout, agent_id}}
+        end
+
+      {:error, {:already_started, sup_pid}} ->
+        # Already running - verify AgentServer is ready
+        case wait_for_agent_ready(agent_id, startup_timeout) do
+          :ok ->
+            {:ok, sup_pid}
+
+          {:error, :timeout} ->
+            {:error, {:agent_startup_timeout, agent_id}}
+        end
+
+      error ->
+        error
+    end
+  end
+
   @impl true
   def init(config) do
     # Extract and validate agent first (before accessing agent_id)
@@ -221,5 +317,33 @@ defmodule LangChain.Agents.AgentSupervisor do
     # - AgentServer crash: AgentServer and SubAgentsDynamicSupervisor restart
     # - SubAgentsDynamicSupervisor crash: only itself restarts
     Supervisor.init(children, strategy: :rest_for_one)
+  end
+
+  ## Private Helpers
+
+  # Wait for the AgentServer to be registered and ready
+  # Retries with exponential backoff up to the timeout
+  defp wait_for_agent_ready(agent_id, timeout_ms) do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+    do_wait_for_agent_ready(agent_id, deadline, 10)
+  end
+
+  defp do_wait_for_agent_ready(agent_id, deadline, retry_delay_ms) do
+    case AgentServer.get_pid(agent_id) do
+      nil ->
+        now = System.monotonic_time(:millisecond)
+
+        if now >= deadline do
+          {:error, :timeout}
+        else
+          # Sleep briefly and retry with exponential backoff (max 100ms)
+          Process.sleep(retry_delay_ms)
+          next_delay = min(retry_delay_ms * 2, 100)
+          do_wait_for_agent_ready(agent_id, deadline, next_delay)
+        end
+
+      pid when is_pid(pid) ->
+        :ok
+    end
   end
 end
