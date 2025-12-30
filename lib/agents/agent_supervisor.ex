@@ -3,22 +3,25 @@ defmodule LangChain.Agents.AgentSupervisor do
   Custom supervisor for managing an Agent and its supporting infrastructure.
 
   AgentSupervisor coordinates the lifecycle of:
-  - FileSystemServer - Persistent virtual filesystem with ETS storage
   - AgentServer - Agent execution and state management
   - SubAgentsDynamicSupervisor - Dynamic supervisor for spawning sub-agents
 
   ## Supervision Strategy
 
   Uses `:rest_for_one` strategy to ensure crash resilience:
-  - If FileSystemServer crashes, all children restart
-  - If AgentServer crashes, only AgentServer and SubAgentsDynamicSupervisor restart
-  - FileSystemServer (with ETS state) survives AgentServer crashes
+  - If AgentServer crashes, SubAgentsDynamicSupervisor restarts
+  - SubAgentsDynamicSupervisor crashes only affect itself
+
+  ## Filesystem Integration
+
+  Filesystems are now managed independently via FileSystemSupervisor.
+  Agents reference filesystems through the `filesystem_scope` field in the Agent struct.
+  See `LangChain.Agents.FileSystem` for filesystem lifecycle management.
 
   ## Configuration
 
   Accepts a keyword list with:
   - `:agent` - The Agent struct (required)
-  - `:persistence_configs` - List of FileSystemConfig structs (optional, default: [])
   - `:initial_state` - Initial State for AgentServer (optional)
   - `:pubsub` - PubSub configuration as `{module(), atom()}` tuple or `nil` (optional, default: nil)
   - `:shutdown_delay` - Delay in milliseconds to allow the supervisor to gracefully stop all children (optional, default: 5000)
@@ -34,18 +37,6 @@ defmodule LangChain.Agents.AgentSupervisor do
 
       {:ok, sup_pid} = AgentSupervisor.start_link(agent: agent)
 
-      # With persistence
-      {:ok, config} = FileSystemConfig.new(%{
-        base_directory: "Memories",
-        persistence_module: LangChain.Agents.FileSystem.Persistence.Disk,
-        storage_opts: [path: "/data/agents"]
-      })
-
-      {:ok, sup_pid} = AgentSupervisor.start_link(
-        agent: agent,
-        persistence_configs: [config]
-      )
-
       # With initial state and PubSub
       initial_state = State.new!(%{
         messages: [Message.new_user!("Hello!")]
@@ -56,13 +47,32 @@ defmodule LangChain.Agents.AgentSupervisor do
         initial_state: initial_state,
         pubsub: {Phoenix.PubSub, :my_app_pubsub}
       )
+
+      # With external filesystem
+      # Start filesystem separately
+      {:ok, config} = FileSystemConfig.new(%{
+        scope_key: {:user, 123},
+        base_directory: "Memories",
+        persistence_module: LangChain.Agents.FileSystem.Persistence.Disk,
+        storage_opts: [path: "/data/users/123"]
+      })
+      {:ok, _fs_pid} = FileSystem.ensure_filesystem({:user, 123}, [config])
+
+      # Create agent with filesystem reference
+      {:ok, agent} = Agent.new(%{
+        agent_id: "my-agent",
+        model: model,
+        filesystem_scope: {:user, 123}
+      })
+
+      {:ok, sup_pid} = AgentSupervisor.start_link(agent: agent)
   """
 
   use Supervisor
+  require Logger
 
   alias LangChain.Agents.Agent
   alias LangChain.Agents.AgentServer
-  alias LangChain.Agents.FileSystemServer
   alias LangChain.Agents.SubAgentsDynamicSupervisor
   alias LangChain.Agents.State
 
@@ -107,7 +117,6 @@ defmodule LangChain.Agents.AgentSupervisor do
   ## Options
 
   - `:agent` - The Agent struct (required)
-  - `:persistence_configs` - List of FileSystemConfig structs (optional, default: [])
   - `:initial_state` - Initial State for AgentServer (optional)
   - `:pubsub` - PubSub configuration as `{module(), atom()}` tuple or `nil` (optional, default: nil)
   - `:debug_pubsub` - Optional debug PubSub configuration as `{module(), atom()}` or `nil` (optional, default: nil)
@@ -120,7 +129,6 @@ defmodule LangChain.Agents.AgentSupervisor do
 
       {:ok, sup_pid} = AgentSupervisor.start_link(
         agent: agent,
-        persistence_configs: [config],
         pubsub: {Phoenix.PubSub, :my_app_pubsub}
       )
 
@@ -268,8 +276,7 @@ defmodule LangChain.Agents.AgentSupervisor do
       raise ArgumentError, "Agent must have a valid agent_id"
     end
 
-    # Extract remaining configuration (safe to use agent.agent_id)
-    persistence_configs = Keyword.get(config, :persistence_configs, [])
+    # Extract remaining configuration
     initial_state = Keyword.get(config, :initial_state, State.new!(%{agent_id: agent.agent_id}))
     pubsub = Keyword.get(config, :pubsub)
     debug_pubsub = Keyword.get(config, :debug_pubsub)
@@ -297,24 +304,18 @@ defmodule LangChain.Agents.AgentSupervisor do
         else: agent_server_opts
 
     # Build child specifications
+    # Note: FileSystemServer is now managed independently via FileSystemSupervisor
+    # Agents reference filesystems through the filesystem_scope field
     children = [
-      # 1. FileSystemServer - starts first, survives AgentServer crashes
-      {FileSystemServer,
-       [
-         agent_id: agent_id,
-         persistence_configs: persistence_configs
-       ]},
-
-      # 2. AgentServer - manages agent execution
+      # 1. AgentServer - manages agent execution
       {AgentServer, agent_server_opts},
 
-      # 3. SubAgentsDynamicSupervisor - for spawning sub-agents
+      # 2. SubAgentsDynamicSupervisor - for spawning sub-agents
       {SubAgentsDynamicSupervisor, agent_id: agent_id}
     ]
 
     # Use :rest_for_one strategy
-    # - FileSystemServer crash: all restart
-    # - AgentServer crash: AgentServer and SubAgentsDynamicSupervisor restart
+    # - AgentServer crash: SubAgentsDynamicSupervisor restarts
     # - SubAgentsDynamicSupervisor crash: only itself restarts
     Supervisor.init(children, strategy: :rest_for_one)
   end
@@ -325,21 +326,28 @@ defmodule LangChain.Agents.AgentSupervisor do
   # Retries with exponential backoff up to the timeout
   defp wait_for_agent_ready(agent_id, timeout_ms) do
     deadline = System.monotonic_time(:millisecond) + timeout_ms
-    do_wait_for_agent_ready(agent_id, deadline, 10)
+    do_wait_for_agent_ready(agent_id, deadline, 10, 0)
   end
 
-  defp do_wait_for_agent_ready(agent_id, deadline, retry_delay_ms) do
+  defp do_wait_for_agent_ready(agent_id, deadline, retry_delay_ms, attempt) do
     case AgentServer.get_pid(agent_id) do
       nil ->
         now = System.monotonic_time(:millisecond)
+        time_left = deadline - now
 
         if now >= deadline do
+          Logger.error("AgentServer #{agent_id} failed to register within timeout (#{attempt} attempts)")
           {:error, :timeout}
         else
+          # Log first few attempts and then periodically
+          if attempt < 3 or rem(attempt, 10) == 0 do
+            Logger.debug("AgentServer #{agent_id} not yet registered, retrying... (attempt #{attempt}, #{time_left}ms left)")
+          end
+
           # Sleep briefly and retry with exponential backoff (max 100ms)
           Process.sleep(retry_delay_ms)
           next_delay = min(retry_delay_ms * 2, 100)
-          do_wait_for_agent_ready(agent_id, deadline, next_delay)
+          do_wait_for_agent_ready(agent_id, deadline, next_delay, attempt + 1)
         end
 
       pid when is_pid(pid) ->

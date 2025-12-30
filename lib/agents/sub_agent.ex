@@ -178,7 +178,6 @@ defmodule LangChain.Agents.SubAgent do
     parent_agent_id = Keyword.fetch!(opts, :parent_agent_id)
     instructions = Keyword.fetch!(opts, :instructions)
     agent_config = Keyword.fetch!(opts, :agent_config)
-    _parent_state = Keyword.fetch!(opts, :parent_state)
 
     # Generate unique ID
     sub_agent_id = "#{parent_agent_id}-sub-#{:erlang.unique_integer([:positive])}"
@@ -186,8 +185,22 @@ defmodule LangChain.Agents.SubAgent do
     # Build the chain with system prompt + user message
     messages = build_initial_messages(agent_config.assembled_system_prompt, instructions)
 
+    # Create SubAgent's OWN state - fresh and independent from parent
+    # This ensures true isolation
+    subagent_state = State.new!(%{agent_id: sub_agent_id})
+
+    # Build custom_context with SubAgent's OWN state (not parent's!)
+    # Tools in SubAgent will access/modify SubAgent's state, not parent's
+    custom_context = %{
+      state: subagent_state,
+      parent_middleware: agent_config.middleware
+    }
+
     chain =
-      LLMChain.new!(%{llm: agent_config.model})
+      LLMChain.new!(%{
+        llm: agent_config.model,
+        custom_context: custom_context
+      })
       |> LLMChain.add_tools(agent_config.tools)
       |> LLMChain.add_messages(messages)
 
@@ -232,7 +245,6 @@ defmodule LangChain.Agents.SubAgent do
     parent_agent_id = Keyword.fetch!(opts, :parent_agent_id)
     instructions = Keyword.fetch!(opts, :instructions)
     compiled_agent = Keyword.fetch!(opts, :compiled_agent)
-    _parent_state = Keyword.fetch!(opts, :parent_state)
     initial_messages = Keyword.get(opts, :initial_messages, [])
 
     # Generate unique ID
@@ -243,8 +255,22 @@ defmodule LangChain.Agents.SubAgent do
     user_message = Message.new_user!(instructions)
     all_messages = system_messages ++ initial_messages ++ [user_message]
 
+    # Create SubAgent's OWN state - fresh and independent from parent
+    # This ensures true isolation and prevents memory waste from parent's message history
+    subagent_state = State.new!(%{agent_id: sub_agent_id})
+
+    # Build custom_context with SubAgent's OWN state (not parent's!)
+    # Tools in SubAgent will access/modify SubAgent's state, not parent's
+    custom_context = %{
+      state: subagent_state,
+      parent_middleware: compiled_agent.middleware
+    }
+
     chain =
-      LLMChain.new!(%{llm: compiled_agent.model})
+      LLMChain.new!(%{
+        llm: compiled_agent.model,
+        custom_context: custom_context
+      })
       |> LLMChain.add_tools(compiled_agent.tools)
       |> LLMChain.add_messages(all_messages)
 

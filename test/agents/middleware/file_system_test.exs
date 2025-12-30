@@ -13,7 +13,7 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
   setup do
     # Generate unique agent ID for each test
     agent_id = "test_agent_#{System.unique_integer([:positive])}"
-    {:ok, _pid} = start_supervised({FileSystemServer, agent_id: agent_id})
+    {:ok, _pid} = start_supervised({FileSystemServer, scope_key: {:agent, agent_id}})
 
     %{agent_id: agent_id}
   end
@@ -21,7 +21,7 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
   describe "init/1" do
     test "initializes with agent_id", %{agent_id: agent_id} do
       assert {:ok, config} = FileSystem.init(agent_id: agent_id)
-      assert config.agent_id == agent_id
+      assert config.filesystem_scope == {:agent, agent_id}
 
       assert config.enabled_tools == [
                "ls",
@@ -38,7 +38,7 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
 
     test "initializes with custom enabled_tools", %{agent_id: agent_id} do
       assert {:ok, config} =
-               FileSystem.init(agent_id: agent_id, enabled_tools: ["ls", "read_file"])
+               FileSystem.init(filesystem_scope: {:agent, agent_id}, enabled_tools: ["ls", "read_file"])
 
       assert config.enabled_tools == ["ls", "read_file"]
     end
@@ -74,7 +74,7 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
     test "returns all seven filesystem tools by default", %{agent_id: agent_id} do
       tools =
         FileSystem.tools(%{
-          agent_id: agent_id,
+          filesystem_scope: {:agent, agent_id},
           enabled_tools: [
             "ls",
             "read_file",
@@ -98,7 +98,7 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
     end
 
     test "returns only enabled tools", %{agent_id: agent_id} do
-      tools = FileSystem.tools(%{agent_id: agent_id, enabled_tools: ["ls", "read_file"]})
+      tools = FileSystem.tools(%{filesystem_scope: {:agent, agent_id}, enabled_tools: ["ls", "read_file"]})
 
       assert length(tools) == 2
       tool_names = Enum.map(tools, & &1.name)
@@ -112,12 +112,12 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
   describe "ls tool" do
     test "lists files in filesystem", %{agent_id: agent_id} do
       # Write some files
-      FileSystemServer.write_file(agent_id, "/file1.txt", "content1")
-      FileSystemServer.write_file(agent_id, "/file2.txt", "content2")
+      FileSystemServer.write_file({:agent, agent_id}, "/file1.txt", "content1")
+      FileSystemServer.write_file({:agent, agent_id}, "/file2.txt", "content2")
 
       [ls_tool | _] =
         FileSystem.tools(%{
-          agent_id: agent_id,
+          filesystem_scope: {:agent, agent_id},
           enabled_tools: ["ls", "read_file", "write_file", "edit_file"]
         })
 
@@ -129,7 +129,7 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
     test "reports empty filesystem", %{agent_id: agent_id} do
       [ls_tool | _] =
         FileSystem.tools(%{
-          agent_id: agent_id,
+          filesystem_scope: {:agent, agent_id},
           enabled_tools: ["ls", "read_file", "write_file", "edit_file"]
         })
 
@@ -138,13 +138,13 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
     end
 
     test "filters by pattern", %{agent_id: agent_id} do
-      FileSystemServer.write_file(agent_id, "/test.txt", "content")
-      FileSystemServer.write_file(agent_id, "/test.md", "content")
-      FileSystemServer.write_file(agent_id, "/other.txt", "content")
+      FileSystemServer.write_file({:agent, agent_id}, "/test.txt", "content")
+      FileSystemServer.write_file({:agent, agent_id}, "/test.md", "content")
+      FileSystemServer.write_file({:agent, agent_id}, "/other.txt", "content")
 
       [ls_tool | _] =
         FileSystem.tools(%{
-          agent_id: agent_id,
+          filesystem_scope: {:agent, agent_id},
           enabled_tools: ["ls", "read_file", "write_file", "edit_file"]
         })
 
@@ -165,11 +165,11 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
       line 5
       """
 
-      FileSystemServer.write_file(agent_id, "/test.txt", String.trim(content))
+      FileSystemServer.write_file({:agent, agent_id}, "/test.txt", String.trim(content))
 
       [_, read_file_tool | _] =
         FileSystem.tools(%{
-          agent_id: agent_id,
+          filesystem_scope: {:agent, agent_id},
           enabled_tools: ["ls", "read_file", "write_file", "edit_file"]
         })
 
@@ -232,7 +232,7 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
     setup %{agent_id: agent_id} do
       [_, _, write_file_tool | _] =
         FileSystem.tools(%{
-          agent_id: agent_id,
+          filesystem_scope: {:agent, agent_id},
           enabled_tools: ["ls", "read_file", "write_file", "edit_file"]
         })
 
@@ -246,13 +246,13 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
       assert message =~ "created successfully"
 
       # Verify file was created in FileSystemServer
-      {:ok, content} = FileSystemServer.read_file(agent_id, "/new.txt")
+      {:ok, content} = FileSystemServer.read_file({:agent, agent_id}, "/new.txt")
       assert content == "Hello, World!"
     end
 
     test "rejects overwriting existing file", %{agent_id: agent_id, tool: tool} do
       # Create a file first
-      FileSystemServer.write_file(agent_id, "/existing.txt", "original")
+      FileSystemServer.write_file({:agent, agent_id}, "/existing.txt", "original")
 
       args = %{"file_path" => "/existing.txt", "content" => "new content"}
 
@@ -277,11 +277,11 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
 
   describe "edit_file tool" do
     setup %{agent_id: agent_id} do
-      FileSystemServer.write_file(agent_id, "/edit.txt", "Hello World")
+      FileSystemServer.write_file({:agent, agent_id}, "/edit.txt", "Hello World")
 
       [_, _, _, edit_file_tool] =
         FileSystem.tools(%{
-          agent_id: agent_id,
+          filesystem_scope: {:agent, agent_id},
           enabled_tools: ["ls", "read_file", "write_file", "edit_file"]
         })
 
@@ -299,7 +299,7 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
       assert message =~ "edited successfully"
 
       # Verify content changed
-      {:ok, content} = FileSystemServer.read_file(agent_id, "/edit.txt")
+      {:ok, content} = FileSystemServer.read_file({:agent, agent_id}, "/edit.txt")
       assert content == "Hello Elixir"
     end
 
@@ -315,7 +315,7 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
     end
 
     test "errors on multiple occurrences without replace_all", %{agent_id: agent_id, tool: tool} do
-      FileSystemServer.write_file(agent_id, "/multi.txt", "test test test")
+      FileSystemServer.write_file({:agent, agent_id}, "/multi.txt", "test test test")
 
       args = %{
         "file_path" => "/multi.txt",
@@ -329,7 +329,7 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
     end
 
     test "replaces all occurrences with replace_all: true", %{agent_id: agent_id, tool: tool} do
-      FileSystemServer.write_file(agent_id, "/multi.txt", "test test test")
+      FileSystemServer.write_file({:agent, agent_id}, "/multi.txt", "test test test")
 
       args = %{
         "file_path" => "/multi.txt",
@@ -342,7 +342,7 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
       assert message =~ "edited successfully"
       assert message =~ "3 replacements"
 
-      {:ok, content} = FileSystemServer.read_file(agent_id, "/multi.txt")
+      {:ok, content} = FileSystemServer.read_file({:agent, agent_id}, "/multi.txt")
       assert content == "foo foo foo"
     end
 
@@ -408,7 +408,7 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
 
     test "finds matches in a single file with line numbers", %{agent_id: agent_id} do
       # Setup: create a file with searchable content
-      FileSystemServer.write_file(agent_id, "/test.txt", """
+      FileSystemServer.write_file({:agent, agent_id}, "/test.txt", """
       Hello World
       This is a test
       TODO: Add feature
@@ -432,7 +432,7 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
     end
 
     test "returns no matches when pattern not found", %{agent_id: agent_id} do
-      FileSystemServer.write_file(agent_id, "/test.txt", """
+      FileSystemServer.write_file({:agent, agent_id}, "/test.txt", """
       Hello World
       This is a test
       """)
@@ -447,7 +447,7 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
     end
 
     test "handles case-insensitive search", %{agent_id: agent_id} do
-      FileSystemServer.write_file(agent_id, "/test.txt", """
+      FileSystemServer.write_file({:agent, agent_id}, "/test.txt", """
       Hello World
       hello world
       HELLO WORLD
@@ -466,7 +466,7 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
     end
 
     test "handles case-sensitive search", %{agent_id: agent_id} do
-      FileSystemServer.write_file(agent_id, "/test.txt", """
+      FileSystemServer.write_file({:agent, agent_id}, "/test.txt", """
       Hello World
       hello world
       HELLO WORLD
@@ -485,7 +485,7 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
     end
 
     test "supports regex patterns", %{agent_id: agent_id} do
-      FileSystemServer.write_file(agent_id, "/test.txt", """
+      FileSystemServer.write_file({:agent, agent_id}, "/test.txt", """
       error123
       warning456
       error789
@@ -506,7 +506,7 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
     end
 
     test "returns error for invalid regex pattern", %{agent_id: agent_id} do
-      FileSystemServer.write_file(agent_id, "/test.txt", "content")
+      FileSystemServer.write_file({:agent, agent_id}, "/test.txt", "content")
 
       {:ok, config} = FileSystem.init(agent_id: agent_id)
       search_tool = config |> FileSystem.tools() |> get_search_text_tool()
@@ -530,7 +530,7 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
 
   describe "search_text tool - context lines" do
     test "includes context lines before and after matches", %{agent_id: agent_id} do
-      FileSystemServer.write_file(agent_id, "/test.txt", """
+      FileSystemServer.write_file({:agent, agent_id}, "/test.txt", """
       Before context 1
       Before context 2
       MATCH HERE
@@ -555,7 +555,7 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
     end
 
     test "handles context at file boundaries", %{agent_id: agent_id} do
-      FileSystemServer.write_file(agent_id, "/test.txt", """
+      FileSystemServer.write_file({:agent, agent_id}, "/test.txt", """
       MATCH at start
       After
       """)
@@ -575,17 +575,17 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
   describe "search_text tool - multi-file search" do
     test "searches across all files when no file_path specified", %{agent_id: agent_id} do
       # Create multiple files
-      FileSystemServer.write_file(agent_id, "/file1.txt", """
+      FileSystemServer.write_file({:agent, agent_id}, "/file1.txt", """
       TODO in file 1
       Normal line
       """)
 
-      FileSystemServer.write_file(agent_id, "/file2.txt", """
+      FileSystemServer.write_file({:agent, agent_id}, "/file2.txt", """
       Normal line
       TODO in file 2
       """)
 
-      FileSystemServer.write_file(agent_id, "/file3.txt", """
+      FileSystemServer.write_file({:agent, agent_id}, "/file3.txt", """
       No match here
       """)
 
@@ -605,8 +605,8 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
     end
 
     test "returns no matches when pattern not in any file", %{agent_id: agent_id} do
-      FileSystemServer.write_file(agent_id, "/file1.txt", "content 1")
-      FileSystemServer.write_file(agent_id, "/file2.txt", "content 2")
+      FileSystemServer.write_file({:agent, agent_id}, "/file1.txt", "content 1")
+      FileSystemServer.write_file({:agent, agent_id}, "/file2.txt", "content 2")
 
       {:ok, config} = FileSystem.init(agent_id: agent_id)
       search_tool = config |> FileSystem.tools() |> get_search_text_tool()
@@ -625,7 +625,7 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
         Enum.map(1..100, fn i -> "Line #{i}: MATCH #{i}" end)
         |> Enum.join("\n")
 
-      FileSystemServer.write_file(agent_id, "/test.txt", content)
+      FileSystemServer.write_file({:agent, agent_id}, "/test.txt", content)
 
       {:ok, config} = FileSystem.init(agent_id: agent_id)
       search_tool = config |> FileSystem.tools() |> get_search_text_tool()
@@ -650,7 +650,7 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
         Enum.map(1..60, fn i -> "Line #{i}: MATCH #{i}" end)
         |> Enum.join("\n")
 
-      FileSystemServer.write_file(agent_id, "/test.txt", content)
+      FileSystemServer.write_file({:agent, agent_id}, "/test.txt", content)
 
       {:ok, config} = FileSystem.init(agent_id: agent_id)
       search_tool = config |> FileSystem.tools() |> get_search_text_tool()
@@ -697,7 +697,7 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
     test "search_text tool can be disabled via config", %{agent_id: agent_id} do
       {:ok, config} =
         FileSystem.init(
-          agent_id: agent_id,
+          filesystem_scope: {:agent, agent_id},
           enabled_tools: ["ls", "read_file", "write_file"]
         )
 
@@ -730,7 +730,7 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
   describe "search_text tool - integration scenarios" do
     test "search then read workflow", %{agent_id: agent_id} do
       # Create a file with searchable content
-      FileSystemServer.write_file(agent_id, "/project.md", """
+      FileSystemServer.write_file({:agent, agent_id}, "/project.md", """
       # Project Documentation
 
       ## Section 1
@@ -768,14 +768,14 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
     end
 
     test "search across multiple files with different patterns", %{agent_id: agent_id} do
-      FileSystemServer.write_file(agent_id, "/config.json", """
+      FileSystemServer.write_file({:agent, agent_id}, "/config.json", """
       {
         "error_log": true,
         "debug": false
       }
       """)
 
-      FileSystemServer.write_file(agent_id, "/app.log", """
+      FileSystemServer.write_file({:agent, agent_id}, "/app.log", """
       2024-01-01 10:00:00 INFO: Application started
       2024-01-01 10:05:00 ERROR: Connection failed
       2024-01-01 10:10:00 INFO: Retrying...
@@ -810,7 +810,7 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
     end
 
     test "replaces a single line", %{agent_id: agent_id} do
-      FileSystemServer.write_file(agent_id, "/test.txt", """
+      FileSystemServer.write_file({:agent, agent_id}, "/test.txt", """
       Line 1
       Line 2
       Line 3
@@ -834,7 +834,7 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
       assert result =~ "Replaced 1 lines (3-3)"
 
       # Verify file content
-      {:ok, content} = FileSystemServer.read_file(agent_id, "/test.txt")
+      {:ok, content} = FileSystemServer.read_file({:agent, agent_id}, "/test.txt")
       assert content =~ "Line 1"
       assert content =~ "Line 2"
       assert content =~ "REPLACED LINE 3"
@@ -844,7 +844,7 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
     end
 
     test "replaces multiple lines", %{agent_id: agent_id} do
-      FileSystemServer.write_file(agent_id, "/test.txt", """
+      FileSystemServer.write_file({:agent, agent_id}, "/test.txt", """
       Line 1
       Line 2
       Line 3
@@ -868,13 +868,13 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
       assert result =~ "Replaced 3 lines (2-4)"
 
       # Verify file content
-      {:ok, content} = FileSystemServer.read_file(agent_id, "/test.txt")
+      {:ok, content} = FileSystemServer.read_file({:agent, agent_id}, "/test.txt")
       lines = String.split(content, "\n", trim: true)
       assert lines == ["Line 1", "NEW LINE A", "NEW LINE B", "Line 5"]
     end
 
     test "replaces with multi-line content", %{agent_id: agent_id} do
-      FileSystemServer.write_file(agent_id, "/story.txt", """
+      FileSystemServer.write_file({:agent, agent_id}, "/story.txt", """
       Chapter 1
       Old paragraph 1
       Old paragraph 2
@@ -900,7 +900,7 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
       {:ok, result} = edit_lines_tool.function.(args, %{})
       assert result =~ "Replaced 2 lines"
 
-      {:ok, content} = FileSystemServer.read_file(agent_id, "/story.txt")
+      {:ok, content} = FileSystemServer.read_file({:agent, agent_id}, "/story.txt")
       assert content =~ "Chapter 1"
       assert content =~ "New paragraph 1"
       assert content =~ "New paragraph 2"
@@ -912,7 +912,7 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
 
   describe "edit_lines tool - boundary conditions" do
     test "replaces first line only", %{agent_id: agent_id} do
-      FileSystemServer.write_file(agent_id, "/test.txt", """
+      FileSystemServer.write_file({:agent, agent_id}, "/test.txt", """
       Line 1
       Line 2
       Line 3
@@ -931,13 +931,13 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
       {:ok, result} = edit_lines_tool.function.(args, %{})
       assert result =~ "Replaced 1 lines (1-1)"
 
-      {:ok, content} = FileSystemServer.read_file(agent_id, "/test.txt")
+      {:ok, content} = FileSystemServer.read_file({:agent, agent_id}, "/test.txt")
       lines = String.split(content, "\n", trim: true)
       assert lines == ["REPLACED FIRST LINE", "Line 2", "Line 3"]
     end
 
     test "replaces last line only", %{agent_id: agent_id} do
-      FileSystemServer.write_file(agent_id, "/test.txt", """
+      FileSystemServer.write_file({:agent, agent_id}, "/test.txt", """
       Line 1
       Line 2
       Line 3
@@ -956,13 +956,13 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
       {:ok, result} = edit_lines_tool.function.(args, %{})
       assert result =~ "Replaced 1 lines (4-4)"
 
-      {:ok, content} = FileSystemServer.read_file(agent_id, "/test.txt")
+      {:ok, content} = FileSystemServer.read_file({:agent, agent_id}, "/test.txt")
       lines = String.split(content, "\n", trim: true)
       assert lines == ["Line 1", "Line 2", "Line 3", "REPLACED LAST LINE"]
     end
 
     test "replaces entire file", %{agent_id: agent_id} do
-      FileSystemServer.write_file(agent_id, "/test.txt", """
+      FileSystemServer.write_file({:agent, agent_id}, "/test.txt", """
       Line 1
       Line 2
       Line 3
@@ -981,12 +981,12 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
       {:ok, result} = edit_lines_tool.function.(args, %{})
       assert result =~ "Replaced 4 lines (1-4)"
 
-      {:ok, content} = FileSystemServer.read_file(agent_id, "/test.txt")
+      {:ok, content} = FileSystemServer.read_file({:agent, agent_id}, "/test.txt")
       assert String.trim(content) == "Completely new content"
     end
 
     test "replaces with empty content", %{agent_id: agent_id} do
-      FileSystemServer.write_file(agent_id, "/test.txt", """
+      FileSystemServer.write_file({:agent, agent_id}, "/test.txt", """
       Line 1
       Line 2
       Line 3
@@ -1005,7 +1005,7 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
       {:ok, result} = edit_lines_tool.function.(args, %{})
       assert result =~ "Replaced 1 lines"
 
-      {:ok, content} = FileSystemServer.read_file(agent_id, "/test.txt")
+      {:ok, content} = FileSystemServer.read_file({:agent, agent_id}, "/test.txt")
       lines = String.split(content, "\n", trim: true)
       # Empty string creates an empty line
       assert length(lines) == 2
@@ -1029,7 +1029,7 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
     end
 
     test "returns error when start_line is less than 1", %{agent_id: agent_id} do
-      FileSystemServer.write_file(agent_id, "/test.txt", "Line 1\nLine 2")
+      FileSystemServer.write_file({:agent, agent_id}, "/test.txt", "Line 1\nLine 2")
 
       {:ok, config} = FileSystem.init(agent_id: agent_id)
       edit_lines_tool = config |> FileSystem.tools() |> get_edit_lines_tool()
@@ -1046,7 +1046,7 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
     end
 
     test "returns error when end_line is less than start_line", %{agent_id: agent_id} do
-      FileSystemServer.write_file(agent_id, "/test.txt", "Line 1\nLine 2\nLine 3")
+      FileSystemServer.write_file({:agent, agent_id}, "/test.txt", "Line 1\nLine 2\nLine 3")
 
       {:ok, config} = FileSystem.init(agent_id: agent_id)
       edit_lines_tool = config |> FileSystem.tools() |> get_edit_lines_tool()
@@ -1063,7 +1063,7 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
     end
 
     test "returns error when start_line is beyond file length", %{agent_id: agent_id} do
-      FileSystemServer.write_file(agent_id, "/test.txt", "Line 1\nLine 2")
+      FileSystemServer.write_file({:agent, agent_id}, "/test.txt", "Line 1\nLine 2")
 
       {:ok, config} = FileSystem.init(agent_id: agent_id)
       edit_lines_tool = config |> FileSystem.tools() |> get_edit_lines_tool()
@@ -1080,7 +1080,7 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
     end
 
     test "returns error when end_line is beyond file length", %{agent_id: agent_id} do
-      FileSystemServer.write_file(agent_id, "/test.txt", "Line 1\nLine 2\nLine 3")
+      FileSystemServer.write_file({:agent, agent_id}, "/test.txt", "Line 1\nLine 2\nLine 3")
 
       {:ok, config} = FileSystem.init(agent_id: agent_id)
       edit_lines_tool = config |> FileSystem.tools() |> get_edit_lines_tool()
@@ -1156,7 +1156,7 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
 
   describe "edit_lines tool - integration scenarios" do
     test "read then edit_lines workflow", %{agent_id: agent_id} do
-      FileSystemServer.write_file(agent_id, "/document.md", """
+      FileSystemServer.write_file({:agent, agent_id}, "/document.md", """
       # Title
 
       ## Section 1
@@ -1201,7 +1201,7 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
     test "edit_lines can be disabled via config", %{agent_id: agent_id} do
       {:ok, config} =
         FileSystem.init(
-          agent_id: agent_id,
+          filesystem_scope: {:agent, agent_id},
           enabled_tools: ["ls", "read_file", "write_file"]
         )
 

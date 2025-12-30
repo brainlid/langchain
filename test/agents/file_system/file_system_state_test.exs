@@ -24,9 +24,9 @@ defmodule LangChain.Agents.FileSystem.FileSystemStateTest do
   describe "new/1" do
     test "creates state with empty files map" do
       agent_id = "test_agent_#{System.unique_integer([:positive])}"
-      assert {:ok, state} = FileSystemState.new(agent_id: agent_id)
+      assert {:ok, state} = FileSystemState.new(scope_key: {:agent, agent_id})
 
-      assert state.agent_id == agent_id
+      assert state.scope_key == {:agent, agent_id}
       assert state.files == %{}
       assert state.persistence_configs == %{}
       assert state.debounce_timers == %{}
@@ -36,7 +36,7 @@ defmodule LangChain.Agents.FileSystem.FileSystemStateTest do
   describe "write_file/4" do
     setup do
       agent_id = "test_agent_#{System.unique_integer([:positive])}"
-      {:ok, state} = FileSystemState.new(agent_id: agent_id)
+      {:ok, state} = FileSystemState.new(scope_key: {:agent, agent_id})
       %{state: state}
     end
 
@@ -115,7 +115,7 @@ defmodule LangChain.Agents.FileSystem.FileSystemStateTest do
   describe "delete_file/2" do
     setup do
       agent_id = "test_agent_#{System.unique_integer([:positive])}"
-      {:ok, state} = FileSystemState.new(agent_id: agent_id)
+      {:ok, state} = FileSystemState.new(scope_key: {:agent, agent_id})
       %{state: state}
     end
 
@@ -185,7 +185,7 @@ defmodule LangChain.Agents.FileSystem.FileSystemStateTest do
   describe "register_persistence/2" do
     setup do
       agent_id = "test_agent_#{System.unique_integer([:positive])}"
-      {:ok, state} = FileSystemState.new(agent_id: agent_id)
+      {:ok, state} = FileSystemState.new(scope_key: {:agent, agent_id})
       %{state: state}
     end
 
@@ -243,7 +243,7 @@ defmodule LangChain.Agents.FileSystem.FileSystemStateTest do
   describe "stats/1" do
     setup do
       agent_id = "test_agent_#{System.unique_integer([:positive])}"
-      {:ok, state} = FileSystemState.new(agent_id: agent_id)
+      {:ok, state} = FileSystemState.new(scope_key: {:agent, agent_id})
       %{state: state}
     end
 
@@ -288,7 +288,7 @@ defmodule LangChain.Agents.FileSystem.FileSystemStateTest do
   describe "reset/1" do
     setup do
       agent_id = "test_agent_#{System.unique_integer([:positive])}"
-      {:ok, state} = FileSystemState.new(agent_id: agent_id)
+      {:ok, state} = FileSystemState.new(scope_key: {:agent, agent_id})
       %{state: state}
     end
 
@@ -382,7 +382,7 @@ defmodule LangChain.Agents.FileSystem.FileSystemStateTest do
 
       assert reset_state.files == %{}
       assert reset_state.debounce_timers == %{}
-      assert reset_state.agent_id == state.agent_id
+      assert reset_state.scope_key == state.scope_key
       assert reset_state.persistence_configs == state.persistence_configs
     end
 

@@ -1429,7 +1429,6 @@ defmodule LangChain.Agents.AgentServer do
 
     # If we're already cancelled, ignore the task result (race condition)
     if server_state.status == :cancelled do
-      Logger.debug("Ignoring task result after cancellation (race condition)")
       {:noreply, Map.delete(server_state, :task)}
     else
       handle_execution_result(result, server_state)
@@ -1447,7 +1446,6 @@ defmodule LangChain.Agents.AgentServer do
     # Task crashed or was killed
     # If status is already :cancelled, this is expected (brutal_kill side effect)
     if server_state.status == :cancelled do
-      Logger.debug("Received :DOWN for cancelled task (expected): #{inspect(reason)}")
       {:noreply, Map.delete(server_state, :task)}
     else
       # Unexpected crash
@@ -1494,7 +1492,7 @@ defmodule LangChain.Agents.AgentServer do
     # Stop the parent AgentSupervisor, which will stop all children
     case AgentSupervisor.stop(agent_id, server_state.shutdown_delay) do
       :ok ->
-        Logger.debug("AgentSupervisor for agent #{agent_id} acknowledged shutdown request")
+        :ok
 
       {:error, :not_found} ->
         Logger.warning("AgentSupervisor for agent #{agent_id} was not found, stopping self")
@@ -1506,8 +1504,6 @@ defmodule LangChain.Agents.AgentServer do
 
   @impl true
   def handle_info({:middleware_message, middleware_id, message}, server_state) do
-    Logger.debug("Received middleware message for #{inspect(middleware_id)}: #{inspect(message)}")
-
     # Emit telemetry event
     :telemetry.execute(
       [:langchain, :middleware, :message, :received],
@@ -1549,9 +1545,7 @@ defmodule LangChain.Agents.AgentServer do
   end
 
   @impl true
-  def terminate(reason, server_state) do
-    Logger.debug("AgentServer terminating: #{inspect(reason)}")
-
+  def terminate(_reason, server_state) do
     # Cancel timer if present
     cancel_inactivity_timer(server_state)
 

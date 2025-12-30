@@ -527,6 +527,176 @@ defmodule LangChain.Agents.Middleware.SubAgentTest do
     end
   end
 
+  describe "MiddlewareEntry conversion regression test" do
+    test "converts initialized MiddlewareEntry structs to raw specs when creating dynamic subagent" do
+      # This test covers a bug where passing initialized MiddlewareEntry structs
+      # (which contain the parent's model with thinking config) to Agent.new!()
+      # would cause an atom limit error when validation failed.
+      #
+      # The fix converts MiddlewareEntry structs back to raw middleware specs
+      # before passing them to Agent.new!()
+
+      agent_id = "parent-#{System.unique_integer([:positive])}"
+
+      # Start supervision tree
+      {:ok, _sup} =
+        start_supervised({
+          SubAgentsDynamicSupervisor,
+          agent_id: agent_id
+        })
+
+      # Create a model with thinking enabled (this was triggering the bug)
+      model_with_thinking =
+        ChatAnthropic.new!(%{
+          model: "claude-sonnet-4-5-20250929",
+          api_key: "test_key",
+          thinking: %{type: "enabled", budget_tokens: 2000},
+          temperature: 1,
+          stream: true
+        })
+
+      # Create parent agent with initialized middleware that includes the model
+      {:ok, parent_agent} =
+        Agent.new(%{
+          agent_id: agent_id,
+          model: model_with_thinking,
+          base_system_prompt: "Parent agent",
+          middleware: [
+            TodoList,
+            FileSystem,
+            LangChain.Agents.Middleware.Summarization
+          ]
+        })
+
+      # Parent agent middleware is now initialized (MiddlewareEntry structs)
+      assert Enum.all?(parent_agent.middleware, &match?(%LangChain.Agents.MiddlewareEntry{}, &1))
+
+      # Verify the middleware entries contain the model in their config
+      summarization_entry =
+        Enum.find(parent_agent.middleware, fn entry ->
+          entry.module == LangChain.Agents.Middleware.Summarization
+        end)
+
+      assert summarization_entry != nil
+      assert summarization_entry.config.model == model_with_thinking
+
+      # Initialize SubAgent middleware config
+      {:ok, middleware_config} =
+        SubAgentMiddleware.init(
+          agent_id: agent_id,
+          model: model_with_thinking,
+          middleware: parent_agent.middleware,
+          subagents: []
+        )
+
+      # Mock LLMChain.run to return success
+      assistant_message = Message.new_assistant!(%{content: "Subagent task completed!"})
+
+      LLMChain
+      |> stub(:run, fn chain ->
+        updated_chain =
+          chain
+          |> Map.put(:messages, chain.messages ++ [assistant_message])
+          |> Map.put(:last_message, assistant_message)
+          |> Map.put(:needs_response, false)
+
+        {:ok, updated_chain}
+      end)
+
+      # Build context with parent_middleware containing initialized MiddlewareEntry structs
+      context = %{
+        agent_id: agent_id,
+        state: State.new!(%{messages: []}),
+        parent_middleware: parent_agent.middleware,
+        parent_tools: []
+      }
+
+      args = %{
+        "instructions" => "Perform a complex task",
+        "subagent_type" => "general-purpose"
+      }
+
+      # This should succeed without hitting the atom limit error
+      # The fix converts MiddlewareEntry structs back to raw middleware specs
+      assert {:ok, result} =
+               SubAgentMiddleware.start_subagent(
+                 "Perform a complex task",
+                 "general-purpose",
+                 args,
+                 context,
+                 middleware_config
+               )
+
+      assert result == "Subagent task completed!"
+    end
+
+    test "handles MiddlewareEntry structs with various config options" do
+      # Test that the conversion properly handles different middleware configurations
+      agent_id = "parent-#{System.unique_integer([:positive])}"
+
+      {:ok, _sup} =
+        start_supervised({
+          SubAgentsDynamicSupervisor,
+          agent_id: agent_id
+        })
+
+      model = test_model()
+
+      # Create parent with middleware that has various config options
+      {:ok, parent_agent} =
+        Agent.new(%{
+          agent_id: agent_id,
+          model: model,
+          base_system_prompt: "Parent",
+          middleware: [
+            {TodoList, [custom_option: "value"]},
+            {FileSystem, [enabled_tools: ["read_file"], custom_tool_descriptions: %{}]},
+            {LangChain.Agents.Middleware.Summarization,
+             [max_tokens_before_summary: 100_000, messages_to_keep: 10]}
+          ]
+        })
+
+      # Initialize SubAgent middleware
+      {:ok, middleware_config} =
+        SubAgentMiddleware.init(
+          agent_id: agent_id,
+          model: model,
+          middleware: parent_agent.middleware,
+          subagents: []
+        )
+
+      # Mock LLMChain
+      assistant_message = Message.new_assistant!(%{content: "Done"})
+
+      LLMChain
+      |> stub(:run, fn chain ->
+        {:ok, Map.merge(chain, %{messages: chain.messages ++ [assistant_message], last_message: assistant_message, needs_response: false})}
+      end)
+
+      context = %{
+        agent_id: agent_id,
+        state: State.new!(%{messages: []}),
+        parent_middleware: parent_agent.middleware,
+        parent_tools: []
+      }
+
+      args = %{
+        "instructions" => "Test task",
+        "subagent_type" => "general-purpose"
+      }
+
+      # Should successfully create subagent with properly converted middleware
+      assert {:ok, _result} =
+               SubAgentMiddleware.start_subagent(
+                 "Test task",
+                 "general-purpose",
+                 args,
+                 context,
+                 middleware_config
+               )
+    end
+  end
+
   describe "start_subagent/5 public API" do
     setup do
       # Start supervision tree

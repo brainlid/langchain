@@ -5,9 +5,7 @@ defmodule LangChain.Agents.AgentSupervisorTest do
   alias LangChain.Agents.Agent
   alias LangChain.Agents.AgentSupervisor
   alias LangChain.Agents.AgentServer
-  alias LangChain.Agents.FileSystemServer
   alias LangChain.Agents.SubAgentsDynamicSupervisor
-  alias LangChain.Agents.FileSystem.FileSystemConfig
   alias LangChain.Agents.State
   alias LangChain.ChatModels.ChatAnthropic
   alias LangChain.Message
@@ -41,47 +39,15 @@ defmodule LangChain.Agents.AgentSupervisorTest do
       assert {:ok, sup_pid} = AgentSupervisor.start_link(agent: agent)
       assert Process.alive?(sup_pid)
 
-      # Verify all children are started
+      # Verify all children are started (AgentServer and SubAgentsDynamicSupervisor only)
       children = Supervisor.which_children(sup_pid)
-      assert length(children) == 3
+      assert length(children) == 2
 
-      # Verify FileSystemServer is running
-      assert FileSystemServer.whereis(agent.agent_id) != nil
+      # Verify AgentServer is running
+      assert AgentServer.get_pid(agent.agent_id) != nil
 
       # Verify SubAgentsDynamicSupervisor is running
       assert SubAgentsDynamicSupervisor.whereis(agent.agent_id) != nil
-
-      # Clean up
-      Supervisor.stop(sup_pid)
-    end
-
-    test "starts supervisor with persistence configs" do
-      agent = create_test_agent()
-
-      # Note: Using a mock module here since we don't have an actual persistence module
-      config =
-        FileSystemConfig.new!(%{
-          base_directory: "TestDir",
-          persistence_module: LangChain.Agents.FileSystem.Persistence.Disk,
-          debounce_ms: 1000,
-          storage_opts: [path: "/tmp/test"]
-        })
-
-      assert {:ok, sup_pid} =
-               AgentSupervisor.start_link(
-                 agent: agent,
-                 persistence_configs: [config]
-               )
-
-      assert Process.alive?(sup_pid)
-
-      # Verify FileSystemServer received the config
-      fs_pid = FileSystemServer.whereis(agent.agent_id)
-      assert fs_pid != nil
-
-      configs = FileSystemServer.get_persistence_configs(agent.agent_id)
-      assert map_size(configs) == 1
-      assert configs["TestDir"].base_directory == "TestDir"
 
       # Clean up
       Supervisor.stop(sup_pid)
@@ -165,50 +131,12 @@ defmodule LangChain.Agents.AgentSupervisorTest do
   end
 
   describe "supervision strategy (:rest_for_one)" do
-    test "FileSystemServer crash restarts all children" do
+    test "AgentServer crash restarts SubAgentsDynamicSupervisor" do
       agent = create_test_agent()
 
       {:ok, sup_pid} = AgentSupervisor.start_link(agent: agent)
 
       # Get original child PIDs
-      fs_pid_before = FileSystemServer.whereis(agent.agent_id)
-      children_before = Supervisor.which_children(sup_pid)
-
-      {_, agent_server_pid_before, _, _} =
-        Enum.find(children_before, fn {id, _, _, _} -> id == AgentServer end)
-
-      sub_sup_pid_before = SubAgentsDynamicSupervisor.whereis(agent.agent_id)
-
-      # Kill FileSystemServer
-      Process.exit(fs_pid_before, :kill)
-
-      # Give supervisor time to restart
-      Process.sleep(100)
-
-      # All children should have restarted (new PIDs)
-      fs_pid_after = FileSystemServer.whereis(agent.agent_id)
-      children_after = Supervisor.which_children(sup_pid)
-
-      {_, agent_server_pid_after, _, _} =
-        Enum.find(children_after, fn {id, _, _, _} -> id == AgentServer end)
-
-      sub_sup_pid_after = SubAgentsDynamicSupervisor.whereis(agent.agent_id)
-
-      assert fs_pid_after != fs_pid_before
-      assert agent_server_pid_after != agent_server_pid_before
-      assert sub_sup_pid_after != sub_sup_pid_before
-
-      # Clean up
-      Supervisor.stop(sup_pid)
-    end
-
-    test "AgentServer crash restarts AgentServer and SubAgentsDynamicSupervisor but not FileSystemServer" do
-      agent = create_test_agent()
-
-      {:ok, sup_pid} = AgentSupervisor.start_link(agent: agent)
-
-      # Get original child PIDs
-      fs_pid_before = FileSystemServer.whereis(agent.agent_id)
       children_before = Supervisor.which_children(sup_pid)
 
       {_, agent_server_pid_before, _, _} =
@@ -222,8 +150,7 @@ defmodule LangChain.Agents.AgentSupervisorTest do
       # Give supervisor time to restart
       Process.sleep(100)
 
-      # FileSystemServer should be the same, but AgentServer and SubAgentsDynamicSupervisor should be new
-      fs_pid_after = FileSystemServer.whereis(agent.agent_id)
+      # Both should restart with new PIDs
       children_after = Supervisor.which_children(sup_pid)
 
       {_, agent_server_pid_after, _, _} =
@@ -231,10 +158,7 @@ defmodule LangChain.Agents.AgentSupervisorTest do
 
       sub_sup_pid_after = SubAgentsDynamicSupervisor.whereis(agent.agent_id)
 
-      # FileSystemServer survives (same PID)
-      assert fs_pid_after == fs_pid_before
-
-      # AgentServer and SubAgentsDynamicSupervisor restart (different PIDs)
+      # Both should have restarted (different PIDs)
       assert agent_server_pid_after != agent_server_pid_before
       assert sub_sup_pid_after != sub_sup_pid_before
 
@@ -248,7 +172,6 @@ defmodule LangChain.Agents.AgentSupervisorTest do
       {:ok, sup_pid} = AgentSupervisor.start_link(agent: agent)
 
       # Get original child PIDs
-      fs_pid_before = FileSystemServer.whereis(agent.agent_id)
       children_before = Supervisor.which_children(sup_pid)
 
       {_, agent_server_pid_before, _, _} =
@@ -262,8 +185,7 @@ defmodule LangChain.Agents.AgentSupervisorTest do
       # Give supervisor time to restart
       Process.sleep(100)
 
-      # FileSystemServer and AgentServer should be the same
-      fs_pid_after = FileSystemServer.whereis(agent.agent_id)
+      # AgentServer should be the same
       children_after = Supervisor.which_children(sup_pid)
 
       {_, agent_server_pid_after, _, _} =
@@ -271,8 +193,7 @@ defmodule LangChain.Agents.AgentSupervisorTest do
 
       sub_sup_pid_after = SubAgentsDynamicSupervisor.whereis(agent.agent_id)
 
-      # FileSystemServer and AgentServer survive (same PIDs)
-      assert fs_pid_after == fs_pid_before
+      # AgentServer survives (same PID)
       assert agent_server_pid_after == agent_server_pid_before
 
       # SubAgentsDynamicSupervisor restarts (different PID)
@@ -284,22 +205,6 @@ defmodule LangChain.Agents.AgentSupervisorTest do
   end
 
   describe "child process accessibility" do
-    test "can access FileSystemServer via agent_id" do
-      agent = create_test_agent()
-
-      {:ok, sup_pid} = AgentSupervisor.start_link(agent: agent)
-
-      # FileSystemServer should be accessible by agent_id
-      fs_pid = FileSystemServer.whereis(agent.agent_id)
-      assert fs_pid != nil
-      assert Process.alive?(fs_pid)
-
-      # Should be able to interact with FileSystemServer
-      assert :ok == FileSystemServer.write_file(agent.agent_id, "/test.txt", "content")
-
-      # Clean up
-      Supervisor.stop(sup_pid)
-    end
 
     test "can access SubAgentsDynamicSupervisor via agent_id" do
       agent = create_test_agent()
@@ -349,14 +254,12 @@ defmodule LangChain.Agents.AgentSupervisorTest do
         )
 
       # Get all child PIDs
-      fs_pid = FileSystemServer.whereis(agent_id)
       children = Supervisor.which_children(sup_pid)
       {_, agent_server_pid, _, _} = Enum.find(children, fn {id, _, _, _} -> id == AgentServer end)
       sub_sup_pid = SubAgentsDynamicSupervisor.whereis(agent_id)
 
       # Verify everything is running
       assert Process.alive?(sup_pid)
-      assert Process.alive?(fs_pid)
       assert Process.alive?(agent_server_pid)
       assert Process.alive?(sub_sup_pid)
 
@@ -368,7 +271,6 @@ defmodule LangChain.Agents.AgentSupervisorTest do
 
       # Verify everything is stopped
       refute Process.alive?(sup_pid)
-      refute Process.alive?(fs_pid)
       refute Process.alive?(agent_server_pid)
       refute Process.alive?(sub_sup_pid)
     end
@@ -395,32 +297,6 @@ defmodule LangChain.Agents.AgentSupervisorTest do
       Process.sleep(100)
       refute Process.alive?(sup_pid)
     end
-
-    test "FileSystemServer flushes data on shutdown" do
-      agent = create_test_agent()
-      agent_id = agent.agent_id
-
-      {:ok, sup_pid} =
-        AgentSupervisor.start_link(
-          agent: agent,
-          name: AgentSupervisor.get_name(agent_id)
-        )
-
-      # Write some data to FileSystemServer
-      :ok = FileSystemServer.write_file(agent_id, "/test.txt", "test content")
-
-      # Verify it's there
-      assert {:ok, "test content"} = FileSystemServer.read_file(agent_id, "/test.txt")
-
-      # Stop the supervisor
-      assert :ok = AgentSupervisor.stop(agent_id)
-
-      Process.sleep(100)
-
-      # FileSystemServer's terminate/2 should have been called
-      # which handles flushing (tested separately in FileSystemServer tests)
-      refute Process.alive?(sup_pid)
-    end
   end
 
   describe "start_link_sync/1" do
@@ -434,9 +310,9 @@ defmodule LangChain.Agents.AgentSupervisorTest do
       assert AgentServer.get_pid(agent.agent_id) != nil
       assert :idle == AgentServer.get_status(agent.agent_id)
 
-      # Verify all children are started
+      # Verify all children are started (AgentServer and SubAgentsDynamicSupervisor)
       children = Supervisor.which_children(sup_pid)
-      assert length(children) == 3
+      assert length(children) == 2
 
       # Clean up
       Supervisor.stop(sup_pid)
@@ -456,36 +332,6 @@ defmodule LangChain.Agents.AgentSupervisorTest do
       # Should be able to add messages immediately
       message = Message.new_user!("test")
       assert :ok == AgentServer.add_message(agent.agent_id, message)
-
-      # Clean up
-      Supervisor.stop(sup_pid)
-    end
-
-    test "works with persistence configs" do
-      agent = create_test_agent()
-
-      config =
-        FileSystemConfig.new!(%{
-          base_directory: "TestDir",
-          persistence_module: LangChain.Agents.FileSystem.Persistence.Disk,
-          storage_opts: [path: "/tmp/test"]
-        })
-
-      assert {:ok, sup_pid} =
-               AgentSupervisor.start_link_sync(
-                 agent: agent,
-                 persistence_configs: [config]
-               )
-
-      # AgentServer should be ready immediately
-      assert AgentServer.get_pid(agent.agent_id) != nil
-
-      # FileSystemServer should have configs
-      fs_pid = FileSystemServer.whereis(agent.agent_id)
-      assert fs_pid != nil
-
-      configs = FileSystemServer.get_persistence_configs(agent.agent_id)
-      assert map_size(configs) == 1
 
       # Clean up
       Supervisor.stop(sup_pid)
@@ -644,7 +490,8 @@ defmodule LangChain.Agents.AgentSupervisorTest do
         )
 
       # Get child PIDs
-      fs_pid = FileSystemServer.whereis(agent_id)
+      children = Supervisor.which_children(sup_pid)
+      {_, agent_server_pid, _, _} = Enum.find(children, fn {id, _, _, _} -> id == AgentServer end)
       sub_sup_pid = SubAgentsDynamicSupervisor.whereis(agent_id)
 
       # Monitor the supervisor
@@ -655,7 +502,7 @@ defmodule LangChain.Agents.AgentSupervisorTest do
 
       # Verify all children stopped
       refute Process.alive?(sup_pid)
-      refute Process.alive?(fs_pid)
+      refute Process.alive?(agent_server_pid)
       refute Process.alive?(sub_sup_pid)
     end
   end

@@ -21,25 +21,33 @@ defmodule LangChain.Agents.FileSystemServer do
 
   ## Configuration
 
-  - `:agent_id` - Agent identifier (required)
-  - `:persistence_configs` - List of FileSystemConfig structs (optional,
-    default: [])
+  - `:scope_key` - Scope identifier (required) - Can be any unique term
+    - Tuple format: `{:user, 123}`, `{:agent, "uuid"}`, `{:project, id}`
+    - UUID string: `"550e8400-e29b-41d4-a716-446655440000"`
+    - Database ID: `"12345"`
+  - `:configs` - List of FileSystemConfig structs (optional, default: [])
 
   ## Examples
 
-      # Memory-only filesystem
-      {:ok, pid} = start_link(agent_id: "agent-123")
+      # Memory-only filesystem with tuple scope
+      {:ok, pid} = start_link(scope_key: {:user, 123})
 
-      # With disk persistence
+      # Memory-only filesystem with UUID
+      {:ok, pid} = start_link(scope_key: "550e8400-e29b-41d4-a716-446655440000")
+
+      # Memory-only filesystem with database ID
+      {:ok, pid} = start_link(scope_key: 789)
+
+      # With disk persistence (tuple scope)
       {:ok, config} = FileSystemConfig.new(%{
         base_directory: "Memories",
         persistence_module: LangChain.Agents.FileSystem.Persistence.Disk,
         debounce_ms: 5000,
-        storage_opts: [path: "/data/agents"]
+        storage_opts: [path: "/data/users/123"]
       })
       {:ok, pid} = start_link(
-        agent_id: "agent-123",
-        persistence_configs: [config]
+        scope_key: {:user, 123},
+        configs: [config]
       )
   """
 
@@ -50,57 +58,96 @@ defmodule LangChain.Agents.FileSystemServer do
   alias LangChain.Agents.FileSystem.FileSystemConfig
   alias LangChain.Agents.FileSystem.FileEntry
 
-  # ============================================================================
+  # ======================================================================
   # Client API
-  # ============================================================================
+  # ======================================================================
 
   @doc """
-  Start FileSystemServer for an agent.
+  Start FileSystemServer for a scope.
 
   ## Options
 
-  - `:agent_id` - Agent identifier (required)
-  - `:persistence_configs` - List of FileSystemConfig structs (optional, default: [])
+  - `:scope_key` - Scope identifier (required) - Can be any term that uniquely identifies the scope
+    - Tuple: `{:user, 123}`, `{:agent, uuid}`, `{:project, id}`
+    - UUID: `"550e8400-e29b-41d4-a716-446655440000"`
+    - Database ID: `12345` or `"12345"`
+  - `:configs` - List of FileSystemConfig structs (optional, default: [])
 
   ## Examples
 
-      # Memory-only filesystem
-      {:ok, pid} = start_link(agent_id: "agent-123")
+      # Memory-only filesystem with tuple scope
+      {:ok, pid} = start_link(scope_key: {:user, 123})
+
+      # Memory-only filesystem with UUID
+      {:ok, pid} = start_link(scope_key: "550e8400-e29b-41d4-a716-446655440000")
+
+      # Memory-only filesystem with database ID
+      {:ok, pid} = start_link(scope_key: 789)
 
       # With disk persistence
       {:ok, config} = FileSystemConfig.new(%{
         base_directory: "Memories",
         persistence_module: LangChain.Agents.FileSystem.Persistence.Disk,
         debounce_ms: 5000,
-        storage_opts: [path: "/data/agents"]
+        storage_opts: [path: "/data/users/123"]
       })
       {:ok, pid} = start_link(
-        agent_id: "agent-123",
-        persistence_configs: [config]
+        scope_key: {:user, 123},
+        configs: [config]
       )
   """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
-    agent_id = Keyword.fetch!(opts, :agent_id)
-    GenServer.start_link(__MODULE__, opts, name: get_name(agent_id))
+    scope_key = Keyword.fetch!(opts, :scope_key)
+    GenServer.start_link(__MODULE__, opts, name: get_name(scope_key))
   end
 
   @doc """
-  Get the FileSystemServer PID for an agent.
+  Child spec for starting under a supervisor.
   """
-  @spec whereis(String.t()) :: pid() | nil
-  def whereis(agent_id) do
-    case Registry.lookup(LangChain.Agents.Registry, {:file_system_server, agent_id}) do
+  def child_spec(opts) do
+    scope_key = Keyword.fetch!(opts, :scope_key)
+
+    %{
+      id: {:filesystem_server, scope_key},
+      start: {__MODULE__, :start_link, [opts]},
+      restart: :transient
+    }
+  end
+
+  @doc """
+  Get the FileSystemServer PID by scope key.
+
+  The scope_key can be any term that uniquely identifies the filesystem scope.
+  Common patterns include tuples like `{:user, 123}`, UUIDs like
+  `"550e8400-e29b-41d4-a716-446655440000"`, or database IDs like `12345`.
+  """
+  @spec whereis(term()) :: pid() | nil
+  def whereis(scope_key) do
+    case Registry.lookup(LangChain.Agents.Registry, {:filesystem_server, scope_key}) do
       [{pid, _}] -> pid
       [] -> nil
     end
   end
 
   @doc """
-  Get the name of the FileSystemServer process for a specific agent.
+  Get the scope key for a FileSystemServer PID.
+
+  Returns the scope_key that was used to start the server.
   """
-  def get_name(agent_id) do
-    {:via, Registry, {LangChain.Agents.Registry, {:file_system_server, agent_id}}}
+  @spec get_scope(pid()) :: {:ok, term()} | {:error, term()}
+  def get_scope(pid) when is_pid(pid) do
+    GenServer.call(pid, :get_scope)
+  end
+
+  @doc """
+  Get the via tuple name for a scope key.
+
+  The scope_key can be any term that uniquely identifies the scope.
+  Common patterns include tuples like `{:user, 123}` or strings like `"agent-abc"`.
+  """
+  def get_name(scope_key) do
+    {:via, Registry, {LangChain.Agents.Registry, {:filesystem_server, scope_key}}}
   end
 
   @doc """
@@ -115,15 +162,18 @@ defmodule LangChain.Agents.FileSystemServer do
 
   ## Examples
 
-      iex> write_file("agent-123", "/tmp/notes.txt", "Hello")
+      # With tuple scope
+      iex> write_file({:user, 123}, "/tmp/notes.txt", "Hello")
       :ok
 
-      iex> write_file("agent-123", "/Memories/chat_log.txt", data)
+      # With UUID scope
+      iex> write_file("550e8400-e29b-41d4-a716-446655440000", "/Memories/chat_log.txt", data)
       :ok  # Auto-persists after 5s (default) of no more writes
   """
-  @spec write_file(String.t(), String.t(), String.t(), keyword()) :: :ok | {:error, term()}
-  def write_file(agent_id, path, content, opts \\ []) do
-    GenServer.call(get_name(agent_id), {:write_file, path, content, opts})
+  @spec write_file(term(), String.t(), String.t(), keyword()) ::
+          :ok | {:error, term()}
+  def write_file(scope_key, path, content, opts \\ []) do
+    GenServer.call(get_name(scope_key), {:write_file, path, content, opts})
   end
 
   @doc """
@@ -137,15 +187,17 @@ defmodule LangChain.Agents.FileSystemServer do
 
   ## Examples
 
-      iex> read_file("agent-123", "/Memories/notes.txt")
+      # With tuple scope
+      iex> read_file({:user, 123}, "/Memories/notes.txt")
       {:ok, "My notes..."}
 
-      iex> read_file("agent-123", "/nonexistent.txt")
+      # With database ID scope
+      iex> read_file(789, "/nonexistent.txt")
       {:error, :enoent}
   """
-  @spec read_file(String.t(), String.t()) :: {:ok, String.t()} | {:error, term()}
-  def read_file(agent_id, path) do
-    GenServer.call(get_name(agent_id), {:read_file, path})
+  @spec read_file(term(), String.t()) :: {:ok, String.t()} | {:error, term()}
+  def read_file(scope_key, path) do
+    GenServer.call(get_name(scope_key), {:read_file, path})
   end
 
   @doc """
@@ -153,9 +205,9 @@ defmodule LangChain.Agents.FileSystemServer do
 
   If file was persisted, it's also removed from storage immediately (no debounce).
   """
-  @spec delete_file(String.t(), String.t()) :: :ok | {:error, term()}
-  def delete_file(agent_id, path) do
-    GenServer.call(get_name(agent_id), {:delete_file, path})
+  @spec delete_file(term(), String.t()) :: :ok | {:error, term()}
+  def delete_file(scope_key, path) do
+    GenServer.call(get_name(scope_key), {:delete_file, path})
   end
 
   @doc """
@@ -165,7 +217,7 @@ defmodule LangChain.Agents.FileSystemServer do
 
   ## Parameters
 
-  - `agent_id` - Agent identifier
+  - `scope_key` - Scope identifier tuple
   - `config` - FileSystemConfig struct
 
   ## Returns
@@ -180,12 +232,12 @@ defmodule LangChain.Agents.FileSystemServer do
       ...>   persistence_module: MyApp.Persistence.Disk,
       ...>   storage_opts: [path: "/data/users"]
       ...> })
-      iex> FileSystemServer.register_persistence("agent-123", config)
+      iex> FileSystemServer.register_persistence({:user, 123}, config)
       :ok
   """
-  @spec register_persistence(String.t(), FileSystemConfig.t()) :: :ok | {:error, term()}
-  def register_persistence(agent_id, %FileSystemConfig{} = config) do
-    GenServer.call(get_name(agent_id), {:register_persistence, config})
+  @spec register_persistence(term(), FileSystemConfig.t()) :: :ok | {:error, term()}
+  def register_persistence(scope_key, %FileSystemConfig{} = config) do
+    GenServer.call(get_name(scope_key), {:register_persistence, config})
   end
 
   @doc """
@@ -196,7 +248,7 @@ defmodule LangChain.Agents.FileSystemServer do
 
   ## Parameters
 
-  - `agent_id` - Agent identifier
+  - `scope_key` - Scope identifier tuple
   - `file_entry_or_entries` - FileEntry struct or list of FileEntry structs
 
   ## Returns
@@ -206,21 +258,21 @@ defmodule LangChain.Agents.FileSystemServer do
   ## Examples
 
       iex> {:ok, entry} = FileEntry.new_memory_file("/scratch/temp.txt", "data")
-      iex> FileSystemServer.register_files("agent-123", entry)
+      iex> FileSystemServer.register_files({:user, 123}, entry)
       :ok
 
       iex> {:ok, entry1} = FileEntry.new_memory_file("/scratch/file1.txt", "data1")
       iex> {:ok, entry2} = FileEntry.new_memory_file("/scratch/file2.txt", "data2")
-      iex> FileSystemServer.register_files("agent-123", [entry1, entry2])
+      iex> FileSystemServer.register_files({:user, 123}, [entry1, entry2])
       :ok
   """
-  @spec register_files(String.t(), FileEntry.t() | [FileEntry.t()]) :: :ok
-  def register_files(agent_id, %FileEntry{} = file_entry) do
-    register_files(agent_id, [file_entry])
+  @spec register_files(term(), FileEntry.t() | [FileEntry.t()]) :: :ok
+  def register_files(scope_key, %FileEntry{} = file_entry) do
+    register_files(scope_key, [file_entry])
   end
 
-  def register_files(agent_id, file_entries) when is_list(file_entries) do
-    GenServer.call(get_name(agent_id), {:register_files, file_entries})
+  def register_files(scope_key, file_entries) when is_list(file_entries) do
+    GenServer.call(get_name(scope_key), {:register_files, file_entries})
   end
 
   @doc """
@@ -230,12 +282,12 @@ defmodule LangChain.Agents.FileSystemServer do
 
   ## Examples
 
-      iex> FileSystemServer.get_persistence_configs("agent-123")
+      iex> FileSystemServer.get_persistence_configs({:user, 123})
       %{"user_files" => %FileSystemConfig{}, "S3" => %FileSystemConfig{}}
   """
-  @spec get_persistence_configs(String.t()) :: %{String.t() => FileSystemConfig.t()}
-  def get_persistence_configs(agent_id) do
-    GenServer.call(get_name(agent_id), :get_persistence_configs)
+  @spec get_persistence_configs(term()) :: %{String.t() => FileSystemConfig.t()}
+  def get_persistence_configs(scope_key) do
+    GenServer.call(get_name(scope_key), :get_persistence_configs)
   end
 
   @doc """
@@ -243,9 +295,9 @@ defmodule LangChain.Agents.FileSystemServer do
 
   Useful for graceful shutdown or checkpoints.
   """
-  @spec flush_all(String.t()) :: :ok
-  def flush_all(agent_id) do
-    GenServer.call(get_name(agent_id), :flush_all)
+  @spec flush_all(term()) :: :ok
+  def flush_all(scope_key) do
+    GenServer.call(get_name(scope_key), :flush_all)
   end
 
   @doc """
@@ -258,17 +310,17 @@ defmodule LangChain.Agents.FileSystemServer do
 
   **Result**: Next read will reload persisted files from storage in their original state.
 
-  This is useful when resetting an agent to start fresh without carrying over
+  This is useful when resetting to start fresh without carrying over
   transient in-memory file modifications.
 
   ## Examples
 
-      iex> FileSystemServer.reset("agent-123")
+      iex> FileSystemServer.reset({:user, 123})
       :ok
   """
-  @spec reset(String.t()) :: :ok
-  def reset(agent_id) do
-    GenServer.call(get_name(agent_id), :reset)
+  @spec reset(term()) :: :ok
+  def reset(scope_key) do
+    GenServer.call(get_name(scope_key), :reset)
   end
 
   @doc """
@@ -278,12 +330,15 @@ defmodule LangChain.Agents.FileSystemServer do
 
   ## Examples
 
-      iex> list_files("agent-123")
+      iex> list_files({:user, 123})
       ["/file1.txt", "/Memories/file2.txt"]
   """
-  @spec list_files(String.t()) :: [String.t()]
-  def list_files(agent_id) do
-    GenServer.call(get_name(agent_id), :list_files)
+  @spec list_files(nil | term()) :: [String.t()]
+  def list_files(scope_key)
+  def list_files(nil), do: []
+
+  def list_files(scope_key) do
+    GenServer.call(get_name(scope_key), :list_files)
   end
 
   @doc """
@@ -291,15 +346,15 @@ defmodule LangChain.Agents.FileSystemServer do
 
   ## Examples
 
-      iex> file_exists?("agent-123", "/notes.txt")
+      iex> file_exists?({:user, 123}, "/notes.txt")
       true
 
-      iex> file_exists?("agent-123", "/nonexistent.txt")
+      iex> file_exists?({:user, 123}, "/nonexistent.txt")
       false
   """
-  @spec file_exists?(String.t(), String.t()) :: boolean()
-  def file_exists?(agent_id, path) do
-    GenServer.call(get_name(agent_id), {:file_exists?, path})
+  @spec file_exists?(term(), String.t()) :: boolean()
+  def file_exists?(scope_key, path) do
+    GenServer.call(get_name(scope_key), {:file_exists?, path})
   end
 
   @doc """
@@ -307,9 +362,9 @@ defmodule LangChain.Agents.FileSystemServer do
 
   Returns map with various statistics about the filesystem state.
   """
-  @spec stats(String.t()) :: {:ok, map()}
-  def stats(agent_id) do
-    GenServer.call(get_name(agent_id), :stats)
+  @spec stats(term()) :: {:ok, map()}
+  def stats(scope_key) do
+    GenServer.call(get_name(scope_key), :stats)
   end
 
   # ============================================================================
@@ -323,8 +378,8 @@ defmodule LangChain.Agents.FileSystemServer do
 
     case FileSystemState.new(opts) do
       {:ok, state} ->
-        agent_id = state.agent_id
-        Logger.debug("FileSystemServer started for agent #{agent_id}")
+        scope_key = state.scope_key
+        Logger.debug("FileSystemServer started for scope #{inspect(scope_key)}")
         {:ok, state}
 
       {:error, reason} ->
@@ -346,6 +401,11 @@ defmodule LangChain.Agents.FileSystemServer do
   @impl true
   def handle_call(:get_persistence_configs, _from, state) do
     {:reply, state.persistence_configs, state}
+  end
+
+  @impl true
+  def handle_call(:get_scope, _from, state) do
+    {:reply, {:ok, state.scope_key}, state}
   end
 
   @impl true

@@ -12,14 +12,14 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
   alias LangChain.Agents.FileSystem.FileSystemConfig
 
   defstruct [
-    :agent_id,
+    :scope_key,
     :files,
     :persistence_configs,
     :debounce_timers
   ]
 
   @type t :: %FileSystemState{
-          agent_id: String.t(),
+          scope_key: term(),
           files: %{String.t() => FileEntry.t()},
           persistence_configs: %{String.t() => FileSystemConfig.t()},
           debounce_timers: %{String.t() => reference()}
@@ -30,17 +30,18 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
 
   ## Options
 
-  - `:agent_id` - Agent identifier (required)
-  - `:persistence_configs` - List of FileSystemConfig structs (optional, default: [])
+  - `:scope_key` - Scope identifier (required) - Can be any term that uniquely identifies the scope
+    - Tuple: `{:user, 123}`, `{:agent, uuid}`, `{:project, id}`
+    - UUID: `"550e8400-e29b-41d4-a716-446655440000"`
+    - Database ID: `12345` or `"12345"`
+  - `:configs` - List of FileSystemConfig structs (optional, default: [])
   """
   @spec new(keyword()) :: {:ok, t()} | {:error, term()}
   def new(opts) do
-    with {:ok, agent_id} <- fetch_agent_id(opts) do
-      # Build persistence configs map
-      persistence_configs = build_persistence_configs(opts)
-
+    with {:ok, scope_key} <- fetch_scope_key(opts),
+         {:ok, persistence_configs} <- build_persistence_configs(opts) do
       state = %FileSystemState{
-        agent_id: agent_id,
+        scope_key: scope_key,
         files: %{},
         persistence_configs: persistence_configs,
         debounce_timers: %{}
@@ -49,7 +50,7 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
       # Index existing files from all persistence backends
       state = index_persisted_files(state)
 
-      Logger.debug("FileSystemState initialized for agent #{agent_id}")
+      Logger.debug("FileSystemState initialized for scope #{inspect(scope_key)}")
       {:ok, state}
     end
   end
@@ -91,9 +92,10 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
       new_state = %{state | persistence_configs: new_configs}
 
       # List existing persisted files and add them as indexed (not loaded)
-      opts = FileSystemConfig.build_storage_opts(config, state.agent_id)
+      opts = FileSystemConfig.build_storage_opts(config, state.scope_key)
+      agent_id = scope_key_to_agent_id(state.scope_key)
 
-      case config.persistence_module.list_persisted_files(state.agent_id, opts) do
+      case config.persistence_module.list_persisted_files(agent_id, opts) do
         {:ok, paths} ->
           # Add all paths as indexed files (loaded: false)
           new_files =
@@ -247,7 +249,7 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
 
           # Delete from storage immediately if we have a config
           if config do
-            opts = FileSystemConfig.build_storage_opts(config, state.agent_id)
+            opts = FileSystemConfig.build_storage_opts(config, state.scope_key)
 
             case config.persistence_module.delete_from_storage(entry, opts) do
               :ok ->
@@ -288,7 +290,7 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
     case Map.get(state.files, path) do
       %FileEntry{dirty: true, persistence: :persisted} = entry ->
         if config do
-          opts = FileSystemConfig.build_storage_opts(config, state.agent_id)
+          opts = FileSystemConfig.build_storage_opts(config, state.scope_key)
 
           case config.persistence_module.write_to_storage(entry, opts) do
             {:ok, updated_entry} ->
@@ -397,7 +399,7 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
         config = find_config_for_path(state, path)
 
         if config do
-          opts = FileSystemConfig.build_storage_opts(config, state.agent_id)
+          opts = FileSystemConfig.build_storage_opts(config, state.scope_key)
 
           case config.persistence_module.load_from_storage(entry, opts) do
             {:ok, loaded_entry} ->
@@ -497,19 +499,61 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
 
   # Private helpers
 
-  defp fetch_agent_id(opts) do
-    case Keyword.fetch(opts, :agent_id) do
-      {:ok, agent_id} -> {:ok, agent_id}
-      :error -> {:error, :agent_id_required}
+  defp fetch_scope_key(opts) do
+    case Keyword.fetch(opts, :scope_key) do
+      {:ok, nil} ->
+        {:error, :invalid_scope_key}
+
+      {:ok, scope_key} ->
+        {:ok, scope_key}
+
+      :error ->
+        {:error, :scope_key_required}
     end
   end
 
   # Build persistence configs map from list of FileSystemConfig structs
   defp build_persistence_configs(opts) do
-    opts
-    |> Keyword.get(:persistence_configs, [])
-    |> Enum.map(fn config -> {config.base_directory, config} end)
-    |> Map.new()
+    configs = Keyword.get(opts, :configs, [])
+
+    # Validate that all configs are FileSystemConfig structs
+    with :ok <- validate_all_configs(configs) do
+      persistence_configs =
+        configs
+        |> Enum.map(fn config -> {config.base_directory, config} end)
+        |> Map.new()
+
+      {:ok, persistence_configs}
+    end
+  end
+
+  # Validate that all items in the list are FileSystemConfig structs
+  defp validate_all_configs(configs) when is_list(configs) do
+    invalid_configs = Enum.reject(configs, &is_struct(&1, FileSystemConfig))
+
+    case invalid_configs do
+      [] -> :ok
+      _ -> {:error, :invalid_configs}
+    end
+  end
+
+  defp validate_all_configs(_), do: {:error, :invalid_configs}
+
+  # Extract agent_id from scope_key for backward compatibility with persistence modules
+  # Persistence modules still expect agent_id as first parameter
+  defp scope_key_to_agent_id({:agent, agent_id}), do: "agent:#{agent_id}"
+  defp scope_key_to_agent_id({:user, user_id}), do: "user:#{user_id}"
+  defp scope_key_to_agent_id({:project, project_id}), do: "project:#{project_id}"
+  defp scope_key_to_agent_id({:organization, org_id}), do: "org:#{org_id}"
+  defp scope_key_to_agent_id(scope_key) when is_tuple(scope_key) do
+    # Generic handler for any other scope types
+    scope_key
+    |> Tuple.to_list()
+    |> Enum.map(&to_string/1)
+    |> Enum.join(":")
+  end
+  defp scope_key_to_agent_id(scope_key) when is_binary(scope_key) do
+    scope_key
   end
 
   # Find the persistence config that matches a given path
@@ -543,11 +587,13 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
 
   # Index files from all registered persistence backends
   defp index_persisted_files(%FileSystemState{} = state) do
+    agent_id = scope_key_to_agent_id(state.scope_key)
+
     new_files =
       Enum.reduce(state.persistence_configs, state.files, fn {_base_dir, config}, acc_files ->
-        opts = FileSystemConfig.build_storage_opts(config, state.agent_id)
+        opts = FileSystemConfig.build_storage_opts(config, state.scope_key)
 
-        case config.persistence_module.list_persisted_files(state.agent_id, opts) do
+        case config.persistence_module.list_persisted_files(agent_id, opts) do
           {:ok, paths} ->
             # Add all paths as indexed files (loaded: false)
             Enum.reduce(paths, acc_files, fn path, inner_acc ->

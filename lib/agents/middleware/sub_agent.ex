@@ -359,8 +359,7 @@ defmodule LangChain.Agents.Middleware.SubAgent do
                 parent_agent_id: config.agent_id,
                 instructions: instructions,
                 compiled_agent: compiled.agent,
-                initial_messages: compiled.initial_messages || [],
-                parent_state: context.state
+                initial_messages: compiled.initial_messages || []
               )
 
             agent ->
@@ -368,8 +367,7 @@ defmodule LangChain.Agents.Middleware.SubAgent do
               SubAgent.new_from_config(
                 parent_agent_id: config.agent_id,
                 instructions: instructions,
-                agent_config: agent,
-                parent_state: context.state
+                agent_config: agent
               )
           end
 
@@ -422,6 +420,11 @@ defmodule LangChain.Agents.Middleware.SubAgent do
         # Filter middleware to remove SubAgent (prevent nesting)
         filtered_middleware = SubAgent.subagent_middleware_stack(parent_middleware, [])
 
+        # Convert MiddlewareEntry structs back to raw middleware specs
+        # parent_middleware contains initialized MiddlewareEntry structs, but Agent.new!
+        # expects raw middleware specs (module or {module, opts} tuples)
+        raw_middleware_specs = LangChain.Agents.MiddlewareEntry.to_raw_specs(filtered_middleware)
+
         # Build Agent struct with inherited middleware capabilities
         # Do NOT pass parent_tools - let filtered_middleware provide tools naturally
         # This ensures SubAgent "task" tool is not inherited after filtering out SubAgent middleware
@@ -430,7 +433,7 @@ defmodule LangChain.Agents.Middleware.SubAgent do
             %{
               model: config.model,
               base_system_prompt: system_prompt,
-              middleware: filtered_middleware
+              middleware: raw_middleware_specs
             },
             replace_default_middleware: true,
             interrupt_on: nil
@@ -441,8 +444,7 @@ defmodule LangChain.Agents.Middleware.SubAgent do
           SubAgent.new_from_config(
             parent_agent_id: config.agent_id,
             instructions: instructions,
-            agent_config: agent_config,
-            parent_state: context.state
+            agent_config: agent_config
           )
 
         # Get supervisor and start SubAgent (same as pre-configured)

@@ -167,11 +167,21 @@ defmodule LangChain.Agents.Middleware.FileSystem do
 
   @impl true
   def init(opts) do
-    # Require agent_id to link to FileSystemServer
-    agent_id = Keyword.fetch!(opts, :agent_id)
+    # Support both new filesystem_scope and old agent_id (backward compatible)
+    filesystem_scope =
+      case Keyword.get(opts, :filesystem_scope) do
+        nil ->
+          # Backward compatible: use agent_id wrapped in tuple
+          agent_id = Keyword.fetch!(opts, :agent_id)
+          {:agent, agent_id}
+
+        scope when is_tuple(scope) ->
+          # Use provided scope: {:user, 123}, {:project, 456}, etc.
+          scope
+      end
 
     config = %{
-      agent_id: agent_id,
+      filesystem_scope: filesystem_scope,
       # Tool configuration
       enabled_tools:
         Keyword.get(opts, :enabled_tools, [
@@ -527,7 +537,7 @@ defmodule LangChain.Agents.Middleware.FileSystem do
     pattern = get_arg(args, "pattern")
 
     # List all files using FileSystemServer
-    all_files = FileSystemServer.list_files(config.agent_id)
+    all_files = FileSystemServer.list_files(config.filesystem_scope)
 
     # Apply pattern filtering
     filtered_files = filter_by_pattern(all_files, pattern)
@@ -558,7 +568,7 @@ defmodule LangChain.Agents.Middleware.FileSystem do
     # Validate path
     with {:ok, normalized_path} <- validate_path(file_path) do
       # Read file using FileSystemServer (handles lazy loading automatically)
-      case FileSystemServer.read_file(config.agent_id, normalized_path) do
+      case FileSystemServer.read_file(config.filesystem_scope, normalized_path) do
         {:ok, content} ->
           format_file_content(content, normalized_path, offset, limit)
 
@@ -629,13 +639,13 @@ defmodule LangChain.Agents.Middleware.FileSystem do
         # Validate path
         with {:ok, normalized_path} <- validate_path(file_path) do
           # Check if file already exists (overwrite protection)
-          if FileSystemServer.file_exists?(config.agent_id, normalized_path) do
+          if FileSystemServer.file_exists?(config.filesystem_scope, normalized_path) do
             {:error,
              "File already exists: #{normalized_path}. Use edit_file to modify existing files."}
           else
             # Write file using FileSystemServer
             case FileSystemServer.write_file(
-                   config.agent_id,
+                   config.filesystem_scope,
                    normalized_path,
                    content
                  ) do
@@ -669,10 +679,10 @@ defmodule LangChain.Agents.Middleware.FileSystem do
         # Validate path
         with {:ok, normalized_path} <- validate_path(file_path) do
           # Read current content using FileSystemServer
-          case FileSystemServer.read_file(config.agent_id, normalized_path) do
+          case FileSystemServer.read_file(config.filesystem_scope, normalized_path) do
             {:ok, content} ->
               perform_edit(
-                config.agent_id,
+                config.filesystem_scope,
                 normalized_path,
                 content,
                 old_string,
@@ -706,7 +716,7 @@ defmodule LangChain.Agents.Middleware.FileSystem do
         # Validate path
         with {:ok, normalized_path} <- validate_path(file_path) do
           # Delete file using FileSystemServer
-          case FileSystemServer.delete_file(config.agent_id, normalized_path) do
+          case FileSystemServer.delete_file(config.filesystem_scope, normalized_path) do
             :ok ->
               {:ok, "File deleted successfully: #{normalized_path}"}
 
@@ -741,10 +751,10 @@ defmodule LangChain.Agents.Middleware.FileSystem do
           {:ok, regex} ->
             if file_path do
               # Search single file
-              search_single_file(config.agent_id, file_path, regex, context_lines, max_results)
+              search_single_file(config.filesystem_scope, file_path, regex, context_lines, max_results)
             else
               # Search all files
-              search_all_files(config.agent_id, regex, context_lines, max_results)
+              search_all_files(config.filesystem_scope, regex, context_lines, max_results)
             end
 
           {:error, _reason} ->
@@ -780,9 +790,9 @@ defmodule LangChain.Agents.Middleware.FileSystem do
 
       true ->
         with {:ok, normalized_path} <- validate_path(file_path),
-             {:ok, content} <- FileSystemServer.read_file(config.agent_id, normalized_path) do
+             {:ok, content} <- FileSystemServer.read_file(config.filesystem_scope, normalized_path) do
           perform_line_edit(
-            config.agent_id,
+            config.filesystem_scope,
             normalized_path,
             content,
             start_line,
@@ -802,9 +812,9 @@ defmodule LangChain.Agents.Middleware.FileSystem do
       {:error, "Edit failed: #{Exception.message(e)}"}
   end
 
-  defp search_single_file(agent_id, file_path, regex, context_lines, max_results) do
+  defp search_single_file(filesystem_scope, file_path, regex, context_lines, max_results) do
     with {:ok, normalized_path} <- validate_path(file_path),
-         {:ok, content} <- FileSystemServer.read_file(agent_id, normalized_path) do
+         {:ok, content} <- FileSystemServer.read_file(filesystem_scope, normalized_path) do
       {matches, truncated} = find_matches_in_content(content, regex, context_lines, max_results)
       format_search_results([{normalized_path, matches}], max_results, truncated)
     else
@@ -816,8 +826,8 @@ defmodule LangChain.Agents.Middleware.FileSystem do
     end
   end
 
-  defp search_all_files(agent_id, regex, context_lines, max_results) do
-    all_files = FileSystemServer.list_files(agent_id)
+  defp search_all_files(filesystem_scope, regex, context_lines, max_results) do
+    all_files = FileSystemServer.list_files(filesystem_scope)
 
     # Search each file and collect matches, tracking total matches
     {results, _total_matches, any_truncated} =
@@ -830,7 +840,7 @@ defmodule LangChain.Agents.Middleware.FileSystem do
           # Already hit limit, stop collecting
           {acc, match_count, truncated}
         else
-          case FileSystemServer.read_file(agent_id, file_path) do
+          case FileSystemServer.read_file(filesystem_scope, file_path) do
             {:ok, content} ->
               {matches, file_truncated} =
                 find_matches_in_content(content, regex, context_lines, remaining)
@@ -973,7 +983,7 @@ defmodule LangChain.Agents.Middleware.FileSystem do
     lines
   end
 
-  defp perform_edit(agent_id, file_path, content, old_string, new_string, replace_all) do
+  defp perform_edit(filesystem_scope, file_path, content, old_string, new_string, replace_all) do
     # Split to count occurrences
     parts = String.split(content, old_string, parts: :infinity)
     occurrence_count = length(parts) - 1
@@ -985,7 +995,7 @@ defmodule LangChain.Agents.Middleware.FileSystem do
       occurrence_count == 1 ->
         # Single occurrence, safe to replace
         updated_content = String.replace(content, old_string, new_string, global: false)
-        write_edit(agent_id, file_path, updated_content, "File edited successfully: #{file_path}")
+        write_edit(filesystem_scope, file_path, updated_content, "File edited successfully: #{file_path}")
 
       occurrence_count > 1 and not replace_all ->
         {:error,
@@ -996,7 +1006,7 @@ defmodule LangChain.Agents.Middleware.FileSystem do
         updated_content = String.replace(content, old_string, new_string, global: true)
 
         write_edit(
-          agent_id,
+          filesystem_scope,
           file_path,
           updated_content,
           "File edited successfully: #{file_path} (#{occurrence_count} replacements)"
@@ -1004,8 +1014,8 @@ defmodule LangChain.Agents.Middleware.FileSystem do
     end
   end
 
-  defp write_edit(agent_id, file_path, updated_content, success_message) do
-    case FileSystemServer.write_file(agent_id, file_path, updated_content) do
+  defp write_edit(filesystem_scope, file_path, updated_content, success_message) do
+    case FileSystemServer.write_file(filesystem_scope, file_path, updated_content) do
       :ok ->
         {:ok, success_message}
 
@@ -1014,7 +1024,7 @@ defmodule LangChain.Agents.Middleware.FileSystem do
     end
   end
 
-  defp perform_line_edit(agent_id, file_path, content, start_line, end_line, new_content) do
+  defp perform_line_edit(filesystem_scope, file_path, content, start_line, end_line, new_content) do
     lines = String.split(content, "\n")
     total_lines = length(lines)
 
@@ -1045,7 +1055,7 @@ defmodule LangChain.Agents.Middleware.FileSystem do
         updated_content = Enum.join(updated_lines, "\n")
 
         # Write the updated content
-        case FileSystemServer.write_file(agent_id, file_path, updated_content) do
+        case FileSystemServer.write_file(filesystem_scope, file_path, updated_content) do
           :ok ->
             {:ok,
              "File edited successfully: #{file_path}\nReplaced #{lines_replaced_count} lines (#{start_line}-#{end_line})"}

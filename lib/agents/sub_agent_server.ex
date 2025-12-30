@@ -255,13 +255,9 @@ defmodule LangChain.Agents.SubAgentServer do
 
   @impl true
   def handle_call(:execute, _from, %ServerState{subagent: subagent} = server_state) do
-    Logger.debug("SubAgentServer executing #{subagent.id}")
-
     # Delegate to SubAgent.execute
     case SubAgent.execute(subagent) do
       {:ok, completed_subagent} ->
-        Logger.debug("SubAgentServer #{subagent.id} completed successfully")
-
         # Extract result - returns {:ok, result} or {:error, reason}
         case SubAgent.extract_result(completed_subagent) do
           {:ok, result} ->
@@ -270,7 +266,7 @@ defmodule LangChain.Agents.SubAgentServer do
 
           {:error, reason} ->
             Logger.error(
-              "SubAgentServer #{subagent.id} result extraction error: #{inspect(reason)}"
+              "SubAgentServer: #{subagent.id} result extraction error: #{inspect(reason)}"
             )
 
             new_state = %{server_state | subagent: completed_subagent}
@@ -279,13 +275,12 @@ defmodule LangChain.Agents.SubAgentServer do
 
       {:interrupt, interrupted_subagent} ->
         # SubAgent hit HITL interrupt
-        Logger.debug("SubAgentServer #{subagent.id} interrupted")
         new_state = %{server_state | subagent: interrupted_subagent}
         {:reply, {:interrupt, interrupted_subagent.interrupt_data}, new_state}
 
       {:error, error_subagent} ->
         Logger.error(
-          "SubAgentServer #{subagent.id} execution error: #{inspect(error_subagent.error)}"
+          "SubAgentServer: #{subagent.id} execution error: #{inspect(error_subagent.error)}"
         )
 
         new_state = %{server_state | subagent: error_subagent}

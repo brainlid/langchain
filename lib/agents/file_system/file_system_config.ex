@@ -207,7 +207,7 @@ defmodule LangChain.Agents.FileSystem.FileSystemConfig do
   end
 
   @doc """
-  Builds storage options for this config, including agent_id.
+  Builds storage options for this config, including scope_key.
 
   ## Examples
 
@@ -216,13 +216,16 @@ defmodule LangChain.Agents.FileSystem.FileSystemConfig do
       ...>   persistence_module: SomeMod,
       ...>   storage_opts: [path: "/data"]
       ...> })
-      iex> FileSystemConfig.build_storage_opts(config, "agent-123")
-      [path: "/data", agent_id: "agent-123", base_directory: "user_files"]
+      iex> FileSystemConfig.build_storage_opts(config, {:user, 123})
+      [path: "/data", scope_key: {:user, 123}, base_directory: "user_files"]
+
+      iex> FileSystemConfig.build_storage_opts(config, {:agent, "agent-123"})
+      [path: "/data", scope_key: {:agent, "agent-123"}, base_directory: "user_files"]
   """
-  @spec build_storage_opts(t(), String.t()) :: keyword()
-  def build_storage_opts(%FileSystemConfig{} = config, agent_id) do
+  @spec build_storage_opts(t(), tuple()) :: keyword()
+  def build_storage_opts(%FileSystemConfig{} = config, scope_key) when is_tuple(scope_key) do
     config.storage_opts
-    |> Keyword.put(:agent_id, agent_id)
+    |> Keyword.put(:scope_key, scope_key)
     |> Keyword.put(:base_directory, config.base_directory)
   end
 end

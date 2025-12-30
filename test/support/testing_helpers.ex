@@ -45,7 +45,7 @@ defmodule LangChain.TestingHelpers do
       assert entry.content == "test content"
   """
   def get_entry(agent_id, path) do
-    pid = FileSystemServer.whereis(agent_id)
+    pid = FileSystemServer.whereis({:agent, agent_id})
     state = :sys.get_state(pid)
     Map.get(state.files, path)
   end

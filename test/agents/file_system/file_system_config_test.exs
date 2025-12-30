@@ -168,7 +168,7 @@ defmodule LangChain.Agents.FileSystem.FileSystemConfigTest do
   end
 
   describe "build_storage_opts/2" do
-    test "adds agent_id and base_directory to storage_opts" do
+    test "adds scope_key and base_directory to storage_opts" do
       {:ok, config} =
         FileSystemConfig.new(%{
           base_directory: "user_files",
@@ -176,11 +176,11 @@ defmodule LangChain.Agents.FileSystem.FileSystemConfigTest do
           storage_opts: [path: "/data", custom: "value"]
         })
 
-      opts = FileSystemConfig.build_storage_opts(config, "agent-123")
+      opts = FileSystemConfig.build_storage_opts(config, {:agent, "agent-123"})
 
       assert Keyword.get(opts, :path) == "/data"
       assert Keyword.get(opts, :custom) == "value"
-      assert Keyword.get(opts, :agent_id) == "agent-123"
+      assert Keyword.get(opts, :scope_key) == {:agent, "agent-123"}
       assert Keyword.get(opts, :base_directory) == "user_files"
     end
 
@@ -191,9 +191,9 @@ defmodule LangChain.Agents.FileSystem.FileSystemConfigTest do
           persistence_module: Disk
         })
 
-      opts = FileSystemConfig.build_storage_opts(config, "agent-456")
+      opts = FileSystemConfig.build_storage_opts(config, {:user, 456})
 
-      assert Keyword.get(opts, :agent_id) == "agent-456"
+      assert Keyword.get(opts, :scope_key) == {:user, 456}
       assert Keyword.get(opts, :base_directory) == "user_files"
     end
   end

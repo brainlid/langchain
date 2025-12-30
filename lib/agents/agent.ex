@@ -58,6 +58,7 @@ defmodule LangChain.Agents.Agent do
     field :tools, {:array, :any}, default: [], virtual: true
     field :middleware, {:array, :any}, default: [], virtual: true
     field :name, :string
+    field :filesystem_scope, :any, virtual: true
   end
 
   @type t :: %Agent{}
@@ -69,7 +70,8 @@ defmodule LangChain.Agents.Agent do
     :assembled_system_prompt,
     :tools,
     :middleware,
-    :name
+    :name,
+    :filesystem_scope
   ]
   @required_fields [:agent_id, :model]
 
@@ -84,6 +86,7 @@ defmodule LangChain.Agents.Agent do
   - `:tools` - Additional tools beyond middleware (default: [])
   - `:middleware` - List of middleware modules/configs (default: [])
   - `:name` - Agent name for identification (default: nil)
+  - `:filesystem_scope` - Optional scope key for referencing an independently-running filesystem (e.g., `{:user, 123}`, `{:project, 456}`)
 
   ## Options
 
@@ -206,17 +209,18 @@ defmodule LangChain.Agents.Agent do
     user_middleware = get_field(changeset, :middleware) || []
     model = get_field(changeset, :model)
     agent_id = get_field(changeset, :agent_id)
+    filesystem_scope = get_field(changeset, :filesystem_scope)
 
     middleware_list =
       case replace_defaults do
         false ->
-          # Append user middleware to defaults (inject agent_id and model)
+          # Append user middleware to defaults (inject agent_id, model, and filesystem_scope)
           build_default_middleware(model, agent_id, opts) ++
-            inject_agent_context(user_middleware, agent_id, model)
+            inject_agent_context(user_middleware, agent_id, model, filesystem_scope)
 
         true ->
-          # Use only user-provided middleware (inject agent_id and model)
-          inject_agent_context(user_middleware, agent_id, model)
+          # Use only user-provided middleware (inject agent_id, model, and filesystem_scope)
+          inject_agent_context(user_middleware, agent_id, model, filesystem_scope)
       end
 
     # Initialize middleware
@@ -229,20 +233,27 @@ defmodule LangChain.Agents.Agent do
     end
   end
 
-  # Inject agent_id and model into user middleware configurations
-  defp inject_agent_context(middleware_list, agent_id, model) do
+  # Inject agent_id, model, and filesystem_scope into user middleware configurations
+  defp inject_agent_context(middleware_list, agent_id, model, filesystem_scope) do
+    base_context =
+      if filesystem_scope do
+        [agent_id: agent_id, model: model, filesystem_scope: filesystem_scope]
+      else
+        [agent_id: agent_id, model: model]
+      end
+
     Enum.map(middleware_list, fn
-      # Module without options - inject agent_id and model
+      # Module without options - inject context
       module when is_atom(module) ->
-        {module, [agent_id: agent_id, model: model]}
+        {module, base_context}
 
-      # Module with options - merge agent_id and model
+      # Module with options - merge context
       {module, opts} when is_list(opts) ->
-        {module, Keyword.merge([agent_id: agent_id, model: model], opts)}
+        {module, Keyword.merge(base_context, opts)}
 
-      # Module with map options - merge agent_id and model
+      # Module with map options - merge context
       {module, opts} when is_map(opts) ->
-        merged = Map.merge(%{agent_id: agent_id, model: model}, opts)
+        merged = Map.merge(Map.new(base_context), opts)
         {module, Map.to_list(merged)}
 
       # Pass through anything else as-is

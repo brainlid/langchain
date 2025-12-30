@@ -133,17 +133,17 @@ defmodule LangChain.Agents.IntegrationTest do
       agent_id = "test-agent-#{System.unique_integer([:positive])}"
 
       # Start FileSystemServer first (before creating agent)
-      {:ok, fs_pid} = FileSystemServer.start_link(agent_id: agent_id)
+      {:ok, fs_pid} = FileSystemServer.start_link(scope_key: {:agent, agent_id})
 
       # Verify the server is running
       assert Process.alive?(fs_pid)
 
       # Verify we can reach the server
-      assert FileSystemServer.whereis(agent_id) == fs_pid
+      assert FileSystemServer.whereis({:agent, agent_id}) == fs_pid
 
       # Test that write_file works directly (paths must start with /)
-      assert :ok == FileSystemServer.write_file(agent_id, "/direct_test.txt", "test content")
-      assert FileSystemServer.file_exists?(agent_id, "/direct_test.txt")
+      assert :ok == FileSystemServer.write_file({:agent, agent_id}, "/direct_test.txt", "test content")
+      assert FileSystemServer.file_exists?({:agent, agent_id}, "/direct_test.txt")
 
       # Create agent with Filesystem middleware
       {:ok, agent} =
@@ -165,11 +165,11 @@ defmodule LangChain.Agents.IntegrationTest do
       {:ok, _final_state} = Agent.execute(agent, initial_state)
 
       # Verify file was created using FileSystemServer
-      files = FileSystemServer.list_files(agent_id)
+      files = FileSystemServer.list_files({:agent, agent_id})
       assert "/test.txt" in files
 
       # Get the file content from FileSystemServer
-      {:ok, file_content} = FileSystemServer.read_file(agent_id, "/test.txt")
+      {:ok, file_content} = FileSystemServer.read_file({:agent, agent_id}, "/test.txt")
       assert file_content == "Hello, World!"
     end
 
@@ -253,7 +253,7 @@ defmodule LangChain.Agents.IntegrationTest do
       agent_id = "test-agent-#{System.unique_integer([:positive])}"
 
       # Start FileSystemServer first (before creating agent)
-      {:ok, _fs_pid} = FileSystemServer.start_link(agent_id: agent_id)
+      {:ok, _fs_pid} = FileSystemServer.start_link(scope_key: {:agent, agent_id})
 
       # Create agent
       {:ok, agent} = Agent.new(%{agent_id: agent_id, model: model})
@@ -274,10 +274,10 @@ defmodule LangChain.Agents.IntegrationTest do
       assert final_state.todos == []
 
       # Verify file was created using FileSystemServer
-      files = FileSystemServer.list_files(agent.agent_id)
+      files = FileSystemServer.list_files({:agent, agent.agent_id})
       assert "/data.txt" in files
 
-      {:ok, file_content} = FileSystemServer.read_file(agent.agent_id, "/data.txt")
+      {:ok, file_content} = FileSystemServer.read_file({:agent, agent.agent_id}, "/data.txt")
       assert file_content == "Some data"
     end
 
@@ -326,7 +326,7 @@ defmodule LangChain.Agents.IntegrationTest do
       agent_id = "test-agent-#{System.unique_integer([:positive])}"
 
       # Start FileSystemServer first (before creating agent)
-      {:ok, _fs_pid} = FileSystemServer.start_link(agent_id: agent_id)
+      {:ok, _fs_pid} = FileSystemServer.start_link(scope_key: {:agent, agent_id})
 
       {:ok, agent} = Agent.new(%{agent_id: agent_id, model: model})
 
@@ -339,10 +339,10 @@ defmodule LangChain.Agents.IntegrationTest do
       {:ok, _final_state} = Agent.execute(agent, initial_state)
 
       # Verify the file was created only once using FileSystemServer
-      files = FileSystemServer.list_files(agent.agent_id)
+      files = FileSystemServer.list_files({:agent, agent.agent_id})
       assert "/existing.txt" in files
 
-      {:ok, file_content} = FileSystemServer.read_file(agent.agent_id, "/existing.txt")
+      {:ok, file_content} = FileSystemServer.read_file({:agent, agent.agent_id}, "/existing.txt")
       assert file_content == "content"
     end
   end
