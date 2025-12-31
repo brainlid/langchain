@@ -203,7 +203,8 @@ defmodule LangChain.Agents.AgentServer do
       :last_activity_at,
       :shutdown_delay,
       :task,
-      :middleware_registry
+      :middleware_registry,
+      :presence_config
     ]
 
     @type t :: %__MODULE__{
@@ -221,7 +222,9 @@ defmodule LangChain.Agents.AgentServer do
             last_activity_at: DateTime.t() | nil,
             shutdown_delay: pos_integer() | nil,
             task: Task.t() | nil,
-            middleware_registry: %{(atom() | String.t()) => MiddlewareEntry.t()}
+            middleware_registry: %{(atom() | String.t()) => MiddlewareEntry.t()},
+            presence_config:
+              %{enabled: boolean(), presence_module: module(), topic: String.t()} | nil
           }
   end
 
@@ -476,10 +479,11 @@ defmodule LangChain.Agents.AgentServer do
   """
   @spec list_running_agents() :: [String.t()]
   def list_running_agents do
+    # Query the Registry for agent_server entries only (not supervisors)
+    # Registry stores entries as {key, pid, value}
+    # We only want {:agent_server, agent_id} entries
     Registry.select(LangChain.Agents.Registry, [
-      {{:agent_server, :"$1"}, :_, :_},
-      [],
-      [:"$1"]
+      {{{:agent_server, :"$1"}, :_, :_}, [], [:"$1"]}
     ])
   end
 
@@ -1063,6 +1067,20 @@ defmodule LangChain.Agents.AgentServer do
     inactivity_timeout = Keyword.get(opts, :inactivity_timeout, 300_000)
     shutdown_delay = Keyword.get(opts, :shutdown_delay, 5_000)
 
+    # Extract presence configuration
+    presence_opts = Keyword.get(opts, :presence_tracking)
+
+    presence_config =
+      if presence_opts do
+        %{
+          enabled: Keyword.get(presence_opts, :enabled, true),
+          presence_module: Keyword.fetch!(presence_opts, :presence_module),
+          topic: Keyword.fetch!(presence_opts, :topic)
+        }
+      else
+        nil
+      end
+
     topic = "agent_server:#{agent.agent_id}"
     debug_topic = if debug_pubsub, do: "agent_server:debug:#{agent.agent_id}", else: nil
 
@@ -1089,7 +1107,8 @@ defmodule LangChain.Agents.AgentServer do
       inactivity_timer_ref: nil,
       last_activity_at: DateTime.utc_now(),
       shutdown_delay: shutdown_delay,
-      middleware_registry: middleware_registry
+      middleware_registry: middleware_registry,
+      presence_config: presence_config
     }
 
     # Start the inactivity timer
@@ -1402,7 +1421,9 @@ defmodule LangChain.Agents.AgentServer do
 
     # Validate that state has agent_id set (critical for middleware functionality)
     unless new_state.agent_id do
-      error_msg = "State.agent_id is nil. When deserializing state, you must provide agent_id: State.from_serialized(agent_id, data)"
+      error_msg =
+        "State.agent_id is nil. When deserializing state, you must provide agent_id: State.from_serialized(agent_id, data)"
+
       Logger.error(error_msg)
       {:reply, {:error, error_msg}, server_state}
     else
@@ -1503,6 +1524,36 @@ defmodule LangChain.Agents.AgentServer do
   end
 
   @impl true
+  def handle_info(:shutdown_no_viewers, server_state) do
+    agent_id = server_state.agent.agent_id
+    Logger.info("Agent #{agent_id} shutting down - idle with no viewers")
+
+    # Broadcast shutdown event
+    broadcast_event(
+      server_state,
+      {:agent_shutdown,
+       %{
+         agent_id: agent_id,
+         reason: :no_viewers,
+         last_activity_at: server_state.last_activity_at,
+         shutdown_at: DateTime.utc_now()
+       }}
+    )
+
+    # Stop the parent AgentSupervisor, which will stop all children
+    case AgentSupervisor.stop(agent_id, server_state.shutdown_delay) do
+      :ok ->
+        :ok
+
+      {:error, :not_found} ->
+        Logger.warning("AgentSupervisor for agent #{agent_id} was not found, stopping self")
+    end
+
+    # Let the supervisor tree shutdown take care of it
+    {:noreply, server_state}
+  end
+
+  @impl true
   def handle_info({:middleware_message, middleware_id, message}, server_state) do
     # Emit telemetry event
     :telemetry.execute(
@@ -1524,7 +1575,11 @@ defmodule LangChain.Agents.AgentServer do
             # Update server state
             new_server_state = %{server_state | state: updated_state}
             # if debug pubsub is enabled, it will be notified.
-            broadcast_debug_event(new_server_state, {:agent_state_update, middleware_id, updated_state})
+            broadcast_debug_event(
+              new_server_state,
+              {:agent_state_update, middleware_id, updated_state}
+            )
+
             {:noreply, new_server_state}
 
           {:error, reason} ->
@@ -1631,6 +1686,9 @@ defmodule LangChain.Agents.AgentServer do
 
     broadcast_event(updated_state, {:status_changed, :completed, new_state})
 
+    # Check if we should shutdown based on presence
+    maybe_shutdown_if_no_viewers(updated_state)
+
     # Reset activity timer after completion
     updated_state = reset_inactivity_timer(updated_state)
 
@@ -1678,6 +1736,33 @@ defmodule LangChain.Agents.AgentServer do
     # Broadcast complete TODO snapshot if todos changed
     if old_server_state.state.todos != new_state.todos do
       broadcast_todos(old_server_state, new_state)
+    end
+  end
+
+  defp maybe_shutdown_if_no_viewers(server_state) do
+    case server_state.presence_config do
+      %{enabled: true, presence_module: presence_mod, topic: topic} ->
+        # Check who's viewing this agent's conversation
+        viewers = presence_mod.list(topic)
+
+        if map_size(viewers) == 0 do
+          Logger.info(
+            "Agent #{server_state.agent.agent_id} idle with no viewers, " <>
+              "scheduling shutdown to free resources"
+          )
+
+          # Schedule shutdown after brief delay (let final events propagate)
+          Process.send_after(self(), :shutdown_no_viewers, 1000)
+        else
+          Logger.debug(
+            "Agent #{server_state.agent.agent_id} idle but has #{map_size(viewers)} " <>
+              "viewers, keeping alive"
+          )
+        end
+
+      _ ->
+        # Presence tracking disabled, use standard inactivity timeout
+        :ok
     end
   end
 

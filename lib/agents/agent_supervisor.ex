@@ -282,6 +282,7 @@ defmodule LangChain.Agents.AgentSupervisor do
     debug_pubsub = Keyword.get(config, :debug_pubsub)
     inactivity_timeout = Keyword.get(config, :inactivity_timeout, 300_000)
     shutdown_delay = Keyword.get(config, :shutdown_delay, 5000)
+    presence_tracking = Keyword.get(config, :presence_tracking)
 
     # Build AgentServer options
     agent_server_opts = [
@@ -301,6 +302,12 @@ defmodule LangChain.Agents.AgentSupervisor do
     agent_server_opts =
       if debug_pubsub,
         do: Keyword.put(agent_server_opts, :debug_pubsub, debug_pubsub),
+        else: agent_server_opts
+
+    # Add presence_tracking if provided
+    agent_server_opts =
+      if presence_tracking,
+        do: Keyword.put(agent_server_opts, :presence_tracking, presence_tracking),
         else: agent_server_opts
 
     # Build child specifications
