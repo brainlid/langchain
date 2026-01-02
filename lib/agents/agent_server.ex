@@ -74,11 +74,9 @@ defmodule LangChain.Agents.AgentServer do
   - `{:todos_updated, todos}` - Complete snapshot of current TODO list
 
   ### Status Events
-  - `{:status_changed, :idle, nil}` - Server ready for work
+  - `{:status_changed, :idle, nil}` - Server ready for work (also broadcast after successful execution completion)
   - `{:status_changed, :running, nil}` - Agent executing
   - `{:status_changed, :interrupted, interrupt_data}` - Awaiting human decision
-  - `{:status_changed, :completed, final_state}` - Execution completed
-    successfully
   - `{:status_changed, :cancelled, nil}` - Execution was cancelled by user
   - `{:status_changed, :error, reason}` - Execution failed
 
@@ -139,7 +137,7 @@ defmodule LangChain.Agents.AgentServer do
       # Listen for events
       receive do
         {:todos_updated, todos} -> IO.inspect(todos, label: "Current TODOs")
-        {:status_changed, :completed, final_state} -> IO.puts("Done!")
+        {:status_changed, :idle, nil} -> IO.puts("Done!")
       end
 
   ## Human-in-the-Loop Example
@@ -172,7 +170,7 @@ defmodule LangChain.Agents.AgentServer do
 
       # Wait for completion
       receive do
-        {:status_changed, :completed, final_state} -> :ok
+        {:status_changed, :idle, nil} -> :ok
       end
   """
 
@@ -217,7 +215,7 @@ defmodule LangChain.Agents.AgentServer do
     @type t :: %__MODULE__{
             agent: Agent.t(),
             state: State.t(),
-            status: :idle | :running | :interrupted | :completed | :cancelled | :error,
+            status: :idle | :running | :interrupted | :cancelled | :error,
             pubsub: {module(), atom()} | nil,
             topic: String.t(),
             debug_pubsub: {module(), atom()} | nil,
@@ -667,7 +665,7 @@ defmodule LangChain.Agents.AgentServer do
   @doc """
   Get the current status of the server.
 
-  Returns one of: `:idle`, `:running`, `:interrupted`, `:completed`, `:error`
+  Returns one of: `:idle`, `:running`, `:interrupted`, `:cancelled`, `:error`
 
   ## Examples
 
@@ -694,6 +692,38 @@ defmodule LangChain.Agents.AgentServer do
   @spec get_info(String.t()) :: map()
   def get_info(agent_id) do
     GenServer.call(get_name(agent_id), :get_info)
+  end
+
+  @doc """
+  Gets metadata about the agent server including status and last activity.
+
+  ## Returns
+    - `{:ok, metadata}` - Map with agent metadata
+    - `{:error, :not_found}` - Agent not found
+
+  ## Metadata Fields
+    - `:status` - Current status atom (:idle, :running, :interrupted, :error, :cancelled)
+    - `:last_activity_at` - DateTime of last activity (may be nil)
+    - `:conversation_id` - Conversation ID (may be nil)
+
+  ## Examples
+
+      {:ok, metadata} = AgentServer.get_metadata("my-agent-1")
+      # => {:ok, %{status: :idle, last_activity_at: ~U[2024-01-01 12:00:00Z], conversation_id: "conv-123"}}
+  """
+  @spec get_metadata(String.t()) :: {:ok, map()} | {:error, :not_found}
+  def get_metadata(agent_id) do
+    case get_pid(agent_id) do
+      nil ->
+        {:error, :not_found}
+
+      pid ->
+        try do
+          GenServer.call(pid, :get_metadata, 5000)
+        catch
+          :exit, _ -> {:error, :not_found}
+        end
+    end
   end
 
   @doc """
@@ -1267,6 +1297,17 @@ defmodule LangChain.Agents.AgentServer do
     }
 
     {:reply, info, server_state}
+  end
+
+  @impl true
+  def handle_call(:get_metadata, _from, server_state) do
+    metadata = %{
+      status: server_state.status,
+      last_activity_at: server_state.last_activity_at,
+      conversation_id: server_state.conversation_id
+    }
+
+    {:reply, {:ok, metadata}, server_state}
   end
 
   @impl true
