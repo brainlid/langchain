@@ -926,6 +926,36 @@ defmodule LangChain.Agents.AgentServerTest do
       assert DateTime.compare(status2.last_activity_at, initial_time) == :gt
     end
 
+    test "resets timer on touch" do
+      agent = create_test_agent()
+      agent_id = agent.agent_id
+
+      {:ok, _pid} =
+        AgentServer.start_link(
+          agent: agent,
+          name: AgentServer.get_name(agent_id),
+          pubsub: nil,
+          inactivity_timeout: 1_000
+        )
+
+      # Get initial status
+      status1 = AgentServer.get_inactivity_status(agent_id)
+      initial_time = status1.last_activity_at
+
+      # Wait a bit
+      Process.sleep(50)
+
+      # Touch the agent - should reset timer
+      :ok = AgentServer.touch(agent_id)
+
+      # Wait for cast to be processed
+      Process.sleep(10)
+
+      # Check that activity time was updated
+      status2 = AgentServer.get_inactivity_status(agent_id)
+      assert DateTime.compare(status2.last_activity_at, initial_time) == :gt
+    end
+
     # Note: The reset timer test is in agent_supervisor_test.exs where FileSystemServer is available
 
     test "time_since_activity increases over time" do

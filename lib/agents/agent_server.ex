@@ -727,6 +727,33 @@ defmodule LangChain.Agents.AgentServer do
   end
 
   @doc """
+  Gets the agent configuration for the given agent.
+
+  ## Returns
+    - `{:ok, Agent.t()}` - The agent struct
+    - `{:error, :not_found}` - Agent not found
+
+  ## Examples
+
+      {:ok, agent} = AgentServer.get_agent("my-agent-1")
+      # => {:ok, %Agent{agent_id: "my-agent-1", model: %ChatModel{...}, ...}}
+  """
+  @spec get_agent(String.t()) :: {:ok, Agent.t()} | {:error, :not_found}
+  def get_agent(agent_id) do
+    case get_pid(agent_id) do
+      nil ->
+        {:error, :not_found}
+
+      pid ->
+        try do
+          GenServer.call(pid, :get_agent, 5000)
+        catch
+          :exit, _ -> {:error, :not_found}
+        end
+    end
+  end
+
+  @doc """
   Add a message to the agent's state and transition to idle if completed.
 
   This is useful for conversational interfaces where you want to add a new user
@@ -805,6 +832,24 @@ defmodule LangChain.Agents.AgentServer do
   @spec get_inactivity_status(String.t()) :: map()
   def get_inactivity_status(agent_id) do
     GenServer.call(get_name(agent_id), :get_inactivity_status)
+  end
+
+  @doc """
+  Touch the agent to indicate activity and reset the inactivity timer.
+
+  This is useful when external events indicate activity (e.g., user viewing
+  the agent in the UI, clicking tabs, etc.) to keep the agent alive and
+  prevent automatic shutdown due to inactivity.
+
+  Returns `:ok` immediately (non-blocking).
+
+  ## Examples
+
+      :ok = AgentServer.touch("my-agent-1")
+  """
+  @spec touch(String.t()) :: :ok
+  def touch(agent_id) do
+    GenServer.cast(get_name(agent_id), :touch)
   end
 
   @doc """
@@ -1311,6 +1356,11 @@ defmodule LangChain.Agents.AgentServer do
   end
 
   @impl true
+  def handle_call(:get_agent, _from, server_state) do
+    {:reply, {:ok, server_state.agent}, server_state}
+  end
+
+  @impl true
   def handle_call({:add_message, message}, _from, server_state) do
     # Add message to the state
     new_state = State.add_message(server_state.state, message)
@@ -1505,6 +1555,12 @@ defmodule LangChain.Agents.AgentServer do
   def handle_cast({:publish_event, event}, server_state) do
     broadcast_event(server_state, event)
     {:noreply, server_state}
+  end
+
+  @impl true
+  def handle_cast(:touch, server_state) do
+    # Reset the inactivity timer to keep the agent alive
+    {:noreply, reset_inactivity_timer(server_state)}
   end
 
   @impl true
