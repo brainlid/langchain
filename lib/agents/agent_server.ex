@@ -85,10 +85,15 @@ defmodule LangChain.Agents.AgentServer do
   ### LLM Streaming Events
   - `{:llm_deltas, [%MessageDelta{}]}` - Streaming tokens/deltas received (list
     of deltas)
-  - `{:llm_message, %Message{}}` - Complete message received and processed from
-    LLM
+  - `{:llm_message, %Message{}}` - Complete message received and processed
   - `{:llm_token_usage, %TokenUsage{}}` - Token usage information
   - `{:tool_response, %Message{}}` - Tool execution result (optional)
+
+  ### Message Persistence Events
+  - `{:display_message_saved, display_message}` - Broadcast after message is
+    persisted via save_new_message_fn callback (only when callback is configured
+    and succeeds). The `{:llm_message, ...}` event is also broadcast alongside
+    this event for backward compatibility
 
   **Note**: File events are NOT broadcast by AgentServer. Files are managed by
   `FileSystemServer` which provides its own event handling mechanism.
@@ -184,7 +189,7 @@ defmodule LangChain.Agents.AgentServer do
   @registry LangChain.Agents.Registry
 
   @typedoc "Status of the agent server"
-  @type status :: :idle | :running | :interrupted | :completed | :cancelled | :error
+  @type status :: :idle | :running | :interrupted | :cancelled | :error
 
   defmodule ServerState do
     @moduledoc false
@@ -204,7 +209,9 @@ defmodule LangChain.Agents.AgentServer do
       :shutdown_delay,
       :task,
       :middleware_registry,
-      :presence_config
+      :presence_config,
+      :conversation_id,
+      :save_new_message_fn
     ]
 
     @type t :: %__MODULE__{
@@ -224,7 +231,9 @@ defmodule LangChain.Agents.AgentServer do
             task: Task.t() | nil,
             middleware_registry: %{(atom() | String.t()) => MiddlewareEntry.t()},
             presence_config:
-              %{enabled: boolean(), presence_module: module(), topic: String.t()} | nil
+              %{enabled: boolean(), presence_module: module(), topic: String.t()} | nil,
+            conversation_id: String.t() | nil,
+            save_new_message_fn: (String.t(), LangChain.Message.t() -> {:ok, list()} | {:error, term()}) | nil
           }
   end
 
@@ -245,6 +254,9 @@ defmodule LangChain.Agents.AgentServer do
   - `:inactivity_timeout` - Timeout in milliseconds for automatic shutdown due to inactivity (default: 300_000 - 5 minutes)
     Set to `nil` or `:infinity` to disable automatic shutdown
   - `:shutdown_delay` - Delay in milliseconds to allow the supervisor to gracefully stop all children (default: 5000)
+  - `:conversation_id` - Optional conversation identifier for message persistence (default: nil)
+  - `:save_new_message_fn` - Optional callback function for persisting messages (default: nil)
+    Function signature: `(conversation_id :: String.t(), message :: LangChain.Message.t()) -> {:ok, [saved_messages]} | {:error, reason}`
 
   ## Examples
 
@@ -1093,6 +1105,10 @@ defmodule LangChain.Agents.AgentServer do
     # Update agent with middleware entries
     updated_agent = %{agent | middleware: middleware_entries}
 
+    # Extract conversation_id and save_new_message_fn from opts
+    conversation_id = Keyword.get(opts, :conversation_id)
+    save_new_message_fn = Keyword.get(opts, :save_new_message_fn)
+
     server_state = %ServerState{
       agent: updated_agent,
       state: state,
@@ -1108,7 +1124,9 @@ defmodule LangChain.Agents.AgentServer do
       last_activity_at: DateTime.utc_now(),
       shutdown_delay: shutdown_delay,
       middleware_registry: middleware_registry,
-      presence_config: presence_config
+      presence_config: presence_config,
+      conversation_id: conversation_id,
+      save_new_message_fn: save_new_message_fn
     }
 
     # Start the inactivity timer
@@ -1274,6 +1292,11 @@ defmodule LangChain.Agents.AgentServer do
 
     # Reset inactivity timer on user message
     updated_server_state = reset_inactivity_timer(updated_server_state)
+
+    # Save and broadcast messages immediately
+    # Note: During LLM execution, assistant messages are also saved via on_message_processed callback
+    # But if manually adding assistant messages, we should also save them here
+    maybe_save_and_broadcast_message(updated_server_state, message)
 
     # Broadcast debug event for state update
     broadcast_debug_event(updated_server_state, {:agent_state_update, new_state})
@@ -1628,7 +1651,8 @@ defmodule LangChain.Agents.AgentServer do
 
       # Callback for complete message (either through delta or non-streamed messages)
       on_message_processed: fn _chain, message ->
-        broadcast_event(server_state, {:llm_message, message})
+        # Save and broadcast message (if callback configured)
+        maybe_save_and_broadcast_message(server_state, message)
       end,
 
       # Callback for token usage information
@@ -1679,12 +1703,12 @@ defmodule LangChain.Agents.AgentServer do
   defp handle_execution_result({:ok, new_state}, server_state) do
     updated_state = %{
       server_state
-      | status: :completed,
+      | status: :idle,
         state: new_state,
         error: nil
     }
 
-    broadcast_event(updated_state, {:status_changed, :completed, new_state})
+    broadcast_event(updated_state, {:status_changed, :idle, nil})
 
     # Check if we should shutdown based on presence
     maybe_shutdown_if_no_viewers(updated_state)
@@ -1776,6 +1800,51 @@ defmodule LangChain.Agents.AgentServer do
     Enum.each(new_state.messages, fn message ->
       broadcast_event(server_state, {:llm_message, message})
     end)
+  end
+
+  # Save message via callback and broadcast display messages
+  defp maybe_save_and_broadcast_message(server_state, message) do
+    Logger.debug("maybe_save_and_broadcast_message called - callback: #{inspect(not is_nil(server_state.save_new_message_fn))}, conversation_id: #{inspect(server_state.conversation_id)}, message role: #{message.role}")
+
+    if server_state.save_new_message_fn && server_state.conversation_id do
+      Logger.debug("Calling save callback for conversation #{server_state.conversation_id}")
+
+      try do
+        case server_state.save_new_message_fn.(server_state.conversation_id, message) do
+          {:ok, display_messages} when is_list(display_messages) ->
+            Logger.debug("Successfully saved #{length(display_messages)} display messages, broadcasting...")
+            # Broadcast each saved DisplayMessage
+            Enum.each(display_messages, fn display_msg ->
+              broadcast_event(server_state, {:display_message_saved, display_msg})
+            end)
+
+            # Also broadcast the original message event
+            # This maintains backward compatibility and allows UI to handle message completion
+            broadcast_event(server_state, {:llm_message, message})
+            :ok
+
+          {:error, reason} ->
+            Logger.error("Failed to save message: #{inspect(reason)}")
+            # When callback fails, don't broadcast any message events
+            # The UI should handle the absence of events appropriately
+            :ok
+
+          other ->
+            Logger.error("Invalid callback return format: #{inspect(other)}. Expected {:ok, list()} or {:error, term()}")
+            # When callback returns invalid format, don't broadcast any message events
+            :ok
+        end
+      rescue
+        exception ->
+          Logger.error("Callback raised exception: #{inspect(exception)}")
+          # When callback raises exception, don't broadcast any message events
+          :ok
+      end
+    else
+      Logger.debug("No save callback configured, using original :llm_message event")
+      # No save function configured, use original event
+      broadcast_event(server_state, {:llm_message, message})
+    end
   end
 
   defp broadcast_event(%ServerState{} = server_state, event) do

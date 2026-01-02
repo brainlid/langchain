@@ -197,7 +197,7 @@ defmodule LangChain.Agents.AgentServerTest do
       # Wait for execution to complete
       Process.sleep(50)
 
-      assert AgentServer.get_status(agent_id) == :completed
+      assert AgentServer.get_status(agent_id) == :idle
       state = AgentServer.get_state(agent_id)
       assert length(state.messages) == 2
     end
@@ -379,11 +379,11 @@ defmodule LangChain.Agents.AgentServerTest do
       # Execute and wait for completion
       assert :ok = AgentServer.execute(agent_id)
       Process.sleep(50)
-      assert AgentServer.get_status(agent_id) == :completed
+      assert AgentServer.get_status(agent_id) == :idle
 
       # Try to cancel - should fail
       assert {:error, msg} = AgentServer.cancel(agent_id)
-      assert msg == "Cannot cancel, server is not running (status: completed)"
+      assert msg == "Cannot cancel, server is not running (status: idle)"
     end
   end
 
@@ -435,7 +435,7 @@ defmodule LangChain.Agents.AgentServerTest do
       # Wait for resume to complete
       Process.sleep(50)
 
-      assert AgentServer.get_status(agent_id) == :completed
+      assert AgentServer.get_status(agent_id) == :idle
     end
 
     test "returns error if not interrupted", %{agent: _agent, agent_id: setup_agent_id} do
@@ -512,8 +512,8 @@ defmodule LangChain.Agents.AgentServerTest do
       # Should receive running status
       assert_receive {:status_changed, :running, nil}, 100
 
-      # Should receive completed status
-      assert_receive {:status_changed, :completed, _state}, 200
+      # Should receive idle status
+      assert_receive {:status_changed, :idle, nil}, 200
     end
 
     # NOTE: File events are NOT broadcast by AgentServer anymore

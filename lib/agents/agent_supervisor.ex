@@ -25,6 +25,8 @@ defmodule LangChain.Agents.AgentSupervisor do
   - `:initial_state` - Initial State for AgentServer (optional)
   - `:pubsub` - PubSub configuration as `{module(), atom()}` tuple or `nil` (optional, default: nil)
   - `:shutdown_delay` - Delay in milliseconds to allow the supervisor to gracefully stop all children (optional, default: 5000)
+  - `:conversation_id` - Optional conversation identifier for message persistence (optional, default: nil)
+  - `:save_new_message_fn` - Optional callback function for persisting messages (optional, default: nil)
 
   ## Examples
 
@@ -124,6 +126,8 @@ defmodule LangChain.Agents.AgentSupervisor do
     Set to `nil` or `:infinity` to disable automatic shutdown
   - `:name` - Supervisor name registration (optional)
   - `:shutdown_delay` - Delay in milliseconds to allow the supervisor to gracefully stop all children (optional, default: 5000)
+  - `:conversation_id` - Optional conversation identifier for message persistence (optional, default: nil)
+  - `:save_new_message_fn` - Optional callback function for persisting messages (optional, default: nil)
 
   ## Examples
 
@@ -283,6 +287,8 @@ defmodule LangChain.Agents.AgentSupervisor do
     inactivity_timeout = Keyword.get(config, :inactivity_timeout, 300_000)
     shutdown_delay = Keyword.get(config, :shutdown_delay, 5000)
     presence_tracking = Keyword.get(config, :presence_tracking)
+    conversation_id = Keyword.get(config, :conversation_id)
+    save_new_message_fn = Keyword.get(config, :save_new_message_fn)
 
     # Build AgentServer options
     agent_server_opts = [
@@ -308,6 +314,18 @@ defmodule LangChain.Agents.AgentSupervisor do
     agent_server_opts =
       if presence_tracking,
         do: Keyword.put(agent_server_opts, :presence_tracking, presence_tracking),
+        else: agent_server_opts
+
+    # Add conversation_id if provided
+    agent_server_opts =
+      if conversation_id,
+        do: Keyword.put(agent_server_opts, :conversation_id, conversation_id),
+        else: agent_server_opts
+
+    # Add save_new_message_fn if provided
+    agent_server_opts =
+      if save_new_message_fn,
+        do: Keyword.put(agent_server_opts, :save_new_message_fn, save_new_message_fn),
         else: agent_server_opts
 
     # Build child specifications

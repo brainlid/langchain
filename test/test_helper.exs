@@ -42,6 +42,9 @@ Mimic.copy(LangChain.ChatModels.ChatGrok)
 # Start the Agents Registry for tests
 {:ok, _} = Registry.start_link(keys: :unique, name: LangChain.Agents.Registry)
 
+# Start a shared PubSub for tests
+{:ok, _} = Phoenix.PubSub.Supervisor.start_link(name: :test_pubsub)
+
 Logger.configure(level: :warning)
 ExUnit.configure(exclude: [live_call: true])
 

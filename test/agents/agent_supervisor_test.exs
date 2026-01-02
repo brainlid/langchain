@@ -13,6 +13,15 @@ defmodule LangChain.Agents.AgentSupervisorTest do
   setup :set_mimic_global
   setup :verify_on_exit!
 
+  setup do
+    # Mock ChatAnthropic.call to prevent real API calls
+    stub(ChatAnthropic, :call, fn _model, _messages, _callbacks ->
+      {:ok, [Message.new_assistant!("Mock response")]}
+    end)
+
+    :ok
+  end
+
   # Helper to create a mock model
   defp mock_model do
     ChatAnthropic.new!(%{
