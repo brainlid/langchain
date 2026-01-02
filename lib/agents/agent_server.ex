@@ -80,6 +80,13 @@ defmodule LangChain.Agents.AgentServer do
   - `{:status_changed, :cancelled, nil}` - Execution was cancelled by user
   - `{:status_changed, :error, reason}` - Execution failed
 
+  ### Shutdown Events
+  - `{:agent_shutdown, shutdown_data}` - Agent is shutting down
+    - `shutdown_data.agent_id` - The agent identifier
+    - `shutdown_data.reason` - Shutdown reason (`:inactivity` | `:no_viewers`)
+    - `shutdown_data.last_activity_at` - DateTime of last activity
+    - `shutdown_data.shutdown_at` - DateTime when shutdown was initiated
+
   ### LLM Streaming Events
   - `{:llm_deltas, [%MessageDelta{}]}` - Streaming tokens/deltas received (list
     of deltas)
