@@ -225,8 +225,20 @@ defmodule LangChain.Agents.Middleware.ConversationTitle do
 
     Task.start(fn ->
       try do
+        # Publish debug event for title generation start
+        AgentServer.publish_debug_event_from(
+          agent_id,
+          {:middleware_action, __MODULE__, {:title_generation_started, String.slice(user_text, 0, 100)}}
+        )
+
         # Generate title using TextToTitleChain
         title = generate_title(user_text, config)
+
+        # Publish debug event for successful completion
+        AgentServer.publish_debug_event_from(
+          agent_id,
+          {:middleware_action, __MODULE__, {:title_generation_completed, title}}
+        )
 
         # Emit telemetry for successful completion
         :telemetry.execute(
@@ -244,6 +256,12 @@ defmodule LangChain.Agents.Middleware.ConversationTitle do
       rescue
         error ->
           stacktrace = __STACKTRACE__
+
+          # Publish debug event for failure
+          AgentServer.publish_debug_event_from(
+            agent_id,
+            {:middleware_action, __MODULE__, {:title_generation_failed, inspect(error)}}
+          )
 
           Logger.error(
             "Title generation task failed: #{inspect(error)}\n#{Exception.format_stacktrace(stacktrace)}"
@@ -264,6 +282,12 @@ defmodule LangChain.Agents.Middleware.ConversationTitle do
       catch
         kind, reason ->
           stacktrace = __STACKTRACE__
+
+          # Publish debug event for crash
+          AgentServer.publish_debug_event_from(
+            agent_id,
+            {:middleware_action, __MODULE__, {:title_generation_failed, "#{kind}: #{inspect(reason)}"}}
+          )
 
           Logger.error(
             "Title generation task crashed (#{kind}): #{inspect(reason)}\n#{Exception.format_stacktrace(stacktrace)}"

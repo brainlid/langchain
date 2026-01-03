@@ -513,7 +513,7 @@ defmodule LangChain.Agents.AgentServerTest do
       assert_receive {:status_changed, :running, nil}, 100
 
       # Should receive idle status
-      assert_receive {:status_changed, :idle, nil}, 200
+      assert_receive {:status_changed, :idle, nil}, 100
     end
 
     # NOTE: File events are NOT broadcast by AgentServer anymore
@@ -633,6 +633,70 @@ defmodule LangChain.Agents.AgentServerTest do
 
       # Should receive cancelled status
       assert_receive {:status_changed, :cancelled, _state}, 100
+    end
+  end
+
+  describe "publish_debug_event_from/2" do
+    test "broadcasts debug event to debug PubSub topic" do
+      agent_id = new_agent_id()
+      pubsub_name = :"test_pubsub_#{agent_id}"
+      {:ok, _} = start_supervised({Phoenix.PubSub, name: pubsub_name})
+
+      # Create agent with debug PubSub enabled
+      {:ok, agent} =
+        Agent.new(%{
+          agent_id: agent_id,
+          model: ChatAnthropic.new!(%{model: "claude-sonnet-4-5-20250929"})
+        })
+
+      # Start AgentServer with debug_pubsub
+      {:ok, _pid} =
+        AgentServer.start_link(
+          agent: agent,
+          initial_state: State.new!(),
+          pubsub: {Phoenix.PubSub, pubsub_name},
+          debug_pubsub: {Phoenix.PubSub, pubsub_name}
+        )
+
+      # Subscribe to debug events
+      AgentServer.subscribe_debug(agent_id)
+
+      # Publish a middleware action debug event
+      test_event = {:middleware_action, TestMiddleware, {:test_action, "test_data"}}
+      :ok = AgentServer.publish_debug_event_from(agent_id, test_event)
+
+      # Assert we received the event
+      assert_receive ^test_event, 100
+
+      # Clean up
+      AgentServer.stop(agent_id)
+    end
+
+    test "returns :ok when debug_pubsub is not configured" do
+      agent_id = new_agent_id()
+      pubsub_name = :"test_pubsub_#{agent_id}"
+      {:ok, _} = start_supervised({Phoenix.PubSub, name: pubsub_name})
+
+      {:ok, agent} =
+        Agent.new(%{
+          agent_id: agent_id,
+          model: ChatAnthropic.new!(%{model: "claude-sonnet-4-5-20250929"})
+        })
+
+      # Start without debug_pubsub
+      {:ok, _pid} =
+        AgentServer.start_link(
+          agent: agent,
+          initial_state: State.new!(),
+          pubsub: {Phoenix.PubSub, pubsub_name}
+          # No debug_pubsub configured
+        )
+
+      # Should not crash, just return :ok
+      assert :ok = AgentServer.publish_debug_event_from(agent_id, {:test_event, "data"})
+
+      # Clean up
+      AgentServer.stop(agent_id)
     end
   end
 

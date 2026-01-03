@@ -386,14 +386,19 @@ defmodule LangChain.Agents.AgentServer do
   """
   @spec subscribe(String.t()) :: :ok | {:error, term()}
   def subscribe(agent_id) do
-    case GenServer.call(get_name(agent_id), :get_pubsub_info) do
-      {pubsub, pubsub_name, topic} ->
-        # subscribe the client process executing this request to the pubsub
-        # topic the server is using for broadcasting events
-        pubsub.subscribe(pubsub_name, topic)
+    try do
+      case GenServer.call(get_name(agent_id), :get_pubsub_info) do
+        nil ->
+          {:error, :no_pubsub}
 
-      nil ->
-        {:error, :no_pubsub}
+        {pubsub, pubsub_name, topic} ->
+          # subscribe the client process executing this request to the pubsub
+          # topic the server is using for broadcasting events
+          pubsub.subscribe(pubsub_name, topic)
+      end
+    catch
+      :exit, _ ->
+        {:error, :process_not_found}
     end
   end
 
@@ -410,13 +415,19 @@ defmodule LangChain.Agents.AgentServer do
   """
   @spec unsubscribe(String.t()) :: :ok | {:error, term()}
   def unsubscribe(agent_id) do
-    case GenServer.call(get_name(agent_id), :get_pubsub_info) do
-      {pubsub, pubsub_name, topic} ->
-        # unsubscribe the client process from the pubsub topic
-        pubsub.unsubscribe(pubsub_name, topic)
+    try do
+      case GenServer.call(get_name(agent_id), :get_pubsub_info) do
+        nil ->
+          {:error, :no_pubsub}
 
-      nil ->
-        {:error, :no_pubsub}
+        {pubsub, pubsub_name, topic} ->
+          # unsubscribe the client process from the pubsub topic
+          pubsub.unsubscribe(pubsub_name, topic)
+      end
+    catch
+      :exit, _ ->
+        # Process doesn't exist, so already unsubscribed (treat as success)
+        :ok
     end
   end
 
@@ -435,14 +446,19 @@ defmodule LangChain.Agents.AgentServer do
   """
   @spec subscribe_debug(String.t()) :: :ok | {:error, term()}
   def subscribe_debug(agent_id) do
-    case GenServer.call(get_name(agent_id), :get_debug_pubsub_info) do
-      {debug_pubsub, debug_pubsub_name, debug_topic} ->
-        # subscribe the client process executing this request to the debug pubsub
-        # topic the server is using for broadcasting debug events
-        debug_pubsub.subscribe(debug_pubsub_name, debug_topic)
+    try do
+      case GenServer.call(get_name(agent_id), :get_debug_pubsub_info) do
+        nil ->
+          {:error, :no_debug_pubsub}
 
-      nil ->
-        {:error, :no_debug_pubsub}
+        {debug_pubsub, debug_pubsub_name, debug_topic} ->
+          # subscribe the client process executing this request to the debug pubsub
+          # topic the server is using for broadcasting debug events
+          debug_pubsub.subscribe(debug_pubsub_name, debug_topic)
+      end
+    catch
+      :exit, _ ->
+        {:error, :process_not_found}
     end
   end
 
@@ -459,13 +475,19 @@ defmodule LangChain.Agents.AgentServer do
   """
   @spec unsubscribe_debug(String.t()) :: :ok | {:error, term()}
   def unsubscribe_debug(agent_id) do
-    case GenServer.call(get_name(agent_id), :get_debug_pubsub_info) do
-      {debug_pubsub, debug_pubsub_name, debug_topic} ->
-        # unsubscribe the client process from the debug pubsub topic
-        debug_pubsub.unsubscribe(debug_pubsub_name, debug_topic)
+    try do
+      case GenServer.call(get_name(agent_id), :get_debug_pubsub_info) do
+        nil ->
+          {:error, :no_debug_pubsub}
 
-      nil ->
-        {:error, :no_debug_pubsub}
+        {debug_pubsub, debug_pubsub_name, debug_topic} ->
+          # unsubscribe the client process from the debug pubsub topic
+          debug_pubsub.unsubscribe(debug_pubsub_name, debug_topic)
+      end
+    catch
+      :exit, _ ->
+        # Process doesn't exist, so already unsubscribed (treat as success)
+        :ok
     end
   end
 
@@ -481,6 +503,54 @@ defmodule LangChain.Agents.AgentServer do
   @spec publish_event_from(String.t(), term()) :: :ok
   def publish_event_from(agent_id, event) do
     GenServer.cast(get_name(agent_id), {:publish_event, event})
+  end
+
+  @doc """
+  Request the AgentServer to publish a specific debug PubSub message or event.
+
+  Designed to make it easier for middleware to publish debug messages to the
+  Agent's debug PubSub. Debug events are useful for development and debugging
+  but separate from user-facing events.
+
+  A debug PubSub message is only broadcast if the AgentServer is configured
+  with debug_pubsub.
+
+  ## Standardized Middleware Action Pattern
+
+  Middleware should use the `:middleware_action` tuple pattern to avoid event
+  proliferation:
+
+      {:middleware_action, middleware_module, action_data}
+
+  Where:
+  - `middleware_module` - The middleware module (atom) that generated the event
+  - `action_data` - Middleware-specific action tuple or data
+
+  This pattern allows the debug UI to handle all middleware events generically
+  without needing to know about every possible middleware-specific event type.
+
+  ## Examples
+
+      # From ConversationTitle middleware
+      AgentServer.publish_debug_event_from(
+        agent_id,
+        {:middleware_action, LangChain.Agents.Middleware.ConversationTitle, {:title_generation_started, user_text}}
+      )
+
+      AgentServer.publish_debug_event_from(
+        agent_id,
+        {:middleware_action, LangChain.Agents.Middleware.ConversationTitle, {:title_generation_completed, title}}
+      )
+
+      # From custom middleware
+      AgentServer.publish_debug_event_from(
+        agent_id,
+        {:middleware_action, MyApp.CustomMiddleware, {:validation_started, params}}
+      )
+  """
+  @spec publish_debug_event_from(String.t(), term()) :: :ok
+  def publish_debug_event_from(agent_id, event) do
+    GenServer.cast(get_name(agent_id), {:publish_debug_event, event})
   end
 
   @doc """
@@ -1561,6 +1631,12 @@ defmodule LangChain.Agents.AgentServer do
   @impl true
   def handle_cast({:publish_event, event}, server_state) do
     broadcast_event(server_state, event)
+    {:noreply, server_state}
+  end
+
+  @impl true
+  def handle_cast({:publish_debug_event, event}, server_state) do
+    broadcast_debug_event(server_state, event)
     {:noreply, server_state}
   end
 
