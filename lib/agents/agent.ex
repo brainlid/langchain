@@ -738,11 +738,15 @@ defmodule LangChain.Agents.Agent do
     end
   end
 
-  defp extract_state_from_chain(chain, original_state) do
-    # Extract any state updates from tool results (used by middleware like TodoList)
-    # Some tools return State objects as processed_content to update agent state
+  defp extract_state_from_chain(chain, %State{} = original_state) do
+    # Use the chain's current set of messages as the agent's messages state.
+    {_system, chain_messages} = LangChain.Utils.split_system_message(chain.messages)
+
+    # Extract any state updates from tool results (used by middleware like
+    # TodoList) Some tools return State objects as processed_content to update
+    # agent state
     state_updates =
-      chain.exchanged_messages
+      chain_messages
       |> Enum.filter(&(&1.role == :tool))
       |> Enum.flat_map(fn message ->
         case message.tool_results do
@@ -757,8 +761,9 @@ defmodule LangChain.Agents.Agent do
         end
       end)
 
-    # Start with the original state and add all messages including tool results
-    updated_state = State.add_messages(original_state, chain.exchanged_messages)
+    # Use the full set of chain messages (excluding the system message)
+    # for the state's set of messages.
+    updated_state = %State{original_state | messages: chain_messages}
 
     # Merge in any state updates from tools (e.g., todo list updates)
     final_state =
