@@ -665,8 +665,8 @@ defmodule LangChain.Agents.AgentServerTest do
       test_event = {:middleware_action, TestMiddleware, {:test_action, "test_data"}}
       :ok = AgentServer.publish_debug_event_from(agent_id, test_event)
 
-      # Assert we received the event
-      assert_receive ^test_event, 100
+      # Assert we received the wrapped debug event
+      assert_receive {:debug, ^test_event}, 100
 
       # Clean up
       AgentServer.stop(agent_id)

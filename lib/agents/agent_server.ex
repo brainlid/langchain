@@ -2048,7 +2048,8 @@ defmodule LangChain.Agents.AgentServer do
     case server_state.debug_pubsub do
       {debug_pubsub, debug_pubsub_name} ->
         # Use "broadcast_from" to avoid sending to self
-        debug_pubsub.broadcast_from(debug_pubsub_name, self(), server_state.debug_topic, event)
+        # Wrap debug events with {:debug, event} tuple to distinguish them from regular events
+        debug_pubsub.broadcast_from(debug_pubsub_name, self(), server_state.debug_topic, {:debug, event})
 
       nil ->
         # No debug PubSub configured

@@ -96,8 +96,8 @@ defmodule LangChain.Agents.Middleware.ConversationTitleIntegrationTest do
       # Send a user message through the proper API
       :ok = AgentServer.add_message(agent_id, Message.new_user!("What's the weather today?"))
 
-      # Should receive broadcast debug event
-      assert_receive {:agent_state_update, _received_state}, 100
+      # Should receive broadcast debug event wrapped in {:debug, event} tuple
+      assert_receive {:debug, {:agent_state_update, _received_state}}, 100
 
       # Should receive PubSub event of title generation
       assert_receive {:conversation_title_generated, title, _agent_id}, 100
