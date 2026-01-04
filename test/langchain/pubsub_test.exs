@@ -25,11 +25,11 @@ defmodule LangChain.PubSubTest do
     :ok
   end
 
-  describe "ensure_subscribe/3" do
+  describe "subscribe/3" do
     test "subscribes to topic on first call" do
       topic = "test:topic1"
 
-      assert :ok = PubSub.ensure_subscribe(MockPubSub, :test_pubsub, topic)
+      assert :ok = PubSub.subscribe(MockPubSub, :test_pubsub, topic)
       assert_received {:subscribed, ^topic}
     end
 
@@ -37,11 +37,11 @@ defmodule LangChain.PubSubTest do
       topic = "test:topic2"
 
       # First call subscribes
-      assert :ok = PubSub.ensure_subscribe(MockPubSub, :test_pubsub, topic)
+      assert :ok = PubSub.subscribe(MockPubSub, :test_pubsub, topic)
       assert_received {:subscribed, ^topic}
 
       # Second call is a no-op
-      assert :ok = PubSub.ensure_subscribe(MockPubSub, :test_pubsub, topic)
+      assert :ok = PubSub.subscribe(MockPubSub, :test_pubsub, topic)
       refute_received {:subscribed, ^topic}
     end
 
@@ -50,7 +50,7 @@ defmodule LangChain.PubSubTest do
 
       refute PubSub.subscribed?(topic)
 
-      PubSub.ensure_subscribe(MockPubSub, :test_pubsub, topic)
+      PubSub.subscribe(MockPubSub, :test_pubsub, topic)
 
       assert PubSub.subscribed?(topic)
     end
@@ -60,12 +60,12 @@ defmodule LangChain.PubSubTest do
       topic2 = "test:topic5"
 
       # Subscribe to first topic
-      assert :ok = PubSub.ensure_subscribe(MockPubSub, :test_pubsub, topic1)
+      assert :ok = PubSub.subscribe(MockPubSub, :test_pubsub, topic1)
       assert_received {:subscribed, ^topic1}
       assert PubSub.subscribed?(topic1)
 
       # Subscribe to second topic
-      assert :ok = PubSub.ensure_subscribe(MockPubSub, :test_pubsub, topic2)
+      assert :ok = PubSub.subscribe(MockPubSub, :test_pubsub, topic2)
       assert_received {:subscribed, ^topic2}
       assert PubSub.subscribed?(topic2)
 
@@ -78,9 +78,9 @@ defmodule LangChain.PubSubTest do
       topic = "test:topic6"
 
       # Call three times
-      assert :ok = PubSub.ensure_subscribe(MockPubSub, :test_pubsub, topic)
-      assert :ok = PubSub.ensure_subscribe(MockPubSub, :test_pubsub, topic)
-      assert :ok = PubSub.ensure_subscribe(MockPubSub, :test_pubsub, topic)
+      assert :ok = PubSub.subscribe(MockPubSub, :test_pubsub, topic)
+      assert :ok = PubSub.subscribe(MockPubSub, :test_pubsub, topic)
+      assert :ok = PubSub.subscribe(MockPubSub, :test_pubsub, topic)
 
       # Should only receive one subscription message
       assert_received {:subscribed, ^topic}
@@ -89,11 +89,11 @@ defmodule LangChain.PubSubTest do
     end
   end
 
-  describe "subscribe/3" do
+  describe "raw_subscribe/3" do
     test "subscribes without tracking in Process dictionary" do
       topic = "test:topic7"
 
-      assert :ok = PubSub.subscribe(MockPubSub, :test_pubsub, topic)
+      assert :ok = PubSub.raw_subscribe(MockPubSub, :test_pubsub, topic)
       assert_received {:subscribed, ^topic}
 
       # Should not be tracked
@@ -101,16 +101,16 @@ defmodule LangChain.PubSubTest do
     end
   end
 
-  describe "ensure_unsubscribe/3" do
+  describe "unsubscribe/3" do
     test "unsubscribes and clears Process dictionary tracking" do
       topic = "test:topic8"
 
       # First subscribe
-      PubSub.ensure_subscribe(MockPubSub, :test_pubsub, topic)
+      PubSub.subscribe(MockPubSub, :test_pubsub, topic)
       assert PubSub.subscribed?(topic)
 
       # Then unsubscribe
-      assert :ok = PubSub.ensure_unsubscribe(MockPubSub, :test_pubsub, topic)
+      assert :ok = PubSub.unsubscribe(MockPubSub, :test_pubsub, topic)
       assert_received {:unsubscribed, ^topic}
 
       # Should no longer be tracked
@@ -121,15 +121,15 @@ defmodule LangChain.PubSubTest do
       topic = "test:topic9"
 
       # Subscribe
-      PubSub.ensure_subscribe(MockPubSub, :test_pubsub, topic)
+      PubSub.subscribe(MockPubSub, :test_pubsub, topic)
       assert_received {:subscribed, ^topic}
 
       # Unsubscribe
-      PubSub.ensure_unsubscribe(MockPubSub, :test_pubsub, topic)
+      PubSub.unsubscribe(MockPubSub, :test_pubsub, topic)
       assert_received {:unsubscribed, ^topic}
 
       # Subscribe again
-      PubSub.ensure_subscribe(MockPubSub, :test_pubsub, topic)
+      PubSub.subscribe(MockPubSub, :test_pubsub, topic)
       assert_received {:subscribed, ^topic}
 
       assert PubSub.subscribed?(topic)
@@ -141,20 +141,20 @@ defmodule LangChain.PubSubTest do
       refute PubSub.subscribed?("test:topic10")
     end
 
-    test "returns true when subscribed via ensure_subscribe" do
+    test "returns true when subscribed via subscribe" do
       topic = "test:topic11"
 
-      PubSub.ensure_subscribe(MockPubSub, :test_pubsub, topic)
+      PubSub.subscribe(MockPubSub, :test_pubsub, topic)
 
       assert PubSub.subscribed?(topic)
     end
 
-    test "returns false when subscribed via plain subscribe" do
+    test "returns false when subscribed via raw_subscribe" do
       topic = "test:topic12"
 
-      PubSub.subscribe(MockPubSub, :test_pubsub, topic)
+      PubSub.raw_subscribe(MockPubSub, :test_pubsub, topic)
 
-      # subscribe() doesn't track, so subscribed? returns false
+      # raw_subscribe() doesn't track, so subscribed? returns false
       refute PubSub.subscribed?(topic)
     end
   end

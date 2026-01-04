@@ -124,7 +124,7 @@ defmodule LangChain.TestingHelpers do
     # Subscribe to agent's PubSub topic so test can receive events
     # AgentServer broadcasts to "agent_server:#{agent_id}"
     topic = "agent_server:#{agent_id}"
-    LangChain.PubSub.subscribe(pubsub_module, pubsub_name, topic)
+    LangChain.PubSub.raw_subscribe(pubsub_module, pubsub_name, topic)
 
     # Create a minimal test agent
     model =

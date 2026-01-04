@@ -394,7 +394,8 @@ defmodule LangChain.Agents.AgentServer do
         {pubsub, pubsub_name, topic} ->
           # subscribe the client process executing this request to the pubsub
           # topic the server is using for broadcasting events
-          pubsub.subscribe(pubsub_name, topic)
+          # Use LangChain.PubSub for automatic deduplication
+          LangChain.PubSub.subscribe(pubsub, pubsub_name, topic)
       end
     catch
       :exit, _ ->
@@ -422,7 +423,8 @@ defmodule LangChain.Agents.AgentServer do
 
         {pubsub, pubsub_name, topic} ->
           # unsubscribe the client process from the pubsub topic
-          pubsub.unsubscribe(pubsub_name, topic)
+          # Use LangChain.PubSub for proper cleanup
+          LangChain.PubSub.unsubscribe(pubsub, pubsub_name, topic)
       end
     catch
       :exit, _ ->
@@ -454,7 +456,8 @@ defmodule LangChain.Agents.AgentServer do
         {debug_pubsub, debug_pubsub_name, debug_topic} ->
           # subscribe the client process executing this request to the debug pubsub
           # topic the server is using for broadcasting debug events
-          debug_pubsub.subscribe(debug_pubsub_name, debug_topic)
+          # Use LangChain.PubSub for automatic deduplication
+          LangChain.PubSub.subscribe(debug_pubsub, debug_pubsub_name, debug_topic)
       end
     catch
       :exit, _ ->
@@ -482,7 +485,8 @@ defmodule LangChain.Agents.AgentServer do
 
         {debug_pubsub, debug_pubsub_name, debug_topic} ->
           # unsubscribe the client process from the debug pubsub topic
-          debug_pubsub.unsubscribe(debug_pubsub_name, debug_topic)
+          # Use LangChain.PubSub for proper cleanup
+          LangChain.PubSub.unsubscribe(debug_pubsub, debug_pubsub_name, debug_topic)
       end
     catch
       :exit, _ ->
