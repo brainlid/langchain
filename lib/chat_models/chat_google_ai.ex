@@ -376,12 +376,18 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   end
 
   def for_api(%ToolCall{} = call) do
-    %{
+    base = %{
       "functionCall" => %{
         "args" => call.arguments,
         "name" => call.name
       }
     }
+
+    if call.thought_signature do
+      Map.put(base, "thoughtSignature", call.thought_signature)
+    else
+      base
+    end
   end
 
   def for_api(%ToolResult{} = result) do
@@ -716,6 +722,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
       content: text_part,
       complete: true,
       index: data["index"],
+      thought_signature: data["thoughtSignature"],
       metadata: if(data["groundingMetadata"], do: data["groundingMetadata"], else: nil)
     }
     |> Utils.conditionally_add_to_map(:tool_calls, tool_calls_from_parts)
@@ -761,7 +768,8 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
       role: unmap_role(role),
       content: content,
       status: finish_reason_to_status(data["finishReason"]),
-      index: data["index"]
+      index: data["index"],
+      thought_signature: data["thoughtSignature"]
     }
     |> Utils.conditionally_add_to_map(:tool_calls, tool_calls_from_parts)
     |> MessageDelta.new()
@@ -784,7 +792,8 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
       name: name,
       arguments: raw_args,
       complete: true,
-      index: data["index"]
+      index: data["index"],
+      thought_signature: data["thoughtSignature"]
     }
     |> ToolCall.new()
     |> case do

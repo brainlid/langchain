@@ -195,6 +195,35 @@ defmodule ChatModels.ChatGoogleAITest do
              } = tool_result
     end
 
+    test "for_api includes thoughtSignature when present on ToolCall" do
+      tool_call =
+        ToolCall.new!(%{
+          call_id: "call_123",
+          name: "test_function",
+          arguments: %{"arg" => "value"},
+          thought_signature: "sig_abc123"
+        })
+
+      result = ChatGoogleAI.for_api(tool_call)
+
+      assert result["thoughtSignature"] == "sig_abc123"
+      assert result["functionCall"]["name"] == "test_function"
+    end
+
+    test "for_api excludes thoughtSignature when nil on ToolCall" do
+      tool_call =
+        ToolCall.new!(%{
+          call_id: "call_123",
+          name: "test_function",
+          arguments: %{"arg" => "value"}
+        })
+
+      result = ChatGoogleAI.for_api(tool_call)
+
+      refute Map.has_key?(result, "thoughtSignature")
+      assert Map.has_key?(result, "functionCall")
+    end
+
     test "generate a map containing text and inline image parts", %{google_ai: google_ai} do
       messages = [
         %LangChain.Message{
@@ -522,6 +551,50 @@ defmodule ChatModels.ChatGoogleAITest do
       [call] = struct.tool_calls
       assert call.name == "hello_world"
       assert call.arguments == %{"value" => 123}
+    end
+
+    test "handles function calls with thoughtSignature (Gemini 3)", %{model: model} do
+      response = %{
+        "candidates" => [
+          %{
+            "content" => %{
+              "role" => "model",
+              "parts" => [
+                %{
+                  "functionCall" => %{"args" => %{"key" => "value"}, "name" => "my_func"},
+                  "thoughtSignature" => "gemini3_thought_sig_xyz"
+                }
+              ]
+            },
+            "finishReason" => "STOP",
+            "index" => 0
+          }
+        ]
+      }
+
+      assert [%Message{} = msg] = ChatGoogleAI.do_process_response(model, response)
+      assert [%ToolCall{} = call] = msg.tool_calls
+      assert call.thought_signature == "gemini3_thought_sig_xyz"
+      assert call.name == "my_func"
+    end
+
+    test "handles function calls without thoughtSignature", %{model: model} do
+      response = %{
+        "candidates" => [
+          %{
+            "content" => %{
+              "role" => "model",
+              "parts" => [%{"functionCall" => %{"args" => %{}, "name" => "my_func"}}]
+            },
+            "finishReason" => "STOP",
+            "index" => 0
+          }
+        ]
+      }
+
+      assert [%Message{} = msg] = ChatGoogleAI.do_process_response(model, response)
+      assert [%ToolCall{} = call] = msg.tool_calls
+      assert call.thought_signature == nil
     end
 
     test "handles no parts in content", %{model: model} do

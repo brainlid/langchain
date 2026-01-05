@@ -97,6 +97,25 @@ defmodule LangChain.Message.ToolCallTest do
 
       assert msg.arguments == four_spaces
     end
+
+    test "accepts thought_signature field" do
+      assert {:ok, %ToolCall{} = call} =
+               ToolCall.new(%{
+                 "status" => :complete,
+                 "type" => "function",
+                 "call_id" => "call_123",
+                 "name" => "test_function",
+                 "arguments" => "{}",
+                 "thought_signature" => "abc123signature"
+               })
+
+      assert call.thought_signature == "abc123signature"
+    end
+
+    test "thought_signature defaults to nil" do
+      {:ok, call} = ToolCall.new(%{})
+      assert call.thought_signature == nil
+    end
   end
 
   describe "complete/1" do
