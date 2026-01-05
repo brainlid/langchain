@@ -268,7 +268,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
     %{
       "role" => :tool,
       "tool_call_id" => result.tool_call_id,
-      "content" => result.content
+      "content" => content_parts_for_api(result.content)
     }
   end
 
@@ -276,7 +276,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
   def for_api(%_{} = _model, %Message{role: :tool, tool_results: [result | _]} = _msg) do
     %{
       "role" => "tool",
-      "content" => result.content,
+      "content" => content_parts_for_api(result.content),
       "tool_call_id" => result.tool_call_id
     }
   end
@@ -311,6 +311,20 @@ defmodule LangChain.ChatModels.ChatMistralAI do
 
   # Implementation only: more straightforward approach for Mistral
   defp get_message_role(%ChatMistralAI{}, role), do: role
+
+  @doc """
+  Convert content to a format suitable for the Mistral API.
+  Handles both string content and lists of ContentParts.
+  Since Mistral only supports text strings for tool results,
+  this extracts text content from ContentPart lists.
+  """
+  @spec content_parts_for_api(String.t() | [ContentPart.t()] | nil) :: String.t()
+  def content_parts_for_api(nil), do: ""
+  def content_parts_for_api(content) when is_binary(content), do: content
+
+  def content_parts_for_api(content) when is_list(content) do
+    ContentPart.parts_to_string(content) || ""
+  end
 
   @doc """
   Calls the Mistral API passing the ChatMistralAI struct plus either a simple string
