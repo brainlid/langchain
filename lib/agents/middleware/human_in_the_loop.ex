@@ -174,6 +174,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoop do
   @behaviour LangChain.Agents.Middleware
 
   alias LangChain.Agents.State
+  alias LangChain.Agents.AgentServer
   alias LangChain.Message.ToolCall
 
   @type interrupt_config :: %{
@@ -215,6 +216,19 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoop do
     # Check if the last message is an assistant message with tool calls
     case check_for_interrupt(state, config) do
       {:interrupt, interrupt_data} ->
+        # Broadcast debug event for interrupt
+        tool_names =
+          interrupt_data.action_requests
+          |> Enum.map(& &1.tool_name)
+          |> Enum.join(", ")
+
+        AgentServer.publish_debug_event_from(
+          state.agent_id,
+          {:middleware_action, __MODULE__,
+           {:interrupt_generated,
+            "#{length(interrupt_data.action_requests)} tool(s): #{tool_names}"}}
+        )
+
         # Store interrupt_data in state for later use during resume
         state_with_interrupt_data = %{state | interrupt_data: interrupt_data}
         {:interrupt, state_with_interrupt_data, interrupt_data}

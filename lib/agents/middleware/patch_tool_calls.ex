@@ -83,6 +83,7 @@ defmodule LangChain.Agents.Middleware.PatchToolCalls do
   @behaviour LangChain.Agents.Middleware
 
   alias LangChain.Agents.State
+  alias LangChain.Agents.AgentServer
   alias LangChain.Message
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult
@@ -96,7 +97,19 @@ defmodule LangChain.Agents.Middleware.PatchToolCalls do
         {:ok, state}
 
       patched_messages ->
-        # Messages were patched, return updated state
+        # Messages were patched, broadcast debug event
+        if state.agent_id do
+          # Count how many patches were added (difference in message count)
+          patches_added = length(patched_messages) - length(messages)
+
+          AgentServer.publish_debug_event_from(
+            state.agent_id,
+            {:middleware_action, __MODULE__,
+             {:dangling_tool_calls_patched, "#{patches_added} cancelled tool call(s)"}}
+          )
+        end
+
+        # Return updated state
         {:ok, %{state | messages: patched_messages}}
     end
   end

@@ -121,6 +121,7 @@ defmodule LangChain.Agents.Middleware.Summarization do
   @behaviour LangChain.Agents.Middleware
 
   alias LangChain.Agents.State
+  alias LangChain.Agents.AgentServer
   alias LangChain.Message
   alias LangChain.Chains.SummarizeConversationChain
   alias LangChain.Utils
@@ -176,10 +177,26 @@ defmodule LangChain.Agents.Middleware.Summarization do
         "SummarizationMiddleware: Token threshold exceeded (#{total_tokens} >= #{config.max_tokens_before_summary}). Starting summarization..."
       )
 
+      # Broadcast debug event: summarization starting
+      AgentServer.publish_debug_event_from(
+        state.agent_id,
+        {:middleware_action, __MODULE__,
+         {:summarization_started,
+          "#{total_tokens} tokens (threshold: #{config.max_tokens_before_summary})"}}
+      )
+
       case summarize_messages(messages, state, config) do
         {:ok, updated_messages} ->
           Logger.info(
             "SummarizationMiddleware: Summarization completed. Reduced from #{length(messages)} to #{length(updated_messages)} messages"
+          )
+
+          # Broadcast debug event: summarization completed
+          AgentServer.publish_debug_event_from(
+            state.agent_id,
+            {:middleware_action, __MODULE__,
+             {:summarization_completed,
+              "#{length(messages)} → #{length(updated_messages)} messages"}}
           )
 
           {:ok, %{state | messages: updated_messages}}
@@ -187,6 +204,12 @@ defmodule LangChain.Agents.Middleware.Summarization do
         {:error, reason} ->
           Logger.error(
             "SummarizationMiddleware: Summarization failed: #{inspect(reason)}. Keeping all messages."
+          )
+
+          # Broadcast debug event: summarization failed
+          AgentServer.publish_debug_event_from(
+            state.agent_id,
+            {:middleware_action, __MODULE__, {:summarization_failed, inspect(reason)}}
           )
 
           {:ok, state}
