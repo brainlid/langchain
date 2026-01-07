@@ -65,6 +65,9 @@ defmodule LangChain.ChatModels.ChatMistralAI do
     # A list of callback handlers
     field :callbacks, {:array, :map}, default: []
 
+    # Whether to allow parallel tool calls. Default is set to `true` according to the API
+    field :parallel_tool_calls, :boolean, default: true
+
     # For help with debugging. It outputs the RAW Req response received and the
     # RAW Elixir map being submitted to the API.
     field :verbose_api, :boolean, default: false
@@ -86,6 +89,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
     :tool_choice,
     :json_schema,
     :json_response,
+    :parallel_tool_calls,
     :verbose_api
   ]
   @required_fields [
@@ -133,13 +137,26 @@ defmodule LangChain.ChatModels.ChatMistralAI do
       top_p: mistral.top_p,
       safe_prompt: mistral.safe_prompt,
       stream: mistral.stream,
-      messages: Enum.map(messages, &for_api(mistral, &1))
+      # a single ToolResult can expand into multiple tool messages for Mistral
+      messages:
+        messages
+        |> Enum.reduce([], fn m, acc ->
+          case for_api(mistral, m) do
+            %{} = data ->
+              [data | acc]
+
+            data when is_list(data) ->
+              Enum.reverse(data) ++ acc
+          end
+        end)
+        |> Enum.reverse()
     }
     |> Utils.conditionally_add_to_map(:random_seed, mistral.random_seed)
     |> Utils.conditionally_add_to_map(:max_tokens, mistral.max_tokens)
     |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(mistral, tools))
     |> Utils.conditionally_add_to_map(:tool_choice, get_tool_choice(mistral))
     |> Utils.conditionally_add_to_map(:response_format, set_response_format(mistral))
+    |> Utils.conditionally_add_to_map(:parallel_tool_calls, mistral.parallel_tool_calls)
   end
 
   # Creates the response_format field for JSON output when json_response is true.
@@ -269,47 +286,25 @@ defmodule LangChain.ChatModels.ChatMistralAI do
   end
 
   # ToolResult => stand-alone message with "role: :tool"
-  # Content is normalized to a list of ContentParts during ToolResult creation,
-  # but we handle both cases defensively. Mistral expects a string, not a list.
-  def for_api(%_{} = _model, %ToolResult{type: :function} = result) do
-    content =
-      case result.content do
-        content when is_list(content) -> ContentPart.parts_to_string(content)
-        content when is_binary(content) -> content
-        nil -> ""
-      end
-
+  def for_api(%_{} = model, %ToolResult{type: :function} = result) do
+    # a ToolResult becomes a stand-alone %Message{role: :tool} response.
     %{
       "role" => :tool,
       "tool_call_id" => result.tool_call_id,
-      "content" => content
+      "content" => content_for_tool_result(model, result.content)
     }
   end
 
-  # When an assistant message has go-betweens for tool results, for example
-  # Content is normalized to a list of ContentParts during ToolResult creation,
-  # but we handle both cases defensively. Mistral expects a string, not a list.
-  def for_api(%_{} = _model, %Message{role: :tool, tool_results: [result | _]} = _msg) do
-    content =
-      case result.content do
-        content when is_list(content) -> ContentPart.parts_to_string(content)
-        content when is_binary(content) -> content
-        nil -> ""
-      end
-
-    %{
-      "role" => "tool",
-      "content" => content,
-      "tool_call_id" => result.tool_call_id
-    }
-  end
-
-  # Handle empty tool_results
-  def for_api(%_{} = _model, %Message{role: :tool, tool_results: []} = _msg) do
-    %{
-      "role" => "tool",
-      "content" => ""
-    }
+  def for_api(%_{} = model, %Message{role: :tool, tool_results: tool_results} = _msg)
+      when is_list(tool_results) do
+    # ToolResults turn into a list of tool messages for Mistral
+    Enum.map(tool_results, fn result ->
+      %{
+        "role" => :tool,
+        "tool_call_id" => result.tool_call_id,
+        "content" => content_for_tool_result(model, result.content)
+      }
+    end)
   end
 
   # ToolCall => "function" style request
@@ -334,6 +329,16 @@ defmodule LangChain.ChatModels.ChatMistralAI do
 
   # Implementation only: more straightforward approach for Mistral
   defp get_message_role(%ChatMistralAI{}, role), do: role
+
+  # Convert content to a format suitable for Mistral tool results.
+  # Mistral expects a string, not a list of ContentParts.
+  defp content_for_tool_result(_model, content) when is_list(content) do
+    ContentPart.parts_to_string(content)
+  end
+
+  defp content_for_tool_result(_model, content) when is_binary(content), do: content
+
+  defp content_for_tool_result(_model, nil), do: ""
 
   @doc """
   Calls the Mistral API passing the ChatMistralAI struct plus either a simple string
@@ -709,6 +714,15 @@ defmodule LangChain.ChatModels.ChatMistralAI do
   def do_process_response(_model, %{"error" => %{"message" => reason}} = response) do
     Logger.error("Received error from Mistral API: #{inspect(reason)}")
     {:error, LangChainError.exception(message: reason, original: response)}
+  end
+
+  # Handle Mistral's error format: %{"object" => "error", "message" => "...", "type" => "...", "code" => "..."}
+  def do_process_response(
+        _model,
+        %{"object" => "error", "message" => reason, "type" => type} = response
+      ) do
+    Logger.error("Received error from Mistral API: #{inspect(reason)}")
+    {:error, LangChainError.exception(type: type, message: reason, original: response)}
   end
 
   def do_process_response(_model, {:error, %Jason.DecodeError{} = response}) do
