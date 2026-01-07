@@ -128,7 +128,13 @@ defmodule LangChain.ChatModels.ChatMistralAI do
       top_p: mistral.top_p,
       safe_prompt: mistral.safe_prompt,
       stream: mistral.stream,
-      messages: Enum.map(messages, &for_api(mistral, &1))
+      messages:
+        Enum.flat_map(messages, fn m ->
+          case for_api(mistral, m) do
+            %{} = data -> [data]
+            data when is_list(data) -> data
+          end
+        end)
     }
     |> Utils.conditionally_add_to_map(:random_seed, mistral.random_seed)
     |> Utils.conditionally_add_to_map(:max_tokens, mistral.max_tokens)
@@ -264,21 +270,24 @@ defmodule LangChain.ChatModels.ChatMistralAI do
   end
 
   # ToolResult => stand-alone message with "role: :tool"
-  def for_api(%_{} = _model, %ToolResult{type: :function} = result) do
+  def for_api(%_{} = model, %ToolResult{type: :function} = result) do
     %{
       "role" => :tool,
       "tool_call_id" => result.tool_call_id,
-      "content" => content_parts_for_api(result.content)
+      "content" => content_parts_for_api(model, result.content)
     }
   end
 
   # When an assistant message has go-betweens for tool results, for example
-  def for_api(%_{} = _model, %Message{role: :tool, tool_results: [result | _]} = _msg) do
-    %{
-      "role" => "tool",
-      "content" => content_parts_for_api(result.content),
-      "tool_call_id" => result.tool_call_id
-    }
+  def for_api(%_{} = model, %Message{role: :tool, tool_results: tool_results} = _msg)
+      when is_list(tool_results) do
+    Enum.map(tool_results, fn result ->
+      %{
+        "role" => :tool,
+        "tool_call_id" => result.tool_call_id,
+        "content" => content_parts_for_api(model, result.content)
+      }
+    end)
   end
 
   # Handle empty tool_results
@@ -318,12 +327,13 @@ defmodule LangChain.ChatModels.ChatMistralAI do
   Since Mistral only supports text strings for tool results,
   this extracts text content from ContentPart lists.
   """
-  @spec content_parts_for_api(String.t() | [ContentPart.t()] | nil) :: String.t()
-  def content_parts_for_api(nil), do: ""
-  def content_parts_for_api(content) when is_binary(content), do: content
+  @spec content_parts_for_api(map(), String.t() | [ContentPart.t()] | nil) :: String.t()
+  def content_parts_for_api(model, content_parts) when is_list(content_parts) do
+    Enum.map(content_parts, &content_part_for_api(model, &1))
+  end
 
-  def content_parts_for_api(content) when is_list(content) do
-    ContentPart.parts_to_string(content) || ""
+  def content_part_for_api(_model, %ContentPart{type: :text} = part) do
+    %{"type" => "text", "text" => part.content}
   end
 
   @doc """
