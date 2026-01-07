@@ -1,10 +1,16 @@
 defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
   use LangChain.BaseCase, async: true
 
+  import LangChain.TestingHelpers, only: [new_agent_id: 0]
+
   alias LangChain.Agents.Middleware.HumanInTheLoop
   alias LangChain.Agents.State
   alias LangChain.Message
   alias LangChain.Message.ToolCall
+
+  setup do
+    %{agent_id: new_agent_id()}
+  end
 
   describe "init/1" do
     test "normalizes simple boolean configuration" do
@@ -67,27 +73,27 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
   end
 
   describe "after_model/2" do
-    test "returns state unchanged when no messages" do
-      state = State.new!(%{messages: []})
+    test "returns state unchanged when no messages", %{agent_id: agent_id} do
+      state = State.new!(%{agent_id: agent_id, messages: []})
       config = %{interrupt_on: %{}}
 
       assert {:ok, ^state} = HumanInTheLoop.after_model(state, config)
     end
 
-    test "returns state unchanged when no tool calls" do
+    test "returns state unchanged when no tool calls", %{agent_id: agent_id} do
       messages = [
         Message.new_system!("You are helpful"),
         Message.new_user!("Hello"),
         Message.new_assistant!("Hi there!")
       ]
 
-      state = State.new!(%{messages: messages})
+      state = State.new!(%{agent_id: agent_id, messages: messages})
       config = %{interrupt_on: %{}}
 
       assert {:ok, ^state} = HumanInTheLoop.after_model(state, config)
     end
 
-    test "returns state unchanged when tool not in interrupt_on" do
+    test "returns state unchanged when tool not in interrupt_on", %{agent_id: agent_id} do
       tool_call =
         ToolCall.new!(%{
           call_id: "123",
@@ -100,13 +106,13 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
         Message.new_assistant!(%{tool_calls: [tool_call]})
       ]
 
-      state = State.new!(%{messages: messages})
+      state = State.new!(%{agent_id: agent_id, messages: messages})
       config = %{interrupt_on: %{"write_file" => %{allowed_decisions: [:approve]}}}
 
       assert {:ok, ^state} = HumanInTheLoop.after_model(state, config)
     end
 
-    test "returns state unchanged when tool has empty allowed_decisions" do
+    test "returns state unchanged when tool has empty allowed_decisions", %{agent_id: agent_id} do
       tool_call =
         ToolCall.new!(%{
           call_id: "123",
@@ -119,13 +125,13 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
         Message.new_assistant!(%{tool_calls: [tool_call]})
       ]
 
-      state = State.new!(%{messages: messages})
+      state = State.new!(%{agent_id: agent_id, messages: messages})
       config = %{interrupt_on: %{"read_file" => %{allowed_decisions: []}}}
 
       assert {:ok, ^state} = HumanInTheLoop.after_model(state, config)
     end
 
-    test "generates interrupt for single tool call" do
+    test "generates interrupt for single tool call", %{agent_id: agent_id} do
       tool_call =
         ToolCall.new!(%{
           call_id: "call_123",
@@ -138,7 +144,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
         Message.new_assistant!(%{tool_calls: [tool_call]})
       ]
 
-      state = State.new!(%{messages: messages})
+      state = State.new!(%{agent_id: agent_id, messages: messages})
 
       config = %{
         interrupt_on: %{
@@ -168,7 +174,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
       assert hitl_ids == ["call_123"]
     end
 
-    test "generates interrupt for multiple tool calls" do
+    test "generates interrupt for multiple tool calls", %{agent_id: agent_id} do
       tool_call1 =
         ToolCall.new!(%{
           call_id: "call_1",
@@ -188,7 +194,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
         Message.new_assistant!(%{tool_calls: [tool_call1, tool_call2]})
       ]
 
-      state = State.new!(%{messages: messages})
+      state = State.new!(%{agent_id: agent_id, messages: messages})
 
       config = %{
         interrupt_on: %{
@@ -228,7 +234,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
       assert hitl_ids == ["call_1", "call_2"]
     end
 
-    test "generates interrupt only for configured tools" do
+    test "generates interrupt only for configured tools", %{agent_id: agent_id} do
       tool_call1 =
         ToolCall.new!(%{
           call_id: "call_1",
@@ -248,7 +254,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
         Message.new_assistant!(%{tool_calls: [tool_call1, tool_call2]})
       ]
 
-      state = State.new!(%{messages: messages})
+      state = State.new!(%{agent_id: agent_id, messages: messages})
 
       config = %{
         interrupt_on: %{
@@ -272,7 +278,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
       assert state_with_interrupt_data.interrupt_data == interrupt_data
     end
 
-    test "mixed tools: HITL first, non-HITL last" do
+    test "mixed tools: HITL first, non-HITL last", %{agent_id: agent_id} do
       tool_call1 =
         ToolCall.new!(%{
           call_id: "call_1",
@@ -299,7 +305,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
         Message.new_assistant!(%{tool_calls: [tool_call1, tool_call2, tool_call3]})
       ]
 
-      state = State.new!(%{messages: messages})
+      state = State.new!(%{agent_id: agent_id, messages: messages})
 
       config = %{
         interrupt_on: %{
@@ -325,7 +331,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
       assert state_with_interrupt_data.interrupt_data == interrupt_data
     end
 
-    test "mixed tools: non-HITL first, HITL last" do
+    test "mixed tools: non-HITL first, HITL last", %{agent_id: agent_id} do
       tool_call1 =
         ToolCall.new!(%{
           call_id: "call_1",
@@ -345,7 +351,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
         Message.new_assistant!(%{tool_calls: [tool_call1, tool_call2]})
       ]
 
-      state = State.new!(%{messages: messages})
+      state = State.new!(%{agent_id: agent_id, messages: messages})
 
       config = %{
         interrupt_on: %{
@@ -369,7 +375,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
       assert state_with_interrupt_data.interrupt_data == interrupt_data
     end
 
-    test "mixed tools: non-HITL in the middle" do
+    test "mixed tools: non-HITL in the middle", %{agent_id: agent_id} do
       tool_call1 =
         ToolCall.new!(%{
           call_id: "call_1",
@@ -396,7 +402,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
         Message.new_assistant!(%{tool_calls: [tool_call1, tool_call2, tool_call3]})
       ]
 
-      state = State.new!(%{messages: messages})
+      state = State.new!(%{agent_id: agent_id, messages: messages})
 
       config = %{
         interrupt_on: %{
@@ -422,7 +428,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
       assert state_with_interrupt_data.interrupt_data == interrupt_data
     end
 
-    test "uses last assistant message with tool calls" do
+    test "uses last assistant message with tool calls", %{agent_id: agent_id} do
       tool_call1 =
         ToolCall.new!(%{
           call_id: "call_old",
@@ -444,7 +450,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
         Message.new_assistant!(%{tool_calls: [tool_call2]})
       ]
 
-      state = State.new!(%{messages: messages})
+      state = State.new!(%{agent_id: agent_id, messages: messages})
 
       config = %{
         interrupt_on: %{
@@ -466,7 +472,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
   end
 
   describe "process_decisions/3" do
-    setup do
+    setup %{agent_id: agent_id} do
       tool_call1 =
         ToolCall.new!(%{
           call_id: "call_1",
@@ -486,7 +492,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
         Message.new_assistant!(%{tool_calls: [tool_call1, tool_call2]})
       ]
 
-      initial_state = State.new!(%{messages: messages})
+      initial_state = State.new!(%{agent_id: agent_id, messages: messages})
 
       config = %{
         interrupt_on: %{
@@ -595,13 +601,13 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
       assert reason =~ "type 'edit' must include 'arguments' field"
     end
 
-    test "returns error when no tool calls found in state" do
+    test "returns error when no tool calls found in state", %{agent_id: agent_id} do
       messages = [
         Message.new_user!("Hello"),
         Message.new_assistant!("Hi there!")
       ]
 
-      state = State.new!(%{messages: messages})
+      state = State.new!(%{agent_id: agent_id, messages: messages})
       config = %{interrupt_on: %{}}
       decisions = [%{type: :approve}]
 
@@ -609,7 +615,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
       assert reason =~ "No interrupt data found"
     end
 
-    test "uses default decisions when tool not in config" do
+    test "uses default decisions when tool not in config", %{agent_id: agent_id} do
       tool_call1 =
         ToolCall.new!(%{
           call_id: "call_1",
@@ -629,7 +635,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
         Message.new_assistant!(%{tool_calls: [tool_call1, tool_call2]})
       ]
 
-      initial_state = State.new!(%{messages: messages})
+      initial_state = State.new!(%{agent_id: agent_id, messages: messages})
 
       # Config doesn't include write_file or delete_file
       config = %{interrupt_on: %{}}
@@ -656,7 +662,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
       assert {:ok, _updated_state} = HumanInTheLoop.process_decisions(state, decisions, config)
     end
 
-    test "validates against default decisions when tool not in config" do
+    test "validates against default decisions when tool not in config", %{agent_id: agent_id} do
       tool_call1 =
         ToolCall.new!(%{
           call_id: "call_1",
@@ -676,7 +682,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
         Message.new_assistant!(%{tool_calls: [tool_call1, tool_call2]})
       ]
 
-      initial_state = State.new!(%{messages: messages})
+      initial_state = State.new!(%{agent_id: agent_id, messages: messages})
 
       config = %{interrupt_on: %{}}
 
@@ -704,7 +710,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
   end
 
   describe "process_decisions/3 with mixed tools" do
-    test "validates decisions for HITL tools only (non-HITL first)" do
+    test "validates decisions for HITL tools only (non-HITL first)", %{agent_id: agent_id} do
       tool_call1 =
         ToolCall.new!(%{
           call_id: "call_1",
@@ -724,7 +730,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
         Message.new_assistant!(%{tool_calls: [tool_call1, tool_call2]})
       ]
 
-      state = State.new!(%{messages: messages})
+      state = State.new!(%{agent_id: agent_id, messages: messages})
 
       config = %{
         interrupt_on: %{
@@ -746,7 +752,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
                HumanInTheLoop.process_decisions(state_with_interrupt_data, decisions, config)
     end
 
-    test "validates decisions for HITL tools only (non-HITL last)" do
+    test "validates decisions for HITL tools only (non-HITL last)", %{agent_id: agent_id} do
       tool_call1 =
         ToolCall.new!(%{
           call_id: "call_1",
@@ -766,7 +772,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
         Message.new_assistant!(%{tool_calls: [tool_call1, tool_call2]})
       ]
 
-      state = State.new!(%{messages: messages})
+      state = State.new!(%{agent_id: agent_id, messages: messages})
 
       config = %{
         interrupt_on: %{
@@ -788,7 +794,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
                HumanInTheLoop.process_decisions(state_with_interrupt_data, decisions, config)
     end
 
-    test "validates decisions for HITL tools only (non-HITL in middle)" do
+    test "validates decisions for HITL tools only (non-HITL in middle)", %{agent_id: agent_id} do
       tool_call1 =
         ToolCall.new!(%{
           call_id: "call_1",
@@ -815,7 +821,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
         Message.new_assistant!(%{tool_calls: [tool_call1, tool_call2, tool_call3]})
       ]
 
-      state = State.new!(%{messages: messages})
+      state = State.new!(%{agent_id: agent_id, messages: messages})
 
       config = %{
         interrupt_on: %{
@@ -839,7 +845,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
                HumanInTheLoop.process_decisions(state_with_interrupt_data, decisions, config)
     end
 
-    test "returns error when decision count exceeds HITL tool count" do
+    test "returns error when decision count exceeds HITL tool count", %{agent_id: agent_id} do
       tool_call1 =
         ToolCall.new!(%{
           call_id: "call_1",
@@ -859,7 +865,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
         Message.new_assistant!(%{tool_calls: [tool_call1, tool_call2]})
       ]
 
-      state = State.new!(%{messages: messages})
+      state = State.new!(%{agent_id: agent_id, messages: messages})
 
       config = %{
         interrupt_on: %{
@@ -883,7 +889,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
       assert reason =~ "Decision count (2) does not match HITL tool count (1)"
     end
 
-    test "returns error when decision count is less than HITL tool count" do
+    test "returns error when decision count is less than HITL tool count", %{agent_id: agent_id} do
       tool_call1 =
         ToolCall.new!(%{
           call_id: "call_1",
@@ -910,7 +916,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
         Message.new_assistant!(%{tool_calls: [tool_call1, tool_call2, tool_call3]})
       ]
 
-      state = State.new!(%{messages: messages})
+      state = State.new!(%{agent_id: agent_id, messages: messages})
 
       config = %{
         interrupt_on: %{
@@ -934,7 +940,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
       assert reason =~ "Decision count (1) does not match HITL tool count (2)"
     end
 
-    test "returns error when interrupt_data is missing" do
+    test "returns error when interrupt_data is missing", %{agent_id: agent_id} do
       tool_call =
         ToolCall.new!(%{
           call_id: "call_1",
@@ -948,7 +954,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
       ]
 
       # State without interrupt_data
-      state = State.new!(%{messages: messages})
+      state = State.new!(%{agent_id: agent_id, messages: messages})
 
       config = %{
         interrupt_on: %{

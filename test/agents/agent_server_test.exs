@@ -2,7 +2,7 @@ defmodule LangChain.Agents.AgentServerTest do
   use LangChain.BaseCase, async: false
   use Mimic
 
-  alias LangChain.Agents.{Agent, AgentServer, State, Todo}
+  alias LangChain.Agents.{Agent, AgentServer, State}
   alias LangChain.ChatModels.ChatAnthropic
   alias LangChain.Message
 
@@ -514,75 +514,6 @@ defmodule LangChain.Agents.AgentServerTest do
 
       # Should receive idle status
       assert_receive {:status_changed, :idle, nil}, 100
-    end
-
-    # NOTE: File events are NOT broadcast by AgentServer anymore
-    # Files are managed by FileSystemServer which has its own event handling
-
-    test "broadcasts todos updated event when todo created", %{agent: agent, agent_id: agent_id} do
-      Agent
-      |> expect(:execute, fn ^agent, state, _opts ->
-        todo = Todo.new!(%{content: "Write tests", status: :pending})
-        new_state = State.put_todo(state, todo)
-        {:ok, new_state}
-      end)
-
-      :ok = AgentServer.execute(agent_id)
-
-      assert_receive {:status_changed, :running, nil}, 100
-      assert_receive {:todos_updated, todos}, 200
-      assert length(todos) == 1
-      assert hd(todos).content == "Write tests"
-    end
-
-    test "broadcasts todos updated event when todo status changes", %{
-      agent: agent,
-      agent_id: agent_id
-    } do
-      # Set initial todo
-      todo = Todo.new!(%{id: "test_id", content: "Write tests", status: :pending})
-      initial_state = State.new!() |> State.put_todo(todo)
-
-      :sys.replace_state(GenServer.whereis(AgentServer.get_name(agent_id)), fn server_state ->
-        %{server_state | state: initial_state}
-      end)
-
-      Agent
-      |> expect(:execute, fn ^agent, state, _opts ->
-        updated_todo = Todo.new!(%{id: "test_id", content: "Write tests", status: :completed})
-        new_state = State.put_todo(state, updated_todo)
-        {:ok, new_state}
-      end)
-
-      :ok = AgentServer.execute(agent_id)
-
-      assert_receive {:status_changed, :running, nil}, 100
-      assert_receive {:todos_updated, todos}, 200
-      assert length(todos) == 1
-      assert hd(todos).status == :completed
-      assert hd(todos).id == "test_id"
-    end
-
-    test "broadcasts todos updated event when todo deleted", %{agent: agent, agent_id: agent_id} do
-      # Set initial todo
-      todo = Todo.new!(%{id: "test_id", content: "Write tests", status: :pending})
-      initial_state = State.new!() |> State.put_todo(todo)
-
-      :sys.replace_state(GenServer.whereis(AgentServer.get_name(agent_id)), fn server_state ->
-        %{server_state | state: initial_state}
-      end)
-
-      Agent
-      |> expect(:execute, fn ^agent, state, _opts ->
-        new_state = State.delete_todo(state, "test_id")
-        {:ok, new_state}
-      end)
-
-      :ok = AgentServer.execute(agent_id)
-
-      assert_receive {:status_changed, :running, nil}, 100
-      assert_receive {:todos_updated, todos}, 200
-      assert length(todos) == 0
     end
 
     test "broadcasts interrupt status with data", %{agent: agent, agent_id: agent_id} do

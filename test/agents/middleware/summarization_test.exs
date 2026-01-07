@@ -1,12 +1,18 @@
 defmodule LangChain.Agents.Middleware.SummarizationTest do
   use LangChain.BaseCase, async: true
 
+  import LangChain.TestingHelpers, only: [new_agent_id: 0]
+
   alias LangChain.Agents.Middleware.Summarization
   alias LangChain.Agents.State
   alias LangChain.Message
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult
   alias LangChain.ChatModels.ChatOpenAI
+
+  setup do
+    %{agent_id: new_agent_id()}
+  end
 
   describe "init/1" do
     test "uses default configuration" do
@@ -36,14 +42,14 @@ defmodule LangChain.Agents.Middleware.SummarizationTest do
   end
 
   describe "before_model/2" do
-    test "returns state unchanged when under token threshold" do
+    test "returns state unchanged when under token threshold", %{agent_id: agent_id} do
       messages = [
         Message.new_system!("You are helpful"),
         Message.new_user!("Hello"),
         Message.new_assistant!("Hi there!")
       ]
 
-      state = State.new!(%{messages: messages})
+      state = State.new!(%{agent_id: agent_id, messages: messages})
 
       config = %{
         max_tokens_before_summary: 1_000_000,
@@ -54,8 +60,8 @@ defmodule LangChain.Agents.Middleware.SummarizationTest do
       assert {:ok, ^state} = Summarization.before_model(state, config)
     end
 
-    test "returns state unchanged when messages is empty" do
-      state = State.new!(%{messages: []})
+    test "returns state unchanged when messages is empty", %{agent_id: agent_id} do
+      state = State.new!(%{agent_id: agent_id, messages: []})
 
       config = %{
         max_tokens_before_summary: 1000,
@@ -66,8 +72,8 @@ defmodule LangChain.Agents.Middleware.SummarizationTest do
       assert {:ok, ^state} = Summarization.before_model(state, config)
     end
 
-    test "returns state unchanged when messages is nil" do
-      state = State.new!(%{})
+    test "returns state unchanged when messages is nil", %{agent_id: agent_id} do
+      state = State.new!(%{agent_id: agent_id})
 
       config = %{
         max_tokens_before_summary: 1000,
@@ -78,7 +84,7 @@ defmodule LangChain.Agents.Middleware.SummarizationTest do
       assert {:ok, ^state} = Summarization.before_model(state, config)
     end
 
-    test "keeps all messages when no safe cutoff point found" do
+    test "keeps all messages when no safe cutoff point found", %{agent_id: agent_id} do
       # Create scenario where all recent messages are assistant+tool pairs
       tool_call =
         ToolCall.new!(%{
@@ -98,7 +104,7 @@ defmodule LangChain.Agents.Middleware.SummarizationTest do
         })
       ]
 
-      state = State.new!(%{messages: messages})
+      state = State.new!(%{agent_id: agent_id, messages: messages})
 
       config = %{
         model: nil,
@@ -183,7 +189,7 @@ defmodule LangChain.Agents.Middleware.SummarizationTest do
   end
 
   describe "safe cutoff detection" do
-    test "finds safe cutoff point before assistant with tool calls" do
+    test "finds safe cutoff point before assistant with tool calls", %{agent_id: agent_id} do
       tool_call =
         ToolCall.new!(%{
           call_id: "call_1",
@@ -205,7 +211,7 @@ defmodule LangChain.Agents.Middleware.SummarizationTest do
         Message.new_user!("Recent message")
       ]
 
-      state = State.new!(%{messages: messages, metadata: %{model: nil}})
+      state = State.new!(%{agent_id: agent_id, messages: messages, metadata: %{model: nil}})
 
       config = %{
         model: nil,
@@ -222,7 +228,7 @@ defmodule LangChain.Agents.Middleware.SummarizationTest do
       assert {:ok, _result} = Summarization.before_model(state, config)
     end
 
-    test "allows cutting after completed tool cycle" do
+    test "allows cutting after completed tool cycle", %{agent_id: agent_id} do
       tool_call =
         ToolCall.new!(%{
           call_id: "call_1",
@@ -244,7 +250,7 @@ defmodule LangChain.Agents.Middleware.SummarizationTest do
         Message.new_assistant!("You're welcome!")
       ]
 
-      state = State.new!(%{messages: messages})
+      state = State.new!(%{agent_id: agent_id, messages: messages})
 
       config = %{
         model: nil,
@@ -284,16 +290,16 @@ defmodule LangChain.Agents.Middleware.SummarizationTest do
   end
 
   describe "edge cases" do
-    test "handles empty message list" do
-      state = State.new!(%{messages: []})
+    test "handles empty message list", %{agent_id: agent_id} do
+      state = State.new!(%{agent_id: agent_id, messages: []})
       {:ok, config} = Summarization.init([])
 
       assert {:ok, ^state} = Summarization.before_model(state, config)
     end
 
-    test "handles state with only system message" do
+    test "handles state with only system message", %{agent_id: agent_id} do
       messages = [Message.new_system!("You are helpful")]
-      state = State.new!(%{messages: messages})
+      state = State.new!(%{agent_id: agent_id, messages: messages})
       {:ok, config} = Summarization.init(max_tokens_before_summary: 10)
 
       # Token counter returns high value to trigger summarization
