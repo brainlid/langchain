@@ -49,6 +49,19 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
       model = ChatMistralAI.new!(%{model: "mistral-tiny", verbose_api: false})
       assert model.verbose_api == false
     end
+
+    test "supports passing parallel_tool_calls" do
+      # defaults to true (Mistral API default)
+      %ChatMistralAI{} = mistral_ai = ChatMistralAI.new!(%{"model" => "mistral-tiny"})
+      assert mistral_ai.parallel_tool_calls == true
+
+      # can override the default to false
+      %ChatMistralAI{} =
+        mistral_ai =
+        ChatMistralAI.new!(%{"model" => "mistral-tiny", "parallel_tool_calls" => false})
+
+      assert mistral_ai.parallel_tool_calls == false
+    end
   end
 
   describe "for_api/3" do
@@ -78,8 +91,21 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
                  stream: false,
                  max_tokens: 100,
                  safe_prompt: true,
-                 random_seed: 42
+                 random_seed: 42,
+                 parallel_tool_calls: true
                }
+    end
+
+    test "generates a map for an API call with parallel_tool_calls set to false" do
+      {:ok, mistral_ai} =
+        ChatMistralAI.new(%{
+          model: "mistral-tiny",
+          parallel_tool_calls: false
+        })
+
+      data = ChatMistralAI.for_api(mistral_ai, [], [])
+      assert data.model == "mistral-tiny"
+      assert data.parallel_tool_calls == false
     end
 
     test "generates a map containing user and assistant messages", %{mistral_ai: mistral_ai} do
@@ -128,7 +154,9 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
              }
     end
 
-    test "converts Message with tool role and ContentParts to string", %{mistral_ai: mistral_ai} do
+    test "converts Message with tool role and ContentParts to list of tool messages", %{
+      mistral_ai: mistral_ai
+    } do
       tool_result =
         ToolResult.new!(%{
           tool_call_id: "call_789",
@@ -139,11 +167,48 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
 
       result = ChatMistralAI.for_api(mistral_ai, message)
 
-      assert result == %{
-               "role" => "tool",
-               "tool_call_id" => "call_789",
-               "content" => "Tool executed successfully"
-             }
+      # Returns a list of tool messages, one per tool result
+      assert result == [
+               %{
+                 "role" => :tool,
+                 "tool_call_id" => "call_789",
+                 "content" => "Tool executed successfully"
+               }
+             ]
+    end
+
+    test "converts Message with multiple tool results to list of tool messages", %{
+      mistral_ai: mistral_ai
+    } do
+      tool_result_1 =
+        ToolResult.new!(%{
+          tool_call_id: "call_abc",
+          content: "Result 1"
+        })
+
+      tool_result_2 =
+        ToolResult.new!(%{
+          tool_call_id: "call_def",
+          content: "Result 2"
+        })
+
+      message = Message.new_tool_result!(%{tool_results: [tool_result_1, tool_result_2]})
+
+      result = ChatMistralAI.for_api(mistral_ai, message)
+
+      # Each tool result becomes a separate tool message
+      assert result == [
+               %{
+                 "role" => :tool,
+                 "tool_call_id" => "call_abc",
+                 "content" => "Result 1"
+               },
+               %{
+                 "role" => :tool,
+                 "tool_call_id" => "call_def",
+                 "content" => "Result 2"
+               }
+             ]
     end
   end
 
