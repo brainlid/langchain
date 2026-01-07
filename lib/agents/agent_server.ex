@@ -934,64 +934,6 @@ defmodule LangChain.Agents.AgentServer do
   end
 
   @doc """
-  Set the complete TODO list for the agent.
-
-  This replaces the entire TODO list and broadcasts appropriate TODO events
-  (created, updated, deleted) for UI synchronization.
-
-  Useful for:
-  - Thread restoration (restoring persisted TODOs)
-  - Testing scenarios (setting sample TODOs)
-  - Bulk TODO updates
-
-  ## Parameters
-
-  - `agent_id` - The agent identifier
-  - `todos` - List of Todo structs
-
-  ## Examples
-
-      todos = [
-        Todo.new!(%{content: "Task 1", status: :completed}),
-        Todo.new!(%{content: "Task 2", status: :in_progress})
-      ]
-      :ok = AgentServer.set_todos("my-agent-1", todos)
-  """
-  @spec set_todos(String.t(), list(LangChain.Agents.Todo.t())) :: :ok
-  def set_todos(agent_id, todos) when is_list(todos) do
-    GenServer.call(get_name(agent_id), {:set_todos, todos})
-  end
-
-  @doc """
-  Set the complete message list for the agent.
-
-  This replaces the entire message list and broadcasts individual `{:llm_message, message}`
-  events for each message, allowing UI synchronization.
-
-  Useful for:
-  - Thread restoration (restoring persisted messages)
-  - Testing scenarios (setting sample messages)
-  - Bulk message updates
-
-  ## Parameters
-
-  - `agent_id` - The agent identifier
-  - `messages` - List of Message structs
-
-  ## Examples
-
-      messages = [
-        Message.new_system!("You are helpful"),
-        Message.new_user!("Hello")
-      ]
-      :ok = AgentServer.set_messages("my-agent-1", messages)
-  """
-  @spec set_messages(String.t(), list(LangChain.Message.t())) :: :ok
-  def set_messages(agent_id, messages) when is_list(messages) do
-    GenServer.call(get_name(agent_id), {:set_messages, messages})
-  end
-
-  @doc """
   Check if an agent is running.
   """
   def running?(agent_id) do
@@ -1288,7 +1230,21 @@ defmodule LangChain.Agents.AgentServer do
     # Start the inactivity timer
     server_state = reset_inactivity_timer(server_state)
 
-    {:ok, server_state}
+    # Use continue to broadcast initial state after init completes
+    # This ensures subscribers are ready before we broadcast
+    {:ok, server_state, {:continue, :broadcast_initial_state}}
+  end
+
+  @impl true
+  def handle_continue(:broadcast_initial_state, server_state) do
+    # Call on_server_start for each middleware
+    # This allows middleware to broadcast initial state, set up subscriptions, etc.
+    # E.g., TodoList middleware broadcasts initial todos for UI sync
+    Enum.each(server_state.agent.middleware, fn entry ->
+      Middleware.apply_on_server_start(server_state.state, entry)
+    end)
+
+    {:noreply, server_state}
   end
 
   @impl true
@@ -1525,46 +1481,6 @@ defmodule LangChain.Agents.AgentServer do
     }
 
     {:reply, status, server_state}
-  end
-
-  @impl true
-  def handle_call({:set_todos, todos}, _from, server_state) do
-    # Update state with new todos
-    new_state = State.set_todos(server_state.state, todos)
-
-    # Broadcast complete snapshot of current TODOs
-    broadcast_todos(server_state, new_state)
-
-    # Update server state
-    updated_server_state = %{server_state | state: new_state}
-
-    # Reset inactivity timer on todo update
-    updated_server_state = reset_inactivity_timer(updated_server_state)
-
-    # Broadcast debug event for state update
-    broadcast_debug_event(updated_server_state, {:agent_state_update, new_state})
-
-    {:reply, :ok, updated_server_state}
-  end
-
-  @impl true
-  def handle_call({:set_messages, messages}, _from, server_state) do
-    # Update state with new messages
-    new_state = State.set_messages(server_state.state, messages)
-
-    # Broadcast complete snapshot of current messages
-    broadcast_messages(server_state, new_state)
-
-    # Update server state
-    updated_server_state = %{server_state | state: new_state}
-
-    # Reset inactivity timer on message update
-    updated_server_state = reset_inactivity_timer(updated_server_state)
-
-    # Broadcast debug event for state update
-    broadcast_debug_event(updated_server_state, {:agent_state_update, new_state})
-
-    {:reply, :ok, updated_server_state}
   end
 
   @impl true
@@ -1940,11 +1856,10 @@ defmodule LangChain.Agents.AgentServer do
     {:noreply, Map.delete(updated_state, :task)}
   end
 
-  defp broadcast_state_changes(%ServerState{} = old_server_state, %State{} = new_state) do
-    # Broadcast complete TODO snapshot if todos changed
-    if old_server_state.state.todos != new_state.todos do
-      broadcast_todos(old_server_state, new_state)
-    end
+  # Broadcast state changes - broadcasts todos and debug state update
+  defp broadcast_state_changes(%ServerState{} = server_state, %State{} = new_state) do
+    # Debug broadcast that state changed (for debugging/monitoring tools)
+    broadcast_debug_event(server_state, {:agent_state_update, new_state})
   end
 
   defp maybe_shutdown_if_no_viewers(server_state) do
@@ -1972,18 +1887,6 @@ defmodule LangChain.Agents.AgentServer do
         # Presence tracking disabled, use standard inactivity timeout
         :ok
     end
-  end
-
-  defp broadcast_todos(%ServerState{} = server_state, %State{} = new_state) do
-    # Broadcast complete snapshot of current TODOs
-    broadcast_event(server_state, {:todos_updated, new_state.todos})
-  end
-
-  defp broadcast_messages(%ServerState{} = server_state, %State{} = new_state) do
-    # Broadcast individual messages using the existing {:llm_message, message} event
-    Enum.each(new_state.messages, fn message ->
-      broadcast_event(server_state, {:llm_message, message})
-    end)
   end
 
   # Save message via callback and broadcast display messages

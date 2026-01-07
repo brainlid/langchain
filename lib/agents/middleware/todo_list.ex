@@ -24,7 +24,7 @@ defmodule LangChain.Agents.Middleware.TodoList do
 
   @behaviour LangChain.Agents.Middleware
 
-  alias LangChain.Agents.{State, Todo}
+  alias LangChain.Agents.{AgentServer, State, Todo}
   alias LangChain.Function
 
   @system_prompt """
@@ -115,6 +115,14 @@ defmodule LangChain.Agents.Middleware.TodoList do
     [build_write_todos_tool()]
   end
 
+  @impl true
+  def on_server_start(state, _config) do
+    # Broadcast initial todos when AgentServer starts
+    # This handles restored conversations showing their saved/restored todos
+    broadcast_todos(state.agent_id, state.todos)
+    {:ok, state}
+  end
+
   # Build the tool function - called at runtime to avoid compile-time ordering issues
   defp build_write_todos_tool do
     Function.new!(%{
@@ -170,6 +178,10 @@ defmodule LangChain.Agents.Middleware.TodoList do
           context.state
           |> update_todos(parsed_todos, merge)
           |> clear_if_all_completed()
+
+        # Broadcast todos immediately for real-time UI updates
+        # This is the point where todos are actually committed to state
+        broadcast_todos(context.state.agent_id, updated_state.todos)
 
         # Return only the state changes (todos), not messages
         state_delta = %State{todos: updated_state.todos}
@@ -291,6 +303,20 @@ defmodule LangChain.Agents.Middleware.TodoList do
           |> Enum.join(", ")
 
         "Successfully #{mode} #{count} TODO(s): #{summary}"
+    end
+  end
+
+  # Broadcast todos via AgentServer's PubSub infrastructure
+  # Uses the public API so middleware doesn't need direct PubSub access
+  defp broadcast_todos(nil, _todos), do: :ok
+
+  defp broadcast_todos(agent_id, todos) do
+    # Only broadcast if AgentServer is running
+    # This check is necessary because execute_write_todos can be called
+    # outside of AgentServer context (e.g., in tests or standalone agents)
+    case GenServer.whereis(AgentServer.get_name(agent_id)) do
+      nil -> :ok
+      _pid -> AgentServer.publish_event_from(agent_id, {:todos_updated, todos})
     end
   end
 end

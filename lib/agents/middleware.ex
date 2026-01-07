@@ -194,6 +194,38 @@ defmodule LangChain.Agents.Middleware do
   """
   @callback state_schema() :: module() | nil
 
+  @doc """
+  Called when the AgentServer starts or restarts.
+
+  This allows middleware to perform initialization actions that require
+  the AgentServer to be running, such as broadcasting initial state to
+  subscribers (e.g., TODOs for UI display).
+
+  Receives the current state and middleware config.
+  Returns `{:ok, state}` (state is not typically modified here but could be).
+
+  Defaults to `{:ok, state}` if not implemented.
+
+  ## Parameters
+
+  - `state` - The current `LangChain.Agents.State` struct
+  - `config` - The middleware configuration from `init/1`
+
+  ## Returns
+
+  - `{:ok, state}` - Success (state typically unchanged)
+  - `{:error, reason}` - Failure (logged but does not halt agent)
+
+  ## Example
+
+      def on_server_start(state, _config) do
+        # Broadcast initial todos when AgentServer starts
+        broadcast_todos(state.agent_id, state.todos)
+        {:ok, state}
+      end
+  """
+  @callback on_server_start(State.t(), middleware_config) :: {:ok, State.t()} | {:error, term()}
+
   @optional_callbacks [
     init: 1,
     system_prompt: 1,
@@ -201,7 +233,8 @@ defmodule LangChain.Agents.Middleware do
     before_model: 2,
     after_model: 2,
     handle_message: 3,
-    state_schema: 0
+    state_schema: 0,
+    on_server_start: 2
   ]
 
   @doc """
@@ -363,6 +396,32 @@ defmodule LangChain.Agents.Middleware do
   def apply_handle_message(message, state, %MiddlewareEntry{module: module, config: config}) do
     try do
       module.handle_message(message, state, config)
+    rescue
+      UndefinedFunctionError -> {:ok, state}
+    end
+  end
+
+  @doc """
+  Apply on_server_start callback from middleware.
+
+  Called when the AgentServer starts to allow middleware to perform
+  initialization actions like broadcasting initial state.
+
+  ## Parameters
+
+  - `state` - The current agent state
+  - `entry` - MiddlewareEntry struct with module and config
+
+  ## Returns
+
+  - `{:ok, state}` - Success (state typically unchanged)
+  - `{:error, reason}` - Error from middleware
+  """
+  @spec apply_on_server_start(State.t(), LangChain.Agents.MiddlewareEntry.t()) ::
+          {:ok, State.t()} | {:error, term()}
+  def apply_on_server_start(state, %MiddlewareEntry{module: module, config: config}) do
+    try do
+      module.on_server_start(state, config)
     rescue
       UndefinedFunctionError -> {:ok, state}
     end
