@@ -51,6 +51,9 @@ defmodule LangChain.Agents.FileSystem do
 
   - `scope_key` - Tuple identifying the filesystem scope (e.g., `{:user, 123}`)
   - `configs` - List of FileSystemConfig structs
+  - `opts` - Additional options:
+    - `:supervisor` - Supervisor reference (PID or registered name). Defaults to `FileSystemSupervisor`.
+    - `:pubsub` - PubSub configuration as `{module(), atom()}` tuple (optional)
 
   ## Returns
 
@@ -71,15 +74,23 @@ defmodule LangChain.Agents.FileSystem do
 
       # Subsequent calls return the same PID
       {:ok, ^pid} = ensure_filesystem({:user, 123}, [config])
-  """
-  @spec ensure_filesystem(tuple(), list()) :: {:ok, pid()} | {:error, term()}
-  @spec ensure_filesystem(atom() | pid(), tuple(), list()) :: {:ok, pid()} | {:error, term()}
 
-  def ensure_filesystem(scope_key, configs) when is_tuple(scope_key) and is_list(configs) do
-    ensure_filesystem(FileSystemSupervisor, scope_key, configs)
+      # With PubSub
+      {:ok, pid} = ensure_filesystem({:user, 123}, [config], pubsub: {Phoenix.PubSub, :my_pubsub})
+  """
+  @spec ensure_filesystem(tuple(), list(), keyword()) :: {:ok, pid()} | {:error, term()}
+
+  def ensure_filesystem(scope_key, configs, opts \\ [])
+
+  def ensure_filesystem(scope_key, _configs, _opts) when not is_tuple(scope_key) do
+    {:error, :invalid_arguments}
   end
 
-  def ensure_filesystem(supervisor, scope_key, configs)
+  def ensure_filesystem(_scope_key, configs, _opts) when not is_list(configs) do
+    {:error, :invalid_arguments}
+  end
+
+  def ensure_filesystem(scope_key, configs, opts)
       when is_tuple(scope_key) and is_list(configs) do
     case FileSystemSupervisor.get_filesystem(scope_key) do
       {:ok, pid} ->
@@ -88,7 +99,7 @@ defmodule LangChain.Agents.FileSystem do
 
       {:error, :not_found} ->
         # Not running, start it
-        case FileSystemSupervisor.start_filesystem(supervisor, scope_key, configs) do
+        case FileSystemSupervisor.start_filesystem(scope_key, configs, opts) do
           {:ok, pid} -> {:ok, pid}
           {:error, {:already_started, pid}} -> {:ok, pid}
           {:error, reason} -> {:error, reason}
@@ -96,20 +107,19 @@ defmodule LangChain.Agents.FileSystem do
     end
   end
 
-  def ensure_filesystem(_supervisor, _scope_key, _configs) do
-    {:error, :invalid_arguments}
-  end
-
   @doc """
   Start a new filesystem for the given scope.
 
   Returns an error if a filesystem is already running for this scope.
-  For idempotent behavior, use `ensure_filesystem/2` instead.
+  For idempotent behavior, use `ensure_filesystem/3` instead.
 
   ## Parameters
 
   - `scope_key` - Tuple identifying the filesystem scope
   - `configs` - List of FileSystemConfig structs
+  - `opts` - Additional options:
+    - `:supervisor` - Supervisor reference (PID or registered name). Defaults to `FileSystemSupervisor`.
+    - `:pubsub` - PubSub configuration as `{module(), atom()}` tuple (optional)
 
   ## Returns
 
@@ -121,15 +131,10 @@ defmodule LangChain.Agents.FileSystem do
 
       {:ok, pid} = start_filesystem({:user, 123}, [config])
   """
-  @spec start_filesystem(tuple(), list()) :: {:ok, pid()} | {:error, term()}
-  @spec start_filesystem(atom() | pid(), tuple(), list()) :: {:ok, pid()} | {:error, term()}
+  @spec start_filesystem(tuple(), list(), keyword()) :: {:ok, pid()} | {:error, term()}
 
-  def start_filesystem(scope_key, configs) do
-    FileSystemSupervisor.start_filesystem(scope_key, configs)
-  end
-
-  def start_filesystem(supervisor, scope_key, configs) do
-    FileSystemSupervisor.start_filesystem(supervisor, scope_key, configs)
+  def start_filesystem(scope_key, configs, opts \\ []) do
+    FileSystemSupervisor.start_filesystem(scope_key, configs, opts)
   end
 
   @doc """
@@ -140,6 +145,8 @@ defmodule LangChain.Agents.FileSystem do
   ## Parameters
 
   - `scope_key` - Tuple identifying the filesystem scope
+  - `opts` - Additional options:
+    - `:supervisor` - Supervisor reference (PID or registered name). Defaults to `FileSystemSupervisor`.
 
   ## Returns
 
@@ -150,15 +157,10 @@ defmodule LangChain.Agents.FileSystem do
 
       :ok = stop_filesystem({:user, 123})
   """
-  @spec stop_filesystem(tuple()) :: :ok | {:error, :not_found}
-  @spec stop_filesystem(atom() | pid(), tuple()) :: :ok | {:error, :not_found}
+  @spec stop_filesystem(tuple(), keyword()) :: :ok | {:error, :not_found}
 
-  def stop_filesystem(scope_key) do
-    FileSystemSupervisor.stop_filesystem(scope_key)
-  end
-
-  def stop_filesystem(supervisor, scope_key) do
-    FileSystemSupervisor.stop_filesystem(supervisor, scope_key)
+  def stop_filesystem(scope_key, opts \\ []) do
+    FileSystemSupervisor.stop_filesystem(scope_key, opts)
   end
 
   @doc """

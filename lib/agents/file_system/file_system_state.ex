@@ -15,14 +15,18 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
     :scope_key,
     :files,
     :persistence_configs,
-    :debounce_timers
+    :debounce_timers,
+    :pubsub,
+    :topic
   ]
 
   @type t :: %FileSystemState{
           scope_key: term(),
           files: %{String.t() => FileEntry.t()},
           persistence_configs: %{String.t() => FileSystemConfig.t()},
-          debounce_timers: %{String.t() => reference()}
+          debounce_timers: %{String.t() => reference()},
+          pubsub: {module(), atom()} | nil,
+          topic: String.t() | nil
         }
 
   @doc """
@@ -35,16 +39,25 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
     - UUID: `"550e8400-e29b-41d4-a716-446655440000"`
     - Database ID: `12345` or `"12345"`
   - `:configs` - List of FileSystemConfig structs (optional, default: [])
+  - `:pubsub` - PubSub configuration as `{module(), atom()}` tuple or `nil` (optional, default: nil)
+    Example: `{Phoenix.PubSub, :my_app_pubsub}`
+    When configured, broadcasts `{:files_updated, file_list}` after write/delete operations.
   """
   @spec new(keyword()) :: {:ok, t()} | {:error, term()}
   def new(opts) do
     with {:ok, scope_key} <- fetch_scope_key(opts),
          {:ok, persistence_configs} <- build_persistence_configs(opts) do
+      # Get optional pubsub configuration
+      pubsub = Keyword.get(opts, :pubsub)
+      topic = if pubsub, do: "filesystem:#{inspect(scope_key)}", else: nil
+
       state = %FileSystemState{
         scope_key: scope_key,
         files: %{},
         persistence_configs: persistence_configs,
-        debounce_timers: %{}
+        debounce_timers: %{},
+        pubsub: pubsub,
+        topic: topic
       }
 
       # Index existing files from all persistence backends

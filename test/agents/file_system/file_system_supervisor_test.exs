@@ -54,14 +54,16 @@ defmodule LangChain.Agents.FileSystem.FileSystemSupervisorTest do
       scope_key = {:user, System.unique_integer([:positive])}
       config = create_test_config(scope_key)
 
-      assert {:ok, fs_pid} = FileSystemSupervisor.start_filesystem(sup, scope_key, [config])
+      assert {:ok, fs_pid} =
+               FileSystemSupervisor.start_filesystem(scope_key, [config], supervisor: sup)
+
       assert Process.alive?(fs_pid)
 
       # Verify it's registered
       assert {:ok, ^fs_pid} = FileSystemSupervisor.get_filesystem(scope_key)
 
       # Clean up
-      FileSystemSupervisor.stop_filesystem(sup, scope_key)
+      FileSystemSupervisor.stop_filesystem(scope_key, supervisor: sup)
     end
 
     test "returns error if filesystem already running for scope", %{supervisor_pid: sup} do
@@ -69,14 +71,14 @@ defmodule LangChain.Agents.FileSystem.FileSystemSupervisorTest do
       config = create_test_config(scope_key)
 
       # Start first filesystem
-      {:ok, fs_pid} = FileSystemSupervisor.start_filesystem(sup, scope_key, [config])
+      {:ok, fs_pid} = FileSystemSupervisor.start_filesystem(scope_key, [config], supervisor: sup)
 
       # Try to start duplicate
       assert {:error, {:already_started, ^fs_pid}} =
-               FileSystemSupervisor.start_filesystem(sup, scope_key, [config])
+               FileSystemSupervisor.start_filesystem(scope_key, [config], supervisor: sup)
 
       # Clean up
-      FileSystemSupervisor.stop_filesystem(sup, scope_key)
+      FileSystemSupervisor.stop_filesystem(scope_key, supervisor: sup)
     end
 
     test "can start multiple filesystems with different scopes", %{supervisor_pid: sup} do
@@ -88,9 +90,9 @@ defmodule LangChain.Agents.FileSystem.FileSystemSupervisorTest do
       config2 = create_test_config(scope2)
       config3 = create_test_config(scope3)
 
-      {:ok, fs_pid1} = FileSystemSupervisor.start_filesystem(sup, scope1, [config1])
-      {:ok, fs_pid2} = FileSystemSupervisor.start_filesystem(sup, scope2, [config2])
-      {:ok, fs_pid3} = FileSystemSupervisor.start_filesystem(sup, scope3, [config3])
+      {:ok, fs_pid1} = FileSystemSupervisor.start_filesystem(scope1, [config1], supervisor: sup)
+      {:ok, fs_pid2} = FileSystemSupervisor.start_filesystem(scope2, [config2], supervisor: sup)
+      {:ok, fs_pid3} = FileSystemSupervisor.start_filesystem(scope3, [config3], supervisor: sup)
 
       # All PIDs should be different
       assert fs_pid1 != fs_pid2
@@ -103,23 +105,23 @@ defmodule LangChain.Agents.FileSystem.FileSystemSupervisorTest do
       assert {:ok, ^fs_pid3} = FileSystemSupervisor.get_filesystem(scope3)
 
       # Clean up
-      FileSystemSupervisor.stop_filesystem(sup, scope1)
-      FileSystemSupervisor.stop_filesystem(sup, scope2)
-      FileSystemSupervisor.stop_filesystem(sup, scope3)
+      FileSystemSupervisor.stop_filesystem(scope1, supervisor: sup)
+      FileSystemSupervisor.stop_filesystem(scope2, supervisor: sup)
+      FileSystemSupervisor.stop_filesystem(scope3, supervisor: sup)
     end
 
-    test "returns error for invalid scope_key (not a tuple)", %{supervisor_pid: sup} do
+    test "returns error for invalid scope_key (not a tuple)", %{supervisor_pid: _sup} do
       config = create_test_config({:user, 123})
 
       assert {:error, :invalid_scope_key} =
-               FileSystemSupervisor.start_filesystem(sup, "invalid", [config])
+               FileSystemSupervisor.start_filesystem("invalid", [config])
     end
 
-    test "returns error for invalid configs (not a list)", %{supervisor_pid: sup} do
+    test "returns error for invalid configs (not a list)", %{supervisor_pid: _sup} do
       scope_key = {:user, System.unique_integer([:positive])}
 
       assert {:error, :invalid_configs} =
-               FileSystemSupervisor.start_filesystem(sup, scope_key, "invalid")
+               FileSystemSupervisor.start_filesystem(scope_key, "invalid")
     end
   end
 
@@ -128,11 +130,11 @@ defmodule LangChain.Agents.FileSystem.FileSystemSupervisorTest do
       scope_key = {:user, System.unique_integer([:positive])}
       config = create_test_config(scope_key)
 
-      {:ok, fs_pid} = FileSystemSupervisor.start_filesystem(sup, scope_key, [config])
+      {:ok, fs_pid} = FileSystemSupervisor.start_filesystem(scope_key, [config], supervisor: sup)
       assert Process.alive?(fs_pid)
 
       # Stop the filesystem
-      assert :ok = FileSystemSupervisor.stop_filesystem(sup, scope_key)
+      assert :ok = FileSystemSupervisor.stop_filesystem(scope_key, supervisor: sup)
 
       # Give it time to stop
       Process.sleep(50)
@@ -145,20 +147,22 @@ defmodule LangChain.Agents.FileSystem.FileSystemSupervisorTest do
     test "returns error if filesystem not running", %{supervisor_pid: sup} do
       scope_key = {:user, System.unique_integer([:positive])}
 
-      assert {:error, :not_found} = FileSystemSupervisor.stop_filesystem(sup, scope_key)
+      assert {:error, :not_found} =
+               FileSystemSupervisor.stop_filesystem(scope_key, supervisor: sup)
     end
 
     test "returns error after already stopped", %{supervisor_pid: sup} do
       scope_key = {:user, System.unique_integer([:positive])}
       config = create_test_config(scope_key)
 
-      {:ok, _fs_pid} = FileSystemSupervisor.start_filesystem(sup, scope_key, [config])
-      :ok = FileSystemSupervisor.stop_filesystem(sup, scope_key)
+      {:ok, _fs_pid} = FileSystemSupervisor.start_filesystem(scope_key, [config], supervisor: sup)
+      :ok = FileSystemSupervisor.stop_filesystem(scope_key, supervisor: sup)
 
       Process.sleep(50)
 
       # Trying to stop again should return error
-      assert {:error, :not_found} = FileSystemSupervisor.stop_filesystem(sup, scope_key)
+      assert {:error, :not_found} =
+               FileSystemSupervisor.stop_filesystem(scope_key, supervisor: sup)
     end
   end
 
@@ -167,12 +171,12 @@ defmodule LangChain.Agents.FileSystem.FileSystemSupervisorTest do
       scope_key = {:user, System.unique_integer([:positive])}
       config = create_test_config(scope_key)
 
-      {:ok, fs_pid} = FileSystemSupervisor.start_filesystem(sup, scope_key, [config])
+      {:ok, fs_pid} = FileSystemSupervisor.start_filesystem(scope_key, [config], supervisor: sup)
 
       assert {:ok, ^fs_pid} = FileSystemSupervisor.get_filesystem(scope_key)
 
       # Clean up
-      FileSystemSupervisor.stop_filesystem(sup, scope_key)
+      FileSystemSupervisor.stop_filesystem(scope_key, supervisor: sup)
     end
 
     test "returns error when filesystem does not exist", %{supervisor_pid: _sup} do
@@ -185,10 +189,10 @@ defmodule LangChain.Agents.FileSystem.FileSystemSupervisorTest do
       scope_key = {:user, System.unique_integer([:positive])}
       config = create_test_config(scope_key)
 
-      {:ok, fs_pid} = FileSystemSupervisor.start_filesystem(sup, scope_key, [config])
+      {:ok, fs_pid} = FileSystemSupervisor.start_filesystem(scope_key, [config], supervisor: sup)
       assert {:ok, ^fs_pid} = FileSystemSupervisor.get_filesystem(scope_key)
 
-      FileSystemSupervisor.stop_filesystem(sup, scope_key)
+      FileSystemSupervisor.stop_filesystem(scope_key, supervisor: sup)
       Process.sleep(50)
 
       assert {:error, :not_found} = FileSystemSupervisor.get_filesystem(scope_key)
@@ -210,8 +214,8 @@ defmodule LangChain.Agents.FileSystem.FileSystemSupervisorTest do
       config1 = create_test_config(scope1)
       config2 = create_test_config(scope2)
 
-      {:ok, fs_pid1} = FileSystemSupervisor.start_filesystem(sup, scope1, [config1])
-      {:ok, fs_pid2} = FileSystemSupervisor.start_filesystem(sup, scope2, [config2])
+      {:ok, fs_pid1} = FileSystemSupervisor.start_filesystem(scope1, [config1], supervisor: sup)
+      {:ok, fs_pid2} = FileSystemSupervisor.start_filesystem(scope2, [config2], supervisor: sup)
 
       filesystems = FileSystemSupervisor.list_filesystems()
 
@@ -220,20 +224,20 @@ defmodule LangChain.Agents.FileSystem.FileSystemSupervisorTest do
       assert {scope2, fs_pid2} in filesystems
 
       # Clean up
-      FileSystemSupervisor.stop_filesystem(sup, scope1)
-      FileSystemSupervisor.stop_filesystem(sup, scope2)
+      FileSystemSupervisor.stop_filesystem(scope1, supervisor: sup)
+      FileSystemSupervisor.stop_filesystem(scope2, supervisor: sup)
     end
 
     test "list updates after stopping filesystem", %{supervisor_pid: sup} do
       scope_key = {:user, System.unique_integer([:positive])}
       config = create_test_config(scope_key)
 
-      {:ok, fs_pid} = FileSystemSupervisor.start_filesystem(sup, scope_key, [config])
+      {:ok, fs_pid} = FileSystemSupervisor.start_filesystem(scope_key, [config], supervisor: sup)
 
       filesystems_before = FileSystemSupervisor.list_filesystems()
       assert {scope_key, fs_pid} in filesystems_before
 
-      FileSystemSupervisor.stop_filesystem(sup, scope_key)
+      FileSystemSupervisor.stop_filesystem(scope_key, supervisor: sup)
       Process.sleep(50)
 
       filesystems_after = FileSystemSupervisor.list_filesystems()
@@ -246,7 +250,7 @@ defmodule LangChain.Agents.FileSystem.FileSystemSupervisorTest do
       scope_key = {:user, System.unique_integer([:positive])}
       config = create_test_config(scope_key)
 
-      {:ok, fs_pid} = FileSystemSupervisor.start_filesystem(sup, scope_key, [config])
+      {:ok, fs_pid} = FileSystemSupervisor.start_filesystem(scope_key, [config], supervisor: sup)
       assert Process.alive?(fs_pid)
 
       # Kill the filesystem process (simulate crash)
@@ -264,19 +268,19 @@ defmodule LangChain.Agents.FileSystem.FileSystemSupervisorTest do
       assert DynamicSupervisor.count_children(sup).active >= 1
 
       # Clean up
-      FileSystemSupervisor.stop_filesystem(sup, scope_key)
+      FileSystemSupervisor.stop_filesystem(scope_key, supervisor: sup)
     end
 
     test "filesystem does not restart on graceful shutdown", %{supervisor_pid: sup} do
       scope_key = {:user, System.unique_integer([:positive])}
       config = create_test_config(scope_key)
 
-      {:ok, fs_pid} = FileSystemSupervisor.start_filesystem(sup, scope_key, [config])
+      {:ok, fs_pid} = FileSystemSupervisor.start_filesystem(scope_key, [config], supervisor: sup)
 
       initial_count = DynamicSupervisor.count_children(sup).active
 
       # Graceful shutdown
-      FileSystemSupervisor.stop_filesystem(sup, scope_key)
+      FileSystemSupervisor.stop_filesystem(scope_key, supervisor: sup)
       Process.sleep(100)
 
       # Should not be running
@@ -294,22 +298,22 @@ defmodule LangChain.Agents.FileSystem.FileSystemSupervisorTest do
       scope_key = {:user, System.unique_integer([:positive])}
       config = create_test_config(scope_key)
 
-      {:ok, fs_pid} = FileSystemSupervisor.start_filesystem(sup, scope_key, [config])
+      {:ok, fs_pid} = FileSystemSupervisor.start_filesystem(scope_key, [config], supervisor: sup)
 
       # Check Registry directly
       assert [{^fs_pid, _}] =
                Registry.lookup(LangChain.Agents.Registry, {:filesystem_server, scope_key})
 
       # Clean up
-      FileSystemSupervisor.stop_filesystem(sup, scope_key)
+      FileSystemSupervisor.stop_filesystem(scope_key, supervisor: sup)
     end
 
     test "filesystem unregistered after stop", %{supervisor_pid: sup} do
       scope_key = {:user, System.unique_integer([:positive])}
       config = create_test_config(scope_key)
 
-      {:ok, _fs_pid} = FileSystemSupervisor.start_filesystem(sup, scope_key, [config])
-      FileSystemSupervisor.stop_filesystem(sup, scope_key)
+      {:ok, _fs_pid} = FileSystemSupervisor.start_filesystem(scope_key, [config], supervisor: sup)
+      FileSystemSupervisor.stop_filesystem(scope_key, supervisor: sup)
 
       Process.sleep(50)
 
@@ -330,7 +334,7 @@ defmodule LangChain.Agents.FileSystem.FileSystemSupervisorTest do
       pids =
         Enum.map(scopes, fn scope ->
           config = create_test_config(scope)
-          {:ok, pid} = FileSystemSupervisor.start_filesystem(sup, scope, [config])
+          {:ok, pid} = FileSystemSupervisor.start_filesystem(scope, [config], supervisor: sup)
           {scope, pid}
         end)
 
@@ -342,7 +346,7 @@ defmodule LangChain.Agents.FileSystem.FileSystemSupervisorTest do
 
       # Clean up
       Enum.each(scopes, fn scope ->
-        FileSystemSupervisor.stop_filesystem(sup, scope)
+        FileSystemSupervisor.stop_filesystem(scope, supervisor: sup)
       end)
     end
 
@@ -353,11 +357,11 @@ defmodule LangChain.Agents.FileSystem.FileSystemSupervisorTest do
       config1 = create_test_config(scope1)
       config2 = create_test_config(scope2)
 
-      {:ok, fs_pid1} = FileSystemSupervisor.start_filesystem(sup, scope1, [config1])
-      {:ok, fs_pid2} = FileSystemSupervisor.start_filesystem(sup, scope2, [config2])
+      {:ok, fs_pid1} = FileSystemSupervisor.start_filesystem(scope1, [config1], supervisor: sup)
+      {:ok, fs_pid2} = FileSystemSupervisor.start_filesystem(scope2, [config2], supervisor: sup)
 
       # Stop first filesystem
-      FileSystemSupervisor.stop_filesystem(sup, scope1)
+      FileSystemSupervisor.stop_filesystem(scope1, supervisor: sup)
       Process.sleep(50)
 
       # First should be stopped
@@ -369,7 +373,7 @@ defmodule LangChain.Agents.FileSystem.FileSystemSupervisorTest do
       assert Process.alive?(fs_pid2)
 
       # Clean up
-      FileSystemSupervisor.stop_filesystem(sup, scope2)
+      FileSystemSupervisor.stop_filesystem(scope2, supervisor: sup)
     end
   end
 end

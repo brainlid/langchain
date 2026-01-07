@@ -95,9 +95,11 @@ defmodule LangChain.Agents.FileSystem.FileSystemSupervisor do
 
   ## Parameters
 
-  - `supervisor` - Supervisor reference (PID or registered name). Defaults to `__MODULE__`.
   - `scope_key` - Tuple identifying the filesystem scope (e.g., `{:user, 123}`)
   - `configs` - List of FileSystemConfig structs for this filesystem
+  - `opts` - Additional options:
+    - `:supervisor` - Supervisor reference (PID or registered name). Defaults to `__MODULE__`.
+    - `:pubsub` - PubSub configuration as `{module(), atom()}` tuple (optional)
 
   ## Returns
 
@@ -114,30 +116,26 @@ defmodule LangChain.Agents.FileSystem.FileSystemSupervisor do
         storage_opts: [path: "/data/users/123"]
       })
 
-      # With default supervisor
       {:ok, pid} = start_filesystem({:user, 123}, [config])
 
-      # With explicit supervisor
-      {:ok, pid} = start_filesystem(my_supervisor, {:user, 123}, [config])
+      # With PubSub
+      {:ok, pid} = start_filesystem({:user, 123}, [config], pubsub: {Phoenix.PubSub, :my_pubsub})
   """
-  @spec start_filesystem(tuple(), list()) :: {:ok, pid()} | {:error, term()}
-  def start_filesystem(scope_key, configs) when is_tuple(scope_key) and is_list(configs) do
-    start_filesystem(__MODULE__, scope_key, configs)
-  end
+  @spec start_filesystem(tuple(), list(), keyword()) :: {:ok, pid()} | {:error, term()}
 
-  @spec start_filesystem(atom() | pid(), tuple(), list()) :: {:ok, pid()} | {:error, term()}
-  def start_filesystem(supervisor, scope_key, _configs) when not is_tuple(scope_key) do
-    _ = supervisor
+  def start_filesystem(scope_key, configs, opts \\ [])
+
+  def start_filesystem(scope_key, _configs, _opts) when not is_tuple(scope_key) do
     {:error, :invalid_scope_key}
   end
 
-  def start_filesystem(supervisor, _scope_key, configs) when not is_list(configs) do
-    _ = supervisor
+  def start_filesystem(_scope_key, configs, _opts) when not is_list(configs) do
     {:error, :invalid_configs}
   end
 
-  def start_filesystem(supervisor, scope_key, configs)
+  def start_filesystem(scope_key, configs, opts)
       when is_tuple(scope_key) and is_list(configs) do
+    supervisor = Keyword.get(opts, :supervisor, __MODULE__)
     # Wait for supervisor to be ready (handles async startup scenarios)
     case wait_for_supervisor_ready(supervisor, 5_000) do
       :ok ->
@@ -147,10 +145,20 @@ defmodule LangChain.Agents.FileSystem.FileSystemSupervisor do
             {:error, {:already_started, pid}}
 
           {:error, :not_found} ->
+            # Build start_link options
+            start_opts = [scope_key: scope_key, configs: configs]
+
+            # Add pubsub if provided
+            start_opts =
+              case Keyword.get(opts, :pubsub) do
+                nil -> start_opts
+                pubsub -> Keyword.put(start_opts, :pubsub, pubsub)
+              end
+
             # Start new filesystem
             child_spec = %{
               id: {:filesystem_server, scope_key},
-              start: {FileSystemServer, :start_link, [[scope_key: scope_key, configs: configs]]},
+              start: {FileSystemServer, :start_link, [start_opts]},
               restart: :transient
             }
 
@@ -187,8 +195,9 @@ defmodule LangChain.Agents.FileSystem.FileSystemSupervisor do
 
   ## Parameters
 
-  - `supervisor` - Supervisor reference (PID or registered name). Defaults to `__MODULE__`.
   - `scope_key` - Tuple identifying the filesystem scope
+  - `opts` - Additional options:
+    - `:supervisor` - Supervisor reference (PID or registered name). Defaults to `__MODULE__`.
 
   ## Returns
 
@@ -197,20 +206,12 @@ defmodule LangChain.Agents.FileSystem.FileSystemSupervisor do
 
   ## Examples
 
-      # With default supervisor
       :ok = stop_filesystem({:user, 123})
-
-      # With explicit supervisor
-      :ok = stop_filesystem(my_supervisor, {:user, 123})
   """
-  @spec stop_filesystem(tuple()) :: :ok | {:error, :not_found}
-  @spec stop_filesystem(atom() | pid(), tuple()) :: :ok | {:error, :not_found}
+  @spec stop_filesystem(tuple(), keyword()) :: :ok | {:error, :not_found}
 
-  def stop_filesystem(scope_key) when is_tuple(scope_key) do
-    stop_filesystem(__MODULE__, scope_key)
-  end
-
-  def stop_filesystem(supervisor, scope_key) when is_tuple(scope_key) do
+  def stop_filesystem(scope_key, opts \\ []) when is_tuple(scope_key) do
+    supervisor = Keyword.get(opts, :supervisor, __MODULE__)
     case get_filesystem(scope_key) do
       {:ok, pid} ->
         case DynamicSupervisor.terminate_child(supervisor, pid) do

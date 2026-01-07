@@ -588,6 +588,175 @@ defmodule LangChain.Agents.FileSystemServerTest do
     end
   end
 
+  describe "PubSub events" do
+    setup do
+      # Use the shared :test_pubsub started in test_helper.exs
+      pubsub_name = :test_pubsub
+      agent_id = "pubsub_test_agent_#{System.unique_integer([:positive])}"
+
+      on_exit(fn ->
+        # Cleanup any running FileSystemServer
+        try do
+          case FileSystemServer.whereis({:agent, agent_id}) do
+            nil -> :ok
+            pid -> GenServer.stop(pid, :normal)
+          end
+        rescue
+          ArgumentError -> :ok
+        catch
+          :exit, _ -> :ok
+        end
+      end)
+
+      %{agent_id: agent_id, pubsub_name: pubsub_name}
+    end
+
+    test "subscribe returns error when pubsub not configured", %{agent_id: agent_id} do
+      {:ok, _pid} = FileSystemServer.start_link(scope_key: {:agent, agent_id})
+
+      assert {:error, :no_pubsub} = FileSystemServer.subscribe({:agent, agent_id})
+    end
+
+    test "subscribe returns error when process not found" do
+      assert {:error, :process_not_found} = FileSystemServer.subscribe({:agent, "nonexistent"})
+    end
+
+    test "unsubscribe returns error when pubsub not configured", %{agent_id: agent_id} do
+      {:ok, _pid} = FileSystemServer.start_link(scope_key: {:agent, agent_id})
+
+      assert {:error, :no_pubsub} = FileSystemServer.unsubscribe({:agent, agent_id})
+    end
+
+    test "unsubscribe returns error when process not found" do
+      assert {:error, :process_not_found} = FileSystemServer.unsubscribe({:agent, "nonexistent"})
+    end
+
+    test "broadcasts file_updated on write", %{agent_id: agent_id, pubsub_name: pubsub_name} do
+      {:ok, _pid} =
+        FileSystemServer.start_link(
+          scope_key: {:agent, agent_id},
+          pubsub: {Phoenix.PubSub, pubsub_name}
+        )
+
+      # Subscribe to events
+      :ok = FileSystemServer.subscribe({:agent, agent_id})
+
+      # Write a file
+      :ok = FileSystemServer.write_file({:agent, agent_id}, "/test.txt", "content")
+
+      # Should receive wrapped file_updated event with path
+      assert_receive {:file_system, {:file_updated, path}}, 100
+      assert path == "/test.txt"
+    end
+
+    test "broadcasts file_deleted on delete", %{agent_id: agent_id, pubsub_name: pubsub_name} do
+      {:ok, _pid} =
+        FileSystemServer.start_link(
+          scope_key: {:agent, agent_id},
+          pubsub: {Phoenix.PubSub, pubsub_name}
+        )
+
+      # Write a file first
+      :ok = FileSystemServer.write_file({:agent, agent_id}, "/test.txt", "content")
+
+      # Subscribe to events
+      :ok = FileSystemServer.subscribe({:agent, agent_id})
+
+      # Delete the file
+      :ok = FileSystemServer.delete_file({:agent, agent_id}, "/test.txt")
+
+      # Should receive wrapped file_deleted event with path
+      assert_receive {:file_system, {:file_deleted, path}}, 100
+      assert path == "/test.txt"
+    end
+
+    test "broadcasts correct path on write", %{agent_id: agent_id, pubsub_name: pubsub_name} do
+      {:ok, _pid} =
+        FileSystemServer.start_link(
+          scope_key: {:agent, agent_id},
+          pubsub: {Phoenix.PubSub, pubsub_name}
+        )
+
+      # Write some files first
+      :ok = FileSystemServer.write_file({:agent, agent_id}, "/z.txt", "z")
+      :ok = FileSystemServer.write_file({:agent, agent_id}, "/a.txt", "a")
+
+      # Subscribe to events
+      :ok = FileSystemServer.subscribe({:agent, agent_id})
+
+      # Write another file
+      :ok = FileSystemServer.write_file({:agent, agent_id}, "/m.txt", "m")
+
+      # Should receive wrapped event with the specific path
+      assert_receive {:file_system, {:file_updated, path}}, 100
+      assert path == "/m.txt"
+    end
+
+    test "can unsubscribe from events", %{agent_id: agent_id, pubsub_name: pubsub_name} do
+      {:ok, _pid} =
+        FileSystemServer.start_link(
+          scope_key: {:agent, agent_id},
+          pubsub: {Phoenix.PubSub, pubsub_name}
+        )
+
+      # Subscribe and then unsubscribe
+      :ok = FileSystemServer.subscribe({:agent, agent_id})
+      :ok = FileSystemServer.unsubscribe({:agent, agent_id})
+
+      # Write a file
+      :ok = FileSystemServer.write_file({:agent, agent_id}, "/test.txt", "content")
+
+      # Should NOT receive event after unsubscribe
+      refute_receive {:file_system, _}, 50
+    end
+
+    test "does not broadcast on write error", %{agent_id: agent_id, pubsub_name: pubsub_name} do
+      defmodule ReadOnlyPersistence do
+        @behaviour LangChain.Agents.FileSystem.Persistence
+
+        def write_to_storage(_entry, _opts), do: {:error, :readonly}
+        def load_from_storage(_entry, _opts), do: {:error, :enoent}
+        def delete_from_storage(_entry, _opts), do: :ok
+        def list_persisted_files(_agent_id, _opts), do: {:ok, []}
+      end
+
+      config =
+        FileSystemConfig.new!(%{
+          base_directory: "ReadOnly",
+          persistence_module: ReadOnlyPersistence,
+          readonly: true
+        })
+
+      {:ok, _pid} =
+        FileSystemServer.start_link(
+          scope_key: {:agent, agent_id},
+          configs: [config],
+          pubsub: {Phoenix.PubSub, pubsub_name}
+        )
+
+      # Subscribe to events
+      :ok = FileSystemServer.subscribe({:agent, agent_id})
+
+      # Try to write to readonly - should fail
+      {:error, _} = FileSystemServer.write_file({:agent, agent_id}, "/ReadOnly/test.txt", "content")
+
+      # Should NOT receive event on error
+      refute_receive {:file_system, _}, 50
+    end
+
+    test "topic includes scope_key in name", %{agent_id: agent_id, pubsub_name: pubsub_name} do
+      {:ok, pid} =
+        FileSystemServer.start_link(
+          scope_key: {:agent, agent_id},
+          pubsub: {Phoenix.PubSub, pubsub_name}
+        )
+
+      # Access internal state to verify topic
+      state = :sys.get_state(pid)
+      assert state.topic == "filesystem:{:agent, \"#{agent_id}\"}"
+    end
+  end
+
   describe "concurrent operations" do
     test "handles multiple writes to different files", %{agent_id: agent_id} do
       {:ok, _pid} = FileSystemServer.start_link(scope_key: {:agent, agent_id})

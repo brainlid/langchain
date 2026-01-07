@@ -32,14 +32,14 @@ defmodule LangChain.Agents.FileSystemTest do
       config = create_test_config(scope_key)
 
       # Should start new filesystem
-      assert {:ok, pid} = FileSystem.ensure_filesystem(sup, scope_key, [config])
+      assert {:ok, pid} = FileSystem.ensure_filesystem(scope_key, [config], supervisor: sup)
       assert Process.alive?(pid)
 
       # Should be registered
       assert {:ok, ^pid} = FileSystem.get_filesystem_pid(scope_key)
 
       # Clean up
-      FileSystem.stop_filesystem(sup, scope_key)
+      FileSystem.stop_filesystem(scope_key, supervisor: sup)
     end
 
     test "returns existing PID if filesystem already running (idempotent)", %{supervisor_pid: sup} do
@@ -47,20 +47,20 @@ defmodule LangChain.Agents.FileSystemTest do
       config = create_test_config(scope_key)
 
       # First call starts the filesystem
-      {:ok, pid1} = FileSystem.ensure_filesystem(sup, scope_key, [config])
+      {:ok, pid1} = FileSystem.ensure_filesystem(scope_key, [config], supervisor: sup)
 
       # Second call returns same PID
-      {:ok, pid2} = FileSystem.ensure_filesystem(sup, scope_key, [config])
+      {:ok, pid2} = FileSystem.ensure_filesystem(scope_key, [config], supervisor: sup)
 
       assert pid1 == pid2
       assert Process.alive?(pid1)
 
       # Third call also returns same PID
-      {:ok, pid3} = FileSystem.ensure_filesystem(sup, scope_key, [config])
+      {:ok, pid3} = FileSystem.ensure_filesystem(scope_key, [config], supervisor: sup)
       assert pid1 == pid3
 
       # Clean up
-      FileSystem.stop_filesystem(sup, scope_key)
+      FileSystem.stop_filesystem(scope_key, supervisor: sup)
     end
 
     test "idempotent across multiple calls", %{supervisor_pid: sup} do
@@ -70,7 +70,7 @@ defmodule LangChain.Agents.FileSystemTest do
       # Call ensure_filesystem 10 times
       results =
         Enum.map(1..10, fn _ ->
-          FileSystem.ensure_filesystem(sup, scope_key, [config])
+          FileSystem.ensure_filesystem(scope_key, [config], supervisor: sup)
         end)
 
       # All should succeed
@@ -81,21 +81,21 @@ defmodule LangChain.Agents.FileSystemTest do
       assert Enum.all?(rest, fn pid -> pid == first_pid end)
 
       # Clean up
-      FileSystem.stop_filesystem(sup, scope_key)
+      FileSystem.stop_filesystem(scope_key, supervisor: sup)
     end
 
-    test "validates scope_key is a tuple", %{supervisor_pid: sup} do
+    test "validates scope_key is a tuple", %{supervisor_pid: _sup} do
       config = create_test_config({:user, 123})
 
       # Invalid scope_key (not a tuple)
-      assert {:error, _} = FileSystem.ensure_filesystem(sup, "invalid", [config])
+      assert {:error, _} = FileSystem.ensure_filesystem("invalid", [config])
     end
 
-    test "validates configs is a list", %{supervisor_pid: sup} do
+    test "validates configs is a list", %{supervisor_pid: _sup} do
       scope_key = {:user, System.unique_integer([:positive])}
 
       # Invalid configs (not a list)
-      assert {:error, _} = FileSystem.ensure_filesystem(sup, scope_key, "invalid")
+      assert {:error, _} = FileSystem.ensure_filesystem(scope_key, "invalid")
     end
   end
 
@@ -104,11 +104,11 @@ defmodule LangChain.Agents.FileSystemTest do
       scope_key = {:user, System.unique_integer([:positive])}
       config = create_test_config(scope_key)
 
-      assert {:ok, pid} = FileSystem.start_filesystem(sup, scope_key, [config])
+      assert {:ok, pid} = FileSystem.start_filesystem(scope_key, [config], supervisor: sup)
       assert Process.alive?(pid)
 
       # Clean up
-      FileSystem.stop_filesystem(sup, scope_key)
+      FileSystem.stop_filesystem(scope_key, supervisor: sup)
     end
 
     test "returns error if filesystem already running (not idempotent)", %{supervisor_pid: sup} do
@@ -116,13 +116,14 @@ defmodule LangChain.Agents.FileSystemTest do
       config = create_test_config(scope_key)
 
       # First call succeeds
-      {:ok, pid} = FileSystem.start_filesystem(sup, scope_key, [config])
+      {:ok, pid} = FileSystem.start_filesystem(scope_key, [config], supervisor: sup)
 
       # Second call returns error
-      assert {:error, {:already_started, ^pid}} = FileSystem.start_filesystem(sup, scope_key, [config])
+      assert {:error, {:already_started, ^pid}} =
+               FileSystem.start_filesystem(scope_key, [config], supervisor: sup)
 
       # Clean up
-      FileSystem.stop_filesystem(sup, scope_key)
+      FileSystem.stop_filesystem(scope_key, supervisor: sup)
     end
   end
 
@@ -131,11 +132,11 @@ defmodule LangChain.Agents.FileSystemTest do
       scope_key = {:user, System.unique_integer([:positive])}
       config = create_test_config(scope_key)
 
-      {:ok, pid} = FileSystem.ensure_filesystem(sup, scope_key, [config])
+      {:ok, pid} = FileSystem.ensure_filesystem(scope_key, [config], supervisor: sup)
       assert Process.alive?(pid)
 
       # Stop the filesystem
-      assert :ok = FileSystem.stop_filesystem(sup, scope_key)
+      assert :ok = FileSystem.stop_filesystem(scope_key, supervisor: sup)
 
       # Give it time to stop
       Process.sleep(50)
@@ -148,7 +149,7 @@ defmodule LangChain.Agents.FileSystemTest do
     test "returns error if filesystem not running", %{supervisor_pid: sup} do
       scope_key = {:user, System.unique_integer([:positive])}
 
-      assert {:error, :not_found} = FileSystem.stop_filesystem(sup, scope_key)
+      assert {:error, :not_found} = FileSystem.stop_filesystem(scope_key, supervisor: sup)
     end
   end
 
@@ -157,12 +158,12 @@ defmodule LangChain.Agents.FileSystemTest do
       scope_key = {:user, System.unique_integer([:positive])}
       config = create_test_config(scope_key)
 
-      {:ok, _pid} = FileSystem.ensure_filesystem(sup, scope_key, [config])
+      {:ok, _pid} = FileSystem.ensure_filesystem(scope_key, [config], supervisor: sup)
 
       assert FileSystem.filesystem_running?(scope_key) == true
 
       # Clean up
-      FileSystem.stop_filesystem(sup, scope_key)
+      FileSystem.stop_filesystem(scope_key, supervisor: sup)
     end
 
     test "returns false when filesystem is not running", %{supervisor_pid: _sup} do
@@ -175,10 +176,10 @@ defmodule LangChain.Agents.FileSystemTest do
       scope_key = {:user, System.unique_integer([:positive])}
       config = create_test_config(scope_key)
 
-      {:ok, _pid} = FileSystem.ensure_filesystem(sup, scope_key, [config])
+      {:ok, _pid} = FileSystem.ensure_filesystem(scope_key, [config], supervisor: sup)
       assert FileSystem.filesystem_running?(scope_key) == true
 
-      FileSystem.stop_filesystem(sup, scope_key)
+      FileSystem.stop_filesystem(scope_key, supervisor: sup)
       Process.sleep(50)
 
       assert FileSystem.filesystem_running?(scope_key) == false
@@ -190,12 +191,12 @@ defmodule LangChain.Agents.FileSystemTest do
       scope_key = {:user, System.unique_integer([:positive])}
       config = create_test_config(scope_key)
 
-      {:ok, pid} = FileSystem.ensure_filesystem(sup, scope_key, [config])
+      {:ok, pid} = FileSystem.ensure_filesystem(scope_key, [config], supervisor: sup)
 
       assert {:ok, ^pid} = FileSystem.get_filesystem_pid(scope_key)
 
       # Clean up
-      FileSystem.stop_filesystem(sup, scope_key)
+      FileSystem.stop_filesystem(scope_key, supervisor: sup)
     end
 
     test "returns error when filesystem is not running", %{supervisor_pid: _sup} do
@@ -210,14 +211,14 @@ defmodule LangChain.Agents.FileSystemTest do
       scope_key = {:user, System.unique_integer([:positive])}
       config = create_test_config(scope_key)
 
-      {:ok, _pid} = FileSystem.ensure_filesystem(sup, scope_key, [config])
+      {:ok, _pid} = FileSystem.ensure_filesystem(scope_key, [config], supervisor: sup)
 
       # This will be tested once we implement get_scope in FileSystemServer
       # For now, we'll just verify the function exists
       assert function_exported?(FileSystem, :get_scope, 1)
 
       # Clean up
-      FileSystem.stop_filesystem(sup, scope_key)
+      FileSystem.stop_filesystem(scope_key, supervisor: sup)
     end
   end
 
@@ -229,8 +230,8 @@ defmodule LangChain.Agents.FileSystemTest do
       config1 = create_test_config(scope1)
       config2 = create_test_config(scope2)
 
-      {:ok, pid1} = FileSystem.ensure_filesystem(sup, scope1, [config1])
-      {:ok, pid2} = FileSystem.ensure_filesystem(sup, scope2, [config2])
+      {:ok, pid1} = FileSystem.ensure_filesystem(scope1, [config1], supervisor: sup)
+      {:ok, pid2} = FileSystem.ensure_filesystem(scope2, [config2], supervisor: sup)
 
       filesystems = FileSystem.list_filesystems()
 
@@ -239,8 +240,8 @@ defmodule LangChain.Agents.FileSystemTest do
       assert {scope2, pid2} in filesystems
 
       # Clean up
-      FileSystem.stop_filesystem(sup, scope1)
-      FileSystem.stop_filesystem(sup, scope2)
+      FileSystem.stop_filesystem(scope1, supervisor: sup)
+      FileSystem.stop_filesystem(scope2, supervisor: sup)
     end
 
     test "returns empty list when no filesystems running", %{supervisor_pid: _sup} do
@@ -255,7 +256,8 @@ defmodule LangChain.Agents.FileSystemTest do
       scope_key = {:user, System.unique_integer([:positive])}
 
       # Pass invalid config (not a FileSystemConfig struct) to trigger error
-      assert {:error, _reason} = FileSystem.ensure_filesystem(sup, scope_key, [:invalid_config])
+      assert {:error, _reason} =
+               FileSystem.ensure_filesystem(scope_key, [:invalid_config], supervisor: sup)
     end
 
     test "handles concurrent ensure_filesystem calls gracefully", %{supervisor_pid: sup} do
@@ -266,7 +268,7 @@ defmodule LangChain.Agents.FileSystemTest do
       tasks =
         Enum.map(1..5, fn _ ->
           Task.async(fn ->
-            FileSystem.ensure_filesystem(sup, scope_key, [config])
+            FileSystem.ensure_filesystem(scope_key, [config], supervisor: sup)
           end)
         end)
 
@@ -284,7 +286,7 @@ defmodule LangChain.Agents.FileSystemTest do
       assert Enum.all?(rest, fn pid -> pid == first_pid end)
 
       # Clean up
-      FileSystem.stop_filesystem(sup, scope_key)
+      FileSystem.stop_filesystem(scope_key, supervisor: sup)
     end
   end
 
@@ -293,40 +295,40 @@ defmodule LangChain.Agents.FileSystemTest do
       scope_key = {:user, System.unique_integer([:positive])}
       config = create_test_config(scope_key)
 
-      {:ok, _pid} = FileSystem.ensure_filesystem(sup, scope_key, [config])
+      {:ok, _pid} = FileSystem.ensure_filesystem(scope_key, [config], supervisor: sup)
       assert FileSystem.filesystem_running?(scope_key)
 
-      FileSystem.stop_filesystem(sup, scope_key)
+      FileSystem.stop_filesystem(scope_key, supervisor: sup)
     end
 
     test "supports project-scoped filesystems", %{supervisor_pid: sup} do
       scope_key = {:project, System.unique_integer([:positive])}
       config = create_test_config(scope_key)
 
-      {:ok, _pid} = FileSystem.ensure_filesystem(sup, scope_key, [config])
+      {:ok, _pid} = FileSystem.ensure_filesystem(scope_key, [config], supervisor: sup)
       assert FileSystem.filesystem_running?(scope_key)
 
-      FileSystem.stop_filesystem(sup, scope_key)
+      FileSystem.stop_filesystem(scope_key, supervisor: sup)
     end
 
     test "supports organization-scoped filesystems", %{supervisor_pid: sup} do
       scope_key = {:organization, System.unique_integer([:positive])}
       config = create_test_config(scope_key)
 
-      {:ok, _pid} = FileSystem.ensure_filesystem(sup, scope_key, [config])
+      {:ok, _pid} = FileSystem.ensure_filesystem(scope_key, [config], supervisor: sup)
       assert FileSystem.filesystem_running?(scope_key)
 
-      FileSystem.stop_filesystem(sup, scope_key)
+      FileSystem.stop_filesystem(scope_key, supervisor: sup)
     end
 
-    test "supports agent-scoped filesystems (backward compatible)", %{supervisor_pid: sup} do
+    test "supports agent-scoped filesystems", %{supervisor_pid: sup} do
       scope_key = {:agent, "agent-#{System.unique_integer([:positive])}"}
       config = create_test_config(scope_key)
 
-      {:ok, _pid} = FileSystem.ensure_filesystem(sup, scope_key, [config])
+      {:ok, _pid} = FileSystem.ensure_filesystem(scope_key, [config], supervisor: sup)
       assert FileSystem.filesystem_running?(scope_key)
 
-      FileSystem.stop_filesystem(sup, scope_key)
+      FileSystem.stop_filesystem(scope_key, supervisor: sup)
     end
 
     test "different scope types can coexist", %{supervisor_pid: sup} do
@@ -338,9 +340,12 @@ defmodule LangChain.Agents.FileSystemTest do
       project_config = create_test_config(project_scope)
       org_config = create_test_config(org_scope)
 
-      {:ok, user_pid} = FileSystem.ensure_filesystem(sup, user_scope, [user_config])
-      {:ok, project_pid} = FileSystem.ensure_filesystem(sup, project_scope, [project_config])
-      {:ok, org_pid} = FileSystem.ensure_filesystem(sup, org_scope, [org_config])
+      {:ok, user_pid} = FileSystem.ensure_filesystem(user_scope, [user_config], supervisor: sup)
+
+      {:ok, project_pid} =
+        FileSystem.ensure_filesystem(project_scope, [project_config], supervisor: sup)
+
+      {:ok, org_pid} = FileSystem.ensure_filesystem(org_scope, [org_config], supervisor: sup)
 
       # All should be running with different PIDs
       assert user_pid != project_pid
@@ -350,9 +355,9 @@ defmodule LangChain.Agents.FileSystemTest do
       assert FileSystem.filesystem_running?(org_scope)
 
       # Clean up
-      FileSystem.stop_filesystem(sup, user_scope)
-      FileSystem.stop_filesystem(sup, project_scope)
-      FileSystem.stop_filesystem(sup, org_scope)
+      FileSystem.stop_filesystem(user_scope, supervisor: sup)
+      FileSystem.stop_filesystem(project_scope, supervisor: sup)
+      FileSystem.stop_filesystem(org_scope, supervisor: sup)
     end
   end
 end

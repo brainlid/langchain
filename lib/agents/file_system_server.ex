@@ -26,6 +26,9 @@ defmodule LangChain.Agents.FileSystemServer do
     - UUID string: `"550e8400-e29b-41d4-a716-446655440000"`
     - Database ID: `"12345"`
   - `:configs` - List of FileSystemConfig structs (optional, default: [])
+  - `:pubsub` - PubSub configuration as `{module(), atom()}` tuple or `nil` (optional, default: nil)
+    Example: `{Phoenix.PubSub, :my_app_pubsub}`
+    When configured, broadcasts `{:files_updated, file_list}` after write/delete operations.
 
   ## Examples
 
@@ -367,6 +370,59 @@ defmodule LangChain.Agents.FileSystemServer do
     GenServer.call(get_name(scope_key), :stats)
   end
 
+  @doc """
+  Subscribe to file change events for a filesystem scope.
+
+  Events broadcast (wrapped in `{:file_system, event}` tuple):
+  - `{:file_system, {:file_updated, path}}` - File was created or updated at path
+  - `{:file_system, {:file_deleted, path}}` - File was deleted at path
+
+  ## Examples
+
+      # Subscribe to user's filesystem
+      :ok = FileSystemServer.subscribe({:user, 123})
+
+      # Receive events
+      receive do
+        {:file_system, {:file_updated, path}} -> IO.puts("File updated: \#{path}")
+        {:file_system, {:file_deleted, path}} -> IO.puts("File deleted: \#{path}")
+      end
+  """
+  @spec subscribe(term()) :: :ok | {:error, :no_pubsub | :process_not_found}
+  def subscribe(scope_key) do
+    try do
+      case GenServer.call(get_name(scope_key), :get_pubsub_info) do
+        nil ->
+          {:error, :no_pubsub}
+
+        {pubsub, pubsub_name, topic} ->
+          pubsub.subscribe(pubsub_name, topic)
+      end
+    catch
+      :exit, _ ->
+        {:error, :process_not_found}
+    end
+  end
+
+  @doc """
+  Unsubscribe from file change events for a filesystem scope.
+  """
+  @spec unsubscribe(term()) :: :ok | {:error, :no_pubsub | :process_not_found}
+  def unsubscribe(scope_key) do
+    try do
+      case GenServer.call(get_name(scope_key), :get_pubsub_info) do
+        nil ->
+          {:error, :no_pubsub}
+
+        {pubsub, pubsub_name, topic} ->
+          pubsub.unsubscribe(pubsub_name, topic)
+      end
+    catch
+      :exit, _ ->
+        {:error, :process_not_found}
+    end
+  end
+
   # ============================================================================
   # GenServer Callbacks
   # ============================================================================
@@ -418,6 +474,7 @@ defmodule LangChain.Agents.FileSystemServer do
   def handle_call({:write_file, path, content, opts}, _from, state) do
     case FileSystemState.write_file(state, path, content, opts) do
       {:ok, new_state} ->
+        broadcast_file_change(new_state, {:file_updated, path})
         {:reply, :ok, new_state}
 
       {:error, reason, state} ->
@@ -485,9 +542,21 @@ defmodule LangChain.Agents.FileSystemServer do
   end
 
   @impl true
+  def handle_call(:get_pubsub_info, _from, state) do
+    case state.pubsub do
+      nil ->
+        {:reply, nil, state}
+
+      {pubsub, pubsub_name} ->
+        {:reply, {pubsub, pubsub_name, state.topic}, state}
+    end
+  end
+
+  @impl true
   def handle_call({:delete_file, path}, _from, state) do
     case FileSystemState.delete_file(state, path) do
       {:ok, new_state} ->
+        broadcast_file_change(new_state, {:file_deleted, path})
         {:reply, :ok, new_state}
 
       {:error, reason, state} ->
@@ -518,5 +587,22 @@ defmodule LangChain.Agents.FileSystemServer do
     # Flush all pending writes before terminating
     FileSystemState.flush_all(state)
     :ok
+  end
+
+  # ============================================================================
+  # Private Helpers
+  # ============================================================================
+
+  # Broadcast file changes to subscribers
+  # change_info is a tuple like {:file_updated, path} or {:file_deleted, path}
+  # Events are wrapped as {:file_system, change_info} for easier pattern matching
+  defp broadcast_file_change(state, change_info) do
+    case state.pubsub do
+      {pubsub, pubsub_name} ->
+        pubsub.broadcast_from(pubsub_name, self(), state.topic, {:file_system, change_info})
+
+      nil ->
+        :ok
+    end
   end
 end
