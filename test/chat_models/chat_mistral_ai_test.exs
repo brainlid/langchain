@@ -6,6 +6,7 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
   alias LangChain.MessageDelta
   alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
+  alias LangChain.Message.ToolResult
   alias LangChain.LangChainError
   alias LangChain.TokenUsage
   alias LangChain.Function
