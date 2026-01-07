@@ -64,6 +64,10 @@ defmodule LangChain.ChatModels.ChatMistralAI do
 
     # A list of callback handlers
     field :callbacks, {:array, :map}, default: []
+
+    # For help with debugging. It outputs the RAW Req response received and the
+    # RAW Elixir map being submitted to the API.
+    field :verbose_api, :boolean, default: false
   end
 
   @type t :: %ChatMistralAI{}
@@ -81,7 +85,8 @@ defmodule LangChain.ChatModels.ChatMistralAI do
     :stream,
     :tool_choice,
     :json_schema,
-    :json_response
+    :json_response,
+    :verbose_api
   ]
   @required_fields [
     :model
@@ -798,7 +803,8 @@ defmodule LangChain.ChatModels.ChatMistralAI do
         :random_seed,
         :stream,
         :json_schema,
-        :json_response
+        :json_response,
+        :verbose_api
       ],
       @current_config_version
     )
