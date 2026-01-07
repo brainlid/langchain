@@ -40,6 +40,19 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
 
       assert model.endpoint == override_url
     end
+
+    test "supports passing parallel_tool_calls" do
+      # defaults to nil
+      %ChatMistralAI{} = mistral_ai = ChatMistralAI.new!(%{"model" => "mistral-tiny"})
+      assert mistral_ai.parallel_tool_calls == nil
+
+      # can override the default to false
+      %ChatMistralAI{} =
+        mistral_ai =
+        ChatMistralAI.new!(%{"model" => "mistral-tiny", "parallel_tool_calls" => false})
+
+      assert mistral_ai.parallel_tool_calls == false
+    end
   end
 
   describe "for_api/3" do
@@ -71,6 +84,20 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
                  safe_prompt: true,
                  random_seed: 42
                }
+
+      assert data[:parallel_tool_calls] == nil
+    end
+
+    test "generates a map for an API call with parallel_tool_calls set to false" do
+      {:ok, mistral_ai} =
+        ChatMistralAI.new(%{
+          model: "mistral-tiny",
+          parallel_tool_calls: false
+        })
+
+      data = ChatMistralAI.for_api(mistral_ai, [], [])
+      assert data.model == "mistral-tiny"
+      assert data.parallel_tool_calls == false
     end
 
     test "generates a map containing user and assistant messages", %{mistral_ai: mistral_ai} do

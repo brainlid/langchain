@@ -56,6 +56,9 @@ defmodule LangChain.ChatModels.ChatMistralAI do
     # For choosing a specific tool call (like forcing a function execution).
     field :tool_choice, :map
 
+    # Whether to allow the model to make parallel tool calls. `true` to reflect current default of API
+    field :parallel_tool_calls, :boolean, default: true
+
     # JSON Schema to validate the output format (for structured JSON output)
     field :json_schema, :map
 
@@ -64,6 +67,10 @@ defmodule LangChain.ChatModels.ChatMistralAI do
 
     # A list of callback handlers
     field :callbacks, {:array, :map}, default: []
+
+    # For help with debugging. It outputs the RAW Req response received and the
+    # RAW Elixir map being submitted to the API.
+    field :verbose_api, :boolean, default: false
   end
 
   @type t :: %ChatMistralAI{}
@@ -81,7 +88,9 @@ defmodule LangChain.ChatModels.ChatMistralAI do
     :stream,
     :tool_choice,
     :json_schema,
-    :json_response
+    :json_response,
+    :parallel_tool_calls,
+    :verbose_api
   ]
   @required_fields [
     :model
@@ -141,6 +150,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
     |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(mistral, tools))
     |> Utils.conditionally_add_to_map(:tool_choice, get_tool_choice(mistral))
     |> Utils.conditionally_add_to_map(:response_format, set_response_format(mistral))
+    |> Utils.conditionally_add_to_map(:parallel_tool_calls, mistral.parallel_tool_calls)
   end
 
   # Creates the response_format field for JSON output when json_response is true.
@@ -405,6 +415,10 @@ defmodule LangChain.ChatModels.ChatMistralAI do
       ) do
     raw_data = for_api(mistralai, messages, tools)
 
+    if mistralai.verbose_api do
+      IO.inspect(raw_data, label: "RAW DATA BEING SUBMITTED")
+    end
+
     req =
       Req.new(
         url: mistralai.endpoint,
@@ -423,6 +437,10 @@ defmodule LangChain.ChatModels.ChatMistralAI do
     |> Req.post()
     |> case do
       {:ok, %Req.Response{body: data} = response} ->
+        if mistralai.verbose_api do
+          IO.inspect(response, label: "RAW REQ RESPONSE")
+        end
+
         Callbacks.fire(mistralai.callbacks, :on_llm_response_headers, [response.headers])
 
         Callbacks.fire(mistralai.callbacks, :on_llm_token_usage, [
@@ -469,6 +487,10 @@ defmodule LangChain.ChatModels.ChatMistralAI do
         retry_count
       ) do
     raw_data = for_api(mistralai, messages, tools)
+
+    if mistralai.verbose_api do
+      IO.inspect(raw_data, label: "RAW DATA BEING SUBMITTED")
+    end
 
     req =
       Req.new(
@@ -630,6 +652,11 @@ defmodule LangChain.ChatModels.ChatMistralAI do
       if is_list(calls),
         do: Enum.map(calls, &do_process_response(model, &1)),
         else: []
+
+    # DEBUG: Log the content and tool_calls to diagnose parsing issues
+    Logger.debug(fn ->
+      "DEBUG ChatMistralAI - content: #{inspect(message["content"])}, tool_calls: #{inspect(tool_calls)}"
+    end)
 
     case Message.new(%{
            "role" => "assistant",
