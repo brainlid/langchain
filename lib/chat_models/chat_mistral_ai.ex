@@ -716,6 +716,15 @@ defmodule LangChain.ChatModels.ChatMistralAI do
     {:error, LangChainError.exception(message: reason, original: response)}
   end
 
+  # Handle Mistral's error format: %{"object" => "error", "message" => "...", "type" => "...", "code" => "..."}
+  def do_process_response(
+        _model,
+        %{"object" => "error", "message" => reason, "type" => type} = response
+      ) do
+    Logger.error("Received error from Mistral API: #{inspect(reason)}")
+    {:error, LangChainError.exception(type: type, message: reason, original: response)}
+  end
+
   def do_process_response(_model, {:error, %Jason.DecodeError{} = response}) do
     error_message = "Received invalid JSON: #{inspect(response)}"
     Logger.error(error_message)
