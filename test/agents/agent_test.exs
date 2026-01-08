@@ -92,14 +92,6 @@ defmodule LangChain.Agents.AgentTest do
     end
   end
 
-  # Helper to create a mock model
-  defp mock_model do
-    ChatAnthropic.new!(%{
-      model: "claude-3-5-sonnet-20241022",
-      api_key: "test_key"
-    })
-  end
-
   describe "new/1" do
     test "creates agent with required model" do
       assert {:ok, agent} = Agent.new(%{model: mock_model()})

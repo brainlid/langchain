@@ -1736,7 +1736,7 @@ defmodule LangChain.Agents.AgentServer do
     agent_id = server_state.agent.agent_id
     shutdown_delay = server_state.shutdown_delay
 
-    Task.start(fn ->
+    spawn(fn ->
       case AgentSupervisor.stop(agent_id, shutdown_delay) do
         :ok -> :ok
         {:error, :not_found} -> Logger.debug("AgentSupervisor for #{agent_id} already stopped")

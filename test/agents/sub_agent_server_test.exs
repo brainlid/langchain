@@ -1,9 +1,8 @@
 defmodule LangChain.Agents.SubAgentServerTest do
-  use ExUnit.Case, async: false
+  use LangChain.BaseCase, async: false
   use Mimic
 
-  alias LangChain.Agents.{Agent, SubAgent, SubAgentServer, State}
-  alias LangChain.ChatModels.ChatAnthropic
+  alias LangChain.Agents.{SubAgent, SubAgentServer, State}
   alias LangChain.Chains.LLMChain
   alias LangChain.Message
 
@@ -14,32 +13,6 @@ defmodule LangChain.Agents.SubAgentServerTest do
     # Copy modules for mocking
     Mimic.copy(LLMChain)
     :ok
-  end
-
-  # Helper to create a mock model
-  defp mock_model do
-    ChatAnthropic.new!(%{
-      model: "claude-3-5-sonnet-20241022",
-      api_key: "test_key"
-    })
-  end
-
-  # Helper to create a simple agent
-  defp create_test_agent(opts \\ []) do
-    agent_id = Keyword.get(opts, :agent_id, "test-subagent-#{System.unique_integer([:positive])}")
-    opts = Keyword.put(opts, :agent_id, agent_id)
-
-    Agent.new!(
-      Map.merge(
-        %{
-          model: mock_model(),
-          system_prompt: "Test subagent",
-          replace_default_middleware: true,
-          middleware: []
-        },
-        Enum.into(opts, %{})
-      )
-    )
   end
 
   # Helper to create a SubAgent struct

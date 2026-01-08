@@ -1,8 +1,7 @@
 defmodule LangChain.Agents.AgentServerDebugPubSubTest do
-  use ExUnit.Case, async: false
+  use LangChain.BaseCase, async: false
 
-  alias LangChain.Agents.{Agent, AgentServer, State, Middleware}
-  alias LangChain.ChatModels.ChatAnthropic
+  alias LangChain.Agents.{AgentServer, State, Middleware}
   alias LangChain.Message
 
   setup do
@@ -23,32 +22,6 @@ defmodule LangChain.Agents.AgentServerDebugPubSubTest do
       pubsub_name: pubsub_name,
       debug_pubsub_name: debug_pubsub_name
     }
-  end
-
-  # Helper to create a mock model
-  defp mock_model do
-    ChatAnthropic.new!(%{
-      model: "claude-3-5-sonnet-20241022",
-      api_key: "test_key"
-    })
-  end
-
-  # Helper to create a simple agent
-  defp create_test_agent(opts \\ []) do
-    agent_id = Keyword.get(opts, :agent_id, "test-agent-#{System.unique_integer([:positive])}")
-    opts = Keyword.put(opts, :agent_id, agent_id)
-
-    Agent.new!(
-      Map.merge(
-        %{
-          model: mock_model(),
-          base_system_prompt: "Test agent",
-          replace_default_middleware: true,
-          middleware: []
-        },
-        Enum.into(opts, %{})
-      )
-    )
   end
 
   # Simple test middleware that can trigger state updates

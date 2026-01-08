@@ -3,7 +3,6 @@ defmodule LangChain.Agents.AgentServerPresenceTest do
   use Mimic
 
   alias LangChain.Agents.{Agent, AgentServer, AgentSupervisor, State}
-  alias LangChain.ChatModels.ChatAnthropic
   alias LangChain.Message
 
   setup :set_mimic_global
@@ -37,32 +36,6 @@ defmodule LangChain.Agents.AgentServerPresenceTest do
   # Helper to set viewers for a topic
   defp set_viewers(topic, viewers) do
     Process.put({:test_viewers, topic}, viewers)
-  end
-
-  # Helper to create a mock model
-  defp mock_model do
-    ChatAnthropic.new!(%{
-      model: "claude-3-5-sonnet-20241022",
-      api_key: "test_key"
-    })
-  end
-
-  # Helper to create a simple agent
-  defp create_test_agent(opts \\ []) do
-    agent_id = Keyword.get(opts, :agent_id, "test-agent-#{System.unique_integer([:positive])}")
-    opts = Keyword.put(opts, :agent_id, agent_id)
-
-    Agent.new!(
-      Map.merge(
-        %{
-          model: mock_model(),
-          base_system_prompt: "Test agent",
-          replace_default_middleware: true,
-          middleware: []
-        },
-        Enum.into(opts, %{})
-      )
-    )
   end
 
   # Helper to mock agent execution - just returns success immediately

@@ -18,14 +18,6 @@ defmodule LangChain.Agents.Middleware.ConversationTitleIntegrationTest do
     :ok
   end
 
-  defp mock_model do
-    ChatAnthropic.new!(%{
-      model: "claude-3-5-haiku-latest",
-      api_key: "test_key",
-      stream: false
-    })
-  end
-
   defp create_agent_with_title_middleware(opts \\ []) do
     chat_model = Keyword.get(opts, :chat_model, mock_model())
     fallbacks = Keyword.get(opts, :fallbacks, [])

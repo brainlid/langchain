@@ -1,15 +1,13 @@
 defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
   use LangChain.BaseCase, async: true
 
-  import LangChain.TestingHelpers, only: [new_agent_id: 0]
-
   alias LangChain.Agents.Middleware.HumanInTheLoop
   alias LangChain.Agents.State
   alias LangChain.Message
   alias LangChain.Message.ToolCall
 
   setup do
-    %{agent_id: new_agent_id()}
+    %{agent_id: generate_test_agent_id()}
   end
 
   # Test helper: creates state with interrupt_data populated

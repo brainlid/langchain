@@ -1,5 +1,5 @@
 defmodule LangChain.Agents.AgentSupervisorTest do
-  use ExUnit.Case, async: false
+  use LangChain.BaseCase, async: false
   use Mimic
 
   alias LangChain.Agents.Agent
@@ -20,25 +20,6 @@ defmodule LangChain.Agents.AgentSupervisorTest do
     end)
 
     :ok
-  end
-
-  # Helper to create a mock model
-  defp mock_model do
-    ChatAnthropic.new!(%{
-      model: "claude-3-5-sonnet-20241022",
-      api_key: "test_key"
-    })
-  end
-
-  # Helper to create a test agent
-  defp create_test_agent(agent_id \\ "test-agent-#{System.unique_integer([:positive])}") do
-    Agent.new!(%{
-      agent_id: agent_id,
-      model: mock_model(),
-      base_system_prompt: "Test agent",
-      replace_default_middleware: true,
-      middleware: []
-    })
   end
 
   describe "start_link/1" do

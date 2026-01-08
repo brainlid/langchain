@@ -13,7 +13,7 @@ defmodule LangChain.Persistence.StateSerializerTest do
 
       {:ok, agent} =
         Agent.new(%{
-          agent_id: new_agent_id(),
+          agent_id: generate_test_agent_id(),
           model: model,
           base_system_prompt: "You are helpful"
         })
@@ -292,7 +292,7 @@ defmodule LangChain.Persistence.StateSerializerTest do
 
     test "serialize and deserialize with complex messages" do
       {:ok, model} = ChatOpenAI.new(%{model: "gpt-4", api_key: "test-key"})
-      {:ok, agent} = Agent.new(%{agent_id: new_agent_id(), model: model})
+      {:ok, agent} = Agent.new(%{agent_id: generate_test_agent_id(), model: model})
 
       msg1 = Message.new_user!("Calculate 2 + 2")
 
@@ -326,7 +326,7 @@ defmodule LangChain.Persistence.StateSerializerTest do
 
       # Deserialize (agent is not deserialized, only state)
       {:ok, restored_state} =
-        StateSerializer.deserialize_server_state(new_agent_id(), serialized)
+        StateSerializer.deserialize_server_state(generate_test_agent_id(), serialized)
 
       # Check messages
       assert [restored_msg1, restored_msg2, restored_msg3, restored_msg4] =
@@ -357,7 +357,7 @@ defmodule LangChain.Persistence.StateSerializerTest do
 
       {:ok, agent} =
         Agent.new(%{
-          agent_id: new_agent_id(),
+          agent_id: generate_test_agent_id(),
           model: model,
           base_system_prompt: "You are helpful"
         })
@@ -382,7 +382,7 @@ defmodule LangChain.Persistence.StateSerializerTest do
       # Simulate data coming from PostgreSQL JSONB (all string keys)
       jsonb_data = %{
         "version" => 1,
-        "agent_id" => new_agent_id(),
+        "agent_id" => generate_test_agent_id(),
         "state" => %{
           "messages" => [
             %{
@@ -408,7 +408,7 @@ defmodule LangChain.Persistence.StateSerializerTest do
       }
 
       # Should deserialize successfully (must provide agent_id)
-      {:ok, state} = StateSerializer.deserialize_server_state(new_agent_id(), jsonb_data)
+      {:ok, state} = StateSerializer.deserialize_server_state(generate_test_agent_id(), jsonb_data)
 
       assert [_message] = state.messages
       # Metadata stays with string keys (from JSONB)

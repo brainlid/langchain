@@ -15,33 +15,6 @@ defmodule LangChain.Agents.AgentServerTest do
     :ok
   end
 
-  # Helper to create a mock model
-  defp mock_model do
-    ChatAnthropic.new!(%{
-      model: "claude-3-5-sonnet-20241022",
-      api_key: "test_key"
-    })
-  end
-
-  # Helper to create a simple agent
-  defp create_test_agent(opts \\ []) do
-    # Generate unique agent_id if not provided
-    agent_id = Keyword.get(opts, :agent_id, "test-agent-#{System.unique_integer([:positive])}")
-    opts = Keyword.put(opts, :agent_id, agent_id)
-
-    Agent.new!(
-      Map.merge(
-        %{
-          model: mock_model(),
-          base_system_prompt: "Test agent",
-          replace_default_middleware: true,
-          middleware: []
-        },
-        Enum.into(opts, %{})
-      )
-    )
-  end
-
   describe "start_link/1" do
     test "starts server with agent and initial state" do
       agent = create_test_agent()
@@ -569,7 +542,7 @@ defmodule LangChain.Agents.AgentServerTest do
 
   describe "publish_debug_event_from/2" do
     test "broadcasts debug event to debug PubSub topic" do
-      agent_id = new_agent_id()
+      agent_id = generate_test_agent_id()
       pubsub_name = :"test_pubsub_#{agent_id}"
       {:ok, _} = start_supervised({Phoenix.PubSub, name: pubsub_name})
 
@@ -604,7 +577,7 @@ defmodule LangChain.Agents.AgentServerTest do
     end
 
     test "returns :ok when debug_pubsub is not configured" do
-      agent_id = new_agent_id()
+      agent_id = generate_test_agent_id()
       pubsub_name = :"test_pubsub_#{agent_id}"
       {:ok, _} = start_supervised({Phoenix.PubSub, name: pubsub_name})
 

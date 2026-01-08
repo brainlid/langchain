@@ -1,8 +1,6 @@
 defmodule LangChain.Agents.Middleware.SummarizationTest do
   use LangChain.BaseCase, async: true
 
-  import LangChain.TestingHelpers, only: [new_agent_id: 0]
-
   alias LangChain.Agents.Middleware.Summarization
   alias LangChain.Agents.State
   alias LangChain.Message
@@ -11,7 +9,7 @@ defmodule LangChain.Agents.Middleware.SummarizationTest do
   alias LangChain.ChatModels.ChatOpenAI
 
   setup do
-    %{agent_id: new_agent_id()}
+    %{agent_id: generate_test_agent_id()}
   end
 
   describe "init/1" do

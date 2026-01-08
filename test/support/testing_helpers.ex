@@ -52,19 +52,10 @@ defmodule LangChain.TestingHelpers do
   end
 
   @doc """
-  Generate a new, unique agent_id.
-  """
-  def new_agent_id() do
-    "test-agent-#{System.unique_integer()}"
-  end
-
-  @doc """
   Generate a new, unique test agent_id.
-
-  This is an alias for `new_agent_id/0` with a more descriptive name for use in tests.
   """
   def generate_test_agent_id() do
-    new_agent_id()
+    "test-agent-#{System.unique_integer()}"
   end
 
   @doc """
@@ -83,6 +74,30 @@ defmodule LangChain.TestingHelpers do
   """
   def basic_process_to_display_data(_conversation_id, %LangChain.Message{} = message) do
     {:ok, [message_to_display_data(message)]}
+  end
+
+  # Helper to create a mock model
+  def mock_model do
+    ChatAnthropic.new!(%{
+      model: "claude-3-5-sonnet-20241022",
+      api_key: "test_key"
+    })
+  end
+
+  # Helper to create a simple agent
+  def create_test_agent(opts \\ []) do
+    Agent.new!(
+      Map.merge(
+        %{
+          agent_id: generate_test_agent_id(),
+          model: mock_model(),
+          base_system_prompt: "Test agent",
+          replace_default_middleware: true,
+          middleware: []
+        },
+        Enum.into(opts, %{})
+      )
+    )
   end
 
   @doc """

@@ -5,10 +5,10 @@ defmodule LangChain.Agents.AgentServerMessageCallbackFocusedTest do
   These tests verify the callback infrastructure without triggering full agent execution.
   """
 
-  use ExUnit.Case, async: false
+  use LangChain.BaseCase, async: false
   use Mimic
 
-  alias LangChain.Agents.{Agent, AgentServer}
+  alias LangChain.Agents.AgentServer
   alias LangChain.ChatModels.ChatAnthropic
   alias LangChain.Message
 
@@ -24,29 +24,14 @@ defmodule LangChain.Agents.AgentServerMessageCallbackFocusedTest do
     pubsub_name = :"test_pubsub_#{System.unique_integer([:positive])}"
     {:ok, _pid} = Phoenix.PubSub.Supervisor.start_link(name: pubsub_name, adapter_name: Phoenix.PubSub.PG2)
 
-    agent_id = "test-agent-#{System.unique_integer([:positive])}"
+    agent_id = generate_test_agent_id()
 
     {:ok, pubsub: pubsub_name, agent_id: agent_id}
   end
 
-  defp create_test_agent(agent_id) do
-    model = ChatAnthropic.new!(%{
-      model: "claude-3-5-sonnet-20241022",
-      api_key: "test_key"
-    })
-
-    Agent.new!(%{
-      agent_id: agent_id,
-      model: model,
-      base_system_prompt: "Test agent",
-      replace_default_middleware: true,
-      middleware: []
-    })
-  end
-
   describe "callback configuration" do
     test "accepts and stores conversation_id", %{agent_id: agent_id, pubsub: pubsub} do
-      agent = create_test_agent(agent_id)
+      agent = create_test_agent(agent_id: agent_id)
       conversation_id = "conv-test-123"
 
       {:ok, _pid} = AgentServer.start_link(
@@ -63,7 +48,7 @@ defmodule LangChain.Agents.AgentServerMessageCallbackFocusedTest do
     end
 
     test "accepts and stores save_new_message_fn", %{agent_id: agent_id, pubsub: pubsub} do
-      agent = create_test_agent(agent_id)
+      agent = create_test_agent(agent_id: agent_id)
 
       callback_fn = fn _conv_id, _message -> {:ok, []} end
 
@@ -82,7 +67,7 @@ defmodule LangChain.Agents.AgentServerMessageCallbackFocusedTest do
     end
 
     test "works without callback options (backward compatibility)", %{agent_id: agent_id, pubsub: pubsub} do
-      agent = create_test_agent(agent_id)
+      agent = create_test_agent(agent_id: agent_id)
 
       {:ok, _pid} = AgentServer.start_link(
         agent: agent,
@@ -100,7 +85,7 @@ defmodule LangChain.Agents.AgentServerMessageCallbackFocusedTest do
 
   describe "callback invocation" do
     test "callback is invoked when adding user message", %{agent_id: agent_id, pubsub: pubsub} do
-      agent = create_test_agent(agent_id)
+      agent = create_test_agent(agent_id: agent_id)
       conversation_id = "conv-123"
 
       # Track callback invocations
@@ -128,7 +113,7 @@ defmodule LangChain.Agents.AgentServerMessageCallbackFocusedTest do
     end
 
     test "callback receives correct conversation_id", %{agent_id: agent_id, pubsub: pubsub} do
-      agent = create_test_agent(agent_id)
+      agent = create_test_agent(agent_id: agent_id)
       conversation_id = "conv-unique-12345"
 
       test_pid = self()
@@ -154,7 +139,7 @@ defmodule LangChain.Agents.AgentServerMessageCallbackFocusedTest do
     end
 
     test "callback is not invoked when conversation_id is missing", %{agent_id: agent_id, pubsub: pubsub} do
-      agent = create_test_agent(agent_id)
+      agent = create_test_agent(agent_id: agent_id)
 
       # This callback should NEVER be called
       callback_fn = fn _conv_id, _message ->
@@ -181,7 +166,7 @@ defmodule LangChain.Agents.AgentServerMessageCallbackFocusedTest do
 
   describe "error handling" do
     test "callback exception doesn't crash server", %{agent_id: agent_id, pubsub: pubsub} do
-      agent = create_test_agent(agent_id)
+      agent = create_test_agent(agent_id: agent_id)
 
       # Callback that raises
       callback_fn = fn _conv_id, _message ->
@@ -210,7 +195,7 @@ defmodule LangChain.Agents.AgentServerMessageCallbackFocusedTest do
     end
 
     test "invalid callback return doesn't crash server", %{agent_id: agent_id, pubsub: pubsub} do
-      agent = create_test_agent(agent_id)
+      agent = create_test_agent(agent_id: agent_id)
 
       # Callback returns invalid format
       callback_fn = fn _conv_id, _message ->
@@ -239,7 +224,7 @@ defmodule LangChain.Agents.AgentServerMessageCallbackFocusedTest do
 
   describe "message state management" do
     test "messages added to state regardless of callback success", %{agent_id: agent_id, pubsub: pubsub} do
-      agent = create_test_agent(agent_id)
+      agent = create_test_agent(agent_id: agent_id)
 
       # Callback that always fails
       callback_fn = fn _conv_id, _message ->

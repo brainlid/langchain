@@ -1,8 +1,7 @@
 defmodule LangChain.Agents.AgentServerMiddlewareMessagingTest do
-  use ExUnit.Case, async: false
+  use LangChain.BaseCase, async: false
 
-  alias LangChain.Agents.{Agent, AgentServer, State, Middleware, MiddlewareEntry}
-  alias LangChain.ChatModels.ChatAnthropic
+  alias LangChain.Agents.{AgentServer, State, Middleware, MiddlewareEntry}
 
   setup do
     # Start PubSub for each test
@@ -81,27 +80,6 @@ defmodule LangChain.Agents.AgentServerMiddlewareMessagingTest do
     end
   end
 
-  # Helper to create a mock model
-  defp mock_model do
-    ChatAnthropic.new!(%{
-      model: "claude-3-5-sonnet-20241022",
-      api_key: "test_key"
-    })
-  end
-
-  # Helper to create a test agent with middleware
-  defp create_test_agent_with_middleware(middleware_specs, opts \\ []) do
-    agent_id = Keyword.get(opts, :agent_id, "test-agent-#{System.unique_integer([:positive])}")
-
-    Agent.new!(%{
-      agent_id: agent_id,
-      model: mock_model(),
-      base_system_prompt: "Test agent",
-      replace_default_middleware: true,
-      middleware: middleware_specs
-    })
-  end
-
   describe "middleware registry initialization" do
     test "builds middleware registry with default module name IDs" do
       middleware_specs = [
@@ -109,7 +87,7 @@ defmodule LangChain.Agents.AgentServerMiddlewareMessagingTest do
         {AnotherTestMiddleware, [instance_name: "first"]}
       ]
 
-      agent = create_test_agent_with_middleware(middleware_specs)
+      agent = create_test_agent(middleware: middleware_specs)
       agent_id = agent.agent_id
 
       {:ok, _pid} =
@@ -148,7 +126,7 @@ defmodule LangChain.Agents.AgentServerMiddlewareMessagingTest do
         {TestMiddleware, [id: "custom_test_2", test_key: "value2"]}
       ]
 
-      agent = create_test_agent_with_middleware(middleware_specs)
+      agent = create_test_agent(middleware: middleware_specs)
       agent_id = agent.agent_id
 
       {:ok, _pid} =
@@ -184,7 +162,7 @@ defmodule LangChain.Agents.AgentServerMiddlewareMessagingTest do
         {TestMiddleware, [test_pid: test_pid]}
       ]
 
-      agent = create_test_agent_with_middleware(middleware_specs)
+      agent = create_test_agent(middleware: middleware_specs)
       agent_id = agent.agent_id
 
       {:ok, server_pid} =
@@ -212,7 +190,7 @@ defmodule LangChain.Agents.AgentServerMiddlewareMessagingTest do
         {TestMiddleware, [id: "custom_middleware", test_pid: test_pid]}
       ]
 
-      agent = create_test_agent_with_middleware(middleware_specs)
+      agent = create_test_agent(middleware: middleware_specs)
       agent_id = agent.agent_id
 
       {:ok, server_pid} =
@@ -241,7 +219,7 @@ defmodule LangChain.Agents.AgentServerMiddlewareMessagingTest do
         {AnotherTestMiddleware, [id: "instance_2", instance_name: "second", test_pid: test_pid]}
       ]
 
-      agent = create_test_agent_with_middleware(middleware_specs)
+      agent = create_test_agent(middleware: middleware_specs)
       agent_id = agent.agent_id
 
       {:ok, server_pid} =
@@ -270,7 +248,7 @@ defmodule LangChain.Agents.AgentServerMiddlewareMessagingTest do
         {TestMiddleware, []}
       ]
 
-      agent = create_test_agent_with_middleware(middleware_specs)
+      agent = create_test_agent(middleware: middleware_specs)
       agent_id = agent.agent_id
 
       {:ok, server_pid} =
@@ -299,7 +277,7 @@ defmodule LangChain.Agents.AgentServerMiddlewareMessagingTest do
         {TestMiddleware, [test_pid: test_pid]}
       ]
 
-      agent = create_test_agent_with_middleware(middleware_specs)
+      agent = create_test_agent(middleware: middleware_specs)
       agent_id = agent.agent_id
 
       {:ok, server_pid} =
@@ -328,7 +306,7 @@ defmodule LangChain.Agents.AgentServerMiddlewareMessagingTest do
         {TestMiddleware, [test_pid: test_pid]}
       ]
 
-      agent = create_test_agent_with_middleware(middleware_specs)
+      agent = create_test_agent(middleware: middleware_specs)
       agent_id = agent.agent_id
 
       # Start with PubSub and debug PubSub enabled
