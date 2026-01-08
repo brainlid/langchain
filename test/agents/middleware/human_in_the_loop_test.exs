@@ -12,6 +12,18 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
     %{agent_id: new_agent_id()}
   end
 
+  # Test helper: creates state with interrupt_data populated
+  # This simulates what happens during agent execution when HITL detects tools needing approval
+  defp setup_interrupted_state(state, config) do
+    case HumanInTheLoop.check_for_interrupt(state, config) do
+      {:interrupt, interrupt_data} ->
+        %{state | interrupt_data: interrupt_data}
+
+      :continue ->
+        state
+    end
+  end
+
   describe "init/1" do
     test "normalizes simple boolean configuration" do
       opts = [
@@ -72,15 +84,8 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
     end
   end
 
-  describe "after_model/2" do
-    test "returns state unchanged when no messages", %{agent_id: agent_id} do
-      state = State.new!(%{agent_id: agent_id, messages: []})
-      config = %{interrupt_on: %{}}
-
-      assert {:ok, ^state} = HumanInTheLoop.after_model(state, config)
-    end
-
-    test "returns state unchanged when no tool calls", %{agent_id: agent_id} do
+  describe "check_for_interrupt/2" do
+    test "returns :continue when no tool calls", %{agent_id: agent_id} do
       messages = [
         Message.new_system!("You are helpful"),
         Message.new_user!("Hello"),
@@ -90,10 +95,10 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
       state = State.new!(%{agent_id: agent_id, messages: messages})
       config = %{interrupt_on: %{}}
 
-      assert {:ok, ^state} = HumanInTheLoop.after_model(state, config)
+      assert :continue = HumanInTheLoop.check_for_interrupt(state, config)
     end
 
-    test "returns state unchanged when tool not in interrupt_on", %{agent_id: agent_id} do
+    test "returns :continue when tool not in interrupt_on", %{agent_id: agent_id} do
       tool_call =
         ToolCall.new!(%{
           call_id: "123",
@@ -109,10 +114,10 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
       state = State.new!(%{agent_id: agent_id, messages: messages})
       config = %{interrupt_on: %{"write_file" => %{allowed_decisions: [:approve]}}}
 
-      assert {:ok, ^state} = HumanInTheLoop.after_model(state, config)
+      assert :continue = HumanInTheLoop.check_for_interrupt(state, config)
     end
 
-    test "returns state unchanged when tool has empty allowed_decisions", %{agent_id: agent_id} do
+    test "returns :continue when tool has empty allowed_decisions", %{agent_id: agent_id} do
       tool_call =
         ToolCall.new!(%{
           call_id: "123",
@@ -128,7 +133,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
       state = State.new!(%{agent_id: agent_id, messages: messages})
       config = %{interrupt_on: %{"read_file" => %{allowed_decisions: []}}}
 
-      assert {:ok, ^state} = HumanInTheLoop.after_model(state, config)
+      assert :continue = HumanInTheLoop.check_for_interrupt(state, config)
     end
 
     test "generates interrupt for single tool call", %{agent_id: agent_id} do
@@ -152,11 +157,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
         }
       }
 
-      assert {:interrupt, state_with_interrupt_data, interrupt_data} =
-               HumanInTheLoop.after_model(state, config)
-
-      # State should have interrupt_data populated
-      assert state_with_interrupt_data.interrupt_data == interrupt_data
+      assert {:interrupt, interrupt_data} = HumanInTheLoop.check_for_interrupt(state, config)
 
       assert %{
                action_requests: [action],
@@ -203,11 +204,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
         }
       }
 
-      assert {:interrupt, state_with_interrupt_data, interrupt_data} =
-               HumanInTheLoop.after_model(state, config)
-
-      # State should have interrupt_data populated
-      assert state_with_interrupt_data.interrupt_data == interrupt_data
+      assert {:interrupt, interrupt_data} = HumanInTheLoop.check_for_interrupt(state, config)
 
       assert %{
                action_requests: actions,
@@ -263,8 +260,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
         }
       }
 
-      assert {:interrupt, state_with_interrupt_data, interrupt_data} =
-               HumanInTheLoop.after_model(state, config)
+      assert {:interrupt, interrupt_data} = HumanInTheLoop.check_for_interrupt(state, config)
 
       # Should only interrupt for write_file
       assert %{action_requests: [action], hitl_tool_call_ids: hitl_ids} = interrupt_data
@@ -273,9 +269,6 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
 
       # hitl_tool_call_ids should only contain write_file's ID
       assert hitl_ids == ["call_2"]
-
-      # interrupt_data should be stored in state
-      assert state_with_interrupt_data.interrupt_data == interrupt_data
     end
 
     test "mixed tools: HITL first, non-HITL last", %{agent_id: agent_id} do
@@ -315,8 +308,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
         }
       }
 
-      assert {:interrupt, state_with_interrupt_data, interrupt_data} =
-               HumanInTheLoop.after_model(state, config)
+      assert {:interrupt, interrupt_data} = HumanInTheLoop.check_for_interrupt(state, config)
 
       # Should interrupt for delete_file and write_file only
       assert %{action_requests: actions, hitl_tool_call_ids: hitl_ids} = interrupt_data
@@ -326,9 +318,6 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
 
       # hitl_tool_call_ids should contain both HITL tool IDs
       assert hitl_ids == ["call_1", "call_3"]
-
-      # interrupt_data should be stored in state
-      assert state_with_interrupt_data.interrupt_data == interrupt_data
     end
 
     test "mixed tools: non-HITL first, HITL last", %{agent_id: agent_id} do
@@ -360,8 +349,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
         }
       }
 
-      assert {:interrupt, state_with_interrupt_data, interrupt_data} =
-               HumanInTheLoop.after_model(state, config)
+      assert {:interrupt, interrupt_data} = HumanInTheLoop.check_for_interrupt(state, config)
 
       # Should only interrupt for delete_file
       assert %{action_requests: [action], hitl_tool_call_ids: hitl_ids} = interrupt_data
@@ -370,9 +358,6 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
 
       # hitl_tool_call_ids should only contain delete_file's ID
       assert hitl_ids == ["call_2"]
-
-      # interrupt_data should be stored in state
-      assert state_with_interrupt_data.interrupt_data == interrupt_data
     end
 
     test "mixed tools: non-HITL in the middle", %{agent_id: agent_id} do
@@ -412,8 +397,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
         }
       }
 
-      assert {:interrupt, state_with_interrupt_data, interrupt_data} =
-               HumanInTheLoop.after_model(state, config)
+      assert {:interrupt, interrupt_data} = HumanInTheLoop.check_for_interrupt(state, config)
 
       # Should interrupt for write_file and delete_file
       assert %{action_requests: actions, hitl_tool_call_ids: hitl_ids} = interrupt_data
@@ -423,9 +407,6 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
 
       # hitl_tool_call_ids should contain both HITL tool IDs
       assert hitl_ids == ["call_1", "call_3"]
-
-      # interrupt_data should be stored in state
-      assert state_with_interrupt_data.interrupt_data == interrupt_data
     end
 
     test "uses last assistant message with tool calls", %{agent_id: agent_id} do
@@ -458,11 +439,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
         }
       }
 
-      assert {:interrupt, state_with_interrupt_data, interrupt_data} =
-               HumanInTheLoop.after_model(state, config)
-
-      # State should have interrupt_data populated
-      assert state_with_interrupt_data.interrupt_data == interrupt_data
+      assert {:interrupt, interrupt_data} = HumanInTheLoop.check_for_interrupt(state, config)
 
       # Should only use the last assistant message's tool call
       assert %{action_requests: [action], hitl_tool_call_ids: hitl_ids} = interrupt_data
@@ -501,8 +478,8 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
         }
       }
 
-      # Populate interrupt_data by calling after_model
-      {:interrupt, state, _interrupt_data} = HumanInTheLoop.after_model(initial_state, config)
+      # Populate interrupt_data using test helper
+      state = setup_interrupted_state(initial_state, config)
 
       %{state: state, config: config}
     end
@@ -740,8 +717,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
       }
 
       # Simulate the interrupt flow to populate interrupt_data
-      {:interrupt, state_with_interrupt_data, _interrupt_data} =
-        HumanInTheLoop.after_model(state, config)
+      state_with_interrupt_data = setup_interrupted_state(state, config)
 
       # Only need 1 decision for write_file (not 2 for all tools)
       decisions = [
@@ -782,8 +758,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
       }
 
       # Simulate the interrupt flow
-      {:interrupt, state_with_interrupt_data, _interrupt_data} =
-        HumanInTheLoop.after_model(state, config)
+      state_with_interrupt_data = setup_interrupted_state(state, config)
 
       # Only need 1 decision for delete_file
       decisions = [
@@ -832,8 +807,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
       }
 
       # Simulate the interrupt flow
-      {:interrupt, state_with_interrupt_data, _interrupt_data} =
-        HumanInTheLoop.after_model(state, config)
+      state_with_interrupt_data = setup_interrupted_state(state, config)
 
       # Need 2 decisions for write_file and delete_file (not 3 for all tools)
       decisions = [
@@ -874,8 +848,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
       }
 
       # Simulate the interrupt flow
-      {:interrupt, state_with_interrupt_data, _interrupt_data} =
-        HumanInTheLoop.after_model(state, config)
+      state_with_interrupt_data = setup_interrupted_state(state, config)
 
       # Providing 2 decisions when only 1 HITL tool
       decisions = [
@@ -926,8 +899,7 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoopTest do
       }
 
       # Simulate the interrupt flow
-      {:interrupt, state_with_interrupt_data, _interrupt_data} =
-        HumanInTheLoop.after_model(state, config)
+      state_with_interrupt_data = setup_interrupted_state(state, config)
 
       # Providing only 1 decision when 2 HITL tools
       decisions = [

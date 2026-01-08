@@ -211,33 +211,6 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoop do
     {:ok, config}
   end
 
-  @impl true
-  def after_model(%State{} = state, config) do
-    # Check if the last message is an assistant message with tool calls
-    case check_for_interrupt(state, config) do
-      {:interrupt, interrupt_data} ->
-        # Broadcast debug event for interrupt
-        tool_names =
-          interrupt_data.action_requests
-          |> Enum.map(& &1.tool_name)
-          |> Enum.join(", ")
-
-        AgentServer.publish_debug_event_from(
-          state.agent_id,
-          {:middleware_action, __MODULE__,
-           {:interrupt_generated,
-            "#{length(interrupt_data.action_requests)} tool(s): #{tool_names}"}}
-        )
-
-        # Store interrupt_data in state for later use during resume
-        state_with_interrupt_data = %{state | interrupt_data: interrupt_data}
-        {:interrupt, state_with_interrupt_data, interrupt_data}
-
-      :continue ->
-        {:ok, state}
-    end
-  end
-
   @doc """
   Check if the current state requires an interrupt for human approval.
 
@@ -271,6 +244,20 @@ defmodule LangChain.Agents.Middleware.HumanInTheLoop do
         else
           # Generate interrupt
           interrupt_data = build_interrupt_data(interrupt_requests, config.interrupt_on)
+
+          # Broadcast debug event for interrupt
+          tool_names =
+            interrupt_data.action_requests
+            |> Enum.map(& &1.tool_name)
+            |> Enum.join(", ")
+
+          AgentServer.publish_debug_event_from(
+            state.agent_id,
+            {:middleware_action, __MODULE__,
+             {:interrupt_generated,
+              "#{length(interrupt_data.action_requests)} tool(s): #{tool_names}"}}
+          )
+
           {:interrupt, interrupt_data}
         end
     end

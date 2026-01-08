@@ -785,9 +785,17 @@ defmodule LangChain.Agents.Agent do
   end
 
   defp check_for_interrupts(chain, middleware_list) do
+    # Extract agent_id from the chain's custom_context (set in build_chain)
+    agent_id =
+      case chain.custom_context do
+        %{state: %{agent_id: agent_id}} -> agent_id
+        _other -> nil
+      end
+
     # Convert chain to state for middleware inspection
-    # We only need the messages for HITL to check tool calls
+    # Include agent_id so HITL can broadcast debug events
     state = %State{
+      agent_id: agent_id,
       messages: chain.exchanged_messages,
       metadata: %{}
     }
