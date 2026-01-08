@@ -249,7 +249,8 @@ defmodule LangChain.Agents.AgentServer do
             presence_config:
               %{enabled: boolean(), presence_module: module(), topic: String.t()} | nil,
             conversation_id: String.t() | nil,
-            save_new_message_fn: (String.t(), LangChain.Message.t() -> {:ok, list()} | {:error, term()}) | nil
+            save_new_message_fn:
+              (String.t(), LangChain.Message.t() -> {:ok, list()} | {:error, term()}) | nil
           }
   end
 
@@ -1644,17 +1645,7 @@ defmodule LangChain.Agents.AgentServer do
        }}
     )
 
-    # Stop the parent AgentSupervisor, which will stop all children
-    case AgentSupervisor.stop(agent_id, server_state.shutdown_delay) do
-      :ok ->
-        :ok
-
-      {:error, :not_found} ->
-        Logger.warning("AgentSupervisor for agent #{agent_id} was not found, stopping self")
-    end
-
-    # Let the supervisor tree shutdown take care of it
-    {:noreply, server_state}
+    {:noreply, stop_supervisor(server_state)}
   end
 
   @impl true
@@ -1674,17 +1665,7 @@ defmodule LangChain.Agents.AgentServer do
        }}
     )
 
-    # Stop the parent AgentSupervisor, which will stop all children
-    case AgentSupervisor.stop(agent_id, server_state.shutdown_delay) do
-      :ok ->
-        :ok
-
-      {:error, :not_found} ->
-        Logger.warning("AgentSupervisor for agent #{agent_id} was not found, stopping self")
-    end
-
-    # Let the supervisor tree shutdown take care of it
-    {:noreply, server_state}
+    {:noreply, stop_supervisor(server_state)}
   end
 
   @impl true
@@ -1747,6 +1728,24 @@ defmodule LangChain.Agents.AgentServer do
   end
 
   ## Private Functions
+
+  # Stop the parent AgentSupervisor asynchronously to avoid deadlock.
+  # We can't call it synchronously because the supervisor would try to stop us
+  # while we're waiting for the stop call to return.
+  defp stop_supervisor(server_state) do
+    agent_id = server_state.agent.agent_id
+    shutdown_delay = server_state.shutdown_delay
+
+    Task.start(fn ->
+      case AgentSupervisor.stop(agent_id, shutdown_delay) do
+        :ok -> :ok
+        {:error, :not_found} -> Logger.debug("AgentSupervisor for #{agent_id} already stopped")
+      end
+    end)
+
+    # return the server_state to make it pipe-friendly
+    server_state
+  end
 
   @doc false
   # Build callback handlers that forward LLM events via PubSub
@@ -1902,7 +1901,9 @@ defmodule LangChain.Agents.AgentServer do
 
   # Save message via callback and broadcast display messages
   defp maybe_save_and_broadcast_message(server_state, message) do
-    Logger.debug("maybe_save_and_broadcast_message called - callback: #{inspect(not is_nil(server_state.save_new_message_fn))}, conversation_id: #{inspect(server_state.conversation_id)}, message role: #{message.role}")
+    Logger.debug(
+      "maybe_save_and_broadcast_message called - callback: #{inspect(not is_nil(server_state.save_new_message_fn))}, conversation_id: #{inspect(server_state.conversation_id)}, message role: #{message.role}"
+    )
 
     if server_state.save_new_message_fn && server_state.conversation_id do
       Logger.debug("Calling save callback for conversation #{server_state.conversation_id}")
@@ -1910,7 +1911,10 @@ defmodule LangChain.Agents.AgentServer do
       try do
         case server_state.save_new_message_fn.(server_state.conversation_id, message) do
           {:ok, display_messages} when is_list(display_messages) ->
-            Logger.debug("Successfully saved #{length(display_messages)} display messages, broadcasting...")
+            Logger.debug(
+              "Successfully saved #{length(display_messages)} display messages, broadcasting..."
+            )
+
             # Broadcast each saved DisplayMessage
             Enum.each(display_messages, fn display_msg ->
               broadcast_event(server_state, {:display_message_saved, display_msg})
@@ -1928,7 +1932,10 @@ defmodule LangChain.Agents.AgentServer do
             :ok
 
           other ->
-            Logger.error("Invalid callback return format: #{inspect(other)}. Expected {:ok, list()} or {:error, term()}")
+            Logger.error(
+              "Invalid callback return format: #{inspect(other)}. Expected {:ok, list()} or {:error, term()}"
+            )
+
             # When callback returns invalid format, don't broadcast any message events
             :ok
         end
@@ -1965,7 +1972,12 @@ defmodule LangChain.Agents.AgentServer do
         # Use "broadcast_from" to avoid sending to self
         # Wrap debug events with {:agent, {:debug, event}} for consistent routing
         # The outer :agent wrapper identifies the source, inner :debug identifies the category
-        debug_pubsub.broadcast_from(debug_pubsub_name, self(), server_state.debug_topic, {:agent, {:debug, event}})
+        debug_pubsub.broadcast_from(
+          debug_pubsub_name,
+          self(),
+          server_state.debug_topic,
+          {:agent, {:debug, event}}
+        )
 
       nil ->
         # No debug PubSub configured
