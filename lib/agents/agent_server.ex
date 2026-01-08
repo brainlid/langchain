@@ -207,6 +207,8 @@ defmodule LangChain.Agents.AgentServer do
   @typedoc "Status of the agent server"
   @type status :: :idle | :running | :interrupted | :cancelled | :error
 
+  @presence_check_delay 1_000
+
   defmodule ServerState do
     @moduledoc false
     defstruct [
@@ -247,7 +249,13 @@ defmodule LangChain.Agents.AgentServer do
             task: Task.t() | nil,
             middleware_registry: %{(atom() | String.t()) => MiddlewareEntry.t()},
             presence_config:
-              %{enabled: boolean(), presence_module: module(), topic: String.t()} | nil,
+              %{
+                enabled: boolean(),
+                presence_module: module(),
+                topic: String.t(),
+                check_delay: pos_integer()
+              }
+              | nil,
             conversation_id: String.t() | nil,
             save_new_message_fn:
               (String.t(), LangChain.Message.t() -> {:ok, list()} | {:error, term()}) | nil
@@ -1197,7 +1205,8 @@ defmodule LangChain.Agents.AgentServer do
         %{
           enabled: Keyword.get(presence_opts, :enabled, true),
           presence_module: Keyword.fetch!(presence_opts, :presence_module),
-          topic: Keyword.fetch!(presence_opts, :topic)
+          topic: Keyword.fetch!(presence_opts, :topic),
+          check_delay: Keyword.get(presence_opts, :check_delay, @presence_check_delay)
         }
       else
         nil
@@ -1874,7 +1883,7 @@ defmodule LangChain.Agents.AgentServer do
 
   defp maybe_shutdown_if_no_viewers(server_state) do
     case server_state.presence_config do
-      %{enabled: true, presence_module: presence_mod, topic: topic} ->
+      %{enabled: true, presence_module: presence_mod, topic: topic, check_delay: delay} ->
         # Check who's viewing this agent's conversation
         viewers = presence_mod.list(topic)
 
@@ -1885,7 +1894,7 @@ defmodule LangChain.Agents.AgentServer do
           )
 
           # Schedule shutdown after brief delay (let final events propagate)
-          Process.send_after(self(), :shutdown_no_viewers, 1000)
+          Process.send_after(self(), :shutdown_no_viewers, delay)
         else
           Logger.debug(
             "Agent #{server_state.agent.agent_id} idle but has #{map_size(viewers)} " <>

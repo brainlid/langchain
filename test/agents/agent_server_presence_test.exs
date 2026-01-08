@@ -9,13 +9,31 @@ defmodule LangChain.Agents.AgentServerPresenceTest do
   setup :verify_on_exit!
 
   setup_all do
-    # Copy Agent module for mocking
     Mimic.copy(Agent)
     :ok
   end
 
-  # Mock Presence module for testing
+  # Cross-process presence mock using Elixir's Agent
   defmodule TestPresence do
+    def start_link(_opts \\ []) do
+      Elixir.Agent.start_link(fn -> %{} end, name: __MODULE__)
+    end
+
+    def stop do
+      if Process.whereis(__MODULE__) do
+        Elixir.Agent.stop(__MODULE__)
+      end
+    end
+
+    def set_viewers(topic, viewers) do
+      Elixir.Agent.update(__MODULE__, fn state -> Map.put(state, topic, viewers) end)
+    end
+
+    def clear_viewers(topic) do
+      Elixir.Agent.update(__MODULE__, fn state -> Map.delete(state, topic) end)
+    end
+
+    # Phoenix.Presence compatible interface
     def track(_pid, _topic, _id, _metadata) do
       {:ok, make_ref()}
     end
@@ -25,71 +43,61 @@ defmodule LangChain.Agents.AgentServerPresenceTest do
     end
 
     def list(topic) do
-      # Check if we have viewers stored in the test process
-      case Process.get({:test_viewers, topic}) do
-        nil -> %{}
-        viewers -> viewers
-      end
+      Elixir.Agent.get(__MODULE__, fn state -> Map.get(state, topic, %{}) end)
     end
   end
 
-  # Helper to set viewers for a topic
-  defp set_viewers(topic, viewers) do
-    Process.put({:test_viewers, topic}, viewers)
+  setup do
+    {:ok, _} = TestPresence.start_link()
+    on_exit(fn -> TestPresence.stop() end)
+    :ok
   end
 
-  # Helper to mock agent execution - just returns success immediately
+  # Mock agent execution to return success immediately
   defp mock_quick_execution do
     Agent
     |> expect(:execute, fn _agent, _state, _callbacks ->
-      # Just return success immediately
       {:ok, State.new!()}
     end)
   end
+
+  # Short delays for fast tests
+  @check_delay 10
+  @shutdown_delay 10
 
   describe "presence-based shutdown" do
     test "agent shuts down when idle with no viewers" do
       agent = create_test_agent()
       agent_id = agent.agent_id
       initial_state = State.new!()
-
       presence_topic = "conversation:test-no-viewers"
 
-      # Set no viewers for this topic
-      set_viewers(presence_topic, %{})
-
-      # Mock quick execution
+      TestPresence.set_viewers(presence_topic, %{})
       mock_quick_execution()
 
-      # Start agent with presence tracking enabled and short shutdown delay
       {:ok, _pid} =
         AgentSupervisor.start_link(
           agent: agent,
           initial_state: initial_state,
           name: AgentSupervisor.get_name(agent_id),
-          shutdown_delay: 100,
+          shutdown_delay: @shutdown_delay,
           presence_tracking: [
             enabled: true,
             presence_module: TestPresence,
-            topic: presence_topic
+            topic: presence_topic,
+            check_delay: @check_delay
           ]
         )
 
-      # Wait for agent to be ready
       agent_pid = AgentServer.get_pid(agent_id)
       assert is_pid(agent_pid)
 
-      # Monitor the agent process to detect when it dies
       ref = Process.monitor(agent_pid)
 
-      # Add a message to trigger execution
       assert :ok = AgentServer.add_message(agent_id, Message.new_user!("test"))
 
-      # Wait for the agent to shut down
-      # The shutdown happens after: execution completes + 1s delay + shutdown_delay
-      assert_receive {:DOWN, ^ref, :process, ^agent_pid, _reason}, 3000
+      assert_receive {:DOWN, ^ref, :process, ^agent_pid, _reason}, 500
 
-      # Agent should have shut down
       refute Process.alive?(agent_pid)
     end
 
@@ -97,46 +105,86 @@ defmodule LangChain.Agents.AgentServerPresenceTest do
       agent = create_test_agent()
       agent_id = agent.agent_id
       initial_state = State.new!()
-
       presence_topic = "conversation:test-with-viewers"
 
-      # Set some viewers for this topic
-      set_viewers(presence_topic, %{
+      TestPresence.set_viewers(presence_topic, %{
         "user-1" => %{metas: [%{joined_at: System.system_time(:second)}]},
         "user-2" => %{metas: [%{joined_at: System.system_time(:second)}]}
       })
 
-      # Mock quick execution
       mock_quick_execution()
 
-      # Start agent with presence tracking enabled
       {:ok, _pid} =
         AgentSupervisor.start_link(
           agent: agent,
           initial_state: initial_state,
           name: AgentSupervisor.get_name(agent_id),
+          shutdown_delay: @shutdown_delay,
           presence_tracking: [
             enabled: true,
             presence_module: TestPresence,
-            topic: presence_topic
+            topic: presence_topic,
+            check_delay: @check_delay
           ]
         )
 
-      # Wait for agent to be ready
       agent_pid = AgentServer.get_pid(agent_id)
       assert is_pid(agent_pid)
 
-      # Add a message to trigger execution
       assert :ok = AgentServer.add_message(agent_id, Message.new_user!("test"))
 
-      # Wait a bit (but less than the shutdown delay)
-      Process.sleep(1500)
+      # Wait past the check delay
+      Process.sleep(50)
 
       # Agent should still be alive (viewers present)
       assert Process.alive?(agent_pid)
 
-      # Cleanup
       AgentSupervisor.stop(agent_id)
+    end
+
+    test "agent shuts down after viewers leave" do
+      agent = create_test_agent()
+      agent_id = agent.agent_id
+      initial_state = State.new!()
+      presence_topic = "conversation:test-viewers-leave"
+
+      TestPresence.set_viewers(presence_topic, %{
+        "user-1" => %{metas: [%{joined_at: System.system_time(:second)}]}
+      })
+
+      mock_quick_execution()
+
+      {:ok, _pid} =
+        AgentSupervisor.start_link(
+          agent: agent,
+          initial_state: initial_state,
+          name: AgentSupervisor.get_name(agent_id),
+          shutdown_delay: @shutdown_delay,
+          presence_tracking: [
+            enabled: true,
+            presence_module: TestPresence,
+            topic: presence_topic,
+            check_delay: @check_delay
+          ]
+        )
+
+      agent_pid = AgentServer.get_pid(agent_id)
+      ref = Process.monitor(agent_pid)
+
+      # Trigger execution - should stay alive due to viewers
+      assert :ok = AgentServer.add_message(agent_id, Message.new_user!("test"))
+      Process.sleep(50)
+      assert Process.alive?(agent_pid)
+
+      # Now remove viewers and trigger another execution
+      TestPresence.set_viewers(presence_topic, %{})
+
+      mock_quick_execution()
+      assert :ok = AgentServer.add_message(agent_id, Message.new_user!("another message"))
+
+      # Should now shut down
+      assert_receive {:DOWN, ^ref, :process, ^agent_pid, _reason}, 500
+      refute Process.alive?(agent_pid)
     end
 
     test "agent uses standard inactivity timeout when presence disabled" do
@@ -144,33 +192,26 @@ defmodule LangChain.Agents.AgentServerPresenceTest do
       agent_id = agent.agent_id
       initial_state = State.new!()
 
-      # Mock quick execution
       mock_quick_execution()
 
-      # Start agent WITHOUT presence tracking
       {:ok, _pid} =
         AgentSupervisor.start_link(
           agent: agent,
           initial_state: initial_state,
           name: AgentSupervisor.get_name(agent_id),
           inactivity_timeout: 10_000
-          # No presence_tracking config
         )
 
-      # Wait for agent to be ready
       agent_pid = AgentServer.get_pid(agent_id)
       assert is_pid(agent_pid)
 
-      # Add a message to trigger execution
       assert :ok = AgentServer.add_message(agent_id, Message.new_user!("test"))
 
-      # Wait for execution to complete
-      Process.sleep(100)
+      Process.sleep(50)
 
-      # Agent should still be alive (no presence-based shutdown, relies on inactivity timeout)
+      # Agent should still be alive (no presence-based shutdown)
       assert Process.alive?(agent_pid)
 
-      # Cleanup
       AgentSupervisor.stop(agent_id)
     end
 
@@ -178,10 +219,8 @@ defmodule LangChain.Agents.AgentServerPresenceTest do
       agent = create_test_agent()
       agent_id = agent.agent_id
       initial_state = State.new!()
-
       presence_topic = "conversation:test-config"
 
-      # Start agent with presence tracking (no need to execute, just check config)
       {:ok, _pid} =
         AgentSupervisor.start_link(
           agent: agent,
@@ -190,23 +229,22 @@ defmodule LangChain.Agents.AgentServerPresenceTest do
           presence_tracking: [
             enabled: true,
             presence_module: TestPresence,
-            topic: presence_topic
+            topic: presence_topic,
+            check_delay: 500
           ]
         )
 
-      # Wait for agent to be ready
       agent_pid = AgentServer.get_pid(agent_id)
       assert is_pid(agent_pid)
 
-      # Get server state to verify presence config
       state = :sys.get_state(agent_pid)
 
       assert state.presence_config != nil
       assert state.presence_config.enabled == true
       assert state.presence_config.presence_module == TestPresence
       assert state.presence_config.topic == presence_topic
+      assert state.presence_config.check_delay == 500
 
-      # Cleanup
       AgentSupervisor.stop(agent_id)
     end
   end
