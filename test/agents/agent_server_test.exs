@@ -509,11 +509,11 @@ defmodule LangChain.Agents.AgentServerTest do
 
       :ok = AgentServer.execute(agent_id)
 
-      # Should receive running status
-      assert_receive {:status_changed, :running, nil}, 100
+      # Should receive running status (wrapped in {:agent, event} tuple)
+      assert_receive {:agent, {:status_changed, :running, nil}}, 100
 
-      # Should receive idle status
-      assert_receive {:status_changed, :idle, nil}, 100
+      # Should receive idle status (wrapped in {:agent, event} tuple)
+      assert_receive {:agent, {:status_changed, :idle, nil}}, 100
     end
 
     test "broadcasts interrupt status with data", %{agent: agent, agent_id: agent_id} do
@@ -529,8 +529,8 @@ defmodule LangChain.Agents.AgentServerTest do
 
       :ok = AgentServer.execute(agent_id)
 
-      assert_receive {:status_changed, :running, nil}, 100
-      assert_receive {:status_changed, :interrupted, ^interrupt_data}, 200
+      assert_receive {:agent, {:status_changed, :running, nil}}, 100
+      assert_receive {:agent, {:status_changed, :interrupted, ^interrupt_data}}, 200
     end
 
     test "broadcasts error status", %{agent: agent, agent_id: agent_id} do
@@ -541,8 +541,8 @@ defmodule LangChain.Agents.AgentServerTest do
 
       :ok = AgentServer.execute(agent_id)
 
-      assert_receive {:status_changed, :running, nil}, 100
-      assert_receive {:status_changed, :error, "Test error"}, 200
+      assert_receive {:agent, {:status_changed, :running, nil}}, 100
+      assert_receive {:agent, {:status_changed, :error, "Test error"}}, 200
     end
 
     test "broadcasts cancelled status when task is cancelled", %{agent: agent, agent_id: agent_id} do
@@ -554,16 +554,16 @@ defmodule LangChain.Agents.AgentServerTest do
 
       :ok = AgentServer.execute(agent_id)
 
-      # Should receive running status
-      assert_receive {:status_changed, :running, nil}, 100
+      # Should receive running status (wrapped in {:agent, event} tuple)
+      assert_receive {:agent, {:status_changed, :running, nil}}, 100
 
       # let the task spin up
       Process.sleep(20)
       # Cancel the task
       :ok = AgentServer.cancel(agent_id)
 
-      # Should receive cancelled status
-      assert_receive {:status_changed, :cancelled, _state}, 100
+      # Should receive cancelled status (wrapped in {:agent, event} tuple)
+      assert_receive {:agent, {:status_changed, :cancelled, _state}}, 100
     end
   end
 
@@ -596,8 +596,8 @@ defmodule LangChain.Agents.AgentServerTest do
       test_event = {:middleware_action, TestMiddleware, {:test_action, "test_data"}}
       :ok = AgentServer.publish_debug_event_from(agent_id, test_event)
 
-      # Assert we received the wrapped debug event
-      assert_receive {:debug, ^test_event}, 100
+      # Assert we received the wrapped debug event (now wrapped in {:agent, {:debug, event}})
+      assert_receive {:agent, {:debug, ^test_event}}, 100
 
       # Clean up
       AgentServer.stop(agent_id)
@@ -1004,8 +1004,8 @@ defmodule LangChain.Agents.AgentServerTest do
       # Monitor the process
       _ref = Process.monitor(pid)
 
-      # Wait for timeout and shutdown event
-      assert_receive {:agent_shutdown, shutdown_data}, 500
+      # Wait for timeout and shutdown event (wrapped in {:agent, event} tuple)
+      assert_receive {:agent, {:agent_shutdown, shutdown_data}}, 500
       assert shutdown_data.agent_id == agent_id
       assert shutdown_data.reason == :inactivity
       assert shutdown_data.last_activity_at != nil

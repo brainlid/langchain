@@ -68,34 +68,42 @@ defmodule LangChain.Agents.AgentServer do
 
   ## Events
 
-  The server broadcasts events on the topic `"agent_server:\#{agent_id}"`:
+  The server broadcasts events on the topic `"agent_server:\#{agent_id}"`.
+
+  **All events are wrapped in an `{:agent, event}` tuple** to help consumers
+  identify and route events from AgentServer. This is similar to how
+  `FileSystemServer` wraps its events in `{:file_system, event}`.
+
+  ### Event Format
+
+  Events are received in the format `{:agent, event}` where `event` is one of:
 
   ### Todo Events
-  - `{:todos_updated, todos}` - Complete snapshot of current TODO list
+  - `{:agent, {:todos_updated, todos}}` - Complete snapshot of current TODO list
 
   ### Status Events
-  - `{:status_changed, :idle, nil}` - Server ready for work (also broadcast after successful execution completion)
-  - `{:status_changed, :running, nil}` - Agent executing
-  - `{:status_changed, :interrupted, interrupt_data}` - Awaiting human decision
-  - `{:status_changed, :cancelled, nil}` - Execution was cancelled by user
-  - `{:status_changed, :error, reason}` - Execution failed
+  - `{:agent, {:status_changed, :idle, nil}}` - Server ready for work (also broadcast after successful execution completion)
+  - `{:agent, {:status_changed, :running, nil}}` - Agent executing
+  - `{:agent, {:status_changed, :interrupted, interrupt_data}}` - Awaiting human decision
+  - `{:agent, {:status_changed, :cancelled, nil}}` - Execution was cancelled by user
+  - `{:agent, {:status_changed, :error, reason}}` - Execution failed
 
   ### Shutdown Events
-  - `{:agent_shutdown, shutdown_data}` - Agent is shutting down
+  - `{:agent, {:agent_shutdown, shutdown_data}}` - Agent is shutting down
     - `shutdown_data.agent_id` - The agent identifier
     - `shutdown_data.reason` - Shutdown reason (`:inactivity` | `:no_viewers`)
     - `shutdown_data.last_activity_at` - DateTime of last activity
     - `shutdown_data.shutdown_at` - DateTime when shutdown was initiated
 
   ### LLM Streaming Events
-  - `{:llm_deltas, [%MessageDelta{}]}` - Streaming tokens/deltas received (list
+  - `{:agent, {:llm_deltas, [%MessageDelta{}]}}` - Streaming tokens/deltas received (list
     of deltas)
-  - `{:llm_message, %Message{}}` - Complete message received and processed
-  - `{:llm_token_usage, %TokenUsage{}}` - Token usage information
-  - `{:tool_response, %Message{}}` - Tool execution result (optional)
+  - `{:agent, {:llm_message, %Message{}}}` - Complete message received and processed
+  - `{:agent, {:llm_token_usage, %TokenUsage{}}}` - Token usage information
+  - `{:agent, {:tool_response, %Message{}}}` - Tool execution result (optional)
 
   ### Message Persistence Events
-  - `{:display_message_saved, display_message}` - Broadcast after message is
+  - `{:agent, {:display_message_saved, display_message}}` - Broadcast after message is
     persisted via save_new_message_fn callback (only when callback is configured
     and succeeds). The `{:llm_message, ...}` event is also broadcast alongside
     this event for backward compatibility
@@ -107,10 +115,13 @@ defmodule LangChain.Agents.AgentServer do
 
   When debug PubSub is configured, additional debug events are broadcast on the
   topic `"agent_server:debug:\#{agent_id}"`. These events provide deeper insight
-  into agent execution for debugging and monitoring purposes:
+  into agent execution for debugging and monitoring purposes.
+
+  **Debug events are also wrapped in `{:agent, {:debug, event}}`** for consistent
+  routing with regular events.
 
   ### Middleware Debug Events
-  - `{:agent_state_update, state}` - Middleware state update with
+  - `{:agent, {:debug, {:agent_state_update, state}}}` - Middleware state update with
     full state snapshot
 
   ## Usage
@@ -1938,7 +1949,8 @@ defmodule LangChain.Agents.AgentServer do
     case server_state.pubsub do
       {pubsub, pubsub_name} ->
         # Use "broadcast_from" to avoid sending to self
-        pubsub.broadcast_from(pubsub_name, self(), server_state.topic, event)
+        # Wrap event in {:agent, event} tuple for easier routing by consumers
+        pubsub.broadcast_from(pubsub_name, self(), server_state.topic, {:agent, event})
 
       nil ->
         # No PubSub configured
@@ -1951,8 +1963,9 @@ defmodule LangChain.Agents.AgentServer do
     case server_state.debug_pubsub do
       {debug_pubsub, debug_pubsub_name} ->
         # Use "broadcast_from" to avoid sending to self
-        # Wrap debug events with {:debug, event} tuple to distinguish them from regular events
-        debug_pubsub.broadcast_from(debug_pubsub_name, self(), server_state.debug_topic, {:debug, event})
+        # Wrap debug events with {:agent, {:debug, event}} for consistent routing
+        # The outer :agent wrapper identifies the source, inner :debug identifies the category
+        debug_pubsub.broadcast_from(debug_pubsub_name, self(), server_state.debug_topic, {:agent, {:debug, event}})
 
       nil ->
         # No debug PubSub configured

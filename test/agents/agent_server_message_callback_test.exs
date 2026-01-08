@@ -5,9 +5,11 @@ defmodule LangChain.Agents.AgentServerMessageCallbackTest do
   This tests the feature where AgentServer:
   1. Accepts a `conversation_id` and `save_new_message_fn` callback
   2. Calls the callback when new messages are added
-  3. Broadcasts `{:display_message_saved, display_msg}` events for saved messages
-  4. Also broadcasts `{:llm_message, message}` events (both with and without callback)
+  3. Broadcasts `{:agent, {:display_message_saved, display_msg}}` events for saved messages
+  4. Also broadcasts `{:agent, {:llm_message, message}}` events (both with and without callback)
   5. Does not broadcast message events when callback fails or raises exceptions
+
+  Note: All events are wrapped in `{:agent, event}` tuples for easier routing.
   """
 
   use LangChain.BaseCase, async: false
@@ -68,7 +70,7 @@ defmodule LangChain.Agents.AgentServerMessageCallbackTest do
       assert_receive {:callback_called, ^conversation_id, :user}, 100
 
       # Verify display_message_saved event was broadcast for user message
-      assert_receive {:display_message_saved, user_display_msg}, 100
+      assert_receive {:agent, {:display_message_saved, user_display_msg}}, 100
       assert user_display_msg.role == "user"
       assert user_display_msg.content =~ "user"
 
@@ -77,7 +79,7 @@ defmodule LangChain.Agents.AgentServerMessageCallbackTest do
       assert_receive {:callback_called, ^conversation_id, :assistant}, 100
 
       # Verify display_message_saved event was broadcast for assistant message
-      assert_receive {:display_message_saved, assistant_display_msg}, 100
+      assert_receive {:agent, {:display_message_saved, assistant_display_msg}}, 100
       assert assistant_display_msg.role == "assistant"
       assert assistant_display_msg.content =~ "assistant"
 
@@ -100,10 +102,10 @@ defmodule LangChain.Agents.AgentServerMessageCallbackTest do
       :ok = AgentServer.add_message(agent_id, message)
 
       # Should receive :llm_message event (fallback) for both user and assistant
-      assert_receive {:llm_message, user_msg}, 100
+      assert_receive {:agent, {:llm_message, user_msg}}, 100
       assert user_msg.role == :user
 
-      assert_receive {:llm_message, assistant_msg}, 100
+      assert_receive {:agent, {:llm_message, assistant_msg}}, 100
       assert assistant_msg.role == :assistant
 
       # Cleanup
@@ -132,10 +134,10 @@ defmodule LangChain.Agents.AgentServerMessageCallbackTest do
       :ok = AgentServer.add_message(agent_id, message)
 
       # Should fallback to :llm_message (callback not activated) for both messages
-      assert_receive {:llm_message, user_msg}, 100
+      assert_receive {:agent, {:llm_message, user_msg}}, 100
       assert user_msg.role == :user
 
-      assert_receive {:llm_message, assistant_msg}, 100
+      assert_receive {:agent, {:llm_message, assistant_msg}}, 100
       assert assistant_msg.role == :assistant
 
       # Cleanup
@@ -161,16 +163,16 @@ defmodule LangChain.Agents.AgentServerMessageCallbackTest do
       :ok = AgentServer.add_message(agent_id, message)
 
       # First receives the user message events
-      assert_receive {:display_message_saved, %{role: "user", content: "Test"}}, 100
-      assert_receive {:llm_message, user_msg}, 100
+      assert_receive {:agent, {:display_message_saved, %{role: "user", content: "Test"}}}, 100
+      assert_receive {:agent, {:llm_message, user_msg}}, 100
       assert user_msg.role == :user
 
       # Then receives the assistant message events
-      assert_receive {:display_message_saved, assistant_display_msg}, 100
+      assert_receive {:agent, {:display_message_saved, assistant_display_msg}}, 100
       assert assistant_display_msg.role == "assistant"
       assert assistant_display_msg.content == "Mock response"
 
-      assert_receive {:llm_message, assistant_msg}, 100
+      assert_receive {:agent, {:llm_message, assistant_msg}}, 100
       assert assistant_msg.role == :assistant
       assert assistant_msg.content == [%LangChain.Message.ContentPart{type: :text, content: "Mock response"}]
 
@@ -200,8 +202,8 @@ defmodule LangChain.Agents.AgentServerMessageCallbackTest do
       :ok = AgentServer.add_message(agent_id, message)
 
       # Should NOT broadcast any message events when callback fails
-      refute_receive {:llm_message, _}, 500
-      refute_receive {:display_message_saved, _}, 500
+      refute_receive {:agent, {:llm_message, _}}, 100
+      refute_receive {:agent, {:display_message_saved, _}}, 100
 
       # Cleanup
       TestingHelpers.stop_test_agent(agent_id)
@@ -236,10 +238,10 @@ defmodule LangChain.Agents.AgentServerMessageCallbackTest do
       assert_receive :callback_called, 100
 
       # Should not broadcast display_message_saved (empty list)
-      refute_receive {:display_message_saved, _}, 100
+      refute_receive {:agent, {:display_message_saved, _}}, 100
 
       # Should still broadcast :llm_message event (callback succeeded, even if empty)
-      assert_receive {:llm_message, llm_msg}, 100
+      assert_receive {:agent, {:llm_message, llm_msg}}, 100
       assert llm_msg.role == :user
 
       # Cleanup
@@ -271,7 +273,7 @@ defmodule LangChain.Agents.AgentServerMessageCallbackTest do
       :ok = AgentServer.add_message(agent_id, Message.new_user!("Hello"))
 
       assert_receive {:callback_message_role, :user}, 100
-      assert_receive {:display_message_saved, _}, 100
+      assert_receive {:agent, {:display_message_saved, _}}, 100
 
       # Cleanup
       TestingHelpers.stop_test_agent(agent_id)
@@ -300,7 +302,7 @@ defmodule LangChain.Agents.AgentServerMessageCallbackTest do
       :ok = AgentServer.add_message(agent_id, Message.new_assistant!(%{content: "Response"}))
 
       assert_receive {:callback_message_role, :assistant}, 100
-      assert_receive {:display_message_saved, _}, 100
+      assert_receive {:agent, {:display_message_saved, _}}, 100
 
       # Cleanup
       TestingHelpers.stop_test_agent(agent_id)
@@ -495,8 +497,8 @@ defmodule LangChain.Agents.AgentServerMessageCallbackTest do
       assert Process.alive?(pid)
 
       # Should NOT broadcast any events when callback raises
-      refute_receive {:llm_message, _}, 100
-      refute_receive {:display_message_saved, _}, 100
+      refute_receive {:agent, {:llm_message, _}}, 100
+      refute_receive {:agent, {:display_message_saved, _}}, 100
 
       # Cleanup
       TestingHelpers.stop_test_agent(agent_id)
@@ -528,8 +530,8 @@ defmodule LangChain.Agents.AgentServerMessageCallbackTest do
       assert Process.alive?(pid)
 
       # Should NOT broadcast any events when callback returns invalid format
-      refute_receive {:llm_message, _}, 100
-      refute_receive {:display_message_saved, _}, 100
+      refute_receive {:agent, {:llm_message, _}}, 100
+      refute_receive {:agent, {:display_message_saved, _}}, 100
 
       # Cleanup
       TestingHelpers.stop_test_agent(agent_id)

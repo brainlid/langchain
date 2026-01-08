@@ -350,10 +350,10 @@ defmodule LangChain.Agents.AgentServerMiddlewareMessagingTest do
       )
 
       # Wait for middleware to handle the message
-      assert_receive {:middleware_handled, "test_value"}, 1000
+      assert_receive {:middleware_handled, "test_value"}, 100
 
       # Should receive broadcast event on debug channel wrapped in {:debug, event} tuple
-      assert_receive {:debug, {:agent_state_update, TestMiddleware, _state}}, 1000
+      assert_receive {:agent, {:debug, {:agent_state_update, TestMiddleware, _state}}}, 100
     end
   end
 end

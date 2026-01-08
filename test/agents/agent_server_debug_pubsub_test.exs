@@ -175,8 +175,8 @@ defmodule LangChain.Agents.AgentServerDebugPubSubTest do
       # Send a middleware message (use module name as ID)
       :ok = AgentServer.send_middleware_message(agent_id, TestMiddleware, :test_message)
 
-      # Should receive debug event wrapped in {:debug, event} tuple
-      assert_receive {:debug, {:agent_state_update, TestMiddleware, %State{}}}, 100
+      # Should receive debug event wrapped in {:agent, {:debug, event}} tuple
+      assert_receive {:agent, {:debug, {:agent_state_update, TestMiddleware, %State{}}}}, 100
     end
 
     test "does not broadcast to regular pubsub when using debug events", %{
@@ -207,8 +207,7 @@ defmodule LangChain.Agents.AgentServerDebugPubSubTest do
       :ok = AgentServer.send_middleware_message(agent_id, TestMiddleware, :test_message)
 
       # Should NOT receive agent_state_update on regular pubsub (neither wrapped nor unwrapped)
-      refute_receive {:debug, {:agent_state_update, _, _}}, 100
-      refute_receive {:agent_state_update, _, _}, 100
+      refute_receive {:agent, {:debug, {:agent_state_update, _, _}}}, 100
     end
   end
 
@@ -362,13 +361,13 @@ defmodule LangChain.Agents.AgentServerDebugPubSubTest do
       :ok = AgentServer.send_middleware_message(agent2.agent_id, TestMiddleware, :test_message)
 
       # Should NOT receive debug events from agent2
-      refute_receive {:debug, {:agent_state_update, _, _}}, 100
+      refute_receive {:agent, {:debug, {:agent_state_update, _, _}}}, 100
 
       # Send message to agent1
       :ok = AgentServer.send_middleware_message(agent1.agent_id, TestMiddleware, :test_message)
 
-      # Should receive debug events from agent1 wrapped in {:debug, event} tuple
-      assert_receive {:debug, {:agent_state_update, TestMiddleware, %State{}}}, 100
+      # Should receive debug events from agent1 wrapped in {:agent, {:debug, event}} tuple
+      assert_receive {:agent, {:debug, {:agent_state_update, TestMiddleware, %State{}}}}, 100
     end
   end
 end

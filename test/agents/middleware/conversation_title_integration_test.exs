@@ -96,11 +96,11 @@ defmodule LangChain.Agents.Middleware.ConversationTitleIntegrationTest do
       # Send a user message through the proper API
       :ok = AgentServer.add_message(agent_id, Message.new_user!("What's the weather today?"))
 
-      # Should receive broadcast debug event wrapped in {:debug, event} tuple
-      assert_receive {:debug, {:agent_state_update, _received_state}}, 100
+      # Should receive broadcast debug event wrapped in {:agent, {:debug, event}} tuple
+      assert_receive {:agent, {:debug, {:agent_state_update, _received_state}}}, 100
 
       # Should receive PubSub event of title generation
-      assert_receive {:conversation_title_generated, title, _agent_id}, 100
+      assert_receive {:agent, {:conversation_title_generated, title, _agent_id}}, 100
       assert title == "Asking about the weather"
 
       # Verify title was generated and stored
@@ -145,7 +145,7 @@ defmodule LangChain.Agents.Middleware.ConversationTitleIntegrationTest do
       :ok = AgentServer.add_message(agent_id, Message.new_user!("Tell me a joke"))
 
       # Wait for title generation event (will use fallback title)
-      assert_receive {:conversation_title_generated, fallback_title, _agent_id}, 200
+      assert_receive {:agent, {:conversation_title_generated, fallback_title, _agent_id}}, 200
 
       # Verify fallback title was generated (TextToTitleChain returns "New topic" by default on error)
       state = AgentServer.get_state(agent_id)
@@ -162,7 +162,7 @@ defmodule LangChain.Agents.Middleware.ConversationTitleIntegrationTest do
 
       # Should NOT receive another title generation event
       # Builds in the delay as well
-      refute_receive {:conversation_title_generated, _title, _agent_id}, 100
+      refute_receive {:agent, {:conversation_title_generated, _title, _agent_id}}, 100
     end
 
     test "title generation skipped when title already exists" do
@@ -206,7 +206,7 @@ defmodule LangChain.Agents.Middleware.ConversationTitleIntegrationTest do
 
       # Should NOT receive a title generation event (key assertion: middleware didn't trigger)
       # Builds in the delay as well
-      refute_receive {:conversation_title_generated, _title, _agent_id}, 100
+      refute_receive {:agent, {:conversation_title_generated, _title, _agent_id}}, 100
 
       # Verify title is still the original one (not regenerated)
       final_state = AgentServer.get_state(agent_id)
@@ -246,7 +246,7 @@ defmodule LangChain.Agents.Middleware.ConversationTitleIntegrationTest do
       :ok = AgentServer.add_message(agent_id, Message.new_user!("Hello!"))
 
       # Wait for title generation event (key signal: middleware triggered)
-      assert_receive {:conversation_title_generated, title, _agent_id}, 200
+      assert_receive {:agent, {:conversation_title_generated, title, _agent_id}}, 200
       assert title == "Initial Greeting Conversation"
 
       # Verify title was stored
@@ -264,7 +264,7 @@ defmodule LangChain.Agents.Middleware.ConversationTitleIntegrationTest do
 
       # Should NOT receive another title generation event (key assertion)
       # Builds in the delay as well
-      refute_receive {:conversation_title_generated, _title, _agent_id}, 100
+      refute_receive {:agent, {:conversation_title_generated, _title, _agent_id}}, 100
 
       # Verify title is unchanged (no regeneration)
       final_state = AgentServer.get_state(agent_id)
