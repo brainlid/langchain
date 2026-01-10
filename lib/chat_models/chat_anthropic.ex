@@ -467,8 +467,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     field :tool_choice, :map
 
     # Beta headers
-    # https://docs.anthropic.com/claude/docs/tool-use - requires tools-2024-04-04 header during beta
-    field :beta_headers, {:array, :string}, default: ["tools-2024-04-04"]
+    # https://docs.claude.com/en/docs/build-with-claude/structured-outputs - for strict tool use
+    field :beta_headers, {:array, :string}, default: ["structured-outputs-2025-11-13"]
 
     # Additional level of raw api request and response data
     field :verbose_api, :boolean, default: false
@@ -479,6 +479,10 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     # Can include TTL: %{enabled: true, ttl: "1h"} or %{enabled: true, ttl: "5m"}
     # Set to %{enabled: false} or nil to disable automatic message caching.
     field :cache_messages, :map
+
+    # Req options to merge into the request.
+    # https://hexdocs.pm/req/Req.html#new/1-options
+    field :req_opts, :any, virtual: true, default: []
   end
 
   @type t :: %ChatAnthropic{}
@@ -498,7 +502,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     :tool_choice,
     :beta_headers,
     :verbose_api,
-    :cache_messages
+    :cache_messages,
+    :req_opts
   ]
   @required_fields [:endpoint, :model]
 
@@ -747,6 +752,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         retry_delay: fn attempt -> 300 * attempt end,
         aws_sigv4: aws_sigv4_opts(anthropic.bedrock)
       )
+      |> Req.merge(anthropic.req_opts)
 
     req
     |> Req.post()
@@ -839,6 +845,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       aws_sigv4: aws_sigv4_opts(anthropic.bedrock),
       retry: :transient
     )
+    |> Req.merge(anthropic.req_opts)
     |> Req.post(
       into:
         Utils.handle_stream_fn(
@@ -1498,6 +1505,15 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       "name" => fun.name,
       "input_schema" => get_parameters(fun)
     }
+    |> then(fn map ->
+      # Don't add the strict flag when fun.strict is nil or false.
+      # Sending strict: false to models that don't support strict tools causes an error.
+      if fun.strict do
+        Map.put(map, "strict", fun.strict)
+      else
+        map
+      end
+    end)
     |> Utils.conditionally_add_to_map("description", fun.description)
     |> Utils.conditionally_add_to_map("cache_control", get_cache_control_setting(fun.options))
   end
@@ -1715,6 +1731,16 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         "type" => "base64",
         "data" => part.content,
         "media_type" => media
+      }
+    }
+  end
+
+  def content_part_for_api(%ContentPart{type: :file_url} = part) do
+    %{
+      "type" => "document",
+      "source" => %{
+        "type" => "url",
+        "url" => part.content
       }
     }
   end

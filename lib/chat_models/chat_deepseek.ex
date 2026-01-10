@@ -890,7 +890,7 @@ defmodule LangChain.ChatModels.ChatDeepSeek do
   # Delta message tool call
   def do_process_response(
         model,
-        %{"delta" => delta_body, "index" => index} = msg
+        %{"delta" => delta_body} = msg
       ) do
     # finish_reason might not be present in all streaming responses
     finish = Map.get(msg, "finish_reason", nil)
@@ -914,6 +914,16 @@ defmodule LangChain.ChatModels.ChatDeepSeek do
     # Extract DeepSeek-specific metadata for streaming responses
     metadata = extract_response_metadata(msg)
 
+    {index, content} =
+      case delta_body["reasoning_content"] do
+        nil ->
+          {1, ContentPart.text!(delta_body["content"])}
+
+        reasoning_content ->
+          # NOTE: By default, Deepseek only support one choice, here I use index 1 for thinking text.
+          {0, ContentPart.thinking!(reasoning_content)}
+      end
+
     data =
       delta_body
       |> Map.put("role", role)
@@ -921,6 +931,7 @@ defmodule LangChain.ChatModels.ChatDeepSeek do
       |> Map.put("status", status)
       |> Map.put("tool_calls", tool_calls)
       |> Map.put("metadata", metadata)
+      |> Map.put("content", content)
 
     case MessageDelta.new(data) do
       {:ok, message} ->
@@ -1007,6 +1018,21 @@ defmodule LangChain.ChatModels.ChatDeepSeek do
     status = finish_reason_to_status(finish_reason)
     # Extract DeepSeek-specific metadata
     metadata = extract_response_metadata(data)
+
+    message =
+      case message["reasoning_content"] do
+        nil ->
+          message
+
+        reasoning_content ->
+          content =
+            [
+              ContentPart.thinking!(reasoning_content),
+              ContentPart.text!(message["content"])
+            ]
+
+          Map.put(message, "content", content)
+      end
 
     case Message.new(
            Map.merge(message, %{"status" => status, "index" => index, "metadata" => metadata})

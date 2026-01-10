@@ -216,11 +216,11 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     field :max_output_tokens, :integer, default: nil
     # omit metadata because chat_open_ai also omits it
     # omit parallel_tool_calls because chat_open_ai also omits it
-    # omit previous_response_id becasue langchain assumes statelessness
+    field :previous_response_id, :string, default: nil
     # Reasoning options for gpt-5 and o-series models
     embeds_one(:reasoning, ReasoningOptions)
     # omit service_tier because chat_open_ai also omits it
-    # omit store, but set it explicitly to false later to keep statelessness. the API will default true unless we set it
+    field :store, :boolean, default: false
     field :stream, :boolean, default: false
     field :temperature, :float, default: nil
     field :json_response, :boolean, default: false
@@ -236,6 +236,11 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
 
     field :callbacks, {:array, :map}, default: []
     field :verbose_api, :boolean, default: false
+
+    # Req options to merge into the request.
+    # Refer to `https://hexdocs.pm/req/Req.html#new/1-options` for
+    # `Req.new` supported set of options.
+    field :req_config, :map, default: %{}
   end
 
   @type t :: %ChatOpenAIResponses{}
@@ -248,6 +253,8 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     :model,
     :include,
     :max_output_tokens,
+    :previous_response_id,
+    :store,
     :stream,
     :temperature,
     :json_response,
@@ -258,7 +265,8 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     :top_logprobs,
     :truncation,
     :user,
-    :verbose_api
+    :verbose_api,
+    :req_config
   ]
   @required_fields [:endpoint, :model]
 
@@ -323,7 +331,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     %{
       model: openai.model,
       stream: openai.stream,
-      store: false,
+      store: if(openai.previous_response_id, do: true, else: openai.store),
       input:
         messages
         |> Enum.reduce([], fn m, acc ->
@@ -339,6 +347,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     }
     |> Utils.conditionally_add_to_map(:include, openai.include)
     |> Utils.conditionally_add_to_map(:max_output_tokens, openai.max_output_tokens)
+    |> Utils.conditionally_add_to_map(:previous_response_id, openai.previous_response_id)
     |> Utils.conditionally_add_to_map(:reasoning, ReasoningOptions.to_api_map(openai.reasoning))
     |> Utils.conditionally_add_to_map(:text, set_text_format(openai))
     |> Utils.conditionally_add_to_map(:tool_choice, get_tool_choice(openai))
@@ -556,6 +565,16 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
 
   def content_part_for_api(
         %ChatOpenAIResponses{} = _model,
+        %ContentPart{type: :file_url} = part
+      ) do
+    %{
+      "type" => "input_file",
+      "file_url" => part.content
+    }
+  end
+
+  def content_part_for_api(
+        %ChatOpenAIResponses{} = _model,
         %ContentPart{type: :file, options: opts} = part
       ) do
     case Keyword.get(opts, :type, :base64) do
@@ -735,6 +754,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     req
     |> maybe_add_org_id_header()
     |> maybe_add_proj_id_header()
+    |> Req.merge(openai.req_config |> Keyword.new())
     |> Req.post()
     # parse the body and return it as parsed structs
     |> case do
@@ -801,6 +821,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     )
     |> maybe_add_org_id_header()
     |> maybe_add_proj_id_header()
+    |> Req.merge(openai.req_config |> Keyword.new())
     |> Req.post(
       into: Utils.handle_stream_fn(openai, &decode_stream/1, &do_process_response(openai, &1))
     )
@@ -918,6 +939,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         nil -> %{}
         %TokenUsage{} = usage -> %{usage: usage}
       end
+      |> maybe_add_response_id(response)
 
     Message.new!(%{
       content: content_parts,
@@ -1083,12 +1105,13 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         "response" => response
       }) do
     usage = get_token_usage(response)
+    metadata = %{usage: usage} |> maybe_add_response_id(response)
 
     data = %{
       content: "",
       status: :complete,
       role: :assistant,
-      metadata: %{usage: usage}
+      metadata: metadata
     }
 
     case MessageDelta.new(data) do
@@ -1185,6 +1208,12 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   end
 
   defp get_token_usage(_response_body), do: nil
+
+  defp maybe_add_response_id(metadata, %{"id" => id}) when is_binary(id) do
+    Map.put(metadata, :response_id, id)
+  end
+
+  defp maybe_add_response_id(metadata, _response), do: metadata
 
   defp content_items_to_content_parts_and_tool_calls(content_items) do
     Enum.reduce(content_items, {[], []}, fn content_item, {content_parts, tool_calls} ->

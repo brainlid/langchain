@@ -581,7 +581,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   def for_api(%_{} = _model, %Function{} = fun) do
     %{
       "name" => fun.name,
-      "parameters" => get_parameters(fun)
+      "parameters" => get_parameters(fun),
+      "strict" => fun.strict
     }
     |> Utils.conditionally_add_to_map("description", fun.description)
   end

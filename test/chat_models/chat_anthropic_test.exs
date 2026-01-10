@@ -18,7 +18,8 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
   alias LangChain.LangChainError
   alias LangChain.Utils.BedrockStreamDecoder
 
-  @test_model "claude-3-5-sonnet-20241022"
+  @test_model "claude-haiku-4-5"
+  @sonnet_4_5 "claude-sonnet-4-5"
   @bedrock_test_model "anthropic.claude-3-5-sonnet-20241022-v2:0"
   @claude_3_7 "claude-3-7-sonnet-20250219"
   @apis [:anthropic, :anthropic_bedrock]
@@ -1333,11 +1334,11 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
     end
 
     @tag live_call: true, live_anthropic: true
-    test "handles tool_call with text content response when NOT streaming" do
+    test "handles strict tool_call with text content response when NOT streaming" do
       chat =
         ChatAnthropic.new!(%{
           stream: false,
-          model: @claude_3_7,
+          model: @sonnet_4_5,
           verbose_api: false
         })
 
@@ -1352,8 +1353,14 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
           [
             Function.new!(%{
               name: "do_thing",
-              parameters: [FunctionParam.new!(%{type: :string, name: "value", required: true})],
-              function: fn _args, _context -> :ok end
+              parameters_schema: %{
+                "type" => "object",
+                "properties" => %{"value" => %{"type" => "string"}},
+                "required" => ["value"],
+                "additionalProperties" => false
+              },
+              function: fn _args, _context -> :ok end,
+              strict: true
             })
           ]
         )
@@ -1367,6 +1374,37 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
       assert tool_call.type == :function
       assert tool_call.name == "do_thing"
       assert tool_call.arguments == %{"value" => "test value"}
+    end
+
+    test "merges req_opts into the request (streaming)" do
+      expect(Req, :post, fn req_struct, _opts ->
+        assert req_struct.options.retry == false
+
+        {:error, RuntimeError.exception("Something went wrong")}
+      end)
+
+      model = ChatAnthropic.new!(%{stream: true, model: @test_model, req_opts: [retry: false]})
+
+      assert {:error, %LangChainError{message: error_message}} =
+               ChatAnthropic.call(model, "prompt", [])
+
+      assert error_message =~ "Something went wrong"
+    end
+
+    test "merges req_opts into the request (non-streaming)" do
+      expect(Req, :post, fn req_struct ->
+        assert req_struct.options.retry == false
+
+        {:error, RuntimeError.exception("Something went wrong")}
+      end)
+
+      model =
+        ChatAnthropic.new!(%{stream: false, model: @test_model, req_opts: [retry: false]})
+
+      assert {:error, %LangChainError{message: error_message}} =
+               ChatAnthropic.call(model, "prompt", [])
+
+      assert error_message =~ "Something went wrong"
     end
 
     test "returns error tuple when receiving overloaded_error" do
@@ -1443,9 +1481,14 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
         assert_received {:fired_response_headers, response_headers}
 
         assert %{
-                 "connection" => ["keep-alive"],
-                 "content-type" => ["text/event-stream; charset=utf-8"]
+                 "connection" => ["keep-alive"]
                } = response_headers
+
+        if api == :anthropic_bedrock do
+          assert response_headers["content-type"] == ["application/vnd.amazon.eventstream"]
+        else
+          assert response_headers["content-type"] == ["text/event-stream; charset=utf-8"]
+        end
       end
     end
   end
@@ -2243,6 +2286,23 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
                )
     end
 
+    test "turns a file_url ContentPart into the expected JSON format" do
+      expected = %{
+        "type" => "document",
+        "source" => %{
+          "type" => "url",
+          "url" => "https://example.com/myfile.pdf"
+        }
+      }
+
+      result =
+        ChatAnthropic.content_part_for_api(
+          ContentPart.file_url!("https://example.com/myfile.pdf")
+        )
+
+      assert result == expected
+    end
+
     test "cache_control: true uses default settings" do
       part = ContentPart.text!("content", cache_control: true)
 
@@ -2364,6 +2424,26 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
                "name" => "do_something",
                "input_schema" => %{"properties" => %{}, "type" => "object"},
                "cache_control" => %{"type" => "ephemeral"}
+             }
+    end
+
+    test "supports strict mode on the function definition" do
+      json_schema = %{"properties" => %{}, "type" => "object", "additionalProperties" => false}
+
+      tool =
+        Function.new!(%{
+          name: "do_something",
+          parameters_schema: json_schema,
+          function: fn _args, _context -> :ok end,
+          strict: true
+        })
+
+      output = ChatAnthropic.function_for_api(tool)
+
+      assert output == %{
+               "name" => "do_something",
+               "input_schema" => json_schema,
+               "strict" => true
              }
     end
 
@@ -2998,7 +3078,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
                "api_version" => "2023-06-01",
                "top_k" => nil,
                "top_p" => nil,
-               "beta_headers" => ["tools-2024-04-04"],
+               "beta_headers" => ["structured-outputs-2025-11-13"],
                "module" => "Elixir.LangChain.ChatModels.ChatAnthropic",
                "version" => 1
              }
@@ -3051,9 +3131,9 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       ChatAnthropic.call(model, "prompt", [])
     end
 
-    test "defaults to tools-2024-04-04 when beta_headers is not provided" do
+    test "defaults to structured-outputs-2025-11-13 when beta_headers is not provided" do
       expect(Req, :post, fn req_struct, _opts ->
-        assert req_struct.headers["anthropic-beta"] == ["tools-2024-04-04"]
+        assert req_struct.headers["anthropic-beta"] == ["structured-outputs-2025-11-13"]
       end)
 
       model = ChatAnthropic.new!(%{stream: true, model: @test_model})
