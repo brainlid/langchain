@@ -703,7 +703,7 @@ defmodule LangChain.Agents.AgentServerTest do
       {:ok, _pid} =
         AgentServer.start_link_from_state(
           exported_state,
-          agent: new_agent,  # Agent from code is now REQUIRED
+          agent: new_agent,
           agent_id: new_agent_id,
           pubsub: nil
         )

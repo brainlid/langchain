@@ -751,7 +751,13 @@ defmodule LangChain.Agents.Middleware.FileSystem do
           {:ok, regex} ->
             if file_path do
               # Search single file
-              search_single_file(config.filesystem_scope, file_path, regex, context_lines, max_results)
+              search_single_file(
+                config.filesystem_scope,
+                file_path,
+                regex,
+                context_lines,
+                max_results
+              )
             else
               # Search all files
               search_all_files(config.filesystem_scope, regex, context_lines, max_results)
@@ -790,7 +796,8 @@ defmodule LangChain.Agents.Middleware.FileSystem do
 
       true ->
         with {:ok, normalized_path} <- validate_path(file_path),
-             {:ok, content} <- FileSystemServer.read_file(config.filesystem_scope, normalized_path) do
+             {:ok, content} <-
+               FileSystemServer.read_file(config.filesystem_scope, normalized_path) do
           perform_line_edit(
             config.filesystem_scope,
             normalized_path,
@@ -995,7 +1002,13 @@ defmodule LangChain.Agents.Middleware.FileSystem do
       occurrence_count == 1 ->
         # Single occurrence, safe to replace
         updated_content = String.replace(content, old_string, new_string, global: false)
-        write_edit(filesystem_scope, file_path, updated_content, "File edited successfully: #{file_path}")
+
+        write_edit(
+          filesystem_scope,
+          file_path,
+          updated_content,
+          "File edited successfully: #{file_path}"
+        )
 
       occurrence_count > 1 and not replace_all ->
         {:error,

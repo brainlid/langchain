@@ -558,6 +558,7 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
   defp scope_key_to_agent_id({:user, user_id}), do: "user:#{user_id}"
   defp scope_key_to_agent_id({:project, project_id}), do: "project:#{project_id}"
   defp scope_key_to_agent_id({:organization, org_id}), do: "org:#{org_id}"
+
   defp scope_key_to_agent_id(scope_key) when is_tuple(scope_key) do
     # Generic handler for any other scope types
     scope_key
@@ -565,6 +566,7 @@ defmodule LangChain.Agents.FileSystem.FileSystemState do
     |> Enum.map(&to_string/1)
     |> Enum.join(":")
   end
+
   defp scope_key_to_agent_id(scope_key) when is_binary(scope_key) do
     scope_key
   end

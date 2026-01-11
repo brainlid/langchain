@@ -212,6 +212,7 @@ defmodule LangChain.Agents.FileSystem.FileSystemSupervisor do
 
   def stop_filesystem(scope_key, opts \\ []) when is_tuple(scope_key) do
     supervisor = Keyword.get(opts, :supervisor, __MODULE__)
+
     case get_filesystem(scope_key) do
       {:ok, pid} ->
         case DynamicSupervisor.terminate_child(supervisor, pid) do

@@ -392,7 +392,11 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
       tasks =
         for i <- 1..10 do
           Task.async(fn ->
-            FileSystemServer.write_file({:agent, agent_id}, "/Memories/subagent_#{i}.txt", "result #{i}")
+            FileSystemServer.write_file(
+              {:agent, agent_id},
+              "/Memories/subagent_#{i}.txt",
+              "result #{i}"
+            )
           end)
         end
 
@@ -476,7 +480,8 @@ defmodule LangChain.Agents.FileSystem.PersistenceIntegrationTest do
         )
 
       # Write should succeed (ETS write)
-      assert :ok = FileSystemServer.write_file({:agent, agent_id}, "/Memories/file.txt", "content")
+      assert :ok =
+               FileSystemServer.write_file({:agent, agent_id}, "/Memories/file.txt", "content")
 
       # File should be in ETS
       entry = get_entry(agent_id, "/Memories/file.txt")

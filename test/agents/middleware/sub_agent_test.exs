@@ -670,7 +670,12 @@ defmodule LangChain.Agents.Middleware.SubAgentTest do
 
       LLMChain
       |> stub(:run, fn chain ->
-        {:ok, Map.merge(chain, %{messages: chain.messages ++ [assistant_message], last_message: assistant_message, needs_response: false})}
+        {:ok,
+         Map.merge(chain, %{
+           messages: chain.messages ++ [assistant_message],
+           last_message: assistant_message,
+           needs_response: false
+         })}
       end)
 
       context = %{

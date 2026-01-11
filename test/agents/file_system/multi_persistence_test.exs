@@ -70,7 +70,12 @@ defmodule LangChain.Agents.FileSystem.MultiPersistenceTest do
       assert Map.has_key?(configs, "account_files")
 
       # Write to user_files (should persist)
-      assert :ok = FileSystemServer.write_file({:agent, agent_id}, "/user_files/data.txt", "user data")
+      assert :ok =
+               FileSystemServer.write_file(
+                 {:agent, agent_id},
+                 "/user_files/data.txt",
+                 "user data"
+               )
 
       entry = get_entry(agent_id, "/user_files/data.txt")
       assert entry.persistence == :persisted
@@ -89,12 +94,17 @@ defmodule LangChain.Agents.FileSystem.MultiPersistenceTest do
 
       # Try to write to account_files (read-only, should fail)
       assert {:error, reason} =
-               FileSystemServer.write_file({:agent, agent_id}, "/account_files/data.txt", "account data")
+               FileSystemServer.write_file(
+                 {:agent, agent_id},
+                 "/account_files/data.txt",
+                 "account data"
+               )
 
       assert reason =~ "read-only"
 
       # Write to memory-only location
-      assert :ok = FileSystemServer.write_file({:agent, agent_id}, "/scratch/temp.txt", "temp data")
+      assert :ok =
+               FileSystemServer.write_file({:agent, agent_id}, "/scratch/temp.txt", "temp data")
 
       temp_entry = get_entry(agent_id, "/scratch/temp.txt")
       assert temp_entry.persistence == :memory
@@ -212,7 +222,9 @@ defmodule LangChain.Agents.FileSystem.MultiPersistenceTest do
       assert :ok = FileSystemServer.register_persistence({:agent, agent_id}, config)
 
       # Try to delete from readonly directory (should fail)
-      assert {:error, reason} = FileSystemServer.delete_file({:agent, agent_id}, "/readonly/file.txt")
+      assert {:error, reason} =
+               FileSystemServer.delete_file({:agent, agent_id}, "/readonly/file.txt")
+
       assert reason =~ "read-only"
     end
 

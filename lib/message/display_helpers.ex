@@ -102,11 +102,13 @@ defmodule LangChain.Message.DisplayHelpers do
     case content do
       # String content (simple text)
       text when is_binary(text) and text != "" ->
-        [%{
-          type: :text,
-          message_type: message_type,
-          content: %{"text" => text}
-        }]
+        [
+          %{
+            type: :text,
+            message_type: message_type,
+            content: %{"text" => text}
+          }
+        ]
 
       # List of ContentParts (text, thinking, etc.)
       parts when is_list(parts) ->

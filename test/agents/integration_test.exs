@@ -142,7 +142,9 @@ defmodule LangChain.Agents.IntegrationTest do
       assert FileSystemServer.whereis({:agent, agent_id}) == fs_pid
 
       # Test that write_file works directly (paths must start with /)
-      assert :ok == FileSystemServer.write_file({:agent, agent_id}, "/direct_test.txt", "test content")
+      assert :ok ==
+               FileSystemServer.write_file({:agent, agent_id}, "/direct_test.txt", "test content")
+
       assert FileSystemServer.file_exists?({:agent, agent_id}, "/direct_test.txt")
 
       # Create agent with Filesystem middleware

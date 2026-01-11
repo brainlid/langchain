@@ -86,7 +86,8 @@ defmodule LangChain.Persistence.StateSerializer do
   - `{:ok, state}` - Successfully deserialized state
   - `{:error, reason}` - Deserialization failed
   """
-  def deserialize_server_state(agent_id, data, _opts \\ []) when is_binary(agent_id) and is_map(data)
+  def deserialize_server_state(agent_id, data, _opts \\ [])
+      when is_binary(agent_id) and is_map(data)
       when is_map(data) and is_binary(agent_id) do
     # Handle version migration if needed
     case maybe_migrate(data) do
@@ -330,7 +331,6 @@ defmodule LangChain.Persistence.StateSerializer do
       {:error, _} -> raise "Failed to deserialize tool result: #{inspect(data)}"
     end
   end
-
 
   defp serialize_map_to_string_keys(map) when is_map(map) do
     Map.new(map, fn

@@ -195,7 +195,6 @@ defmodule LangChain.Agents.AgentSupervisorTest do
   end
 
   describe "child process accessibility" do
-
     test "can access SubAgentsDynamicSupervisor via agent_id" do
       agent = create_test_agent()
 

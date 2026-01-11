@@ -228,7 +228,8 @@ defmodule LangChain.Agents.Middleware.ConversationTitle do
         # Publish debug event for title generation start
         AgentServer.publish_debug_event_from(
           agent_id,
-          {:middleware_action, __MODULE__, {:title_generation_started, String.slice(user_text, 0, 100)}}
+          {:middleware_action, __MODULE__,
+           {:title_generation_started, String.slice(user_text, 0, 100)}}
         )
 
         # Generate title using TextToTitleChain
@@ -249,7 +250,6 @@ defmodule LangChain.Agents.Middleware.ConversationTitle do
 
         # Send success message back to AgentServer
         AgentServer.send_middleware_message(agent_id, middleware_id, {:title_generated, title})
-
 
         # Publish the event
         AgentServer.publish_event_from(agent_id, {:conversation_title_generated, title, agent_id})
@@ -286,7 +286,8 @@ defmodule LangChain.Agents.Middleware.ConversationTitle do
           # Publish debug event for crash
           AgentServer.publish_debug_event_from(
             agent_id,
-            {:middleware_action, __MODULE__, {:title_generation_failed, "#{kind}: #{inspect(reason)}"}}
+            {:middleware_action, __MODULE__,
+             {:title_generation_failed, "#{kind}: #{inspect(reason)}"}}
           )
 
           Logger.error(

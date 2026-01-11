@@ -38,7 +38,10 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
 
     test "initializes with custom enabled_tools", %{agent_id: agent_id} do
       assert {:ok, config} =
-               FileSystem.init(filesystem_scope: {:agent, agent_id}, enabled_tools: ["ls", "read_file"])
+               FileSystem.init(
+                 filesystem_scope: {:agent, agent_id},
+                 enabled_tools: ["ls", "read_file"]
+               )
 
       assert config.enabled_tools == ["ls", "read_file"]
     end
@@ -98,7 +101,11 @@ defmodule LangChain.Agents.Middleware.FileSystemTest do
     end
 
     test "returns only enabled tools", %{agent_id: agent_id} do
-      tools = FileSystem.tools(%{filesystem_scope: {:agent, agent_id}, enabled_tools: ["ls", "read_file"]})
+      tools =
+        FileSystem.tools(%{
+          filesystem_scope: {:agent, agent_id},
+          enabled_tools: ["ls", "read_file"]
+        })
 
       assert length(tools) == 2
       tool_names = Enum.map(tools, & &1.name)

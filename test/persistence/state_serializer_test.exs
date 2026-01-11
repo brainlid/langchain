@@ -408,7 +408,8 @@ defmodule LangChain.Persistence.StateSerializerTest do
       }
 
       # Should deserialize successfully (must provide agent_id)
-      {:ok, state} = StateSerializer.deserialize_server_state(generate_test_agent_id(), jsonb_data)
+      {:ok, state} =
+        StateSerializer.deserialize_server_state(generate_test_agent_id(), jsonb_data)
 
       assert [_message] = state.messages
       # Metadata stays with string keys (from JSONB)

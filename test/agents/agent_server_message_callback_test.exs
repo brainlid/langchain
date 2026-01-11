@@ -174,7 +174,10 @@ defmodule LangChain.Agents.AgentServerMessageCallbackTest do
 
       assert_receive {:agent, {:llm_message, assistant_msg}}, 100
       assert assistant_msg.role == :assistant
-      assert assistant_msg.content == [%LangChain.Message.ContentPart{type: :text, content: "Mock response"}]
+
+      assert assistant_msg.content == [
+               %LangChain.Message.ContentPart{type: :text, content: "Mock response"}
+             ]
 
       # Cleanup
       TestingHelpers.stop_test_agent(agent_id)

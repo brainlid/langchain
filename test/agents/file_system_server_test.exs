@@ -738,7 +738,8 @@ defmodule LangChain.Agents.FileSystemServerTest do
       :ok = FileSystemServer.subscribe({:agent, agent_id})
 
       # Try to write to readonly - should fail
-      {:error, _} = FileSystemServer.write_file({:agent, agent_id}, "/ReadOnly/test.txt", "content")
+      {:error, _} =
+        FileSystemServer.write_file({:agent, agent_id}, "/ReadOnly/test.txt", "content")
 
       # Should NOT receive event on error
       refute_receive {:file_system, _}, 50
@@ -788,13 +789,15 @@ defmodule LangChain.Agents.FileSystemServerTest do
       :ok = FileSystemServer.write_file({:agent, agent_id}, "/scratch/notes.txt", "My notes")
 
       # Read should work immediately
-      assert {:ok, "My notes"} = FileSystemServer.read_file({:agent, agent_id}, "/scratch/notes.txt")
+      assert {:ok, "My notes"} =
+               FileSystemServer.read_file({:agent, agent_id}, "/scratch/notes.txt")
     end
 
     test "returns error for nonexistent file", %{agent_id: agent_id} do
       {:ok, _pid} = FileSystemServer.start_link(scope_key: {:agent, agent_id})
 
-      assert {:error, :enoent} = FileSystemServer.read_file({:agent, agent_id}, "/nonexistent.txt")
+      assert {:error, :enoent} =
+               FileSystemServer.read_file({:agent, agent_id}, "/nonexistent.txt")
     end
 
     test "lazy loads persisted file on first read", %{agent_id: agent_id} do
