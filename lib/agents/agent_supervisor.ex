@@ -289,6 +289,7 @@ defmodule LangChain.Agents.AgentSupervisor do
     presence_tracking = Keyword.get(config, :presence_tracking)
     conversation_id = Keyword.get(config, :conversation_id)
     save_new_message_fn = Keyword.get(config, :save_new_message_fn)
+    presence_module = Keyword.get(config, :presence_module)
 
     # Build AgentServer options
     agent_server_opts = [
@@ -328,6 +329,12 @@ defmodule LangChain.Agents.AgentSupervisor do
         do: Keyword.put(agent_server_opts, :save_new_message_fn, save_new_message_fn),
         else: agent_server_opts
 
+    # Add presence_module if provided
+    agent_server_opts =
+      if presence_module,
+        do: Keyword.put(agent_server_opts, :presence_module, presence_module),
+        else: agent_server_opts
+
     # Build child specifications
     # Note: FileSystemServer is now managed independently via FileSystemSupervisor
     # Agents reference filesystems through the filesystem_scope field
@@ -361,12 +368,17 @@ defmodule LangChain.Agents.AgentSupervisor do
         time_left = deadline - now
 
         if now >= deadline do
-          Logger.error("AgentServer #{agent_id} failed to register within timeout (#{attempt} attempts)")
+          Logger.error(
+            "AgentServer #{agent_id} failed to register within timeout (#{attempt} attempts)"
+          )
+
           {:error, :timeout}
         else
           # Log first few attempts and then periodically
           if attempt < 3 or rem(attempt, 10) == 0 do
-            Logger.debug("AgentServer #{agent_id} not yet registered, retrying... (attempt #{attempt}, #{time_left}ms left)")
+            Logger.debug(
+              "AgentServer #{agent_id} not yet registered, retrying... (attempt #{attempt}, #{time_left}ms left)"
+            )
           end
 
           # Sleep briefly and retry with exponential backoff (max 100ms)

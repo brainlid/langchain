@@ -45,7 +45,19 @@ Mimic.copy(LangChain.ChatModels.ChatGrok)
 # Start a shared PubSub for tests
 {:ok, _} = Phoenix.PubSub.Supervisor.start_link(name: :test_pubsub)
 
+# Define a real Presence module for tests (no mocks needed)
+defmodule LangChain.TestPresence do
+  use Phoenix.Presence,
+    otp_app: :langchain,
+    pubsub_server: :test_pubsub
+end
+
+# Start the test Presence (Phoenix.Presence uses Supervisor.start_link/3 internally)
+{:ok, _} = Supervisor.start_link([LangChain.TestPresence], strategy: :one_for_one)
+
 Logger.configure(level: :warning)
+# Logger.configure(level: :debug)
 ExUnit.configure(exclude: [live_call: true])
 
 ExUnit.start(capture_log: true)
+# ExUnit.start(capture_log: false)

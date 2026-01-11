@@ -80,4 +80,42 @@ defmodule LangChain.Presence do
   def list(presence_module, topic) do
     presence_module.list(topic)
   end
+
+  @doc """
+  Update presence metadata for a tracked entity.
+
+  This atomically updates the metadata for an existing presence entry by merging
+  in the new values. Must be called from the same process that originally tracked
+  the presence (typically `self()`).
+
+  Uses Phoenix.Presence's atomic update which sends a single presence_diff with
+  `phx_ref_prev` set, allowing consumers to distinguish updates from leave+join.
+
+  ## Parameters
+
+    - `presence_module` - The Presence module (e.g., MyApp.Presence)
+    - `topic` - The topic string for presence tracking
+    - `id` - Unique identifier for this presence entry
+    - `new_meta` - Map of new/updated metadata fields to merge
+
+  ## Returns
+
+    - `{:ok, ref}` - Presence updated successfully
+    - `{:error, reason}` - Update failed (e.g., not tracked)
+
+  ## Examples
+
+      # Update agent status in presence (from the agent process)
+      {:ok, _ref} = LangChain.Presence.update(
+        MyApp.Presence,
+        "agent_server:presence",
+        "agent-123",
+        %{status: :running}
+      )
+  """
+  def update(presence_module, topic, id, new_meta) do
+    presence_module.update(self(), topic, id, fn existing_meta ->
+      Map.merge(existing_meta, new_meta)
+    end)
+  end
 end

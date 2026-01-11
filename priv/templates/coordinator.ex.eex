@@ -1,0 +1,396 @@
+defmodule <%= module %> do
+  @moduledoc """
+  Coordinates agent lifecycle for conversation-centric agents.
+
+  This module provides a single entry point for starting and stopping
+  conversation-specific agents, handling agent_id generation, state
+  loading, and race condition management.
+
+  ## Usage
+
+      # Start or resume a conversation agent
+      {:ok, session} = <%= module %>.start_conversation_session(conversation_id)
+
+      # Subscribe to agent events
+      AgentServer.subscribe(session.agent_id)
+
+      # Send message
+      AgentServer.add_message(session.agent_id, message)
+
+      # Stop agent (optional - agents auto-timeout)
+      <%= module %>.stop_conversation_session(conversation_id)
+
+  ## Configuration
+
+  Customize this module for your application:
+  - Change agent_id mapping strategy in `conversation_agent_id/1`
+  - Modify inactivity timeout in `start_conversation_session/2`
+  - Add custom lifecycle hooks (telemetry, logging, permissions)
+  - Integrate with your Factory module
+
+  """
+
+  alias LangChain.Agents.{AgentServer, AgentSupervisor, State}
+  require Logger
+
+  # PubSub configuration - single source of truth
+  @pubsub_module Phoenix.PubSub
+  @pubsub_name <%= inspect(pubsub_module) %>
+
+  # Presence configuration for tracking conversation viewers
+  @presence_module <%= inspect(presence_module) %>
+
+  # Default inactivity timeout (can be overridden per session)
+  @inactivity_timeout_minutes 10
+
+  @doc """
+  Starts or resumes an agent session for a conversation.
+
+  This function is idempotent - safe to call multiple times.
+  If the agent is already running, returns the existing session.
+
+  ## Options
+
+  - `:inactivity_timeout` - Milliseconds before agent stops (default: 1 hour)
+  - `:factory_opts` - Options passed to your Factory module
+
+  ## Returns
+
+  - `{:ok, session}` - Session info (whether just started or already running)
+  - `{:error, reason}` - Failed to start
+
+  """
+  def start_conversation_session(conversation_id, opts \\ []) do
+    agent_id = conversation_agent_id(conversation_id)
+
+    case AgentServer.get_pid(agent_id) do
+      nil ->
+        do_start_session(conversation_id, agent_id, opts)
+
+      pid ->
+        Logger.debug("Agent session already running for conversation #{conversation_id}")
+
+        {:ok,
+         %{
+           agent_id: agent_id,
+           pid: pid,
+           conversation_id: conversation_id
+         }}
+    end
+  end
+
+  @doc """
+  Stops an agent session for a conversation.
+
+  Note: Agents automatically stop after inactivity timeout.
+  Only call this for explicit cleanup (e.g., conversation archival).
+  """
+  def stop_conversation_session(conversation_id) do
+    agent_id = conversation_agent_id(conversation_id)
+
+    case AgentServer.get_pid(agent_id) do
+      nil -> {:ok, :not_running}
+      _pid ->
+        AgentServer.stop(agent_id)
+        {:ok, :stopped}
+    end
+  end
+
+  @doc """
+  Checks if an agent session is currently running.
+  """
+  def session_running?(conversation_id) do
+    agent_id = conversation_agent_id(conversation_id)
+    AgentServer.get_pid(agent_id) != nil
+  end
+
+  @doc """
+  Maps a conversation ID to an agent ID.
+
+  ## Customization
+
+  Change this function to implement different mapping strategies:
+
+      # User-centric agents (one agent per user)
+      def conversation_agent_id(conversation_id) do
+        user_id = Conversations.get_user_id(conversation_id)
+        "user-\#{user_id}"
+      end
+
+      # Conversation-centric with prefix (current)
+      def conversation_agent_id(conversation_id) do
+        "conversation-\#{conversation_id}"
+      end
+
+      # Simple pass-through
+      def conversation_agent_id(conversation_id), do: conversation_id
+
+  """
+  def conversation_agent_id(conversation_id) do
+    "conversation-#{conversation_id}"
+  end
+
+  @doc """
+  Ensure the current process is subscribed to agent events for a conversation.
+
+  This function is idempotent - safe to call multiple times. It delegates to
+  LangChain.PubSub.subscribe/3 for subscription management.
+
+  This works even when the agent isn't running because PubSub topics exist
+  independently of processes. When the agent later starts and publishes events,
+  subscribers will receive them.
+
+  Returns `:ok` on success.
+
+  ## Examples
+
+      # In a LiveView - safe to call multiple times
+      Coordinator.ensure_subscribed_to_conversation(conversation_id)
+
+      # Even if user clicks same conversation repeatedly, only subscribes once
+      Coordinator.ensure_subscribed_to_conversation(conversation_id)
+      Coordinator.ensure_subscribed_to_conversation(conversation_id)  # No-op
+
+      # Same process can subscribe to multiple conversations
+      Coordinator.ensure_subscribed_to_conversation(conversation_id_1)
+      Coordinator.ensure_subscribed_to_conversation(conversation_id_2)
+  """
+  def ensure_subscribed_to_conversation(conversation_id) do
+    agent_id = conversation_agent_id(conversation_id)
+    topic = agent_topic(agent_id)
+    LangChain.PubSub.subscribe(@pubsub_module, @pubsub_name, topic)
+  end
+
+  @doc """
+  Subscribe to agent events for a conversation without requiring the agent to be running.
+
+  Note: Consider using `ensure_subscribed_to_conversation/1` instead, which prevents
+  duplicate subscriptions if called multiple times. This function uses raw_subscribe
+  which does not prevent duplicates.
+
+  This works because PubSub topics exist independently of processes. When the agent
+  later starts and publishes events, subscribers will receive them.
+
+  Returns `:ok` on success.
+  """
+  def subscribe_to_conversation(conversation_id) do
+    agent_id = conversation_agent_id(conversation_id)
+    topic = agent_topic(agent_id)
+    LangChain.PubSub.raw_subscribe(@pubsub_module, @pubsub_name, topic)
+  end
+
+  @doc """
+  Unsubscribe from agent events for a conversation.
+
+  Clears the subscription tracking in the Process dictionary.
+  """
+  def unsubscribe_from_conversation(conversation_id) do
+    agent_id = conversation_agent_id(conversation_id)
+    topic = agent_topic(agent_id)
+    LangChain.PubSub.unsubscribe(@pubsub_module, @pubsub_name, topic)
+  end
+
+  @doc """
+  Track a viewer's presence in a conversation.
+
+  Call this in your LiveView mount after the socket is connected to enable smart
+  agent shutdown - when no viewers are present and the agent becomes idle, it can
+  shutdown immediately to free resources.
+
+  Phoenix.Presence automatically removes the entry when the tracked process terminates,
+  so manual cleanup is not needed.
+
+  ## Parameters
+
+    - `conversation_id` - The conversation being viewed
+    - `viewer_id` - Unique identifier for the viewer (typically user_id)
+    - `pid` - The process to track (typically self())
+    - `metadata` - Optional metadata map (default: empty map)
+
+  ## Returns
+
+    - `{:ok, ref}` - Presence tracked successfully
+    - `{:error, reason}` - Failed to track presence
+
+  ## Examples
+
+      # In a LiveView after socket is connected
+      if connected?(socket) do
+        {:ok, _ref} = Coordinator.track_conversation_viewer(conversation_id, user.id, self())
+      end
+
+      # With metadata
+      Coordinator.track_conversation_viewer(
+        conversation_id,
+        user.id,
+        self(),
+        %{username: user.name}
+      )
+  """
+  def track_conversation_viewer(conversation_id, viewer_id, pid, metadata \\ %{}) do
+    topic = presence_topic(conversation_id)
+    full_metadata = Map.merge(%{joined_at: System.system_time(:second)}, metadata)
+    LangChain.Presence.track(@presence_module, topic, viewer_id, pid, full_metadata)
+  end
+
+  @doc """
+  List all viewers currently present in a conversation.
+
+  Returns a map of viewer_id => metadata for all tracked viewers.
+  """
+  def list_conversation_viewers(conversation_id) do
+    topic = presence_topic(conversation_id)
+    LangChain.Presence.list(@presence_module, topic)
+  end
+
+  @doc """
+  Get the PubSub topic for a conversation's agent.
+
+  Useful for direct PubSub operations if needed.
+  """
+  def conversation_topic(conversation_id) do
+    agent_id = conversation_agent_id(conversation_id)
+    agent_topic(agent_id)
+  end
+
+  # Private Functions
+
+  # Private helper for agent PubSub topic naming
+  defp agent_topic(agent_id) do
+    "agent_server:#{agent_id}"
+  end
+
+  # Private helper for presence topic naming
+  defp presence_topic(conversation_id) do
+    "conversation:#{conversation_id}"
+  end
+
+  defp do_start_session(conversation_id, agent_id, opts) do
+    Logger.info("Starting agent session for conversation #{conversation_id}")
+
+    # Create agent using Factory
+    agent = create_conversation_agent(conversation_id, opts)
+
+    # Load state from database (or create fresh)
+    {:ok, state} = create_conversation_state(conversation_id)
+
+    # Start supervised agent
+    inactivity_timeout = Keyword.get(opts, :inactivity_timeout, :timer.hours(1))
+
+    # Configure presence tracking for smart shutdown
+    presence_tracking = [
+      enabled: true,
+      presence_module: @presence_module,
+      topic: presence_topic(conversation_id)
+    ]
+
+    supervisor_opts = [
+      agent: agent,
+      initial_state: state,
+      pubsub: {@pubsub_module, @pubsub_name},
+      inactivity_timeout: inactivity_timeout,
+      presence_tracking: presence_tracking
+    ]
+
+    case AgentSupervisor.start_link(supervisor_opts) do
+      {:ok, _pid} ->
+        {:ok,
+         %{
+           agent_id: agent_id,
+           pid: AgentServer.get_pid(agent_id),
+           conversation_id: conversation_id
+         }}
+
+      {:error, {:already_started, _}} ->
+        # Race condition: another process started it
+        # Return :ok for consistent API (idempotent)
+        Logger.debug("Race condition starting agent #{agent_id}, returning existing session")
+
+        {:ok,
+         %{
+           agent_id: agent_id,
+           pid: AgentServer.get_pid(agent_id),
+           conversation_id: conversation_id
+         }}
+
+      {:error, reason} = error ->
+        Logger.error("Failed to start agent session: #{inspect(reason)}")
+        error
+    end
+  end
+
+  defp create_conversation_agent(conversation_id, opts) do
+    # TODO: Update with your Factory module
+    factory_opts = Keyword.get(opts, :factory_opts, [])
+
+    # Example integration:
+    # <%= factory_module %>.create_demo_agent(
+    #   Keyword.merge(factory_opts, conversation_id: conversation_id)
+    # )
+
+    raise """
+    TODO: Integrate with your Factory module
+
+    Update this function in #{__MODULE__} to create agents using your Factory:
+
+        defp create_conversation_agent(conversation_id, opts) do
+          factory_opts = Keyword.get(opts, :factory_opts, [])
+          agent_id = conversation_agent_id(conversation_id)
+
+          {:ok, agent} = <%= factory_module %>.create_demo_agent(
+            Keyword.merge(factory_opts, agent_id: agent_id, conversation_id: conversation_id)
+          )
+
+          agent
+        end
+    """
+  end
+
+  defp create_conversation_state(conversation_id) do
+    agent_id = conversation_agent_id(conversation_id)
+
+    # TODO: Update with your Conversations context
+
+    # Example integration:
+    # case <%= conversations_module %>.load_agent_state(conversation_id) do
+    #   {:ok, exported_state} ->
+    #     Logger.info("Found saved state for conversation #{conversation_id}, attempting to restore...")
+    #
+    #     # exported_state has structure: %{"version" => 1, "state" => %{"messages" => [...], ...}}
+    #     # We need to pass just the nested "state" field to the deserializer
+    #     nested_state = exported_state["state"]
+    #
+    #     if is_nil(nested_state) do
+    #       Logger.warning(
+    #         "Exported state for conversation #{conversation_id} has no 'state' field, using fresh state"
+    #       )
+    #
+    #       {:ok, State.new!(%{})}
+    #     else
+    #       # Deserialize with proper agent_id (agent_id is not serialized)
+    #       case State.from_serialized(agent_id, nested_state) do
+    #         {:ok, state} ->
+    #           Logger.info(
+    #             "Successfully restored agent state for conversation #{conversation_id} with #{length(state.messages)} messages"
+    #           )
+    #
+    #           {:ok, state}
+    #
+    #         {:error, reason} ->
+    #           Logger.warning(
+    #             "Failed to deserialize agent state for conversation #{conversation_id}: #{inspect(reason)}, using fresh state"
+    #           )
+    #
+    #           {:ok, State.new!(%{})}
+    #       end
+    #     end
+    #
+    #   {:error, :not_found} ->
+    #     Logger.info("No saved state found for conversation #{conversation_id}, creating fresh state")
+    #     {:ok, State.new!(%{})}
+    # end
+
+    # For now, return fresh state until you integrate with your Conversations context
+    {:ok, State.new!(%{})}
+  end
+end

@@ -209,6 +209,9 @@ defmodule LangChain.Agents.AgentServer do
 
   @presence_check_delay 1_000
 
+  # Topic for agent presence tracking - enables discovery of running agents
+  @agent_presence_topic "agent_server:presence"
+
   defmodule ServerState do
     @moduledoc false
     defstruct [
@@ -229,7 +232,10 @@ defmodule LangChain.Agents.AgentServer do
       :middleware_registry,
       :presence_config,
       :conversation_id,
-      :save_new_message_fn
+      :save_new_message_fn,
+      # Presence module for agent discovery (e.g., MyApp.Presence)
+      # When set, agent tracks presence on "agent_server:presence" topic
+      :presence_module
     ]
 
     @type t :: %__MODULE__{
@@ -258,7 +264,8 @@ defmodule LangChain.Agents.AgentServer do
               | nil,
             conversation_id: String.t() | nil,
             save_new_message_fn:
-              (String.t(), LangChain.Message.t() -> {:ok, list()} | {:error, term()}) | nil
+              (String.t(), LangChain.Message.t() -> {:ok, list()} | {:error, term()}) | nil,
+            presence_module: module() | nil
           }
   end
 
@@ -1228,6 +1235,10 @@ defmodule LangChain.Agents.AgentServer do
     conversation_id = Keyword.get(opts, :conversation_id)
     save_new_message_fn = Keyword.get(opts, :save_new_message_fn)
 
+    # Extract presence module for agent discovery
+    # When set, agent will track presence on "agent_server:presence" topic
+    presence_module = Keyword.get(opts, :presence_module)
+
     server_state = %ServerState{
       agent: updated_agent,
       state: state,
@@ -1245,7 +1256,8 @@ defmodule LangChain.Agents.AgentServer do
       middleware_registry: middleware_registry,
       presence_config: presence_config,
       conversation_id: conversation_id,
-      save_new_message_fn: save_new_message_fn
+      save_new_message_fn: save_new_message_fn,
+      presence_module: presence_module
     }
 
     # Start the inactivity timer
@@ -1264,6 +1276,9 @@ defmodule LangChain.Agents.AgentServer do
     Enum.each(server_state.agent.middleware, fn entry ->
       Middleware.apply_on_server_start(server_state.state, entry)
     end)
+
+    # Track presence for agent discovery (unconditional when configured)
+    server_state = track_presence(server_state)
 
     {:noreply, server_state}
   end
@@ -1304,6 +1319,7 @@ defmodule LangChain.Agents.AgentServer do
     # Transition to running
     new_state = %{server_state | status: :running}
     broadcast_event(new_state, {:status_changed, :running, nil})
+    update_presence_status(new_state, :running)
 
     # Reset inactivity timer on execution start
     new_state = reset_inactivity_timer(new_state)
@@ -1342,6 +1358,7 @@ defmodule LangChain.Agents.AgentServer do
 
     # Broadcast cancellation event
     broadcast_event(new_state, {:status_changed, :cancelled, nil})
+    update_presence_status(new_state, :cancelled)
 
     {:reply, :ok, Map.put(new_state, :task, nil)}
   end
@@ -1362,6 +1379,7 @@ defmodule LangChain.Agents.AgentServer do
     }
 
     broadcast_event(new_state, {:status_changed, :running, nil})
+    update_presence_status(new_state, :running)
 
     # Reset inactivity timer on resume
     new_state = reset_inactivity_timer(new_state)
@@ -1584,6 +1602,8 @@ defmodule LangChain.Agents.AgentServer do
   @impl true
   def handle_cast(:touch, server_state) do
     # Reset the inactivity timer to keep the agent alive
+    # Also update presence activity for real-time discovery
+    update_presence_activity(server_state)
     {:noreply, reset_inactivity_timer(server_state)}
   end
 
@@ -1828,6 +1848,7 @@ defmodule LangChain.Agents.AgentServer do
     }
 
     broadcast_event(updated_state, {:status_changed, :idle, nil})
+    update_presence_status(updated_state, :idle)
 
     # Check if we should shutdown based on presence
     maybe_shutdown_if_no_viewers(updated_state)
@@ -1850,6 +1871,7 @@ defmodule LangChain.Agents.AgentServer do
     }
 
     broadcast_event(updated_state, {:status_changed, :interrupted, interrupt_data})
+    update_presence_status(updated_state, :interrupted)
 
     # Reset activity timer after interrupt
     updated_state = reset_inactivity_timer(updated_state)
@@ -1868,6 +1890,7 @@ defmodule LangChain.Agents.AgentServer do
     }
 
     broadcast_event(updated_state, {:status_changed, :error, reason})
+    update_presence_status(updated_state, :error)
 
     # Reset activity timer after error
     updated_state = reset_inactivity_timer(updated_state)
@@ -2056,4 +2079,117 @@ defmodule LangChain.Agents.AgentServer do
   end
 
   defp build_middleware_entries(_), do: []
+
+  ## Agent Presence Tracking
+  #
+  # These functions enable discovery of running agents in real-time
+  # via Phoenix.Presence. When presence_module is configured,
+  # the agent tracks its presence on the "agent_server:presence" topic.
+
+  # Track presence for agent discovery
+  # Called in handle_continue(:broadcast_initial_state, ...)
+  defp track_presence(%ServerState{presence_module: nil} = server_state) do
+    # No presence module configured, skip tracking
+    server_state
+  end
+
+  defp track_presence(%ServerState{} = server_state) do
+    presence_mod = server_state.presence_module
+    agent_id = server_state.agent.agent_id
+    now = DateTime.utc_now()
+
+    # Build base metadata with started_at AND last_activity_at
+    base_metadata = %{
+      started_at: now,
+      last_activity_at: now,
+      status: server_state.status,
+      conversation_id: server_state.conversation_id,
+      node: node()
+    }
+
+    # Add filesystem_scope tuple as a map entry for filtering (e.g., {:project_id, "UUID"})
+    # This comes from the Agent's configuration and enables filtered discovery
+    metadata =
+      case server_state.agent.filesystem_scope do
+        {key, value} -> Map.put(base_metadata, key, value)
+        nil -> base_metadata
+      end
+
+    case LangChain.Presence.track(
+           presence_mod,
+           @agent_presence_topic,
+           agent_id,
+           self(),
+           metadata
+         ) do
+      {:ok, _ref} ->
+        Logger.debug("Agent #{agent_id} tracked for presence discovery")
+        server_state
+
+      {:error, reason} ->
+        Logger.warning(
+          "Failed to track agent #{agent_id} for presence discovery: #{inspect(reason)}"
+        )
+
+        server_state
+    end
+  end
+
+  # Update presence metadata when status changes
+  # Called whenever status changes (execute, complete, interrupt, error, etc.)
+  defp update_presence_status(%ServerState{presence_module: nil}, _new_status) do
+    # No presence module configured, skip update
+    :ok
+  end
+
+  defp update_presence_status(%ServerState{} = server_state, new_status) do
+    presence_mod = server_state.presence_module
+    agent_id = server_state.agent.agent_id
+
+    # Update status AND last_activity_at together
+    case LangChain.Presence.update(
+           presence_mod,
+           @agent_presence_topic,
+           agent_id,
+           %{status: new_status, last_activity_at: DateTime.utc_now()}
+         ) do
+      {:ok, _ref} ->
+        :ok
+
+      {:error, :not_tracked} ->
+        # Agent not tracked, this can happen in race conditions during shutdown
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("Failed to update presence status for #{agent_id}: #{inspect(reason)}")
+        :ok
+    end
+  end
+
+  # Update last_activity_at without status change (e.g., on touch)
+  # Called from touch handler to update presence metadata for activity tracking
+  defp update_presence_activity(%ServerState{presence_module: nil}), do: :ok
+
+  defp update_presence_activity(%ServerState{} = server_state) do
+    presence_mod = server_state.presence_module
+    agent_id = server_state.agent.agent_id
+
+    case LangChain.Presence.update(
+           presence_mod,
+           @agent_presence_topic,
+           agent_id,
+           %{last_activity_at: DateTime.utc_now()}
+         ) do
+      {:ok, _ref} ->
+        :ok
+
+      {:error, :not_tracked} ->
+        # Agent not tracked, this can happen in race conditions during shutdown
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("Failed to update presence activity for #{agent_id}: #{inspect(reason)}")
+        :ok
+    end
+  end
 end

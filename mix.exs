@@ -50,6 +50,7 @@ defmodule LangChain.MixProject do
       {:abacus, "~> 2.1.0", optional: true},
       {:nx, ">= 0.7.0", optional: true},
       {:phoenix_pubsub, "~> 2.1", optional: true},
+      {:phoenix, "~> 1.7", only: :test},
       {:ex_doc, "~> 0.39", only: :dev, runtime: false},
       {:mimic, "~> 1.8", only: :test}
     ]
