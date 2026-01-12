@@ -82,16 +82,20 @@ defmodule LangChain.Agents.SubAgentServer do
   use GenServer
   require Logger
 
+  alias LangChain.Agents.AgentServer
   alias LangChain.Agents.SubAgent
+  alias LangChain.TokenUsage
 
   @registry LangChain.Agents.Registry
 
   defmodule ServerState do
     @moduledoc false
-    defstruct [:subagent]
+    defstruct [:subagent, :started_at]
 
     @type t :: %__MODULE__{
-            subagent: SubAgent.t()
+            subagent: SubAgent.t(),
+            # Monotonic time for duration calculation (milliseconds)
+            started_at: integer() | nil
           }
   end
 
@@ -241,20 +245,28 @@ defmodule LangChain.Agents.SubAgentServer do
   @impl true
   def init(opts) do
     subagent = Keyword.fetch!(opts, :subagent)
+    started_at = System.monotonic_time(:millisecond)
 
     server_state = %ServerState{
-      subagent: subagent
+      subagent: subagent,
+      started_at: started_at
     }
 
     Logger.debug(
       "SubAgentServer started for #{subagent.id} (parent: #{subagent.parent_agent_id})"
     )
 
+    # Broadcast subagent_started via parent AgentServer
+    broadcast_subagent_event(server_state, {:subagent_started, build_started_metadata(subagent)})
+
     {:ok, server_state}
   end
 
   @impl true
   def handle_call(:execute, _from, %ServerState{subagent: subagent} = server_state) do
+    # Broadcast status change to running
+    broadcast_subagent_event(server_state, {:subagent_status_changed, :running})
+
     # Delegate to SubAgent.execute
     case SubAgent.execute(subagent) do
       {:ok, completed_subagent} ->
@@ -262,6 +274,13 @@ defmodule LangChain.Agents.SubAgentServer do
         case SubAgent.extract_result(completed_subagent) do
           {:ok, result} ->
             new_state = %{server_state | subagent: completed_subagent}
+
+            # Broadcast completion event
+            broadcast_subagent_event(
+              new_state,
+              {:subagent_completed, build_completed_metadata(new_state, result)}
+            )
+
             {:reply, {:ok, result}, new_state}
 
           {:error, reason} ->
@@ -270,12 +289,20 @@ defmodule LangChain.Agents.SubAgentServer do
             )
 
             new_state = %{server_state | subagent: completed_subagent}
+
+            # Broadcast error event
+            broadcast_subagent_event(new_state, {:subagent_error, reason})
+
             {:reply, {:error, reason}, new_state}
         end
 
       {:interrupt, interrupted_subagent} ->
         # SubAgent hit HITL interrupt
         new_state = %{server_state | subagent: interrupted_subagent}
+
+        # Broadcast interrupt status
+        broadcast_subagent_event(new_state, {:subagent_status_changed, :interrupted})
+
         {:reply, {:interrupt, interrupted_subagent.interrupt_data}, new_state}
 
       {:error, error_subagent} ->
@@ -285,6 +312,9 @@ defmodule LangChain.Agents.SubAgentServer do
 
         new_state = %{server_state | subagent: error_subagent}
 
+        # Broadcast error event
+        broadcast_subagent_event(new_state, {:subagent_error, error_subagent.error})
+
         {:reply, {:error, error_subagent.error}, new_state}
     end
   end
@@ -292,6 +322,9 @@ defmodule LangChain.Agents.SubAgentServer do
   @impl true
   def handle_call({:resume, decisions}, _from, %ServerState{subagent: subagent} = server_state) do
     Logger.debug("SubAgentServer resuming #{subagent.id} with decisions")
+
+    # Broadcast status change to running (resuming)
+    broadcast_subagent_event(server_state, {:subagent_status_changed, :running})
 
     # Delegate to SubAgent.resume
     case SubAgent.resume(subagent, decisions) do
@@ -302,6 +335,13 @@ defmodule LangChain.Agents.SubAgentServer do
         case SubAgent.extract_result(completed_subagent) do
           {:ok, result} ->
             new_state = %{server_state | subagent: completed_subagent}
+
+            # Broadcast completion event
+            broadcast_subagent_event(
+              new_state,
+              {:subagent_completed, build_completed_metadata(new_state, result)}
+            )
+
             {:reply, {:ok, result}, new_state}
 
           {:error, reason} ->
@@ -310,6 +350,10 @@ defmodule LangChain.Agents.SubAgentServer do
             )
 
             new_state = %{server_state | subagent: completed_subagent}
+
+            # Broadcast error event
+            broadcast_subagent_event(new_state, {:subagent_error, reason})
+
             {:reply, {:error, reason}, new_state}
         end
 
@@ -317,6 +361,10 @@ defmodule LangChain.Agents.SubAgentServer do
         # Another interrupt (multiple HITL tools)
         Logger.debug("SubAgentServer #{subagent.id} interrupted again")
         new_state = %{server_state | subagent: interrupted_subagent}
+
+        # Broadcast interrupt status
+        broadcast_subagent_event(new_state, {:subagent_status_changed, :interrupted})
+
         {:reply, {:interrupt, interrupted_subagent.interrupt_data}, new_state}
 
       {:error, %SubAgent{} = error_subagent} ->
@@ -327,11 +375,17 @@ defmodule LangChain.Agents.SubAgentServer do
 
         new_state = %{server_state | subagent: error_subagent}
 
+        # Broadcast error event
+        broadcast_subagent_event(new_state, {:subagent_error, error_subagent.error})
+
         {:reply, {:error, error_subagent.error}, new_state}
 
       {:error, reason} ->
         # Error is a plain reason (e.g., invalid status)
         Logger.error("SubAgentServer #{subagent.id} resume error: #{inspect(reason)}")
+
+        # Broadcast error event
+        broadcast_subagent_event(server_state, {:subagent_error, reason})
 
         {:reply, {:error, reason}, server_state}
     end
@@ -345,5 +399,187 @@ defmodule LangChain.Agents.SubAgentServer do
   @impl true
   def handle_call(:get_subagent, _from, %ServerState{subagent: subagent} = server_state) do
     {:reply, subagent, server_state}
+  end
+
+  ## Private Helper Functions
+
+  # Broadcast an event via the parent AgentServer's debug topic.
+  # Events are wrapped as {:subagent, subagent_id, event} and the AgentServer
+  # will wrap them as {:agent, {:debug, {:subagent, ...}}} for consistent routing.
+  #
+  # This is a no-op if the parent AgentServer doesn't have debug_pubsub configured.
+  defp broadcast_subagent_event(%ServerState{subagent: subagent}, event) do
+    parent_id = subagent.parent_agent_id
+    subagent_id = subagent.id
+
+    # Wrap event with subagent identification
+    wrapped_event = {:subagent, subagent_id, event}
+
+    # Use parent's debug broadcast - this is a no-op if parent has no debug_pubsub
+    AgentServer.publish_debug_event_from(parent_id, wrapped_event)
+  end
+
+  # Build metadata for subagent_started event
+  defp build_started_metadata(subagent) do
+    %{
+      id: subagent.id,
+      parent_id: subagent.parent_agent_id,
+      name: get_subagent_name(subagent),
+      instructions: extract_instructions(subagent),
+      tools: extract_tools(subagent),
+      middleware: extract_middleware(subagent),
+      model: get_model_name(subagent)
+    }
+  end
+
+  # Build metadata for subagent_completed event
+  defp build_completed_metadata(%ServerState{subagent: subagent, started_at: started_at}, result) do
+    duration_ms =
+      if started_at do
+        System.monotonic_time(:millisecond) - started_at
+      else
+        nil
+      end
+
+    messages =
+      if subagent.chain do
+        subagent.chain.messages
+      else
+        []
+      end
+
+    # Extract token usage from the last assistant message
+    token_usage = extract_token_usage(messages)
+
+    %{
+      id: subagent.id,
+      result: result,
+      messages: messages,
+      duration_ms: duration_ms,
+      token_usage: token_usage
+    }
+  end
+
+  # Extract token usage from the last assistant message in the chain
+  defp extract_token_usage(messages) when is_list(messages) do
+    # Find the last assistant message which typically contains the final token usage
+    messages
+    |> Enum.reverse()
+    |> Enum.find_value(fn message ->
+      if message.role == :assistant do
+        TokenUsage.get(message)
+      else
+        nil
+      end
+    end)
+  end
+
+  defp extract_token_usage(_), do: nil
+
+  # Extract a friendly name from the subagent
+  defp get_subagent_name(subagent) do
+    cond do
+      # Check if chain has a name in custom_context
+      subagent.chain && is_map(subagent.chain.custom_context) &&
+          Map.get(subagent.chain.custom_context, :config_name) ->
+        subagent.chain.custom_context.config_name
+
+      # Default to general-purpose
+      true ->
+        "general-purpose"
+    end
+  end
+
+  # Extract instructions from the subagent's initial user message
+  defp extract_instructions(subagent) do
+    if subagent.chain && is_list(subagent.chain.messages) do
+      case Enum.find(subagent.chain.messages, &(&1.role == :user)) do
+        nil -> nil
+        %{content: content} when is_binary(content) -> content
+        %{content: parts} when is_list(parts) -> extract_text_from_parts(parts)
+        _ -> nil
+      end
+    else
+      nil
+    end
+  end
+
+  defp extract_text_from_parts(parts) do
+    parts
+    |> Enum.filter(&(Map.get(&1, :type) == :text))
+    |> Enum.map_join("\n", &Map.get(&1, :content, ""))
+    |> case do
+      "" -> nil
+      text -> text
+    end
+  end
+
+  # Extract tools from the subagent's chain as maps for UI display
+  # Returns list of maps with :name, :description, :parameters, :async fields
+  defp extract_tools(subagent) do
+    if subagent.chain && is_list(subagent.chain.tools) do
+      Enum.map(subagent.chain.tools, fn tool ->
+        # Handle both Function structs and other tool types
+        case tool do
+          %{name: name, description: desc} = t ->
+            %{
+              name: name,
+              description: desc,
+              parameters: extract_parameters(t),
+              async: Map.get(t, :async, false)
+            }
+
+          %{function: %{name: name, description: desc} = f} ->
+            %{
+              name: name,
+              description: desc,
+              parameters: extract_parameters(f),
+              async: Map.get(f, :async, false)
+            }
+
+          %{name: name} when is_binary(name) ->
+            %{name: name, description: nil, parameters: [], async: false}
+
+          _ ->
+            %{name: inspect(tool), description: nil, parameters: [], async: false}
+        end
+      end)
+    else
+      []
+    end
+  end
+
+  # Extract parameters from a tool/function for UI display
+  defp extract_parameters(%{parameters: params}) when is_list(params) do
+    Enum.map(params, fn param ->
+      %{
+        name: Map.get(param, :name, "unknown"),
+        description: Map.get(param, :description, ""),
+        required: Map.get(param, :required, false)
+      }
+    end)
+  end
+
+  defp extract_parameters(_), do: []
+
+  # Extract middleware from the subagent's chain custom_context
+  # Returns list of middleware entries (MiddlewareEntry structs) for UI display
+  defp extract_middleware(subagent) do
+    if subagent.chain && is_map(subagent.chain.custom_context) do
+      Map.get(subagent.chain.custom_context, :parent_middleware, [])
+    else
+      []
+    end
+  end
+
+  # Get the model name from the subagent's chain
+  defp get_model_name(subagent) do
+    if subagent.chain && subagent.chain.llm do
+      subagent.chain.llm.__struct__
+      |> Module.split()
+      |> List.last()
+    else
+      "Unknown"
+    end
   end
 end

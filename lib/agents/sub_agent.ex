@@ -819,18 +819,44 @@ defmodule LangChain.Agents.SubAgent do
 
   SubAgents get the default middleware stack but with SubAgent middleware
   removed to prevent nesting (subagents can't spawn sub-subagents).
+
+  This function handles middleware in all formats:
+  - Raw module atoms (e.g., `LangChain.Agents.Middleware.SubAgent`)
+  - Raw tuples (e.g., `{LangChain.Agents.Middleware.SubAgent, opts}`)
+  - Initialized MiddlewareEntry structs (from `agent.middleware`)
   """
   def subagent_middleware_stack(default_middleware, additional_middleware \\ []) do
     # Remove SubAgent middleware to prevent nesting
-    filtered =
-      Enum.reject(default_middleware, fn
-        {LangChain.Agents.Middleware.SubAgent, _} -> true
-        LangChain.Agents.Middleware.SubAgent -> true
-        _ -> false
-      end)
+    filtered = Enum.reject(default_middleware, &is_subagent_middleware?/1)
 
     filtered ++ additional_middleware
   end
+
+  @doc """
+  Check if a middleware spec refers to the SubAgent middleware.
+
+  Handles all middleware formats: raw modules, tuples, and MiddlewareEntry structs.
+  """
+  @spec is_subagent_middleware?(any()) :: boolean()
+  def is_subagent_middleware?(middleware) do
+    extract_middleware_module(middleware) == LangChain.Agents.Middleware.SubAgent
+  end
+
+  @doc """
+  Extract the module from any middleware format.
+
+  Returns the middleware module regardless of whether the input is:
+  - A raw module atom
+  - A {module, opts} tuple
+  - A MiddlewareEntry struct
+
+  Returns nil for unrecognized formats.
+  """
+  @spec extract_middleware_module(any()) :: module() | nil
+  def extract_middleware_module(%LangChain.Agents.MiddlewareEntry{module: module}), do: module
+  def extract_middleware_module({module, _opts}) when is_atom(module), do: module
+  def extract_middleware_module(module) when is_atom(module), do: module
+  def extract_middleware_module(_), do: nil
 
   ## Private Functions
 

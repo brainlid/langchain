@@ -770,6 +770,145 @@ defmodule LangChain.Agents.SubAgentTest do
       result = SubAgent.subagent_middleware_stack(default_middleware, [])
       assert result == [{SomeMiddleware, []}]
     end
+
+    test "filters out SubAgent middleware from MiddlewareEntry structs" do
+      # Create initialized middleware list (as it would be in agent.middleware)
+      {:ok, agent} =
+        Agent.new(%{
+          model: test_model(),
+          middleware: [
+            LangChain.Agents.Middleware.TodoList,
+            LangChain.Agents.Middleware.SubAgent,
+            LangChain.Agents.Middleware.FileSystem
+          ]
+        })
+
+      # agent.middleware is now a list of MiddlewareEntry structs
+      assert Enum.all?(agent.middleware, &match?(%MiddlewareEntry{}, &1))
+
+      result = SubAgent.subagent_middleware_stack(agent.middleware)
+
+      # SubAgent middleware should be filtered out
+      refute Enum.any?(result, fn
+        %MiddlewareEntry{module: LangChain.Agents.Middleware.SubAgent} -> true
+        _ -> false
+      end)
+
+      # Other middleware should remain
+      assert Enum.any?(result, fn
+        %MiddlewareEntry{module: LangChain.Agents.Middleware.TodoList} -> true
+        _ -> false
+      end)
+
+      assert Enum.any?(result, fn
+        %MiddlewareEntry{module: LangChain.Agents.Middleware.FileSystem} -> true
+        _ -> false
+      end)
+
+      # Should have 2 items (TodoList and FileSystem) - SubAgent filtered out
+      # Note: Agent.new adds other default middleware, so we check for at least these
+      assert length(result) >= 2
+
+      # Verify NO SubAgent middleware in any format
+      refute Enum.any?(result, &SubAgent.is_subagent_middleware?/1)
+    end
+
+    test "filters out SubAgent middleware from mixed formats" do
+      # Mix of raw specs and MiddlewareEntry structs
+      middleware_entry = %MiddlewareEntry{
+        id: LangChain.Agents.Middleware.SubAgent,
+        module: LangChain.Agents.Middleware.SubAgent,
+        config: %{}
+      }
+
+      default_middleware = [
+        {LangChain.Agents.Middleware.TodoList, []},
+        middleware_entry,
+        LangChain.Agents.Middleware.FileSystem
+      ]
+
+      result = SubAgent.subagent_middleware_stack(default_middleware)
+
+      # SubAgent should be filtered out
+      assert length(result) == 2
+      refute Enum.any?(result, &SubAgent.is_subagent_middleware?/1)
+    end
+  end
+
+  describe "is_subagent_middleware?/1" do
+    test "returns true for raw SubAgent module" do
+      assert SubAgent.is_subagent_middleware?(LangChain.Agents.Middleware.SubAgent)
+    end
+
+    test "returns true for SubAgent tuple" do
+      assert SubAgent.is_subagent_middleware?({LangChain.Agents.Middleware.SubAgent, []})
+      assert SubAgent.is_subagent_middleware?({LangChain.Agents.Middleware.SubAgent, [opt: 1]})
+    end
+
+    test "returns true for SubAgent MiddlewareEntry struct" do
+      entry = %MiddlewareEntry{
+        id: LangChain.Agents.Middleware.SubAgent,
+        module: LangChain.Agents.Middleware.SubAgent,
+        config: %{}
+      }
+
+      assert SubAgent.is_subagent_middleware?(entry)
+    end
+
+    test "returns false for other middleware modules" do
+      refute SubAgent.is_subagent_middleware?(LangChain.Agents.Middleware.TodoList)
+      refute SubAgent.is_subagent_middleware?({LangChain.Agents.Middleware.TodoList, []})
+    end
+
+    test "returns false for other MiddlewareEntry structs" do
+      entry = %MiddlewareEntry{
+        id: LangChain.Agents.Middleware.TodoList,
+        module: LangChain.Agents.Middleware.TodoList,
+        config: %{}
+      }
+
+      refute SubAgent.is_subagent_middleware?(entry)
+    end
+
+    test "returns false for unknown types" do
+      refute SubAgent.is_subagent_middleware?("string")
+      refute SubAgent.is_subagent_middleware?(123)
+      refute SubAgent.is_subagent_middleware?(%{})
+    end
+  end
+
+  describe "extract_middleware_module/1" do
+    test "extracts module from raw atom" do
+      assert SubAgent.extract_middleware_module(LangChain.Agents.Middleware.TodoList) ==
+               LangChain.Agents.Middleware.TodoList
+    end
+
+    test "extracts module from tuple" do
+      assert SubAgent.extract_middleware_module({LangChain.Agents.Middleware.TodoList, []}) ==
+               LangChain.Agents.Middleware.TodoList
+
+      assert SubAgent.extract_middleware_module(
+               {LangChain.Agents.Middleware.FileSystem, [opt: 1]}
+             ) ==
+               LangChain.Agents.Middleware.FileSystem
+    end
+
+    test "extracts module from MiddlewareEntry struct" do
+      entry = %MiddlewareEntry{
+        id: LangChain.Agents.Middleware.TodoList,
+        module: LangChain.Agents.Middleware.TodoList,
+        config: %{some: "config"}
+      }
+
+      assert SubAgent.extract_middleware_module(entry) == LangChain.Agents.Middleware.TodoList
+    end
+
+    test "returns nil for unknown formats" do
+      assert SubAgent.extract_middleware_module("string") == nil
+      assert SubAgent.extract_middleware_module(123) == nil
+      assert SubAgent.extract_middleware_module(%{}) == nil
+      assert SubAgent.extract_middleware_module([]) == nil
+    end
   end
 
   describe "new_from_config/1" do

@@ -993,4 +993,190 @@ defmodule LangChain.Agents.Middleware.SubAgentTest do
       assert result == "Custom tool: Tool result!"
     end
   end
+
+  describe "dynamic general-purpose subagent middleware filtering" do
+    test "dynamic general-purpose subagent does not have task tool" do
+      # This integration test verifies that when a general-purpose subagent is created,
+      # it does NOT inherit the SubAgent middleware (and thus doesn't have the "task" tool).
+      # This prevents recursive sub-agent spawning which could lead to resource exhaustion.
+
+      agent_id = "parent-#{System.unique_integer([:positive])}"
+      model = test_model()
+
+      # Start supervision tree
+      {:ok, _sup} =
+        start_supervised({
+          SubAgentsDynamicSupervisor,
+          agent_id: agent_id
+        })
+
+      # Create a parent agent with SubAgent middleware enabled
+      # This simulates the real-world scenario where a parent agent has the task tool
+      {:ok, parent_agent} =
+        Agent.new(%{
+          agent_id: agent_id,
+          model: model,
+          base_system_prompt: "Parent agent with SubAgent capability",
+          middleware: [
+            TodoList,
+            FileSystem,
+            {SubAgentMiddleware, [model: model, middleware: [], subagents: []]}
+          ]
+        })
+
+      # Verify parent HAS SubAgent middleware (and thus the task tool)
+      parent_has_subagent_middleware =
+        Enum.any?(parent_agent.middleware, fn entry ->
+          entry.module == SubAgentMiddleware
+        end)
+
+      assert parent_has_subagent_middleware, "Parent should have SubAgent middleware"
+
+      parent_has_task_tool = Enum.any?(parent_agent.tools, fn tool -> tool.name == "task" end)
+      assert parent_has_task_tool, "Parent should have task tool"
+
+      # Now simulate what happens when we create a dynamic general-purpose subagent:
+      # 1. The parent's middleware (MiddlewareEntry structs) is passed as parent_middleware
+      # 2. subagent_middleware_stack filters out SubAgent middleware
+      # 3. The filtered middleware is converted to raw specs and used to create the subagent
+
+      # Step 1: parent_middleware comes from parent_agent.middleware
+      parent_middleware = parent_agent.middleware
+
+      # Step 2: Filter out SubAgent middleware (this is what the fix addresses)
+      filtered_middleware = SubAgent.subagent_middleware_stack(parent_middleware, [])
+
+      # Verify SubAgent middleware was filtered out
+      subagent_middleware_present =
+        Enum.any?(filtered_middleware, fn mw ->
+          SubAgent.is_subagent_middleware?(mw)
+        end)
+
+      refute subagent_middleware_present,
+             "SubAgent middleware should be filtered out of subagent's middleware"
+
+      # Step 3: Convert to raw specs (as done in start_dynamic_subagent)
+      raw_middleware_specs = LangChain.Agents.MiddlewareEntry.to_raw_specs(filtered_middleware)
+
+      # Step 4: Create the subagent with filtered middleware
+      {:ok, subagent} =
+        Agent.new(
+          %{
+            model: model,
+            base_system_prompt: "I am a general-purpose subagent",
+            middleware: raw_middleware_specs
+          },
+          replace_default_middleware: true
+        )
+
+      # Verify the subagent does NOT have SubAgent middleware
+      subagent_has_subagent_middleware =
+        Enum.any?(subagent.middleware, fn entry ->
+          entry.module == SubAgentMiddleware
+        end)
+
+      refute subagent_has_subagent_middleware,
+             "Subagent should NOT have SubAgent middleware"
+
+      # CRITICAL: Verify the subagent does NOT have the "task" tool
+      subagent_has_task_tool = Enum.any?(subagent.tools, fn tool -> tool.name == "task" end)
+
+      refute subagent_has_task_tool,
+             "Subagent should NOT have task tool - this would allow recursive sub-agent spawning"
+
+      # Verify the subagent still has other expected tools (from non-filtered middleware)
+      subagent_has_todo_tool =
+        Enum.any?(subagent.tools, fn tool -> tool.name == "write_todos" end)
+
+      assert subagent_has_todo_tool, "Subagent should have write_todos tool from TodoList middleware"
+    end
+
+    test "verifies SubAgent middleware is filtered from MiddlewareEntry format in real execution" do
+      # This test exercises the actual start_subagent function to ensure
+      # MiddlewareEntry-format middleware is properly filtered
+
+      agent_id = "parent-#{System.unique_integer([:positive])}"
+      model = test_model()
+
+      {:ok, _sup} =
+        start_supervised({
+          SubAgentsDynamicSupervisor,
+          agent_id: agent_id
+        })
+
+      # Create parent agent with SubAgent middleware
+      {:ok, parent_agent} =
+        Agent.new(%{
+          agent_id: agent_id,
+          model: model,
+          base_system_prompt: "Parent",
+          middleware: [
+            TodoList,
+            {SubAgentMiddleware, [model: model, middleware: [], subagents: []]}
+          ]
+        })
+
+      # Verify parent middleware is in MiddlewareEntry format
+      assert Enum.all?(parent_agent.middleware, &match?(%LangChain.Agents.MiddlewareEntry{}, &1))
+
+      # Initialize SubAgent middleware config
+      {:ok, middleware_config} =
+        SubAgentMiddleware.init(
+          agent_id: agent_id,
+          model: model,
+          middleware: parent_agent.middleware,
+          subagents: []
+        )
+
+      # Capture what agent gets created by mocking LLMChain.run
+      # and inspecting the chain that's passed to it
+      LLMChain
+      |> stub(:run, fn chain ->
+        # Store reference to verify later
+        # We can't easily capture the chain here, but we can verify
+        # the chain doesn't have the task tool by checking tools
+        has_task_tool = Enum.any?(chain.tools, fn tool -> tool.name == "task" end)
+
+        # Use Process dictionary to communicate result
+        Process.put(:subagent_has_task_tool, has_task_tool)
+
+        assistant_message = Message.new_assistant!(%{content: "Done"})
+
+        {:ok,
+         Map.merge(chain, %{
+           messages: chain.messages ++ [assistant_message],
+           last_message: assistant_message,
+           needs_response: false
+         })}
+      end)
+
+      context = %{
+        agent_id: agent_id,
+        state: State.new!(%{messages: []}),
+        parent_middleware: parent_agent.middleware,
+        parent_tools: parent_agent.tools
+      }
+
+      args = %{
+        "instructions" => "Test task",
+        "subagent_type" => "general-purpose"
+      }
+
+      # Execute subagent creation
+      {:ok, _result} =
+        SubAgentMiddleware.start_subagent(
+          "Test task",
+          "general-purpose",
+          args,
+          context,
+          middleware_config
+        )
+
+      # Verify the chain that was used for the subagent did NOT have the task tool
+      subagent_has_task_tool = Process.get(:subagent_has_task_tool)
+
+      refute subagent_has_task_tool,
+             "Subagent's LLMChain should NOT have task tool - SubAgent middleware should be filtered"
+    end
+  end
 end
