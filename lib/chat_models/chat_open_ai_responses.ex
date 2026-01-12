@@ -345,7 +345,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         end)
         |> Enum.reverse()
     }
-    |> Utils.conditionally_add_to_map(:include, openai.include)
+    |> Utils.conditionally_add_to_map(:include, get_include(openai.include))
     |> Utils.conditionally_add_to_map(:max_output_tokens, openai.max_output_tokens)
     |> Utils.conditionally_add_to_map(:previous_response_id, openai.previous_response_id)
     |> Utils.conditionally_add_to_map(:reasoning, ReasoningOptions.to_api_map(openai.reasoning))
@@ -410,6 +410,13 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
        do: %{"type" => "function", "name" => choice}
 
   defp get_tool_choice(%ChatOpenAIResponses{}), do: nil
+
+  defp get_include(%ChatOpenAIResponses{top_logprobs: top_logprobs, include: include})
+       when is_integer(top_logprobs) and top_logprobs > 0 do
+    include ++ ["message.output_text.logprobs"]
+  end
+
+  defp get_include(%ChatOpenAIResponses{include: include}), do: include
 
   @spec for_api(
           struct(),
