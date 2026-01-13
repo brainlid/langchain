@@ -719,6 +719,9 @@ defmodule LangChain.ChatModels.ChatMistralAI do
   def retry_on_fallback?(%LangChainError{type: "rate_limit_exceeded"}), do: true
   def retry_on_fallback?(%LangChainError{type: "timeout"}), do: true
   def retry_on_fallback?(%LangChainError{type: "too_many_requests"}), do: true
+  def retry_on_fallback?(%LangChainError{type: "unreachable_backend"}), do: true
+  def retry_on_fallback?(%LangChainError{type: "server_error"}), do: true
+  def retry_on_fallback?(%LangChainError{type: "service_unavailable"}), do: true
   def retry_on_fallback?(_), do: false
 
   @doc """
