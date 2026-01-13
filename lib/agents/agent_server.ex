@@ -1280,6 +1280,10 @@ defmodule LangChain.Agents.AgentServer do
     # Track presence for agent discovery (unconditional when configured)
     server_state = track_presence(server_state)
 
+    # Subscribe to presence topic to detect when viewers leave
+    # This enables smart shutdown when agent is idle and all viewers leave
+    subscribe_to_presence_topic(server_state)
+
     {:noreply, server_state}
   end
 
@@ -1697,6 +1701,22 @@ defmodule LangChain.Agents.AgentServer do
     {:noreply, stop_supervisor(server_state)}
   end
 
+  # Handle presence_diff broadcasts from Phoenix.Presence
+  # When viewers leave and the agent is idle, check if we should shutdown
+  # Match on the broadcast struct fields without requiring the struct definition
+  @impl true
+  def handle_info(
+        %{__struct__: Phoenix.Socket.Broadcast, event: "presence_diff", payload: diff},
+        server_state
+      ) do
+    # Only act on leaves when agent is idle
+    if server_state.status == :idle and map_size(diff.leaves) > 0 do
+      maybe_shutdown_if_no_viewers(server_state)
+    end
+
+    {:noreply, server_state}
+  end
+
   @impl true
   def handle_info({:middleware_message, middleware_id, message}, server_state) do
     # Emit telemetry event
@@ -1927,6 +1947,23 @@ defmodule LangChain.Agents.AgentServer do
 
       _ ->
         # Presence tracking disabled, use standard inactivity timeout
+        :ok
+    end
+  end
+
+  # Subscribe to the presence topic to receive presence_diff broadcasts
+  # This allows the agent to detect when viewers leave while idle
+  defp subscribe_to_presence_topic(%ServerState{presence_config: nil}), do: :ok
+
+  defp subscribe_to_presence_topic(%ServerState{presence_config: %{enabled: false}}), do: :ok
+
+  defp subscribe_to_presence_topic(%ServerState{} = server_state) do
+    case {server_state.pubsub, server_state.presence_config} do
+      {{_pubsub_mod, pubsub_name}, %{topic: topic}} ->
+        Phoenix.PubSub.subscribe(pubsub_name, topic)
+        Logger.debug("Agent #{server_state.agent.agent_id} subscribed to presence topic: #{topic}")
+
+      _ ->
         :ok
     end
   end
