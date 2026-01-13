@@ -373,6 +373,31 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
       assert delta.status == :incomplete
     end
 
+    test "handles delta with finish_reason='tool_calls' but no tool_calls", %{model: model} do
+      # This simulates the Mistral streaming bug where finish_reason="tool_calls"
+      # but no actual tool_calls are present in the delta
+      response = %{
+        "choices" => [
+          %{
+            "delta" => %{
+              "role" => "assistant",
+              "content" => "some malformed content"
+            },
+            "finish_reason" => "tool_calls",
+            "index" => 0
+          }
+        ]
+      }
+
+      assert [{:error, %LangChainError{} = error}] =
+               ChatMistralAI.do_process_response(model, response)
+
+      assert error.type == "invalid_tool_calls"
+
+      assert error.message =~
+               "Mistral API returned finish_reason='tool_calls' in delta but tool_calls is empty"
+    end
+
     test "handles API error messages", %{model: model} do
       response = %{
         "error" => %{
@@ -501,6 +526,30 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
 
       assert error.type == "changeset"
       assert error.message =~ "invalid json"
+    end
+
+    test "handles empty tool_calls array when finish_reason is 'tool_calls'", %{
+      model: model
+    } do
+      response = %{
+        "choices" => [
+          %{
+            "message" => %{
+              "role" => "assistant",
+              "content" => "some content",
+              "tool_calls" => []
+            },
+            "finish_reason" => "tool_calls",
+            "index" => 0
+          }
+        ]
+      }
+
+      assert [{:error, %LangChainError{} = error}] =
+               ChatMistralAI.do_process_response(model, response)
+
+      assert error.type == "invalid_tool_calls"
+      assert error.message =~ "finish_reason='tool_calls' but tool_calls is empty"
     end
   end
 
