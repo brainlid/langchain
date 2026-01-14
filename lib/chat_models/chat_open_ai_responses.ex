@@ -345,7 +345,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         end)
         |> Enum.reverse()
     }
-    |> Utils.conditionally_add_to_map(:include, get_include(openai.include))
+    |> Utils.conditionally_add_to_map(:include, get_include(openai))
     |> Utils.conditionally_add_to_map(:max_output_tokens, openai.max_output_tokens)
     |> Utils.conditionally_add_to_map(:previous_response_id, openai.previous_response_id)
     |> Utils.conditionally_add_to_map(:reasoning, ReasoningOptions.to_api_map(openai.reasoning))
@@ -646,9 +646,9 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     %{
       id: opts.id,
       type: "reasoning",
-      content: opts.content,
-      encrypted_content: opts.encrypted_content,
-      status: opts.status,
+      content: opts[:content],
+      encrypted_content: opts[:encrypted_content],
+      status: opts[:status],
       summary: opts.summary
     }
   end
@@ -1307,8 +1307,44 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     end
   end
 
-  # Handle reasoning output from gpt-5 and o-series models
-  # We can either ignore it or store it as metadata
+  # Reasoning content part conversion
+  defp content_item_to_content_part_or_tool_call(%{
+         "type" => "reasoning",
+         "id" => reasoning_id,
+         "summary" => summary
+       }) do
+    # Store reasoning as an unsupported content part for now
+    # This preserves the information without breaking the flow
+    case ContentPart.new(%{
+           type: :unsupported,
+           options: %{
+             id: reasoning_id,
+             summary: summary,
+             type: "reasoning"
+           }
+         }) do
+      {:ok, %ContentPart{} = part} ->
+        part
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        reason = Utils.changeset_error_to_string(changeset)
+        Logger.warning("Failed to process reasoning output. Reason: #{reason}")
+        # Return a minimal content part to avoid breaking the flow
+        ContentPart.text!("")
+    end
+  end
+
+  # Assistant role for LLM messages with thinking content
+  def for_api(
+        %ChatOpenAIResponses{} = model,
+        %Message{role: :assistant, content: [%{type: :thinking}] = content} = msg
+      ) do
+    native_tool_calls_for_api(model, content) ++
+      content_parts_for_api(model, content) ++
+      Enum.map(msg.tool_calls || [], &for_api(model, &1))
+  end
+
+  # Handle reasoning content in response
   defp content_item_to_content_part_or_tool_call(%{
          "type" => "reasoning",
          "id" => reasoning_id,
@@ -1318,7 +1354,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
          "summary" => summary
        }) do
     # Store reasoning as a thinking content part for now
-    # This preserves the information and surface it with no message wrapping
+    # This preserves the information and surfaces it with no message wrapping
     case ContentPart.new(%{
            type: :thinking,
            options: %{

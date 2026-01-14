@@ -1608,7 +1608,8 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
         content: "",
         index: 0,
         role: :assistant,
-        status: :incomplete
+        status: :incomplete,
+        metadata: %{logprobs: nil}
       }
 
       [%MessageDelta{} = delta_1] = ChatOpenAI.do_process_response(model, msg_1)
@@ -1618,7 +1619,8 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
         content: "Hello",
         index: 0,
         role: :unknown,
-        status: :incomplete
+        status: :incomplete,
+        metadata: %{logprobs: nil}
       }
 
       [%MessageDelta{} = delta_2] = ChatOpenAI.do_process_response(model, msg_2)
@@ -1628,7 +1630,8 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
         content: nil,
         index: 0,
         role: :unknown,
-        status: :complete
+        status: :complete,
+        metadata: %{logprobs: nil}
       }
 
       [%MessageDelta{} = delta_10] = ChatOpenAI.do_process_response(model, msg_10)
