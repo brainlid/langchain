@@ -2,7 +2,7 @@ defmodule LangChain.Agents.Agent do
   @moduledoc """
   Main entry point for creating Agents.
 
-  A DeepAgent is an AI agent with composable middleware that provides
+  A Agent is an AI agent with composable middleware that provides
   capabilities like TODO management, filesystem operations, and task delegation.
 
   ## Basic Usage
@@ -59,6 +59,9 @@ defmodule LangChain.Agents.Agent do
     field :middleware, {:array, :any}, default: [], virtual: true
     field :name, :string
     field :filesystem_scope, :any, virtual: true
+    # Timeout for async tool execution. Integer (ms) or :infinity.
+    # Overrides application config when set. See LLMChain docs for details.
+    field :async_tool_timeout, :any, virtual: true
   end
 
   @type t :: %Agent{}
@@ -71,12 +74,13 @@ defmodule LangChain.Agents.Agent do
     :tools,
     :middleware,
     :name,
-    :filesystem_scope
+    :filesystem_scope,
+    :async_tool_timeout
   ]
   @required_fields [:agent_id, :model]
 
   @doc """
-  Create a new DeepAgent.
+  Create a new Agent.
 
   ## Attributes
 
@@ -87,6 +91,9 @@ defmodule LangChain.Agents.Agent do
   - `:middleware` - List of middleware modules/configs (default: [])
   - `:name` - Agent name for identification (default: nil)
   - `:filesystem_scope` - Optional scope key for referencing an independently-running filesystem (e.g., `{:user, 123}`, `{:project, 456}`)
+  - `:async_tool_timeout` - Timeout for parallel tool execution. Integer (milliseconds) or
+    `:infinity`. Overrides application-level config. See LLMChain module docs for details.
+    (default: uses application config or `:infinity`)
 
   ## Options
 
@@ -180,7 +187,7 @@ defmodule LangChain.Agents.Agent do
   end
 
   @doc """
-  Create a new DeepAgent, raising on error.
+  Create a new Agent, raising on error.
   """
   def new!(attrs \\ %{}, opts \\ []) do
     case new(attrs, opts) do
@@ -657,18 +664,29 @@ defmodule LangChain.Agents.Agent do
           messages
       end
 
+    chain_config = %{
+      llm: agent.model,
+      verbose: false,
+      # verbose: true,
+      custom_context: %{
+        state: state,
+        # Make parent agent's middleware and tools available to tools (e.g., SubAgent middleware)
+        parent_middleware: agent.middleware,
+        parent_tools: agent.tools
+      }
+    }
+
+    # Add async_tool_timeout if explicitly set on agent
+    chain_config =
+      if agent.async_tool_timeout do
+        Map.put(chain_config, :async_tool_timeout, agent.async_tool_timeout)
+      else
+        chain_config
+      end
+
     chain =
-      LLMChain.new!(%{
-        llm: agent.model,
-        verbose: false,
-        # verbose: true,
-        custom_context: %{
-          state: state,
-          # Make parent agent's middleware and tools available to tools (e.g., SubAgent middleware)
-          parent_middleware: agent.middleware,
-          parent_tools: agent.tools
-        }
-      })
+      chain_config
+      |> LLMChain.new!()
       |> LLMChain.add_tools(agent.tools)
       |> LLMChain.add_messages(messages_with_system)
       |> maybe_add_callbacks(callbacks)

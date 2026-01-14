@@ -182,6 +182,58 @@ defmodule LangChain.Chains.LLMChain do
 
   See `LangChain.Chains.LLMChain.run_until_tool_used/3` for more details.
 
+  ## Async Tool Timeout
+
+  When tools are defined with `async: true`, they execute in parallel using Elixir's
+  `Task.async/1`. The `async_tool_timeout` setting controls how long to wait for
+  these parallel tasks to complete.
+
+  **Important**: This timeout only applies to tools with `async: true`. Synchronous
+  tools (the default) run inline and are not subject to this timeout.
+
+  ### Default Behavior
+
+  The default is `:infinity`, meaning async tools can run indefinitely. This is
+  appropriate for human-interactive agents where the user can manually stop
+  execution if needed.
+
+  For automated or unattended agents, consider setting a finite timeout.
+
+  ### Configuration Levels
+
+  Timeout can be configured at three levels (highest precedence first):
+
+  1. **Chain-level** - Set when creating an LLMChain:
+
+         LLMChain.new!(%{
+           llm: model,
+           async_tool_timeout: 10 * 60 * 1000  # 10 minutes
+         })
+
+  2. **Application-level** - Set in config/runtime.exs:
+
+         config :langchain, async_tool_timeout: 5 * 60 * 1000  # 5 minutes
+
+  3. **Library default** - `:infinity` (no timeout)
+
+  ### When to Use Async Tools
+
+  Mark a tool as `async: true` when:
+  - The operation may take significant time (web requests, file processing)
+  - Multiple such operations can run in parallel safely
+  - The tool has no side effects that depend on ordering
+
+      Function.new!(%{
+        name: "web_search",
+        async: true,  # Enables parallel execution
+        function: fn args, ctx -> ... end
+      })
+
+  ### Timeout Values
+
+  - `:infinity` - No timeout (wait forever)
+  - Integer - Milliseconds (e.g., `300_000` for 5 minutes)
+
   """
   use Ecto.Schema
   import Ecto.Changeset
@@ -248,15 +300,22 @@ defmodule LangChain.Chains.LLMChain do
     field :needs_response, :boolean, default: false
 
     # The timeout for async tool execution. An async Task execution is used when
-    # running a tool that has `async: true` set. Time is in milliseconds.
-    field :async_tool_timeout, :integer
+    # running a tool that has `async: true` set. Accepts an integer (milliseconds)
+    # or :infinity. Defaults to :infinity for human-interactive use cases.
+    # Configure via Application.get_env(:langchain, :async_tool_timeout).
+    field :async_tool_timeout, :any, virtual: true
 
     # A list of maps for callback handlers
     field :callbacks, {:array, :map}, default: []
   end
 
-  # default to 2 minutes
-  @default_task_await_timeout 2 * 60 * 1000
+  # default to infinity for human-interactive use cases
+  @default_task_await_timeout :infinity
+
+  # Get the async tool timeout from application config or use library default
+  defp default_async_tool_timeout do
+    Application.get_env(:langchain, :async_tool_timeout, @default_task_await_timeout)
+  end
 
   @type t :: %LLMChain{}
 
@@ -1275,7 +1334,7 @@ defmodule LangChain.Chains.LLMChain do
             execute_tool_call(call, func, verbose: verbose, context: use_context)
           end)
         end)
-        |> Task.await_many(chain.async_tool_timeout || @default_task_await_timeout)
+        |> Task.await_many(chain.async_tool_timeout || default_async_tool_timeout())
 
       sync_results =
         Enum.map(grouped[:sync], fn {call, func} ->
