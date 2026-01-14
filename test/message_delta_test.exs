@@ -1010,6 +1010,54 @@ defmodule LangChain.MessageDeltaTest do
                }
              }
     end
+
+    test "handles content list with unknown types like reference" do
+      # Mistral sometimes returns content as a list with reference and text types
+      # This should not crash and should extract the text content
+      primary = %MessageDelta{
+        role: :assistant,
+        merged_content: [],
+        status: :incomplete
+      }
+
+      delta = %MessageDelta{
+        role: :assistant,
+        content: [
+          %{"reference_ids" => [], "type" => "reference"},
+          %{"text" => "{\"entries", "type" => "text"}
+        ],
+        index: 0,
+        status: :incomplete
+      }
+
+      merged = MessageDelta.merge_delta(primary, delta)
+
+      # Should have extracted the text content and skipped the reference
+      assert merged.merged_content == [ContentPart.text!("{\"entries")]
+    end
+
+    test "handles content list with only unknown types" do
+      # When content list has only unknown types, should not crash
+      primary = %MessageDelta{
+        role: :assistant,
+        merged_content: [ContentPart.text!("existing")],
+        status: :incomplete
+      }
+
+      delta = %MessageDelta{
+        role: :assistant,
+        content: [
+          %{"reference_ids" => ["ref1"], "type" => "reference"}
+        ],
+        index: 0,
+        status: :incomplete
+      }
+
+      merged = MessageDelta.merge_delta(primary, delta)
+
+      # Should preserve existing content and skip unknown types
+      assert merged.merged_content == [ContentPart.text!("existing")]
+    end
   end
 
   describe "merge_deltas/2" do
@@ -1363,6 +1411,100 @@ defmodule LangChain.MessageDeltaTest do
 
       {:error, reason} = MessageDelta.to_message(delta)
       assert reason == "tool_calls: arguments: invalid json"
+    end
+
+    test "allows normal content that starts with lowercase words" do
+      # Normal content should not be flagged as malformed tool call
+      delta = %LangChain.MessageDelta{
+        role: :assistant,
+        merged_content: [
+          ContentPart.text!("get started with the project by reading the documentation")
+        ],
+        tool_calls: [],
+        status: :complete
+      }
+
+      {:ok, %Message{} = msg} = MessageDelta.to_message(delta)
+      assert msg.role == :assistant
+    end
+
+    test "allows content with JSON that doesn't look like tool call" do
+      # Content with JSON but not tool call pattern
+      delta = %LangChain.MessageDelta{
+        role: :assistant,
+        merged_content: [
+          ContentPart.text!("Here is the data: {\"name\": \"test\"}")
+        ],
+        tool_calls: [],
+        status: :complete
+      }
+
+      {:ok, %Message{} = msg} = MessageDelta.to_message(delta)
+      assert msg.role == :assistant
+    end
+
+    test "allows valid tool calls without triggering malformed detection" do
+      # When tool_calls is properly populated, don't check content
+      delta = %LangChain.MessageDelta{
+        role: :assistant,
+        merged_content: [],
+        tool_calls: [
+          ToolCall.new!(%{
+            call_id: "call_123",
+            name: "get_festival",
+            arguments: "{\"id\": \"abc-123\"}"
+          })
+        ],
+        status: :complete
+      }
+
+      {:ok, %Message{} = msg} = MessageDelta.to_message(delta)
+      assert msg.role == :assistant
+      assert length(msg.tool_calls) == 1
+    end
+
+    test "rejects empty assistant message with no content and no tool_calls" do
+      # Mistral sometimes returns completely empty assistant messages
+      # which violate conversation flow rules
+      delta = %LangChain.MessageDelta{
+        role: :assistant,
+        merged_content: [],
+        tool_calls: [],
+        status: :complete
+      }
+
+      {:error, reason} = MessageDelta.to_message(delta)
+      assert reason =~ "Empty assistant message"
+    end
+
+    test "rejects empty assistant message with nil content and nil tool_calls" do
+      delta = %LangChain.MessageDelta{
+        role: :assistant,
+        merged_content: nil,
+        tool_calls: nil,
+        status: :complete
+      }
+
+      {:error, reason} = MessageDelta.to_message(delta)
+      assert reason =~ "Empty assistant message"
+    end
+
+    test "handles merged_content with nil values from index padding" do
+      # merged_content can have nil values when content parts arrive at
+      # non-sequential indices (e.g., thinking at 0, text at 2, leaving 1 as nil)
+      delta = %LangChain.MessageDelta{
+        role: :assistant,
+        merged_content: [
+          ContentPart.text!("Hello"),
+          nil,
+          ContentPart.text!("World")
+        ],
+        tool_calls: [],
+        status: :complete
+      }
+
+      {:ok, %Message{} = msg} = MessageDelta.to_message(delta)
+      assert msg.role == :assistant
     end
   end
 
