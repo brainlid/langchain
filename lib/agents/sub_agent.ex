@@ -299,6 +299,10 @@ defmodule LangChain.Agents.SubAgent do
 
   Returns updated SubAgent struct with new status.
 
+  ## Options
+
+  - `:callbacks` - Map of LLMChain callbacks (e.g., `%{on_message_processed: fn...}`)
+
   ## Examples
 
       case SubAgent.execute(subagent) do
@@ -311,15 +315,29 @@ defmodule LangChain.Agents.SubAgent do
         {:error, error_subagent} ->
           # error_subagent.error contains the error
       end
+
+      # With callbacks for real-time message broadcasting
+      callbacks = %{
+        on_message_processed: fn _chain, message ->
+          broadcast_message(message)
+        end
+      }
+      SubAgent.execute(subagent, callbacks: callbacks)
   """
-  def execute(%SubAgent{status: :idle, chain: chain, interrupt_on: interrupt_on} = subagent) do
+  def execute(subagent, opts \\ [])
+
+  def execute(%SubAgent{status: :idle, chain: chain, interrupt_on: interrupt_on} = subagent, opts) do
+    callbacks = Keyword.get(opts, :callbacks, %{})
     Logger.debug("SubAgent #{subagent.id} executing")
 
     # Update status to running
     running_subagent = %{subagent | status: :running}
 
+    # Add callbacks to chain once at entry point (not in the loop)
+    chain_with_callbacks = maybe_add_callbacks(chain, callbacks)
+
     # Execute with HITL support using execution loop
-    case execute_chain_with_hitl(chain, interrupt_on) do
+    case execute_chain_with_hitl(chain_with_callbacks, interrupt_on) do
       {:ok, final_chain} ->
         # Chain completed successfully (needs_response = false)
         Logger.debug("SubAgent #{subagent.id} completed successfully")
@@ -355,7 +373,7 @@ defmodule LangChain.Agents.SubAgent do
     end
   end
 
-  def execute(%SubAgent{status: status}) do
+  def execute(%SubAgent{status: status}, _opts) do
     {:error, {:invalid_status, status, :expected_idle}}
   end
 
@@ -369,6 +387,8 @@ defmodule LangChain.Agents.SubAgent do
 
   - `subagent` - SubAgent with status :interrupted
   - `decisions` - List of decision maps from human reviewer
+  - `opts` - Optional keyword list with:
+    - `:callbacks` - Map of LLMChain callbacks (e.g., `%{on_message_processed: fn...}`)
 
   ## Returns
 
@@ -394,6 +414,8 @@ defmodule LangChain.Agents.SubAgent do
           # Handle error
       end
   """
+  def resume(subagent, decisions, opts \\ [])
+
   def resume(
         %SubAgent{
           status: :interrupted,
@@ -401,8 +423,10 @@ defmodule LangChain.Agents.SubAgent do
           interrupt_on: interrupt_on,
           interrupt_data: interrupt_data
         } = subagent,
-        decisions
+        decisions,
+        opts
       ) do
+    callbacks = Keyword.get(opts, :callbacks, %{})
     Logger.debug("SubAgent #{subagent.id} resuming with #{length(decisions)} decisions")
 
     # Update status to running
@@ -430,11 +454,14 @@ defmodule LangChain.Agents.SubAgent do
         action_requests
       )
 
+    # Add callbacks to chain once at entry point (not in the loop)
+    chain_with_callbacks = maybe_add_callbacks(chain, callbacks)
+
     # Use LLMChain to execute tool calls with decisions
     # This handles approve/edit/reject logic and creates tool result messages
     chain_with_results =
       LLMChain.execute_tool_calls_with_decisions(
-        chain,
+        chain_with_callbacks,
         all_tool_calls,
         full_decisions
       )
@@ -476,7 +503,7 @@ defmodule LangChain.Agents.SubAgent do
     end
   end
 
-  def resume(%SubAgent{status: status}, _decisions) do
+  def resume(%SubAgent{status: status}, _decisions, _opts) do
     {:error, {:invalid_status, status, :expected_interrupted}}
   end
 
@@ -573,6 +600,9 @@ defmodule LangChain.Agents.SubAgent do
 
   # Execute chain with HITL interrupt detection
   # This mirrors Agent.execute_chain_with_hitl from agent.ex
+  #
+  # Note: Callbacks should be added to the chain BEFORE calling this function.
+  # This function does not manage callbacks - they persist on the chain across iterations.
   defp execute_chain_with_hitl(chain, interrupt_on) do
     # Call LLM to get response
     case LLMChain.run(chain) do
@@ -601,6 +631,13 @@ defmodule LangChain.Agents.SubAgent do
       {:error, _chain, reason} ->
         {:error, reason}
     end
+  end
+
+  # Helper to conditionally add callbacks to chain
+  defp maybe_add_callbacks(chain, callbacks) when callbacks == %{} or is_nil(callbacks), do: chain
+
+  defp maybe_add_callbacks(chain, callbacks) when is_map(callbacks) do
+    LLMChain.add_callback(chain, callbacks)
   end
 
   ## Nested Modules (Config and Compiled)

@@ -267,8 +267,11 @@ defmodule LangChain.Agents.SubAgentServer do
     # Broadcast status change to running
     broadcast_subagent_event(server_state, {:subagent_status_changed, :running})
 
-    # Delegate to SubAgent.execute
-    case SubAgent.execute(subagent) do
+    # Build callbacks for real-time message broadcasting
+    callbacks = build_llm_callbacks(server_state)
+
+    # Delegate to SubAgent.execute with callbacks
+    case SubAgent.execute(subagent, callbacks: callbacks) do
       {:ok, completed_subagent} ->
         # Extract result - returns {:ok, result} or {:error, reason}
         case SubAgent.extract_result(completed_subagent) do
@@ -326,8 +329,11 @@ defmodule LangChain.Agents.SubAgentServer do
     # Broadcast status change to running (resuming)
     broadcast_subagent_event(server_state, {:subagent_status_changed, :running})
 
-    # Delegate to SubAgent.resume
-    case SubAgent.resume(subagent, decisions) do
+    # Build callbacks for real-time message broadcasting
+    callbacks = build_llm_callbacks(server_state)
+
+    # Delegate to SubAgent.resume with callbacks
+    case SubAgent.resume(subagent, decisions, callbacks: callbacks) do
       {:ok, completed_subagent} ->
         Logger.debug("SubAgentServer #{subagent.id} completed after resume")
 
@@ -403,6 +409,16 @@ defmodule LangChain.Agents.SubAgentServer do
 
   ## Private Helper Functions
 
+  # Build callbacks for LLMChain that broadcast message events to the parent's debug PubSub.
+  # This enables real-time visibility into sub-agent execution.
+  defp build_llm_callbacks(%ServerState{} = server_state) do
+    %{
+      on_message_processed: fn _chain, message ->
+        broadcast_subagent_event(server_state, {:subagent_llm_message, message})
+      end
+    }
+  end
+
   # Broadcast an event via the parent AgentServer's debug topic.
   # Events are wrapped as {:subagent, subagent_id, event} and the AgentServer
   # will wrap them as {:agent, {:debug, {:subagent, ...}}} for consistent routing.
@@ -433,6 +449,8 @@ defmodule LangChain.Agents.SubAgentServer do
   end
 
   # Build metadata for subagent_completed event
+  # Note: messages are no longer included here as they are now broadcast in real-time
+  # via {:subagent_llm_message, message} events during execution
   defp build_completed_metadata(%ServerState{subagent: subagent, started_at: started_at}, result) do
     duration_ms =
       if started_at do
@@ -441,6 +459,7 @@ defmodule LangChain.Agents.SubAgentServer do
         nil
       end
 
+    # Get messages for token usage extraction only
     messages =
       if subagent.chain do
         subagent.chain.messages
@@ -454,7 +473,6 @@ defmodule LangChain.Agents.SubAgentServer do
     %{
       id: subagent.id,
       result: result,
-      messages: messages,
       duration_ms: duration_ms,
       token_usage: token_usage
     }
