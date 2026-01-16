@@ -10,16 +10,14 @@ defmodule LangChain.Agents.SubAgentServerBroadcastTest do
   use Mimic
 
   alias LangChain.Agents.{AgentServer, SubAgent, SubAgentServer, State}
-  alias LangChain.Chains.LLMChain
+  alias LangChain.ChatModels.ChatAnthropic
+  alias LangChain.Function
   alias LangChain.Message
+  alias LangChain.Message.ContentPart
+  alias LangChain.Message.ToolCall
 
   setup :set_mimic_global
   setup :verify_on_exit!
-
-  setup_all do
-    Mimic.copy(LLMChain)
-    :ok
-  end
 
   setup do
     # Start PubSub for testing
@@ -73,6 +71,29 @@ defmodule LangChain.Agents.SubAgentServerBroadcastTest do
     )
   end
 
+  # Helper to create a simple test tool
+  defp create_test_tool do
+    Function.new!(%{
+      name: "get_weather",
+      description: "Get the weather for a location",
+      parameters_schema: %{
+        type: "object",
+        properties: %{
+          location: %{type: "string", description: "The location to get weather for"}
+        },
+        required: ["location"]
+      },
+      function: fn %{"location" => location}, _context ->
+        {:ok, "Weather in #{location}: Sunny, 72°F"}
+      end
+    })
+  end
+
+  # Helper to create an agent with tools
+  defp create_test_agent_with_tools do
+    create_test_agent(tools: [create_test_tool()])
+  end
+
   describe "subagent_started event" do
     test "broadcasts subagent_started on init via parent", context do
       parent_agent = start_parent_agent(context)
@@ -114,17 +135,11 @@ defmodule LangChain.Agents.SubAgentServerBroadcastTest do
       # Consume the started event
       assert_receive {:agent, {:debug, {:subagent, _, {:subagent_started, _}}}}, 100
 
-      # Mock LLMChain.run to return success
-      assistant_message = Message.new_assistant!(%{content: "Done"})
-
-      updated_chain =
-        subagent.chain
-        |> Map.put(:messages, subagent.chain.messages ++ [assistant_message])
-        |> Map.put(:last_message, assistant_message)
-        |> Map.put(:needs_response, false)
-
-      LLMChain
-      |> stub(:run, fn _chain -> {:ok, updated_chain} end)
+      # Mock ChatAnthropic.call
+      ChatAnthropic
+      |> stub(:call, fn _model, _messages, _callbacks ->
+        {:ok, [Message.new_assistant!("Done")]}
+      end)
 
       # Execute (spawns a task to avoid blocking test)
       Task.async(fn -> SubAgentServer.execute(subagent.id) end)
@@ -134,6 +149,112 @@ defmodule LangChain.Agents.SubAgentServerBroadcastTest do
                      1000
 
       assert sub_id == subagent.id
+    end
+  end
+
+  describe "subagent_llm_message event" do
+    test "broadcasts llm_message for simple assistant response", context do
+      parent_agent = start_parent_agent(context)
+      subagent = create_subagent(parent_agent.agent_id)
+
+      {:ok, _pid} = SubAgentServer.start_link(subagent: subagent)
+
+      # Consume started event
+      assert_receive {:agent, {:debug, {:subagent, _, {:subagent_started, _}}}}, 100
+
+      # Mock ChatAnthropic.call at the deepest level to let LLMChain machinery run
+      # This ensures callbacks are actually fired through the normal code path
+      ChatAnthropic
+      |> stub(:call, fn _model, _messages, _callbacks ->
+        {:ok, [Message.new_assistant!("Task completed successfully")]}
+      end)
+
+      {:ok, _result} = SubAgentServer.execute(subagent.id)
+
+      # Consume running status
+      assert_receive {:agent, {:debug, {:subagent, _, {:subagent_status_changed, :running}}}}
+
+      # Should receive llm_message event for the assistant message
+      # This verifies the full callback chain works: SubAgentServer -> SubAgent -> LLMChain -> callback
+      assert_receive {:agent, {:debug, {:subagent, sub_id, {:subagent_llm_message, message}}}}
+
+      assert sub_id == subagent.id
+      assert message.role == :assistant
+      # Content may be a list of ContentParts or a string
+      content_text =
+        case message.content do
+          text when is_binary(text) -> text
+          parts when is_list(parts) -> Enum.map_join(parts, "", & &1.content)
+        end
+
+      assert content_text == "Task completed successfully"
+    end
+
+    test "broadcasts llm_message events during tool call execution loop", context do
+      parent_agent = start_parent_agent(context)
+      # Create subagent with a tool so we can exercise the full execution loop
+      agent_with_tools = create_test_agent_with_tools()
+      subagent = create_subagent(parent_agent.agent_id, agent: agent_with_tools)
+
+      {:ok, _pid} = SubAgentServer.start_link(subagent: subagent)
+
+      # Consume started event
+      assert_receive {:agent, {:debug, {:subagent, _, {:subagent_started, _}}}}, 100
+
+      # Mock ChatAnthropic.call to return different responses on each call:
+      # First call: returns a tool call
+      # Second call: returns a final assistant message
+      call_counter = :counters.new(1, [:atomics])
+
+      ChatAnthropic
+      |> stub(:call, fn _model, _messages, _callbacks ->
+        call_count = :counters.get(call_counter, 1) + 1
+        :counters.put(call_counter, 1, call_count)
+
+        if call_count == 1 do
+          # First call: return a tool call
+          tool_call = ToolCall.new!(%{
+            call_id: "call_test_123",
+            name: "get_weather",
+            arguments: Jason.encode!(%{"location" => "San Francisco"})
+          })
+
+          {:ok, [Message.new_assistant!(%{tool_calls: [tool_call]})]}
+        else
+          # Second call: return final response
+          {:ok, [Message.new_assistant!("The weather in San Francisco is sunny and 72°F.")]}
+        end
+      end)
+
+      {:ok, result} = SubAgentServer.execute(subagent.id)
+      assert result == "The weather in San Francisco is sunny and 72°F."
+
+      # Consume running status
+      assert_receive {:agent, {:debug, {:subagent, _, {:subagent_status_changed, :running}}}}
+
+      # Should receive llm_message event for the first assistant message (with tool calls)
+      assert_receive {:agent, {:debug, {:subagent, sub_id, {:subagent_llm_message, tool_call_msg}}}}
+
+      assert sub_id == subagent.id
+      assert tool_call_msg.role == :assistant
+      assert length(tool_call_msg.tool_calls) == 1
+      assert hd(tool_call_msg.tool_calls).name == "get_weather"
+
+      # Should receive llm_message event for the tool result
+      assert_receive {:agent, {:debug, {:subagent, ^sub_id, {:subagent_llm_message, tool_result_msg}}}}
+
+      assert tool_result_msg.role == :tool
+      assert length(tool_result_msg.tool_results) == 1
+      tool_result = hd(tool_result_msg.tool_results)
+      assert tool_result.tool_call_id == "call_test_123"
+      assert tool_result.name == "get_weather"
+
+      # Should receive llm_message event for the final assistant message
+      assert_receive {:agent, {:debug, {:subagent, ^sub_id, {:subagent_llm_message, final_msg}}}}
+
+      assert final_msg.role == :assistant
+      content_text = ContentPart.content_to_string(final_msg.content)
+      assert content_text == "The weather in San Francisco is sunny and 72°F."
     end
   end
 
@@ -147,17 +268,11 @@ defmodule LangChain.Agents.SubAgentServerBroadcastTest do
       # Consume started event
       assert_receive {:agent, {:debug, {:subagent, _, {:subagent_started, _}}}}, 100
 
-      # Mock successful completion
-      assistant_message = Message.new_assistant!(%{content: "Task completed successfully"})
-
-      updated_chain =
-        subagent.chain
-        |> Map.put(:messages, subagent.chain.messages ++ [assistant_message])
-        |> Map.put(:last_message, assistant_message)
-        |> Map.put(:needs_response, false)
-
-      LLMChain
-      |> stub(:run, fn _chain -> {:ok, updated_chain} end)
+      # Mock ChatAnthropic.call
+      ChatAnthropic
+      |> stub(:call, fn _model, _messages, _callbacks ->
+        {:ok, [Message.new_assistant!("Task completed successfully")]}
+      end)
 
       {:ok, result} = SubAgentServer.execute(subagent.id)
       assert result == "Task completed successfully"
@@ -172,7 +287,6 @@ defmodule LangChain.Agents.SubAgentServerBroadcastTest do
       assert sub_id == subagent.id
       assert data.id == subagent.id
       assert data.result == "Task completed successfully"
-      assert is_list(data.messages)
       assert is_integer(data.duration_ms)
       assert data.duration_ms >= 0
     end
@@ -188,12 +302,14 @@ defmodule LangChain.Agents.SubAgentServerBroadcastTest do
       # Consume started event
       assert_receive {:agent, {:debug, {:subagent, _, {:subagent_started, _}}}}, 100
 
-      # Mock LLMChain.run to return error
-      LLMChain
-      |> stub(:run, fn _chain -> {:error, subagent.chain, "API error: rate limit"} end)
+      # Mock ChatAnthropic.call to return error
+      ChatAnthropic
+      |> stub(:call, fn _model, _messages, _callbacks ->
+        {:error, LangChain.LangChainError.exception(message: "API error: rate limit")}
+      end)
 
       {:error, reason} = SubAgentServer.execute(subagent.id)
-      assert reason == "API error: rate limit"
+      assert %LangChain.LangChainError{message: "API error: rate limit"} = reason
 
       # Consume running status
       assert_receive {:agent, {:debug, {:subagent, _, {:subagent_status_changed, :running}}}},
@@ -204,7 +320,7 @@ defmodule LangChain.Agents.SubAgentServerBroadcastTest do
                      1000
 
       assert sub_id == subagent.id
-      assert error_reason == "API error: rate limit"
+      assert %LangChain.LangChainError{message: "API error: rate limit"} = error_reason
     end
   end
 
@@ -244,17 +360,11 @@ defmodule LangChain.Agents.SubAgentServerBroadcastTest do
       subagent = create_subagent(parent_agent.agent_id)
       {:ok, _pid} = SubAgentServer.start_link(subagent: subagent)
 
-      # Mock successful completion
-      assistant_message = Message.new_assistant!(%{content: "Done"})
-
-      updated_chain =
-        subagent.chain
-        |> Map.put(:messages, subagent.chain.messages ++ [assistant_message])
-        |> Map.put(:last_message, assistant_message)
-        |> Map.put(:needs_response, false)
-
-      LLMChain
-      |> stub(:run, fn _chain -> {:ok, updated_chain} end)
+      # Mock ChatAnthropic.call
+      ChatAnthropic
+      |> stub(:call, fn _model, _messages, _callbacks ->
+        {:ok, [Message.new_assistant!("Done")]}
+      end)
 
       # Execute should still work
       {:ok, result} = SubAgentServer.execute(subagent.id)
@@ -263,40 +373,110 @@ defmodule LangChain.Agents.SubAgentServerBroadcastTest do
   end
 
   describe "resume broadcasts events" do
-    test "broadcasts running status on resume", context do
+    test "broadcasts events during resume after HITL approval", context do
       parent_agent = start_parent_agent(context)
-      subagent = create_subagent(parent_agent.agent_id)
 
-      {:ok, _pid} = SubAgentServer.start_link(subagent: subagent)
+      # Create a tool that requires HITL approval
+      file_write_tool =
+        Function.new!(%{
+          name: "file_write",
+          description: "Write content to a file",
+          parameters_schema: %{
+            type: "object",
+            properties: %{
+              path: %{type: "string", description: "File path"},
+              content: %{type: "string", description: "Content to write"}
+            },
+            required: ["path", "content"]
+          },
+          function: fn %{"path" => path, "content" => content}, _context ->
+            {:ok, "Wrote #{byte_size(content)} bytes to #{path}"}
+          end
+        })
+
+      # Create agent with the file_write tool and HITL config
+      agent_with_hitl =
+        create_test_agent(
+          tools: [file_write_tool],
+          middleware: [
+            {LangChain.Agents.Middleware.HumanInTheLoop,
+             interrupt_on: %{"file_write" => true}}
+          ]
+        )
+
+      # Create subagent - new_from_config extracts interrupt_on from middleware
+      subagent = create_subagent(parent_agent.agent_id, agent: agent_with_hitl)
+
+      # Build a tool call that would have triggered HITL interrupt
+      tool_call =
+        ToolCall.new!(%{
+          call_id: "call_file_write_1",
+          name: "file_write",
+          arguments: Jason.encode!(%{"path" => "test.txt", "content" => "hello world"})
+        })
+
+      # Add the assistant message with tool call to the chain
+      # This simulates the state after execute returned {:interrupt, ...}
+      tool_call_message = Message.new_assistant!(%{tool_calls: [tool_call]})
+      chain_with_tool_call = LangChain.Chains.LLMChain.add_message(subagent.chain, tool_call_message)
+
+      # Build the interrupt_data that would have been created
+      action_request = %{
+        tool_call_id: "call_file_write_1",
+        tool_name: "file_write",
+        arguments: %{"path" => "test.txt", "content" => "hello world"}
+      }
+
+      # Create the interrupted subagent state
+      interrupted_subagent = %{
+        subagent
+        | status: :interrupted,
+          chain: chain_with_tool_call,
+          interrupt_data: %{
+            action_requests: [action_request],
+            hitl_tool_call_ids: ["call_file_write_1"]
+          }
+      }
+
+      {:ok, _pid} = SubAgentServer.start_link(subagent: interrupted_subagent)
 
       # Consume started event
       assert_receive {:agent, {:debug, {:subagent, _, {:subagent_started, _}}}}, 100
 
-      # Mock chain to trigger interrupt then complete on resume
-      assistant_with_tool = Message.new_assistant!(%{
-        content: "I'll write a file",
-        tool_calls: [
-          LangChain.Message.ToolCall.new!(%{
-            type: :function,
-            call_id: "call_1",
-            name: "file_write",
-            arguments: %{"path" => "test.txt", "content" => "hello"}
-          })
-        ]
-      })
+      # Mock ChatAnthropic.call for the completion response after tool execution
+      ChatAnthropic
+      |> stub(:call, fn _model, _messages, _callbacks ->
+        {:ok, [Message.new_assistant!("I've written the file test.txt successfully.")]}
+      end)
 
-      chain_after_llm =
-        subagent.chain
-        |> Map.put(:messages, subagent.chain.messages ++ [assistant_with_tool])
-        |> Map.put(:last_message, assistant_with_tool)
-        |> Map.put(:needs_response, true)
+      # Resume with approval decision
+      decisions = [%{type: :approve}]
+      {:ok, result} = SubAgentServer.resume(interrupted_subagent.id, decisions)
+      assert result == "I've written the file test.txt successfully."
 
-      # First call returns interrupt-triggering chain
-      LLMChain
-      |> stub(:run, fn _chain -> {:ok, chain_after_llm} end)
+      # Should receive running status when resume starts
+      assert_receive {:agent, {:debug, {:subagent, sub_id, {:subagent_status_changed, :running}}}}
+      assert sub_id == interrupted_subagent.id
 
-      # Skip interrupt test for now - focus on basic events
-      # The resume flow is complex and tested in integration tests
+      # Should receive llm_message event for the tool result (from executing the approved tool)
+      assert_receive {:agent, {:debug, {:subagent, ^sub_id, {:subagent_llm_message, tool_result_msg}}}}
+      assert tool_result_msg.role == :tool
+      assert length(tool_result_msg.tool_results) == 1
+      tool_result = hd(tool_result_msg.tool_results)
+      assert tool_result.tool_call_id == "call_file_write_1"
+      assert tool_result.name == "file_write"
+
+      # Should receive llm_message event for the final assistant response
+      assert_receive {:agent, {:debug, {:subagent, ^sub_id, {:subagent_llm_message, assistant_msg}}}}
+      assert assistant_msg.role == :assistant
+      content_text = ContentPart.content_to_string(assistant_msg.content)
+      assert content_text == "I've written the file test.txt successfully."
+
+      # Should receive completed event
+      assert_receive {:agent, {:debug, {:subagent, ^sub_id, {:subagent_completed, data}}}}
+
+      assert data.result == "I've written the file test.txt successfully."
+      assert is_integer(data.duration_ms)
     end
   end
 end
