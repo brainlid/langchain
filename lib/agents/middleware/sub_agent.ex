@@ -15,12 +15,25 @@ defmodule LangChain.Agents.Middleware.SubAgent do
   - **Token Efficiency**: Parent only sees final result, not SubAgent's internal work
   - **Process Isolation**: SubAgents run as supervised processes
 
-  ## Configuration
+  ## Configuration Options
 
-  The middleware accepts a list of SubAgent configurations:
+  The middleware accepts these options:
+
+    * `:subagents` - List of `SubAgent.Config` or `SubAgent.Compiled` configurations
+      for pre-defined subagents. Defaults to `[]`.
+
+    * `:model` - The chat model for dynamic subagents. Required.
+
+    * `:middleware` - Additional middleware to add to subagents. Defaults to `[]`.
+
+    * `:block_middleware` - List of middleware modules to exclude from general-purpose
+      subagent inheritance. Defaults to `[]`. See "Middleware Filtering" below.
+
+  ## Configuration Example
 
       middleware = [
         {SubAgent, [
+          model: model,
           subagents: [
             SubAgent.Config.new!(%{
               name: "researcher",
@@ -33,9 +46,53 @@ defmodule LangChain.Agents.Middleware.SubAgent do
               description: "Write code for specific tasks",
               agent: pre_built_coder_agent
             })
-          ]
+          ],
+          block_middleware: [ConversationTitle, Summarization]
         ]}
       ]
+
+  ## Middleware Filtering
+
+  When a general-purpose subagent is created, it inherits the parent agent's middleware
+  stack with certain exclusions:
+
+  1. **SubAgent middleware is ALWAYS excluded** - This prevents recursive subagent
+     nesting which could lead to resource exhaustion. You cannot override this.
+
+  2. **Blocked middleware is excluded** - Any modules listed in `:block_middleware`
+     are filtered out before passing to the subagent.
+
+  ### Example: Blocking Unnecessary Middleware
+
+  Some middleware is inappropriate for short-lived subagents:
+
+      {SubAgent, [
+        model: model,
+        subagents: [],
+
+        # These middleware modules won't be inherited by general-purpose subagents
+        block_middleware: [
+          LangChain.Agents.Middleware.ConversationTitle,  # Subagents don't need titles
+          LangChain.Agents.Middleware.Summarization       # Short tasks don't need summarization
+        ]
+      ]}
+
+  ### Pre-configured Subagents
+
+  The `:block_middleware` option only affects **general-purpose** subagents created
+  dynamically via the `task` tool. Pre-configured subagents (defined in `:subagents`)
+  use their own explicitly defined middleware and are NOT affected by this option.
+
+      {SubAgent, [
+        subagents: [
+          # This subagent defines its own middleware - block_middleware doesn't apply
+          SubAgent.Config.new!(%{
+            name: "researcher",
+            middleware: [ConversationTitle]  # Explicitly included
+          })
+        ],
+        block_middleware: [ConversationTitle]  # Only affects general-purpose
+      ]}
 
   ## Usage Example
 
@@ -97,6 +154,10 @@ defmodule LangChain.Agents.Middleware.SubAgent do
     agent_id = Keyword.fetch!(opts, :agent_id)
     model = Keyword.fetch!(opts, :model)
     middleware = Keyword.get(opts, :middleware, [])
+    block_middleware = Keyword.get(opts, :block_middleware, [])
+
+    # Validate block_middleware entries (warn about potential issues)
+    validate_block_middleware(block_middleware, middleware)
 
     # Build agent lookup map from subagent configs
     # Returns {:ok, %{"researcher" => agent_struct, "coder" => agent_struct}}
@@ -123,7 +184,8 @@ defmodule LangChain.Agents.Middleware.SubAgent do
           agent_map: agent_map_with_general,
           descriptions: descriptions_with_general,
           agent_id: agent_id,
-          model: model
+          model: model,
+          block_middleware: block_middleware
         }
 
         {:ok, config}
@@ -417,8 +479,13 @@ defmodule LangChain.Agents.Middleware.SubAgent do
     # Validate system prompt
     case validate_system_prompt(system_prompt) do
       :ok ->
-        # Filter middleware to remove SubAgent (prevent nesting)
-        filtered_middleware = SubAgent.subagent_middleware_stack(parent_middleware, [])
+        # Filter middleware using block list from config
+        filtered_middleware =
+          SubAgent.subagent_middleware_stack(
+            parent_middleware,
+            [],
+            block_middleware: Map.get(config, :block_middleware, [])
+          )
 
         # Convert MiddlewareEntry structs back to raw middleware specs
         # parent_middleware contains initialized MiddlewareEntry structs, but Agent.new!
@@ -498,6 +565,37 @@ defmodule LangChain.Agents.Middleware.SubAgent do
   end
 
   defp validate_system_prompt(_), do: {:error, "system_prompt must be a string"}
+
+  # Validate block_middleware entries and log warnings for potential issues
+  # Note: We only validate that entries are atoms and loaded modules.
+  # We don't check if they're in the parent middleware stack because that
+  # information isn't available at init time - the actual parent middleware
+  # is passed via context when creating subagents at runtime.
+  defp validate_block_middleware(block_list, _middleware) when is_list(block_list) do
+    for module <- block_list do
+      cond do
+        not is_atom(module) ->
+          Logger.warning(
+            "[SubAgent] block_middleware entry #{inspect(module)} is not a module atom"
+          )
+
+        not Code.ensure_loaded?(module) ->
+          Logger.warning(
+            "[SubAgent] block_middleware module #{inspect(module)} is not loaded"
+          )
+
+        true ->
+          :ok
+      end
+    end
+
+    :ok
+  end
+
+  defp validate_block_middleware(block_list, _parent_middleware) do
+    Logger.warning("[SubAgent] block_middleware must be a list, got: #{inspect(block_list)}")
+    :ok
+  end
 
   # Basic safety check for prompt injection patterns
   defp contains_potential_injection?(text) do

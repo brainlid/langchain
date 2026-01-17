@@ -852,19 +852,49 @@ defmodule LangChain.Agents.SubAgent do
   end
 
   @doc """
-  Get the middleware stack for a subagent.
+  Build a middleware stack for subagents, filtering out blocked middleware.
 
-  SubAgents get the default middleware stack but with SubAgent middleware
-  removed to prevent nesting (subagents can't spawn sub-subagents).
+  The SubAgent middleware itself is ALWAYS filtered out to prevent recursive
+  subagent nesting, regardless of whether it appears in the block list.
 
   This function handles middleware in all formats:
   - Raw module atoms (e.g., `LangChain.Agents.Middleware.SubAgent`)
   - Raw tuples (e.g., `{LangChain.Agents.Middleware.SubAgent, opts}`)
   - Initialized MiddlewareEntry structs (from `agent.middleware`)
+
+  ## Options
+
+    * `:block_middleware` - List of middleware modules to exclude from inheritance.
+      These modules will not be passed to general-purpose subagents. Defaults to `[]`.
+
+  ## Examples
+
+      # Default behavior: only SubAgent middleware is filtered
+      subagent_middleware_stack(parent_middleware)
+
+      # Block additional middleware from being inherited
+      subagent_middleware_stack(parent_middleware, [],
+        block_middleware: [ConversationTitle, Summarization]
+      )
+
+      # Add additional middleware while blocking others
+      subagent_middleware_stack(parent_middleware, [CustomMiddleware],
+        block_middleware: [ConversationTitle]
+      )
+
   """
-  def subagent_middleware_stack(default_middleware, additional_middleware \\ []) do
-    # Remove SubAgent middleware to prevent nesting
-    filtered = Enum.reject(default_middleware, &is_subagent_middleware?/1)
+  @spec subagent_middleware_stack(list(), list(), keyword()) :: list()
+  def subagent_middleware_stack(default_middleware, additional_middleware \\ [], opts \\ []) do
+    block_list = Keyword.get(opts, :block_middleware, [])
+
+    # Always block SubAgent middleware + user-specified modules
+    # Use MapSet for O(1) lookup performance
+    blocked_modules = MapSet.new([LangChain.Agents.Middleware.SubAgent | block_list])
+
+    filtered =
+      Enum.reject(default_middleware, fn mw ->
+        extract_middleware_module(mw) in blocked_modules
+      end)
 
     filtered ++ additional_middleware
   end

@@ -1179,4 +1179,183 @@ defmodule LangChain.Agents.Middleware.SubAgentTest do
              "Subagent's LLMChain should NOT have task tool - SubAgent middleware should be filtered"
     end
   end
+
+  describe "block_middleware configuration" do
+    alias LangChain.Agents.MiddlewareEntry
+
+    test "init/1 accepts block_middleware option" do
+      opts = [
+        agent_id: "parent",
+        model: test_model(),
+        middleware: [TodoList, FileSystem],
+        subagents: [],
+        block_middleware: [FileSystem]
+      ]
+
+      assert {:ok, config} = SubAgentMiddleware.init(opts)
+      assert [FileSystem] = config.block_middleware
+    end
+
+    test "init/1 defaults block_middleware to empty list" do
+      opts = [
+        agent_id: "parent",
+        model: test_model(),
+        middleware: [],
+        subagents: []
+      ]
+
+      assert {:ok, config} = SubAgentMiddleware.init(opts)
+      assert [] = config.block_middleware
+    end
+
+    test "dynamic subagent excludes blocked middleware" do
+      # This test verifies end-to-end that blocked middleware doesn't appear
+      # in the general-purpose subagent's tool set
+
+      agent_id = "parent-block-test-#{System.unique_integer([:positive])}"
+      model = test_model()
+
+      {:ok, _sup} =
+        start_supervised({
+          SubAgentsDynamicSupervisor,
+          agent_id: agent_id
+        })
+
+      # Create parent with multiple middleware, blocking FileSystem
+      {:ok, parent_agent} =
+        Agent.new(
+          %{
+            agent_id: agent_id,
+            model: model,
+            base_system_prompt: "Parent agent",
+            middleware: [
+              TodoList,
+              {FileSystem, [root: "/tmp", agent_id: agent_id]},
+              {SubAgentMiddleware,
+               [
+                 model: model,
+                 middleware: [],
+                 subagents: [],
+                 block_middleware: [FileSystem]
+               ]}
+            ]
+          },
+          replace_default_middleware: true
+        )
+
+      # Verify parent has read_file tool (from FileSystem)
+      parent_tool_names = Enum.map(parent_agent.tools, & &1.name)
+      assert "read_file" in parent_tool_names
+      assert "write_todos" in parent_tool_names
+
+      # Simulate subagent creation flow
+      parent_middleware = parent_agent.middleware
+
+      # Get SubAgent middleware config to access block_middleware
+      subagent_entry =
+        Enum.find(parent_middleware, fn e ->
+          e.module == SubAgentMiddleware
+        end)
+
+      block_list = subagent_entry.config.block_middleware
+
+      # Filter with block list
+      filtered =
+        SubAgent.subagent_middleware_stack(parent_middleware, [],
+          block_middleware: block_list
+        )
+
+      raw_specs = MiddlewareEntry.to_raw_specs(filtered)
+
+      {:ok, subagent} =
+        Agent.new(
+          %{model: model, middleware: raw_specs},
+          replace_default_middleware: true
+        )
+
+      # Extract tool names for cleaner assertions
+      subagent_tool_names = Enum.map(subagent.tools, & &1.name)
+
+      # Verify expected tools present/absent
+      assert "write_todos" in subagent_tool_names, "TodoList middleware should be inherited"
+      refute "read_file" in subagent_tool_names, "FileSystem should be blocked"
+      refute "task" in subagent_tool_names, "SubAgent middleware should always be blocked"
+    end
+
+    test "pre-configured subagents are not affected by block_middleware" do
+      # Pre-configured subagents define their own middleware explicitly
+      # The block_middleware option should NOT affect them
+
+      agent_id = "parent-preconfigured-#{System.unique_integer([:positive])}"
+      model = test_model()
+
+      # Create a pre-configured subagent that explicitly includes FileSystem
+      preconfigured =
+        SubAgent.Config.new!(%{
+          name: "researcher",
+          description: "Research assistant",
+          system_prompt: "You are a researcher",
+          tools: [test_tool("research_tool")],
+          middleware: [{FileSystem, [root: "/tmp", agent_id: agent_id <> "-researcher"]}]
+        })
+
+      {:ok, _sup} =
+        start_supervised({
+          SubAgentsDynamicSupervisor,
+          agent_id: agent_id
+        })
+
+      # Parent blocks FileSystem, but pre-configured subagent has it
+      {:ok, parent_agent} =
+        Agent.new(
+          %{
+            agent_id: agent_id,
+            model: model,
+            middleware: [
+              {FileSystem, [root: "/tmp", agent_id: agent_id]},
+              {SubAgentMiddleware,
+               [
+                 model: model,
+                 middleware: [],
+                 subagents: [preconfigured],
+                 block_middleware: [FileSystem]
+               ]}
+            ]
+          },
+          replace_default_middleware: true
+        )
+
+      # Get the pre-built agent from the agent_map
+      subagent_entry =
+        Enum.find(parent_agent.middleware, fn e ->
+          e.module == SubAgentMiddleware
+        end)
+
+      researcher_agent = subagent_entry.config.agent_map["researcher"]
+      researcher_tool_names = Enum.map(researcher_agent.tools, & &1.name)
+
+      # Pre-configured subagent SHOULD have read_file despite block_middleware
+      # because it explicitly defined its own middleware
+      assert "read_file" in researcher_tool_names
+    end
+
+    test "validation logs warning for non-atom entry" do
+      import ExUnit.CaptureLog
+
+      opts = [
+        agent_id: "parent",
+        model: test_model(),
+        middleware: [],
+        subagents: [],
+        block_middleware: ["not_an_atom"]
+      ]
+
+      log =
+        capture_log(fn ->
+          {:ok, _config} = SubAgentMiddleware.init(opts)
+        end)
+
+      assert log =~ "not a module atom"
+    end
+  end
 end

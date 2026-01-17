@@ -835,6 +835,134 @@ defmodule LangChain.Agents.SubAgentTest do
     end
   end
 
+  describe "subagent_middleware_stack/3 with block_middleware option" do
+    alias LangChain.Agents.Middleware.SubAgent, as: SubAgentMW
+    alias LangChain.Agents.Middleware.TodoList
+    alias LangChain.Agents.Middleware.FileSystem
+
+    test "no block_middleware option behaves like original function" do
+      middleware = [
+        TodoList,
+        {FileSystem, [root: "/tmp"]},
+        {SubAgentMW, [model: test_model(), middleware: []]}
+      ]
+
+      result = SubAgent.subagent_middleware_stack(middleware, [])
+      modules = Enum.map(result, &SubAgent.extract_middleware_module/1)
+
+      assert [TodoList, FileSystem] = modules
+    end
+
+    test "empty block_middleware list behaves like no option" do
+      middleware = [TodoList, FileSystem, SubAgentMW]
+
+      result = SubAgent.subagent_middleware_stack(middleware, [], block_middleware: [])
+      modules = Enum.map(result, &SubAgent.extract_middleware_module/1)
+
+      assert [TodoList, FileSystem] = modules
+    end
+
+    test "single module in block_middleware is filtered" do
+      middleware = [
+        TodoList,
+        FileSystem,
+        SomeOtherMiddleware,
+        {SubAgentMW, []}
+      ]
+
+      result =
+        SubAgent.subagent_middleware_stack(middleware, [],
+          block_middleware: [SomeOtherMiddleware]
+        )
+
+      modules = Enum.map(result, &SubAgent.extract_middleware_module/1)
+
+      assert [TodoList, FileSystem] = modules
+    end
+
+    test "multiple modules in block_middleware are all filtered" do
+      middleware = [
+        TodoList,
+        SomeOtherMiddleware,
+        AnotherMiddleware,
+        FileSystem,
+        SubAgentMW
+      ]
+
+      result =
+        SubAgent.subagent_middleware_stack(middleware, [],
+          block_middleware: [SomeOtherMiddleware, AnotherMiddleware]
+        )
+
+      modules = Enum.map(result, &SubAgent.extract_middleware_module/1)
+
+      assert [TodoList, FileSystem] = modules
+    end
+
+    test "SubAgent middleware is always filtered even if not in block list" do
+      middleware = [TodoList, SubAgentMW, FileSystem]
+
+      # Block TodoList, but SubAgent middleware should also be filtered automatically
+      result =
+        SubAgent.subagent_middleware_stack(middleware, [],
+          block_middleware: [TodoList]
+        )
+
+      modules = Enum.map(result, &SubAgent.extract_middleware_module/1)
+
+      assert [FileSystem] = modules
+    end
+
+    test "blocking module not in stack has no effect" do
+      middleware = [TodoList, FileSystem, SubAgentMW]
+
+      result =
+        SubAgent.subagent_middleware_stack(middleware, [],
+          block_middleware: [SomeNonExistentMiddleware]
+        )
+
+      modules = Enum.map(result, &SubAgent.extract_middleware_module/1)
+
+      assert [TodoList, FileSystem] = modules
+    end
+
+    test "additional_middleware still appended after filtering" do
+      middleware = [TodoList, SomeOtherMiddleware, SubAgentMW]
+      additional = [CustomMiddleware]
+
+      result =
+        SubAgent.subagent_middleware_stack(middleware, additional,
+          block_middleware: [SomeOtherMiddleware]
+        )
+
+      modules = Enum.map(result, &SubAgent.extract_middleware_module/1)
+
+      assert [TodoList, CustomMiddleware] = modules
+    end
+
+    test "handles MiddlewareEntry structs in block filtering" do
+      # Simulate middleware that has been initialized (as MiddlewareEntry structs)
+      {:ok, agent} =
+        Agent.new(
+          %{
+            model: test_model(),
+            middleware: [TodoList, {FileSystem, [root: "/tmp", agent_id: "test"]}]
+          },
+          replace_default_middleware: true
+        )
+
+      # agent.middleware contains MiddlewareEntry structs
+      result =
+        SubAgent.subagent_middleware_stack(agent.middleware, [],
+          block_middleware: [FileSystem]
+        )
+
+      modules = Enum.map(result, &SubAgent.extract_middleware_module/1)
+
+      assert [TodoList] = modules
+    end
+  end
+
   describe "is_subagent_middleware?/1" do
     test "returns true for raw SubAgent module" do
       assert SubAgent.is_subagent_middleware?(LangChain.Agents.Middleware.SubAgent)
