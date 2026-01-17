@@ -436,12 +436,14 @@ defmodule LangChain.Agents.SubAgentServer do
   end
 
   # Build metadata for subagent_started event
+  # Sends initial_messages as-is - let the debugger handle extraction of
+  # system prompt and instructions for display
   defp build_started_metadata(subagent) do
     %{
       id: subagent.id,
       parent_id: subagent.parent_agent_id,
       name: get_subagent_name(subagent),
-      instructions: extract_instructions(subagent),
+      initial_messages: subagent.chain.messages || [],
       tools: extract_tools(subagent),
       middleware: extract_middleware(subagent),
       model: get_model_name(subagent)
@@ -505,30 +507,6 @@ defmodule LangChain.Agents.SubAgentServer do
       # Default to general-purpose
       true ->
         "general-purpose"
-    end
-  end
-
-  # Extract instructions from the subagent's initial user message
-  defp extract_instructions(subagent) do
-    if subagent.chain && is_list(subagent.chain.messages) do
-      case Enum.find(subagent.chain.messages, &(&1.role == :user)) do
-        nil -> nil
-        %{content: content} when is_binary(content) -> content
-        %{content: parts} when is_list(parts) -> extract_text_from_parts(parts)
-        _ -> nil
-      end
-    else
-      nil
-    end
-  end
-
-  defp extract_text_from_parts(parts) do
-    parts
-    |> Enum.filter(&(Map.get(&1, :type) == :text))
-    |> Enum.map_join("\n", &Map.get(&1, :content, ""))
-    |> case do
-      "" -> nil
-      text -> text
     end
   end
 
