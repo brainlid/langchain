@@ -113,7 +113,7 @@ defmodule LangChain.Agents.SubAgentServerBroadcastTest do
       assert is_binary(data.model)
     end
 
-    test "includes instructions in started metadata", context do
+    test "includes instructions in initial_messages in started metadata", context do
       parent_agent = start_parent_agent(context)
       instructions = "Research renewable energy impacts on climate"
       subagent = create_subagent(parent_agent.agent_id, instructions: instructions)
@@ -121,7 +121,12 @@ defmodule LangChain.Agents.SubAgentServerBroadcastTest do
       {:ok, _pid} = SubAgentServer.start_link(subagent: subagent)
 
       assert_receive {:agent, {:debug, {:subagent, _, {:subagent_started, data}}}}, 100
-      assert data.instructions == instructions
+      # Instructions are included as a user message in initial_messages
+      assert is_list(data.initial_messages)
+      user_message = Enum.find(data.initial_messages, fn msg -> msg.role == :user end)
+      assert user_message != nil
+      # Content is a list of ContentPart structs
+      assert instructions == ContentPart.parts_to_string(user_message.content)
     end
   end
 

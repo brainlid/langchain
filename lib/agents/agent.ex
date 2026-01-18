@@ -416,6 +416,9 @@ defmodule LangChain.Agents.Agent do
     callbacks = Keyword.get(opts, :callbacks)
 
     with {:ok, prepared_state} <- apply_before_model_hooks(state, agent.middleware) do
+      # Fire callback with post-middleware state (before LLM call)
+      fire_callback(callbacks, :on_after_middleware, [prepared_state])
+
       case execute_model(agent, prepared_state, callbacks) do
         {:ok, response_state} ->
           # Normal completion - run after_model hooks
@@ -616,6 +619,16 @@ defmodule LangChain.Agents.Agent do
           {:halt, {:error, reason}}
       end
     end)
+  end
+
+  defp fire_callback(callbacks, key, args) do
+    case callbacks do
+      %{^key => callback} when is_function(callback) ->
+        apply(callback, args)
+
+      _ ->
+        :ok
+    end
   end
 
   defp execute_model(%Agent{} = agent, %State{} = state, callbacks) do

@@ -1469,8 +1469,9 @@ defmodule LangChain.Agents.AgentServer do
     # But if manually adding assistant messages, we should also save them here
     maybe_save_and_broadcast_message(updated_server_state, message)
 
-    # Broadcast debug event for state update
-    broadcast_debug_event(updated_server_state, {:agent_state_update, new_state})
+    # Note: Debug event for user messages is NOT broadcast here.
+    # The authoritative state (with potential middleware modifications)
+    # will be broadcast via on_after_middleware callback when Agent.execute runs.
 
     {:reply, :ok, updated_server_state}
   end
@@ -1800,6 +1801,12 @@ defmodule LangChain.Agents.AgentServer do
   # Build callback handlers that forward LLM events via PubSub
   defp build_llm_callbacks(%ServerState{} = server_state) do
     %{
+      # Callback for post-middleware state (before LLM call)
+      # This broadcasts the prepared state (with middleware modifications) on the debug channel
+      on_after_middleware: fn prepared_state ->
+        broadcast_debug_event(server_state, {:after_middleware_state, prepared_state})
+      end,
+
       # Callback for streaming deltas (tokens as they arrive)
       on_llm_new_delta: fn _chain, deltas ->
         # deltas is a list of MessageDelta structs

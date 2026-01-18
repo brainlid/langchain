@@ -273,10 +273,15 @@ defmodule LangChain.Integration.DebugFlowTest do
           debug_pubsub: {Phoenix.PubSub, context.debug_pubsub_name}
         )
 
+      # Subscribe to standard topic to observe completion
+      std_topic = "agent_server:#{agent.agent_id}"
+      Phoenix.PubSub.subscribe(context.pubsub_name, std_topic)
+
       # Mock LLM response
       assistant_message = Message.new_assistant!(%{content: "First response"})
+
       LLMChain
-      |> stub(:run, fn chain ->
+      |> expect(:run, 2, fn chain, _opts ->
         updated_chain =
           chain
           |> Map.put(:messages, chain.messages ++ [assistant_message])
@@ -286,35 +291,27 @@ defmodule LangChain.Integration.DebugFlowTest do
         {:ok, updated_chain}
       end)
 
-      # Agent does some work BEFORE debugger connects
+      # Agent does some work BEFORE debugger connects to debug topic
       AgentServer.add_message(agent.agent_id, Message.new_user!("Hello"))
-      Process.sleep(200)
 
-      # NOW connect debugger (late)
+      # Wait for execution to complete by observing standard channel
+      assert_receive {:agent, {:status_changed, :idle, _}}
+
+      # NOW connect debugger (late) to debug topic
       debug_topic = "agent_server:debug:#{agent.agent_id}"
       Phoenix.PubSub.subscribe(context.debug_pubsub_name, debug_topic)
 
-      # Can get current state (missed events are gone, but state is available)
+      # Can get current state (missed debug events are gone, but state is available)
       state = AgentServer.get_state(agent.agent_id)
       assert length(state.messages) > 0
+      assert Enum.any?(state.messages, fn m -> m.role == :assistant end)
 
-      # Future events ARE received
-      second_response = Message.new_assistant!(%{content: "Second response"})
-      LLMChain
-      |> stub(:run, fn chain ->
-        updated_chain =
-          chain
-          |> Map.put(:messages, chain.messages ++ [second_response])
-          |> Map.put(:last_message, second_response)
-          |> Map.put(:needs_response, false)
-
-        {:ok, updated_chain}
-      end)
-
+      # Future debug events ARE received - send another message
       AgentServer.add_message(agent.agent_id, Message.new_user!("Another message"))
 
-      # Should receive events for this new activity
-      assert_receive {:agent, {:debug, _event}}, 100
+      # Should receive debug events for this new activity
+      # The :after_middleware_state event is broadcast on the debug channel
+      assert_receive {:agent, {:debug, _event}}
     end
   end
 
