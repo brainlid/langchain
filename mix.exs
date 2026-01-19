@@ -144,13 +144,6 @@ defmodule LangChain.MixProject do
           LangChain.Tools.DeepResearch.ResearchStatus,
           LangChain.Tools.DeepResearch.ResearchResult
         ],
-        Agents: [
-          LangChain.Agents.Agent,
-          LangChain.Agents.AgentServer,
-          LangChain.Agents.State,
-          LangChain.Agents.Todo,
-          LangChain.Agents.Middleware
-        ],
         Utils: [
           LangChain.Utils,
           LangChain.Utils.BedrockConfig,

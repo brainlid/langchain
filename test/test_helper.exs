@@ -39,22 +39,6 @@ Mimic.copy(LangChain.ChatModels.ChatVertexAI)
 Mimic.copy(LangChain.ChatModels.ChatGoogleAI)
 Mimic.copy(LangChain.ChatModels.ChatGrok)
 
-# Start the Agents Registry for tests
-{:ok, _} = Registry.start_link(keys: :unique, name: LangChain.Agents.Registry)
-
-# Start a shared PubSub for tests
-{:ok, _} = Phoenix.PubSub.Supervisor.start_link(name: :test_pubsub)
-
-# Define a real Presence module for tests (no mocks needed)
-defmodule LangChain.TestPresence do
-  use Phoenix.Presence,
-    otp_app: :langchain,
-    pubsub_server: :test_pubsub
-end
-
-# Start the test Presence (Phoenix.Presence uses Supervisor.start_link/3 internally)
-{:ok, _} = Supervisor.start_link([LangChain.TestPresence], strategy: :one_for_one)
-
 Logger.configure(level: :warning)
 # Logger.configure(level: :debug)
 ExUnit.configure(exclude: [live_call: true])
