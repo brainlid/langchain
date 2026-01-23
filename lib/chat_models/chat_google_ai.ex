@@ -375,7 +375,8 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     }
   end
 
-  def for_api(%ToolCall{thought_signature: signature} = call) when is_binary(signature) do
+  def for_api(%ToolCall{metadata: %{thought_signature: signature}} = call)
+      when is_binary(signature) do
     %{
       "functionCall" => %{
         "args" => call.arguments,
@@ -726,7 +727,6 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
       content: text_part,
       complete: true,
       index: data["index"],
-      thought_signature: data["thoughtSignature"],
       metadata: if(data["groundingMetadata"], do: data["groundingMetadata"], else: nil)
     }
     |> Utils.conditionally_add_to_map(:tool_calls, tool_calls_from_parts)
@@ -772,8 +772,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
       role: unmap_role(role),
       content: content,
       status: finish_reason_to_status(data["finishReason"]),
-      index: data["index"],
-      thought_signature: data["thoughtSignature"]
+      index: data["index"]
     }
     |> Utils.conditionally_add_to_map(:tool_calls, tool_calls_from_parts)
     |> MessageDelta.new()
@@ -797,7 +796,11 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
       arguments: raw_args,
       complete: true,
       index: data["index"],
-      thought_signature: data["thoughtSignature"]
+      metadata:
+        if(data["thoughtSignature"],
+          do: %{thought_signature: data["thoughtSignature"]},
+          else: nil
+        )
     }
     |> ToolCall.new()
     |> case do

@@ -28,8 +28,8 @@ defmodule LangChain.Message.ToolCall do
     # when the tool call is incomplete, the index indicates which tool call to
     # update on a ToolCall.
     field :index, :integer
-    # Gemini 3 thought signature for function calls (required for Gemini 3 models)
-    field :thought_signature, :string
+    # Map of model-specific metadata attributes
+    field :metadata, :map
   end
 
   # https://cookbook.openai.com/examples/how_to_call_functions_with_chat_models
@@ -40,7 +40,7 @@ defmodule LangChain.Message.ToolCall do
 
   @type t :: %ToolCall{}
 
-  @update_fields [:status, :type, :call_id, :name, :arguments, :index, :thought_signature]
+  @update_fields [:status, :type, :call_id, :name, :arguments, :index, :metadata]
   @create_fields @update_fields
 
   @doc """

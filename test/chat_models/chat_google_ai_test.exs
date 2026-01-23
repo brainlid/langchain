@@ -195,13 +195,13 @@ defmodule ChatModels.ChatGoogleAITest do
              } = tool_result
     end
 
-    test "for_api includes thoughtSignature when present on ToolCall" do
+    test "for_api includes thoughtSignature when present in ToolCall metadata" do
       tool_call =
         ToolCall.new!(%{
           call_id: "call_123",
           name: "test_function",
           arguments: %{"arg" => "value"},
-          thought_signature: "sig_abc123"
+          metadata: %{thought_signature: "sig_abc123"}
         })
 
       result = ChatGoogleAI.for_api(tool_call)
@@ -210,7 +210,7 @@ defmodule ChatModels.ChatGoogleAITest do
       assert result["functionCall"]["name"] == "test_function"
     end
 
-    test "for_api excludes thoughtSignature when nil on ToolCall" do
+    test "for_api excludes thoughtSignature when not in ToolCall metadata" do
       tool_call =
         ToolCall.new!(%{
           call_id: "call_123",
@@ -574,7 +574,7 @@ defmodule ChatModels.ChatGoogleAITest do
 
       assert [%Message{} = msg] = ChatGoogleAI.do_process_response(model, response)
       assert [%ToolCall{} = call] = msg.tool_calls
-      assert call.thought_signature == "gemini3_thought_sig_xyz"
+      assert call.metadata.thought_signature == "gemini3_thought_sig_xyz"
       assert call.name == "my_func"
     end
 
@@ -594,7 +594,7 @@ defmodule ChatModels.ChatGoogleAITest do
 
       assert [%Message{} = msg] = ChatGoogleAI.do_process_response(model, response)
       assert [%ToolCall{} = call] = msg.tool_calls
-      assert call.thought_signature == nil
+      assert call.metadata == nil
     end
 
     test "handles no parts in content", %{model: model} do
