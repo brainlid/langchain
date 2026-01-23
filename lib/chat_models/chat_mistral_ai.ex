@@ -64,7 +64,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
 
     # A list of callback handlers
     field :callbacks, {:array, :map}, default: []
-    
+
     # Whether to allow parallel tool calls. Default is set to `true` according to the API
     field :parallel_tool_calls, :boolean, default: true
 
