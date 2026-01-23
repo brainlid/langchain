@@ -602,12 +602,25 @@ defmodule LangChain.ChatModels.ChatMistralAI do
         _ -> "assistant"
       end
 
+    # Convert Mistral's content format to ContentPart structs
+    content = process_mistral_content(delta_body["content"])
+
+    # Adjust index to prevent thinking and text content from merging.
+    # Thinking is always at index 0. Text content is offset by 1 to avoid collision.
+    # Similar to DeepSeek: thinking at index 0, text starts at index 1.
+    adjusted_index =
+      case content do
+        %ContentPart{type: :thinking} -> 0
+        _ -> (index || 0) + 1
+      end
+
     data =
       delta_body
       |> Map.put("role", role)
-      |> Map.put("index", index)
+      |> Map.put("index", adjusted_index)
       |> Map.put("status", status)
       |> Map.put("tool_calls", tool_calls)
+      |> Map.put("content", content)
 
     case MessageDelta.new(data) do
       {:ok, message} ->
@@ -725,6 +738,33 @@ defmodule LangChain.ChatModels.ChatMistralAI do
        original: other
      )}
   end
+
+  # Process Mistral's content format for thinking blocks and text in list format.
+  # Mistral can return:
+  # - Thinking: [%{"type" => "thinking", "thinking" => [%{"text" => "...", "type" => "text"}]}]
+  # - Text: [%{"type" => "text", "text" => "..."}]
+  defp process_mistral_content(nil), do: nil
+
+  defp process_mistral_content(content) when is_binary(content), do: content
+
+  defp process_mistral_content([%{"type" => "thinking", "thinking" => thinking_list} | _])
+       when is_list(thinking_list) do
+    # Extract text from thinking array and convert to ContentPart
+    thinking_text =
+      thinking_list
+      |> Enum.filter(&match?(%{"type" => "text"}, &1))
+      |> Enum.map(&Map.get(&1, "text", ""))
+      |> Enum.join("")
+
+    ContentPart.thinking!(thinking_text)
+  end
+
+  defp process_mistral_content([%{"type" => "text", "text" => text} | _]) do
+    ContentPart.text!(text)
+  end
+
+  # For any other content format, pass through unchanged
+  defp process_mistral_content(content), do: content
 
   defp get_token_usage(%{"usage" => usage} = _response_body) do
     # extract out the reported response token usage

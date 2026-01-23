@@ -271,7 +271,97 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
 
       assert delta.role == :assistant
       assert delta.content == "This is the first part of a mes"
+      assert delta.index == 1
+      assert delta.status == :incomplete
+    end
+
+    test "handles receiving MessageDeltas with thinking content", %{model: model} do
+      response = %{
+        "choices" => [
+          %{
+            "delta" => %{
+              "role" => "assistant",
+              "content" => [
+                %{
+                  "type" => "thinking",
+                  "thinking" => [
+                    %{"type" => "text", "text" => "Let me think about this"}
+                  ]
+                }
+              ]
+            },
+            "finish_reason" => nil,
+            "index" => 0
+          }
+        ]
+      }
+
+      assert [%MessageDelta{} = delta] =
+               ChatMistralAI.do_process_response(model, response)
+
+      assert delta.role == :assistant
+      assert %ContentPart{type: :thinking, content: "Let me think about this"} = delta.content
       assert delta.index == 0
+      assert delta.status == :incomplete
+    end
+
+    test "handles receiving MessageDeltas with multiple thinking text parts", %{model: model} do
+      response = %{
+        "choices" => [
+          %{
+            "delta" => %{
+              "role" => "assistant",
+              "content" => [
+                %{
+                  "type" => "thinking",
+                  "thinking" => [
+                    %{"type" => "text", "text" => "First part "},
+                    %{"type" => "text", "text" => "second part"}
+                  ]
+                }
+              ]
+            },
+            "finish_reason" => nil,
+            "index" => 0
+          }
+        ]
+      }
+
+      assert [%MessageDelta{} = delta] =
+               ChatMistralAI.do_process_response(model, response)
+
+      assert delta.role == :assistant
+      assert %ContentPart{type: :thinking, content: "First part second part"} = delta.content
+      assert delta.index == 0
+      assert delta.status == :incomplete
+    end
+
+    test "handles receiving MessageDeltas with text content in list format", %{model: model} do
+      response = %{
+        "choices" => [
+          %{
+            "delta" => %{
+              "role" => "assistant",
+              "content" => [
+                %{
+                  "type" => "text",
+                  "text" => "This is regular text"
+                }
+              ]
+            },
+            "finish_reason" => nil,
+            "index" => 0
+          }
+        ]
+      }
+
+      assert [%MessageDelta{} = delta] =
+               ChatMistralAI.do_process_response(model, response)
+
+      assert delta.role == :assistant
+      assert %ContentPart{type: :text, content: "This is regular text"} = delta.content
+      # Text content at index 0 is shifted to index 1 to avoid merging with thinking at index 0
+      assert delta.index == 1
       assert delta.status == :incomplete
     end
 
