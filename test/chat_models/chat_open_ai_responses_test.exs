@@ -109,6 +109,66 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
       assert {"must be greater than or equal to %{number}", _} = changeset.errors[:temperature]
     end
 
+    test "top_p defaults to 1.0 and is included for gpt-4 models" do
+      {:ok, openai} = ChatOpenAIResponses.new(%{"model" => @test_model})
+      assert openai.top_p == 1.0
+
+      data = ChatOpenAIResponses.for_api(openai, [], [])
+      assert data.top_p == 1.0
+    end
+
+    test "top_p is excluded for gpt-5.2 and newer models" do
+      {:ok, openai} = ChatOpenAIResponses.new(%{"model" => "gpt-5.2", "top_p" => 0.9})
+      assert openai.top_p == 0.9
+
+      data = ChatOpenAIResponses.for_api(openai, [], [])
+      refute Map.has_key?(data, :top_p)
+    end
+
+    test "top_p is included for gpt-5.1 and earlier models" do
+      {:ok, openai} = ChatOpenAIResponses.new(%{"model" => "gpt-5.1", "top_p" => 0.8})
+      data = ChatOpenAIResponses.for_api(openai, [], [])
+      assert data.top_p == 0.8
+
+      {:ok, openai} = ChatOpenAIResponses.new(%{"model" => "gpt-5.0", "top_p" => 0.7})
+      data = ChatOpenAIResponses.for_api(openai, [], [])
+      assert data.top_p == 0.7
+    end
+
+    test "supports_top_p?/1 returns correct values for various models" do
+      assert ChatOpenAIResponses.supports_top_p?("gpt-4")
+      assert ChatOpenAIResponses.supports_top_p?("gpt-4o")
+      assert ChatOpenAIResponses.supports_top_p?("gpt-4o-mini")
+      assert ChatOpenAIResponses.supports_top_p?("gpt-4o-mini-2024-07-18")
+      assert ChatOpenAIResponses.supports_top_p?("gpt-5.0")
+      assert ChatOpenAIResponses.supports_top_p?("gpt-5.1")
+      refute ChatOpenAIResponses.supports_top_p?("gpt-5.2")
+      refute ChatOpenAIResponses.supports_top_p?("gpt-5.3")
+      refute ChatOpenAIResponses.supports_top_p?("gpt-6")
+    end
+
+    test "supports overriding top_p" do
+      {:ok, openai} = ChatOpenAIResponses.new(%{"model" => @test_model, "top_p" => 0.9})
+      assert openai.top_p == 0.9
+
+      data = ChatOpenAIResponses.for_api(openai, [], [])
+      assert data.top_p == 0.9
+    end
+
+    test "returns error for out-of-bounds top_p" do
+      assert {:error, changeset} =
+               ChatOpenAIResponses.new(%{"model" => @test_model, "top_p" => 1.5})
+
+      refute changeset.valid?
+      assert {"must be less than or equal to %{number}", _} = changeset.errors[:top_p]
+
+      assert {:error, changeset} =
+               ChatOpenAIResponses.new(%{"model" => @test_model, "top_p" => -0.1})
+
+      refute changeset.valid?
+      assert {"must be greater than or equal to %{number}", _} = changeset.errors[:top_p]
+    end
+
     test "supports setting reasoning options" do
       {:ok, openai} =
         ChatOpenAIResponses.new(%{

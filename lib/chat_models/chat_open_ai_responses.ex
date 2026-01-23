@@ -358,7 +358,29 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(openai, tools))
     |> Utils.conditionally_add_to_map(:user, openai.user)
     |> Utils.conditionally_add_to_map(:temperature, openai.temperature)
-    |> Utils.conditionally_add_to_map(:top_p, openai.top_p)
+    |> maybe_add_top_p(openai)
+  end
+
+  # gpt-5.2 and newer do not support the top_p parameter.
+  # Earlier models (gpt-4.x, gpt-5.0, gpt-5.1) accept top_p.
+  defp maybe_add_top_p(map, %ChatOpenAIResponses{model: model, top_p: top_p}) do
+    if supports_top_p?(model) do
+      Utils.conditionally_add_to_map(map, :top_p, top_p)
+    else
+      map
+    end
+  end
+
+  @doc false
+  @spec supports_top_p?(String.t()) :: boolean()
+  def supports_top_p?(model) when is_binary(model) do
+    # Match models known to support top_p. This set is fixed and won't grow.
+    cond do
+      String.starts_with?(model, "gpt-4") -> true
+      String.starts_with?(model, "gpt-5.0") -> true
+      String.starts_with?(model, "gpt-5.1") -> true
+      true -> false
+    end
   end
 
   defp get_tools_for_api(%ChatOpenAIResponses{} = _model, nil), do: []
