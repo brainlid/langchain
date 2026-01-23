@@ -42,6 +42,14 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
       assert model.endpoint == override_url
     end
 
+    test "supports verbose_api option" do
+      model = ChatMistralAI.new!(%{model: "mistral-tiny", verbose_api: true})
+      assert model.verbose_api == true
+
+      model = ChatMistralAI.new!(%{model: "mistral-tiny", verbose_api: false})
+      assert model.verbose_api == false
+    end
+
     test "supports passing parallel_tool_calls" do
       # defaults to true (Mistral API default)
       %ChatMistralAI{} = mistral_ai = ChatMistralAI.new!(%{"model" => "mistral-tiny"})
@@ -533,6 +541,12 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
       refute Map.has_key?(result, "callbacks")
     end
 
+    test "includes verbose_api field" do
+      model = ChatMistralAI.new!(%{model: "mistral-tiny", verbose_api: true})
+      result = ChatMistralAI.serialize_config(model)
+      assert result["verbose_api"] == true
+    end
+
     test "creates expected map" do
       model =
         ChatMistralAI.new!(%{
@@ -559,7 +573,8 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
                "top_p" => 1.0,
                "version" => 1,
                "json_response" => false,
-               "json_schema" => nil
+               "json_schema" => nil,
+               "verbose_api" => false
              }
     end
   end

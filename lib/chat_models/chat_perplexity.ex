@@ -111,6 +111,10 @@ defmodule LangChain.ChatModels.ChatPerplexity do
 
     # A list of maps for callback handlers
     field :callbacks, {:array, :map}, default: []
+
+    # For help with debugging. It outputs the RAW Req response received and the
+    # RAW Elixir map being submitted to the API.
+    field :verbose_api, :boolean, default: false
   end
 
   @type t :: %ChatPerplexity{}
@@ -131,7 +135,8 @@ defmodule LangChain.ChatModels.ChatPerplexity do
     :return_related_questions,
     :search_recency_filter,
     :response_format,
-    :receive_timeout
+    :receive_timeout,
+    :verbose_api
   ]
 
   @required_fields [:model]
@@ -794,7 +799,8 @@ defmodule LangChain.ChatModels.ChatPerplexity do
         :return_related_questions,
         :search_recency_filter,
         :response_format,
-        :receive_timeout
+        :receive_timeout,
+        :verbose_api
       ],
       @current_config_version
     )

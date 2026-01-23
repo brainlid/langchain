@@ -67,6 +67,10 @@ defmodule LangChain.ChatModels.ChatMistralAI do
 
     # Whether to allow parallel tool calls. Default is set to `true` according to the API
     field :parallel_tool_calls, :boolean, default: true
+
+    # For help with debugging. It outputs the RAW Req response received and the
+    # RAW Elixir map being submitted to the API.
+    field :verbose_api, :boolean, default: false
   end
 
   @type t :: %ChatMistralAI{}
@@ -85,7 +89,8 @@ defmodule LangChain.ChatModels.ChatMistralAI do
     :tool_choice,
     :json_schema,
     :json_response,
-    :parallel_tool_calls
+    :parallel_tool_calls,
+    :verbose_api
   ]
   @required_fields [
     :model
@@ -815,7 +820,8 @@ defmodule LangChain.ChatModels.ChatMistralAI do
         :random_seed,
         :stream,
         :json_schema,
-        :json_response
+        :json_response,
+        :verbose_api
       ],
       @current_config_version
     )
