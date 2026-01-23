@@ -649,6 +649,10 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     Utils.conditionally_add_to_map(output, "detail", detail_option)
   end
 
+  # Thinking content parts are output-only and should be omitted when sending to the API
+  def content_part_for_api(%ChatOpenAIResponses{} = _model, %ContentPart{type: :thinking}),
+    do: nil
+
   # Ignore unknown, unsupported content parts
   def content_part_for_api(%ChatOpenAIResponses{} = _model, %ContentPart{type: :unsupported}),
     do: nil
@@ -973,6 +977,52 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   #   "sequence_number" => 4,
   #   "type" => "response.output_text.delta"
   # }
+  def do_process_response(_model, %{
+        "type" => "response.reasoning.delta",
+        "output_index" => output_index,
+        "delta" => delta_text
+      }) do
+    data = %{
+      content: ContentPart.new!(%{type: :thinking, content: delta_text}),
+      status: :incomplete,
+      role: :assistant,
+      index: output_index
+    }
+
+    case MessageDelta.new(data) do
+      {:ok, message} ->
+        message
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:error, LangChainError.exception(changeset)}
+    end
+  end
+
+  def do_process_response(
+        _model,
+        %{
+          "type" => "response.output_text.delta",
+          "output_index" => output_index,
+          "delta" => delta_text
+        }
+      ) do
+    data = %{
+      content: delta_text,
+      # Will need to be updated to :complete when the response is complete
+      status: :incomplete,
+      role: :assistant,
+      index: output_index
+    }
+
+    case MessageDelta.new(data) do
+      {:ok, message} ->
+        message
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:error, LangChainError.exception(changeset)}
+    end
+  end
+
   def do_process_response(_model, %{"type" => "response.output_text.delta", "delta" => delta_text}) do
     data = %{
       content: delta_text,
@@ -1007,6 +1057,33 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     case MessageDelta.new(data) do
       {:ok, message} ->
         message
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:error, LangChainError.exception(changeset)}
+    end
+  end
+
+  # This is the first event we get for a reasoning/thinking block.
+  # It is followed by a series of `response.reasoning.delta` events.
+  # Finally, it is followed by a `response.output_item.done` event.
+  def do_process_response(_model, %{
+        "type" => "response.output_item.added",
+        "output_index" => output_index,
+        "item" => %{
+          "type" => "reasoning",
+          "id" => _reasoning_id
+        }
+      }) do
+    data = %{
+      content: ContentPart.new!(%{type: :thinking, content: ""}),
+      status: :incomplete,
+      role: :assistant,
+      index: output_index
+    }
+
+    case MessageDelta.new(data) do
+      {:ok, delta} ->
+        delta
 
       {:error, %Ecto.Changeset{} = changeset} ->
         {:error, LangChainError.exception(changeset)}
@@ -1071,6 +1148,27 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
            }) do
       message
     else
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:error, LangChainError.exception(changeset)}
+    end
+  end
+
+  def do_process_response(_model, %{
+        "type" => "response.output_item.done",
+        "output_index" => output_index,
+        "item" => %{"type" => "reasoning"}
+      }) do
+    data = %{
+      content: ContentPart.new!(%{type: :thinking, content: ""}),
+      status: :complete,
+      role: :assistant,
+      index: output_index
+    }
+
+    case MessageDelta.new(data) do
+      {:ok, delta} ->
+        delta
+
       {:error, %Ecto.Changeset{} = changeset} ->
         {:error, LangChainError.exception(changeset)}
     end
@@ -1165,7 +1263,6 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     "response.mcp_call.in_progress",
     "response.output_text.annotation.added",
     "response.queued",
-    "response.reasoning.delta",
     "response.reasoning_summary.delta",
     "response.reasoning_summary.done",
     "error"

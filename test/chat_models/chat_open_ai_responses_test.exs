@@ -543,6 +543,30 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
       assert part["type"] == "input_file"
       assert part["file_url"] == "https://example.com/document.pdf"
     end
+
+    test "omits thinking content parts when converting to API format" do
+      model = ChatOpenAIResponses.new!(%{"model" => @test_model})
+
+      # Create a message with thinking content (e.g., from a previous assistant response)
+      thinking_part =
+        LangChain.Message.ContentPart.new!(%{type: :thinking, content: "Some reasoning"})
+
+      text_part = LangChain.Message.ContentPart.text!("Here's my answer")
+
+      msg = LangChain.Message.new_assistant!([thinking_part, text_part])
+
+      api = ChatOpenAIResponses.for_api(model, msg)
+
+      # The result should be a list with the message and no tool calls
+      assert is_list(api)
+      [message_api] = api
+      assert message_api["type"] == "message"
+
+      # Content should only include the text part, not the thinking part
+      [content_part] = message_api["content"]
+      assert content_part["type"] == "input_text"
+      assert content_part["text"] == "Here's my answer"
+    end
   end
 
   describe "for_api/1 tool calls and results" do
@@ -881,6 +905,82 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
       assert call3.arguments == %{"expression" => "1+1"}
     end
 
+    test "parses reasoning output_item.added event", %{model: model} do
+      event = %{
+        "type" => "response.output_item.added",
+        "sequence_number" => 2,
+        "output_index" => 0,
+        "item" => %{
+          "id" => "rs_077ecb7bd77f1554016940159a98d081909d82480668e57471",
+          "type" => "reasoning",
+          "summary" => []
+        }
+      }
+
+      result = ChatOpenAIResponses.do_process_response(model, event)
+      assert %LangChain.MessageDelta{} = result
+      assert result.status == :incomplete
+      assert result.role == :assistant
+      assert result.index == 0
+      assert %LangChain.Message.ContentPart{type: :thinking, content: ""} = result.content
+    end
+
+    test "parses response.reasoning.delta event", %{model: model} do
+      event = %{
+        "type" => "response.reasoning.delta",
+        "output_index" => 0,
+        "delta" => "Let me think about this problem..."
+      }
+
+      result = ChatOpenAIResponses.do_process_response(model, event)
+      assert %LangChain.MessageDelta{} = result
+      assert result.status == :incomplete
+      assert result.role == :assistant
+      assert result.index == 0
+
+      assert %LangChain.Message.ContentPart{
+               type: :thinking,
+               content: "Let me think about this problem..."
+             } = result.content
+    end
+
+    test "parses reasoning output_item.done event", %{model: model} do
+      event = %{
+        "type" => "response.output_item.done",
+        "sequence_number" => 3,
+        "output_index" => 0,
+        "item" => %{
+          "id" => "rs_063b9657f7c2e68601694016d7008881909a128744538cebec",
+          "type" => "reasoning",
+          "summary" => []
+        }
+      }
+
+      result = ChatOpenAIResponses.do_process_response(model, event)
+      assert %LangChain.MessageDelta{} = result
+      assert result.status == :complete
+      assert result.role == :assistant
+      assert result.index == 0
+      assert %LangChain.Message.ContentPart{type: :thinking, content: ""} = result.content
+    end
+
+    test "parses response.output_text.delta with output_index", %{model: model} do
+      delta = %{
+        "type" => "response.output_text.delta",
+        "output_index" => 1,
+        "delta" => "Hello"
+      }
+
+      result = ChatOpenAIResponses.do_process_response(model, delta)
+
+      assert %LangChain.MessageDelta{
+               content: "Hello",
+               status: :incomplete,
+               role: :assistant,
+               index: 1
+             } = result
+    end
+
     test "parses response.completed with token usage", %{model: model} do
       completed = %{
         "type" => "response.completed",
@@ -898,7 +998,6 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
         %{"type" => "response.content_part.added"},
         %{"type" => "response.content_part.done"},
         %{"type" => "response.function_call_arguments.done"},
-        %{"type" => "response.reasoning.delta"},
         %{"type" => "response.queued"}
       ]
 
