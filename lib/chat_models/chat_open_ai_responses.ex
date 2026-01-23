@@ -30,6 +30,12 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         ContentPart.image_url!("https://example.com/image.jpg")
       ])
 
+      # Using a file ID (after uploading to OpenAI)
+      Message.new_user!([
+        ContentPart.text!("Describe this image:"),
+        ContentPart.image!("file-1234", type: :file_id)
+      ])
+
   For images, you can specify the detail level which affects token usage:
   - `detail: "low"` - Lower resolution, fewer tokens
   - `detail: "high"` - Higher resolution, more tokens
@@ -216,11 +222,11 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     field :max_output_tokens, :integer, default: nil
     # omit metadata because chat_open_ai also omits it
     # omit parallel_tool_calls because chat_open_ai also omits it
-    # omit previous_response_id becasue langchain assumes statelessness
+    field :previous_response_id, :string, default: nil
     # Reasoning options for gpt-5 and o-series models
     embeds_one(:reasoning, ReasoningOptions)
     # omit service_tier because chat_open_ai also omits it
-    # omit store, but set it explicitly to false later to keep statelessness. the API will default true unless we set it
+    field :store, :boolean, default: false
     field :stream, :boolean, default: false
     field :temperature, :float, default: nil
     field :json_response, :boolean, default: false
@@ -252,6 +258,8 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     :model,
     :include,
     :max_output_tokens,
+    :previous_response_id,
+    :store,
     :stream,
     :temperature,
     :json_response,
@@ -326,7 +334,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     %{
       model: openai.model,
       stream: openai.stream,
-      store: false,
+      store: if(openai.previous_response_id, do: true, else: openai.store),
       input:
         messages
         |> Enum.reduce([], fn m, acc ->
@@ -342,6 +350,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     }
     |> Utils.conditionally_add_to_map(:include, openai.include)
     |> Utils.conditionally_add_to_map(:max_output_tokens, openai.max_output_tokens)
+    |> Utils.conditionally_add_to_map(:previous_response_id, openai.previous_response_id)
     |> Utils.conditionally_add_to_map(:reasoning, ReasoningOptions.to_api_map(openai.reasoning))
     |> Utils.conditionally_add_to_map(:text, set_text_format(openai))
     |> Utils.conditionally_add_to_map(:tool_choice, get_tool_choice(openai))
@@ -349,7 +358,29 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(openai, tools))
     |> Utils.conditionally_add_to_map(:user, openai.user)
     |> Utils.conditionally_add_to_map(:temperature, openai.temperature)
-    |> Utils.conditionally_add_to_map(:top_p, openai.top_p)
+    |> maybe_add_top_p(openai)
+  end
+
+  # gpt-5.2 and newer do not support the top_p parameter.
+  # Earlier models (gpt-4.x, gpt-5.0, gpt-5.1) accept top_p.
+  defp maybe_add_top_p(map, %ChatOpenAIResponses{model: model, top_p: top_p}) do
+    if supports_top_p?(model) do
+      Utils.conditionally_add_to_map(map, :top_p, top_p)
+    else
+      map
+    end
+  end
+
+  @doc false
+  @spec supports_top_p?(String.t()) :: boolean()
+  def supports_top_p?(model) when is_binary(model) do
+    # Match models known to support top_p. This set is fixed and won't grow.
+    cond do
+      String.starts_with?(model, "gpt-4") -> true
+      String.starts_with?(model, "gpt-5.0") -> true
+      String.starts_with?(model, "gpt-5.1") -> true
+      true -> false
+    end
   end
 
   defp get_tools_for_api(%ChatOpenAIResponses{} = _model, nil), do: []
@@ -577,41 +608,45 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
 
   def content_part_for_api(%ChatOpenAIResponses{} = _model, %ContentPart{type: image} = part)
       when image in [:image, :image_url] do
-    media_prefix =
-      case Keyword.get(part.options || [], :media, nil) do
-        nil ->
-          ""
+    output =
+      if Keyword.get(part.options, :type) == :file_id do
+        %{"type" => "input_image", "file_id" => part.content}
+      else
+        media_prefix =
+          case Keyword.get(part.options || [], :media, nil) do
+            nil ->
+              ""
 
-        type when is_binary(type) ->
-          "data:#{type};base64,"
+            type when is_binary(type) ->
+              "data:#{type};base64,"
 
-        type when type in [:jpeg, :jpg] ->
-          "data:image/jpg;base64,"
+            type when type in [:jpeg, :jpg] ->
+              "data:image/jpg;base64,"
 
-        :png ->
-          "data:image/png;base64,"
+            :png ->
+              "data:image/png;base64,"
 
-        :gif ->
-          "data:image/gif;base64,"
+            :gif ->
+              "data:image/gif;base64,"
 
-        :webp ->
-          "data:image/webp;base64,"
+            :webp ->
+              "data:image/webp;base64,"
 
-        other ->
-          message = "Received unsupported media type for ContentPart: #{inspect(other)}"
-          Logger.error(message)
-          raise LangChainError, message
+            other ->
+              message = "Received unsupported media type for ContentPart: #{inspect(other)}"
+              Logger.error(message)
+              raise LangChainError, message
+          end
+
+        %{
+          "type" => "input_image",
+          "image_url" => media_prefix <> part.content
+        }
       end
 
     detail_option = Keyword.get(part.options, :detail, nil)
-    file_id = Keyword.get(part.options, :file_id, nil)
 
-    %{
-      "type" => "input_image",
-      "image_url" => media_prefix <> part.content
-    }
-    |> Utils.conditionally_add_to_map("detail", detail_option)
-    |> Utils.conditionally_add_to_map("file_id", file_id)
+    Utils.conditionally_add_to_map(output, "detail", detail_option)
   end
 
   # Ignore unknown, unsupported content parts
@@ -907,6 +942,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         nil -> %{}
         %TokenUsage{} = usage -> %{usage: usage}
       end
+      |> maybe_add_response_id(response)
 
     Message.new!(%{
       content: content_parts,
@@ -1072,12 +1108,13 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         "response" => response
       }) do
     usage = get_token_usage(response)
+    metadata = %{usage: usage} |> maybe_add_response_id(response)
 
     data = %{
       content: "",
       status: :complete,
       role: :assistant,
-      metadata: %{usage: usage}
+      metadata: metadata
     }
 
     case MessageDelta.new(data) do
@@ -1170,6 +1207,12 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   end
 
   defp get_token_usage(_response_body), do: nil
+
+  defp maybe_add_response_id(metadata, %{"id" => id}) when is_binary(id) do
+    Map.put(metadata, :response_id, id)
+  end
+
+  defp maybe_add_response_id(metadata, _response), do: metadata
 
   defp content_items_to_content_parts_and_tool_calls(content_items) do
     Enum.reduce(content_items, {[], []}, fn content_item, {content_parts, tool_calls} ->
