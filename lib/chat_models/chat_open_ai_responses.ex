@@ -30,6 +30,12 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         ContentPart.image_url!("https://example.com/image.jpg")
       ])
 
+      # Using a file ID (after uploading to OpenAI)
+      Message.new_user!([
+        ContentPart.text!("Describe this image:"),
+        ContentPart.image!("file-1234", type: :file_id)
+      ])
+
   For images, you can specify the detail level which affects token usage:
   - `detail: "low"` - Lower resolution, fewer tokens
   - `detail: "high"` - Higher resolution, more tokens
@@ -580,41 +586,45 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
 
   def content_part_for_api(%ChatOpenAIResponses{} = _model, %ContentPart{type: image} = part)
       when image in [:image, :image_url] do
-    media_prefix =
-      case Keyword.get(part.options || [], :media, nil) do
-        nil ->
-          ""
+    output =
+      if Keyword.get(part.options, :type) == :file_id do
+        %{"type" => "input_image", "file_id" => part.content}
+      else
+        media_prefix =
+          case Keyword.get(part.options || [], :media, nil) do
+            nil ->
+              ""
 
-        type when is_binary(type) ->
-          "data:#{type};base64,"
+            type when is_binary(type) ->
+              "data:#{type};base64,"
 
-        type when type in [:jpeg, :jpg] ->
-          "data:image/jpg;base64,"
+            type when type in [:jpeg, :jpg] ->
+              "data:image/jpg;base64,"
 
-        :png ->
-          "data:image/png;base64,"
+            :png ->
+              "data:image/png;base64,"
 
-        :gif ->
-          "data:image/gif;base64,"
+            :gif ->
+              "data:image/gif;base64,"
 
-        :webp ->
-          "data:image/webp;base64,"
+            :webp ->
+              "data:image/webp;base64,"
 
-        other ->
-          message = "Received unsupported media type for ContentPart: #{inspect(other)}"
-          Logger.error(message)
-          raise LangChainError, message
+            other ->
+              message = "Received unsupported media type for ContentPart: #{inspect(other)}"
+              Logger.error(message)
+              raise LangChainError, message
+          end
+
+        %{
+          "type" => "input_image",
+          "image_url" => media_prefix <> part.content
+        }
       end
 
     detail_option = Keyword.get(part.options, :detail, nil)
-    file_id = Keyword.get(part.options, :file_id, nil)
 
-    %{
-      "type" => "input_image",
-      "image_url" => media_prefix <> part.content
-    }
-    |> Utils.conditionally_add_to_map("detail", detail_option)
-    |> Utils.conditionally_add_to_map("file_id", file_id)
+    Utils.conditionally_add_to_map(output, "detail", detail_option)
   end
 
   # Ignore unknown, unsupported content parts

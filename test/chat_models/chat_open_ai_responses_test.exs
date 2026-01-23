@@ -433,6 +433,17 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
       assert part["detail"] == "low"
     end
 
+    test "converts file_id to input_image" do
+      model = ChatOpenAIResponses.new!(%{"model" => @test_model})
+      file = LangChain.Message.ContentPart.image!("file-123", type: :file_id)
+      msg = LangChain.Message.new_user!([file])
+
+      api = ChatOpenAIResponses.for_api(model, msg)
+      [part] = api["content"]
+      assert part["type"] == "input_image"
+      assert part["file_id"] == "file-123"
+    end
+
     test "converts file base64 to input_file with filename" do
       model = ChatOpenAIResponses.new!(%{"model" => @test_model})
       file = LangChain.Message.ContentPart.file!("PDF_BASE64", type: :base64, filename: "a.pdf")
