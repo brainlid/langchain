@@ -49,7 +49,7 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
       model = ChatMistralAI.new!(%{model: "mistral-tiny", verbose_api: false})
       assert model.verbose_api == false
     end
-      
+
     test "supports passing parallel_tool_calls" do
       # defaults to true (Mistral API default)
       %ChatMistralAI{} = mistral_ai = ChatMistralAI.new!(%{"model" => "mistral-tiny"})
