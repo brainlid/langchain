@@ -13,8 +13,8 @@ defmodule LangChain.Chains.ChainCallbacks do
       live_view_pid = self()
 
       my_handlers = %{
-        on_llm_new_message: fn _chain, new_message -> send(live_view_pid, {:received_message, new_message}) end,
         on_llm_new_delta: fn _chain, new_deltas -> send(live_view_pid, {:received_delta, new_deltas}) end,
+        on_message_processed: fn _chain, new_message -> send(live_view_pid, {:received_message, new_message}) end,
         on_error_message_created: fn _chain, new_message -> send(live_view_pid, {:received_message, new_message}) end
       }
 
@@ -40,14 +40,6 @@ defmodule LangChain.Chains.ChainCallbacks do
     response.
 
   The return value is discarded.
-
-  ## Example
-
-  A function declaration that matches the signature.
-
-      def handle_llm_new_delta(chain, delta) do
-        IO.write(delta)
-      end
   """
   @type llm_new_delta :: (LLMChain.t(), [MessageDelta.t()] -> any())
 
@@ -55,14 +47,6 @@ defmodule LangChain.Chains.ChainCallbacks do
   Executed when an LLM is not streaming and a full message was received.
 
   The return value is discarded.
-
-  ## Example
-
-  A function declaration that matches the signature.
-
-      def handle_llm_new_message(chain, message) do
-        IO.inspect(message)
-      end
   """
   @type llm_new_message :: (LLMChain.t(), Message.t() -> any())
 
@@ -74,14 +58,6 @@ defmodule LangChain.Chains.ChainCallbacks do
   all the available information included.
 
   The return value is discarded.
-
-  ## Example
-
-  A function declaration that matches the signature.
-
-      def handle_llm_ratelimit_info(chain, %{} = info) do
-        IO.inspect(info)
-      end
   """
   @type llm_ratelimit_info :: (LLMChain.t(), info :: %{String.t() => any()} -> any())
 
@@ -90,14 +66,6 @@ defmodule LangChain.Chains.ChainCallbacks do
   `LangChain.TokenUsage` struct. The data returned depends on the LLM.
 
   The return value is discarded.
-
-  ## Example
-
-  A function declaration that matches the signature.
-
-      def handle_llm_token_usage(chain, %TokenUsage{} = usage) do
-        IO.inspect(usage)
-      end
   """
   @type llm_token_usage :: (LLMChain.t(), TokenUsage.t() -> any())
 
@@ -124,17 +92,13 @@ defmodule LangChain.Chains.ChainCallbacks do
 
   @typedoc """
   Executed when an LLMChain has completed processing a received assistant
-  message.
+  message. This fires when a message is complete either after assembling
+  streaming deltas or when a full message is received when not streaming.
+
+  This is the best way to be notified when a message is "done" and should be
+  handled by the application.
 
   The handler's return value is discarded.
-
-  ## Example
-
-  A function declaration that matches the signature.
-
-      def handle_chain_message_processed(chain, message) do
-        IO.inspect(message)
-      end
   """
   @type chain_message_processed :: (LLMChain.t(), Message.t() -> any())
 
@@ -142,15 +106,6 @@ defmodule LangChain.Chains.ChainCallbacks do
   Executed when an LLMChain, in response to an error from the LLM, generates a
   new, automated response message intended to be returned to the LLM.
 
-  The handler's return value is discarded.
-
-  ## Example
-
-  A function declaration that matches the signature.
-
-      def handles_chain_error_message_created(chain, new_message) do
-        IO.inspect(new_message)
-      end
   """
   @type chain_error_message_created :: (LLMChain.t(), Message.t() -> any())
 
@@ -160,14 +115,6 @@ defmodule LangChain.Chains.ChainCallbacks do
   completed before erroring.
 
   The handler's return value is discarded.
-
-  ## Example
-
-  A function declaration that matches the signature.
-
-      def handle_chain_message_processing_error(chain, new_message) do
-        IO.inspect(new_message)
-      end
   """
   @type chain_message_processing_error :: (LLMChain.t(), Message.t() -> any())
 
@@ -176,14 +123,6 @@ defmodule LangChain.Chains.ChainCallbacks do
   are generated as part of a tool response message.
 
   The handler's return value is discarded.
-
-  ## Example
-
-  A function declaration that matches the signature.
-
-      def handle_chain_tool_response_created(chain, new_message) do
-        IO.inspect(new_message)
-      end
   """
   @type chain_tool_response_created :: (LLMChain.t(), Message.t() -> any())
 
@@ -192,14 +131,6 @@ defmodule LangChain.Chains.ChainCallbacks do
   resulting in the process aborting and returning an error.
 
   The handler's return value is discarded.
-
-  ## Example
-
-  A function declaration that matches the signature.
-
-      def handle_retries_exceeded(chain) do
-        IO.inspect(chain)
-      end
   """
   @type chain_retries_exceeded :: (LLMChain.t() -> any())
 

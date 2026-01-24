@@ -182,6 +182,58 @@ defmodule LangChain.Chains.LLMChain do
 
   See `LangChain.Chains.LLMChain.run_until_tool_used/3` for more details.
 
+  ## Async Tool Timeout
+
+  When tools are defined with `async: true`, they execute in parallel using Elixir's
+  `Task.async/1`. The `async_tool_timeout` setting controls how long to wait for
+  these parallel tasks to complete.
+
+  **Important**: This timeout only applies to tools with `async: true`. Synchronous
+  tools (the default) run inline and are not subject to this timeout.
+
+  ### Default Behavior
+
+  The default is `:infinity`, meaning async tools can run indefinitely. This is
+  appropriate for human-interactive agents where the user can manually stop
+  execution if needed.
+
+  For automated or unattended agents, consider setting a finite timeout.
+
+  ### Configuration Levels
+
+  Timeout can be configured at three levels (highest precedence first):
+
+  1. **Chain-level** - Set when creating an LLMChain:
+
+         LLMChain.new!(%{
+           llm: model,
+           async_tool_timeout: 10 * 60 * 1000  # 10 minutes
+         })
+
+  2. **Application-level** - Set in config/runtime.exs:
+
+         config :langchain, async_tool_timeout: 5 * 60 * 1000  # 5 minutes
+
+  3. **Library default** - `:infinity` (no timeout)
+
+  ### When to Use Async Tools
+
+  Mark a tool as `async: true` when:
+  - The operation may take significant time (web requests, file processing)
+  - Multiple such operations can run in parallel safely
+  - The tool has no side effects that depend on ordering
+
+      Function.new!(%{
+        name: "web_search",
+        async: true,  # Enables parallel execution
+        function: fn args, ctx -> ... end
+      })
+
+  ### Timeout Values
+
+  - `:infinity` - No timeout (wait forever)
+  - Integer - Milliseconds (e.g., `300_000` for 5 minutes)
+
   """
   use Ecto.Schema
   import Ecto.Changeset
@@ -248,15 +300,22 @@ defmodule LangChain.Chains.LLMChain do
     field :needs_response, :boolean, default: false
 
     # The timeout for async tool execution. An async Task execution is used when
-    # running a tool that has `async: true` set. Time is in milliseconds.
-    field :async_tool_timeout, :integer
+    # running a tool that has `async: true` set. Accepts an integer (milliseconds)
+    # or :infinity. Defaults to :infinity for human-interactive use cases.
+    # Configure via Application.get_env(:langchain, :async_tool_timeout).
+    field :async_tool_timeout, :any, virtual: true
 
     # A list of maps for callback handlers
     field :callbacks, {:array, :map}, default: []
   end
 
-  # default to 2 minutes
-  @default_task_await_timeout 2 * 60 * 1000
+  # default to infinity for human-interactive use cases
+  @default_task_await_timeout :infinity
+
+  # Get the async tool timeout from application config or use library default
+  defp default_async_tool_timeout do
+    Application.get_env(:langchain, :async_tool_timeout, @default_task_await_timeout)
+  end
 
   @type t :: %LLMChain{}
 
@@ -1275,7 +1334,7 @@ defmodule LangChain.Chains.LLMChain do
             execute_tool_call(call, func, verbose: verbose, context: use_context)
           end)
         end)
-        |> Task.await_many(chain.async_tool_timeout || @default_task_await_timeout)
+        |> Task.await_many(chain.async_tool_timeout || default_async_tool_timeout())
 
       sync_results =
         Enum.map(grouped[:sync], fn {call, func} ->
@@ -1320,6 +1379,114 @@ defmodule LangChain.Chains.LLMChain do
       # Not a complete tool call
       chain
     end
+  end
+
+  @doc """
+  Execute tool calls with human decisions (approve, edit, reject).
+
+  This is used for Human-in-the-Loop workflows where tool calls need human approval
+  before execution. Each decision controls how the corresponding tool call is handled:
+
+  - `:approve` - Execute the tool with original arguments
+  - `:edit` - Execute the tool with modified arguments from the decision
+  - `:reject` - Create an error result without executing the tool
+
+  Returns the updated chain with tool results added and callbacks fired.
+
+  ## Parameters
+
+    * `chain` - The LLMChain instance
+    * `tool_calls` - List of ToolCall structs to execute
+    * `decisions` - List of decision maps, one per tool call. Each decision must have:
+      - `:type` - One of `:approve`, `:edit`, or `:reject`
+      - `:arguments` - (optional, required for `:edit`) The modified arguments map
+
+  ## Examples
+
+      decisions = [
+        %{type: :approve},
+        %{type: :edit, arguments: %{"path" => "modified.txt"}},
+        %{type: :reject}
+      ]
+
+      updated_chain = LLMChain.execute_tool_calls_with_decisions(chain, tool_calls, decisions)
+  """
+  @spec execute_tool_calls_with_decisions(t(), [ToolCall.t()], [map()]) :: t()
+  def execute_tool_calls_with_decisions(%LLMChain{} = chain, tool_calls, decisions)
+      when is_list(tool_calls) and is_list(decisions) do
+    use_context = chain.custom_context
+    verbose = chain.verbose
+
+    # Execute each tool based on its decision
+    results =
+      tool_calls
+      |> Enum.zip(decisions)
+      |> Enum.map(fn {tool_call, decision} ->
+        case decision.type do
+          :approve ->
+            # Execute with original arguments
+            case chain._tool_map[tool_call.name] do
+              %Function{} = func ->
+                execute_tool_call(tool_call, func, verbose: verbose, context: use_context)
+
+              nil ->
+                ToolResult.new!(%{
+                  tool_call_id: tool_call.call_id,
+                  name: tool_call.name,
+                  content: "Tool '#{tool_call.name}' not found",
+                  is_error: true
+                })
+            end
+
+          :edit ->
+            # Execute with edited arguments
+            edited_args = Map.get(decision, :arguments, %{})
+
+            case chain._tool_map[tool_call.name] do
+              %Function{} = func ->
+                edited_call = %{tool_call | arguments: edited_args}
+                execute_tool_call(edited_call, func, verbose: verbose, context: use_context)
+
+              nil ->
+                ToolResult.new!(%{
+                  tool_call_id: tool_call.call_id,
+                  name: tool_call.name,
+                  content: "Tool '#{tool_call.name}' not found",
+                  is_error: true
+                })
+            end
+
+          :reject ->
+            # Create rejection result without executing
+            ToolResult.new!(%{
+              tool_call_id: tool_call.call_id,
+              name: tool_call.name,
+              content: "Tool call '#{tool_call.name}' was rejected by a human reviewer.",
+              is_error: false
+            })
+        end
+      end)
+
+    # Create tool result message
+    result_message = Message.new_tool_result!(%{content: nil, tool_results: results})
+
+    # Add to chain
+    updated_chain = LLMChain.add_message(chain, result_message)
+
+    # Update failure counter based on errors
+    updated_chain =
+      if Message.tool_had_errors?(result_message) do
+        LLMChain.increment_current_failure_count(updated_chain)
+      else
+        LLMChain.reset_current_failure_count(updated_chain)
+      end
+
+    # Fire callbacks (same as execute_tool_calls does)
+    if chain.verbose, do: IO.inspect(result_message, label: "TOOL RESULTS")
+
+    updated_chain
+    |> fire_callback_and_return(:on_message_processed, [result_message])
+    |> fire_callback_and_return(:on_tool_response_created, [result_message])
   end
 
   @doc """

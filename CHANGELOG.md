@@ -1,5 +1,60 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **LLMChain**: Changed default `async_tool_timeout` from 2 minutes to `:infinity`
+
+### Migration Notes
+
+#### Async Tool Timeout Default Change
+
+**What changed**: The default timeout for async tools (tools with `async: true`) has changed from 2 minutes (`120_000` ms) to `:infinity` (no timeout).
+
+**Why**: The previous 2-minute default was problematic for human-interactive agents because:
+- Web research tools often take 3-5+ minutes
+- Sub-agent workflows can run indefinitely
+- Deep analysis tools may need extended processing time
+- Users observing the agent can manually stop it if needed
+
+**Who is affected**: If your application relied on the implicit 2-minute timeout to catch runaway tools, you will need to explicitly set a timeout.
+
+**How to migrate**:
+
+1. **If you were happy with the 2-minute timeout**, add this to your `config/runtime.exs`:
+
+       config :langchain, async_tool_timeout: 2 * 60 * 1000  # 2 minutes (previous default)
+
+2. **If you set an explicit `async_tool_timeout`**, no changes needed - your explicit value is still respected.
+
+3. **If the new `:infinity` default works for you** (human-interactive agents), no changes needed.
+
+**Configuration precedence** (highest to lowest):
+1. `LLMChain.async_tool_timeout` - explicit value on chain
+2. `Agent.async_tool_timeout` - passed through to chain when building
+3. `Application.get_env(:langchain, :async_tool_timeout)` - runtime config
+4. Library default - `:infinity`
+
+**Example configurations**:
+
+    # Application-level (config/runtime.exs)
+    config :langchain, async_tool_timeout: 5 * 60 * 1000  # 5 minutes
+
+    # Agent-level
+    {:ok, agent} = Agent.new(%{
+      model: model,
+      async_tool_timeout: 10 * 60 * 1000  # 10 minutes
+    })
+
+    # Chain-level
+    {:ok, chain} = LLMChain.new(%{
+      llm: model,
+      async_tool_timeout: 35 * 60 * 1000  # 35 minutes for Deep Research
+    })
+
+---
+
 ## v0.4.1
 
 ### Added
