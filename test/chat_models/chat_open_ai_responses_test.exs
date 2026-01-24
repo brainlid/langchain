@@ -1,5 +1,6 @@
 defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
   use LangChain.BaseCase
+  use Mimic
 
   doctest LangChain.ChatModels.ChatOpenAIResponses
   alias LangChain.ChatModels.ChatOpenAIResponses
@@ -106,6 +107,66 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
 
       refute changeset.valid?
       assert {"must be greater than or equal to %{number}", _} = changeset.errors[:temperature]
+    end
+
+    test "top_p defaults to 1.0 and is included for gpt-4 models" do
+      {:ok, openai} = ChatOpenAIResponses.new(%{"model" => @test_model})
+      assert openai.top_p == 1.0
+
+      data = ChatOpenAIResponses.for_api(openai, [], [])
+      assert data.top_p == 1.0
+    end
+
+    test "top_p is excluded for gpt-5.2 and newer models" do
+      {:ok, openai} = ChatOpenAIResponses.new(%{"model" => "gpt-5.2", "top_p" => 0.9})
+      assert openai.top_p == 0.9
+
+      data = ChatOpenAIResponses.for_api(openai, [], [])
+      refute Map.has_key?(data, :top_p)
+    end
+
+    test "top_p is included for gpt-5.1 and earlier models" do
+      {:ok, openai} = ChatOpenAIResponses.new(%{"model" => "gpt-5.1", "top_p" => 0.8})
+      data = ChatOpenAIResponses.for_api(openai, [], [])
+      assert data.top_p == 0.8
+
+      {:ok, openai} = ChatOpenAIResponses.new(%{"model" => "gpt-5.0", "top_p" => 0.7})
+      data = ChatOpenAIResponses.for_api(openai, [], [])
+      assert data.top_p == 0.7
+    end
+
+    test "supports_top_p?/1 returns correct values for various models" do
+      assert ChatOpenAIResponses.supports_top_p?("gpt-4")
+      assert ChatOpenAIResponses.supports_top_p?("gpt-4o")
+      assert ChatOpenAIResponses.supports_top_p?("gpt-4o-mini")
+      assert ChatOpenAIResponses.supports_top_p?("gpt-4o-mini-2024-07-18")
+      assert ChatOpenAIResponses.supports_top_p?("gpt-5.0")
+      assert ChatOpenAIResponses.supports_top_p?("gpt-5.1")
+      refute ChatOpenAIResponses.supports_top_p?("gpt-5.2")
+      refute ChatOpenAIResponses.supports_top_p?("gpt-5.3")
+      refute ChatOpenAIResponses.supports_top_p?("gpt-6")
+    end
+
+    test "supports overriding top_p" do
+      {:ok, openai} = ChatOpenAIResponses.new(%{"model" => @test_model, "top_p" => 0.9})
+      assert openai.top_p == 0.9
+
+      data = ChatOpenAIResponses.for_api(openai, [], [])
+      assert data.top_p == 0.9
+    end
+
+    test "returns error for out-of-bounds top_p" do
+      assert {:error, changeset} =
+               ChatOpenAIResponses.new(%{"model" => @test_model, "top_p" => 1.5})
+
+      refute changeset.valid?
+      assert {"must be less than or equal to %{number}", _} = changeset.errors[:top_p]
+
+      assert {:error, changeset} =
+               ChatOpenAIResponses.new(%{"model" => @test_model, "top_p" => -0.1})
+
+      refute changeset.valid?
+      assert {"must be greater than or equal to %{number}", _} = changeset.errors[:top_p]
     end
 
     test "supports setting reasoning options" do
@@ -432,6 +493,17 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
       assert part["detail"] == "low"
     end
 
+    test "converts file_id to input_image" do
+      model = ChatOpenAIResponses.new!(%{"model" => @test_model})
+      file = LangChain.Message.ContentPart.image!("file-123", type: :file_id)
+      msg = LangChain.Message.new_user!([file])
+
+      api = ChatOpenAIResponses.for_api(model, msg)
+      [part] = api["content"]
+      assert part["type"] == "input_image"
+      assert part["file_id"] == "file-123"
+    end
+
     test "converts file base64 to input_file with filename" do
       model = ChatOpenAIResponses.new!(%{"model" => @test_model})
       file = LangChain.Message.ContentPart.file!("PDF_BASE64", type: :base64, filename: "a.pdf")
@@ -470,6 +542,30 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
       [part] = api["content"]
       assert part["type"] == "input_file"
       assert part["file_url"] == "https://example.com/document.pdf"
+    end
+
+    test "omits thinking content parts when converting to API format" do
+      model = ChatOpenAIResponses.new!(%{"model" => @test_model})
+
+      # Create a message with thinking content (e.g., from a previous assistant response)
+      thinking_part =
+        LangChain.Message.ContentPart.new!(%{type: :thinking, content: "Some reasoning"})
+
+      text_part = LangChain.Message.ContentPart.text!("Here's my answer")
+
+      msg = LangChain.Message.new_assistant!([thinking_part, text_part])
+
+      api = ChatOpenAIResponses.for_api(model, msg)
+
+      # The result should be a list with the message and no tool calls
+      assert is_list(api)
+      [message_api] = api
+      assert message_api["type"] == "message"
+
+      # Content should only include the text part, not the thinking part
+      [content_part] = message_api["content"]
+      assert content_part["type"] == "input_text"
+      assert content_part["text"] == "Here's my answer"
     end
   end
 
@@ -809,6 +905,82 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
       assert call3.arguments == %{"expression" => "1+1"}
     end
 
+    test "parses reasoning output_item.added event", %{model: model} do
+      event = %{
+        "type" => "response.output_item.added",
+        "sequence_number" => 2,
+        "output_index" => 0,
+        "item" => %{
+          "id" => "rs_077ecb7bd77f1554016940159a98d081909d82480668e57471",
+          "type" => "reasoning",
+          "summary" => []
+        }
+      }
+
+      result = ChatOpenAIResponses.do_process_response(model, event)
+      assert %LangChain.MessageDelta{} = result
+      assert result.status == :incomplete
+      assert result.role == :assistant
+      assert result.index == 0
+      assert %LangChain.Message.ContentPart{type: :thinking, content: ""} = result.content
+    end
+
+    test "parses response.reasoning.delta event", %{model: model} do
+      event = %{
+        "type" => "response.reasoning.delta",
+        "output_index" => 0,
+        "delta" => "Let me think about this problem..."
+      }
+
+      result = ChatOpenAIResponses.do_process_response(model, event)
+      assert %LangChain.MessageDelta{} = result
+      assert result.status == :incomplete
+      assert result.role == :assistant
+      assert result.index == 0
+
+      assert %LangChain.Message.ContentPart{
+               type: :thinking,
+               content: "Let me think about this problem..."
+             } = result.content
+    end
+
+    test "parses reasoning output_item.done event", %{model: model} do
+      event = %{
+        "type" => "response.output_item.done",
+        "sequence_number" => 3,
+        "output_index" => 0,
+        "item" => %{
+          "id" => "rs_063b9657f7c2e68601694016d7008881909a128744538cebec",
+          "type" => "reasoning",
+          "summary" => []
+        }
+      }
+
+      result = ChatOpenAIResponses.do_process_response(model, event)
+      assert %LangChain.MessageDelta{} = result
+      assert result.status == :complete
+      assert result.role == :assistant
+      assert result.index == 0
+      assert %LangChain.Message.ContentPart{type: :thinking, content: ""} = result.content
+    end
+
+    test "parses response.output_text.delta with output_index", %{model: model} do
+      delta = %{
+        "type" => "response.output_text.delta",
+        "output_index" => 1,
+        "delta" => "Hello"
+      }
+
+      result = ChatOpenAIResponses.do_process_response(model, delta)
+
+      assert %LangChain.MessageDelta{
+               content: "Hello",
+               status: :incomplete,
+               role: :assistant,
+               index: 1
+             } = result
+    end
+
     test "parses response.completed with token usage", %{model: model} do
       completed = %{
         "type" => "response.completed",
@@ -826,7 +998,6 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
         %{"type" => "response.content_part.added"},
         %{"type" => "response.content_part.done"},
         %{"type" => "response.function_call_arguments.done"},
-        %{"type" => "response.reasoning.delta"},
         %{"type" => "response.queued"}
       ]
 
@@ -906,6 +1077,139 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
       assert restored.temperature == original.temperature
       assert restored.endpoint == original.endpoint
       assert restored.reasoning.effort == original.reasoning.effort
+    end
+  end
+
+  describe "previous_response_id" do
+    test "accepts previous_response_id in new/1" do
+      {:ok, model} =
+        ChatOpenAIResponses.new(%{
+          "model" => @test_model,
+          "previous_response_id" => "resp_abc123"
+        })
+
+      assert model.previous_response_id == "resp_abc123"
+    end
+
+    test "includes previous_response_id in API request when set" do
+      model =
+        ChatOpenAIResponses.new!(%{
+          "model" => @test_model,
+          "previous_response_id" => "resp_previous_123"
+        })
+
+      api_data = ChatOpenAIResponses.for_api(model, [], [])
+      assert api_data.previous_response_id == "resp_previous_123"
+    end
+
+    test "omits previous_response_id from API request when nil" do
+      model = ChatOpenAIResponses.new!(%{"model" => @test_model})
+
+      api_data = ChatOpenAIResponses.for_api(model, [], [])
+      refute Map.has_key?(api_data, :previous_response_id)
+    end
+
+    test "extracts response_id from completed response and adds to metadata" do
+      model = ChatOpenAIResponses.new!(%{"model" => @test_model})
+
+      response = %{
+        "id" => "resp_new_456",
+        "status" => "completed",
+        "output" => [
+          %{
+            "type" => "message",
+            "content" => [%{"type" => "output_text", "text" => "Hello!"}]
+          }
+        ]
+      }
+
+      result = ChatOpenAIResponses.do_process_response(model, response)
+      assert %LangChain.Message{} = result
+      assert result.metadata.response_id == "resp_new_456"
+    end
+
+    test "extracts response_id from streaming response.completed event" do
+      model = ChatOpenAIResponses.new!(%{"model" => @test_model})
+
+      completed_event = %{
+        "type" => "response.completed",
+        "response" => %{
+          "id" => "resp_stream_789",
+          "usage" => %{"input_tokens" => 10, "output_tokens" => 5}
+        }
+      }
+
+      result = ChatOpenAIResponses.do_process_response(model, completed_event)
+      assert %LangChain.MessageDelta{} = result
+      assert result.metadata.response_id == "resp_stream_789"
+    end
+
+    test "conversation continuity pattern: response_id becomes previous_response_id" do
+      # First call - no previous_response_id
+      model1 = ChatOpenAIResponses.new!(%{"model" => @test_model})
+      api_data1 = ChatOpenAIResponses.for_api(model1, [], [])
+      refute Map.has_key?(api_data1, :previous_response_id)
+
+      # Simulate response with id
+      response1 = %{
+        "id" => "resp_first_call",
+        "status" => "completed",
+        "output" => [
+          %{
+            "type" => "message",
+            "content" => [%{"type" => "output_text", "text" => "First response"}]
+          }
+        ]
+      }
+
+      message1 = ChatOpenAIResponses.do_process_response(model1, response1)
+      assert message1.metadata.response_id == "resp_first_call"
+
+      # Second call - use response_id from first call as previous_response_id
+      model2 =
+        ChatOpenAIResponses.new!(%{
+          "model" => @test_model,
+          "previous_response_id" => message1.metadata.response_id
+        })
+
+      api_data2 = ChatOpenAIResponses.for_api(model2, [], [])
+      assert api_data2.previous_response_id == "resp_first_call"
+    end
+  end
+
+  describe "req_config" do
+    test "merges req_config into the request (non-streaming)" do
+      expect(Req, :post, fn req_struct ->
+        # assert retry value from req_config
+        assert req_struct.options.retry == false
+
+        {:error, RuntimeError.exception("Something went wrong")}
+      end)
+
+      model =
+        ChatOpenAIResponses.new!(%{
+          stream: false,
+          model: @test_model,
+          req_config: %{retry: false}
+        })
+
+      assert {:error, _} = ChatOpenAIResponses.call(model, "prompt", [])
+      verify!()
+    end
+
+    test "merges req_config into the request (streaming)" do
+      expect(Req, :post, fn req_struct, _opts ->
+        # assert retry value from req_config
+        assert req_struct.options.retry == false
+
+        {:error, RuntimeError.exception("Something went wrong")}
+      end)
+
+      model =
+        ChatOpenAIResponses.new!(%{stream: true, model: @test_model, req_config: %{retry: false}})
+
+      assert {:error, _} = ChatOpenAIResponses.call(model, "prompt", [])
+      verify!()
     end
   end
 end

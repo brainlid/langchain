@@ -90,6 +90,14 @@ defmodule LangChain.ChatModels.ChatPerplexityTest do
       {:ok, model} = ChatPerplexity.new(%{model: @test_model, frequency_penalty: 0.5})
       assert model.frequency_penalty == 0.5
     end
+
+    test "supports verbose_api option" do
+      model = ChatPerplexity.new!(%{model: @test_model, verbose_api: true})
+      assert model.verbose_api == true
+
+      model = ChatPerplexity.new!(%{model: @test_model, verbose_api: false})
+      assert model.verbose_api == false
+    end
   end
 
   describe "for_api/3" do
@@ -540,6 +548,7 @@ defmodule LangChain.ChatModels.ChatPerplexityTest do
                "search_recency_filter" => "1d",
                "response_format" => nil,
                "receive_timeout" => 60000,
+               "verbose_api" => false,
                "version" => 1
              }
     end
@@ -550,6 +559,12 @@ defmodule LangChain.ChatModels.ChatPerplexityTest do
       assert result["version"] == 1
       refute Map.has_key?(result, "api_key")
       refute Map.has_key?(result, "callbacks")
+    end
+
+    test "includes verbose_api field" do
+      model = ChatPerplexity.new!(%{model: @test_model, verbose_api: true})
+      result = ChatPerplexity.serialize_config(model)
+      assert result["verbose_api"] == true
     end
   end
 end

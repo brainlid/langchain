@@ -30,6 +30,12 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         ContentPart.image_url!("https://example.com/image.jpg")
       ])
 
+      # Using a file ID (after uploading to OpenAI)
+      Message.new_user!([
+        ContentPart.text!("Describe this image:"),
+        ContentPart.image!("file-1234", type: :file_id)
+      ])
+
   For images, you can specify the detail level which affects token usage:
   - `detail: "low"` - Lower resolution, fewer tokens
   - `detail: "high"` - Higher resolution, more tokens
@@ -216,11 +222,11 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     field :max_output_tokens, :integer, default: nil
     # omit metadata because chat_open_ai also omits it
     # omit parallel_tool_calls because chat_open_ai also omits it
-    # omit previous_response_id becasue langchain assumes statelessness
+    field :previous_response_id, :string, default: nil
     # Reasoning options for gpt-5 and o-series models
     embeds_one(:reasoning, ReasoningOptions)
     # omit service_tier because chat_open_ai also omits it
-    # omit store, but set it explicitly to false later to keep statelessness. the API will default true unless we set it
+    field :store, :boolean, default: false
     field :stream, :boolean, default: false
     field :temperature, :float, default: nil
     field :json_response, :boolean, default: false
@@ -235,6 +241,11 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
 
     field :callbacks, {:array, :map}, default: []
     field :verbose_api, :boolean, default: false
+
+    # Req options to merge into the request.
+    # Refer to `https://hexdocs.pm/req/Req.html#new/1-options` for
+    # `Req.new` supported set of options.
+    field :req_config, :map, default: %{}
   end
 
   @type t :: %ChatOpenAIResponses{}
@@ -247,6 +258,8 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     :model,
     :include,
     :max_output_tokens,
+    :previous_response_id,
+    :store,
     :stream,
     :temperature,
     :json_response,
@@ -256,7 +269,8 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     :top_p,
     :truncation,
     :user,
-    :verbose_api
+    :verbose_api,
+    :req_config
   ]
   @required_fields [:endpoint, :model]
 
@@ -320,7 +334,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     %{
       model: openai.model,
       stream: openai.stream,
-      store: false,
+      store: if(openai.previous_response_id, do: true, else: openai.store),
       input:
         messages
         |> Enum.reduce([], fn m, acc ->
@@ -336,6 +350,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     }
     |> Utils.conditionally_add_to_map(:include, openai.include)
     |> Utils.conditionally_add_to_map(:max_output_tokens, openai.max_output_tokens)
+    |> Utils.conditionally_add_to_map(:previous_response_id, openai.previous_response_id)
     |> Utils.conditionally_add_to_map(:reasoning, ReasoningOptions.to_api_map(openai.reasoning))
     |> Utils.conditionally_add_to_map(:text, set_text_format(openai))
     |> Utils.conditionally_add_to_map(:tool_choice, get_tool_choice(openai))
@@ -343,7 +358,29 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(openai, tools))
     |> Utils.conditionally_add_to_map(:user, openai.user)
     |> Utils.conditionally_add_to_map(:temperature, openai.temperature)
-    |> Utils.conditionally_add_to_map(:top_p, openai.top_p)
+    |> maybe_add_top_p(openai)
+  end
+
+  # gpt-5.2 and newer do not support the top_p parameter.
+  # Earlier models (gpt-4.x, gpt-5.0, gpt-5.1) accept top_p.
+  defp maybe_add_top_p(map, %ChatOpenAIResponses{model: model, top_p: top_p}) do
+    if supports_top_p?(model) do
+      Utils.conditionally_add_to_map(map, :top_p, top_p)
+    else
+      map
+    end
+  end
+
+  @doc false
+  @spec supports_top_p?(String.t()) :: boolean()
+  def supports_top_p?(model) when is_binary(model) do
+    # Match models known to support top_p. This set is fixed and won't grow.
+    cond do
+      String.starts_with?(model, "gpt-4") -> true
+      String.starts_with?(model, "gpt-5.0") -> true
+      String.starts_with?(model, "gpt-5.1") -> true
+      true -> false
+    end
   end
 
   defp get_tools_for_api(%ChatOpenAIResponses{} = _model, nil), do: []
@@ -571,42 +608,50 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
 
   def content_part_for_api(%ChatOpenAIResponses{} = _model, %ContentPart{type: image} = part)
       when image in [:image, :image_url] do
-    media_prefix =
-      case Keyword.get(part.options || [], :media, nil) do
-        nil ->
-          ""
+    output =
+      if Keyword.get(part.options, :type) == :file_id do
+        %{"type" => "input_image", "file_id" => part.content}
+      else
+        media_prefix =
+          case Keyword.get(part.options || [], :media, nil) do
+            nil ->
+              ""
 
-        type when is_binary(type) ->
-          "data:#{type};base64,"
+            type when is_binary(type) ->
+              "data:#{type};base64,"
 
-        type when type in [:jpeg, :jpg] ->
-          "data:image/jpg;base64,"
+            type when type in [:jpeg, :jpg] ->
+              "data:image/jpg;base64,"
 
-        :png ->
-          "data:image/png;base64,"
+            :png ->
+              "data:image/png;base64,"
 
-        :gif ->
-          "data:image/gif;base64,"
+            :gif ->
+              "data:image/gif;base64,"
 
-        :webp ->
-          "data:image/webp;base64,"
+            :webp ->
+              "data:image/webp;base64,"
 
-        other ->
-          message = "Received unsupported media type for ContentPart: #{inspect(other)}"
-          Logger.error(message)
-          raise LangChainError, message
+            other ->
+              message = "Received unsupported media type for ContentPart: #{inspect(other)}"
+              Logger.error(message)
+              raise LangChainError, message
+          end
+
+        %{
+          "type" => "input_image",
+          "image_url" => media_prefix <> part.content
+        }
       end
 
     detail_option = Keyword.get(part.options, :detail, nil)
-    file_id = Keyword.get(part.options, :file_id, nil)
 
-    %{
-      "type" => "input_image",
-      "image_url" => media_prefix <> part.content
-    }
-    |> Utils.conditionally_add_to_map("detail", detail_option)
-    |> Utils.conditionally_add_to_map("file_id", file_id)
+    Utils.conditionally_add_to_map(output, "detail", detail_option)
   end
+
+  # Thinking content parts are output-only and should be omitted when sending to the API
+  def content_part_for_api(%ChatOpenAIResponses{} = _model, %ContentPart{type: :thinking}),
+    do: nil
 
   # Ignore unknown, unsupported content parts
   def content_part_for_api(%ChatOpenAIResponses{} = _model, %ContentPart{type: :unsupported}),
@@ -716,6 +761,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     req
     |> maybe_add_org_id_header()
     |> maybe_add_proj_id_header()
+    |> Req.merge(openai.req_config |> Keyword.new())
     |> Req.post()
     # parse the body and return it as parsed structs
     |> case do
@@ -782,6 +828,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     )
     |> maybe_add_org_id_header()
     |> maybe_add_proj_id_header()
+    |> Req.merge(openai.req_config |> Keyword.new())
     |> Req.post(
       into: Utils.handle_stream_fn(openai, &decode_stream/1, &do_process_response(openai, &1))
     )
@@ -899,6 +946,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         nil -> %{}
         %TokenUsage{} = usage -> %{usage: usage}
       end
+      |> maybe_add_response_id(response)
 
     Message.new!(%{
       content: content_parts,
@@ -929,6 +977,52 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   #   "sequence_number" => 4,
   #   "type" => "response.output_text.delta"
   # }
+  def do_process_response(_model, %{
+        "type" => "response.reasoning.delta",
+        "output_index" => output_index,
+        "delta" => delta_text
+      }) do
+    data = %{
+      content: ContentPart.new!(%{type: :thinking, content: delta_text}),
+      status: :incomplete,
+      role: :assistant,
+      index: output_index
+    }
+
+    case MessageDelta.new(data) do
+      {:ok, message} ->
+        message
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:error, LangChainError.exception(changeset)}
+    end
+  end
+
+  def do_process_response(
+        _model,
+        %{
+          "type" => "response.output_text.delta",
+          "output_index" => output_index,
+          "delta" => delta_text
+        }
+      ) do
+    data = %{
+      content: delta_text,
+      # Will need to be updated to :complete when the response is complete
+      status: :incomplete,
+      role: :assistant,
+      index: output_index
+    }
+
+    case MessageDelta.new(data) do
+      {:ok, message} ->
+        message
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:error, LangChainError.exception(changeset)}
+    end
+  end
+
   def do_process_response(_model, %{"type" => "response.output_text.delta", "delta" => delta_text}) do
     data = %{
       content: delta_text,
@@ -963,6 +1057,33 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     case MessageDelta.new(data) do
       {:ok, message} ->
         message
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:error, LangChainError.exception(changeset)}
+    end
+  end
+
+  # This is the first event we get for a reasoning/thinking block.
+  # It is followed by a series of `response.reasoning.delta` events.
+  # Finally, it is followed by a `response.output_item.done` event.
+  def do_process_response(_model, %{
+        "type" => "response.output_item.added",
+        "output_index" => output_index,
+        "item" => %{
+          "type" => "reasoning",
+          "id" => _reasoning_id
+        }
+      }) do
+    data = %{
+      content: ContentPart.new!(%{type: :thinking, content: ""}),
+      status: :incomplete,
+      role: :assistant,
+      index: output_index
+    }
+
+    case MessageDelta.new(data) do
+      {:ok, delta} ->
+        delta
 
       {:error, %Ecto.Changeset{} = changeset} ->
         {:error, LangChainError.exception(changeset)}
@@ -1035,6 +1156,27 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   def do_process_response(_model, %{
         "type" => "response.output_item.done",
         "output_index" => output_index,
+        "item" => %{"type" => "reasoning"}
+      }) do
+    data = %{
+      content: ContentPart.new!(%{type: :thinking, content: ""}),
+      status: :complete,
+      role: :assistant,
+      index: output_index
+    }
+
+    case MessageDelta.new(data) do
+      {:ok, delta} ->
+        delta
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:error, LangChainError.exception(changeset)}
+    end
+  end
+
+  def do_process_response(_model, %{
+        "type" => "response.output_item.done",
+        "output_index" => output_index,
         "item" => %{"type" => "function_call"} = item
       }) do
     data = %{
@@ -1064,12 +1206,13 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         "response" => response
       }) do
     usage = get_token_usage(response)
+    metadata = %{usage: usage} |> maybe_add_response_id(response)
 
     data = %{
       content: "",
       status: :complete,
       role: :assistant,
-      metadata: %{usage: usage}
+      metadata: metadata
     }
 
     case MessageDelta.new(data) do
@@ -1120,7 +1263,6 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     "response.mcp_call.in_progress",
     "response.output_text.annotation.added",
     "response.queued",
-    "response.reasoning.delta",
     "response.reasoning_summary.delta",
     "response.reasoning_summary.done",
     "error"
@@ -1162,6 +1304,12 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   end
 
   defp get_token_usage(_response_body), do: nil
+
+  defp maybe_add_response_id(metadata, %{"id" => id}) when is_binary(id) do
+    Map.put(metadata, :response_id, id)
+  end
+
+  defp maybe_add_response_id(metadata, _response), do: metadata
 
   defp content_items_to_content_parts_and_tool_calls(content_items) do
     Enum.reduce(content_items, {[], []}, fn content_item, {content_parts, tool_calls} ->

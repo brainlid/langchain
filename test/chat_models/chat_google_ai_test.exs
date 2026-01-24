@@ -125,10 +125,9 @@ defmodule ChatModels.ChatGoogleAITest do
 
     test "generated a map containing response_mime_type and response_schema", %{params: params} do
       google_ai =
-        ChatGoogleAI.new!(
-          params
-          |> Map.merge(%{"json_response" => true, "json_schema" => %{"type" => "object"}})
-        )
+        params
+        |> Map.merge(%{"json_response" => true, "json_schema" => %{"type" => "object"}})
+        |> ChatGoogleAI.new!()
 
       data = ChatGoogleAI.for_api(google_ai, [], [])
 
@@ -193,6 +192,35 @@ defmodule ChatModels.ChatGoogleAITest do
                  }
                }
              } = tool_result
+    end
+
+    test "for_api includes thoughtSignature when present in ToolCall metadata" do
+      tool_call =
+        ToolCall.new!(%{
+          call_id: "call_123",
+          name: "test_function",
+          arguments: %{"arg" => "value"},
+          metadata: %{thought_signature: "sig_abc123"}
+        })
+
+      result = ChatGoogleAI.for_api(tool_call)
+
+      assert result["thoughtSignature"] == "sig_abc123"
+      assert result["functionCall"]["name"] == "test_function"
+    end
+
+    test "for_api excludes thoughtSignature when not in ToolCall metadata" do
+      tool_call =
+        ToolCall.new!(%{
+          call_id: "call_123",
+          name: "test_function",
+          arguments: %{"arg" => "value"}
+        })
+
+      result = ChatGoogleAI.for_api(tool_call)
+
+      refute Map.has_key?(result, "thoughtSignature")
+      assert Map.has_key?(result, "functionCall")
     end
 
     test "generate a map containing text and inline image parts", %{google_ai: google_ai} do
@@ -524,6 +552,50 @@ defmodule ChatModels.ChatGoogleAITest do
       assert call.arguments == %{"value" => 123}
     end
 
+    test "handles function calls with thoughtSignature (Gemini 3)", %{model: model} do
+      response = %{
+        "candidates" => [
+          %{
+            "content" => %{
+              "role" => "model",
+              "parts" => [
+                %{
+                  "functionCall" => %{"args" => %{"key" => "value"}, "name" => "my_func"},
+                  "thoughtSignature" => "gemini3_thought_sig_xyz"
+                }
+              ]
+            },
+            "finishReason" => "STOP",
+            "index" => 0
+          }
+        ]
+      }
+
+      assert [%Message{} = msg] = ChatGoogleAI.do_process_response(model, response)
+      assert [%ToolCall{} = call] = msg.tool_calls
+      assert call.metadata.thought_signature == "gemini3_thought_sig_xyz"
+      assert call.name == "my_func"
+    end
+
+    test "handles function calls without thoughtSignature", %{model: model} do
+      response = %{
+        "candidates" => [
+          %{
+            "content" => %{
+              "role" => "model",
+              "parts" => [%{"functionCall" => %{"args" => %{}, "name" => "my_func"}}]
+            },
+            "finishReason" => "STOP",
+            "index" => 0
+          }
+        ]
+      }
+
+      assert [%Message{} = msg] = ChatGoogleAI.do_process_response(model, response)
+      assert [%ToolCall{} = call] = msg.tool_calls
+      assert call.metadata == nil
+    end
+
     test "handles no parts in content", %{model: model} do
       response = %{
         "candidates" => [
@@ -793,7 +865,7 @@ defmodule ChatModels.ChatGoogleAITest do
 
   describe "serialize_config/2" do
     test "does not include the API key or callbacks" do
-      model = ChatGoogleAI.new!(%{model: "gpt-4o"})
+      model = ChatGoogleAI.new!(%{model: @test_model})
       result = ChatGoogleAI.serialize_config(model)
       assert result["version"] == 1
       refute Map.has_key?(result, "api_key")
