@@ -39,6 +39,31 @@ mix test test/path/to/test_file.exs
 mix test test/path/to/test_file.exs:42
 ```
 
+#### Writing Tests
+
+Prefer to make test assertions using pattern matching rather than checking list lengths and extracting items by index.
+
+Avoid:
+```elixir
+  # Should have patched the dangling tool call
+  assert length(processed_state.messages) == 3
+  tool_message = Enum.at(processed_state.messages, 1)
+  assert tool_message.role == :tool
+```
+
+Favor:
+```elixir
+  # Should have patched the dangling tool call
+  assert [_msg1, %ToolMessage{role: :tool} = tool_msg, _] = processed_state.messages
+```
+
+Or favor this format when more than 1 assertion will be made:
+```elixir
+  # Should have patched the dangling tool call
+  assert [_msg1, tool_msg, _] = processed_state.messages
+  assert tool_msg.role == :tool
+```
+
 ### Code Quality
 
 Always run this before committing:
