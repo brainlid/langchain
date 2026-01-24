@@ -2043,58 +2043,108 @@ defmodule LangChain.Chains.LLMChainTest do
   describe "malformed tool call arguments" do
     @tag :skip
     test "does not loop infinitely when tool call has malformed JSON arguments" do
-      # Deltas with incomplete JSON - missing closing brace
-      malformed_deltas = [
-        %MessageDelta{role: :assistant, status: :incomplete, index: 0},
-        %MessageDelta{
-          status: :incomplete,
-          index: 0,
-          tool_calls: [
-            %ToolCall{
-              status: :incomplete,
-              type: :function,
-              call_id: "call_test123",
-              name: "calculator",
-              arguments: nil,
-              index: 0
-            }
-          ]
-        },
-        %MessageDelta{
-          status: :incomplete,
-          index: 0,
-          tool_calls: [
-            %ToolCall{
-              status: :incomplete,
-              type: :function,
-              call_id: nil,
-              name: nil,
-              # Missing closing brace - malformed JSON
-              arguments: "{\"expression\": \"1 + 1\"",
-              index: 0
-            }
-          ]
-        },
-        %MessageDelta{status: :complete, index: 0}
-      ]
+      # Track call count to return different responses
+      call_counter = :counters.new(1, [:atomics])
 
-      # Mock returns same malformed deltas on every call - simulates LLM
-      # consistently returning bad JSON (reproduces the infinite loop)
+      # First call: LLM returns truncated JSON (missing closing brace)
+      # Subsequent calls: LLM returns VALID JSON, but due to the bug,
+      # these get APPENDED to the old accumulated delta instead of replacing it
+      #
+      # Real-world observation from debug.log:
+      #   1st: {"query":"fusion...",  (truncated)
+      #   2nd: {"query":"fusion...",{"query": "...", "max_results": 10}  (concatenated!)
+      #   3rd: THREE concatenated JSON objects
+      #   ... garbage keeps growing forever
       expect(ChatOpenAI, :call, 100, fn _model, _messages, _tools ->
-        {:ok, malformed_deltas}
+        call_num = :counters.get(call_counter, 1)
+        :counters.add(call_counter, 1, 1)
+
+        deltas =
+          if call_num == 0 do
+            # First call: return truncated/malformed JSON (simulates LLM error)
+            [
+              %MessageDelta{role: :assistant, status: :incomplete, index: 0},
+              %MessageDelta{
+                status: :incomplete,
+                index: 0,
+                tool_calls: [
+                  %ToolCall{
+                    status: :incomplete,
+                    type: :function,
+                    call_id: "call_test123",
+                    name: "search_web",
+                    arguments: nil,
+                    index: 0
+                  }
+                ]
+              },
+              %MessageDelta{
+                status: :incomplete,
+                index: 0,
+                tool_calls: [
+                  %ToolCall{
+                    status: :incomplete,
+                    type: :function,
+                    # Missing closing brace - simulates truncated LLM response
+                    arguments: "{\"query\": \"test search\",\"",
+                    index: 0
+                  }
+                ]
+              },
+              %MessageDelta{status: :complete, index: 0}
+            ]
+          else
+            # Subsequent calls: return VALID JSON that would work on its own
+            # BUG: This gets APPENDED to old garbage instead of replacing it
+            # Result: {"query": "test search","{\"query\": \"retry\", \"max_results\": 10}"
+            #         ^-- old garbage --^    ^-- new valid JSON (now corrupted) --^
+            [
+              %MessageDelta{role: :assistant, status: :incomplete, index: 0},
+              %MessageDelta{
+                status: :incomplete,
+                index: 0,
+                tool_calls: [
+                  %ToolCall{
+                    status: :incomplete,
+                    type: :function,
+                    call_id: "call_retry_#{call_num}",
+                    name: "search_web",
+                    arguments: nil,
+                    index: 0
+                  }
+                ]
+              },
+              %MessageDelta{
+                status: :incomplete,
+                index: 0,
+                tool_calls: [
+                  %ToolCall{
+                    status: :incomplete,
+                    type: :function,
+                    # Valid JSON that SHOULD work, but gets appended to old garbage
+                    arguments: "{\"query\": \"retry #{call_num}\", \"max_results\": 10}",
+                    index: 0
+                  }
+                ]
+              },
+              %MessageDelta{status: :complete, index: 0}
+            ]
+          end
+
+        {:ok, deltas}
       end)
 
-      calculator =
+      search_web =
         Function.new!(%{
-          name: "calculator",
-          description: "Evaluate expression",
-          function: fn _args, _ctx -> "2" end
+          name: "search_web",
+          description: "Search the web",
+          function: fn _args, _ctx -> "results" end
         })
 
       chain =
         LLMChain.new!(%{llm: ChatOpenAI.new!(%{stream: true})})
-        |> LLMChain.add_tools(calculator)
-        |> LLMChain.add_message(Message.new_user!("Calculate 1+1"))
+        |> LLMChain.add_tools(search_web)
+        |> LLMChain.add_message(Message.new_user!("Search for something"))
 
       # Run in separate process with timeout to catch infinite loop
       task =
@@ -2104,20 +2154,36 @@ defmodule LangChain.Chains.LLMChainTest do
           end)
         end)
 
-      # BUG: Currently this times out because chain loops infinitely
-      # when delta conversion fails with "invalid json" error.
-      # The error is logged but chain is returned unmodified, causing retry loop.
+      # BUG: Currently this times out because:
+      # 1. First call returns truncated JSON -> parse fails -> error logged -> chain unmodified
+      # 2. Retry: new response APPENDED to old delta (not replaced!) -> still invalid -> loop
+      # 3. Each retry makes the accumulated garbage longer
       result = Task.yield(task, 2_000) || Task.shutdown(task, :brutal_kill)
 
       # BUG EXPOSED: This assertion fails because result is nil (task killed due to timeout).
-      # The chain loops infinitely printing "Error applying delta message. Reason: invalid json"
-      # Fix: delta_to_message_when_complete/1 should clear delta and/or return error
-      # instead of returning chain unmodified when MessageDelta.to_message fails.
+      # The chain loops infinitely because:
+      #   - delta_to_message_when_complete/1 returns chain unmodified on error
+      #   - delta is NOT cleared between retries
+      #   - new LLM responses get APPENDED to old garbage via ToolCall.merge/2
+      #
+      # Fix requires:
+      #   1. Clear delta on error (or return error tuple)
+      #   2. Possibly: don't accumulate tool args across separate LLM calls
       refute is_nil(result),
              """
              BUG: Chain loops infinitely when tool call has malformed JSON arguments.
              The task timed out and was killed after 2 seconds.
-             See lib/chains/llm_chain.ex:1133-1137 - error is logged but chain returned unmodified.
+
+             Root cause (see debug.log for real-world example):
+               1. First LLM call returns truncated JSON in tool_call.arguments
+               2. delta_to_message_when_complete/1 fails to parse, logs warning, returns chain unmodified
+               3. Chain retries (mode: :while_needs_response)
+               4. New LLM response gets APPENDED to old delta instead of replacing it
+               5. Accumulated garbage: {"query":"...",{"query": "...", "max_results": 10}
+               6. Still invalid JSON -> loop forever with ever-growing garbage
+
+             See lib/chains/llm_chain.ex:1133-1137 - error logged but chain returned unmodified.
+             See also: ToolCall.merge/2 - arguments get concatenated, not replaced.
              """
 
       # When fixed: verify error was logged and chain terminated gracefully

@@ -1,0 +1,144 @@
+
+[warning] [ToolCall] Invalid JSON in tool arguments
+  Tool: "search_web"
+  Call ID: "functions.search_web:0"
+  Reason: %Jason.DecodeError{position: 77, token: nil, data: "{\"query\":\"fusion reactor technology breakthroughs 2024 tokamak stellarator\",\""}
+  Arguments (truncated): "{\"query\":\"fusion reactor technology breakthroughs 2024 tokamak stellarator\",\""
+
+[warning] [LLMChain] Error applying delta message
+  Reason: "tool_calls: arguments: invalid json"
+  Delta status: :complete
+  Tool calls: search_web("{\"query\":\"fusion reactor technology breakthroughs 2024 tokamak stellarator\",\"")
+  Content preview: "I'll search for the latest news on fusion reactor technology, focusing on recent breakthroughs and major developments. Let me gather information on the different aspects you mentioned."
+
+[warning] [ToolCall] Invalid JSON in tool arguments
+  Tool: "search_web"
+  Call ID: "functions.search_web:0"
+  Reason: %Jason.DecodeError{position: 79, token: nil, data: "{\"query\":\"fusion reactor technology breakthroughs 2024 tokamak stellarator\",\"{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator nuclear fusion news\", \"max_results\": 10}"}
+  Arguments (truncated): "{\"query\":\"fusion reactor technology breakthroughs 2024 tokamak stellarator\",\"{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator nuclear fusion news\", \"max_results\": 10}"
+
+[warning] [LLMChain] Error applying delta message
+  Reason: "tool_calls: arguments: invalid json"
+  Delta status: :complete
+  Tool calls: search_web("{\"query\":\"fusion reactor technology breakthroughs 2024 tokamak stellarator\",\"{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator nuclear fusion news\", \"max_results\": 10}")
+  Content preview: "I'll search for the latest news on fusion reactor technology, focusing on recent breakthroughs and major developments. Let me gather information on the different aspects you mentioned.I'll search for "
+
+[warning] [ToolCall] Invalid JSON in tool arguments
+  Tool: "search_web"
+  Call ID: "functions.search_web:0"
+  Reason: %Jason.DecodeError{position: 79, token: nil, data: "{\"query\":\"fusion reactor technology breakthroughs 2024 tokamak stellarator\",\"{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator nuclear fusion news\", \"max_results\": 10}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator\", \"max_results\": 10}"}
+  Arguments (truncated): "{\"query\":\"fusion reactor technology breakthroughs 2024 tokamak stellarator\",\"{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator nuclear fusion news\", \"max_results\": 10}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator\", \"max_results\": 10}"
+
+[warning] [LLMChain] Error applying delta message
+  Reason: "tool_calls: arguments: invalid json"
+  Delta status: :complete
+  Tool calls: search_web("{\"query\":\"fusion reactor technology breakthroughs 2024 tokamak stellarator\",\"{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator nuclear fusion news\", \"max_results\": 10}{\"query\": \"fusion r...")
+  Content preview: "I'll search for the latest news on fusion reactor technology, focusing on recent breakthroughs and major developments. Let me gather information on the different aspects you mentioned.I'll search for "
+
+[warning] [ToolCall] Invalid JSON in tool arguments
+  Tool: "search_web"
+  Call ID: "functions.search_web:0"
+  Reason: %Jason.DecodeError{position: 79, token: nil, data: "{\"query\":\"fusion reactor technology breakthroughs 2024 tokamak stellarator\",\"{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator nuclear fusion news\", \"max_results\": 10}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator\", \"max_results\": 10}{\"query\":\"latest fusion reactor breakthroughs 2024 tokamaks stellarators\",\", \":\",/tool_max_results\"}"}
+  Arguments (truncated): "{\"query\":\"fusion reactor technology breakthroughs 2024 tokamak stellarator\",\"{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator nuclear fusion news\", \"max_results\": 10}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator\", \"max_results\": 10}{\"query\":\"latest fusion reactor breakthroughs 2024 tokamaks stellarators\",\", \":\",/tool_max_results\"}"
+
+[warning] [LLMChain] Error applying delta message
+  Reason: "tool_calls: arguments: invalid json"
+  Delta status: :complete
+  Tool calls: search_web("{\"query\":\"fusion reactor technology breakthroughs 2024 tokamak stellarator\",\"{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator nuclear fusion news\", \"max_results\": 10}{\"query\": \"fusion r...")
+  Content preview: "I'll search for the latest news on fusion reactor technology, focusing on recent breakthroughs and major developments. Let me gather information on the different aspects you mentioned.I'll search for "
+
+[warning] [ToolCall] Invalid JSON in tool arguments
+  Tool: "search_web"
+  Call ID: "functions.search_web:0"
+  Reason: %Jason.DecodeError{position: 79, token: nil, data: "{\"query\":\"fusion reactor technology breakthroughs 2024 tokamak stellarator\",\"{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator nuclear fusion news\", \"max_results\": 10}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator\", \"max_results\": 10}{\"query\":\"latest fusion reactor breakthroughs 2024 tokamaks stellarators\",\", \":\",/tool_max_results\"}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator\", \"max_results\": 10}"}
+  Arguments (truncated): "{\"query\":\"fusion reactor technology breakthroughs 2024 tokamak stellarator\",\"{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator nuclear fusion news\", \"max_results\": 10}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator\", \"max_results\": 10}{\"query\":\"latest fusion reactor breakthroughs 2024 tokamaks stellarators\",\", \":\",/tool_max_results\"}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator\", \"max_results\": 10}"
+
+[warning] [LLMChain] Error applying delta message
+  Reason: "tool_calls: arguments: invalid json"
+  Delta status: :complete
+  Tool calls: search_web("{\"query\":\"fusion reactor technology breakthroughs 2024 tokamak stellarator\",\"{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator nuclear fusion news\", \"max_results\": 10}{\"query\": \"fusion r...")
+  Content preview: "I'll search for the latest news on fusion reactor technology, focusing on recent breakthroughs and major developments. Let me gather information on the different aspects you mentioned.I'll search for "
+
+[warning] [ToolCall] Invalid JSON in tool arguments
+  Tool: "search_web"
+  Call ID: "functions.search_web:0"
+  Reason: %Jason.DecodeError{position: 79, token: nil, data: "{\"query\":\"fusion reactor technology breakthroughs 2024 tokamak stellarator\",\"{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator nuclear fusion news\", \"max_results\": 10}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator\", \"max_results\": 10}{\"query\":\"latest fusion reactor breakthroughs 2024 tokamaks stellarators\",\", \":\",/tool_max_results\"}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator\", \"max_results\": 10}{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator recent news\", \"max_results\": 10}"}
+  Arguments (truncated): "{\"query\":\"fusion reactor technology breakthroughs 2024 tokamak stellarator\",\"{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator nuclear fusion news\", \"max_results\": 10}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator\", \"max_results\": 10}{\"query\":\"latest fusion reactor breakthroughs 2024 tokamaks stellarators\",\", \":\",/tool_max_results\"}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator\", \"max_results\": 10}{\"query\": \"fusion reactor b..."
+
+[warning] [LLMChain] Error applying delta message
+  Reason: "tool_calls: arguments: invalid json"
+  Delta status: :complete
+  Tool calls: search_web("{\"query\":\"fusion reactor technology breakthroughs 2024 tokamak stellarator\",\"{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator nuclear fusion news\", \"max_results\": 10}{\"query\": \"fusion r...")
+  Content preview: "I'll search for the latest news on fusion reactor technology, focusing on recent breakthroughs and major developments. Let me gather information on the different aspects you mentioned.I'll search for "
+
+[warning] [ToolCall] Invalid JSON in tool arguments
+  Tool: "search_web"
+  Call ID: "functions.search_web:0"
+  Reason: %Jason.DecodeError{position: 79, token: nil, data: "{\"query\":\"fusion reactor technology breakthroughs 2024 tokamak stellarator\",\"{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator nuclear fusion news\", \"max_results\": 10}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator\", \"max_results\": 10}{\"query\":\"latest fusion reactor breakthroughs 2024 tokamaks stellarators\",\", \":\",/tool_max_results\"}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator\", \"max_results\": 10}{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator recent news\", \"max_results\": 10}{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator\", \"max_results\": 10}"}
+  Arguments (truncated): "{\"query\":\"fusion reactor technology breakthroughs 2024 tokamak stellarator\",\"{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator nuclear fusion news\", \"max_results\": 10}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator\", \"max_results\": 10}{\"query\":\"latest fusion reactor breakthroughs 2024 tokamaks stellarators\",\", \":\",/tool_max_results\"}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator\", \"max_results\": 10}{\"query\": \"fusion reactor b..."
+
+[warning] [LLMChain] Error applying delta message
+  Reason: "tool_calls: arguments: invalid json"
+  Delta status: :complete
+  Tool calls: search_web("{\"query\":\"fusion reactor technology breakthroughs 2024 tokamak stellarator\",\"{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator nuclear fusion news\", \"max_results\": 10}{\"query\": \"fusion r...")
+  Content preview: "I'll search for the latest news on fusion reactor technology, focusing on recent breakthroughs and major developments. Let me gather information on the different aspects you mentioned.I'll search for "
+
+[warning] [ToolCall] Invalid JSON in tool arguments
+  Tool: "search_web"
+  Call ID: "functions.search_web:0"
+  Reason: %Jason.DecodeError{position: 79, token: nil, data: "{\"query\":\"fusion reactor technology breakthroughs 2024 tokamak stellarator\",\"{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator nuclear fusion news\", \"max_results\": 10}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator\", \"max_results\": 10}{\"query\":\"latest fusion reactor breakthroughs 2024 tokamaks stellarators\",\", \":\",/tool_max_results\"}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator\", \"max_results\": 10}{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator recent news\", \"max_results\": 10}{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator\", \"max_results\": 10}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamaks stellarators\", \"max_results\": 10}"}
+  Arguments (truncated): "{\"query\":\"fusion reactor technology breakthroughs 2024 tokamak stellarator\",\"{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator nuclear fusion news\", \"max_results\": 10}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator\", \"max_results\": 10}{\"query\":\"latest fusion reactor breakthroughs 2024 tokamaks stellarators\",\", \":\",/tool_max_results\"}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator\", \"max_results\": 10}{\"query\": \"fusion reactor b..."
+
+[warning] [LLMChain] Error applying delta message
+  Reason: "tool_calls: arguments: invalid json"
+  Delta status: :complete
+  Tool calls: search_web("{\"query\":\"fusion reactor technology breakthroughs 2024 tokamak stellarator\",\"{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator nuclear fusion news\", \"max_results\": 10}{\"query\": \"fusion r...")
+  Content preview: "I'll search for the latest news on fusion reactor technology, focusing on recent breakthroughs and major developments. Let me gather information on the different aspects you mentioned.I'll search for "
+
+[warning] [ToolCall] Invalid JSON in tool arguments
+  Tool: "search_web"
+  Call ID: "search_web:0"
+  Reason: %Jason.DecodeError{position: 79, token: nil, data: "{\"query\":\"fusion reactor technology breakthroughs 2024 tokamak stellarator\",\"{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator nuclear fusion news\", \"max_results\": 10}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator\", \"max_results\": 10}{\"query\":\"latest fusion reactor breakthroughs 2024 tokamaks stellarators\",\", \":\",/tool_max_results\"}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator\", \"max_results\": 10}{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator recent news\", \"max_results\": 10}{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator\", \"max_results\": 10}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamaks stellarators\", \"max_results\": 10}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator\", \"max_results\": 10}"}
+  Arguments (truncated): "{\"query\":\"fusion reactor technology breakthroughs 2024 tokamak stellarator\",\"{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator nuclear fusion news\", \"max_results\": 10}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator\", \"max_results\": 10}{\"query\":\"latest fusion reactor breakthroughs 2024 tokamaks stellarators\",\", \":\",/tool_max_results\"}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator\", \"max_results\": 10}{\"query\": \"fusion reactor b..."
+
+[warning] [LLMChain] Error applying delta message
+  Reason: "tool_calls: arguments: invalid json"
+  Delta status: :complete
+  Tool calls: search_web("{\"query\":\"fusion reactor technology breakthroughs 2024 tokamak stellarator\",\"{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator nuclear fusion news\", \"max_results\": 10}{\"query\": \"fusion r...")
+  Content preview: "I'll search for the latest news on fusion reactor technology, focusing on recent breakthroughs and major developments. Let me gather information on the different aspects you mentioned.I'll search for "
+
+[warning] [ToolCall] Invalid JSON in tool arguments
+  Tool: "search_web"
+  Call ID: "search_web:0"
+  Reason: %Jason.DecodeError{position: 79, token: nil, data: "{\"query\":\"fusion reactor technology breakthroughs 2024 tokamak stellarator\",\"{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator nuclear fusion news\", \"max_results\": 10}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator\", \"max_results\": 10}{\"query\":\"latest fusion reactor breakthroughs 2024 tokamaks stellarators\",\", \":\",/tool_max_results\"}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator\", \"max_results\": 10}{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator recent news\", \"max_results\": 10}{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator\", \"max_results\": 10}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamaks stellarators\", \"max_results\": 10}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator\", \"max_results\": 10}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator recent news\", \"max_results\": 10}"}
+  Arguments (truncated): "{\"query\":\"fusion reactor technology breakthroughs 2024 tokamak stellarator\",\"{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator nuclear fusion news\", \"max_results\": 10}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator\", \"max_results\": 10}{\"query\":\"latest fusion reactor breakthroughs 2024 tokamaks stellarators\",\", \":\",/tool_max_results\"}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator\", \"max_results\": 10}{\"query\": \"fusion reactor b..."
+
+[warning] [LLMChain] Error applying delta message
+  Reason: "tool_calls: arguments: invalid json"
+  Delta status: :complete
+  Tool calls: search_web("{\"query\":\"fusion reactor technology breakthroughs 2024 tokamak stellarator\",\"{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator nuclear fusion news\", \"max_results\": 10}{\"query\": \"fusion r...")
+  Content preview: "I'll search for the latest news on fusion reactor technology, focusing on recent breakthroughs and major developments. Let me gather information on the different aspects you mentioned.I'll search for "
+
+[warning] [ToolCall] Invalid JSON in tool arguments
+  Tool: "search_web"
+  Call ID: "search_web:0"
+  Reason: %Jason.DecodeError{position: 79, token: nil, data: "{\"query\":\"fusion reactor technology breakthroughs 2024 tokamak stellarator\",\"{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator nuclear fusion news\", \"max_results\": 10}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator\", \"max_results\": 10}{\"query\":\"latest fusion reactor breakthroughs 2024 tokamaks stellarators\",\", \":\",/tool_max_results\"}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator\", \"max_results\": 10}{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator recent news\", \"max_results\": 10}{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator\", \"max_results\": 10}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamaks stellarators\", \"max_results\": 10}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator\", \"max_results\": 10}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator recent news\", \"max_results\": 10}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator\", \"max_results\": 10}"}
+  Arguments (truncated): "{\"query\":\"fusion reactor technology breakthroughs 2024 tokamak stellarator\",\"{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator nuclear fusion news\", \"max_results\": 10}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator\", \"max_results\": 10}{\"query\":\"latest fusion reactor breakthroughs 2024 tokamaks stellarators\",\", \":\",/tool_max_results\"}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator\", \"max_results\": 10}{\"query\": \"fusion reactor b..."
+
+[warning] [LLMChain] Error applying delta message
+  Reason: "tool_calls: arguments: invalid json"
+  Delta status: :complete
+  Tool calls: search_web("{\"query\":\"fusion reactor technology breakthroughs 2024 tokamak stellarator\",\"{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator nuclear fusion news\", \"max_results\": 10}{\"query\": \"fusion r...")
+  Content preview: "I'll search for the latest news on fusion reactor technology, focusing on recent breakthroughs and major developments. Let me gather information on the different aspects you mentioned.I'll search for "
+
+[warning] [ToolCall] Invalid JSON in tool arguments
+  Tool: "search_web"
+  Call ID: "search_web:0"
+  Reason: %Jason.DecodeError{position: 79, token: nil, data: "{\"query\":\"fusion reactor technology breakthroughs 2024 tokamak stellarator\",\"{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator nuclear fusion news\", \"max_results\": 10}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator\", \"max_results\": 10}{\"query\":\"latest fusion reactor breakthroughs 2024 tokamaks stellarators\",\", \":\",/tool_max_results\"}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator\", \"max_results\": 10}{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator recent news\", \"max_results\": 10}{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator\", \"max_results\": 10}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamaks stellarators\", \"max_results\": 10}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator\", \"max_results\": 10}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator recent news\", \"max_results\": 10}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator\", \"max_results\": 10}{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator recent news\", \"max_results\": 10}"}
+  Arguments (truncated): "{\"query\":\"fusion reactor technology breakthroughs 2024 tokamak stellarator\",\"{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator nuclear fusion news\", \"max_results\": 10}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator\", \"max_results\": 10}{\"query\":\"latest fusion reactor breakthroughs 2024 tokamaks stellarators\",\", \":\",/tool_max_results\"}{\"query\": \"fusion reactor technology breakthroughs 2024 tokamak stellarator\", \"max_results\": 10}{\"query\": \"fusion reactor b..."
+
+[warning] [LLMChain] Error applying delta message
+  Reason: "tool_calls: arguments: invalid json"
+  Delta status: :complete
+  Tool calls: search_web("{\"query\":\"fusion reactor technology breakthroughs 2024 tokamak stellarator\",\"{\"query\": \"fusion reactor breakthrough 2024 tokamak stellarator nuclear fusion news\", \"max_results\": 10}{\"query\": \"fusion r...")
+  Content preview: "I'll search for the latest news on fusion reactor technology, focusing on recent breakthroughs and major developments. Let me gather information on the different aspects you mentioned.I'll search for "
