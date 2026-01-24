@@ -102,9 +102,9 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     # lengthy response, a longer time limit may be required. However, when it
     # goes on too long by itself, it tends to hallucinate more.
     field :receive_timeout, :integer, default: @receive_timeout
-
-    field :stream, :boolean, default: false
     field :json_response, :boolean, default: false
+    field :json_schema, :map, default: nil
+    field :stream, :boolean, default: false
 
     # A list of maps for callback handlers (treated as internal)
     field :callbacks, {:array, :map}, default: []
@@ -124,8 +124,9 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     :top_k,
     :thinking_config,
     :receive_timeout,
-    :stream,
-    :json_response
+    :json_response,
+    :json_schema,
+    :stream
   ]
   @required_fields [
     :endpoint,
@@ -177,13 +178,13 @@ defmodule LangChain.ChatModels.ChatVertexAI do
       |> List.flatten()
       |> List.wrap()
 
-    response_mime_type =
+    {response_mime_type, response_schema} =
       case vertex_ai.json_response do
         true ->
-          "application/json"
+          {"application/json", vertex_ai.json_schema}
 
         false ->
-          nil
+          {nil, nil}
       end
 
     generation_config_params =
@@ -194,6 +195,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
       }
       |> Utils.conditionally_add_to_map("thinkingConfig", vertex_ai.thinking_config)
       |> Utils.conditionally_add_to_map("response_mime_type", response_mime_type)
+      |> Utils.conditionally_add_to_map("response_schema", response_schema)
 
     req =
       %{
@@ -792,6 +794,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
         :thinking_config,
         :receive_timeout,
         :json_response,
+        :json_schema,
         :stream
       ],
       @current_config_version
