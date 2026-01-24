@@ -40,7 +40,6 @@ Mimic.copy(LangChain.ChatModels.ChatGoogleAI)
 Mimic.copy(LangChain.ChatModels.ChatGrok)
 
 Logger.configure(level: :warning)
-# Logger.configure(level: :debug)
 ExUnit.configure(exclude: [live_call: true])
 
 ExUnit.start(capture_log: true)
