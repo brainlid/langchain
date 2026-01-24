@@ -837,9 +837,7 @@ defmodule LangChain.ChatModels.ChatDeepSeekTest do
       assert delta1.content == ContentPart.thinking!("reasoning content")
       assert delta2.content == ContentPart.text!("content")
     end
-
   end
-
 
   describe "decode_stream/2" do
     test "correctly handles fully formed chat completion chunks" do
