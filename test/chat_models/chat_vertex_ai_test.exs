@@ -485,6 +485,7 @@ defmodule ChatModels.ChatVertexAITest do
                "model" => "gemini-pro",
                "module" => "Elixir.LangChain.ChatModels.ChatVertexAI",
                "receive_timeout" => 60000,
+               "thinking_config" => nil,
                "stream" => false,
                "temperature" => 0.9,
                "top_k" => 1.0,

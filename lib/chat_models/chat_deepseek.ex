@@ -889,6 +889,53 @@ defmodule LangChain.ChatModels.ChatDeepSeek do
 
   # Delta message tool call
   def do_process_response(
+        %ChatDeepSeek{model: "deepseek-chat"} = model,
+        %{"delta" => delta_body, "index" => index} = msg
+      ) do
+    # finish_reason might not be present in all streaming responses (e.g., LiteLLM proxy)
+    finish = Map.get(msg, "finish_reason", nil)
+    status = finish_reason_to_status(finish)
+
+    tool_calls =
+      case delta_body do
+        %{"tool_calls" => tools_data} when is_list(tools_data) ->
+          Enum.map(tools_data, &do_process_response(model, &1))
+
+        _other ->
+          nil
+      end
+
+    # more explicitly interpret the role. We treat a "function_call" as a a role
+    # while OpenAI addresses it as an "assistant". Technically, they are correct
+    # that the assistant is issuing the function_call.
+    role =
+      case delta_body do
+        %{"role" => role} -> role
+        _other -> "unknown"
+      end
+
+    # Extract DeepSeek-specific metadata for streaming responses
+    metadata = extract_response_metadata(msg)
+
+    data =
+      delta_body
+      |> Map.put("role", role)
+      |> Map.put("index", index)
+      |> Map.put("status", status)
+      |> Map.put("tool_calls", tool_calls)
+      |> Map.put("metadata", metadata)
+
+    case MessageDelta.new(data) do
+      {:ok, message} ->
+        message
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:error, LangChainError.exception(changeset)}
+    end
+  end
+
+  # Delta message tool call
+  def do_process_response(
         model,
         %{"delta" => delta_body} = msg
       ) do

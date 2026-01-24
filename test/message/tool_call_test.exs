@@ -97,6 +97,25 @@ defmodule LangChain.Message.ToolCallTest do
 
       assert msg.arguments == four_spaces
     end
+
+    test "accepts metadata field with thought_signature" do
+      assert {:ok, %ToolCall{} = call} =
+               ToolCall.new(%{
+                 "status" => :complete,
+                 "type" => "function",
+                 "call_id" => "call_123",
+                 "name" => "test_function",
+                 "arguments" => "{}",
+                 "metadata" => %{thought_signature: "abc123signature"}
+               })
+
+      assert call.metadata == %{thought_signature: "abc123signature"}
+    end
+
+    test "metadata defaults to nil" do
+      {:ok, call} = ToolCall.new(%{})
+      assert call.metadata == nil
+    end
   end
 
   describe "complete/1" do
