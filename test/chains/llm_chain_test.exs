@@ -2040,6 +2040,93 @@ defmodule LangChain.Chains.LLMChainTest do
     end
   end
 
+  describe "malformed tool call arguments" do
+    @tag :skip
+    test "does not loop infinitely when tool call has malformed JSON arguments" do
+      # Deltas with incomplete JSON - missing closing brace
+      malformed_deltas = [
+        %MessageDelta{role: :assistant, status: :incomplete, index: 0},
+        %MessageDelta{
+          status: :incomplete,
+          index: 0,
+          tool_calls: [
+            %ToolCall{
+              status: :incomplete,
+              type: :function,
+              call_id: "call_test123",
+              name: "calculator",
+              arguments: nil,
+              index: 0
+            }
+          ]
+        },
+        %MessageDelta{
+          status: :incomplete,
+          index: 0,
+          tool_calls: [
+            %ToolCall{
+              status: :incomplete,
+              type: :function,
+              call_id: nil,
+              name: nil,
+              # Missing closing brace - malformed JSON
+              arguments: "{\"expression\": \"1 + 1\"",
+              index: 0
+            }
+          ]
+        },
+        %MessageDelta{status: :complete, index: 0}
+      ]
+
+      # Mock returns same malformed deltas on every call - simulates LLM
+      # consistently returning bad JSON (reproduces the infinite loop)
+      expect(ChatOpenAI, :call, 100, fn _model, _messages, _tools ->
+        {:ok, malformed_deltas}
+      end)
+
+      calculator =
+        Function.new!(%{
+          name: "calculator",
+          description: "Evaluate expression",
+          function: fn _args, _ctx -> "2" end
+        })
+
+      chain =
+        LLMChain.new!(%{llm: ChatOpenAI.new!(%{stream: true})})
+        |> LLMChain.add_tools(calculator)
+        |> LLMChain.add_message(Message.new_user!("Calculate 1+1"))
+
+      # Run in separate process with timeout to catch infinite loop
+      task =
+        Task.async(fn ->
+          ExUnit.CaptureLog.capture_log(fn ->
+            LLMChain.run(chain, mode: :while_needs_response)
+          end)
+        end)
+
+      # BUG: Currently this times out because chain loops infinitely
+      # when delta conversion fails with "invalid json" error.
+      # The error is logged but chain is returned unmodified, causing retry loop.
+      result = Task.yield(task, 2_000) || Task.shutdown(task, :brutal_kill)
+
+      # BUG EXPOSED: This assertion fails because result is nil (task killed due to timeout).
+      # The chain loops infinitely printing "Error applying delta message. Reason: invalid json"
+      # Fix: delta_to_message_when_complete/1 should clear delta and/or return error
+      # instead of returning chain unmodified when MessageDelta.to_message fails.
+      refute is_nil(result),
+             """
+             BUG: Chain loops infinitely when tool call has malformed JSON arguments.
+             The task timed out and was killed after 2 seconds.
+             See lib/chains/llm_chain.ex:1133-1137 - error is logged but chain returned unmodified.
+             """
+
+      # When fixed: verify error was logged and chain terminated gracefully
+      {:ok, log} = result
+      assert log =~ "Error applying delta message"
+      assert log =~ "invalid json"
+    end
+  end
+
   describe "run_until_tool_used/3" do
     test "supports multiple tool calls being made and stopping when the specific tool is called",
          %{greet: greet, sync: do_thing} do
