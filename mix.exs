@@ -49,9 +49,7 @@ defmodule LangChain.MixProject do
       {:nimble_parsec, "~> 1.4", optional: true},
       {:abacus, "~> 2.1.0", optional: true},
       {:nx, ">= 0.7.0", optional: true},
-      {:phoenix_pubsub, "~> 2.1", optional: true},
-      {:phoenix, "~> 1.7", only: :test},
-      {:ex_doc, "~> 0.39", only: :dev, runtime: false},
+      {:ex_doc, "~> 0.40", only: :dev, runtime: false},
       {:mimic, "~> 1.8", only: :test}
     ]
   end
@@ -79,7 +77,6 @@ defmodule LangChain.MixProject do
       extra_section: "Guides",
       extras: extras(),
       groups_for_extras: [
-        Docs: Path.wildcard("docs/*.md"),
         Notebooks: Path.wildcard("notebooks/*.livemd")
       ],
       groups_for_modules: [
@@ -164,8 +161,7 @@ defmodule LangChain.MixProject do
       "CHANGELOG.md",
       "notebooks/getting_started.livemd",
       "notebooks/custom_functions.livemd",
-      "notebooks/context-specific-image-descriptions.livemd",
-      "docs/middleware_messaging.md"
+      "notebooks/context-specific-image-descriptions.livemd"
     ]
   end
 
