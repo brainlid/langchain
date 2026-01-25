@@ -243,7 +243,7 @@ defmodule LangChain.ChatModels.ChatGrok do
     base_params =
       %{
         model: grok.model,
-        messages: messages |> Enum.flat_map(&for_api_message/1),
+        messages: messages |> Enum.map(&for_api_message/1),
         stream: grok.stream
       }
       |> Utils.conditionally_add_to_map(:max_tokens, grok.max_tokens)
@@ -354,7 +354,10 @@ defmodule LangChain.ChatModels.ChatGrok do
   Convert a LangChain structure to the expected xAI API format.
   """
   def for_api_message(%Message{role: :system} = message) do
-    [%{role: "system", content: get_content_string(message)}]
+    %{
+      role: "system",
+      content: get_content_string(message)
+    }
   end
 
   def for_api_message(%Message{role: :user} = message) do
@@ -364,21 +367,27 @@ defmodule LangChain.ChatModels.ChatGrok do
           text
 
         content_parts when is_list(content_parts) ->
+          # If it's just a single text part, extract the text
           case content_parts do
             [%ContentPart{type: :text, content: text}] -> text
             _ -> Enum.map(content_parts, &format_content_part_for_api/1)
           end
       end
 
-    [%{role: "user", content: content}]
+    %{
+      role: "user",
+      content: content
+    }
   end
 
   def for_api_message(%Message{role: :assistant} = message) do
-    base = %{role: "assistant"}
+    base = %{
+      role: "assistant"
+    }
 
-    [base
-     |> maybe_add_content(message)
-     |> maybe_add_tool_calls(message)]
+    base
+    |> maybe_add_content(message)
+    |> maybe_add_tool_calls(message)
   end
 
   def for_api_message(%Message{role: :tool, tool_results: tool_results} = _message)
@@ -451,7 +460,7 @@ defmodule LangChain.ChatModels.ChatGrok do
       type: "function",
       function: %{
         name: tool_call.name,
-        arguments: Jason.encode!(tool_call.arguments)
+        arguments: tool_call.arguments
       }
     }
   end
@@ -744,13 +753,11 @@ defmodule LangChain.ChatModels.ChatGrok do
 
   defp parse_tool_calls(tool_calls) when is_list(tool_calls) do
     Enum.map(tool_calls, fn tool_call ->
-      ToolCall.new!(%{
-        status: :complete,
-        type: :function,
+      %ToolCall{
         call_id: tool_call["id"],
         name: tool_call["function"]["name"],
         arguments: tool_call["function"]["arguments"]
-      })
+      }
     end)
   end
 
