@@ -2,11 +2,25 @@
 
 ## Unreleased
 
-### Changed
+---
 
-- **LLMChain**: Changed default `async_tool_timeout` from 2 minutes to `:infinity`
+## v0.5.0
 
-### Migration Notes
+### Breaking Changes
+
+**Elixir 1.17+ Required**: This release requires Elixir 1.17 or higher. The library uses the `get_in` macro which is only available in Elixir 1.17 onwards. Using Elixir 1.16 will throw a compile error. https://github.com/brainlid/langchain/pull/427
+
+**Async Tool Timeout Default Changed**: The default timeout for async tools (tools with `async: true`) has changed from 2 minutes (`120_000` ms) to `:infinity` (no timeout).
+
+### Upgrading from v0.4.1 - v0.5.0
+
+#### Elixir Version Requirement
+
+**What changed**: Minimum Elixir version is now 1.17.
+
+**Who is affected**: Users running Elixir 1.16 or earlier.
+
+**How to migrate**: Upgrade to Elixir 1.17 or later.
 
 #### Async Tool Timeout Default Change
 
@@ -52,6 +66,29 @@
       llm: model,
       async_tool_timeout: 35 * 60 * 1000  # 35 minutes for Deep Research
     })
+
+### Added
+- **Agent Framework Foundation**: Base work for new agent library with middleware-based architecture, including agent orchestration, state management, virtual filesystem, human-in-the-loop (HITL) workflows, sub-agents, summarization, and presence tracking https://github.com/brainlid/langchain/pull/442
+- **ChatOpenAIResponses**: Added `req_config` option for custom Req configuration https://github.com/brainlid/langchain/pull/415
+- **ChatOpenAIResponses**: Added reasoning/thinking events support https://github.com/brainlid/langchain/pull/421
+- **ChatOpenAIResponses**: Added new reasoning effort values https://github.com/brainlid/langchain/pull/419
+- **ChatOpenAIResponses**: Added stateful context support for Response API https://github.com/brainlid/langchain/pull/425
+- **ChatVertexAI**: Added JSON schema support https://github.com/brainlid/langchain/pull/424
+- **ChatVertexAI**: Added thinking configuration support https://github.com/brainlid/langchain/pull/423
+- **ChatGoogleAI**: Added `thought_signature` support for Gemini 3 function calls https://github.com/brainlid/langchain/pull/431
+- **ChatMistralAI**: Added support for parallel tool calls https://github.com/brainlid/langchain/pull/433
+- **ChatMistralAI**: Added thinking content parts support https://github.com/brainlid/langchain/pull/418
+- **ChatPerplexity and ChatMistralAI**: Added `verbose_api` field https://github.com/brainlid/langchain/pull/416
+- **LLMChain**: Changed default `async_tool_timeout` from 2 minutes to `:infinity` https://github.com/brainlid/langchain/pull/442
+
+### Changed
+- **Dependencies**: Updated Elixir requirement to `~> 1.17` https://github.com/brainlid/langchain/pull/427
+- **ChatOpenAIResponses**: Don't include `top_p` parameter for gpt-5.2+ models https://github.com/brainlid/langchain/pull/428
+
+### Fixed
+- **ChatDeepSeek**: Fixed UI bug in deepseek-chat model introduced by reasoning_content support https://github.com/brainlid/langchain/pull/429
+- **Core**: Fixed missing error handling and fallback mechanism on server outages https://github.com/brainlid/langchain/pull/435
+- **ChatOpenAIResponses**: Fixed image `file_id` content type handling https://github.com/brainlid/langchain/pull/438
 
 ---
 
