@@ -208,7 +208,11 @@ defmodule LangChain.ChatModels.ChatVertexAI do
         %{
           # Google AI functions use an OpenAI compatible format.
           # See: https://ai.google.dev/docs/function_calling#how_it_works
-          "functionDeclarations" => Enum.map(functions, &ChatOpenAI.for_api(vertex_ai, &1))
+          # Note: We strip the "strict" field as it's OpenAI-specific and not supported by Vertex AI
+          "functionDeclarations" =>
+            functions
+            |> Enum.map(&ChatOpenAI.for_api(vertex_ai, &1))
+            |> Enum.map(&Map.delete(&1, "strict"))
         }
       ])
     else
