@@ -241,7 +241,8 @@ defmodule LangChain.MessageDelta do
 
   # Empty content - nothing to merge
   defp append_to_merged_content(%MessageDelta{} = primary, %MessageDelta{content: content})
-       when content in [nil, []], do: primary
+       when content in [nil, []],
+       do: primary
 
   # String content - convert to ContentPart and merge
   defp append_to_merged_content(%MessageDelta{} = primary, %MessageDelta{content: content})
