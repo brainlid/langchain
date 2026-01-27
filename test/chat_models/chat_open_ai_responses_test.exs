@@ -740,6 +740,38 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
 
       assert error.message == "API key invalid"
     end
+
+    test "handles failed response status", %{model: model} do
+      response = %{
+        "response" => %{
+          "status" => "failed",
+          "error" => %{
+            "code" => "server_error",
+            "message" => "The server had an error processing your request"
+          }
+        }
+      }
+
+      assert {:error, %LangChain.LangChainError{} = error} =
+               ChatOpenAIResponses.do_process_response(model, response)
+
+      assert error.type == "api_error"
+      assert error.message =~ "The server had an error processing your request"
+    end
+
+    test "handles failed response status without error details", %{model: model} do
+      response = %{
+        "response" => %{
+          "status" => "failed"
+        }
+      }
+
+      assert {:error, %LangChain.LangChainError{} = error} =
+               ChatOpenAIResponses.do_process_response(model, response)
+
+      assert error.type == "api_error"
+      assert error.message =~ "failed"
+    end
   end
 
   describe "do_process_response streaming events" do
@@ -818,6 +850,25 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
 
       %LangChain.MessageDelta{metadata: %{usage: %LangChain.TokenUsage{input: 5, output: 2}}} =
         ChatOpenAIResponses.do_process_response(model, completed)
+    end
+
+    test "handles response.failed streaming event", %{model: model} do
+      failed_event = %{
+        "type" => "response.failed",
+        "response" => %{
+          "status" => "failed",
+          "error" => %{
+            "code" => "timeout",
+            "message" => "Request timed out"
+          }
+        }
+      }
+
+      assert {:error, %LangChain.LangChainError{} = error} =
+               ChatOpenAIResponses.do_process_response(model, failed_event)
+
+      assert error.type == "api_error"
+      assert error.message =~ "Request timed out"
     end
 
     test "skips expected streaming events", %{model: model} do
