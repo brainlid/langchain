@@ -1279,6 +1279,39 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     {:error, LangChainError.exception(message: reason)}
   end
 
+  # Handle failed response status (streaming event with type "response.failed")
+  def do_process_response(_model, %{
+        "type" => "response.failed",
+        "response" => %{"status" => "failed"} = response
+      }) do
+    error_info = Map.get(response, "error", %{})
+    error_message = Map.get(error_info, "message", "Request failed")
+
+    Logger.error("OpenAI Responses API request failed: #{error_message}")
+
+    {:error,
+     LangChainError.exception(
+       type: "api_error",
+       message: "OpenAI request failed: #{error_message}",
+       original: response
+     )}
+  end
+
+  # Handle failed response status (non-streaming / full response object)
+  def do_process_response(_model, %{"response" => %{"status" => "failed"} = response}) do
+    error_info = Map.get(response, "error", %{})
+    error_message = Map.get(error_info, "message", "Request failed")
+
+    Logger.error("OpenAI Responses API request failed: #{error_message}")
+
+    {:error,
+     LangChainError.exception(
+       type: "api_error",
+       message: "OpenAI request failed: #{error_message}",
+       original: response
+     )}
+  end
+
   def do_process_response(_model, {:error, %Jason.DecodeError{} = response}) do
     error_message = "Received invalid JSON: #{inspect(response)}"
     Logger.error(error_message)
