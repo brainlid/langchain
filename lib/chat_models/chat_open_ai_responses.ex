@@ -1284,32 +1284,12 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         "type" => "response.failed",
         "response" => %{"status" => "failed"} = response
       }) do
-    error_info = Map.get(response, "error", %{})
-    error_message = Map.get(error_info, "message", "Request failed")
-
-    Logger.error("OpenAI Responses API request failed: #{error_message}")
-
-    {:error,
-     LangChainError.exception(
-       type: "api_error",
-       message: "OpenAI request failed: #{error_message}",
-       original: response
-     )}
+    build_failed_response_error(response)
   end
 
   # Handle failed response status (non-streaming / full response object)
   def do_process_response(_model, %{"response" => %{"status" => "failed"} = response}) do
-    error_info = Map.get(response, "error", %{})
-    error_message = Map.get(error_info, "message", "Request failed")
-
-    Logger.error("OpenAI Responses API request failed: #{error_message}")
-
-    {:error,
-     LangChainError.exception(
-       type: "api_error",
-       message: "OpenAI request failed: #{error_message}",
-       original: response
-     )}
+    build_failed_response_error(response)
   end
 
   def do_process_response(_model, {:error, %Jason.DecodeError{} = response}) do
@@ -1323,6 +1303,41 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   def do_process_response(_model, other) do
     Logger.error("Trying to process an unexpected response. #{inspect(other)}")
     {:error, LangChainError.exception(message: "Unexpected response")}
+  end
+
+  # Extracts error details from a failed OpenAI response and builds an error tuple.
+  # Handles various error formats defensively:
+  # - %{"error" => %{"code" => "...", "message" => "..."}}
+  # - %{"error" => "string message"}
+  # - %{} (no error details)
+  @spec build_failed_response_error(map()) :: {:error, LangChainError.t()}
+  defp build_failed_response_error(response) do
+    {error_type, error_message} = extract_error_details(response)
+
+    Logger.error("OpenAI Responses API request failed: #{error_message}")
+
+    {:error,
+     LangChainError.exception(
+       type: error_type,
+       message: "OpenAI request failed: #{error_message}",
+       original: response
+     )}
+  end
+
+  @spec extract_error_details(map()) :: {String.t(), String.t()}
+  defp extract_error_details(response) do
+    case Map.get(response, "error") do
+      %{} = error_info ->
+        message = Map.get(error_info, "message", "Request failed")
+        code = Map.get(error_info, "code", "api_error")
+        {code, message}
+
+      message when is_binary(message) ->
+        {"api_error", message}
+
+      _ ->
+        {"api_error", "Request failed"}
+    end
   end
 
   defp get_token_usage(%{"usage" => usage} = _response_body) when is_map(usage) do

@@ -850,7 +850,8 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
       assert {:error, %LangChain.LangChainError{} = error} =
                ChatOpenAIResponses.do_process_response(model, response)
 
-      assert error.type == "api_error"
+      # Uses actual error code from response for better error categorization
+      assert error.type == "server_error"
       assert error.message =~ "The server had an error processing your request"
     end
 
@@ -864,8 +865,25 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
       assert {:error, %LangChain.LangChainError{} = error} =
                ChatOpenAIResponses.do_process_response(model, response)
 
+      # Falls back to "api_error" when no error code provided
       assert error.type == "api_error"
       assert error.message =~ "failed"
+    end
+
+    test "handles failed response status with string error", %{model: model} do
+      response = %{
+        "response" => %{
+          "status" => "failed",
+          "error" => "Something went wrong"
+        }
+      }
+
+      assert {:error, %LangChain.LangChainError{} = error} =
+               ChatOpenAIResponses.do_process_response(model, response)
+
+      # Handles string error format defensively
+      assert error.type == "api_error"
+      assert error.message =~ "Something went wrong"
     end
   end
 
@@ -1038,7 +1056,8 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
       assert {:error, %LangChain.LangChainError{} = error} =
                ChatOpenAIResponses.do_process_response(model, failed_event)
 
-      assert error.type == "api_error"
+      # Uses actual error code from response for better error categorization
+      assert error.type == "timeout"
       assert error.message =~ "Request timed out"
     end
 
