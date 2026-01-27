@@ -57,6 +57,7 @@ defmodule LangChain.Message.ContentPart do
   alias LangChain.LangChainError
   alias LangChain.Utils
 
+  @derive {Jason.Encoder, only: [:type, :content]}
   @primary_key false
   embedded_schema do
     field :type, Ecto.Enum,
