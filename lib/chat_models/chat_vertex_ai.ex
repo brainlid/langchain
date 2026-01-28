@@ -299,6 +299,17 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     }
   end
 
+  defp for_api(%ToolCall{metadata: %{thought_signature: signature}} = call)
+       when is_binary(signature) do
+    %{
+      "functionCall" => %{
+        "args" => call.arguments,
+        "name" => call.name
+      },
+      "thoughtSignature" => signature
+    }
+  end
+
   defp for_api(%ToolCall{} = call) do
     %{
       "functionCall" => %{
@@ -636,7 +647,12 @@ defmodule LangChain.ChatModels.ChatVertexAI do
       name: name,
       arguments: raw_args,
       complete: true,
-      index: data["index"]
+      index: data["index"],
+      metadata:
+        if(data["thoughtSignature"],
+          do: %{thought_signature: data["thoughtSignature"]},
+          else: nil
+        )
     }
     |> ToolCall.new()
     |> case do
