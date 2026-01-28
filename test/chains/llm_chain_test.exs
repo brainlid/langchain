@@ -699,6 +699,119 @@ defmodule LangChain.Chains.LLMChainTest do
       assert updated_chain.messages == [last]
       assert %TokenUsage{input: 15, output: 4, raw: %{}} = last.metadata.usage
     end
+
+    test "clears delta when conversion to message fails (empty assistant message)" do
+      # This test verifies that when delta-to-message conversion fails,
+      # the delta is cleared from the chain to prevent it from interfering
+      # with subsequent API calls.
+      #
+      # This can happen with Mistral when the model returns empty streaming
+      # responses (no content, no tool_calls), which violates conversation
+      # flow rules.
+
+      # Create deltas that result in an empty assistant message
+      # (no content, no tool_calls) - this will fail to convert to a message
+      empty_deltas = [
+        [
+          %LangChain.MessageDelta{
+            content: nil,
+            status: :incomplete,
+            index: 0,
+            role: :assistant,
+            tool_calls: nil
+          }
+        ],
+        [
+          %LangChain.MessageDelta{
+            content: nil,
+            status: :complete,
+            index: 0,
+            role: :unknown,
+            tool_calls: nil
+          }
+        ]
+      ]
+
+      chain = LLMChain.new!(%{llm: ChatOpenAI.new!()})
+
+      # Apply the empty deltas - this should fail to convert but clear the delta
+      updated_chain = LLMChain.apply_deltas(chain, empty_deltas)
+
+      # The delta should be cleared (nil) even though conversion failed
+      assert updated_chain.delta == nil
+
+      # No message should have been added since conversion failed
+      assert updated_chain.messages == []
+      assert updated_chain.last_message == nil
+    end
+
+    test "failed delta does not interfere with subsequent delta processing" do
+      # This test verifies that after a failed delta conversion,
+      # subsequent deltas can be processed correctly without interference
+      # from the previous failed delta.
+
+      chain = LLMChain.new!(%{llm: ChatOpenAI.new!()})
+
+      # First, apply empty deltas that will fail to convert
+      empty_deltas = [
+        [
+          %LangChain.MessageDelta{
+            content: nil,
+            status: :incomplete,
+            index: 0,
+            role: :assistant,
+            tool_calls: nil
+          }
+        ],
+        [
+          %LangChain.MessageDelta{
+            content: nil,
+            status: :complete,
+            index: 0,
+            role: :unknown,
+            tool_calls: nil
+          }
+        ]
+      ]
+
+      chain_after_failure = LLMChain.apply_deltas(chain, empty_deltas)
+      assert chain_after_failure.delta == nil
+
+      # Now apply valid deltas - they should work correctly
+      valid_deltas = [
+        [
+          %LangChain.MessageDelta{
+            content: "Hello",
+            status: :incomplete,
+            index: 0,
+            role: :assistant,
+            tool_calls: nil
+          }
+        ],
+        [
+          %LangChain.MessageDelta{
+            content: " world!",
+            status: :complete,
+            index: 0,
+            role: :unknown,
+            tool_calls: nil
+          }
+        ]
+      ]
+
+      final_chain = LLMChain.apply_deltas(chain_after_failure, valid_deltas)
+
+      # The valid deltas should have been processed correctly
+      assert final_chain.delta == nil
+      assert final_chain.last_message != nil
+      assert final_chain.last_message.role == :assistant
+
+      # Content should be the merged result
+      content_text =
+        LangChain.Message.ContentPart.parts_to_string(final_chain.last_message.content)
+
+      assert content_text == "Hello world!"
+    end
   end
 
   describe "add_message/2" do
@@ -973,6 +1086,163 @@ defmodule LangChain.Chains.LLMChainTest do
       # includes the message that errored at the point it was before failure
       assert msg1.content == [ContentPart.text!("Initial")]
       assert msg1.processed_content == "Initial *"
+    end
+
+    test "detects malformed tool call when content starts with registered tool name", %{
+      chain: chain,
+      hello_world: hello_world
+    } do
+      handler = %{
+        on_message_processing_error: fn _chain, item ->
+          send(self(), {:processing_error_callback, item})
+        end,
+        on_error_message_created: fn _chain, item ->
+          send(self(), {:error_message_created_callback, item})
+        end
+      }
+
+      chain =
+        chain
+        |> LLMChain.add_tools([hello_world])
+        |> LLMChain.add_callback(handler)
+
+      # Simulate a malformed tool call where tool data appears in content
+      malformed_message =
+        Message.new_assistant!(%{
+          content: "hello_world\": {\"some\": \"args\"}}",
+          tool_calls: []
+        })
+
+      updated_chain = LLMChain.process_message(chain, malformed_message)
+
+      # Should increment failure count
+      assert updated_chain.current_failure_count == 1
+
+      # Should have added the malformed message and an error message
+      assert length(updated_chain.messages) == 2
+      [original_msg, error_msg] = updated_chain.messages
+
+      assert original_msg.role == :assistant
+      assert error_msg.role == :user
+      assert String.contains?(ContentPart.parts_to_string(error_msg.content), "hello_world")
+      assert String.contains?(ContentPart.parts_to_string(error_msg.content), "malformed")
+
+      # Callbacks should have fired
+      assert_received {:processing_error_callback, ^original_msg}
+      assert_received {:error_message_created_callback, ^error_msg}
+    end
+
+    test "does not flag normal assistant messages as malformed", %{
+      chain: chain,
+      hello_world: hello_world
+    } do
+      chain = LLMChain.add_tools(chain, [hello_world])
+
+      # Normal message that doesn't start with a tool name
+      normal_message = Message.new_assistant!(%{content: "Here is my response."})
+
+      updated_chain = LLMChain.process_message(chain, normal_message)
+
+      # Should NOT increment failure count
+      assert updated_chain.current_failure_count == 0
+      assert length(updated_chain.messages) == 1
+    end
+
+    test "does not flag messages when no tools are registered", %{chain: chain} do
+      # Message that looks like it could be a tool call, but no tools registered
+      message = Message.new_assistant!(%{content: "hello_world\": {}"})
+
+      updated_chain = LLMChain.process_message(chain, message)
+
+      # Should NOT flag as malformed since no tools are registered
+      assert updated_chain.current_failure_count == 0
+      assert length(updated_chain.messages) == 1
+    end
+
+    test "does not flag message with valid tool_calls even if content has tool name", %{
+      chain: chain,
+      hello_world: hello_world
+    } do
+      chain = LLMChain.add_tools(chain, [hello_world])
+
+      # Message has both content starting with tool name AND valid tool_calls
+      # This should NOT be flagged since tool_calls is properly populated
+      message =
+        Message.new_assistant!(%{
+          content: "hello_world is being called",
+          tool_calls: [
+            ToolCall.new!(%{
+              call_id: "call_123",
+              name: "hello_world",
+              arguments: %{}
+            })
+          ]
+        })
+
+      updated_chain = LLMChain.process_message(chain, message)
+
+      assert updated_chain.current_failure_count == 0
+      assert length(updated_chain.messages) == 1
+    end
+
+    test "does not flag when tool name appears mid-content", %{
+      chain: chain,
+      hello_world: hello_world
+    } do
+      chain = LLMChain.add_tools(chain, [hello_world])
+
+      # Tool name appears in content but not at the start
+      message = Message.new_assistant!(%{content: "I will call hello_world for you"})
+
+      updated_chain = LLMChain.process_message(chain, message)
+
+      assert updated_chain.current_failure_count == 0
+      assert length(updated_chain.messages) == 1
+    end
+
+    test "does not flag content starting with unregistered tool name", %{
+      chain: chain,
+      hello_world: hello_world
+    } do
+      chain = LLMChain.add_tools(chain, [hello_world])
+
+      # Content starts with something that looks like a tool but isn't registered
+      message = Message.new_assistant!(%{content: "other_tool\": {\"arg\": 1}"})
+
+      updated_chain = LLMChain.process_message(chain, message)
+
+      assert updated_chain.current_failure_count == 0
+      assert length(updated_chain.messages) == 1
+    end
+
+    test "does not flag messages with empty or nil content", %{
+      chain: chain,
+      hello_world: hello_world
+    } do
+      chain = LLMChain.add_tools(chain, [hello_world])
+
+      # Empty content with tool calls (normal tool call response)
+      message_empty =
+        Message.new_assistant!(%{
+          content: [],
+          tool_calls: [
+            ToolCall.new!(%{call_id: "call_123", name: "hello_world", arguments: %{}})
+          ]
+        })
+
+      updated_chain = LLMChain.process_message(chain, message_empty)
+      assert updated_chain.current_failure_count == 0
+
+      # Nil content (also valid for assistant messages)
+      message_nil =
+        Message.new_assistant!(%{
+          tool_calls: [
+            ToolCall.new!(%{call_id: "call_456", name: "hello_world", arguments: %{}})
+          ]
+        })
+
+      updated_chain2 = LLMChain.process_message(chain, message_nil)
+      assert updated_chain2.current_failure_count == 0
     end
   end
 

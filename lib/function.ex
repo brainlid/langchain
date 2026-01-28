@@ -235,7 +235,7 @@ defmodule LangChain.Function do
   @doc """
   Build a new function.
   """
-  @spec new(attrs :: map()) :: {:ok, t} | {:error, Ecto.Changeset.t()}
+  @spec new(attrs :: map()) :: {:ok, t()} | {:error, Ecto.Changeset.t()}
   def new(attrs \\ %{}) do
     %Function{}
     |> cast(attrs, @create_fields)
@@ -257,12 +257,13 @@ defmodule LangChain.Function do
     end
   end
 
+  @spec common_validation(Ecto.Changeset.t()) :: Ecto.Changeset.t()
   defp common_validation(changeset) do
     changeset
     |> validate_required(@required_fields)
     |> validate_length(:name, max: 64)
-    |> ensure_single_parameter_option()
-    |> validate_function_and_arity()
+    |> validate_parameter_exclusivity()
+    |> validate_function_arity()
   end
 
   @doc """
@@ -274,74 +275,8 @@ defmodule LangChain.Function do
   def execute(%Function{function: fun} = function, arguments, context) do
     Logger.debug("Executing function #{inspect(function.name)}")
 
-    try do
-      # execute the function and normalize the results. Want :ok/:error tuples
-      case fun.(arguments, context) do
-        {:ok, llm_result, processed_content} ->
-          # successful execution with additional processed_content.
-          {:ok, llm_result, processed_content}
-
-        {:ok, result} ->
-          # successful execution.
-          {:ok, result}
-
-        {:error, reason} when is_binary(reason) ->
-          {:error, reason}
-
-        {:error, reason} ->
-          # turn the error response into a string.
-          {:error, "#{inspect(reason)}"}
-
-        text when is_binary(text) ->
-          {:ok, text}
-
-        parts when is_list(parts) ->
-          {:ok, parts}
-
-        other ->
-          Logger.error(
-            "Function #{function.name} unexpectedly returned #{inspect(other)}. Expect a string. Unable to present as response to LLM."
-          )
-
-          {:error, "An unexpected response was returned from the tool."}
-      end
-    rescue
-      err ->
-        Logger.error(
-          "Function! #{function.name} failed in execution. Exception: #{LangChainError.format_exception(err, __STACKTRACE__)}"
-        )
-
-        {:error, "ERROR: #{LangChainError.format_exception(err, __STACKTRACE__, :short)}"}
-    end
-  end
-
-  defp validate_function_and_arity(changeset) do
-    function = get_field(changeset, :function)
-
-    if is_function(function) do
-      case Elixir.Function.info(function, :arity) do
-        {:arity, 2} ->
-          changeset
-
-        {:arity, n} ->
-          add_error(changeset, :function, "expected arity of 2 but has arity #{inspect(n)}")
-      end
-    else
-      add_error(changeset, :function, "is not an Elixir function")
-    end
-  end
-
-  defp ensure_single_parameter_option(changeset) do
-    params_list = get_field(changeset, :parameters)
-    schema_map = get_field(changeset, :parameters_schema)
-
-    cond do
-      # can't have both
-      is_map(schema_map) and !Enum.empty?(params_list) ->
-        add_error(changeset, :parameters, "Cannot use both parameters and parameters_schema")
-
-      true ->
-        changeset
+    with :ok <- validate_required_params(function, arguments) do
+      execute_with_error_handling(function, fun, arguments, context)
     end
   end
 
@@ -350,10 +285,146 @@ defmodule LangChain.Function do
   If it not found, return the fallback text.
   """
   @spec get_display_text([t()], String.t(), String.t()) :: String.t()
-  def get_display_text(functions, function_name, fallback_text \\ "Perform action") do
+  def get_display_text(functions, function_name, fallback_text \\ "Perform action")
+
+  def get_display_text(functions, function_name, fallback_text) do
     case Enum.find(functions, &(&1.name == function_name)) do
       nil -> fallback_text
-      %Function{} = func -> func.display_text
+      %Function{display_text: display_text} -> display_text
     end
+  end
+
+  # Validates that the function field contains a function with arity 2
+  @spec validate_function_arity(Ecto.Changeset.t()) :: Ecto.Changeset.t()
+  defp validate_function_arity(changeset) do
+    changeset
+    |> get_field(:function)
+    |> do_validate_function_arity(changeset)
+  end
+
+  @spec do_validate_function_arity(any(), Ecto.Changeset.t()) :: Ecto.Changeset.t()
+  defp do_validate_function_arity(function, changeset) when is_function(function, 2) do
+    changeset
+  end
+
+  defp do_validate_function_arity(function, changeset) when is_function(function) do
+    {:arity, arity} = Elixir.Function.info(function, :arity)
+    add_error(changeset, :function, "expected arity of 2 but has arity #{inspect(arity)}")
+  end
+
+  defp do_validate_function_arity(_not_a_function, changeset) do
+    add_error(changeset, :function, "is not an Elixir function")
+  end
+
+  # Validates that only one of parameters or parameters_schema is provided
+  @spec validate_parameter_exclusivity(Ecto.Changeset.t()) :: Ecto.Changeset.t()
+  defp validate_parameter_exclusivity(changeset) do
+    params_list = get_field(changeset, :parameters)
+    schema_map = get_field(changeset, :parameters_schema)
+
+    do_validate_parameter_exclusivity(changeset, params_list, schema_map)
+  end
+
+  @spec do_validate_parameter_exclusivity(Ecto.Changeset.t(), list(), map() | nil) ::
+          Ecto.Changeset.t()
+  defp do_validate_parameter_exclusivity(changeset, params, schema)
+       when is_map(schema) and is_list(params) and params != [] do
+    add_error(changeset, :parameters, "Cannot use both parameters and parameters_schema")
+  end
+
+  defp do_validate_parameter_exclusivity(changeset, _params, _schema), do: changeset
+
+  @spec execute_with_error_handling(t(), function(), arguments(), context()) ::
+          {:ok, any()} | {:ok, any(), any()} | {:error, String.t()}
+  defp execute_with_error_handling(function, fun, arguments, context) do
+    fun.(arguments, context)
+    |> normalize_execution_result(function)
+  rescue
+    err ->
+      Logger.error(
+        "Function! #{function.name} failed in execution. Exception: #{LangChainError.format_exception(err, __STACKTRACE__)}"
+      )
+
+      {:error, "ERROR: #{LangChainError.format_exception(err, __STACKTRACE__, :short)}"}
+  end
+
+  # Normalizes the various return types from function execution into consistent tagged tuples
+  @spec normalize_execution_result(any(), t()) ::
+          {:ok, any()} | {:ok, any(), any()} | {:error, String.t()}
+  defp normalize_execution_result({:ok, llm_result, processed_content}, _function) do
+    {:ok, llm_result, processed_content}
+  end
+
+  defp normalize_execution_result({:ok, result}, _function) do
+    {:ok, result}
+  end
+
+  defp normalize_execution_result({:error, reason}, _function) when is_binary(reason) do
+    {:error, reason}
+  end
+
+  defp normalize_execution_result({:error, reason}, _function) do
+    {:error, "#{inspect(reason)}"}
+  end
+
+  defp normalize_execution_result(text, _function) when is_binary(text) do
+    {:ok, text}
+  end
+
+  defp normalize_execution_result(parts, _function) when is_list(parts) do
+    {:ok, parts}
+  end
+
+  defp normalize_execution_result(other, function) do
+    Logger.warning(
+      "Function #{function.name} unexpectedly returned #{inspect(other)}. Expect a string. Unable to present as response to LLM."
+    )
+
+    {:error, "An unexpected response was returned from the tool."}
+  end
+
+  # Validates that all required parameters are present in the arguments
+  @spec validate_required_params(t(), arguments()) :: :ok | {:error, String.t()}
+  defp validate_required_params(%Function{parameters: params}, arguments)
+       when is_list(params) and params != [] do
+    params
+    |> collect_required_param_names()
+    |> find_missing_params(arguments)
+    |> format_missing_params_result()
+  end
+
+  defp validate_required_params(_function, _arguments), do: :ok
+
+  # Extracts names of required parameters from the parameter list
+  @spec collect_required_param_names([struct()]) :: [String.t()]
+  defp collect_required_param_names(params) do
+    Enum.reduce(params, [], fn param, acc ->
+      if param.required, do: [param.name | acc], else: acc
+    end)
+  end
+
+  # Finds parameters that are required but missing from the arguments
+  @spec find_missing_params([String.t()], arguments()) :: [String.t()]
+  defp find_missing_params([], _arguments), do: []
+
+  defp find_missing_params(required_names, arguments) do
+    Enum.reject(required_names, &Map.has_key?(arguments, &1))
+  end
+
+  # Formats the result based on whether any parameters are missing
+  @spec format_missing_params_result([String.t()]) :: :ok | {:error, String.t()}
+  defp format_missing_params_result([]), do: :ok
+
+  @missing_params_error_template """
+  Missing required parameters for this tool.
+
+  Required parameters: ~s
+
+  Ensure you're passing the correct parameter names as defined in the tool schema.
+  """
+
+  defp format_missing_params_result(missing_params) do
+    expected = Enum.join(missing_params, ", ")
+    {:error, :io_lib.format(@missing_params_error_template, [expected]) |> IO.iodata_to_binary()}
   end
 end
