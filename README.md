@@ -71,13 +71,15 @@ This library was heavily inspired by, and based on, the way the JavaScript libra
 
 ## Installation
 
+**Requirements:** Elixir 1.17 or higher
+
 The package can be installed by adding `langchain` to your list of dependencies
 in `mix.exs`:
 
 ```elixir
 def deps do
   [
-    {:langchain, "0.4.0"}
+    {:langchain, "~> 0.5.0"}
   ]
 end
 ```
