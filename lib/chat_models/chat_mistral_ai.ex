@@ -599,40 +599,58 @@ defmodule LangChain.ChatModels.ChatMistralAI do
           nil
       end
 
-    role =
-      case delta_body do
-        %{"role" => role} -> role
-        # Mistral doesn't include a `role` key in the delta.
-        # Defaulting to `:assistant`. seems like it makes sense.
-        _ -> "assistant"
+    # Validate that tool_calls is not empty when finish_reason is "tool_calls"
+    # Mistral API sometimes returns finish_reason="tool_calls" in streaming deltas
+    # but without actual tool_calls data, which causes message ordering errors
+    if finish == "tool_calls" and (tool_calls == nil or tool_calls == []) do
+      error_msg =
+        "Mistral API returned finish_reason='tool_calls' in delta but tool_calls is empty. " <>
+          "Delta content: #{inspect(delta_body["content"])}, index: #{inspect(index)}"
+
+      Logger.warning(error_msg)
+
+      {:error,
+       LangChainError.exception(
+         type: "invalid_tool_calls",
+         message: error_msg,
+         original: %{"delta" => delta_body, "finish_reason" => finish, "index" => index}
+       )}
+    else
+      role =
+        case delta_body do
+          %{"role" => role} -> role
+          # Mistral doesn't include a `role` key in the delta.
+          # Defaulting to `:assistant`. seems like it makes sense.
+          _ -> "assistant"
+        end
+
+      # Convert Mistral's content format to ContentPart structs
+      content = process_mistral_content(delta_body["content"])
+
+      # Adjust index to prevent thinking and text content from merging.
+      # Thinking is always at index 0. Text content is offset by 1 to avoid collision.
+      # Similar to DeepSeek: thinking at index 0, text starts at index 1.
+      adjusted_index =
+        case content do
+          %ContentPart{type: :thinking} -> 0
+          _ -> (index || 0) + 1
+        end
+
+      data =
+        delta_body
+        |> Map.put("role", role)
+        |> Map.put("index", adjusted_index)
+        |> Map.put("status", status)
+        |> Map.put("tool_calls", tool_calls)
+        |> Map.put("content", content)
+
+      case MessageDelta.new(data) do
+        {:ok, message} ->
+          message
+
+        {:error, %Ecto.Changeset{} = changeset} ->
+          {:error, LangChainError.exception(changeset)}
       end
-
-    # Convert Mistral's content format to ContentPart structs
-    content = process_mistral_content(delta_body["content"])
-
-    # Adjust index to prevent thinking and text content from merging.
-    # Thinking is always at index 0. Text content is offset by 1 to avoid collision.
-    # Similar to DeepSeek: thinking at index 0, text starts at index 1.
-    adjusted_index =
-      case content do
-        %ContentPart{type: :thinking} -> 0
-        _ -> (index || 0) + 1
-      end
-
-    data =
-      delta_body
-      |> Map.put("role", role)
-      |> Map.put("index", adjusted_index)
-      |> Map.put("status", status)
-      |> Map.put("tool_calls", tool_calls)
-      |> Map.put("content", content)
-
-    case MessageDelta.new(data) do
-      {:ok, message} ->
-        message
-
-      {:error, %Ecto.Changeset{} = changeset} ->
-        {:error, LangChainError.exception(changeset)}
     end
   end
 
@@ -648,18 +666,36 @@ defmodule LangChain.ChatModels.ChatMistralAI do
         do: Enum.map(calls, &do_process_response(model, &1)),
         else: []
 
-    case Message.new(%{
-           "role" => "assistant",
-           "content" => message["content"],
-           "complete" => true,
-           "index" => data["index"],
-           "tool_calls" => tool_calls
-         }) do
-      {:ok, msg} ->
-        msg
+    # Validate that tool_calls is not empty when finish_reason is "tool_calls"
+    # Mistral API sometimes returns finish_reason="tool_calls" with empty or
+    # malformed tool_calls, which causes message ordering errors when sent back
+    if finish_reason == "tool_calls" and Enum.empty?(tool_calls) do
+      error_msg =
+        "Mistral API returned finish_reason='tool_calls' but tool_calls is empty. " <>
+          "Content: #{inspect(message["content"])}"
 
-      {:error, %Ecto.Changeset{} = changeset} ->
-        {:error, LangChainError.exception(changeset)}
+      Logger.warning(error_msg)
+
+      {:error,
+       LangChainError.exception(
+         type: "invalid_tool_calls",
+         message: error_msg,
+         original: data
+       )}
+    else
+      case Message.new(%{
+             "role" => "assistant",
+             "content" => message["content"],
+             "complete" => true,
+             "index" => data["index"],
+             "tool_calls" => tool_calls
+           }) do
+        {:ok, msg} ->
+          msg
+
+        {:error, %Ecto.Changeset{} = changeset} ->
+          {:error, LangChainError.exception(changeset)}
+      end
     end
   end
 
