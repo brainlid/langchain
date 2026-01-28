@@ -486,6 +486,22 @@ defmodule ChatModels.ChatVertexAITest do
     end
   end
 
+  describe "filter_text_parts/1" do
+    test "returns only text parts that are not nil or empty" do
+      parts = [
+        %{"text" => "I have text"},
+        %{"text" => nil},
+        %{"text" => ""},
+        %{"text" => "I have more text"}
+      ]
+
+      assert ChatVertexAI.filter_text_parts(parts) == [
+               %{"text" => "I have text"},
+               %{"text" => "I have more text"}
+             ]
+    end
+  end
+
   describe "get_message_contents/1" do
     test "returns basic text as a ContentPart" do
       message = Message.new_user!("Howdy!")
