@@ -28,7 +28,10 @@ defmodule LangChain.Chains.ChainCallbacks do
   """
 
   alias LangChain.Chains.LLMChain
+  alias LangChain.Function
   alias LangChain.Message
+  alias LangChain.Message.ToolCall
+  alias LangChain.Message.ToolResult
   alias LangChain.MessageDelta
   alias LangChain.TokenUsage
 
@@ -119,6 +122,47 @@ defmodule LangChain.Chains.ChainCallbacks do
   @type chain_message_processing_error :: (LLMChain.t(), Message.t() -> any())
 
   @typedoc """
+  Executed when the chain begins executing a tool call.
+
+  This fires immediately before tool execution starts, allowing UIs to show
+  real-time feedback like "Searching the web..." or "Creating file...".
+
+  - First argument: LLMChain.t()
+  - Second argument: ToolCall struct being executed
+  - Third argument: Function struct for the tool (includes display_text)
+
+  The handler's return value is discarded.
+  """
+  @type chain_tool_execution_started :: (LLMChain.t(), ToolCall.t(), Function.t() -> any())
+
+  @typedoc """
+  Executed when a single tool execution completes successfully.
+
+  Fires after individual tool execution, before results are aggregated.
+  Useful for showing per-tool success indicators.
+
+  - First argument: LLMChain.t()
+  - Second argument: ToolCall that was executed
+  - Third argument: ToolResult that was generated
+
+  The handler's return value is discarded.
+  """
+  @type chain_tool_execution_completed :: (LLMChain.t(), ToolCall.t(), ToolResult.t() -> any())
+
+  @typedoc """
+  Executed when a single tool execution fails.
+
+  Fires when tool execution raises an exception or returns an error result.
+
+  - First argument: LLMChain.t()
+  - Second argument: ToolCall that failed
+  - Third argument: Error reason or exception
+
+  The handler's return value is discarded.
+  """
+  @type chain_tool_execution_failed :: (LLMChain.t(), ToolCall.t(), term() -> any())
+
+  @typedoc """
   Executed when the chain uses one or more tools and the resulting ToolResults
   are generated as part of a tool response message.
 
@@ -149,6 +193,9 @@ defmodule LangChain.Chains.ChainCallbacks do
           optional(:on_message_processed) => chain_message_processed(),
           optional(:on_message_processing_error) => chain_message_processing_error(),
           optional(:on_error_message_created) => chain_error_message_created(),
+          optional(:on_tool_execution_started) => chain_tool_execution_started(),
+          optional(:on_tool_execution_completed) => chain_tool_execution_completed(),
+          optional(:on_tool_execution_failed) => chain_tool_execution_failed(),
           optional(:on_tool_response_created) => chain_tool_response_created(),
           optional(:on_retries_exceeded) => chain_retries_exceeded()
         }

@@ -1384,19 +1384,56 @@ defmodule LangChain.Chains.LLMChain do
           end
         end)
 
+      # Fire started callbacks for ALL valid tools BEFORE execution
+      Enum.each(grouped[:async] ++ grouped[:sync], fn {call, func} ->
+        Callbacks.fire(chain.callbacks, :on_tool_execution_started, [chain, call, func])
+      end)
+
       # execute all the async calls. This keeps the responses in order too.
+      # Return tuple with call and func for callback firing
       async_results =
         grouped[:async]
         |> Enum.map(fn {call, func} ->
           Task.async(fn ->
-            execute_tool_call(call, func, verbose: verbose, context: use_context)
+            result = execute_tool_call(call, func, verbose: verbose, context: use_context)
+            {call, func, result}
           end)
         end)
         |> Task.await_many(chain.async_tool_timeout || default_async_tool_timeout())
 
-      sync_results =
+      # Fire completed/failed callbacks for async tools and extract results
+      async_tool_results =
+        Enum.map(async_results, fn {call, _func, result} ->
+          if result.is_error do
+            Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
+              chain,
+              call,
+              result.content
+            ])
+          else
+            Callbacks.fire(chain.callbacks, :on_tool_execution_completed, [chain, call, result])
+          end
+
+          result
+        end)
+
+      # Execute sync tools with immediate callbacks
+      sync_tool_results =
         Enum.map(grouped[:sync], fn {call, func} ->
-          execute_tool_call(call, func, verbose: verbose, context: use_context)
+          result = execute_tool_call(call, func, verbose: verbose, context: use_context)
+
+          # Fire completed/failed callback immediately after execution
+          if result.is_error do
+            Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
+              chain,
+              call,
+              result.content
+            ])
+          else
+            Callbacks.fire(chain.callbacks, :on_tool_execution_completed, [chain, call, result])
+          end
+
+          result
         end)
 
       # log invalid tool calls
@@ -1405,10 +1442,13 @@ defmodule LangChain.Chains.LLMChain do
           text = "Tool call made to #{call.name} but tool not found"
           Logger.warning(text)
 
+          # Fire failed callback for invalid tools
+          Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [chain, call, text])
+
           ToolResult.new!(%{tool_call_id: call.call_id, content: text, is_error: true})
         end)
 
-      combined_results = async_results ++ sync_results ++ invalid_calls
+      combined_results = async_tool_results ++ sync_tool_results ++ invalid_calls
       # create a single tool message that contains all the tool results
       result_message =
         Message.new_tool_result!(%{content: nil, tool_results: combined_results})
@@ -1485,13 +1525,46 @@ defmodule LangChain.Chains.LLMChain do
             # Execute with original arguments
             case chain._tool_map[tool_call.name] do
               %Function{} = func ->
-                execute_tool_call(tool_call, func, verbose: verbose, context: use_context)
+                # Fire started callback before execution
+                Callbacks.fire(chain.callbacks, :on_tool_execution_started, [
+                  chain,
+                  tool_call,
+                  func
+                ])
+
+                result =
+                  execute_tool_call(tool_call, func, verbose: verbose, context: use_context)
+
+                # Fire completed/failed callback after execution
+                if result.is_error do
+                  Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
+                    chain,
+                    tool_call,
+                    result.content
+                  ])
+                else
+                  Callbacks.fire(chain.callbacks, :on_tool_execution_completed, [
+                    chain,
+                    tool_call,
+                    result
+                  ])
+                end
+
+                result
 
               nil ->
+                error_msg = "Tool '#{tool_call.name}' not found"
+
+                Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
+                  chain,
+                  tool_call,
+                  error_msg
+                ])
+
                 ToolResult.new!(%{
                   tool_call_id: tool_call.call_id,
                   name: tool_call.name,
-                  content: "Tool '#{tool_call.name}' not found",
+                  content: error_msg,
                   is_error: true
                 })
             end
@@ -1503,23 +1576,66 @@ defmodule LangChain.Chains.LLMChain do
             case chain._tool_map[tool_call.name] do
               %Function{} = func ->
                 edited_call = %{tool_call | arguments: edited_args}
-                execute_tool_call(edited_call, func, verbose: verbose, context: use_context)
+
+                # Fire started callback before execution
+                Callbacks.fire(chain.callbacks, :on_tool_execution_started, [
+                  chain,
+                  edited_call,
+                  func
+                ])
+
+                result =
+                  execute_tool_call(edited_call, func, verbose: verbose, context: use_context)
+
+                # Fire completed/failed callback after execution
+                if result.is_error do
+                  Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
+                    chain,
+                    edited_call,
+                    result.content
+                  ])
+                else
+                  Callbacks.fire(chain.callbacks, :on_tool_execution_completed, [
+                    chain,
+                    edited_call,
+                    result
+                  ])
+                end
+
+                result
 
               nil ->
+                error_msg = "Tool '#{tool_call.name}' not found"
+
+                Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
+                  chain,
+                  tool_call,
+                  error_msg
+                ])
+
                 ToolResult.new!(%{
                   tool_call_id: tool_call.call_id,
                   name: tool_call.name,
-                  content: "Tool '#{tool_call.name}' not found",
+                  content: error_msg,
                   is_error: true
                 })
             end
 
           :reject ->
             # Create rejection result without executing
+            rejection_msg = "Tool call '#{tool_call.name}' was rejected by a human reviewer."
+
+            # Fire failed callback for rejected tools
+            Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
+              chain,
+              tool_call,
+              rejection_msg
+            ])
+
             ToolResult.new!(%{
               tool_call_id: tool_call.call_id,
               name: tool_call.name,
-              content: "Tool call '#{tool_call.name}' was rejected by a human reviewer.",
+              content: rejection_msg,
               is_error: false
             })
         end
