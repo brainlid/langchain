@@ -1571,4 +1571,111 @@ defmodule LangChain.MessageDeltaTest do
              }
     end
   end
+
+  describe "add_tool_display_info/2" do
+    test "adds tool info to nil delta" do
+      tool_info = %{call_id: "call_123", name: "write_file", display_name: "Writing file..."}
+      delta = MessageDelta.add_tool_display_info(nil, tool_info)
+
+      assert [^tool_info] = MessageDelta.get_tool_display_info(delta)
+    end
+
+    test "adds tool info to existing delta" do
+      delta = %MessageDelta{
+        content: "Hello",
+        role: :assistant,
+        status: :incomplete
+      }
+
+      tool_info = %{call_id: "call_123", name: "write_file", display_name: "Writing file..."}
+      updated_delta = MessageDelta.add_tool_display_info(delta, tool_info)
+
+      assert [^tool_info] = MessageDelta.get_tool_display_info(updated_delta)
+    end
+
+    test "adds multiple tool calls" do
+      delta = nil
+      tool1 = %{call_id: "call_1", name: "read_file"}
+      tool2 = %{call_id: "call_2", name: "write_file"}
+
+      delta = MessageDelta.add_tool_display_info(delta, tool1)
+      delta = MessageDelta.add_tool_display_info(delta, tool2)
+
+      tools = MessageDelta.get_tool_display_info(delta)
+      assert length(tools) == 2
+      assert Enum.any?(tools, &(&1.call_id == "call_1"))
+      assert Enum.any?(tools, &(&1.call_id == "call_2"))
+    end
+
+    test "updates existing tool call by call_id" do
+      tool_info = %{call_id: "call_123", name: "write_file", status: :streaming}
+      delta = MessageDelta.add_tool_display_info(nil, tool_info)
+
+      updated_info = %{call_id: "call_123", name: "write_file", status: :complete}
+      delta = MessageDelta.add_tool_display_info(delta, updated_info)
+
+      [tool] = MessageDelta.get_tool_display_info(delta)
+      assert tool.status == :complete
+    end
+
+    test "preserves other metadata" do
+      delta = %MessageDelta{
+        content: "Hello",
+        role: :assistant,
+        status: :incomplete,
+        metadata: %{usage: %{input: 10, output: 5}, custom: "data"}
+      }
+
+      tool_info = %{call_id: "call_123", name: "write_file"}
+      updated_delta = MessageDelta.add_tool_display_info(delta, tool_info)
+
+      assert updated_delta.metadata.usage == %{input: 10, output: 5}
+      assert updated_delta.metadata.custom == "data"
+      assert [^tool_info] = MessageDelta.get_tool_display_info(updated_delta)
+    end
+  end
+
+  describe "get_tool_display_info/1" do
+    test "returns empty list for nil delta" do
+      assert MessageDelta.get_tool_display_info(nil) == []
+    end
+
+    test "returns empty list for delta with no tool display info" do
+      delta = %MessageDelta{
+        content: "Hello",
+        role: :assistant,
+        status: :incomplete
+      }
+
+      assert MessageDelta.get_tool_display_info(delta) == []
+    end
+
+    test "returns empty list for delta with empty metadata" do
+      delta = %MessageDelta{
+        content: "Hello",
+        role: :assistant,
+        status: :incomplete,
+        metadata: %{}
+      }
+
+      assert MessageDelta.get_tool_display_info(delta) == []
+    end
+
+    test "returns tool calls from metadata" do
+      tool1 = %{call_id: "call_1", name: "read_file"}
+      tool2 = %{call_id: "call_2", name: "write_file"}
+
+      delta = %MessageDelta{
+        content: "Hello",
+        role: :assistant,
+        status: :incomplete,
+        metadata: %{streaming_tool_calls: [tool1, tool2]}
+      }
+
+      tools = MessageDelta.get_tool_display_info(delta)
+      assert length(tools) == 2
+      assert Enum.any?(tools, &(&1.call_id == "call_1"))
+      assert Enum.any?(tools, &(&1.call_id == "call_2"))
+    end
+  end
 end
