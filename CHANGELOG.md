@@ -2,6 +2,56 @@
 
 ## Unreleased
 
+### Enhancements
+
+**Enhanced Tool Execution Callbacks**: Added four new callbacks that provide granular visibility into the complete tool execution lifecycle:
+
+1. **`:on_tool_call_identified`** - Fires as soon as a tool name is detected during streaming (before arguments are fully received). May not have `call_id` yet. Enables early UI feedback like "Searching web..." while the LLM is still streaming.
+
+2. **`:on_tool_execution_started`** - Fires immediately before tool execution begins. Always has `call_id`. Allows tracking when actual execution starts.
+
+3. **`:on_tool_execution_completed`** - Fires after successful tool execution with the result. Useful for logging, metrics, and updating UI state.
+
+4. **`:on_tool_execution_failed`** - Fires when a tool call fails, is invalid, or is rejected during human-in-the-loop approval. Includes error details.
+
+**Key distinction**: The early `:on_tool_call_identified` callback fires during streaming as soon as the tool name appears, while `:on_tool_execution_started` fires later when execution actually begins. This two-phase notification enables responsive UIs that can show immediate feedback.
+
+**Example usage**:
+
+```elixir
+callbacks = %{
+  on_tool_call_identified: fn _chain, tool_call, func ->
+    # Show early UI feedback during streaming (tool args may be incomplete)
+    IO.puts("Tool identified: #{func.display_text || tool_call.name}")
+  end,
+  on_tool_execution_started: fn _chain, tool_call, func ->
+    # Update UI when execution actually begins (tool args complete)
+    IO.puts("Executing: #{func.display_text || tool_call.name}")
+  end,
+  on_tool_execution_completed: fn _chain, tool_call, func, result ->
+    # Handle successful execution
+    IO.puts("Completed: #{tool_call.name}")
+  end,
+  on_tool_execution_failed: fn _chain, tool_call, func, error ->
+    # Handle failures
+    IO.puts("Failed: #{tool_call.name} - #{error}")
+  end
+}
+
+chain = LLMChain.new!(%{
+  llm: model,
+  tools: [my_tool],
+  callbacks: [callbacks]
+})
+```
+
+**Additional improvements**:
+- `MessageDelta` now tracks tool display information in metadata for better UI rendering
+- Callbacks fire correctly across all execution paths (normal, async, HITL workflows)
+- Internal tracking prevents duplicate identification notifications for the same tool call
+
+**Non-breaking change**: Existing applications continue to work without modifications. All new callbacks are optional.
+
 ---
 
 ## v0.5.0
