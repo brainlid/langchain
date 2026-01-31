@@ -122,6 +122,38 @@ defmodule LangChain.Chains.ChainCallbacks do
   @type chain_message_processing_error :: (LLMChain.t(), Message.t() -> any())
 
   @typedoc """
+  Executed when a tool call is identified during streaming, before execution begins.
+
+  This fires as soon as we have enough information to identify the tool (at minimum, the `name` field).
+  The tool call may be incomplete - `call_id` might not be available yet, and `arguments` may be partial.
+
+  This callback provides early notification for UI feedback like "Searching web..." while the LLM
+  is still streaming the complete tool call.
+
+  Timing:
+  - Fires: As soon as tool name is detected in streaming deltas
+  - Before: Tool arguments are fully received
+  - Before: Tool execution begins
+
+  Arguments:
+  - First: LLMChain.t() - Current chain state
+  - Second: ToolCall.t() - Tool call struct (may be incomplete, but has name)
+  - Third: Function.t() - Function definition (includes display_text)
+
+  The handler's return value is discarded.
+
+  ## Example
+
+      callback_handler = %{
+        on_tool_call_identified: fn _chain, tool_call, func ->
+          IO.puts("Tool identified: \#{func.display_text || tool_call.name}")
+        end
+      }
+
+  """
+  @type chain_tool_call_identified :: (LLMChain.t(), ToolCall.t(), Function.t() -> any())
+
+  @typedoc """
   Executed when the chain begins executing a tool call.
 
   This fires immediately before tool execution starts, allowing UIs to show
@@ -193,6 +225,7 @@ defmodule LangChain.Chains.ChainCallbacks do
           optional(:on_message_processed) => chain_message_processed(),
           optional(:on_message_processing_error) => chain_message_processing_error(),
           optional(:on_error_message_created) => chain_error_message_created(),
+          optional(:on_tool_call_identified) => chain_tool_call_identified(),
           optional(:on_tool_execution_started) => chain_tool_execution_started(),
           optional(:on_tool_execution_completed) => chain_tool_execution_completed(),
           optional(:on_tool_execution_failed) => chain_tool_execution_failed(),

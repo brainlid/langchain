@@ -400,4 +400,194 @@ defmodule LangChain.Chains.LLMChainToolCallbacksTest do
       assert_received {:completed, "async_tool", _end_time}
     end
   end
+
+  describe "tool identification callbacks during streaming" do
+    test "fires on_tool_call_identified when tool name detected in streaming delta" do
+      test_pid = self()
+
+      tool =
+        Function.new!(%{
+          name: "search_web",
+          display_text: "Searching web",
+          description: "Search the web",
+          parameters_schema: %{type: "object", properties: %{}},
+          function: fn _args, _ctx -> {:ok, "results"} end
+        })
+
+      callbacks = %{
+        on_tool_call_identified: fn _chain, tool_call, function ->
+          send(test_pid, {:identified, tool_call.name, function.display_text})
+        end
+      }
+
+      chain =
+        LLMChain.new!(%{
+          llm: ChatAnthropic.new!(%{model: "claude-sonnet-4-5-20250929"}),
+          tools: [tool],
+          callbacks: [callbacks]
+        })
+
+      # Simulate streaming: first delta has tool name but no call_id
+      delta =
+        LangChain.MessageDelta.new!(%{
+          role: :assistant,
+          tool_calls: [
+            LangChain.Message.ToolCall.new!(%{index: 0, name: "search_web"})
+          ]
+        })
+
+      _updated_chain = LLMChain.merge_delta(chain, delta)
+
+      assert_received {:identified, "search_web", "Searching web"}
+    end
+
+    test "does not fire on_tool_call_identified twice for same tool" do
+      test_pid = self()
+
+      tool =
+        Function.new!(%{
+          name: "file_read",
+          display_text: "Reading file",
+          description: "Read a file",
+          parameters_schema: %{type: "object", properties: %{}},
+          function: fn _args, _ctx -> {:ok, "content"} end
+        })
+
+      callbacks = %{
+        on_tool_call_identified: fn _chain, tool_call, _function ->
+          send(test_pid, {:identified, tool_call.name})
+        end
+      }
+
+      chain =
+        LLMChain.new!(%{
+          llm: ChatAnthropic.new!(%{model: "claude-sonnet-4-5-20250929"}),
+          tools: [tool],
+          callbacks: [callbacks]
+        })
+
+      # First delta with tool name
+      delta1 =
+        LangChain.MessageDelta.new!(%{
+          role: :assistant,
+          tool_calls: [
+            LangChain.Message.ToolCall.new!(%{index: 0, name: "file_read"})
+          ]
+        })
+
+      chain = LLMChain.merge_delta(chain, delta1)
+
+      # Second delta with same tool (adding arguments)
+      delta2 =
+        LangChain.MessageDelta.new!(%{
+          role: :assistant,
+          tool_calls: [
+            LangChain.Message.ToolCall.new!(%{
+              index: 0,
+              name: "file_read",
+              arguments: "{\"path\":"
+            })
+          ]
+        })
+
+      _updated_chain = LLMChain.merge_delta(chain, delta2)
+
+      # Should only receive one identification
+      assert_received {:identified, "file_read"}
+      refute_received {:identified, "file_read"}
+    end
+
+    test "fires both on_tool_call_identified and on_tool_execution_started in sequence" do
+      test_pid = self()
+
+      tool =
+        Function.new!(%{
+          name: "calculator",
+          display_text: "Calculating",
+          description: "Do math",
+          parameters_schema: %{type: "object", properties: %{}},
+          function: fn _args, _ctx -> {:ok, "42"} end
+        })
+
+      callbacks = %{
+        on_tool_call_identified: fn _chain, tool_call, function ->
+          send(test_pid, {:identified, tool_call.name, function.display_text})
+        end,
+        on_tool_execution_started: fn _chain, tool_call, function ->
+          send(test_pid, {:started, tool_call.name, function.display_text})
+        end
+      }
+
+      chain =
+        LLMChain.new!(%{
+          llm: ChatAnthropic.new!(%{model: "claude-sonnet-4-5-20250929"}),
+          tools: [tool],
+          callbacks: [callbacks]
+        })
+
+      # Simulate streaming delta
+      delta =
+        LangChain.MessageDelta.new!(%{
+          role: :assistant,
+          tool_calls: [
+            LangChain.Message.ToolCall.new!(%{index: 0, name: "calculator"})
+          ]
+        })
+
+      chain = LLMChain.merge_delta(chain, delta)
+
+      # Should receive identification callback
+      assert_received {:identified, "calculator", "Calculating"}
+
+      # Now simulate execution
+      message =
+        Message.new_assistant!(%{
+          content: "Let me calculate",
+          tool_calls: [
+            LangChain.Message.ToolCall.new!(%{
+              call_id: "call_123",
+              name: "calculator",
+              arguments: %{}
+            })
+          ]
+        })
+
+      chain = LLMChain.add_message(chain, message)
+      _updated_chain = LLMChain.execute_tool_calls(chain)
+
+      # Should also receive execution started callback
+      assert_received {:started, "calculator", "Calculating"}
+    end
+
+    test "handles tool not found in tool map during identification" do
+      test_pid = self()
+
+      callbacks = %{
+        on_tool_call_identified: fn _chain, tool_call, _function ->
+          send(test_pid, {:identified, tool_call.name})
+        end
+      }
+
+      chain =
+        LLMChain.new!(%{
+          llm: ChatAnthropic.new!(%{model: "claude-sonnet-4-5-20250929"}),
+          tools: [],
+          callbacks: [callbacks]
+        })
+
+      # Delta with unknown tool
+      delta =
+        LangChain.MessageDelta.new!(%{
+          role: :assistant,
+          tool_calls: [
+            LangChain.Message.ToolCall.new!(%{index: 0, name: "unknown_tool"})
+          ]
+        })
+
+      _updated_chain = LLMChain.merge_delta(chain, delta)
+
+      # Should not fire callback for unknown tool
+      refute_received {:identified, _}
+    end
+  end
 end
