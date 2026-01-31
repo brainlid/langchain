@@ -210,7 +210,11 @@ defmodule LangChain.ChatModels.ChatVertexAI do
         %{
           # Google AI functions use an OpenAI compatible format.
           # See: https://ai.google.dev/docs/function_calling#how_it_works
-          "functionDeclarations" => Enum.map(functions, &ChatOpenAI.for_api(vertex_ai, &1))
+          # Note: We strip the "strict" field as it's OpenAI-specific and not supported by Vertex AI
+          "functionDeclarations" =>
+            functions
+            |> Enum.map(&ChatOpenAI.for_api(vertex_ai, &1))
+            |> Enum.map(&Map.delete(&1, "strict"))
         }
       ])
     else
@@ -294,6 +298,17 @@ defmodule LangChain.ChatModels.ChatVertexAI do
         "mimeType" => Keyword.fetch!(part.options, :media),
         "fileUri" => part.content
       }
+    }
+  end
+
+  defp for_api(%ToolCall{metadata: %{thought_signature: signature}} = call)
+       when is_binary(signature) do
+    %{
+      "functionCall" => %{
+        "args" => call.arguments,
+        "name" => call.name
+      },
+      "thoughtSignature" => signature
     }
   end
 
@@ -641,7 +656,12 @@ defmodule LangChain.ChatModels.ChatVertexAI do
       name: name,
       arguments: raw_args,
       complete: true,
-      index: data["index"]
+      index: data["index"],
+      metadata:
+        if(data["thoughtSignature"],
+          do: %{thought_signature: data["thoughtSignature"]},
+          else: nil
+        )
     }
     |> ToolCall.new()
     |> case do
