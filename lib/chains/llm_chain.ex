@@ -285,6 +285,12 @@ defmodule LangChain.Chains.LLMChain do
     # when the final delta is received that completes the message. At that point,
     # the delta is converted to a message and the delta is set to nil.
     field :delta, :any, virtual: true
+
+    # Track tool calls we've already identified during streaming.
+    # Reset when delta is cleared (message complete/cancelled).
+    # Used to prevent duplicate on_tool_call_identified callbacks.
+    field :notified_identified_tool_calls, :any, virtual: true, default: nil
+
     # Track the last `%Message{}` received in the chain.
     field :last_message, :any, virtual: true
     # Internally managed. The list of exchanged messages during a `run` function
@@ -1090,7 +1096,10 @@ defmodule LangChain.Chains.LLMChain do
   @spec merge_delta(t(), MessageDelta.t() | TokenUsage.t() | {:error, LangChainError.t()}) :: t()
   def merge_delta(%LLMChain{} = chain, %MessageDelta{} = new_delta) do
     merged = MessageDelta.merge_delta(chain.delta, new_delta)
-    %LLMChain{chain | delta: merged}
+    updated_chain = %LLMChain{chain | delta: merged}
+
+    # Check for newly identified tool calls and fire early notifications
+    detect_and_notify_identified_tool_calls(updated_chain)
   end
 
   def merge_delta(%LLMChain{} = chain, %TokenUsage{} = usage) do
@@ -1106,12 +1115,72 @@ defmodule LangChain.Chains.LLMChain do
     cancel_delta(chain, :cancelled)
   end
 
+  # Detect new tool calls in the streaming delta and fire identification notifications.
+  # This allows UIs to show "Tool identified: Searching web..." immediately when the LLM
+  # decides to use a tool, rather than waiting for all arguments to stream in.
+  #
+  # OPTIMIZATION: Fire as soon as we have the tool name, don't wait for call_id.
+  # The call_id might arrive late (after streaming large file contents), so
+  # waiting for it delays the notification unnecessarily.
+  @spec detect_and_notify_identified_tool_calls(t()) :: t()
+  defp detect_and_notify_identified_tool_calls(%LLMChain{delta: nil} = chain) do
+    # No delta being tracked, nothing to check
+    chain
+  end
+
+  defp detect_and_notify_identified_tool_calls(%LLMChain{delta: delta} = chain) do
+    # Get or initialize the notified map (index -> true when notified)
+    notified_map = chain.notified_identified_tool_calls || %{}
+
+    # Find tool calls that:
+    # 1. Have a name (enough to show display notification - can look up function)
+    # 2. Haven't been notified yet (tracked by index since call_id may not be available)
+    tool_calls = delta.tool_calls || []
+    indexed_tool_calls = Enum.with_index(tool_calls)
+
+    new_tool_calls =
+      indexed_tool_calls
+      |> Enum.filter(fn {tc, idx} ->
+        has_name = tc.name != nil
+        already_notified = Map.get(notified_map, idx, false)
+        has_name && !already_notified
+      end)
+
+    # Fire identified callback for each new tool call
+    Enum.each(new_tool_calls, fn {tool_call, _idx} ->
+      case chain._tool_map[tool_call.name] do
+        %Function{} = func ->
+          Callbacks.fire(chain.callbacks, :on_tool_call_identified, [chain, tool_call, func])
+
+        nil ->
+          # Tool not in map - will be handled as invalid later during execution
+          :ok
+      end
+    end)
+
+    # Update the notified map: mark newly identified tools as notified
+    updated_notified_map =
+      Enum.reduce(new_tool_calls, notified_map, fn {_tc, idx}, map ->
+        Map.put(map, idx, true)
+      end)
+
+    %LLMChain{chain | notified_identified_tool_calls: updated_notified_map}
+  end
+
   @doc """
   Drop the current delta. This is useful when needing to ignore a partial or
   complete delta because the message may be handled in a different way.
   """
   @spec drop_delta(t()) :: t()
   def drop_delta(%LLMChain{} = chain) do
+    reset_streaming_state(chain)
+  end
+
+  # Reset the delta. The notified_identified_tool_calls map is preserved
+  # because it tracks which tools were identified during streaming to prevent
+  # duplicate :on_tool_call_identified callbacks. It will be cleared after tool execution.
+  @spec reset_streaming_state(t()) :: t()
+  defp reset_streaming_state(%LLMChain{} = chain) do
     %LLMChain{chain | delta: nil}
   end
 
@@ -1128,13 +1197,13 @@ defmodule LangChain.Chains.LLMChain do
     # it's complete. Attempt to convert delta to a message
     case MessageDelta.to_message(delta) do
       {:ok, %Message{} = message} ->
-        process_message(%LLMChain{chain | delta: nil}, message)
+        process_message(reset_streaming_state(chain), message)
 
       {:error, reason} ->
         # Delta conversion failed. Log the error and clear the delta to prevent
         # it from interfering with subsequent API calls.
         Logger.warning("Error applying delta message. Reason: #{inspect(reason)}")
-        %LLMChain{chain | delta: nil}
+        reset_streaming_state(chain)
     end
   end
 
@@ -1384,19 +1453,58 @@ defmodule LangChain.Chains.LLMChain do
           end
         end)
 
+      # Fire execution started callbacks for ALL valid tools BEFORE execution
+      # This is the ONLY place :on_tool_execution_started fires (not during streaming detection)
+      # The :on_tool_call_identified callback already fired earlier during streaming
+      Enum.each(grouped[:async] ++ grouped[:sync], fn {call, func} ->
+        Callbacks.fire(chain.callbacks, :on_tool_execution_started, [chain, call, func])
+      end)
+
       # execute all the async calls. This keeps the responses in order too.
+      # Return tuple with call and func for callback firing
       async_results =
         grouped[:async]
         |> Enum.map(fn {call, func} ->
           Task.async(fn ->
-            execute_tool_call(call, func, verbose: verbose, context: use_context)
+            result = execute_tool_call(call, func, verbose: verbose, context: use_context)
+            {call, func, result}
           end)
         end)
         |> Task.await_many(chain.async_tool_timeout || default_async_tool_timeout())
 
-      sync_results =
+      # Fire completed/failed callbacks for async tools and extract results
+      async_tool_results =
+        Enum.map(async_results, fn {call, _func, result} ->
+          if result.is_error do
+            Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
+              chain,
+              call,
+              result.content
+            ])
+          else
+            Callbacks.fire(chain.callbacks, :on_tool_execution_completed, [chain, call, result])
+          end
+
+          result
+        end)
+
+      # Execute sync tools with immediate callbacks
+      sync_tool_results =
         Enum.map(grouped[:sync], fn {call, func} ->
-          execute_tool_call(call, func, verbose: verbose, context: use_context)
+          result = execute_tool_call(call, func, verbose: verbose, context: use_context)
+
+          # Fire completed/failed callback immediately after execution
+          if result.is_error do
+            Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
+              chain,
+              call,
+              result.content
+            ])
+          else
+            Callbacks.fire(chain.callbacks, :on_tool_execution_completed, [chain, call, result])
+          end
+
+          result
         end)
 
       # log invalid tool calls
@@ -1405,10 +1513,13 @@ defmodule LangChain.Chains.LLMChain do
           text = "Tool call made to #{call.name} but tool not found"
           Logger.warning(text)
 
+          # Fire failed callback for invalid tools
+          Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [chain, call, text])
+
           ToolResult.new!(%{tool_call_id: call.call_id, content: text, is_error: true})
         end)
 
-      combined_results = async_results ++ sync_results ++ invalid_calls
+      combined_results = async_tool_results ++ sync_tool_results ++ invalid_calls
       # create a single tool message that contains all the tool results
       result_message =
         Message.new_tool_result!(%{content: nil, tool_results: combined_results})
@@ -1429,6 +1540,9 @@ defmodule LangChain.Chains.LLMChain do
 
       # fire the callbacks
       if chain.verbose, do: IO.inspect(result_message, label: "TOOL RESULTS")
+
+      # Clear the notified set after tool execution completes
+      updated_chain = %LLMChain{updated_chain | notified_identified_tool_calls: nil}
 
       updated_chain
       |> fire_callback_and_return(:on_message_processed, [result_message])
@@ -1485,13 +1599,46 @@ defmodule LangChain.Chains.LLMChain do
             # Execute with original arguments
             case chain._tool_map[tool_call.name] do
               %Function{} = func ->
-                execute_tool_call(tool_call, func, verbose: verbose, context: use_context)
+                # Fire started callback before execution
+                Callbacks.fire(chain.callbacks, :on_tool_execution_started, [
+                  chain,
+                  tool_call,
+                  func
+                ])
+
+                result =
+                  execute_tool_call(tool_call, func, verbose: verbose, context: use_context)
+
+                # Fire completed/failed callback after execution
+                if result.is_error do
+                  Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
+                    chain,
+                    tool_call,
+                    result.content
+                  ])
+                else
+                  Callbacks.fire(chain.callbacks, :on_tool_execution_completed, [
+                    chain,
+                    tool_call,
+                    result
+                  ])
+                end
+
+                result
 
               nil ->
+                error_msg = "Tool '#{tool_call.name}' not found"
+
+                Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
+                  chain,
+                  tool_call,
+                  error_msg
+                ])
+
                 ToolResult.new!(%{
                   tool_call_id: tool_call.call_id,
                   name: tool_call.name,
-                  content: "Tool '#{tool_call.name}' not found",
+                  content: error_msg,
                   is_error: true
                 })
             end
@@ -1503,23 +1650,66 @@ defmodule LangChain.Chains.LLMChain do
             case chain._tool_map[tool_call.name] do
               %Function{} = func ->
                 edited_call = %{tool_call | arguments: edited_args}
-                execute_tool_call(edited_call, func, verbose: verbose, context: use_context)
+
+                # Fire started callback before execution
+                Callbacks.fire(chain.callbacks, :on_tool_execution_started, [
+                  chain,
+                  edited_call,
+                  func
+                ])
+
+                result =
+                  execute_tool_call(edited_call, func, verbose: verbose, context: use_context)
+
+                # Fire completed/failed callback after execution
+                if result.is_error do
+                  Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
+                    chain,
+                    edited_call,
+                    result.content
+                  ])
+                else
+                  Callbacks.fire(chain.callbacks, :on_tool_execution_completed, [
+                    chain,
+                    edited_call,
+                    result
+                  ])
+                end
+
+                result
 
               nil ->
+                error_msg = "Tool '#{tool_call.name}' not found"
+
+                Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
+                  chain,
+                  tool_call,
+                  error_msg
+                ])
+
                 ToolResult.new!(%{
                   tool_call_id: tool_call.call_id,
                   name: tool_call.name,
-                  content: "Tool '#{tool_call.name}' not found",
+                  content: error_msg,
                   is_error: true
                 })
             end
 
           :reject ->
             # Create rejection result without executing
+            rejection_msg = "Tool call '#{tool_call.name}' was rejected by a human reviewer."
+
+            # Fire failed callback for rejected tools
+            Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
+              chain,
+              tool_call,
+              rejection_msg
+            ])
+
             ToolResult.new!(%{
               tool_call_id: tool_call.call_id,
               name: tool_call.name,
-              content: "Tool call '#{tool_call.name}' was rejected by a human reviewer.",
+              content: rejection_msg,
               is_error: false
             })
         end
@@ -1541,6 +1731,9 @@ defmodule LangChain.Chains.LLMChain do
 
     # Fire callbacks (same as execute_tool_calls does)
     if chain.verbose, do: IO.inspect(result_message, label: "TOOL RESULTS")
+
+    # Clear the notified set after tool execution completes
+    updated_chain = %LLMChain{updated_chain | notified_identified_tool_calls: nil}
 
     updated_chain
     |> fire_callback_and_return(:on_message_processed, [result_message])
@@ -1631,8 +1824,8 @@ defmodule LangChain.Chains.LLMChain do
   def cancel_delta(%LLMChain{delta: nil} = chain, _message_status), do: chain
 
   def cancel_delta(%LLMChain{delta: %MessageDelta{} = delta} = chain, message_status) do
-    # remove the in-progress delta
-    updated_chain = %LLMChain{chain | delta: nil}
+    # remove the in-progress delta and reset streaming state
+    updated_chain = reset_streaming_state(chain)
 
     case MessageDelta.to_message(%MessageDelta{delta | status: :complete}) do
       {:ok, %Message{} = message} ->
