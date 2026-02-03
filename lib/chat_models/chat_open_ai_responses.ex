@@ -816,9 +816,11 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         tools,
         retry_count
       ) do
+    body = for_api(openai, messages, tools)
+
     Req.new(
       url: openai.endpoint,
-      json: for_api(openai, messages, tools),
+      json: body,
       # required for OpenAI API
       auth: {:bearer, get_api_key(openai)},
       # required for Azure OpenAI version
@@ -1299,29 +1301,46 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     "response.mcp_call.failed",
     "response.mcp_call.in_progress",
     "response.queued",
-    "response.reasoning_summary.delta",
-    "response.reasoning_summary.done",
+    "response.reasoning.delta",
+    # NOTE: reasoning_summary events removed from skippable - now handled explicitly above
     "error"
   ]
 
   # Handle reasoning summary delta events - fire callback and return :skip
+  # Handles both event types: response.reasoning_summary_text.delta and response.reasoning_summary.delta
   def do_process_response(model, %{
         "type" => "response.reasoning_summary_text.delta",
         "delta" => delta
       }) do
-    Callbacks.fire(model.callbacks, :on_llm_reasoning_delta, [model, delta])
+    Logger.debug("[LANGCHAIN] Reasoning text delta received")
+    Callbacks.fire(model.callbacks, :on_llm_reasoning_delta, [delta])
     :skip
   end
 
-  def do_process_response(_model, %{"type" => event})
+  def do_process_response(model, %{
+        "type" => "response.reasoning_summary.delta",
+        "delta" => delta
+      }) do
+    Logger.debug("[LANGCHAIN] Reasoning summary delta received")
+    Callbacks.fire(model.callbacks, :on_llm_reasoning_delta, [delta])
+    :skip
+  end
+
+  def do_process_response(_model, %{"type" => event} = _data)
       when event in @reasoning_summary_events do
     # Other reasoning events (done, part.added, part.done) are skipped without callback
+    Logger.debug("[LANGCHAIN] Reasoning event: #{event}")
+    :skip
+  end
+
+  # Handle remaining reasoning summary events (done events)
+  def do_process_response(_model, %{"type" => "response.reasoning_summary.done"} = _data) do
+    Logger.debug("[LANGCHAIN] Reasoning summary done")
     :skip
   end
 
   def do_process_response(_model, %{"type" => event})
       when event in @skippable_streaming_events do
-    # Logger.warning("Skipping event: #{event} with data: #{inspect(event_data)}")
     :skip
   end
 
