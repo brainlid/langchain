@@ -816,7 +816,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         tools,
         retry_count
       ) do
-    Req.new
+    Req.new(
       url: openai.endpoint,
       json: for_api(openai, messages, tools),
       # required for OpenAI API
@@ -1264,11 +1264,11 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   # - function_calls
   # - error
 
-  @reasoning_summary_event [
-    "response.reasoning_summary_text.delta",
+  @reasoning_summary_events [
     "response.reasoning_summary_text.done",
     "response.reasoning_summary_part.added",
-    "response.reasoning_summary_part.done"
+    "response.reasoning_summary_part.done",
+    "response.reasoning_summary.done"
   ]
 
   @skippable_streaming_events [
@@ -1303,7 +1303,6 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   ]
 
   # Handle reasoning summary delta events - fire callback and return :skip
-  # Handles both event types: response.reasoning_summary_text.delta and response.reasoning_summary.delta
   def do_process_response(model, %{
         "type" => "response.reasoning_summary_text.delta",
         "delta" => delta
@@ -1324,20 +1323,13 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
 
   def do_process_response(_model, %{"type" => event} = _data)
       when event in @reasoning_summary_events do
-    # Other reasoning events (done, part.added, part.done) are skipped without callback
     Logger.debug("[LANGCHAIN] Reasoning event: #{event}")
-    :skip
-  end
-
-  # Handle remaining reasoning summary events (done events)
-  def do_process_response(_model, %{"type" => "response.reasoning_summary.done"} = _data) do
-    Logger.debug("[LANGCHAIN] Reasoning summary done")
     :skip
   end
 
   def do_process_response(_model, %{"type" => event})
       when event in @skippable_streaming_events do
-    Logger.debug("[LANGCHAIN] Skipping streamin event: #{event}")
+    Logger.debug("[LANGCHAIN] Skipping streaming event: #{event}")
     :skip
   end
 

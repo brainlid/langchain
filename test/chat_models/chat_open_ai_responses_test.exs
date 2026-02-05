@@ -1061,6 +1061,53 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
       assert error.message =~ "Request timed out"
     end
 
+    test "fires on_llm_reasoning_delta callback for reasoning_summary_text.delta", %{model: model} do
+      test_pid = self()
+
+      model_with_callback = %{
+        model
+        | callbacks: [%{on_llm_reasoning_delta: fn delta -> send(test_pid, {:reasoning_delta, delta}) end}]
+      }
+
+      event = %{
+        "type" => "response.reasoning_summary_text.delta",
+        "delta" => "Let me think..."
+      }
+
+      assert :skip == ChatOpenAIResponses.do_process_response(model_with_callback, event)
+      assert_received {:reasoning_delta, "Let me think..."}
+    end
+
+    test "fires on_llm_reasoning_delta callback for reasoning_summary.delta", %{model: model} do
+      test_pid = self()
+
+      model_with_callback = %{
+        model
+        | callbacks: [%{on_llm_reasoning_delta: fn delta -> send(test_pid, {:reasoning_delta, delta}) end}]
+      }
+
+      event = %{
+        "type" => "response.reasoning_summary.delta",
+        "delta" => "Reasoning step..."
+      }
+
+      assert :skip == ChatOpenAIResponses.do_process_response(model_with_callback, event)
+      assert_received {:reasoning_delta, "Reasoning step..."}
+    end
+
+    test "skips reasoning summary non-delta events without callback", %{model: model} do
+      events = [
+        %{"type" => "response.reasoning_summary_text.done"},
+        %{"type" => "response.reasoning_summary_part.added"},
+        %{"type" => "response.reasoning_summary_part.done"},
+        %{"type" => "response.reasoning_summary.done"}
+      ]
+
+      for event <- events do
+        assert :skip == ChatOpenAIResponses.do_process_response(model, event)
+      end
+    end
+
     test "skips expected streaming events", %{model: model} do
       events_to_skip = [
         %{"type" => "response.created"},
