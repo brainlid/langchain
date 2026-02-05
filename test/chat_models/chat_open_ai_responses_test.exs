@@ -1066,7 +1066,9 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
 
       model_with_callback = %{
         model
-        | callbacks: [%{on_llm_reasoning_delta: fn delta -> send(test_pid, {:reasoning_delta, delta}) end}]
+        | callbacks: [
+            %{on_llm_reasoning_delta: fn delta -> send(test_pid, {:reasoning_delta, delta}) end}
+          ]
       }
 
       event = %{
@@ -1083,7 +1085,9 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
 
       model_with_callback = %{
         model
-        | callbacks: [%{on_llm_reasoning_delta: fn delta -> send(test_pid, {:reasoning_delta, delta}) end}]
+        | callbacks: [
+            %{on_llm_reasoning_delta: fn delta -> send(test_pid, {:reasoning_delta, delta}) end}
+          ]
       }
 
       event = %{
