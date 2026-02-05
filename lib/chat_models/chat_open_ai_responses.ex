@@ -1231,6 +1231,13 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   # - function_calls
   # - error
 
+  @reasoning_summary_events [
+    "response.reasoning_summary_text.done",
+    "response.reasoning_summary_part.added",
+    "response.reasoning_summary_part.done",
+    "response.reasoning_summary.done"
+  ]
+
   @skippable_streaming_events [
     "response.created",
     "response.in_progress",
@@ -1248,10 +1255,6 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     "response.web_search_call.in_progress",
     "response.web_search_call.searching",
     "response.web_search_call.completed",
-    "response.reasoning_summary_part.added",
-    "response.reasoning_summary_part.done",
-    "response.reasoning_summary_text.delta",
-    "response.reasoning_summary_text.done",
     "response.image_generation_call.completed",
     "response.image_generation_call.generating",
     "response.image_generation_call.in_progress",
@@ -1263,14 +1266,38 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     "response.mcp_call.in_progress",
     "response.output_text.annotation.added",
     "response.queued",
-    "response.reasoning_summary.delta",
-    "response.reasoning_summary.done",
+    "response.reasoning.delta",
     "error"
   ]
 
+  # Handle reasoning summary delta events - fire callback and return :skip
+  def do_process_response(model, %{
+        "type" => "response.reasoning_summary_text.delta",
+        "delta" => delta
+      }) do
+    Logger.debug("[LANGCHAIN] Reasoning text delta received")
+    Callbacks.fire(model.callbacks, :on_llm_reasoning_delta, [delta])
+    :skip
+  end
+
+  def do_process_response(model, %{
+        "type" => "response.reasoning_summary.delta",
+        "delta" => delta
+      }) do
+    Logger.debug("[LANGCHAIN] Reasoning summary delta received")
+    Callbacks.fire(model.callbacks, :on_llm_reasoning_delta, [delta])
+    :skip
+  end
+
+  def do_process_response(_model, %{"type" => event} = _data)
+      when event in @reasoning_summary_events do
+    Logger.debug("[LANGCHAIN] Reasoning event: #{event}")
+    :skip
+  end
+
   def do_process_response(_model, %{"type" => event})
       when event in @skippable_streaming_events do
-    # Logger.warning("Skipping event: #{event} with data: #{inspect(event_data)}")
+    Logger.debug("[LANGCHAIN] Skipping streaming event: #{event}")
     :skip
   end
 
