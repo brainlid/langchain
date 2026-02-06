@@ -948,6 +948,12 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         "[DONE]" ->
           acc
 
+        ":" <> _sse_comment ->
+          # A line starting with a colon can be ignored per SSE spec
+          # https://html.spec.whatwg.org/multipage/server-sent-events.html
+          # Required for OpenRouter which sends ": OPENROUTER PROCESSING" comments
+          acc
+
         json ->
           parse_combined_data(incomplete, json, done)
       end
