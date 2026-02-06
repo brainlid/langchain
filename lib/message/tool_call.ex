@@ -28,6 +28,8 @@ defmodule LangChain.Message.ToolCall do
     # when the tool call is incomplete, the index indicates which tool call to
     # update on a ToolCall.
     field :index, :integer
+    # Text to display in a UI for the tool call. Optional.
+    field :display_text, :string
     # Map of model-specific metadata attributes
     field :metadata, :map
   end
@@ -40,7 +42,7 @@ defmodule LangChain.Message.ToolCall do
 
   @type t :: %ToolCall{}
 
-  @update_fields [:status, :type, :call_id, :name, :arguments, :index, :metadata]
+  @update_fields [:status, :type, :call_id, :name, :arguments, :index, :display_text, :metadata]
   @create_fields @update_fields
 
   @doc """
