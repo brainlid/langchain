@@ -122,3 +122,21 @@ This pattern allows:
 - `:on_message_processing_error` — Message processor failure
 
 **Critical distinction**: Use `:on_llm_new_delta` for real-time UI updates, but wait for `:on_message_processed` before persisting to database or treating the message as complete.
+
+## Tool Call display_text During Streaming
+
+Each `ToolCall` has a `display_text` field for UI-friendly labels (e.g., "Reading file" instead of `file_read`). The library handles this automatically — **consumers of `:on_llm_new_delta` receive deltas with `display_text` already set**. No per-consumer augmentation is needed.
+
+Resolution order: `Function.display_text` if defined on the tool, otherwise `Utils.humanize_tool_name/1` (e.g., `"file_read"` → `"File read"`).
+
+### Why this is important
+
+Streaming deltas flow through two separate paths that process the same data at different times:
+
+1. **Callback path** — `:on_llm_new_delta` fires immediately as chunks arrive from the LLM. The library enriches tool calls with `display_text` here via `rewrap_callbacks_for_model`, so the UI can show tool names the moment they appear.
+
+2. **Post-streaming path** — After the HTTP stream completes, `apply_deltas` processes the accumulated raw deltas through `merge_delta`, which independently sets `display_text` and fires `:on_tool_call_identified`.
+
+These paths operate on separate copies of the deltas and don't interfere. Both use `display_text != nil` as an idempotent "already processed" guard.
+
+Without callback-level enrichment, the UI would show blank tool labels during the entire streaming phase. By the time the post-streaming path runs, the tool may already be executing or finished.

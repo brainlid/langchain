@@ -302,6 +302,171 @@ defmodule LangChain.UtilsTest do
       # not an LLM event. Not included
       assert group_2[:on_message_processed] == nil
     end
+
+    test "augments tool call display_text in on_llm_new_delta deltas" do
+      test_pid = self()
+
+      tool =
+        LangChain.Function.new!(%{
+          name: "file_read",
+          description: "Read a file",
+          display_text: "Reading file",
+          parameters_schema: %{type: "object", properties: %{}},
+          function: fn _args, _ctx -> {:ok, "ok"} end
+        })
+
+      callback = %{
+        on_llm_new_delta: fn _chain, deltas ->
+          send(test_pid, {:deltas, deltas})
+        end
+      }
+
+      llm = ChatOpenAI.new!(%{})
+
+      chain =
+        LLMChain.new!(%{llm: llm, tools: [tool]})
+        |> LLMChain.add_callback(callback)
+
+      updated_llm = Utils.rewrap_callbacks_for_model(llm, chain.callbacks, chain)
+      [wrapped] = updated_llm.callbacks
+
+      # Fire with a delta containing a tool call with no display_text
+      delta =
+        MessageDelta.new!(%{
+          role: :assistant,
+          tool_calls: [
+            LangChain.Message.ToolCall.new!(%{index: 0, name: "file_read"})
+          ]
+        })
+
+      wrapped.on_llm_new_delta.([delta])
+
+      assert_receive {:deltas, [augmented_delta]}
+      [tc] = augmented_delta.tool_calls
+      assert tc.display_text == "Reading file"
+    end
+
+    test "uses humanized fallback when Function has no display_text" do
+      test_pid = self()
+
+      tool =
+        LangChain.Function.new!(%{
+          name: "search_web",
+          description: "Search the web",
+          parameters_schema: %{type: "object", properties: %{}},
+          function: fn _args, _ctx -> {:ok, "ok"} end
+        })
+
+      callback = %{
+        on_llm_new_delta: fn _chain, deltas ->
+          send(test_pid, {:deltas, deltas})
+        end
+      }
+
+      llm = ChatOpenAI.new!(%{})
+
+      chain =
+        LLMChain.new!(%{llm: llm, tools: [tool]})
+        |> LLMChain.add_callback(callback)
+
+      updated_llm = Utils.rewrap_callbacks_for_model(llm, chain.callbacks, chain)
+      [wrapped] = updated_llm.callbacks
+
+      delta =
+        MessageDelta.new!(%{
+          role: :assistant,
+          tool_calls: [
+            LangChain.Message.ToolCall.new!(%{index: 0, name: "search_web"})
+          ]
+        })
+
+      wrapped.on_llm_new_delta.([delta])
+
+      assert_receive {:deltas, [augmented_delta]}
+      [tc] = augmented_delta.tool_calls
+      assert tc.display_text == "Search web"
+    end
+
+    test "does not overwrite existing display_text on tool calls" do
+      test_pid = self()
+
+      tool =
+        LangChain.Function.new!(%{
+          name: "file_read",
+          description: "Read a file",
+          display_text: "Reading file",
+          parameters_schema: %{type: "object", properties: %{}},
+          function: fn _args, _ctx -> {:ok, "ok"} end
+        })
+
+      callback = %{
+        on_llm_new_delta: fn _chain, deltas ->
+          send(test_pid, {:deltas, deltas})
+        end
+      }
+
+      llm = ChatOpenAI.new!(%{})
+
+      chain =
+        LLMChain.new!(%{llm: llm, tools: [tool]})
+        |> LLMChain.add_callback(callback)
+
+      updated_llm = Utils.rewrap_callbacks_for_model(llm, chain.callbacks, chain)
+      [wrapped] = updated_llm.callbacks
+
+      # Delta with display_text already set
+      delta =
+        MessageDelta.new!(%{
+          role: :assistant,
+          tool_calls: [
+            LangChain.Message.ToolCall.new!(%{
+              index: 0,
+              name: "file_read",
+              display_text: "Custom text"
+            })
+          ]
+        })
+
+      wrapped.on_llm_new_delta.([delta])
+
+      assert_receive {:deltas, [augmented_delta]}
+      [tc] = augmented_delta.tool_calls
+      assert tc.display_text == "Custom text"
+    end
+
+    test "passes deltas through unchanged when no tools on chain" do
+      test_pid = self()
+
+      callback = %{
+        on_llm_new_delta: fn _chain, deltas ->
+          send(test_pid, {:deltas, deltas})
+        end
+      }
+
+      llm = ChatOpenAI.new!(%{})
+
+      chain =
+        LLMChain.new!(%{llm: llm})
+        |> LLMChain.add_callback(callback)
+
+      updated_llm = Utils.rewrap_callbacks_for_model(llm, chain.callbacks, chain)
+      [wrapped] = updated_llm.callbacks
+
+      delta =
+        MessageDelta.new!(%{
+          role: :assistant,
+          tool_calls: [
+            LangChain.Message.ToolCall.new!(%{index: 0, name: "unknown_tool"})
+          ]
+        })
+
+      wrapped.on_llm_new_delta.([delta])
+
+      assert_receive {:deltas, [received_delta]}
+      [tc] = received_delta.tool_calls
+      # No tool map, so display_text stays nil
+      assert tc.display_text == nil
+    end
   end
 
   describe "migrate_to_content_parts/1" do

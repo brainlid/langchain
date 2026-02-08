@@ -5,6 +5,7 @@ defmodule LangChain.Utils do
   alias LangChain.LangChainError
   alias Ecto.Changeset
   alias LangChain.Callbacks
+  alias LangChain.Function
   alias LangChain.Message
   alias LangChain.Message.ContentPart
   alias LangChain.MessageDelta
@@ -46,16 +47,27 @@ defmodule LangChain.Utils do
       :on_llm_response_headers
     ]
 
+    tool_map = Map.get(context, :_tool_map) || %{}
+
     # get the LLM callbacks from the chain.
     new_callbacks =
       callbacks
       |> Enum.map(fn callback_map ->
         callback_map
         |> Map.take(to_wrap)
-        |> Enum.map(fn {key, fun} ->
-          # return a wrapped/curried function that embeds the chain context into
-          # the call
-          {key, fn arg -> fun.(context, arg) end}
+        |> Enum.map(fn
+          # For :on_llm_new_delta, augment tool calls with display_text before
+          # passing to the callback so consumers get enriched deltas during
+          # streaming (not only after post-streaming processing).
+          {:on_llm_new_delta, fun} when tool_map != %{} ->
+            {:on_llm_new_delta, fn deltas ->
+              fun.(context, augment_delta_display_text(deltas, tool_map))
+            end}
+
+          {key, fun} ->
+            # return a wrapped/curried function that embeds the chain context into
+            # the call
+            {key, fn arg -> fun.(context, arg) end}
         end)
         |> Enum.into(%{})
       end)
@@ -405,5 +417,55 @@ defmodule LangChain.Utils do
       _ ->
         changeset
     end
+  end
+
+  # Set display_text on tool calls in streaming deltas using the chain's tool map.
+  # Called from rewrap_callbacks_for_model to enrich deltas before they reach
+  # consumer callbacks. Uses the same resolution logic as
+  # LLMChain.resolve_display_text: prefer Function.display_text, fall back to
+  # humanize_tool_name.
+  @doc false
+  @spec augment_delta_display_text([MessageDelta.t()], map()) :: [MessageDelta.t()]
+  def augment_delta_display_text(deltas, tool_map) when is_list(deltas) do
+    Enum.map(deltas, fn
+      %{tool_calls: [_ | _] = tcs} = delta ->
+        updated_tcs =
+          Enum.map(tcs, fn tc ->
+            if tc.name != nil and tc.display_text == nil do
+              display_text =
+                case tool_map[tc.name] do
+                  %Function{display_text: dt} when not is_nil(dt) -> dt
+                  _ -> humanize_tool_name(tc.name)
+                end
+
+              %{tc | display_text: display_text}
+            else
+              tc
+            end
+          end)
+
+        %{delta | tool_calls: updated_tcs}
+
+      delta ->
+        delta
+    end)
+  end
+
+  @doc """
+  Convert a tool name to a human-friendly display string.
+
+  ## Examples
+
+      iex> LangChain.Utils.humanize_tool_name("file_read")
+      "File read"
+
+      iex> LangChain.Utils.humanize_tool_name("search_web")
+      "Search web"
+  """
+  @spec humanize_tool_name(String.t()) :: String.t()
+  def humanize_tool_name(name) when is_binary(name) do
+    name
+    |> String.replace("_", " ")
+    |> String.capitalize()
   end
 end

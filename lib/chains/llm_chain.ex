@@ -286,11 +286,6 @@ defmodule LangChain.Chains.LLMChain do
     # the delta is converted to a message and the delta is set to nil.
     field :delta, :any, virtual: true
 
-    # Track tool calls we've already identified during streaming.
-    # Reset when delta is cleared (message complete/cancelled).
-    # Used to prevent duplicate on_tool_call_identified callbacks.
-    field :notified_identified_tool_calls, :any, virtual: true, default: nil
-
     # Track the last `%Message{}` received in the chain.
     field :last_message, :any, virtual: true
     # Internally managed. The list of exchanged messages during a `run` function
@@ -1098,8 +1093,10 @@ defmodule LangChain.Chains.LLMChain do
     merged = MessageDelta.merge_delta(chain.delta, new_delta)
     updated_chain = %LLMChain{chain | delta: merged}
 
-    # Check for newly identified tool calls and fire early notifications
-    detect_and_notify_identified_tool_calls(updated_chain)
+    # Augment tool calls with display_text and fire early identification callbacks.
+    # Uses display_text presence on ToolCall as the "already processed" signal.
+    augmented_delta = augment_and_notify_tool_calls(updated_chain, updated_chain.delta)
+    %LLMChain{updated_chain | delta: augmented_delta}
   end
 
   def merge_delta(%LLMChain{} = chain, %TokenUsage{} = usage) do
@@ -1115,58 +1112,63 @@ defmodule LangChain.Chains.LLMChain do
     cancel_delta(chain, :cancelled)
   end
 
-  # Detect new tool calls in the streaming delta and fire identification notifications.
-  # This allows UIs to show "Tool identified: Searching web..." immediately when the LLM
-  # decides to use a tool, rather than waiting for all arguments to stream in.
+  # Unified function to augment tool calls with display_text and optionally
+  # fire :on_tool_call_identified callbacks. Works on any struct with a
+  # `tool_calls` field (both MessageDelta and Message).
   #
-  # OPTIMIZATION: Fire as soon as we have the tool name, don't wait for call_id.
-  # The call_id might arrive late (after streaming large file contents), so
-  # waiting for it delays the notification unnecessarily.
-  @spec detect_and_notify_identified_tool_calls(t()) :: t()
-  defp detect_and_notify_identified_tool_calls(%LLMChain{delta: nil} = chain) do
-    # No delta being tracked, nothing to check
-    chain
-  end
+  # Uses the presence of `display_text` on each ToolCall as the "already
+  # processed" signal — no separate tracking map needed.
+  #
+  # Options:
+  #   - notify: true (default) — fire :on_tool_call_identified for new tool calls
+  #   - notify: false — only augment display_text, don't fire callbacks
+  @spec augment_and_notify_tool_calls(t(), struct(), keyword()) :: struct()
+  defp augment_and_notify_tool_calls(chain, struct, opts \\ [])
 
-  defp detect_and_notify_identified_tool_calls(%LLMChain{delta: delta} = chain) do
-    # Get or initialize the notified map (index -> true when notified)
-    notified_map = chain.notified_identified_tool_calls || %{}
+  defp augment_and_notify_tool_calls(
+         %LLMChain{} = chain,
+         %{tool_calls: tool_calls} = struct,
+         opts
+       )
+       when is_list(tool_calls) and tool_calls != [] do
+    notify = Keyword.get(opts, :notify, true)
 
-    # Find tool calls that:
-    # 1. Have a name (enough to show display notification - can look up function)
-    # 2. Haven't been notified yet (tracked by index since call_id may not be available)
-    tool_calls = delta.tool_calls || []
-    indexed_tool_calls = Enum.with_index(tool_calls)
+    augmented_calls =
+      Enum.map(tool_calls, fn call ->
+        cond do
+          # Already augmented — skip
+          call.display_text != nil ->
+            call
 
-    new_tool_calls =
-      indexed_tool_calls
-      |> Enum.filter(fn {tc, idx} ->
-        has_name = tc.name != nil
-        already_notified = Map.get(notified_map, idx, false)
-        has_name && !already_notified
+          # No name yet — can't look up
+          call.name == nil ->
+            call
+
+          # New tool call to augment
+          true ->
+            display_text = resolve_display_text(chain._tool_map, call.name)
+            augmented_call = %{call | display_text: display_text}
+
+            if notify do
+              case chain._tool_map[call.name] do
+                %Function{} = func ->
+                  Callbacks.fire(chain.callbacks, :on_tool_call_identified, [
+                    chain, augmented_call, func
+                  ])
+
+                nil ->
+                  :ok
+              end
+            end
+
+            augmented_call
+        end
       end)
 
-    # Fire identified callback for each new tool call
-    Enum.each(new_tool_calls, fn {tool_call, _idx} ->
-      case chain._tool_map[tool_call.name] do
-        %Function{} = func ->
-          Callbacks.fire(chain.callbacks, :on_tool_call_identified, [chain, tool_call, func])
-
-        nil ->
-          # Tool not in map - will be handled as invalid later during execution
-          :ok
-      end
-    end)
-
-    # Update the notified map: mark newly identified tools as notified
-    updated_notified_map =
-      Enum.reduce(new_tool_calls, notified_map, fn {_tc, idx}, map ->
-        Map.put(map, idx, true)
-      end)
-
-    %LLMChain{chain | notified_identified_tool_calls: updated_notified_map}
+    %{struct | tool_calls: augmented_calls}
   end
 
+  defp augment_and_notify_tool_calls(_chain, struct, _opts), do: struct
   @doc """
   Drop the current delta. This is useful when needing to ignore a partial or
   complete delta because the message may be handled in a different way.
@@ -1176,13 +1178,21 @@ defmodule LangChain.Chains.LLMChain do
     reset_streaming_state(chain)
   end
 
-  # Reset the delta. The notified_identified_tool_calls map is preserved
-  # because it tracks which tools were identified during streaming to prevent
-  # duplicate :on_tool_call_identified callbacks. It will be cleared after tool execution.
   @spec reset_streaming_state(t()) :: t()
   defp reset_streaming_state(%LLMChain{} = chain) do
     %LLMChain{chain | delta: nil}
   end
+
+  # Resolve display text for a tool call by looking up the Function definition.
+  # Falls back to a humanized version of the tool name.
+  @spec resolve_display_text(map(), String.t()) :: String.t()
+  defp resolve_display_text(tool_map, tool_name) do
+    case tool_map[tool_name] do
+      %Function{display_text: dt} when not is_nil(dt) -> dt
+      _ -> Utils.humanize_tool_name(tool_name)
+    end
+  end
+
 
   @doc """
   Convert any hanging delta of the chain to a message and append to the chain.
@@ -1280,9 +1290,10 @@ defmodule LangChain.Chains.LLMChain do
       %Message{role: :assistant} = updated_message ->
         if chain.verbose, do: IO.inspect(updated_message, label: "MESSAGE PROCESSED")
 
-        # Augment tool_calls with display_text BEFORE adding message to chain
-        # This ensures display_text is preserved when message is persisted
-        augmented_message = augment_tool_calls_with_display_text(chain, updated_message)
+        # Augment tool_calls with display_text and fire :on_tool_call_identified.
+        # For streaming, display_text was already set during merge_delta so this is a no-op.
+        # For non-streaming, this is the first time we see the tool calls.
+        augmented_message = augment_and_notify_tool_calls(chain, updated_message)
 
         chain
         |> add_message(augmented_message)
@@ -1292,33 +1303,6 @@ defmodule LangChain.Chains.LLMChain do
     end
   end
 
-  # Augment tool_calls in a message with display_text from Function definitions.
-  # This ensures display_text travels with the ToolCall through persistence.
-  # Note: This is used for on_message_processed callbacks (streaming path may bypass this).
-  # For tool execution callbacks, use augment_tool_call_with_display_text instead.
-  @spec augment_tool_calls_with_display_text(t(), Message.t()) :: Message.t()
-  defp augment_tool_calls_with_display_text(
-         %LLMChain{_tool_map: tool_map},
-         %Message{tool_calls: tool_calls} = message
-       )
-       when is_list(tool_calls) and tool_calls != [] do
-    augmented_tool_calls =
-      Enum.map(tool_calls, fn call ->
-        case tool_map[call.name] do
-          %Function{display_text: display_text} when not is_nil(display_text) ->
-            # Set display_text directly on the ToolCall
-            %{call | display_text: display_text}
-
-          _function ->
-            # No function found or no display_text, keep original
-            call
-        end
-      end)
-
-    %{message | tool_calls: augmented_tool_calls}
-  end
-
-  defp augment_tool_calls_with_display_text(_chain, message), do: message
 
   @doc """
   Add a received Message struct to the chain. The LLMChain tracks the
@@ -1332,9 +1316,9 @@ defmodule LangChain.Chains.LLMChain do
   """
   @spec add_message(t(), Message.t()) :: t()
   def add_message(%LLMChain{} = chain, %Message{} = new_message) do
-    # Augment tool_calls with display_text at the earliest possible point
-    # This ensures the metadata is available to all downstream code
-    new_message = maybe_augment_tool_calls(chain, new_message)
+    # Augment tool_calls with display_text. (no callback — callbacks fire in
+    # merge_delta for streaming or process_message for non-streaming).
+    new_message = augment_and_notify_tool_calls(chain, new_message, notify: true)
 
     needs_response =
       cond do
@@ -1356,31 +1340,6 @@ defmodule LangChain.Chains.LLMChain do
     raise LangChain.LangChainError,
           "PromptTemplates must be converted to messages. You can use LLMChain.apply_prompt_templates/3. Received: #{inspect(template)}"
   end
-
-  # Augment tool_calls in assistant messages with display_text from Function definitions.
-  # This is called in add_message to ensure augmentation happens at the earliest point.
-  @spec maybe_augment_tool_calls(t(), Message.t()) :: Message.t()
-  defp maybe_augment_tool_calls(
-         %LLMChain{_tool_map: tool_map},
-         %Message{role: :assistant, tool_calls: tool_calls} = message
-       )
-       when is_map(tool_map) and map_size(tool_map) > 0 and
-            is_list(tool_calls) and tool_calls != [] do
-    augmented_tool_calls =
-      Enum.map(tool_calls, fn call ->
-        case tool_map[call.name] do
-          %Function{display_text: display_text} when not is_nil(display_text) ->
-            %{call | display_text: display_text}
-
-          _other ->
-            call
-        end
-      end)
-
-    %{message | tool_calls: augmented_tool_calls}
-  end
-
-  defp maybe_augment_tool_calls(_chain, message), do: message
 
   @doc """
   Add a set of Message structs to the chain. This enables quickly building a chain
@@ -1464,35 +1423,32 @@ defmodule LangChain.Chains.LLMChain do
       # The :on_tool_call_identified callback already fired earlier during streaming
       # Augment each ToolCall with display_text from Function before firing callback
       Enum.each(grouped[:async] ++ grouped[:sync], fn {call, func} ->
-        augmented_call = augment_tool_call_with_display_text(call, func)
-        Callbacks.fire(chain.callbacks, :on_tool_execution_started, [chain, augmented_call, func])
+        Callbacks.fire(chain.callbacks, :on_tool_execution_started, [chain, call, func])
       end)
 
       # execute all the async calls. This keeps the responses in order too.
-      # Return tuple with augmented call and func for callback firing
+      # Return tuple with call and func for callback firing
       async_results =
         grouped[:async]
         |> Enum.map(fn {call, func} ->
-          augmented_call = augment_tool_call_with_display_text(call, func)
-
           Task.async(fn ->
-            result = execute_tool_call(augmented_call, func, verbose: verbose, context: use_context)
-            {augmented_call, func, result}
+            result = execute_tool_call(call, func, verbose: verbose, context: use_context)
+            {call, func, result}
           end)
         end)
         |> Task.await_many(chain.async_tool_timeout || default_async_tool_timeout())
 
       # Fire completed/failed callbacks for async tools and extract results
       async_tool_results =
-        Enum.map(async_results, fn {augmented_call, _func, result} ->
+        Enum.map(async_results, fn {call, _func, result} ->
           if result.is_error do
             Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
               chain,
-              augmented_call,
+              call,
               result.content
             ])
           else
-            Callbacks.fire(chain.callbacks, :on_tool_execution_completed, [chain, augmented_call, result])
+            Callbacks.fire(chain.callbacks, :on_tool_execution_completed, [chain, call, result])
           end
 
           result
@@ -1501,18 +1457,17 @@ defmodule LangChain.Chains.LLMChain do
       # Execute sync tools with immediate callbacks
       sync_tool_results =
         Enum.map(grouped[:sync], fn {call, func} ->
-          augmented_call = augment_tool_call_with_display_text(call, func)
-          result = execute_tool_call(augmented_call, func, verbose: verbose, context: use_context)
+          result = execute_tool_call(call, func, verbose: verbose, context: use_context)
 
           # Fire completed/failed callback immediately after execution
           if result.is_error do
             Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
               chain,
-              augmented_call,
+              call,
               result.content
             ])
           else
-            Callbacks.fire(chain.callbacks, :on_tool_execution_completed, [chain, augmented_call, result])
+            Callbacks.fire(chain.callbacks, :on_tool_execution_completed, [chain, call, result])
           end
 
           result
@@ -1551,9 +1506,6 @@ defmodule LangChain.Chains.LLMChain do
 
       # fire the callbacks
       if chain.verbose, do: IO.inspect(result_message, label: "TOOL RESULTS")
-
-      # Clear the notified set after tool execution completes
-      updated_chain = %LLMChain{updated_chain | notified_identified_tool_calls: nil}
 
       updated_chain
       |> fire_callback_and_return(:on_message_processed, [result_message])
@@ -1601,7 +1553,6 @@ defmodule LangChain.Chains.LLMChain do
     verbose = chain.verbose
 
     # Execute each tool based on its decision
-    # Augment each ToolCall with display_text from Function before firing callbacks
     results =
       tool_calls
       |> Enum.zip(decisions)
@@ -1611,29 +1562,26 @@ defmodule LangChain.Chains.LLMChain do
             # Execute with original arguments
             case chain._tool_map[tool_call.name] do
               %Function{} = func ->
-                # Augment with display_text and fire started callback
-                augmented_call = augment_tool_call_with_display_text(tool_call, func)
-
                 Callbacks.fire(chain.callbacks, :on_tool_execution_started, [
                   chain,
-                  augmented_call,
+                  tool_call,
                   func
                 ])
 
                 result =
-                  execute_tool_call(augmented_call, func, verbose: verbose, context: use_context)
+                  execute_tool_call(tool_call, func, verbose: verbose, context: use_context)
 
                 # Fire completed/failed callback after execution
                 if result.is_error do
                   Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
                     chain,
-                    augmented_call,
+                    tool_call,
                     result.content
                   ])
                 else
                   Callbacks.fire(chain.callbacks, :on_tool_execution_completed, [
                     chain,
-                    augmented_call,
+                    tool_call,
                     result
                   ])
                 end
@@ -1645,7 +1593,7 @@ defmodule LangChain.Chains.LLMChain do
 
                 Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
                   chain,
-                  tool_call,  # Can't augment - no func available
+                  tool_call,
                   error_msg
                 ])
 
@@ -1664,30 +1612,28 @@ defmodule LangChain.Chains.LLMChain do
             case chain._tool_map[tool_call.name] do
               %Function{} = func ->
                 edited_call = %{tool_call | arguments: edited_args}
-                # Augment with display_text
-                augmented_edited_call = augment_tool_call_with_display_text(edited_call, func)
 
                 # Fire started callback before execution
                 Callbacks.fire(chain.callbacks, :on_tool_execution_started, [
                   chain,
-                  augmented_edited_call,
+                  edited_call,
                   func
                 ])
 
                 result =
-                  execute_tool_call(augmented_edited_call, func, verbose: verbose, context: use_context)
+                  execute_tool_call(edited_call, func, verbose: verbose, context: use_context)
 
                 # Fire completed/failed callback after execution
                 if result.is_error do
                   Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
                     chain,
-                    augmented_edited_call,
+                    edited_call,
                     result.content
                   ])
                 else
                   Callbacks.fire(chain.callbacks, :on_tool_execution_completed, [
                     chain,
-                    augmented_edited_call,
+                    edited_call,
                     result
                   ])
                 end
@@ -1699,7 +1645,7 @@ defmodule LangChain.Chains.LLMChain do
 
                 Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
                   chain,
-                  tool_call,  # Can't augment - no func available
+                  tool_call,
                   error_msg
                 ])
 
@@ -1747,9 +1693,6 @@ defmodule LangChain.Chains.LLMChain do
 
     # Fire callbacks (same as execute_tool_calls does)
     if chain.verbose, do: IO.inspect(result_message, label: "TOOL RESULTS")
-
-    # Clear the notified set after tool execution completes
-    updated_chain = %LLMChain{updated_chain | notified_identified_tool_calls: nil}
 
     updated_chain
     |> fire_callback_and_return(:on_message_processed, [result_message])
