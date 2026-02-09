@@ -111,6 +111,11 @@ defmodule LangChain.ChatModels.ChatVertexAI do
 
     # Additional level of raw api request and response data
     field :verbose_api, :boolean, default: false
+
+    # Req options to merge into the request.
+    # Refer to `https://hexdocs.pm/req/Req.html#new/1-options` for
+    # `Req.new` supported set of options.
+    field :req_config, :map, default: %{}
   end
 
   @type t :: %ChatVertexAI{}
@@ -126,7 +131,8 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     :receive_timeout,
     :json_response,
     :json_schema,
-    :stream
+    :stream,
+    :req_config
   ]
   @required_fields [
     :endpoint,
@@ -434,6 +440,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
         auth: {:bearer, get_api_key(vertex_ai)},
         retry_delay: fn attempt -> 300 * attempt end
       )
+      |> Req.merge(vertex_ai.req_config |> Keyword.new())
 
     req
     |> Req.post()
@@ -479,6 +486,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
       receive_timeout: vertex_ai.receive_timeout
     )
     |> Req.Request.put_header("accept-encoding", "utf-8")
+    |> Req.merge(vertex_ai.req_config |> Keyword.new())
     |> Req.post(
       into:
         Utils.handle_stream_fn(

@@ -1,6 +1,7 @@
 defmodule ChatModels.ChatVertexAITest do
   alias LangChain.ChatModels.ChatVertexAI
   use LangChain.BaseCase
+  use Mimic
 
   doctest LangChain.ChatModels.ChatVertexAI
   alias LangChain.ChatModels.ChatVertexAI
@@ -696,6 +697,51 @@ defmodule ChatModels.ChatVertexAITest do
       assert %Message{} = updated_chain.last_message
       assert updated_chain.last_message.role == :assistant
       assert Map.has_key?(updated_chain.last_message.metadata, "groundingChunks")
+    end
+  end
+
+  describe "req_config" do
+    test "merges req_config into the request (non-streaming)" do
+      expect(Req, :post, fn req_struct ->
+        # assert headers from req_config
+        assert req_struct.headers == %{"x-vertex-ai-llm-request-type" => ["shared"]}
+
+        {:error, RuntimeError.exception("Something went wrong")}
+      end)
+
+      model =
+        ChatVertexAI.new!(%{
+          endpoint: "http://localhost:1234/",
+          stream: false,
+          model: @test_model,
+          req_config: %{headers: [{"X-Vertex-AI-LLM-Request-Type", "shared"}]}
+        })
+
+      assert {:error, _} = ChatVertexAI.call(model, "prompt", [])
+      verify!()
+    end
+
+    test "merges req_config into the request (streaming)" do
+      expect(Req, :post, fn req_struct, _opts ->
+        # assert headers from req_config
+        assert req_struct.headers == %{
+                 "x-vertex-ai-llm-request-type" => ["shared"],
+                 "accept-encoding" => ["utf-8"]
+               }
+
+        {:error, RuntimeError.exception("Something went wrong")}
+      end)
+
+      model =
+        ChatVertexAI.new!(%{
+          endpoint: "http://localhost:1234/",
+          stream: true,
+          model: @test_model,
+          req_config: %{headers: [{"X-Vertex-AI-LLM-Request-Type", "shared"}]}
+        })
+
+      assert {:error, _} = ChatVertexAI.call(model, "prompt", [])
+      verify!()
     end
   end
 end
