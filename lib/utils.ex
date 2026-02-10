@@ -60,9 +60,10 @@ defmodule LangChain.Utils do
           # passing to the callback so consumers get enriched deltas during
           # streaming (not only after post-streaming processing).
           {:on_llm_new_delta, fun} when tool_map != %{} ->
-            {:on_llm_new_delta, fn deltas ->
-              fun.(context, augment_delta_display_text(deltas, tool_map))
-            end}
+            {:on_llm_new_delta,
+             fn deltas ->
+               fun.(context, augment_delta_display_text(deltas, tool_map))
+             end}
 
           {key, fun} ->
             # return a wrapped/curried function that embeds the chain context into

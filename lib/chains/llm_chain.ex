@@ -1153,7 +1153,9 @@ defmodule LangChain.Chains.LLMChain do
               case chain._tool_map[call.name] do
                 %Function{} = func ->
                   Callbacks.fire(chain.callbacks, :on_tool_call_identified, [
-                    chain, augmented_call, func
+                    chain,
+                    augmented_call,
+                    func
                   ])
 
                 nil ->
@@ -1169,6 +1171,7 @@ defmodule LangChain.Chains.LLMChain do
   end
 
   defp augment_and_notify_tool_calls(_chain, struct, _opts), do: struct
+
   @doc """
   Drop the current delta. This is useful when needing to ignore a partial or
   complete delta because the message may be handled in a different way.
@@ -1192,7 +1195,6 @@ defmodule LangChain.Chains.LLMChain do
       _ -> Utils.humanize_tool_name(tool_name)
     end
   end
-
 
   @doc """
   Convert any hanging delta of the chain to a message and append to the chain.
@@ -1302,7 +1304,6 @@ defmodule LangChain.Chains.LLMChain do
         |> fire_usage_callback_and_return(:on_llm_token_usage, [augmented_message])
     end
   end
-
 
   @doc """
   Add a received Message struct to the chain. The LLMChain tracks the

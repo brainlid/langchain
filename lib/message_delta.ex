@@ -531,5 +531,4 @@ defmodule LangChain.MessageDelta do
   def migrate_to_content_parts(%MessageDelta{} = delta) do
     delta
   end
-
 end

@@ -1571,5 +1571,4 @@ defmodule LangChain.MessageDeltaTest do
              }
     end
   end
-
 end
