@@ -28,6 +28,8 @@ defmodule LangChain.Message.ToolCall do
     # when the tool call is incomplete, the index indicates which tool call to
     # update on a ToolCall.
     field :index, :integer
+    # Text to display in a UI for the tool call. Optional.
+    field :display_text, :string
     # Map of model-specific metadata attributes
     field :metadata, :map
   end
@@ -40,7 +42,7 @@ defmodule LangChain.Message.ToolCall do
 
   @type t :: %ToolCall{}
 
-  @update_fields [:status, :type, :call_id, :name, :arguments, :index, :metadata]
+  @update_fields [:status, :type, :call_id, :name, :arguments, :index, :display_text, :metadata]
   @create_fields @update_fields
 
   @doc """
@@ -153,6 +155,8 @@ defmodule LangChain.Message.ToolCall do
     |> update_call_id(call_part)
     |> update_type(call_part)
     |> update_status(call_part)
+    |> preserve_display_text(call_part)
+    |> preserve_metadata(call_part)
   end
 
   defp append_tool_name(%ToolCall{name: primary_name} = primary, %ToolCall{name: new_name})
@@ -211,6 +215,22 @@ defmodule LangChain.Message.ToolCall do
     primary
   end
 
+  # Preserve display_text: use the delta's value if present, otherwise keep primary's
+  defp preserve_display_text(%ToolCall{} = primary, %ToolCall{display_text: text})
+       when is_binary(text) do
+    %ToolCall{primary | display_text: text}
+  end
+
+  defp preserve_display_text(%ToolCall{} = primary, %ToolCall{}), do: primary
+
+  # Preserve metadata: use the delta's value if present, otherwise keep primary's
+  defp preserve_metadata(%ToolCall{} = primary, %ToolCall{metadata: meta})
+       when is_map(meta) do
+    %ToolCall{primary | metadata: Map.merge(primary.metadata || %{}, meta)}
+  end
+
+  defp preserve_metadata(%ToolCall{} = primary, %ToolCall{}), do: primary
+
   defp append_arguments(%ToolCall{status: :incomplete} = primary, %ToolCall{
          status: :complete,
          arguments: new_arguments
@@ -229,6 +249,29 @@ defmodule LangChain.Message.ToolCall do
   defp append_arguments(%ToolCall{} = primary, %ToolCall{} = _delta_part) do
     # no arguments to merge
     primary
+  end
+
+  @doc """
+  Get the execution status from a ToolCall's metadata.
+
+  Returns the status string ("identified", "executing", "completed", "failed")
+  or the default value if not set.
+  """
+  @spec execution_status(t(), String.t()) :: String.t()
+  def execution_status(%ToolCall{metadata: metadata}, default \\ "identified") do
+    case metadata do
+      %{"execution_status" => status} -> status
+      _ -> default
+    end
+  end
+
+  @doc """
+  Set the execution status on a ToolCall's metadata.
+  """
+  @spec set_execution_status(t(), String.t()) :: t()
+  def set_execution_status(%ToolCall{} = tool_call, status) when is_binary(status) do
+    metadata = tool_call.metadata || %{}
+    %{tool_call | metadata: Map.put(metadata, "execution_status", status)}
   end
 
   # The contents and arguments get streamed as a string. A tool call may be part of a delta and it
