@@ -1230,9 +1230,9 @@ defmodule LangChain.Chains.LLMChain do
           Message.t() | {:halted, Message.t(), Message.t()}
   def run_message_processors(
         %LLMChain{message_processors: processors} = chain,
-        %Message{role: :assistant} = message
+        %Message{role: :assistant, content: message_content} = message
       )
-      when is_list(processors) and processors != [] do
+      when is_list(processors) and processors != [] and is_list(message_content) and message_content != [] do
     # start `processed_content` with the message's content as a string
     message = %Message{message | processed_content: ContentPart.parts_to_string(message.content)}
 
@@ -1261,7 +1261,7 @@ defmodule LangChain.Chains.LLMChain do
     end)
   end
 
-  # the message is not an assistant message. Skip message processing.
+  # the message is not an assistant message or there is no content to process. Skip message processing.
   def run_message_processors(%LLMChain{} = _chain, %Message{} = message) do
     message
   end
