@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.5.2
+
+### Changed
+
+- **Tool Detection Improvements**: Simplified tool execution flow and enhanced UI feedback https://github.com/brainlid/langchain/pull/458
+  - Removed special detection of malformed tool calls (partial rollback of https://github.com/brainlid/langchain/pull/449). The previous approach created a more complicated multi-path flow and could add internally defined user messages that appeared unexpectedly to users
+  - Added `display_text` as a first-class attribute on `ToolCall` for better UI feedback and display control
+  - Fixed early tool use detection and notification timing
+
+### Fixed
+
+- **ChatVertexAI**: Fixed tool calls for ChatVertexAI and added support for Gemini 3 models https://github.com/brainlid/langchain/pull/452
+  - Added `thought_signature` support for Gemini 3 function calls
+  - Removed unsupported "strict" field from function declarations for Vertex AI compatibility
+  - Added Jason encoder derivation for `ContentPart` to ensure proper JSON serialization
+  - Implemented `thoughtSignature` handling for Vertex AI tool calls
+
+---
+
 ## v0.5.1
 
 ### Enhancements
