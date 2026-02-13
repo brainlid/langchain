@@ -58,6 +58,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   alias LangChain.Utils
   alias LangChain.Callbacks
   alias LangChain.NativeTool
+  alias LangChain.Message.Citation
 
   @behaviour ChatModel
 
@@ -560,6 +561,17 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
             result
         end
 
+      {:ok, %Req.Response{body: %{"error" => %{"message" => message} = error}} = response} ->
+        error_type = google_error_type(error)
+        Logger.error("Received error from API: #{inspect(message)}")
+
+        {:error,
+         LangChainError.exception(
+           type: error_type,
+           message: message,
+           original: response
+         )}
+
       {:ok, %Req.Response{status: status} = err} ->
         {:error,
          LangChainError.exception(
@@ -622,12 +634,29 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
         data
         |> Enum.reverse()
 
-      {:ok, %Req.Response{status: status} = err} ->
-        {:error,
-         LangChainError.exception(
-           message: "Failed with status: #{inspect(status)}",
-           original: err
-         )}
+      {:ok, %Req.Response{body: {:error, %LangChainError{} = error}}} ->
+        {:error, error}
+
+      {:ok, %Req.Response{status: status} = response} when status != 200 ->
+        # Try to extract error from the buffered error data
+        case Utils.extract_stream_error(response) do
+          {:ok, %{"error" => %{"message" => message} = error}} ->
+            error_type = google_error_type(error)
+
+            {:error,
+             LangChainError.exception(
+               type: error_type,
+               message: message,
+               original: response
+             )}
+
+          _ ->
+            {:error,
+             LangChainError.exception(
+               message: "Failed with status: #{inspect(status)}",
+               original: response
+             )}
+        end
 
       {:error, %LangChainError{} = error} ->
         {:error, error}
@@ -645,6 +674,21 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
          LangChainError.exception(type: "unexpected_response", message: "Unexpected response")}
     end
   end
+
+  # Convert Google AI error status to a LangChainError type string.
+  defp google_error_type(%{"status" => status}) when is_binary(status) do
+    status |> String.downcase()
+  end
+
+  defp google_error_type(%{"code" => code}) when is_integer(code) do
+    case code do
+      404 -> "not_found"
+      429 -> "resource_exhausted"
+      _ -> "api_error"
+    end
+  end
+
+  defp google_error_type(_), do: "api_error"
 
   @doc false
   @spec build_url(t()) :: String.t()
@@ -722,19 +766,21 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
         do_process_response(model, part, nil)
       end)
 
+    grounding_metadata = data["groundingMetadata"]
+
     %{
       role: unmap_role(role),
       content: text_part,
       complete: true,
       index: data["index"],
-      metadata: if(data["groundingMetadata"], do: data["groundingMetadata"], else: nil)
+      metadata: build_grounding_message_metadata(grounding_metadata)
     }
     |> Utils.conditionally_add_to_map(:tool_calls, tool_calls_from_parts)
     |> Utils.conditionally_add_to_map(:tool_results, tool_result_from_parts)
     |> Message.new()
     |> case do
       {:ok, message} ->
-        message
+        attach_grounding_citations(message, grounding_metadata)
 
       {:error, %Ecto.Changeset{} = changeset} ->
         {:error, LangChainError.exception(changeset)}
@@ -749,13 +795,16 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     role = content["role"]
     parts = content["parts"] || []
 
+    grounding_metadata = data["groundingMetadata"]
+
     content =
       case parts do
         [%{"text" => text, "thought" => true}] ->
           ContentPart.new!(%{type: :thinking, content: text})
 
         [%{"text" => text}] ->
-          ContentPart.new!(%{type: :text, content: text})
+          part = ContentPart.new!(%{type: :text, content: text})
+          attach_grounding_citations_to_part(part, grounding_metadata, 0)
 
         _other ->
           nil
@@ -812,9 +861,10 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     end
   end
 
-  def do_process_response(_model, %{"error" => %{"message" => reason}} = response, _) do
+  def do_process_response(_model, %{"error" => %{"message" => reason} = error} = response, _) do
+    error_type = google_error_type(error)
     Logger.error("Received error from API: #{inspect(reason)}")
-    {:error, LangChainError.exception(message: reason, original: response)}
+    {:error, LangChainError.exception(type: error_type, message: reason, original: response)}
   end
 
   def do_process_response(_model, {:error, %Jason.DecodeError{} = response}, _) do
@@ -960,4 +1010,150 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     Logger.warning("Unsupported finishReason in response. Reason: #{inspect(other)}")
     nil
   end
+
+  # --- Grounding Citation Helpers ---
+
+  @doc false
+  @spec attach_grounding_citations(Message.t(), map() | nil) :: Message.t()
+  def attach_grounding_citations(%Message{} = message, nil), do: message
+
+  def attach_grounding_citations(%Message{} = message, grounding_metadata) do
+    chunks = Map.get(grounding_metadata, "groundingChunks", [])
+    supports = Map.get(grounding_metadata, "groundingSupports", [])
+
+    if supports == [] do
+      message
+    else
+      citations_by_part =
+        supports
+        |> Enum.flat_map(fn support ->
+          segment = Map.get(support, "segment", %{})
+          part_index = Map.get(segment, "partIndex", 0)
+          chunk_indices = Map.get(support, "groundingChunkIndices", [])
+          confidence_scores = Map.get(support, "confidenceScores", [])
+
+          chunk_indices
+          |> Enum.with_index()
+          |> Enum.map(fn {chunk_index, i} ->
+            chunk = Enum.at(chunks, chunk_index, %{})
+            confidence = Enum.at(confidence_scores, i)
+
+            citation = build_gemini_citation(segment, chunk, chunk_index, confidence)
+            {part_index, citation}
+          end)
+        end)
+        |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+
+      updated_content =
+        message.content
+        |> Enum.with_index()
+        |> Enum.map(fn {part, idx} ->
+          case Map.get(citations_by_part, idx) do
+            nil -> part
+            citations -> %{part | citations: citations}
+          end
+        end)
+
+      %{message | content: updated_content}
+    end
+  end
+
+  @doc false
+  @spec attach_grounding_citations_to_part(ContentPart.t(), map() | nil, integer()) ::
+          ContentPart.t()
+  def attach_grounding_citations_to_part(%ContentPart{} = part, nil, _part_index), do: part
+
+  def attach_grounding_citations_to_part(%ContentPart{} = part, grounding_metadata, part_index) do
+    chunks = Map.get(grounding_metadata, "groundingChunks", [])
+    supports = Map.get(grounding_metadata, "groundingSupports", [])
+
+    citations =
+      supports
+      |> Enum.filter(fn support ->
+        segment = Map.get(support, "segment", %{})
+        Map.get(segment, "partIndex", 0) == part_index
+      end)
+      |> Enum.flat_map(fn support ->
+        segment = Map.get(support, "segment", %{})
+        chunk_indices = Map.get(support, "groundingChunkIndices", [])
+        confidence_scores = Map.get(support, "confidenceScores", [])
+
+        chunk_indices
+        |> Enum.with_index()
+        |> Enum.map(fn {chunk_index, i} ->
+          chunk = Enum.at(chunks, chunk_index, %{})
+          confidence = Enum.at(confidence_scores, i)
+          build_gemini_citation(segment, chunk, chunk_index, confidence)
+        end)
+      end)
+
+    case citations do
+      [] -> part
+      _ -> %{part | citations: citations}
+    end
+  end
+
+  defp build_gemini_citation(segment, chunk, chunk_index, confidence) do
+    {source_type, source_attrs} = parse_grounding_chunk(chunk)
+
+    source_attrs = Map.put(source_attrs, :type, source_type)
+
+    citation_attrs = %{
+      cited_text: Map.get(segment, "text"),
+      start_index: Map.get(segment, "startIndex"),
+      end_index: Map.get(segment, "endIndex"),
+      source: source_attrs,
+      metadata: %{
+        "provider_type" => "grounding_support",
+        "chunk_index" => chunk_index
+      }
+    }
+
+    citation_attrs =
+      if confidence, do: Map.put(citation_attrs, :confidence, confidence), else: citation_attrs
+
+    Citation.new!(citation_attrs)
+  end
+
+  defp parse_grounding_chunk(%{"web" => web}) do
+    {:web,
+     %{
+       title: Map.get(web, "title"),
+       url: Map.get(web, "uri")
+     }}
+  end
+
+  defp parse_grounding_chunk(%{"retrievedContext" => ctx}) do
+    {:document,
+     %{
+       title: Map.get(ctx, "title"),
+       url: Map.get(ctx, "uri"),
+       metadata: %{"retrieved_context" => true}
+     }}
+  end
+
+  defp parse_grounding_chunk(%{"maps" => maps}) do
+    {:place,
+     %{
+       title: Map.get(maps, "title"),
+       url: Map.get(maps, "uri"),
+       metadata: %{"maps" => true}
+     }}
+  end
+
+  defp parse_grounding_chunk(_), do: {:web, %{}}
+
+  defp build_grounding_message_metadata(nil), do: nil
+
+  defp build_grounding_message_metadata(grounding_metadata) do
+    %{"grounding_metadata" => grounding_metadata}
+    |> maybe_add_search_entry_point(grounding_metadata)
+  end
+
+  defp maybe_add_search_entry_point(metadata, %{"searchEntryPoint" => sep})
+       when not is_nil(sep) do
+    Map.put(metadata, "search_entry_point", sep)
+  end
+
+  defp maybe_add_search_entry_point(metadata, _), do: metadata
 end
