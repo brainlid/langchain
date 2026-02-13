@@ -45,6 +45,7 @@ defmodule LangChain.ChatModels.ChatPerplexity do
   alias LangChain.ChatModels.ChatModel
   alias LangChain.Message
   alias LangChain.MessageDelta
+  alias LangChain.Message.Citation
   alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
   alias LangChain.TokenUsage
@@ -333,8 +334,17 @@ defmodule LangChain.ChatModels.ChatPerplexity do
           {:error, reason} ->
             {:error, reason}
 
+          {:ok, %Req.Response{body: body}} when is_list(body) ->
+            # Streaming response - body contains accumulated MessageDelta lists
+            Telemetry.llm_response(
+              %{system_time: System.system_time()},
+              %{model: perplexity.model, response: body}
+            )
+
+            {:ok, body}
+
           parsed_data ->
-            # Track the response being received
+            # Non-streaming response
             Telemetry.llm_response(
               %{system_time: System.system_time()},
               %{model: perplexity.model, response: parsed_data}
@@ -512,8 +522,10 @@ defmodule LangChain.ChatModels.ChatPerplexity do
       end
     end
 
-    # Process the first choice
-    do_process_response(model, choice, tools)
+    # Process the first choice and attach citations from top-level response
+    model
+    |> do_process_response(choice, tools)
+    |> attach_perplexity_citations(data)
   end
 
   def do_process_response(
@@ -525,16 +537,47 @@ defmodule LangChain.ChatModels.ChatPerplexity do
       when tools != [] do
     status = finish_reason_to_status(finish_reason)
 
-    # Try to parse content as JSON since we expect structured output
+    # Try to parse content as JSON since we expect structured output.
+    # Perplexity returns structured output matching the tool_calls JSON schema
+    # we send in for_api: {"tool_calls": [{"name": "...", "arguments": {...}}]}
     case Jason.decode(content) do
+      {:ok, %{"tool_calls" => tool_calls}} when is_list(tool_calls) ->
+        parsed_tool_calls =
+          Enum.map(tool_calls, fn call ->
+            args_json = Jason.encode!(call["arguments"])
+
+            tool_call =
+              ToolCall.new!(%{
+                type: :function,
+                status: :complete,
+                name: call["name"],
+                arguments: args_json,
+                call_id: Ecto.UUID.generate()
+              })
+
+            # Force arguments back to JSON string (validate_and_parse_arguments
+            # decodes it to a map, but we want to keep the string form)
+            %{tool_call | arguments: args_json}
+          end)
+
+        case Message.new(%{
+               "role" => role,
+               "content" => nil,
+               "status" => status,
+               "index" => data["index"],
+               "tool_calls" => parsed_tool_calls
+             }) do
+          {:ok, message} -> message
+          {:error, changeset} -> {:error, LangChainError.exception(changeset)}
+        end
+
       {:ok, _parsed} ->
-        # Create a tool call from the parsed content
+        # Valid JSON but not in tool_calls format — treat as single tool call
         tool_call =
           ToolCall.new!(%{
             type: :function,
             status: :complete,
             name: List.first(tools).name,
-            # Keep the original JSON string
             arguments: content,
             call_id: Ecto.UUID.generate()
           })
@@ -815,52 +858,193 @@ defmodule LangChain.ChatModels.ChatPerplexity do
     ChatPerplexity.new(data)
   end
 
+  # Content delta on the final chunk (finish_reason: "stop"). Also extract
+  # citations from the chunk since Perplexity includes them on every chunk
+  # but we only need to process them once at completion. Returns a list
+  # [citation_delta, content_delta] so both flow through the pipeline.
   defp process_stream_chunk(_perplexity, %{
          "choices" => [
            %{
              "delta" => %{"content" => content},
-             "finish_reason" => finish_reason
+             "finish_reason" => "stop"
            }
            | _
          ]
-       })
-       when finish_reason in [nil, "stop"] do
-    delta = %MessageDelta{content: content, role: :assistant, status: :complete}
-    send(self(), {:message_delta, delta})
-    {:cont, delta}
+       } = chunk) do
+    content_delta = %MessageDelta{content: content, role: :assistant, status: :complete}
+
+    case build_streaming_citation_delta(chunk) do
+      nil -> content_delta
+      citation_delta -> [citation_delta, content_delta]
+    end
   end
 
+  # Content delta on intermediate chunks (no finish_reason or nil).
+  # Ignore citations here since they repeat on every chunk.
   defp process_stream_chunk(_perplexity, %{
          "choices" => [
            %{"delta" => %{"content" => content}} | _
          ]
        }) do
-    delta = %MessageDelta{content: content, role: :assistant}
-    send(self(), {:message_delta, delta})
-    {:cont, delta}
+    %MessageDelta{content: content, role: :assistant}
   end
 
+  # Completion chunk with no content delta.
   defp process_stream_chunk(_perplexity, %{
          "choices" => [
-           %{"finish_reason" => finish_reason} | _
+           %{"finish_reason" => "stop"} | _
          ]
-       })
-       when finish_reason in [nil, "stop"] do
-    delta = %MessageDelta{status: :complete}
-    send(self(), {:message_delta, delta})
-    {:cont, delta}
-  end
+       } = chunk) do
+    content_delta = %MessageDelta{status: :complete, role: :assistant}
 
-  defp process_stream_chunk(_perplexity, %{
-         "choices" => [
-           %{"message" => message} | _
-         ]
-       }) do
-    send(self(), {:message, message})
-    {:cont, message}
+    case build_streaming_citation_delta(chunk) do
+      nil -> content_delta
+      citation_delta -> [citation_delta, content_delta]
+    end
   end
 
   defp process_stream_chunk(_perplexity, _chunk) do
-    {:cont, %MessageDelta{}}
+    %MessageDelta{}
   end
+
+  # --- Citation Support ---
+
+  # Attach citations from top-level Perplexity response data to a Message.
+  @doc false
+  @spec attach_perplexity_citations(Message.t() | any(), map()) :: Message.t() | any()
+  def attach_perplexity_citations(%Message{} = msg, data) do
+    citation_urls = Map.get(data, "citations", [])
+    search_results = Map.get(data, "search_results", [])
+
+    sources = build_perplexity_sources(citation_urls, search_results)
+
+    if sources == [] do
+      msg
+    else
+      full_text = get_message_text(msg)
+      citations = find_citation_markers(full_text, sources)
+
+      if citations == [] do
+        msg
+      else
+        updated_content = attach_citations_to_first_text_part(msg.content, citations)
+        %{msg | content: updated_content}
+      end
+    end
+  end
+
+  def attach_perplexity_citations(other, _data), do: other
+
+  @doc false
+  @spec build_perplexity_sources(list(), list()) :: [map()]
+  def build_perplexity_sources(citation_urls, search_results) do
+    cond do
+      is_list(search_results) and search_results != [] ->
+        search_results
+        |> Enum.with_index()
+        |> Enum.map(fn {result, idx} ->
+          url = Map.get(result, "url") || Enum.at(citation_urls || [], idx)
+
+          metadata =
+            %{}
+            |> maybe_put_metadata("date", Map.get(result, "date"))
+            |> maybe_put_metadata("snippet", Map.get(result, "snippet"))
+            |> maybe_put_metadata("source_domain", Map.get(result, "source"))
+
+          %{
+            type: :web,
+            title: Map.get(result, "title"),
+            url: url,
+            metadata: metadata
+          }
+        end)
+
+      is_list(citation_urls) and citation_urls != [] ->
+        Enum.map(citation_urls, fn url ->
+          %{type: :web, url: url}
+        end)
+
+      true ->
+        []
+    end
+  end
+
+  @doc false
+  @spec find_citation_markers(String.t(), [map()]) :: [Citation.t()]
+  def find_citation_markers(text, sources) when is_binary(text) and text != "" do
+    ~r/\[(\d+)\]/
+    |> Regex.scan(text, return: :index)
+    |> Enum.flat_map(fn [{full_start, full_len}, {num_start, num_len}] ->
+      number_str = binary_part(text, num_start, num_len)
+      index = String.to_integer(number_str) - 1
+
+      case Enum.at(sources, index) do
+        nil ->
+          []
+
+        source ->
+          [
+            Citation.new!(%{
+              start_index: full_start,
+              end_index: full_start + full_len,
+              source: source,
+              metadata: %{"provider_type" => "perplexity_citation", "citation_index" => index}
+            })
+          ]
+      end
+    end)
+  end
+
+  def find_citation_markers(_, _), do: []
+
+  defp get_message_text(%Message{content: content}) when is_list(content) do
+    content
+    |> Enum.filter(&(&1.type == :text))
+    |> Enum.map_join("", & &1.content)
+  end
+
+  defp get_message_text(%Message{content: content}) when is_binary(content), do: content
+  defp get_message_text(_), do: ""
+
+  defp attach_citations_to_first_text_part(content, citations) when is_list(content) do
+    case Enum.find_index(content, &(&1.type == :text)) do
+      nil ->
+        content
+
+      idx ->
+        List.update_at(content, idx, fn part ->
+          %{part | citations: citations}
+        end)
+    end
+  end
+
+  defp attach_citations_to_first_text_part(content, _citations), do: content
+
+  # Build a citation-only MessageDelta from a streaming chunk's citation data.
+  # Returns nil if no citations are present.
+  defp build_streaming_citation_delta(chunk) do
+    citation_urls = Map.get(chunk, "citations", [])
+    search_results = Map.get(chunk, "search_results", [])
+    sources = build_perplexity_sources(citation_urls, search_results)
+
+    if sources == [] do
+      nil
+    else
+      citation_structs =
+        sources
+        |> Enum.with_index()
+        |> Enum.map(fn {source, idx} ->
+          Citation.new!(%{
+            source: source,
+            metadata: %{"provider_type" => "perplexity_citation", "citation_index" => idx}
+          })
+        end)
+
+      citation_part = %ContentPart{type: :text, content: nil, citations: citation_structs}
+      %MessageDelta{content: citation_part, role: :assistant, status: :incomplete}
+    end
+  end
+
+  defp maybe_put_metadata(map, _key, nil), do: map
+  defp maybe_put_metadata(map, key, value), do: Map.put(map, key, value)
 end
