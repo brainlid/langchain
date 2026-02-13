@@ -39,11 +39,17 @@ defmodule LangChain.Message.Citation do
 
   @create_fields [:cited_text, :start_index, :end_index, :confidence, :metadata]
 
+  @doc false
+  def changeset(citation, attrs) do
+    citation
+    |> cast(attrs, @create_fields)
+    |> cast_embed(:source)
+  end
+
   @spec new(map()) :: {:ok, t()} | {:error, Ecto.Changeset.t()}
   def new(attrs \\ %{}) do
     %Citation{}
-    |> cast(attrs, @create_fields)
-    |> cast_embed(:source)
+    |> changeset(attrs)
     |> apply_action(:insert)
   end
 
