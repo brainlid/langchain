@@ -55,6 +55,7 @@ defmodule LangChain.Message.ContentPart do
   require Logger
   alias __MODULE__
   alias LangChain.LangChainError
+  alias LangChain.Message.Citation
   alias LangChain.Utils
 
   @derive {Jason.Encoder, only: [:type, :content]}
@@ -66,6 +67,7 @@ defmodule LangChain.Message.ContentPart do
 
     field :content, :string
     field :options, :any, virtual: true, default: []
+    field :citations, {:array, :any}, virtual: true, default: []
   end
 
   @type t :: %ContentPart{}
@@ -208,6 +210,7 @@ defmodule LangChain.Message.ContentPart do
     primary
     |> append_content(content_part)
     |> update_options(content_part)
+    |> merge_citations(content_part)
   end
 
   # text content being merged
@@ -223,6 +226,15 @@ defmodule LangChain.Message.ContentPart do
   end
 
   defp append_content(%ContentPart{} = primary, %ContentPart{content: nil}), do: primary
+
+  # Primary has nil content (e.g., citation-only delta), new has actual text
+  defp append_content(
+         %ContentPart{type: type, content: nil} = primary,
+         %ContentPart{type: type, content: new_content}
+       )
+       when is_binary(new_content) do
+    %ContentPart{primary | content: new_content}
+  end
 
   # When types don't match or content cannot be merged, return the primary part unchanged
   defp append_content(%ContentPart{} = primary, %ContentPart{} = new_part) do
@@ -260,6 +272,16 @@ defmodule LangChain.Message.ContentPart do
   end
 
   defp update_options(%ContentPart{} = primary, %ContentPart{}), do: primary
+
+  defp merge_citations(
+         %ContentPart{citations: existing} = primary,
+         %ContentPart{citations: new_citations}
+       )
+       when is_list(new_citations) and new_citations != [] do
+    %ContentPart{primary | citations: (existing || []) ++ new_citations}
+  end
+
+  defp merge_citations(%ContentPart{} = primary, _), do: primary
 
   @doc """
   Sets an option on the last text part in a list of ContentParts. Returns the updated content parts.
@@ -323,4 +345,18 @@ defmodule LangChain.Message.ContentPart do
   def content_to_string(content, type) when is_list(content) do
     parts_to_string(content, type)
   end
+
+  @doc """
+  Returns the citations for this content part, defaulting to empty list.
+  """
+  @spec citations(t()) :: [Citation.t()]
+  def citations(%ContentPart{citations: citations}) when is_list(citations), do: citations
+  def citations(%ContentPart{}), do: []
+
+  @doc """
+  Returns true if this content part has any citations.
+  """
+  @spec has_citations?(t()) :: boolean()
+  def has_citations?(%ContentPart{citations: citations}),
+    do: is_list(citations) and citations != []
 end

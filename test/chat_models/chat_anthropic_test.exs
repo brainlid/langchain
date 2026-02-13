@@ -7,6 +7,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
   alias LangChain.ChatModels.ChatAnthropic
   alias LangChain.Chains.LLMChain
   alias LangChain.Message
+  alias LangChain.Message.Citation
   alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult
@@ -1297,6 +1298,460 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
                "role" => "assistant"
              }
     end
+
+    # -- Citation tests --
+
+    test "handles receiving a non-streaming response with char_location citations", %{
+      model: model
+    } do
+      response = %{
+        "id" => "msg_123",
+        "type" => "message",
+        "role" => "assistant",
+        "stop_reason" => "end_turn",
+        "usage" => %{"input_tokens" => 100, "output_tokens" => 50},
+        "content" => [
+          %{"type" => "text", "text" => "According to the document, "},
+          %{
+            "type" => "text",
+            "text" => "the sky is blue",
+            "citations" => [
+              %{
+                "type" => "char_location",
+                "cited_text" => "The sky is blue.",
+                "document_index" => 0,
+                "document_title" => "Science Facts",
+                "start_char_index" => 0,
+                "end_char_index" => 16
+              }
+            ]
+          }
+        ]
+      }
+
+      result = ChatAnthropic.do_process_response(model, response)
+      assert %Message{} = msg = result
+
+      assert [part1, part2] = msg.content
+      assert part1.content == "According to the document, "
+      assert part1.citations == []
+
+      assert part2.content == "the sky is blue"
+      assert [%Citation{} = citation] = part2.citations
+      assert citation.cited_text == "The sky is blue."
+      assert citation.source.type == :document
+      assert citation.source.title == "Science Facts"
+      assert citation.source.document_id == "0"
+      assert citation.metadata["provider_type"] == "char_location"
+      assert citation.metadata["start_char_index"] == 0
+      assert citation.metadata["end_char_index"] == 16
+    end
+
+    test "handles receiving a non-streaming response with page_location citations", %{
+      model: model
+    } do
+      response = %{
+        "id" => "msg_124",
+        "type" => "message",
+        "role" => "assistant",
+        "stop_reason" => "end_turn",
+        "usage" => %{"input_tokens" => 100, "output_tokens" => 50},
+        "content" => [
+          %{
+            "type" => "text",
+            "text" => "on page 3 it says",
+            "citations" => [
+              %{
+                "type" => "page_location",
+                "cited_text" => "Important finding.",
+                "document_index" => 1,
+                "document_title" => "Research Paper",
+                "start_page_number" => 3,
+                "end_page_number" => 3
+              }
+            ]
+          }
+        ]
+      }
+
+      result = ChatAnthropic.do_process_response(model, response)
+      assert %Message{} = msg = result
+
+      assert [part] = msg.content
+      assert [%Citation{} = citation] = part.citations
+      assert citation.metadata["provider_type"] == "page_location"
+      assert citation.metadata["start_page_number"] == 3
+      assert citation.metadata["end_page_number"] == 3
+    end
+
+    test "handles receiving a non-streaming response with content_block_location citations", %{
+      model: model
+    } do
+      response = %{
+        "id" => "msg_125",
+        "type" => "message",
+        "role" => "assistant",
+        "stop_reason" => "end_turn",
+        "usage" => %{"input_tokens" => 100, "output_tokens" => 50},
+        "content" => [
+          %{
+            "type" => "text",
+            "text" => "the introduction states",
+            "citations" => [
+              %{
+                "type" => "content_block_location",
+                "cited_text" => "This paper examines...",
+                "document_index" => 0,
+                "document_title" => "Paper",
+                "start_block_index" => 0,
+                "end_block_index" => 2
+              }
+            ]
+          }
+        ]
+      }
+
+      result = ChatAnthropic.do_process_response(model, response)
+      assert %Message{} = msg = result
+
+      assert [part] = msg.content
+      assert [%Citation{} = citation] = part.citations
+      assert citation.metadata["provider_type"] == "content_block_location"
+      assert citation.metadata["start_block_index"] == 0
+      assert citation.metadata["end_block_index"] == 2
+    end
+
+    test "handles receiving multiple text blocks with mixed citations", %{model: model} do
+      response = %{
+        "id" => "msg_126",
+        "type" => "message",
+        "role" => "assistant",
+        "stop_reason" => "end_turn",
+        "usage" => %{"input_tokens" => 100, "output_tokens" => 50},
+        "content" => [
+          %{"type" => "text", "text" => "According to the document, "},
+          %{
+            "type" => "text",
+            "text" => "the sky is blue",
+            "citations" => [
+              %{
+                "type" => "char_location",
+                "cited_text" => "The sky is blue.",
+                "document_index" => 0,
+                "document_title" => "Science Facts",
+                "start_char_index" => 0,
+                "end_char_index" => 16
+              }
+            ]
+          },
+          %{"type" => "text", "text" => " and "},
+          %{
+            "type" => "text",
+            "text" => "water is wet",
+            "citations" => [
+              %{
+                "type" => "char_location",
+                "cited_text" => "Water is wet.",
+                "document_index" => 0,
+                "document_title" => "Science Facts",
+                "start_char_index" => 50,
+                "end_char_index" => 63
+              }
+            ]
+          }
+        ]
+      }
+
+      result = ChatAnthropic.do_process_response(model, response)
+      assert %Message{} = msg = result
+
+      assert length(msg.content) == 4
+      all_citations = Message.all_citations(msg)
+      assert length(all_citations) == 2
+      assert Enum.all?(all_citations, &(&1.source.type == :document))
+    end
+
+    test "handles receiving a citations_delta streaming event", %{model: model} do
+      response = %{
+        "type" => "content_block_delta",
+        "index" => 0,
+        "delta" => %{
+          "type" => "citations_delta",
+          "citation" => %{
+            "type" => "char_location",
+            "cited_text" => "42 is the answer.",
+            "document_index" => 0,
+            "document_title" => "Hitchhiker's Guide",
+            "start_char_index" => 0,
+            "end_char_index" => 17
+          }
+        }
+      }
+
+      assert %MessageDelta{} = struct = ChatAnthropic.do_process_response(model, response)
+      assert struct.role == :assistant
+      assert struct.index == 0
+      assert struct.status == :incomplete
+
+      assert %ContentPart{} = part = struct.content
+      assert part.type == :text
+      assert part.content == nil
+      assert [%Citation{} = citation] = part.citations
+      assert citation.cited_text == "42 is the answer."
+      assert citation.source.type == :document
+      assert citation.source.title == "Hitchhiker's Guide"
+      assert citation.metadata["provider_type"] == "char_location"
+    end
+
+    test "accumulates citations across streaming deltas", %{model: model} do
+      processed =
+        [
+          %{
+            "message" => %{
+              "content" => [],
+              "id" => "msg_127",
+              "model" => @test_model,
+              "role" => "assistant",
+              "stop_reason" => nil,
+              "stop_sequence" => nil,
+              "type" => "message",
+              "usage" => %{
+                "input_tokens" => 100,
+                "output_tokens" => 0
+              }
+            },
+            "type" => "message_start"
+          },
+          %{
+            "content_block" => %{"type" => "text", "text" => ""},
+            "index" => 0,
+            "type" => "content_block_start"
+          },
+          %{
+            "delta" => %{"type" => "text_delta", "text" => "The answer is "},
+            "index" => 0,
+            "type" => "content_block_delta"
+          },
+          %{
+            "delta" => %{
+              "type" => "citations_delta",
+              "citation" => %{
+                "type" => "char_location",
+                "cited_text" => "42 is the answer.",
+                "document_index" => 0,
+                "document_title" => "Hitchhiker's Guide",
+                "start_char_index" => 0,
+                "end_char_index" => 17
+              }
+            },
+            "index" => 0,
+            "type" => "content_block_delta"
+          },
+          %{
+            "delta" => %{"type" => "text_delta", "text" => "42."},
+            "index" => 0,
+            "type" => "content_block_delta"
+          },
+          %{"index" => 0, "type" => "content_block_stop"},
+          %{
+            "delta" => %{"stop_reason" => "end_turn", "stop_sequence" => nil},
+            "type" => "message_delta",
+            "usage" => %{"output_tokens" => 25}
+          },
+          %{"type" => "message_stop"}
+        ]
+        |> Enum.filter(&ChatAnthropic.relevant_event?/1)
+        |> Enum.map(&ChatAnthropic.do_process_response(model, &1))
+
+      # merge the deltas and convert to a message
+      {:ok, %Message{} = merged} =
+        MessageDelta.merge_deltas(processed) |> MessageDelta.to_message()
+
+      assert merged.status == :complete
+      assert merged.role == :assistant
+
+      assert [%ContentPart{} = part] = merged.content
+      assert part.type == :text
+      assert part.content == "The answer is 42."
+      assert [%Citation{} = citation] = part.citations
+      assert citation.cited_text == "42 is the answer."
+      assert citation.source.document_id == "0"
+    end
+
+    test "handles interleaved text and multiple citation deltas", %{model: model} do
+      processed =
+        [
+          %{
+            "message" => %{
+              "content" => [],
+              "id" => "msg_128",
+              "model" => @test_model,
+              "role" => "assistant",
+              "stop_reason" => nil,
+              "stop_sequence" => nil,
+              "type" => "message",
+              "usage" => %{
+                "input_tokens" => 100,
+                "output_tokens" => 0
+              }
+            },
+            "type" => "message_start"
+          },
+          %{
+            "content_block" => %{"type" => "text", "text" => ""},
+            "index" => 0,
+            "type" => "content_block_start"
+          },
+          %{
+            "delta" => %{"type" => "text_delta", "text" => "Fact one: "},
+            "index" => 0,
+            "type" => "content_block_delta"
+          },
+          %{
+            "delta" => %{
+              "type" => "citations_delta",
+              "citation" => %{
+                "type" => "char_location",
+                "cited_text" => "First fact.",
+                "document_index" => 0,
+                "document_title" => "Doc A",
+                "start_char_index" => 0,
+                "end_char_index" => 11
+              }
+            },
+            "index" => 0,
+            "type" => "content_block_delta"
+          },
+          %{
+            "delta" => %{"type" => "text_delta", "text" => "sky is blue. "},
+            "index" => 0,
+            "type" => "content_block_delta"
+          },
+          %{
+            "delta" => %{"type" => "text_delta", "text" => "Fact two: "},
+            "index" => 0,
+            "type" => "content_block_delta"
+          },
+          %{
+            "delta" => %{
+              "type" => "citations_delta",
+              "citation" => %{
+                "type" => "char_location",
+                "cited_text" => "Second fact.",
+                "document_index" => 1,
+                "document_title" => "Doc B",
+                "start_char_index" => 0,
+                "end_char_index" => 12
+              }
+            },
+            "index" => 0,
+            "type" => "content_block_delta"
+          },
+          %{
+            "delta" => %{"type" => "text_delta", "text" => "water is wet."},
+            "index" => 0,
+            "type" => "content_block_delta"
+          },
+          %{"index" => 0, "type" => "content_block_stop"},
+          %{
+            "delta" => %{"stop_reason" => "end_turn", "stop_sequence" => nil},
+            "type" => "message_delta",
+            "usage" => %{"output_tokens" => 40}
+          },
+          %{"type" => "message_stop"}
+        ]
+        |> Enum.filter(&ChatAnthropic.relevant_event?/1)
+        |> Enum.map(&ChatAnthropic.do_process_response(model, &1))
+
+      {:ok, %Message{} = merged} =
+        MessageDelta.merge_deltas(processed) |> MessageDelta.to_message()
+
+      assert [%ContentPart{} = part] = merged.content
+      assert part.content == "Fact one: sky is blue. Fact two: water is wet."
+      assert [citation1, citation2] = part.citations
+      assert citation1.cited_text == "First fact."
+      assert citation1.source.title == "Doc A"
+      assert citation2.cited_text == "Second fact."
+      assert citation2.source.title == "Doc B"
+    end
+
+    test "handles multi-block streaming with citations on only some blocks", %{model: model} do
+      processed =
+        [
+          %{
+            "message" => %{
+              "content" => [],
+              "id" => "msg_129",
+              "model" => @test_model,
+              "role" => "assistant",
+              "stop_reason" => nil,
+              "stop_sequence" => nil,
+              "type" => "message",
+              "usage" => %{
+                "input_tokens" => 100,
+                "output_tokens" => 0
+              }
+            },
+            "type" => "message_start"
+          },
+          # Block 0: text without citations
+          %{
+            "content_block" => %{"type" => "text", "text" => ""},
+            "index" => 0,
+            "type" => "content_block_start"
+          },
+          %{
+            "delta" => %{"type" => "text_delta", "text" => "Intro text."},
+            "index" => 0,
+            "type" => "content_block_delta"
+          },
+          %{"index" => 0, "type" => "content_block_stop"},
+          # Block 1: text with citation
+          %{
+            "content_block" => %{"type" => "text", "text" => ""},
+            "index" => 1,
+            "type" => "content_block_start"
+          },
+          %{
+            "delta" => %{"type" => "text_delta", "text" => "cited text"},
+            "index" => 1,
+            "type" => "content_block_delta"
+          },
+          %{
+            "delta" => %{
+              "type" => "citations_delta",
+              "citation" => %{
+                "type" => "char_location",
+                "cited_text" => "From the source.",
+                "document_index" => 0,
+                "document_title" => "Source Doc",
+                "start_char_index" => 0,
+                "end_char_index" => 16
+              }
+            },
+            "index" => 1,
+            "type" => "content_block_delta"
+          },
+          %{"index" => 1, "type" => "content_block_stop"},
+          %{
+            "delta" => %{"stop_reason" => "end_turn", "stop_sequence" => nil},
+            "type" => "message_delta",
+            "usage" => %{"output_tokens" => 30}
+          },
+          %{"type" => "message_stop"}
+        ]
+        |> Enum.filter(&ChatAnthropic.relevant_event?/1)
+        |> Enum.map(&ChatAnthropic.do_process_response(model, &1))
+
+      {:ok, %Message{} = merged} =
+        MessageDelta.merge_deltas(processed) |> MessageDelta.to_message()
+
+      assert [block0, block1] = merged.content
+      assert block0.content == "Intro text."
+      assert block0.citations == []
+      assert block1.content == "cited text"
+      assert [%Citation{}] = block1.citations
+    end
   end
 
   describe "call/2" do
@@ -2330,6 +2785,134 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       assert_raise LangChain.LangChainError, "Anthropic does not support image_url", fn ->
         ChatAnthropic.content_part_for_api(ContentPart.image_url!("url-to-image"))
       end
+    end
+
+    test "includes citations in API output for text part with citations" do
+      citation =
+        Citation.new!(%{
+          cited_text: "The sky is blue.",
+          source: %{type: :document, title: "Science Facts", document_id: "0"},
+          metadata: %{
+            "provider_type" => "char_location",
+            "start_char_index" => 0,
+            "end_char_index" => 16
+          }
+        })
+
+      part = ContentPart.text!("the sky is blue")
+      part = %{part | citations: [citation]}
+
+      result = ChatAnthropic.content_part_for_api(part)
+
+      assert result == %{
+               "type" => "text",
+               "text" => "the sky is blue",
+               "citations" => [
+                 %{
+                   "type" => "char_location",
+                   "cited_text" => "The sky is blue.",
+                   "document_index" => 0,
+                   "document_title" => "Science Facts",
+                   "start_char_index" => 0,
+                   "end_char_index" => 16
+                 }
+               ]
+             }
+    end
+
+    test "round-trips all three citation types through content_part_for_api" do
+      char_citation =
+        Citation.new!(%{
+          cited_text: "Text A",
+          source: %{type: :document, title: "Doc", document_id: "0"},
+          metadata: %{
+            "provider_type" => "char_location",
+            "start_char_index" => 10,
+            "end_char_index" => 20
+          }
+        })
+
+      page_citation =
+        Citation.new!(%{
+          cited_text: "Text B",
+          source: %{type: :document, title: "Paper", document_id: "1"},
+          metadata: %{
+            "provider_type" => "page_location",
+            "start_page_number" => 3,
+            "end_page_number" => 5
+          }
+        })
+
+      block_citation =
+        Citation.new!(%{
+          cited_text: "Text C",
+          source: %{type: :document, title: "Report", document_id: "2"},
+          metadata: %{
+            "provider_type" => "content_block_location",
+            "start_block_index" => 0,
+            "end_block_index" => 2
+          }
+        })
+
+      part = ContentPart.text!("some text")
+      part = %{part | citations: [char_citation, page_citation, block_citation]}
+
+      result = ChatAnthropic.content_part_for_api(part)
+      assert [c1, c2, c3] = result["citations"]
+
+      assert c1["type"] == "char_location"
+      assert c1["start_char_index"] == 10
+      assert c1["end_char_index"] == 20
+
+      assert c2["type"] == "page_location"
+      assert c2["start_page_number"] == 3
+      assert c2["end_page_number"] == 5
+
+      assert c3["type"] == "content_block_location"
+      assert c3["start_block_index"] == 0
+      assert c3["end_block_index"] == 2
+    end
+
+    test "omits citations from API output when content part has no citations" do
+      part = ContentPart.text!("no citations here")
+      result = ChatAnthropic.content_part_for_api(part)
+
+      refute Map.has_key?(result, "citations")
+      assert result == %{"type" => "text", "text" => "no citations here"}
+    end
+
+    test "round-trips message with citations through message_for_api" do
+      citation =
+        Citation.new!(%{
+          cited_text: "The sky is blue.",
+          source: %{type: :document, title: "Science Facts", document_id: "0"},
+          metadata: %{
+            "provider_type" => "char_location",
+            "start_char_index" => 0,
+            "end_char_index" => 16
+          }
+        })
+
+      part_with = %{ContentPart.text!("the sky is blue") | citations: [citation]}
+      part_without = ContentPart.text!("According to the document, ")
+
+      msg =
+        Message.new_assistant!(%{
+          content: [part_without, part_with]
+        })
+
+      api_data = ChatAnthropic.message_for_api(msg)
+
+      assert api_data["role"] == "assistant"
+      assert [api_part1, api_part2] = api_data["content"]
+
+      refute Map.has_key?(api_part1, "citations")
+      assert api_part1 == %{"type" => "text", "text" => "According to the document, "}
+
+      assert [api_citation] = api_part2["citations"]
+      assert api_citation["type"] == "char_location"
+      assert api_citation["cited_text"] == "The sky is blue."
+      assert api_citation["document_index"] == 0
     end
   end
 
@@ -3550,6 +4133,332 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 
       refute inspect(changeset) =~ "1234567890"
       assert inspect(changeset) =~ "**redacted**"
+    end
+  end
+
+  describe "live citations" do
+    # Historical document with stable, unchanging facts
+    @historical_document """
+    The Apollo 11 mission launched on July 16, 1969, from Kennedy Space Center in Florida. \
+    The crew consisted of Commander Neil Armstrong, Command Module Pilot Michael Collins, \
+    and Lunar Module Pilot Edwin "Buzz" Aldrin. On July 20, 1969, Armstrong and Aldrin \
+    landed the lunar module Eagle on the Moon's Sea of Tranquility. Armstrong became the \
+    first human to step onto the lunar surface at 10:56 PM EDT. He famously declared, \
+    "That's one small step for man, one giant leap for mankind." The crew returned safely \
+    to Earth on July 24, 1969, splashing down in the Pacific Ocean.\
+    """
+
+    @tag live_call: true, live_anthropic: true
+    test "parses citations from non-streaming response with plain text document" do
+      chat =
+        ChatAnthropic.new!(%{
+          stream: false,
+          model: @test_model,
+          temperature: 0.0,
+          max_tokens: 512
+        })
+
+      message =
+        Message.new_user!([
+          ContentPart.file!(@historical_document,
+            media: :text,
+            citations: true,
+            title: "Apollo 11 Facts"
+          ),
+          ContentPart.text!(
+            "According to the document, who was the commander of Apollo 11 and when did the mission launch? Use citations to back up your answer."
+          )
+        ])
+
+      {:ok, response} = ChatAnthropic.call(chat, [message], [])
+
+      assert %Message{role: :assistant, status: :complete} = response
+      assert is_list(response.content)
+
+      all_citations = Message.all_citations(response)
+      assert length(all_citations) > 0, "Expected at least one citation in the response"
+
+      Enum.each(all_citations, fn citation ->
+        assert %Citation{} = citation
+        assert citation.source.type == :document
+        assert is_binary(citation.cited_text)
+        assert citation.metadata["provider_type"] == "char_location"
+      end)
+    end
+
+    @tag live_call: true, live_anthropic: true
+    test "parses citations from streaming response with plain text document" do
+      chat =
+        ChatAnthropic.new!(%{
+          stream: true,
+          model: @test_model,
+          temperature: 0.0,
+          max_tokens: 512
+        })
+
+      message =
+        Message.new_user!([
+          ContentPart.file!(@historical_document,
+            media: :text,
+            citations: true,
+            title: "Apollo 11 Facts"
+          ),
+          ContentPart.text!(
+            "According to the document, when did Apollo 11 launch? Use citations to back up your answer."
+          )
+        ])
+
+      {:ok, deltas} = ChatAnthropic.call(chat, [message], [])
+
+      {:ok, %Message{} = merged} =
+        deltas |> List.flatten() |> MessageDelta.merge_deltas() |> MessageDelta.to_message()
+
+      assert merged.role == :assistant
+      assert merged.status == :complete
+
+      all_citations = Message.all_citations(merged)
+      assert length(all_citations) > 0, "Expected at least one citation in the streaming response"
+
+      Enum.each(all_citations, fn citation ->
+        assert %Citation{} = citation
+        assert citation.source.type == :document
+        assert is_binary(citation.cited_text)
+        assert citation.metadata["provider_type"] == "char_location"
+      end)
+    end
+  end
+
+  describe "streaming citation delta merging (captured from live API)" do
+    setup do
+      model = ChatAnthropic.new!(%{stream: true})
+      %{model: model}
+    end
+
+    test "merges citation-first streaming sequence into message with text and citations", %{
+      model: model
+    } do
+      # Captured from a real Anthropic streaming response with citations enabled.
+      # The citation delta arrives BEFORE the text deltas for the same content block.
+      processed =
+        [
+          %{
+            "message" => %{
+              "content" => [],
+              "id" => "msg_live_citation_001",
+              "model" => @test_model,
+              "role" => "assistant",
+              "stop_reason" => nil,
+              "stop_sequence" => nil,
+              "type" => "message",
+              "usage" => %{
+                "input_tokens" => 811,
+                "output_tokens" => 5
+              }
+            },
+            "type" => "message_start"
+          },
+          # content_block_start for cited text block
+          %{
+            "content_block" => %{"type" => "text", "text" => ""},
+            "index" => 0,
+            "type" => "content_block_start"
+          },
+          # Citation arrives BEFORE the text (this is how Anthropic sends it)
+          %{
+            "delta" => %{
+              "type" => "citations_delta",
+              "citation" => %{
+                "type" => "char_location",
+                "cited_text" =>
+                  "The Apollo 11 mission launched on July 16, 1969, from Kennedy Space Center in Florida. ",
+                "document_index" => 0,
+                "document_title" => "Apollo 11 Facts",
+                "start_char_index" => 0,
+                "end_char_index" => 87
+              }
+            },
+            "index" => 0,
+            "type" => "content_block_delta"
+          },
+          # Text deltas arrive after the citation
+          %{
+            "delta" => %{"type" => "text_delta", "text" => "Apollo"},
+            "index" => 0,
+            "type" => "content_block_delta"
+          },
+          %{
+            "delta" => %{"type" => "text_delta", "text" => " 11 launched on July 16"},
+            "index" => 0,
+            "type" => "content_block_delta"
+          },
+          %{
+            "delta" => %{
+              "type" => "text_delta",
+              "text" => ", 1969, from Kennedy Space Center in Florida."
+            },
+            "index" => 0,
+            "type" => "content_block_delta"
+          },
+          %{"index" => 0, "type" => "content_block_stop"},
+          %{
+            "delta" => %{"stop_reason" => "end_turn", "stop_sequence" => nil},
+            "type" => "message_delta",
+            "usage" => %{"output_tokens" => 45}
+          },
+          %{"type" => "message_stop"}
+        ]
+        |> Enum.filter(&ChatAnthropic.relevant_event?/1)
+        |> Enum.map(&ChatAnthropic.do_process_response(model, &1))
+
+      {:ok, %Message{} = merged} =
+        MessageDelta.merge_deltas(processed) |> MessageDelta.to_message()
+
+      assert merged.role == :assistant
+      assert merged.status == :complete
+
+      # Single content block with both text and citation
+      assert [%ContentPart{} = part] = merged.content
+      assert part.content == "Apollo 11 launched on July 16, 1969, from Kennedy Space Center in Florida."
+      assert [%Citation{} = citation] = part.citations
+      assert citation.cited_text =~ "Apollo 11 mission launched"
+      assert citation.source.type == :document
+      assert citation.source.title == "Apollo 11 Facts"
+      assert citation.source.document_id == "0"
+      assert citation.metadata["provider_type"] == "char_location"
+      assert citation.metadata["start_char_index"] == 0
+      assert citation.metadata["end_char_index"] == 87
+    end
+
+    test "merges multi-block response with cited and uncited blocks", %{model: model} do
+      # Captured pattern: Anthropic splits response into separate text blocks
+      # for cited vs uncited spans
+      processed =
+        [
+          %{
+            "message" => %{
+              "content" => [],
+              "id" => "msg_live_citation_002",
+              "model" => @test_model,
+              "role" => "assistant",
+              "stop_reason" => nil,
+              "stop_sequence" => nil,
+              "type" => "message",
+              "usage" => %{
+                "input_tokens" => 819,
+                "output_tokens" => 5
+              }
+            },
+            "type" => "message_start"
+          },
+          # Block 0: cited text
+          %{
+            "content_block" => %{"type" => "text", "text" => ""},
+            "index" => 0,
+            "type" => "content_block_start"
+          },
+          %{
+            "delta" => %{
+              "type" => "citations_delta",
+              "citation" => %{
+                "type" => "char_location",
+                "cited_text" =>
+                  "The crew consisted of Commander Neil Armstrong, Command Module Pilot Michael Collins, and Lunar Module Pilot Edwin \"Buzz\" Aldrin. ",
+                "document_index" => 0,
+                "document_title" => "Apollo 11 Facts",
+                "start_char_index" => 87,
+                "end_char_index" => 217
+              }
+            },
+            "index" => 0,
+            "type" => "content_block_delta"
+          },
+          %{
+            "delta" => %{
+              "type" => "text_delta",
+              "text" => "The commander of Apollo 11 was Neil Armstrong"
+            },
+            "index" => 0,
+            "type" => "content_block_delta"
+          },
+          %{"index" => 0, "type" => "content_block_stop"},
+          # Block 1: uncited connector text
+          %{
+            "content_block" => %{"type" => "text", "text" => ""},
+            "index" => 1,
+            "type" => "content_block_start"
+          },
+          %{
+            "delta" => %{"type" => "text_delta", "text" => ", and "},
+            "index" => 1,
+            "type" => "content_block_delta"
+          },
+          %{"index" => 1, "type" => "content_block_stop"},
+          # Block 2: another cited text
+          %{
+            "content_block" => %{"type" => "text", "text" => ""},
+            "index" => 2,
+            "type" => "content_block_start"
+          },
+          %{
+            "delta" => %{
+              "type" => "citations_delta",
+              "citation" => %{
+                "type" => "char_location",
+                "cited_text" =>
+                  "The Apollo 11 mission launched on July 16, 1969, from Kennedy Space Center in Florida. ",
+                "document_index" => 0,
+                "document_title" => "Apollo 11 Facts",
+                "start_char_index" => 0,
+                "end_char_index" => 87
+              }
+            },
+            "index" => 2,
+            "type" => "content_block_delta"
+          },
+          %{
+            "delta" => %{
+              "type" => "text_delta",
+              "text" => "the mission launched on July 16, 1969, from Kennedy Space Center in Florida."
+            },
+            "index" => 2,
+            "type" => "content_block_delta"
+          },
+          %{"index" => 2, "type" => "content_block_stop"},
+          %{
+            "delta" => %{"stop_reason" => "end_turn", "stop_sequence" => nil},
+            "type" => "message_delta",
+            "usage" => %{"output_tokens" => 66}
+          },
+          %{"type" => "message_stop"}
+        ]
+        |> Enum.filter(&ChatAnthropic.relevant_event?/1)
+        |> Enum.map(&ChatAnthropic.do_process_response(model, &1))
+
+      {:ok, %Message{} = merged} =
+        MessageDelta.merge_deltas(processed) |> MessageDelta.to_message()
+
+      assert merged.status == :complete
+      assert [block0, block1, block2] = merged.content
+
+      # Block 0: cited
+      assert block0.content == "The commander of Apollo 11 was Neil Armstrong"
+      assert [%Citation{} = c0] = block0.citations
+      assert c0.cited_text =~ "Commander Neil Armstrong"
+
+      # Block 1: uncited connector
+      assert block1.content == ", and "
+      assert block1.citations == []
+
+      # Block 2: cited
+      assert block2.content =~
+               "the mission launched on July 16, 1969, from Kennedy Space Center in Florida."
+
+      assert [%Citation{} = c2] = block2.citations
+      assert c2.cited_text =~ "Apollo 11 mission launched"
+
+      # Message-level helper collects all citations
+      all_citations = Message.all_citations(merged)
+      assert length(all_citations) == 2
     end
   end
 end

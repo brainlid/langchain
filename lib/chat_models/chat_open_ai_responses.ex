@@ -188,6 +188,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   alias LangChain.ChatModels.ChatModel
   alias LangChain.PromptTemplate
   alias LangChain.Message
+  alias LangChain.Message.Citation
   alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult
@@ -1040,6 +1041,34 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     end
   end
 
+  # Annotation events arrive during streaming when the model cites sources
+  # (e.g., from web search). Each event carries one annotation that we convert
+  # to a Citation and attach to a ContentPart with nil content, which gets
+  # merged into the accumulated delta via ContentPart.merge_part/2.
+  def do_process_response(_model, %{
+        "type" => "response.output_text.annotation.added",
+        "annotation" => annotation_data,
+        "output_index" => output_index
+      }) do
+    citation = parse_openai_annotation(annotation_data)
+    content_part = %ContentPart{type: :text, content: nil, citations: [citation]}
+
+    data = %{
+      content: content_part,
+      status: :incomplete,
+      role: :assistant,
+      index: output_index
+    }
+
+    case MessageDelta.new(data) do
+      {:ok, message} ->
+        message
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:error, LangChainError.exception(changeset)}
+    end
+  end
+
   # Open question: is it possible we get multiples of `response.output_text.done`?
   # It precedes `response.content_part.done` and `response.output_item.done`
   # and theoretically we could get multiple text content_parts and output_items.
@@ -1261,7 +1290,6 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     "response.mcp_call.completed",
     "response.mcp_call.failed",
     "response.mcp_call.in_progress",
-    "response.output_text.annotation.added",
     "response.queued",
     "response.reasoning_summary.delta",
     "response.reasoning_summary.done",
@@ -1375,15 +1403,19 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
          "type" => "message",
          "content" => message_contents
        }) do
-    text =
-      message_contents
-      |> Enum.map(fn
-        %{"type" => "output_text", "text" => text} -> text
-        %{"type" => "refusal", "refusal" => refusal} -> refusal
-      end)
-      |> Enum.join(" ")
+    {text_parts, all_citations} =
+      Enum.reduce(message_contents, {[], []}, fn
+        %{"type" => "output_text", "text" => text} = item, {texts, citations} ->
+          new_citations = parse_openai_annotations(Map.get(item, "annotations", []))
+          {texts ++ [text], citations ++ new_citations}
 
-    ContentPart.text!(text)
+        %{"type" => "refusal", "refusal" => refusal}, {texts, citations} ->
+          {texts ++ [refusal], citations}
+      end)
+
+    text = Enum.join(text_parts, " ")
+    part = ContentPart.text!(text)
+    %{part | citations: all_citations}
   end
 
   defp content_item_to_content_part_or_tool_call(%{
@@ -1504,6 +1536,49 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     Logger.warning("Unknown content item type: #{type}. Item: #{inspect(item)}")
     # Return empty text content to avoid breaking the flow
     ContentPart.text!("")
+  end
+
+  # -- OpenAI annotation parsing helpers --
+
+  defp parse_openai_annotations(annotations) when is_list(annotations) do
+    Enum.map(annotations, &parse_openai_annotation/1)
+  end
+
+  defp parse_openai_annotations(_), do: []
+
+  defp parse_openai_annotation(%{"type" => "url_citation"} = ann) do
+    Citation.new!(%{
+      source: %{
+        type: :web,
+        title: Map.get(ann, "title"),
+        url: Map.get(ann, "url")
+      },
+      start_index: Map.get(ann, "start_index"),
+      end_index: Map.get(ann, "end_index"),
+      metadata: %{"provider_type" => "url_citation"}
+    })
+  end
+
+  defp parse_openai_annotation(%{"type" => "file_citation"} = ann) do
+    Citation.new!(%{
+      source: %{
+        type: :document,
+        document_id: Map.get(ann, "file_id"),
+        title: Map.get(ann, "filename"),
+        metadata: %{"filename" => Map.get(ann, "filename")}
+      },
+      start_index: Map.get(ann, "start_index"),
+      end_index: Map.get(ann, "end_index"),
+      metadata: %{"provider_type" => "file_citation"}
+    })
+  end
+
+  defp parse_openai_annotation(%{"type" => type} = ann) do
+    Logger.warning("Unknown OpenAI annotation type: #{type}")
+
+    Citation.new!(%{
+      metadata: %{"provider_type" => type, "raw" => ann}
+    })
   end
 
   defp maybe_add_org_id_header(%Req.Request{} = req) do
