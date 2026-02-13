@@ -247,20 +247,57 @@ defmodule LangChain.Utils do
 
       {:data, raw_data}, {req, %Req.Response{status: status} = response}
       when status in 400..599 ->
-        case Jason.decode(raw_data) do
+        # Buffer error response data across chunks since the JSON may span
+        # multiple chunks. Try to decode the accumulated data on each chunk.
+        buffered = Req.Response.get_private(response, :error_buffer, "")
+        combined = buffered <> raw_data
+
+        case Jason.decode(combined) do
           {:ok, data} ->
             {:halt, {req, %{response | body: transform_data_fn.(data)}}}
 
-          {:error, reason} ->
-            Logger.error("Failed to JSON decode error response. ERROR: #{inspect(reason)}")
-
-            {:halt,
-             {req, LangChainError.exception("Failed to handle error response from server.")}}
+          {:error, _reason} ->
+            # JSON is incomplete, keep buffering
+            updated_response = Req.Response.put_private(response, :error_buffer, combined)
+            {:cont, {req, updated_response}}
         end
 
       {:data, _raw_data}, {req, response} ->
         Logger.error("Unhandled API response!")
         {:halt, {req, response}}
+    end
+  end
+
+  @doc """
+  Extract a structured error from a non-200 streaming response.
+
+  When `handle_stream_fn/3` processes error responses, it buffers the raw JSON
+  in the response's private `:error_buffer` key. This function attempts to
+  extract a parsed error map from either the response body (if already decoded)
+  or the buffered data.
+
+  Returns `{:ok, parsed_map}` with the decoded JSON map, or `:not_found`.
+
+  The caller is responsible for converting the parsed map into the appropriate
+  error struct (e.g. `LangChainError`), since the error structure varies by
+  provider.
+  """
+  @spec extract_stream_error(Req.Response.t()) :: {:ok, map()} | :not_found
+  def extract_stream_error(%Req.Response{} = response) do
+    buffer = Req.Response.get_private(response, :error_buffer, nil)
+
+    cond do
+      is_map(response.body) && response.body != %{} ->
+        {:ok, response.body}
+
+      is_binary(buffer) ->
+        case Jason.decode(buffer) do
+          {:ok, data} when is_map(data) -> {:ok, data}
+          _ -> :not_found
+        end
+
+      true ->
+        :not_found
     end
   end
 
