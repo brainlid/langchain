@@ -512,7 +512,13 @@ defmodule LangChain.ChatModels.ChatMistralAI do
 
       other ->
         Logger.error("Unhandled and unexpected response from streamed call. #{inspect(other)}")
-        {:error, LangChainError.exception(type: "unexpected_response", message: "Unexpected")}
+
+        {:error,
+         LangChainError.exception(
+           type: "unexpected_response",
+           message: "Unexpected",
+           original: other
+         )}
     end
   end
 

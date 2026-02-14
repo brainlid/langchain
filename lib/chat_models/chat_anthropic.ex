@@ -814,9 +814,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         error
 
       other ->
-        message = "Unexpected and unhandled API response! #{inspect(other)}"
-        Logger.error(message)
-        {:error, LangChainError.exception(type: "unexpected_response", message: message)}
+        Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
+        other
     end
   end
 
@@ -891,9 +890,16 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         error
 
       other ->
-        message = "Unhandled and unexpected response from streamed post call. #{inspect(other)}"
-        Logger.error(message)
-        {:error, LangChainError.exception(type: "unexpected_response", message: message)}
+        Logger.error(
+          "Unhandled and unexpected response from streamed post call. #{inspect(other)}"
+        )
+
+        {:error,
+         LangChainError.exception(
+           type: "unexpected_response",
+           message: "Unexpected response",
+           original: other
+         )}
     end
   end
 
