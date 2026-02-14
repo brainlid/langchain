@@ -1094,6 +1094,351 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
     end
   end
 
+  describe "do_process_response non-streaming citations" do
+    setup do
+      %{model: ChatOpenAIResponses.new!(%{"model" => @test_model})}
+    end
+
+    test "parses url_citation annotations from output_text", %{model: model} do
+      response = %{
+        "status" => "completed",
+        "output" => [
+          %{
+            "type" => "message",
+            "content" => [
+              %{
+                "type" => "output_text",
+                "text" => "Spain won the 2024 European Championship.",
+                "annotations" => [
+                  %{
+                    "type" => "url_citation",
+                    "title" => "UEFA Euro 2024",
+                    "url" => "https://example.com/euro2024",
+                    "start_index" => 0,
+                    "end_index" => 41
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+
+      result = ChatOpenAIResponses.do_process_response(model, response)
+      assert %LangChain.Message{} = result
+      assert result.role == :assistant
+      assert result.status == :complete
+
+      [content_part] = result.content
+      assert content_part.type == :text
+      assert content_part.content == "Spain won the 2024 European Championship."
+
+      assert [%LangChain.Message.Citation{} = citation] = content_part.citations
+      assert citation.source.type == :web
+      assert citation.source.title == "UEFA Euro 2024"
+      assert citation.source.url == "https://example.com/euro2024"
+      assert citation.start_index == 0
+      assert citation.end_index == 41
+      assert citation.metadata["provider_type"] == "url_citation"
+    end
+
+    test "parses file_citation annotations from output_text", %{model: model} do
+      response = %{
+        "status" => "completed",
+        "output" => [
+          %{
+            "type" => "message",
+            "content" => [
+              %{
+                "type" => "output_text",
+                "text" => "The quarterly report shows growth.",
+                "annotations" => [
+                  %{
+                    "type" => "file_citation",
+                    "file_id" => "file-abc123",
+                    "filename" => "Q4_Report.pdf",
+                    "start_index" => 0,
+                    "end_index" => 33
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+
+      result = ChatOpenAIResponses.do_process_response(model, response)
+      [content_part] = result.content
+
+      assert [%LangChain.Message.Citation{} = citation] = content_part.citations
+      assert citation.source.type == :document
+      assert citation.source.document_id == "file-abc123"
+      assert citation.source.title == "Q4_Report.pdf"
+      assert citation.source.metadata["filename"] == "Q4_Report.pdf"
+      assert citation.start_index == 0
+      assert citation.end_index == 33
+      assert citation.metadata["provider_type"] == "file_citation"
+    end
+
+    test "handles output_text with no annotations", %{model: model} do
+      response = %{
+        "status" => "completed",
+        "output" => [
+          %{
+            "type" => "message",
+            "content" => [
+              %{"type" => "output_text", "text" => "Hello, world!"}
+            ]
+          }
+        ]
+      }
+
+      result = ChatOpenAIResponses.do_process_response(model, response)
+      [content_part] = result.content
+      assert content_part.content == "Hello, world!"
+      assert content_part.citations == []
+    end
+
+    test "handles output_text with empty annotations list", %{model: model} do
+      response = %{
+        "status" => "completed",
+        "output" => [
+          %{
+            "type" => "message",
+            "content" => [
+              %{
+                "type" => "output_text",
+                "text" => "Hello, world!",
+                "annotations" => []
+              }
+            ]
+          }
+        ]
+      }
+
+      result = ChatOpenAIResponses.do_process_response(model, response)
+      [content_part] = result.content
+      assert content_part.content == "Hello, world!"
+      assert content_part.citations == []
+    end
+
+    test "parses multiple annotations on a single output_text", %{model: model} do
+      response = %{
+        "status" => "completed",
+        "output" => [
+          %{
+            "type" => "message",
+            "content" => [
+              %{
+                "type" => "output_text",
+                "text" => "Spain won Euro 2024. France came second.",
+                "annotations" => [
+                  %{
+                    "type" => "url_citation",
+                    "title" => "Euro 2024 Final",
+                    "url" => "https://example.com/final",
+                    "start_index" => 0,
+                    "end_index" => 20
+                  },
+                  %{
+                    "type" => "url_citation",
+                    "title" => "Euro 2024 Standings",
+                    "url" => "https://example.com/standings",
+                    "start_index" => 21,
+                    "end_index" => 40
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+
+      result = ChatOpenAIResponses.do_process_response(model, response)
+      [content_part] = result.content
+      assert length(content_part.citations) == 2
+
+      [c1, c2] = content_part.citations
+      assert c1.source.url == "https://example.com/final"
+      assert c2.source.url == "https://example.com/standings"
+
+      # Also verify Message.all_citations/1
+      all = LangChain.Message.all_citations(result)
+      assert length(all) == 2
+    end
+  end
+
+  describe "do_process_response streaming citations" do
+    setup do
+      %{model: ChatOpenAIResponses.new!(%{"model" => @test_model})}
+    end
+
+    test "handles annotation.added streaming event", %{model: model} do
+      event = %{
+        "type" => "response.output_text.annotation.added",
+        "annotation" => %{
+          "type" => "url_citation",
+          "title" => "UEFA Euro 2024",
+          "url" => "https://example.com/euro2024",
+          "start_index" => 0,
+          "end_index" => 41
+        },
+        "output_index" => 0,
+        "content_index" => 0
+      }
+
+      result = ChatOpenAIResponses.do_process_response(model, event)
+      assert %LangChain.MessageDelta{} = result
+      assert result.role == :assistant
+      assert result.status == :incomplete
+      assert result.index == 0
+
+      assert %LangChain.Message.ContentPart{} = part = result.content
+      assert part.type == :text
+      assert part.content == nil
+      assert [%LangChain.Message.Citation{} = citation] = part.citations
+      assert citation.source.type == :web
+      assert citation.source.title == "UEFA Euro 2024"
+      assert citation.source.url == "https://example.com/euro2024"
+      assert citation.start_index == 0
+      assert citation.end_index == 41
+      assert citation.metadata["provider_type"] == "url_citation"
+    end
+
+    test "accumulates annotations across streaming deltas", %{model: model} do
+      events = [
+        %{"type" => "response.output_text.delta", "output_index" => 0, "delta" => "Spain won "},
+        %{
+          "type" => "response.output_text.delta",
+          "output_index" => 0,
+          "delta" => "the 2024 European Championship."
+        },
+        %{
+          "type" => "response.output_text.annotation.added",
+          "annotation" => %{
+            "type" => "url_citation",
+            "title" => "Euro 2024",
+            "url" => "https://example.com/euro2024",
+            "start_index" => 0,
+            "end_index" => 41
+          },
+          "output_index" => 0,
+          "content_index" => 0
+        },
+        %{
+          "type" => "response.completed",
+          "response" => %{"usage" => %{"input_tokens" => 10, "output_tokens" => 8}}
+        }
+      ]
+
+      deltas =
+        events
+        |> Enum.map(&ChatOpenAIResponses.do_process_response(model, &1))
+        |> Enum.reject(&(&1 == :skip))
+
+      assert length(deltas) == 4
+
+      {:ok, %LangChain.Message{} = merged} =
+        LangChain.MessageDelta.merge_deltas(deltas) |> LangChain.MessageDelta.to_message()
+
+      assert merged.status == :complete
+      assert merged.role == :assistant
+
+      assert [%LangChain.Message.ContentPart{} = part] = merged.content
+      assert part.content == "Spain won the 2024 European Championship."
+      assert [%LangChain.Message.Citation{} = citation] = part.citations
+      assert citation.source.type == :web
+      assert citation.source.url == "https://example.com/euro2024"
+    end
+
+    test "accumulates multiple annotations in sequence", %{model: model} do
+      events = [
+        %{
+          "type" => "response.output_text.delta",
+          "output_index" => 0,
+          "delta" => "Spain won Euro 2024. France came second."
+        },
+        %{
+          "type" => "response.output_text.annotation.added",
+          "annotation" => %{
+            "type" => "url_citation",
+            "title" => "Euro 2024 Final",
+            "url" => "https://example.com/final",
+            "start_index" => 0,
+            "end_index" => 20
+          },
+          "output_index" => 0,
+          "content_index" => 0
+        },
+        %{
+          "type" => "response.output_text.annotation.added",
+          "annotation" => %{
+            "type" => "url_citation",
+            "title" => "Euro 2024 Standings",
+            "url" => "https://example.com/standings",
+            "start_index" => 21,
+            "end_index" => 40
+          },
+          "output_index" => 0,
+          "content_index" => 0
+        },
+        %{
+          "type" => "response.output_text.annotation.added",
+          "annotation" => %{
+            "type" => "url_citation",
+            "title" => "Euro 2024 Teams",
+            "url" => "https://example.com/teams",
+            "start_index" => 0,
+            "end_index" => 40
+          },
+          "output_index" => 0,
+          "content_index" => 0
+        },
+        %{"type" => "response.output_text.done"},
+        %{
+          "type" => "response.completed",
+          "response" => %{"usage" => %{"input_tokens" => 10, "output_tokens" => 8}}
+        }
+      ]
+
+      deltas =
+        events
+        |> Enum.map(&ChatOpenAIResponses.do_process_response(model, &1))
+        |> Enum.reject(&(&1 == :skip))
+
+      {:ok, %LangChain.Message{} = merged} =
+        LangChain.MessageDelta.merge_deltas(deltas) |> LangChain.MessageDelta.to_message()
+
+      assert [%LangChain.Message.ContentPart{} = part] = merged.content
+      assert part.content == "Spain won Euro 2024. France came second."
+      assert length(part.citations) == 3
+
+      urls = Enum.map(part.citations, & &1.source.url)
+      assert "https://example.com/final" in urls
+      assert "https://example.com/standings" in urls
+      assert "https://example.com/teams" in urls
+    end
+
+    test "annotation.added is no longer skipped", %{model: model} do
+      event = %{
+        "type" => "response.output_text.annotation.added",
+        "annotation" => %{
+          "type" => "url_citation",
+          "title" => "Test",
+          "url" => "https://example.com",
+          "start_index" => 0,
+          "end_index" => 10
+        },
+        "output_index" => 0,
+        "content_index" => 0
+      }
+
+      result = ChatOpenAIResponses.do_process_response(model, event)
+      refute result == :skip
+      assert %LangChain.MessageDelta{} = result
+    end
+  end
+
   describe "decode_stream/1" do
     test "decodes event-based streaming format" do
       raw = "event: response.output_text.delta\ndata: {\"delta\": \"Hi\"}\n\n"

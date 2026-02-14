@@ -2,6 +2,8 @@ defmodule LangChain.Tools.DeepResearch.ResearchResultTest do
   use LangChain.BaseCase
 
   alias LangChain.Tools.DeepResearch.ResearchResult
+  alias LangChain.Message.Citation
+  alias LangChain.Message.CitationSource
 
   describe "changeset/2" do
     test "creates valid changeset with required fields" do
@@ -24,13 +26,23 @@ defmodule LangChain.Tools.DeepResearch.ResearchResultTest do
       assert Keyword.has_key?(errors, :output_text)
     end
 
-    test "casts embedded sources" do
+    test "casts embedded sources as Citation structs" do
       attrs = %{
         id: "req_12345",
         output_text: "Research findings",
         sources: [
-          %{title: "Source 1", url: "https://example.com/1"},
-          %{title: "Source 2", url: "https://example.com/2"}
+          %{
+            cited_text: "Solar power is growing",
+            start_index: 0,
+            end_index: 20,
+            source: %{type: :web, title: "Source 1", url: "https://example.com/1"}
+          },
+          %{
+            cited_text: "Wind energy is efficient",
+            start_index: 25,
+            end_index: 50,
+            source: %{type: :web, title: "Source 2", url: "https://example.com/2"}
+          }
         ]
       }
 
@@ -39,7 +51,16 @@ defmodule LangChain.Tools.DeepResearch.ResearchResultTest do
 
       result = Ecto.Changeset.apply_changes(changeset)
       assert length(result.sources) == 2
-      assert hd(result.sources).title == "Source 1"
+
+      first = hd(result.sources)
+      assert %Citation{} = first
+      assert first.cited_text == "Solar power is growing"
+      assert first.start_index == 0
+      assert first.end_index == 20
+      assert %CitationSource{} = first.source
+      assert first.source.type == :web
+      assert first.source.title == "Source 1"
+      assert first.source.url == "https://example.com/1"
     end
 
     test "casts embedded usage statistics" do
@@ -98,7 +119,8 @@ defmodule LangChain.Tools.DeepResearch.ResearchResultTest do
                     "title" => "Solar Power Study",
                     "url" => "https://example.com/solar",
                     "start_index" => 0,
-                    "end_index" => 20
+                    "end_index" => 20,
+                    "snippet" => "Solar power is growing rapidly"
                   }
                 ]
               }
@@ -125,9 +147,15 @@ defmodule LangChain.Tools.DeepResearch.ResearchResultTest do
       assert result.created_at == 1_234_567_890
 
       assert length(result.sources) == 1
-      source = hd(result.sources)
-      assert source.title == "Solar Power Study"
-      assert source.url == "https://example.com/solar"
+      citation = hd(result.sources)
+      assert %Citation{} = citation
+      assert citation.cited_text == "Solar power is growing rapidly"
+      assert citation.start_index == 0
+      assert citation.end_index == 20
+      assert citation.source.type == :web
+      assert citation.source.title == "Solar Power Study"
+      assert citation.source.url == "https://example.com/solar"
+      assert citation.metadata == %{"provider" => "openai_deep_research"}
 
       assert result.usage.input_tokens == 150
       assert result.usage.total_tokens == 950
@@ -169,14 +197,56 @@ defmodule LangChain.Tools.DeepResearch.ResearchResultTest do
       errors = changeset.errors
       assert Keyword.has_key?(errors, :id)
     end
+
+    test "handles multiple annotations creating multiple Citation structs" do
+      api_response = %{
+        "id" => "req_multi",
+        "output" => [
+          %{
+            "type" => "message",
+            "content" => [
+              %{
+                "type" => "output_text",
+                "text" => "Research on multiple topics.",
+                "annotations" => [
+                  %{
+                    "title" => "First Source",
+                    "url" => "https://example.com/1",
+                    "start_index" => 0,
+                    "end_index" => 10,
+                    "snippet" => "First finding"
+                  },
+                  %{
+                    "title" => "Second Source",
+                    "url" => "https://example.com/2",
+                    "start_index" => 15,
+                    "end_index" => 25,
+                    "snippet" => "Second finding"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+
+      assert {:ok, result} = ResearchResult.from_api_response(api_response)
+      assert length(result.sources) == 2
+
+      [first, second] = result.sources
+      assert first.source.url == "https://example.com/1"
+      assert first.cited_text == "First finding"
+      assert second.source.url == "https://example.com/2"
+      assert second.cited_text == "Second finding"
+    end
   end
 
   describe "source_count/1" do
     test "returns correct source count" do
       result = %ResearchResult{
         sources: [
-          %ResearchResult.Source{url: "https://example.com/1"},
-          %ResearchResult.Source{url: "https://example.com/2"}
+          Citation.new!(%{source: %{type: :web, url: "https://example.com/1"}}),
+          Citation.new!(%{source: %{type: :web, url: "https://example.com/2"}})
         ]
       }
 
@@ -207,8 +277,12 @@ defmodule LangChain.Tools.DeepResearch.ResearchResultTest do
       result = %ResearchResult{
         output_text: "This is the research content.",
         sources: [
-          %ResearchResult.Source{title: "Source 1", url: "https://example.com/1"},
-          %ResearchResult.Source{title: "Source 2", url: "https://example.com/2"}
+          Citation.new!(%{
+            source: %{type: :web, title: "Source 1", url: "https://example.com/1"}
+          }),
+          Citation.new!(%{
+            source: %{type: :web, title: "Source 2", url: "https://example.com/2"}
+          })
         ]
       }
 
@@ -236,11 +310,11 @@ defmodule LangChain.Tools.DeepResearch.ResearchResultTest do
   end
 
   describe "source_urls/1" do
-    test "extracts URLs from sources" do
+    test "extracts URLs from citation sources" do
       result = %ResearchResult{
         sources: [
-          %ResearchResult.Source{url: "https://example.com/1"},
-          %ResearchResult.Source{url: "https://example.com/2"}
+          Citation.new!(%{source: %{type: :web, url: "https://example.com/1"}}),
+          Citation.new!(%{source: %{type: :web, url: "https://example.com/2"}})
         ]
       }
 
@@ -251,6 +325,18 @@ defmodule LangChain.Tools.DeepResearch.ResearchResultTest do
     test "returns empty list for no sources" do
       result = %ResearchResult{sources: []}
       assert ResearchResult.source_urls(result) == []
+    end
+
+    test "filters out nil URLs" do
+      result = %ResearchResult{
+        sources: [
+          Citation.new!(%{source: %{type: :web, url: "https://example.com/1"}}),
+          Citation.new!(%{source: %{type: :document, title: "Local Doc"}})
+        ]
+      }
+
+      urls = ResearchResult.source_urls(result)
+      assert urls == ["https://example.com/1"]
     end
   end
 end

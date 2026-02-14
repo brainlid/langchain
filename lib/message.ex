@@ -562,4 +562,14 @@ defmodule LangChain.Message do
   end
 
   def is_empty?(_message), do: false
+
+  @doc """
+  Returns all citations across all content parts of a message.
+  """
+  @spec all_citations(t()) :: [LangChain.Message.Citation.t()]
+  def all_citations(%Message{content: content}) when is_list(content) do
+    Enum.flat_map(content, &ContentPart.citations/1)
+  end
+
+  def all_citations(%Message{}), do: []
 end
