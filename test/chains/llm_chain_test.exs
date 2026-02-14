@@ -970,9 +970,17 @@ defmodule LangChain.Chains.LLMChainTest do
 
       message = Message.new_assistant!(%{content: "Initial"})
 
-      {:halted, final_message} = LLMChain.run_message_processors(chain, message)
+      {:halted, failed_message, error_message} =
+        LLMChain.run_message_processors(chain, message)
 
-      assert final_message.content ==
+      # the message-so-far that was being processed when the exception occurred
+      assert failed_message.role == :assistant
+      assert failed_message.processed_content == "Initial *"
+
+      # the error message generated from the exception
+      assert error_message.role == :user
+
+      assert error_message.content ==
                [
                  ContentPart.text!(
                    "ERROR: An exception was raised! Exception: %RuntimeError{message: \"BOOM! Processor exploded\"}"
@@ -1065,6 +1073,51 @@ defmodule LangChain.Chains.LLMChainTest do
       # Expect callback with the original assistant message
       assert_received {:processing_error_callback, ^msg1}
       # Expect callback with the new user message
+      assert_received {:error_message_created_callback, ^msg2}
+    end
+
+    test "when halted by exception, adds original message plus error message and fires callbacks",
+         %{chain: chain} do
+      handler = %{
+        on_message_processing_error: fn _chain, item ->
+          send(self(), {:processing_error_callback, item})
+        end,
+        on_error_message_created: fn _chain, item ->
+          send(self(), {:error_message_created_callback, item})
+        end
+      }
+
+      assert chain.current_failure_count == 0
+
+      chain =
+        chain
+        |> LLMChain.add_callback(handler)
+        |> LLMChain.message_processors([
+          &fake_success_processor/2,
+          &fake_raise_processor/2
+        ])
+
+      message = Message.new_assistant!(%{content: "Initial"})
+
+      updated_chain = LLMChain.process_message(chain, message)
+      # the failure count is incremented
+      assert updated_chain.current_failure_count == 1
+      [msg1, msg2] = updated_chain.messages
+      # includes the message that was being processed when the exception occurred
+      assert msg1.role == :assistant
+      assert msg1.processed_content == "Initial *"
+      # adds a new user message with the exception error
+      assert msg2.role == :user
+
+      assert msg2.content == [
+               ContentPart.text!(
+                 "ERROR: An exception was raised! Exception: %RuntimeError{message: \"BOOM! Processor exploded\"}"
+               )
+             ]
+
+      # Expect callback with the original assistant message
+      assert_received {:processing_error_callback, ^msg1}
+      # Expect callback with the new error message
       assert_received {:error_message_created_callback, ^msg2}
     end
 

@@ -1255,7 +1255,7 @@ defmodule LangChain.Chains.LLMChain do
           Logger.error("Exception raised in processor #{inspect(proc)}")
 
           {:halt,
-           {:halted,
+           {:halted, m,
             Message.new_user!("ERROR: An exception was raised! Exception: #{inspect(err)}")}}
       end
     end)
