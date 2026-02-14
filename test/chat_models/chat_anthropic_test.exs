@@ -1842,7 +1842,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
       assert {:error, %LangChainError{message: error_message}} =
                ChatAnthropic.call(model, "prompt", [])
 
-      assert error_message =~ "Something went wrong"
+      assert error_message =~ "Unhanded error in streaming response"
     end
 
     test "merges req_opts into the request (non-streaming)" do
@@ -1858,7 +1858,70 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
       assert {:error, %LangChainError{message: error_message}} =
                ChatAnthropic.call(model, "prompt", [])
 
-      assert error_message =~ "Something went wrong"
+      assert error_message =~ "Unhanded error in non-streamed response"
+    end
+
+    test "returns unhandled error in original attribute (streaming)" do
+      expect(Req, :post, fn _req_struct, _opts ->
+        {:error, RuntimeError.exception("Something went wrong")}
+      end)
+
+      model = ChatAnthropic.new!(%{stream: true, model: @test_model})
+
+      assert {:error, %LangChainError{message: error_message} = error} =
+               ChatAnthropic.call(model, "prompt", [])
+
+      assert error_message =~ "Unhanded error in streaming response"
+
+      assert %RuntimeError{message: "Something went wrong"} =
+               error.original
+    end
+
+    test "returns unexpected response in original attribute (streaming)" do
+      expect(Req, :post, fn _req_struct, _opts ->
+        {:what, "RANDOM!"}
+      end)
+
+      model = ChatAnthropic.new!(%{stream: true, model: @test_model})
+
+      assert {:error, %LangChainError{message: error_message} = error} =
+               ChatAnthropic.call(model, "prompt", [])
+
+      assert error_message =~ "Unexpected response"
+
+      assert {:what, "RANDOM!"} = error.original
+    end
+
+    test "returns unhandled error in original attribute (non-streaming)" do
+      expect(Req, :post, fn _req_struct ->
+        {:error, RuntimeError.exception("Something went wrong")}
+      end)
+
+      model =
+        ChatAnthropic.new!(%{stream: false, model: @test_model})
+
+      assert {:error, %LangChainError{message: error_message} = error} =
+               ChatAnthropic.call(model, "prompt", [])
+
+      assert error_message =~ "Unhanded error in non-streamed response"
+
+      assert %RuntimeError{message: "Something went wrong"} =
+               error.original
+    end
+
+    test "returns unexpected response in original attribute (non-streaming)" do
+      expect(Req, :post, fn _req_struct ->
+        {:what, "RANDOM!"}
+      end)
+
+      model =
+        ChatAnthropic.new!(%{stream: false, model: @test_model})
+
+      assert {:error, %LangChainError{message: error_message} = error} =
+               ChatAnthropic.call(model, "prompt", [])
+
+      assert error_message =~ "Unexpected response"
+      assert {:what, "RANDOM!"} = error.original
     end
 
     test "returns error tuple when receiving overloaded_error" do

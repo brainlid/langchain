@@ -813,9 +813,25 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         # pass through the already handled exception
         error
 
+      {:error, err} ->
+        Logger.error("Unhandled error non-streamed post call. #{inspect(err)}")
+
+        {:error,
+         LangChainError.exception(
+           type: "unhandled_error",
+           message: "Unhanded error in non-streamed response",
+           original: err
+         )}
+
       other ->
         Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
-        other
+
+        {:error,
+         LangChainError.exception(
+           type: "unexpected_response",
+           message: "Unexpected response",
+           original: other
+         )}
     end
   end
 
@@ -888,6 +904,16 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       {:error, %LangChainError{}} = error ->
         # pass through the already handled exception
         error
+
+      {:error, err} ->
+        Logger.error("Unhandled error streamed post call. #{inspect(err)}")
+
+        {:error,
+         LangChainError.exception(
+           type: "unhandled_error",
+           message: "Unhanded error in streaming response",
+           original: err
+         )}
 
       other ->
         Logger.error(
