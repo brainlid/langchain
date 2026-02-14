@@ -1747,13 +1747,11 @@ defmodule ChatModels.ChatGoogleAITest do
              {:error,
               LangChainError.exception(
                 type: "not_found",
-                message:
-                  "models/gemini-1.5-flash is not found for API version v1beta.",
+                message: "models/gemini-1.5-flash is not found for API version v1beta.",
                 original: %{
                   "error" => %{
                     "code" => 404,
-                    "message" =>
-                      "models/gemini-1.5-flash is not found for API version v1beta.",
+                    "message" => "models/gemini-1.5-flash is not found for API version v1beta.",
                     "status" => "NOT_FOUND"
                   }
                 }

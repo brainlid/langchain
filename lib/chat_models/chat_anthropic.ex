@@ -1234,7 +1234,10 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   defp do_process_content_response(%Message{} = message, %{"type" => "text", "text" => ""}),
     do: message
 
-  defp do_process_content_response(%Message{} = message, %{"type" => "text", "text" => text} = block) do
+  defp do_process_content_response(
+         %Message{} = message,
+         %{"type" => "text", "text" => text} = block
+       ) do
     citations = parse_anthropic_citations(Map.get(block, "citations", []))
     part = ContentPart.text!(text)
     part = %{part | citations: citations}
@@ -1667,7 +1670,11 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   @spec content_part_for_api(ContentPart.t()) :: map() | nil | no_return()
   def content_part_for_api(%ContentPart{type: :text, citations: citations} = part)
       when is_list(citations) and citations != [] do
-    %{"type" => "text", "text" => part.content, "citations" => Enum.map(citations, &citation_for_api/1)}
+    %{
+      "type" => "text",
+      "text" => part.content,
+      "citations" => Enum.map(citations, &citation_for_api/1)
+    }
     |> Utils.conditionally_add_to_map("cache_control", get_cache_control_setting(part.options))
   end
 
@@ -1763,8 +1770,12 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         _ ->
           media_type =
             case media do
-              :pdf -> "application/pdf"
-              value when is_binary(value) -> value
+              :pdf ->
+                "application/pdf"
+
+              value when is_binary(value) ->
+                value
+
               other ->
                 message = "Received unsupported media type for ContentPart: #{inspect(other)}"
                 Logger.error(message)

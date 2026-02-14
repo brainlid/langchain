@@ -862,15 +862,18 @@ defmodule LangChain.ChatModels.ChatPerplexity do
   # citations from the chunk since Perplexity includes them on every chunk
   # but we only need to process them once at completion. Returns a list
   # [citation_delta, content_delta] so both flow through the pipeline.
-  defp process_stream_chunk(_perplexity, %{
-         "choices" => [
-           %{
-             "delta" => %{"content" => content},
-             "finish_reason" => "stop"
-           }
-           | _
-         ]
-       } = chunk) do
+  defp process_stream_chunk(
+         _perplexity,
+         %{
+           "choices" => [
+             %{
+               "delta" => %{"content" => content},
+               "finish_reason" => "stop"
+             }
+             | _
+           ]
+         } = chunk
+       ) do
     content_delta = %MessageDelta{content: content, role: :assistant, status: :complete}
 
     case build_streaming_citation_delta(chunk) do
@@ -890,11 +893,14 @@ defmodule LangChain.ChatModels.ChatPerplexity do
   end
 
   # Completion chunk with no content delta.
-  defp process_stream_chunk(_perplexity, %{
-         "choices" => [
-           %{"finish_reason" => "stop"} | _
-         ]
-       } = chunk) do
+  defp process_stream_chunk(
+         _perplexity,
+         %{
+           "choices" => [
+             %{"finish_reason" => "stop"} | _
+           ]
+         } = chunk
+       ) do
     content_delta = %MessageDelta{status: :complete, role: :assistant}
 
     case build_streaming_citation_delta(chunk) do

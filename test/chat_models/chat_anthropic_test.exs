@@ -4318,7 +4318,10 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 
       # Single content block with both text and citation
       assert [%ContentPart{} = part] = merged.content
-      assert part.content == "Apollo 11 launched on July 16, 1969, from Kennedy Space Center in Florida."
+
+      assert part.content ==
+               "Apollo 11 launched on July 16, 1969, from Kennedy Space Center in Florida."
+
       assert [%Citation{} = citation] = part.citations
       assert citation.cited_text =~ "Apollo 11 mission launched"
       assert citation.source.type == :document
@@ -4418,7 +4421,8 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
           %{
             "delta" => %{
               "type" => "text_delta",
-              "text" => "the mission launched on July 16, 1969, from Kennedy Space Center in Florida."
+              "text" =>
+                "the mission launched on July 16, 1969, from Kennedy Space Center in Florida."
             },
             "index" => 2,
             "type" => "content_block_delta"
