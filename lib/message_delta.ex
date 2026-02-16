@@ -239,69 +239,75 @@ defmodule LangChain.MessageDelta do
     %MessageDelta{delta | content: nil}
   end
 
-  # ContentPart being merged
-  defp append_to_merged_content(
-         %MessageDelta{role: :assistant, merged_content: %ContentPart{} = primary_part} = primary,
-         %MessageDelta{content: nil, merged_content: %ContentPart{} = new_content_part}
-       ) do
-    # merging two deltas that have already been merged from smaller chunks.
-    merged_part = ContentPart.merge_part(primary_part, new_content_part)
-    %MessageDelta{primary | merged_content: [merged_part]}
+  # Empty content - nothing to merge
+  defp append_to_merged_content(%MessageDelta{} = primary, %MessageDelta{content: content})
+       when content in [nil, []],
+       do: primary
+
+  # String content - convert to ContentPart and merge
+  defp append_to_merged_content(%MessageDelta{} = primary, %MessageDelta{content: content})
+       when is_binary(content) do
+    append_to_merged_content(primary, %MessageDelta{content: ContentPart.text!(content)})
   end
 
+  # ContentPart from merged_content (already processed delta)
   defp append_to_merged_content(
-         %MessageDelta{role: :assistant, merged_content: %ContentPart{} = primary_part} = primary,
-         %MessageDelta{content: %ContentPart{} = new_content_part}
+         %MessageDelta{} = primary,
+         %MessageDelta{content: nil, merged_content: %ContentPart{} = part}
        ) do
-    merged_part = ContentPart.merge_part(primary_part, new_content_part)
-    %MessageDelta{primary | merged_content: [merged_part]}
+    merge_content_part_into(primary, part)
   end
 
+  # Single ContentPart content
   defp append_to_merged_content(
-         %MessageDelta{role: :assistant, merged_content: []} = primary,
-         %MessageDelta{content: %ContentPart{} = new_content_part}
+         %MessageDelta{} = primary,
+         %MessageDelta{content: %ContentPart{} = part, index: index}
        ) do
-    %MessageDelta{primary | merged_content: [new_content_part]}
+    merge_content_part_at_index(primary, part, index)
   end
 
+  # List of content items (e.g., from Mistral with reference types)
   defp append_to_merged_content(
-         %MessageDelta{role: :assistant, merged_content: parts_list} = primary,
-         %MessageDelta{
-           content: new_delta_content,
-           index: index
-         }
+         %MessageDelta{merged_content: parts_list} = primary,
+         %MessageDelta{content: content_list, index: index}
        )
-       when is_list(parts_list) and not is_nil(new_delta_content) do
-    # Incoming delta has a single ContentPart, not a list
-    case new_delta_content do
-      [] ->
-        # Incoming delta will be a list of ContentParts
-        primary
-
-      %ContentPart{} = part ->
-        merge_content_part_at_index(primary, part, index)
-    end
+       when is_list(parts_list) and is_list(content_list) do
+    Enum.reduce(content_list, primary, &merge_content_item(&2, &1, index))
   end
 
-  defp append_to_merged_content(%MessageDelta{} = primary, %MessageDelta{} = delta_part) do
-    # Handle case where primary has no content and delta has string content
-    case {primary.merged_content, delta_part.content} do
-      {nil, content} when is_binary(content) ->
-        %MessageDelta{primary | merged_content: [ContentPart.text!(content)]}
+  # Catch-all - no content to merge
+  defp append_to_merged_content(%MessageDelta{} = primary, %MessageDelta{}), do: primary
 
-      {[], content} when is_binary(content) ->
-        %MessageDelta{primary | merged_content: [ContentPart.text!(content)]}
-
-      {%ContentPart{} = part, content} when is_binary(content) ->
-        new_part = ContentPart.text!(content)
-        merged_part = ContentPart.merge_part(part, new_part)
-        %MessageDelta{primary | merged_content: [merged_part]}
-
-      _ ->
-        # no content to merge
-        primary
-    end
+  # Merge a ContentPart directly into merged_content (for already-merged deltas)
+  @spec merge_content_part_into(t(), ContentPart.t()) :: t()
+  defp merge_content_part_into(%MessageDelta{merged_content: content} = primary, part)
+       when content in [nil, []] do
+    %MessageDelta{primary | merged_content: [part]}
   end
+
+  defp merge_content_part_into(
+         %MessageDelta{merged_content: %ContentPart{} = existing} = primary,
+         part
+       ) do
+    %MessageDelta{primary | merged_content: [ContentPart.merge_part(existing, part)]}
+  end
+
+  defp merge_content_part_into(%MessageDelta{merged_content: [_ | _]} = primary, part) do
+    merge_content_part_at_index(primary, part, 0)
+  end
+
+  # Merge a single content item from a list into the primary delta
+  @spec merge_content_item(t(), ContentPart.t() | map(), integer() | nil) :: t()
+  defp merge_content_item(primary, %ContentPart{} = part, index) do
+    merge_content_part_at_index(primary, part, index)
+  end
+
+  defp merge_content_item(primary, %{"type" => "text", "text" => text}, index)
+       when is_binary(text) do
+    merge_content_part_at_index(primary, ContentPart.text!(text), index)
+  end
+
+  defp merge_content_item(primary, _unrecognized, _index), do: primary
 
   # Helper function to merge a content part at a specific index
   defp merge_content_part_at_index(
@@ -351,75 +357,42 @@ defmodule LangChain.MessageDelta do
     %MessageDelta{primary | merged_content: updated_list}
   end
 
-  defp merge_tool_calls(
-         %MessageDelta{} = primary,
-         %MessageDelta{tool_calls: [delta_call]} = _delta_part
-       ) do
-    # point from the primary delta.
-    primary_calls = primary.tool_calls || []
-
-    # only the `index` can be counted on in the minimal delta_call for matching
-    # against. Anthropic's index is used to differentiate calls but the count is
-    # not related to the actual index in the list. For this reason, we match on
-    # the index value and not the index as an offset.
-    initial = Enum.find(primary_calls, &(&1.index == delta_call.index))
-
-    # merge them and put it back in the correct spot of the list
+  # Merge tool call delta by matching on index value (not list position).
+  # Anthropic's index differentiates calls but doesn't correspond to list offset.
+  @spec merge_tool_calls(t(), t()) :: t()
+  defp merge_tool_calls(%MessageDelta{tool_calls: primary_calls} = primary, %MessageDelta{
+         tool_calls: [delta_call]
+       }) do
+    calls = primary_calls || []
+    initial = Enum.find(calls, &(&1.index == delta_call.index))
     merged_call = ToolCall.merge(initial, delta_call)
-    # if the index exists, update it, otherwise insert it
-
-    # insert or update the merged item into the list based on the index value
-    updated_calls = insert_or_update_tool_call(primary_calls, merged_call)
-    # updated_calls = Utils.put_in_list(primary_calls, pos, merged_call)
-    # return updated MessageDelta
-    %MessageDelta{primary | tool_calls: updated_calls}
+    %MessageDelta{primary | tool_calls: upsert_by_index(calls, merged_call)}
   end
 
-  defp merge_tool_calls(%MessageDelta{} = primary, %MessageDelta{} = _delta_part) do
-    # nothing to merge
-    primary
+  defp merge_tool_calls(%MessageDelta{} = primary, %MessageDelta{}), do: primary
+
+  @spec update_index(t(), t()) :: t()
+  defp update_index(%MessageDelta{} = primary, %MessageDelta{index: idx}) when is_number(idx) do
+    %MessageDelta{primary | index: idx}
   end
 
-  defp update_index(%MessageDelta{} = primary, %MessageDelta{index: new_index})
-       when is_number(new_index) do
-    %MessageDelta{primary | index: new_index}
+  defp update_index(%MessageDelta{} = primary, %MessageDelta{}), do: primary
+
+  # Only update status from :incomplete to a terminal state
+  @spec update_status(t(), t()) :: t()
+  defp update_status(%MessageDelta{status: :incomplete} = primary, %MessageDelta{status: status})
+       when status in [:complete, :length] do
+    %MessageDelta{primary | status: status}
   end
 
-  defp update_index(%MessageDelta{} = primary, %MessageDelta{} = _delta_part) do
-    # no index update
-    primary
-  end
+  defp update_status(%MessageDelta{} = primary, %MessageDelta{}), do: primary
 
-  defp update_status(%MessageDelta{status: :incomplete} = primary, %MessageDelta{
-         status: :complete
-       }) do
-    %MessageDelta{primary | status: :complete}
-  end
-
-  defp update_status(%MessageDelta{status: :incomplete} = primary, %MessageDelta{
-         status: :length
-       }) do
-    %MessageDelta{primary | status: :length}
-  end
-
-  defp update_status(%MessageDelta{} = primary, %MessageDelta{} = _delta_part) do
-    # status flag not updated
-    primary
-  end
-
-  # given the list of tool calls, insert or update the item into the list based
-  # on the tool_call's index value.
-  defp insert_or_update_tool_call(tool_calls, call) when is_list(tool_calls) do
-    # find the position index of the item
-    idx = Enum.find_index(tool_calls, fn item -> item.index == call.index end)
-
-    case idx do
-      nil ->
-        # not in the list, append the call to the list
-        tool_calls ++ [call]
-
-      position ->
-        List.replace_at(tool_calls, position, call)
+  # Insert or update tool call in list by matching on index field
+  @spec upsert_by_index([ToolCall.t()], ToolCall.t()) :: [ToolCall.t()]
+  defp upsert_by_index(calls, call) do
+    case Enum.find_index(calls, &(&1.index == call.index)) do
+      nil -> calls ++ [call]
+      pos -> List.replace_at(calls, pos, call)
     end
   end
 
@@ -451,33 +424,47 @@ defmodule LangChain.MessageDelta do
     {:error, "Cannot convert incomplete message"}
   end
 
-  def to_message(%MessageDelta{status: status} = delta) do
-    msg_status =
-      case status do
-        :complete ->
-          :complete
-
-        :length ->
-          :length
-
-        _other ->
-          nil
-      end
+  def to_message(%MessageDelta{merged_content: merged_content} = delta) do
+    content = reject_nil(merged_content)
 
     attrs =
       delta
       |> Map.from_struct()
-      |> Map.put(:status, msg_status)
-      |> Map.put(:content, delta.merged_content)
+      |> Map.put(:content, content)
 
-    case Message.new(attrs) do
-      {:ok, message} ->
-        {:ok, message}
-
-      {:error, changeset} ->
+    with :ok <- validate_not_empty(delta),
+         {:ok, message} <- Message.new(attrs) do
+      {:ok, message}
+    else
+      {:error, %Ecto.Changeset{} = changeset} ->
         {:error, Utils.changeset_error_to_string(changeset)}
+
+      {:error, _reason} = error ->
+        error
     end
   end
+
+  # Validate that assistant message is not empty (no content and no tool_calls).
+  # Empty assistant messages violate conversation flow rules in most LLM APIs.
+  defp validate_not_empty(%MessageDelta{
+         role: :assistant,
+         merged_content: merged_content,
+         tool_calls: tool_calls,
+         status: :complete
+       })
+       when (merged_content == [] or merged_content == nil) and
+              (tool_calls == [] or tool_calls == nil) do
+    Logger.warning("Received empty assistant message with no content and no tool_calls")
+
+    {:error, "Empty assistant message: no content and no tool_calls"}
+  end
+
+  defp validate_not_empty(_delta), do: :ok
+
+  # Filter nil values from list (from index padding during delta merging)
+  @spec reject_nil(list() | any()) :: list() | any()
+  defp reject_nil(list) when is_list(list), do: Enum.reject(list, &is_nil/1)
+  defp reject_nil(other), do: other
 
   @doc """
   Accumulates token usage from delta messages. Uses `LangChain.TokenUsage.add/2` to combine

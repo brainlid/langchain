@@ -13,6 +13,7 @@ defmodule LangChain.ChatModels.ChatDeepSeekTest do
   alias LangChain.Message.ToolResult
 
   @test_model "deepseek-chat"
+  @test_model_2 "deepseek-reasoner"
 
   defp hello_world(_args, _context) do
     "Hello world!"
@@ -731,54 +732,6 @@ defmodule LangChain.ChatModels.ChatDeepSeekTest do
              ]
     end
 
-    test "handles receiving message with reasoning content", %{model: model} do
-      response = %{
-        "finish_reason" => "stop",
-        "message" => %{
-          "role" => "assistant",
-          "content" => "test",
-          "reasoning_content" => "reasoning test"
-        },
-        "index" => 0
-      }
-
-      assert %Message{} = struct = ChatDeepSeek.do_process_response(model, response)
-
-      assert struct.content == [
-               ContentPart.thinking!("reasoning test"),
-               ContentPart.text!("test")
-             ]
-    end
-
-    test "handles receiving message delta with reasoning content", %{model: model} do
-      reasoning_response1 = %{
-        "index" => 0,
-        "delta" => %{
-          "content" => nil,
-          "reasoning_content" => "reasoning content"
-        },
-        "finish_reason" => nil
-      }
-
-      reasoning_response2 = %{
-        "index" => 0,
-        "delta" => %{
-          "content" => "content",
-          "reasoning_content" => nil
-        },
-        "finish_reason" => nil
-      }
-
-      assert %MessageDelta{} =
-               delta1 = ChatDeepSeek.do_process_response(model, reasoning_response1)
-
-      assert %MessageDelta{} =
-               delta2 = ChatDeepSeek.do_process_response(model, reasoning_response2)
-
-      assert delta1.content == ContentPart.thinking!("reasoning content")
-      assert delta2.content == ContentPart.text!("content")
-    end
-
     test "handles error from server", %{model: model} do
       response = %{
         "error" => %{"code" => "429", "message" => "Rate limit exceeded"}
@@ -828,6 +781,61 @@ defmodule LangChain.ChatModels.ChatDeepSeekTest do
       assert %Message{role: :assistant, index: 1} = msg2
       assert msg1.content == [ContentPart.text!("Greetings!")]
       assert msg2.content == [ContentPart.text!("Howdy!")]
+    end
+  end
+
+  describe "do_process_response/2 for deepseek-reasoner" do
+    setup do
+      model = ChatDeepSeek.new!(%{"model" => @test_model_2})
+      %{model: model}
+    end
+
+    test "handles receiving message with reasoning content", %{model: model} do
+      response = %{
+        "finish_reason" => "stop",
+        "message" => %{
+          "role" => "assistant",
+          "content" => "test",
+          "reasoning_content" => "reasoning test"
+        },
+        "index" => 0
+      }
+
+      assert %Message{} = struct = ChatDeepSeek.do_process_response(model, response)
+
+      assert struct.content == [
+               ContentPart.thinking!("reasoning test"),
+               ContentPart.text!("test")
+             ]
+    end
+
+    test "handles receiving message delta with reasoning content", %{model: model} do
+      reasoning_response1 = %{
+        "index" => 0,
+        "delta" => %{
+          "content" => nil,
+          "reasoning_content" => "reasoning content"
+        },
+        "finish_reason" => nil
+      }
+
+      reasoning_response2 = %{
+        "index" => 0,
+        "delta" => %{
+          "content" => "content",
+          "reasoning_content" => nil
+        },
+        "finish_reason" => nil
+      }
+
+      assert %MessageDelta{} =
+               delta1 = ChatDeepSeek.do_process_response(model, reasoning_response1)
+
+      assert %MessageDelta{} =
+               delta2 = ChatDeepSeek.do_process_response(model, reasoning_response2)
+
+      assert delta1.content == ContentPart.thinking!("reasoning content")
+      assert delta2.content == ContentPart.text!("content")
     end
   end
 

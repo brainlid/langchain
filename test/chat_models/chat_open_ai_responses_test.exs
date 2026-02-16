@@ -112,6 +112,66 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
       assert {"must be greater than or equal to %{number}", _} = changeset.errors[:temperature]
     end
 
+    test "top_p defaults to 1.0 and is included for gpt-4 models" do
+      {:ok, openai} = ChatOpenAIResponses.new(%{"model" => @test_model})
+      assert openai.top_p == 1.0
+
+      data = ChatOpenAIResponses.for_api(openai, [], [])
+      assert data.top_p == 1.0
+    end
+
+    test "top_p is excluded for gpt-5.2 and newer models" do
+      {:ok, openai} = ChatOpenAIResponses.new(%{"model" => "gpt-5.2", "top_p" => 0.9})
+      assert openai.top_p == 0.9
+
+      data = ChatOpenAIResponses.for_api(openai, [], [])
+      refute Map.has_key?(data, :top_p)
+    end
+
+    test "top_p is included for gpt-5.1 and earlier models" do
+      {:ok, openai} = ChatOpenAIResponses.new(%{"model" => "gpt-5.1", "top_p" => 0.8})
+      data = ChatOpenAIResponses.for_api(openai, [], [])
+      assert data.top_p == 0.8
+
+      {:ok, openai} = ChatOpenAIResponses.new(%{"model" => "gpt-5.0", "top_p" => 0.7})
+      data = ChatOpenAIResponses.for_api(openai, [], [])
+      assert data.top_p == 0.7
+    end
+
+    test "supports_top_p?/1 returns correct values for various models" do
+      assert ChatOpenAIResponses.supports_top_p?("gpt-4")
+      assert ChatOpenAIResponses.supports_top_p?("gpt-4o")
+      assert ChatOpenAIResponses.supports_top_p?("gpt-4o-mini")
+      assert ChatOpenAIResponses.supports_top_p?("gpt-4o-mini-2024-07-18")
+      assert ChatOpenAIResponses.supports_top_p?("gpt-5.0")
+      assert ChatOpenAIResponses.supports_top_p?("gpt-5.1")
+      refute ChatOpenAIResponses.supports_top_p?("gpt-5.2")
+      refute ChatOpenAIResponses.supports_top_p?("gpt-5.3")
+      refute ChatOpenAIResponses.supports_top_p?("gpt-6")
+    end
+
+    test "supports overriding top_p" do
+      {:ok, openai} = ChatOpenAIResponses.new(%{"model" => @test_model, "top_p" => 0.9})
+      assert openai.top_p == 0.9
+
+      data = ChatOpenAIResponses.for_api(openai, [], [])
+      assert data.top_p == 0.9
+    end
+
+    test "returns error for out-of-bounds top_p" do
+      assert {:error, changeset} =
+               ChatOpenAIResponses.new(%{"model" => @test_model, "top_p" => 1.5})
+
+      refute changeset.valid?
+      assert {"must be less than or equal to %{number}", _} = changeset.errors[:top_p]
+
+      assert {:error, changeset} =
+               ChatOpenAIResponses.new(%{"model" => @test_model, "top_p" => -0.1})
+
+      refute changeset.valid?
+      assert {"must be greater than or equal to %{number}", _} = changeset.errors[:top_p]
+    end
+
     test "supports setting reasoning options" do
       {:ok, openai} =
         ChatOpenAIResponses.new(%{
@@ -435,6 +495,17 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
       assert part["detail"] == "low"
     end
 
+    test "converts file_id to input_image" do
+      model = ChatOpenAIResponses.new!(%{"model" => @test_model})
+      file = LangChain.Message.ContentPart.image!("file-123", type: :file_id)
+      msg = LangChain.Message.new_user!([file])
+
+      api = ChatOpenAIResponses.for_api(model, msg)
+      [part] = api["content"]
+      assert part["type"] == "input_image"
+      assert part["file_id"] == "file-123"
+    end
+
     test "converts file base64 to input_file with filename" do
       model = ChatOpenAIResponses.new!(%{"model" => @test_model})
       file = LangChain.Message.ContentPart.file!("PDF_BASE64", type: :base64, filename: "a.pdf")
@@ -473,6 +544,30 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
       [part] = api["content"]
       assert part["type"] == "input_file"
       assert part["file_url"] == "https://example.com/document.pdf"
+    end
+
+    test "omits thinking content parts when converting to API format" do
+      model = ChatOpenAIResponses.new!(%{"model" => @test_model})
+
+      # Create a message with thinking content (e.g., from a previous assistant response)
+      thinking_part =
+        LangChain.Message.ContentPart.new!(%{type: :thinking, content: "Some reasoning"})
+
+      text_part = LangChain.Message.ContentPart.text!("Here's my answer")
+
+      msg = LangChain.Message.new_assistant!([thinking_part, text_part])
+
+      api = ChatOpenAIResponses.for_api(model, msg)
+
+      # The result should be a list with the message and no tool calls
+      assert is_list(api)
+      [message_api] = api
+      assert message_api["type"] == "message"
+
+      # Content should only include the text part, not the thinking part
+      [content_part] = message_api["content"]
+      assert content_part["type"] == "input_text"
+      assert content_part["text"] == "Here's my answer"
     end
   end
 
@@ -741,6 +836,56 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
 
       assert error.message == "API key invalid"
     end
+
+    test "handles failed response status", %{model: model} do
+      response = %{
+        "response" => %{
+          "status" => "failed",
+          "error" => %{
+            "code" => "server_error",
+            "message" => "The server had an error processing your request"
+          }
+        }
+      }
+
+      assert {:error, %LangChain.LangChainError{} = error} =
+               ChatOpenAIResponses.do_process_response(model, response)
+
+      # Uses actual error code from response for better error categorization
+      assert error.type == "server_error"
+      assert error.message =~ "The server had an error processing your request"
+    end
+
+    test "handles failed response status without error details", %{model: model} do
+      response = %{
+        "response" => %{
+          "status" => "failed"
+        }
+      }
+
+      assert {:error, %LangChain.LangChainError{} = error} =
+               ChatOpenAIResponses.do_process_response(model, response)
+
+      # Falls back to "api_error" when no error code provided
+      assert error.type == "api_error"
+      assert error.message =~ "failed"
+    end
+
+    test "handles failed response status with string error", %{model: model} do
+      response = %{
+        "response" => %{
+          "status" => "failed",
+          "error" => "Something went wrong"
+        }
+      }
+
+      assert {:error, %LangChain.LangChainError{} = error} =
+               ChatOpenAIResponses.do_process_response(model, response)
+
+      # Handles string error format defensively
+      assert error.type == "api_error"
+      assert error.message =~ "Something went wrong"
+    end
   end
 
   describe "do_process_response streaming events" do
@@ -811,6 +956,82 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
       assert call3.arguments == %{"expression" => "1+1"}
     end
 
+    test "parses reasoning output_item.added event", %{model: model} do
+      event = %{
+        "type" => "response.output_item.added",
+        "sequence_number" => 2,
+        "output_index" => 0,
+        "item" => %{
+          "id" => "rs_077ecb7bd77f1554016940159a98d081909d82480668e57471",
+          "type" => "reasoning",
+          "summary" => []
+        }
+      }
+
+      result = ChatOpenAIResponses.do_process_response(model, event)
+      assert %LangChain.MessageDelta{} = result
+      assert result.status == :incomplete
+      assert result.role == :assistant
+      assert result.index == 0
+      assert %LangChain.Message.ContentPart{type: :thinking, content: ""} = result.content
+    end
+
+    test "parses response.reasoning.delta event", %{model: model} do
+      event = %{
+        "type" => "response.reasoning.delta",
+        "output_index" => 0,
+        "delta" => "Let me think about this problem..."
+      }
+
+      result = ChatOpenAIResponses.do_process_response(model, event)
+      assert %LangChain.MessageDelta{} = result
+      assert result.status == :incomplete
+      assert result.role == :assistant
+      assert result.index == 0
+
+      assert %LangChain.Message.ContentPart{
+               type: :thinking,
+               content: "Let me think about this problem..."
+             } = result.content
+    end
+
+    test "parses reasoning output_item.done event", %{model: model} do
+      event = %{
+        "type" => "response.output_item.done",
+        "sequence_number" => 3,
+        "output_index" => 0,
+        "item" => %{
+          "id" => "rs_063b9657f7c2e68601694016d7008881909a128744538cebec",
+          "type" => "reasoning",
+          "summary" => []
+        }
+      }
+
+      result = ChatOpenAIResponses.do_process_response(model, event)
+      assert %LangChain.MessageDelta{} = result
+      assert result.status == :complete
+      assert result.role == :assistant
+      assert result.index == 0
+      assert %LangChain.Message.ContentPart{type: :thinking, content: ""} = result.content
+    end
+
+    test "parses response.output_text.delta with output_index", %{model: model} do
+      delta = %{
+        "type" => "response.output_text.delta",
+        "output_index" => 1,
+        "delta" => "Hello"
+      }
+
+      result = ChatOpenAIResponses.do_process_response(model, delta)
+
+      assert %LangChain.MessageDelta{
+               content: "Hello",
+               status: :incomplete,
+               role: :assistant,
+               index: 1
+             } = result
+    end
+
     test "parses response.completed with token usage", %{model: model} do
       completed = %{
         "type" => "response.completed",
@@ -821,6 +1042,26 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
         ChatOpenAIResponses.do_process_response(model, completed)
     end
 
+    test "handles response.failed streaming event", %{model: model} do
+      failed_event = %{
+        "type" => "response.failed",
+        "response" => %{
+          "status" => "failed",
+          "error" => %{
+            "code" => "timeout",
+            "message" => "Request timed out"
+          }
+        }
+      }
+
+      assert {:error, %LangChain.LangChainError{} = error} =
+               ChatOpenAIResponses.do_process_response(model, failed_event)
+
+      # Uses actual error code from response for better error categorization
+      assert error.type == "timeout"
+      assert error.message =~ "Request timed out"
+    end
+
     test "skips expected streaming events", %{model: model} do
       events_to_skip = [
         %{"type" => "response.created"},
@@ -828,7 +1069,6 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
         %{"type" => "response.content_part.added"},
         %{"type" => "response.content_part.done"},
         %{"type" => "response.function_call_arguments.done"},
-        %{"type" => "response.reasoning.delta"},
         %{"type" => "response.queued"}
       ]
 
@@ -852,6 +1092,351 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
       assert %LangChain.MessageDelta{content: "Hello", status: :incomplete} = d1
       assert %LangChain.MessageDelta{content: " world", status: :incomplete} = d2
       assert %LangChain.MessageDelta{status: :complete} = done
+    end
+  end
+
+  describe "do_process_response non-streaming citations" do
+    setup do
+      %{model: ChatOpenAIResponses.new!(%{"model" => @test_model})}
+    end
+
+    test "parses url_citation annotations from output_text", %{model: model} do
+      response = %{
+        "status" => "completed",
+        "output" => [
+          %{
+            "type" => "message",
+            "content" => [
+              %{
+                "type" => "output_text",
+                "text" => "Spain won the 2024 European Championship.",
+                "annotations" => [
+                  %{
+                    "type" => "url_citation",
+                    "title" => "UEFA Euro 2024",
+                    "url" => "https://example.com/euro2024",
+                    "start_index" => 0,
+                    "end_index" => 41
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+
+      result = ChatOpenAIResponses.do_process_response(model, response)
+      assert %LangChain.Message{} = result
+      assert result.role == :assistant
+      assert result.status == :complete
+
+      [content_part] = result.content
+      assert content_part.type == :text
+      assert content_part.content == "Spain won the 2024 European Championship."
+
+      assert [%LangChain.Message.Citation{} = citation] = content_part.citations
+      assert citation.source.type == :web
+      assert citation.source.title == "UEFA Euro 2024"
+      assert citation.source.url == "https://example.com/euro2024"
+      assert citation.start_index == 0
+      assert citation.end_index == 41
+      assert citation.metadata["provider_type"] == "url_citation"
+    end
+
+    test "parses file_citation annotations from output_text", %{model: model} do
+      response = %{
+        "status" => "completed",
+        "output" => [
+          %{
+            "type" => "message",
+            "content" => [
+              %{
+                "type" => "output_text",
+                "text" => "The quarterly report shows growth.",
+                "annotations" => [
+                  %{
+                    "type" => "file_citation",
+                    "file_id" => "file-abc123",
+                    "filename" => "Q4_Report.pdf",
+                    "start_index" => 0,
+                    "end_index" => 33
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+
+      result = ChatOpenAIResponses.do_process_response(model, response)
+      [content_part] = result.content
+
+      assert [%LangChain.Message.Citation{} = citation] = content_part.citations
+      assert citation.source.type == :document
+      assert citation.source.document_id == "file-abc123"
+      assert citation.source.title == "Q4_Report.pdf"
+      assert citation.source.metadata["filename"] == "Q4_Report.pdf"
+      assert citation.start_index == 0
+      assert citation.end_index == 33
+      assert citation.metadata["provider_type"] == "file_citation"
+    end
+
+    test "handles output_text with no annotations", %{model: model} do
+      response = %{
+        "status" => "completed",
+        "output" => [
+          %{
+            "type" => "message",
+            "content" => [
+              %{"type" => "output_text", "text" => "Hello, world!"}
+            ]
+          }
+        ]
+      }
+
+      result = ChatOpenAIResponses.do_process_response(model, response)
+      [content_part] = result.content
+      assert content_part.content == "Hello, world!"
+      assert content_part.citations == []
+    end
+
+    test "handles output_text with empty annotations list", %{model: model} do
+      response = %{
+        "status" => "completed",
+        "output" => [
+          %{
+            "type" => "message",
+            "content" => [
+              %{
+                "type" => "output_text",
+                "text" => "Hello, world!",
+                "annotations" => []
+              }
+            ]
+          }
+        ]
+      }
+
+      result = ChatOpenAIResponses.do_process_response(model, response)
+      [content_part] = result.content
+      assert content_part.content == "Hello, world!"
+      assert content_part.citations == []
+    end
+
+    test "parses multiple annotations on a single output_text", %{model: model} do
+      response = %{
+        "status" => "completed",
+        "output" => [
+          %{
+            "type" => "message",
+            "content" => [
+              %{
+                "type" => "output_text",
+                "text" => "Spain won Euro 2024. France came second.",
+                "annotations" => [
+                  %{
+                    "type" => "url_citation",
+                    "title" => "Euro 2024 Final",
+                    "url" => "https://example.com/final",
+                    "start_index" => 0,
+                    "end_index" => 20
+                  },
+                  %{
+                    "type" => "url_citation",
+                    "title" => "Euro 2024 Standings",
+                    "url" => "https://example.com/standings",
+                    "start_index" => 21,
+                    "end_index" => 40
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+
+      result = ChatOpenAIResponses.do_process_response(model, response)
+      [content_part] = result.content
+      assert length(content_part.citations) == 2
+
+      [c1, c2] = content_part.citations
+      assert c1.source.url == "https://example.com/final"
+      assert c2.source.url == "https://example.com/standings"
+
+      # Also verify Message.all_citations/1
+      all = LangChain.Message.all_citations(result)
+      assert length(all) == 2
+    end
+  end
+
+  describe "do_process_response streaming citations" do
+    setup do
+      %{model: ChatOpenAIResponses.new!(%{"model" => @test_model})}
+    end
+
+    test "handles annotation.added streaming event", %{model: model} do
+      event = %{
+        "type" => "response.output_text.annotation.added",
+        "annotation" => %{
+          "type" => "url_citation",
+          "title" => "UEFA Euro 2024",
+          "url" => "https://example.com/euro2024",
+          "start_index" => 0,
+          "end_index" => 41
+        },
+        "output_index" => 0,
+        "content_index" => 0
+      }
+
+      result = ChatOpenAIResponses.do_process_response(model, event)
+      assert %LangChain.MessageDelta{} = result
+      assert result.role == :assistant
+      assert result.status == :incomplete
+      assert result.index == 0
+
+      assert %LangChain.Message.ContentPart{} = part = result.content
+      assert part.type == :text
+      assert part.content == nil
+      assert [%LangChain.Message.Citation{} = citation] = part.citations
+      assert citation.source.type == :web
+      assert citation.source.title == "UEFA Euro 2024"
+      assert citation.source.url == "https://example.com/euro2024"
+      assert citation.start_index == 0
+      assert citation.end_index == 41
+      assert citation.metadata["provider_type"] == "url_citation"
+    end
+
+    test "accumulates annotations across streaming deltas", %{model: model} do
+      events = [
+        %{"type" => "response.output_text.delta", "output_index" => 0, "delta" => "Spain won "},
+        %{
+          "type" => "response.output_text.delta",
+          "output_index" => 0,
+          "delta" => "the 2024 European Championship."
+        },
+        %{
+          "type" => "response.output_text.annotation.added",
+          "annotation" => %{
+            "type" => "url_citation",
+            "title" => "Euro 2024",
+            "url" => "https://example.com/euro2024",
+            "start_index" => 0,
+            "end_index" => 41
+          },
+          "output_index" => 0,
+          "content_index" => 0
+        },
+        %{
+          "type" => "response.completed",
+          "response" => %{"usage" => %{"input_tokens" => 10, "output_tokens" => 8}}
+        }
+      ]
+
+      deltas =
+        events
+        |> Enum.map(&ChatOpenAIResponses.do_process_response(model, &1))
+        |> Enum.reject(&(&1 == :skip))
+
+      assert length(deltas) == 4
+
+      {:ok, %LangChain.Message{} = merged} =
+        LangChain.MessageDelta.merge_deltas(deltas) |> LangChain.MessageDelta.to_message()
+
+      assert merged.status == :complete
+      assert merged.role == :assistant
+
+      assert [%LangChain.Message.ContentPart{} = part] = merged.content
+      assert part.content == "Spain won the 2024 European Championship."
+      assert [%LangChain.Message.Citation{} = citation] = part.citations
+      assert citation.source.type == :web
+      assert citation.source.url == "https://example.com/euro2024"
+    end
+
+    test "accumulates multiple annotations in sequence", %{model: model} do
+      events = [
+        %{
+          "type" => "response.output_text.delta",
+          "output_index" => 0,
+          "delta" => "Spain won Euro 2024. France came second."
+        },
+        %{
+          "type" => "response.output_text.annotation.added",
+          "annotation" => %{
+            "type" => "url_citation",
+            "title" => "Euro 2024 Final",
+            "url" => "https://example.com/final",
+            "start_index" => 0,
+            "end_index" => 20
+          },
+          "output_index" => 0,
+          "content_index" => 0
+        },
+        %{
+          "type" => "response.output_text.annotation.added",
+          "annotation" => %{
+            "type" => "url_citation",
+            "title" => "Euro 2024 Standings",
+            "url" => "https://example.com/standings",
+            "start_index" => 21,
+            "end_index" => 40
+          },
+          "output_index" => 0,
+          "content_index" => 0
+        },
+        %{
+          "type" => "response.output_text.annotation.added",
+          "annotation" => %{
+            "type" => "url_citation",
+            "title" => "Euro 2024 Teams",
+            "url" => "https://example.com/teams",
+            "start_index" => 0,
+            "end_index" => 40
+          },
+          "output_index" => 0,
+          "content_index" => 0
+        },
+        %{"type" => "response.output_text.done"},
+        %{
+          "type" => "response.completed",
+          "response" => %{"usage" => %{"input_tokens" => 10, "output_tokens" => 8}}
+        }
+      ]
+
+      deltas =
+        events
+        |> Enum.map(&ChatOpenAIResponses.do_process_response(model, &1))
+        |> Enum.reject(&(&1 == :skip))
+
+      {:ok, %LangChain.Message{} = merged} =
+        LangChain.MessageDelta.merge_deltas(deltas) |> LangChain.MessageDelta.to_message()
+
+      assert [%LangChain.Message.ContentPart{} = part] = merged.content
+      assert part.content == "Spain won Euro 2024. France came second."
+      assert length(part.citations) == 3
+
+      urls = Enum.map(part.citations, & &1.source.url)
+      assert "https://example.com/final" in urls
+      assert "https://example.com/standings" in urls
+      assert "https://example.com/teams" in urls
+    end
+
+    test "annotation.added is no longer skipped", %{model: model} do
+      event = %{
+        "type" => "response.output_text.annotation.added",
+        "annotation" => %{
+          "type" => "url_citation",
+          "title" => "Test",
+          "url" => "https://example.com",
+          "start_index" => 0,
+          "end_index" => 10
+        },
+        "output_index" => 0,
+        "content_index" => 0
+      }
+
+      result = ChatOpenAIResponses.do_process_response(model, event)
+      refute result == :skip
+      assert %LangChain.MessageDelta{} = result
     end
   end
 

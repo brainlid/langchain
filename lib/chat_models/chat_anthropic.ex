@@ -379,6 +379,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   alias LangChain.ChatModels.ChatModel
   alias LangChain.LangChainError
   alias LangChain.Message
+  alias LangChain.Message.Citation
   alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult
@@ -812,10 +813,25 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         # pass through the already handled exception
         error
 
+      {:error, err} ->
+        Logger.error("Unhandled error non-streamed post call. #{inspect(err)}")
+
+        {:error,
+         LangChainError.exception(
+           type: "unhandled_error",
+           message: "Unhanded error in non-streamed response",
+           original: err
+         )}
+
       other ->
-        message = "Unexpected and unhandled API response! #{inspect(other)}"
-        Logger.error(message)
-        {:error, LangChainError.exception(type: "unexpected_response", message: message)}
+        Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
+
+        {:error,
+         LangChainError.exception(
+           type: "unexpected_response",
+           message: "Unexpected response",
+           original: other
+         )}
     end
   end
 
@@ -889,10 +905,27 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         # pass through the already handled exception
         error
 
+      {:error, err} ->
+        Logger.error("Unhandled error streamed post call. #{inspect(err)}")
+
+        {:error,
+         LangChainError.exception(
+           type: "unhandled_error",
+           message: "Unhanded error in streaming response",
+           original: err
+         )}
+
       other ->
-        message = "Unhandled and unexpected response from streamed post call. #{inspect(other)}"
-        Logger.error(message)
-        {:error, LangChainError.exception(type: "unexpected_response", message: message)}
+        Logger.error(
+          "Unhandled and unexpected response from streamed post call. #{inspect(other)}"
+        )
+
+        {:error,
+         LangChainError.exception(
+           type: "unexpected_response",
+           message: "Unexpected response",
+           original: other
+         )}
     end
   end
 
@@ -1050,6 +1083,23 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     %{
       role: :assistant,
       content: ContentPart.text!(content),
+      status: :incomplete,
+      index: index
+    }
+    |> MessageDelta.new()
+    |> to_response()
+  end
+
+  def do_process_response(_model, %{
+        "type" => "content_block_delta",
+        "index" => index,
+        "delta" => %{"type" => "citations_delta", "citation" => citation_data}
+      }) do
+    citation = parse_anthropic_citation(citation_data)
+
+    %{
+      role: :assistant,
+      content: %ContentPart{type: :text, content: nil, citations: [citation]},
       status: :incomplete,
       index: index
     }
@@ -1216,8 +1266,14 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   defp do_process_content_response(%Message{} = message, %{"type" => "text", "text" => ""}),
     do: message
 
-  defp do_process_content_response(%Message{} = message, %{"type" => "text", "text" => text}) do
-    %Message{message | content: message.content ++ [ContentPart.text!(text)]}
+  defp do_process_content_response(
+         %Message{} = message,
+         %{"type" => "text", "text" => text} = block
+       ) do
+    citations = parse_anthropic_citations(Map.get(block, "citations", []))
+    part = ContentPart.text!(text)
+    part = %{part | citations: citations}
+    %Message{message | content: message.content ++ [part]}
   end
 
   defp do_process_content_response(%Message{} = message, %{
@@ -1596,6 +1652,13 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   # If the setting is a map, return the map.
   #
   # If the setting is not provided, return nil.
+  defp get_citation_setting(options) do
+    case Keyword.get(options, :citations) do
+      true -> %{"enabled" => true}
+      _ -> nil
+    end
+  end
+
   defp get_cache_control_setting(options) do
     case Keyword.fetch(options || [], :cache_control) do
       :error ->
@@ -1637,6 +1700,16 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   Returns `nil` for unsupported content without required options.
   """
   @spec content_part_for_api(ContentPart.t()) :: map() | nil | no_return()
+  def content_part_for_api(%ContentPart{type: :text, citations: citations} = part)
+      when is_list(citations) and citations != [] do
+    %{
+      "type" => "text",
+      "text" => part.content,
+      "citations" => Enum.map(citations, &citation_for_api/1)
+    }
+    |> Utils.conditionally_add_to_map("cache_control", get_cache_control_setting(part.options))
+  end
+
   def content_part_for_api(%ContentPart{type: :text} = part) do
     %{"type" => "text", "text" => part.content}
     |> Utils.conditionally_add_to_map("cache_control", get_cache_control_setting(part.options))
@@ -1711,28 +1784,50 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   end
 
   def content_part_for_api(%ContentPart{type: :file} = part) do
-    media =
-      case Keyword.fetch!(part.options || [], :media) do
-        :pdf ->
-          "application/pdf"
+    opts = part.options || []
+    media = Keyword.fetch!(opts, :media)
 
-        value when is_binary(value) ->
-          value
+    base =
+      case media do
+        :text ->
+          %{
+            "type" => "document",
+            "source" => %{
+              "type" => "text",
+              "media_type" => "text/plain",
+              "data" => part.content
+            }
+          }
 
-        other ->
-          message = "Received unsupported media type for ContentPart: #{inspect(other)}"
-          Logger.error(message)
-          raise LangChainError, message
+        _ ->
+          media_type =
+            case media do
+              :pdf ->
+                "application/pdf"
+
+              value when is_binary(value) ->
+                value
+
+              other ->
+                message = "Received unsupported media type for ContentPart: #{inspect(other)}"
+                Logger.error(message)
+                raise LangChainError, message
+            end
+
+          %{
+            "type" => "document",
+            "source" => %{
+              "type" => "base64",
+              "data" => part.content,
+              "media_type" => media_type
+            }
+          }
       end
 
-    %{
-      "type" => "document",
-      "source" => %{
-        "type" => "base64",
-        "data" => part.content,
-        "media_type" => media
-      }
-    }
+    base
+    |> Utils.conditionally_add_to_map("title", Keyword.get(opts, :title))
+    |> Utils.conditionally_add_to_map("citations", get_citation_setting(opts))
+    |> Utils.conditionally_add_to_map("cache_control", get_cache_control_setting(opts))
   end
 
   def content_part_for_api(%ContentPart{type: :file_url} = part) do
@@ -1953,6 +2048,88 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       raw: usage_data
     })
   end
+
+  # -- Citation parsing helpers --
+
+  defp parse_anthropic_citations(citations) when is_list(citations) do
+    Enum.map(citations, &parse_anthropic_citation/1)
+  end
+
+  defp parse_anthropic_citations(_), do: []
+
+  defp parse_anthropic_citation(%{"type" => type} = citation) do
+    Citation.new!(%{
+      cited_text: Map.get(citation, "cited_text"),
+      source: %{
+        type: :document,
+        title: Map.get(citation, "document_title"),
+        document_id: to_string(Map.get(citation, "document_index"))
+      },
+      metadata: build_anthropic_citation_metadata(type, citation)
+    })
+  end
+
+  defp build_anthropic_citation_metadata("char_location", citation) do
+    %{
+      "provider_type" => "char_location",
+      "start_char_index" => Map.get(citation, "start_char_index"),
+      "end_char_index" => Map.get(citation, "end_char_index")
+    }
+  end
+
+  defp build_anthropic_citation_metadata("page_location", citation) do
+    %{
+      "provider_type" => "page_location",
+      "start_page_number" => Map.get(citation, "start_page_number"),
+      "end_page_number" => Map.get(citation, "end_page_number")
+    }
+  end
+
+  defp build_anthropic_citation_metadata("content_block_location", citation) do
+    %{
+      "provider_type" => "content_block_location",
+      "start_block_index" => Map.get(citation, "start_block_index"),
+      "end_block_index" => Map.get(citation, "end_block_index")
+    }
+  end
+
+  # -- Citation serialization for API round-trip --
+
+  defp citation_for_api(%Citation{} = citation) do
+    meta = citation.metadata || %{}
+    provider_type = Map.get(meta, "provider_type", "char_location")
+
+    base = %{
+      "type" => provider_type,
+      "cited_text" => citation.cited_text,
+      "document_index" => parse_document_index(citation.source.document_id),
+      "document_title" => citation.source.title
+    }
+
+    case provider_type do
+      "char_location" ->
+        Map.merge(base, %{
+          "start_char_index" => Map.get(meta, "start_char_index"),
+          "end_char_index" => Map.get(meta, "end_char_index")
+        })
+
+      "page_location" ->
+        Map.merge(base, %{
+          "start_page_number" => Map.get(meta, "start_page_number"),
+          "end_page_number" => Map.get(meta, "end_page_number")
+        })
+
+      "content_block_location" ->
+        Map.merge(base, %{
+          "start_block_index" => Map.get(meta, "start_block_index"),
+          "end_block_index" => Map.get(meta, "end_block_index")
+        })
+    end
+  end
+
+  defp parse_document_index(nil), do: nil
+  defp parse_document_index(id) when is_binary(id), do: String.to_integer(id)
+  defp parse_document_index(id) when is_integer(id), do: id
 
   @doc """
   Generate a config map that can later restore the model's configuration.

@@ -6,7 +6,8 @@ defmodule LangChain.ChatModels.ReasoningOptions do
 
   ## Fields
 
-  - `effort` - Constrains effort on reasoning. Supported values: :minimal, :low, :medium, :high
+  - `effort` - Constrains effort on reasoning. Supported values: :none, :minimal, :low, :medium,
+    :high, :xhigh
   - `generate_summary` - (Deprecated) A summary of the reasoning performed. Use `summary` instead.
   - `summary` - A summary of the reasoning performed. Supported values: :auto, :concise, :detailed
   """
@@ -17,7 +18,11 @@ defmodule LangChain.ChatModels.ReasoningOptions do
   @primary_key false
 
   embedded_schema do
-    field(:effort, Ecto.Enum, values: [:minimal, :low, :medium, :high], default: nil)
+    field(:effort, Ecto.Enum,
+      values: [:none, :minimal, :low, :medium, :high, :xhigh],
+      default: nil
+    )
+
     field(:generate_summary, Ecto.Enum, values: [:auto, :concise, :detailed], default: nil)
     field(:summary, Ecto.Enum, values: [:auto, :concise, :detailed], default: nil)
   end
@@ -85,8 +90,10 @@ defmodule LangChain.ChatModels.ReasoningOptions do
 
   @doc """
   Returns the list of valid effort values.
+
+  Different models allow different reasoning effort values. Consult the OpenAI docs.
   """
-  def valid_efforts, do: [:minimal, :low, :medium, :high]
+  def valid_efforts, do: [:none, :minimal, :low, :medium, :high, :xhigh]
 
   @doc """
   Returns the list of valid summary values.

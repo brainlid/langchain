@@ -4,9 +4,13 @@ defmodule LangChain.Tools.DeepResearch.ResearchResult do
 
   This schema captures the research findings, citations, usage statistics,
   and other metadata from a successful research operation.
+
+  Sources are stored as `LangChain.Message.Citation` structs, providing a
+  unified citation representation shared across all providers.
   """
   use Ecto.Schema
   import Ecto.Changeset
+  alias LangChain.Message.Citation
 
   @type t() :: %__MODULE__{
           id: String.t(),
@@ -14,7 +18,7 @@ defmodule LangChain.Tools.DeepResearch.ResearchResult do
           model: String.t() | nil,
           created_at: integer() | nil,
           completion_time: integer() | nil,
-          sources: [any()],
+          sources: [Citation.t()],
           usage: any() | nil,
           tool_calls: [any()]
         }
@@ -27,13 +31,7 @@ defmodule LangChain.Tools.DeepResearch.ResearchResult do
     field :created_at, :integer
     field :completion_time, :integer
 
-    embeds_many :sources, Source do
-      field :title, :string
-      field :url, :string
-      field :start_index, :integer
-      field :end_index, :integer
-      field :snippet, :string
-    end
+    embeds_many :sources, Citation
 
     embeds_one :usage, Usage do
       field :input_tokens, :integer
@@ -57,7 +55,7 @@ defmodule LangChain.Tools.DeepResearch.ResearchResult do
   def changeset(result \\ %__MODULE__{}, attrs) do
     result
     |> cast(attrs, [:id, :output_text, :model, :created_at, :completion_time])
-    |> cast_embed(:sources, with: &source_changeset/2)
+    |> cast_embed(:sources, with: &Citation.changeset/2)
     |> cast_embed(:usage, with: &usage_changeset/2)
     |> cast_embed(:tool_calls, with: &tool_call_changeset/2)
     |> validate_required([:id, :output_text])
@@ -125,17 +123,12 @@ defmodule LangChain.Tools.DeepResearch.ResearchResult do
   """
   @spec source_urls(__MODULE__.t()) :: [String.t()]
   def source_urls(%__MODULE__{sources: sources}) do
-    Enum.map(sources, & &1.url)
+    sources
+    |> Enum.map(& &1.source.url)
+    |> Enum.reject(&is_nil/1)
   end
 
   # Private functions
-
-  @spec source_changeset(map(), map()) :: Ecto.Changeset.t()
-  defp source_changeset(source, attrs) do
-    source
-    |> cast(attrs, [:title, :url, :start_index, :end_index, :snippet])
-    |> validate_required([:url])
-  end
 
   @spec usage_changeset(map(), map()) :: Ecto.Changeset.t()
   defp usage_changeset(usage, attrs) do
@@ -191,7 +184,6 @@ defmodule LangChain.Tools.DeepResearch.ResearchResult do
 
   @spec extract_sources(map()) :: [map()]
   defp extract_sources(response) do
-    # Extract sources from annotations in the output
     response
     |> get_in(["output"])
     |> case do
@@ -221,11 +213,15 @@ defmodule LangChain.Tools.DeepResearch.ResearchResult do
   @spec normalize_source(map()) :: map()
   defp normalize_source(annotation) do
     %{
-      title: Map.get(annotation, "title"),
-      url: Map.get(annotation, "url"),
+      cited_text: Map.get(annotation, "snippet"),
       start_index: Map.get(annotation, "start_index"),
       end_index: Map.get(annotation, "end_index"),
-      snippet: Map.get(annotation, "snippet")
+      source: %{
+        type: :web,
+        title: Map.get(annotation, "title"),
+        url: Map.get(annotation, "url")
+      },
+      metadata: %{"provider" => "openai_deep_research"}
     }
   end
 
@@ -263,13 +259,13 @@ defmodule LangChain.Tools.DeepResearch.ResearchResult do
     nil
   end
 
-  @spec format_sources([map()]) :: String.t()
+  @spec format_sources([Citation.t()]) :: String.t()
   defp format_sources(sources) when is_list(sources) do
     sources
     |> Enum.with_index(1)
-    |> Enum.map(fn {source, index} ->
-      title = source.title || "Untitled"
-      url = source.url || "No URL"
+    |> Enum.map(fn {citation, index} ->
+      title = (citation.source && citation.source.title) || "Untitled"
+      url = (citation.source && citation.source.url) || "No URL"
       "#{index}. #{title} - #{url}"
     end)
     |> Enum.join("\n")

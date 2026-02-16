@@ -1,4 +1,10 @@
 defmodule LangChain.TestingHelpers do
+  @moduledoc """
+  Shared testing helper functions used across test suites.
+  """
+
+  alias LangChain.ChatModels.ChatAnthropic
+
   @doc """
   Collects all messages sent to the current test process and returns them as a
   list.
@@ -17,5 +23,24 @@ defmodule LangChain.TestingHelpers do
     after
       0 -> Enum.reverse(acc)
     end
+  end
+
+  @doc """
+  Basic conversion of a Message to a DisplayMessage like data map.
+  """
+  def message_to_display_data(%LangChain.Message{} = message) do
+    %{
+      content_type: "text",
+      role: to_string(message.role),
+      content: LangChain.Message.ContentPart.parts_to_string(message.content)
+    }
+  end
+
+  # Helper to create a mock model
+  def mock_model do
+    ChatAnthropic.new!(%{
+      model: "claude-3-5-sonnet-20241022",
+      api_key: "test_key"
+    })
   end
 end

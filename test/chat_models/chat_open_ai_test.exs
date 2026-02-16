@@ -1,7 +1,6 @@
 defmodule LangChain.ChatModels.ChatOpenAITest do
   use LangChain.BaseCase
   import LangChain.Fixtures
-  import LangChain.TestingHelpers
 
   doctest LangChain.ChatModels.ChatOpenAI
   alias LangChain.ChatModels.ChatOpenAI
@@ -1650,7 +1649,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       {:error, %LangChainError{} = error} =
         ChatOpenAI.do_process_response(model, "unexpected")
 
-      assert error.type == nil
+      assert error.type == "unexpected_response"
       assert error.message == "Unexpected response"
     end
 

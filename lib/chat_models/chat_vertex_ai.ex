@@ -102,15 +102,20 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     # lengthy response, a longer time limit may be required. However, when it
     # goes on too long by itself, it tends to hallucinate more.
     field :receive_timeout, :integer, default: @receive_timeout
-
-    field :stream, :boolean, default: false
     field :json_response, :boolean, default: false
+    field :json_schema, :map, default: nil
+    field :stream, :boolean, default: false
 
     # A list of maps for callback handlers (treated as internal)
     field :callbacks, {:array, :map}, default: []
 
     # Additional level of raw api request and response data
     field :verbose_api, :boolean, default: false
+
+    # Req options to merge into the request.
+    # Refer to `https://hexdocs.pm/req/Req.html#new/1-options` for
+    # `Req.new` supported set of options.
+    field :req_config, :map, default: %{}
   end
 
   @type t :: %ChatVertexAI{}
@@ -124,8 +129,10 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     :top_k,
     :thinking_config,
     :receive_timeout,
+    :json_response,
+    :json_schema,
     :stream,
-    :json_response
+    :req_config
   ]
   @required_fields [
     :endpoint,
@@ -177,13 +184,13 @@ defmodule LangChain.ChatModels.ChatVertexAI do
       |> List.flatten()
       |> List.wrap()
 
-    response_mime_type =
+    {response_mime_type, response_schema} =
       case vertex_ai.json_response do
         true ->
-          "application/json"
+          {"application/json", vertex_ai.json_schema}
 
         false ->
-          nil
+          {nil, nil}
       end
 
     generation_config_params =
@@ -194,6 +201,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
       }
       |> Utils.conditionally_add_to_map("thinkingConfig", vertex_ai.thinking_config)
       |> Utils.conditionally_add_to_map("response_mime_type", response_mime_type)
+      |> Utils.conditionally_add_to_map("response_schema", response_schema)
 
     req =
       %{
@@ -208,7 +216,11 @@ defmodule LangChain.ChatModels.ChatVertexAI do
         %{
           # Google AI functions use an OpenAI compatible format.
           # See: https://ai.google.dev/docs/function_calling#how_it_works
-          "functionDeclarations" => Enum.map(functions, &ChatOpenAI.for_api(vertex_ai, &1))
+          # Note: We strip the "strict" field as it's OpenAI-specific and not supported by Vertex AI
+          "functionDeclarations" =>
+            functions
+            |> Enum.map(&ChatOpenAI.for_api(vertex_ai, &1))
+            |> Enum.map(&Map.delete(&1, "strict"))
         }
       ])
     else
@@ -292,6 +304,17 @@ defmodule LangChain.ChatModels.ChatVertexAI do
         "mimeType" => Keyword.fetch!(part.options, :media),
         "fileUri" => part.content
       }
+    }
+  end
+
+  defp for_api(%ToolCall{metadata: %{thought_signature: signature}} = call)
+       when is_binary(signature) do
+    %{
+      "functionCall" => %{
+        "args" => call.arguments,
+        "name" => call.name
+      },
+      "thoughtSignature" => signature
     }
   end
 
@@ -417,6 +440,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
         auth: {:bearer, get_api_key(vertex_ai)},
         retry_delay: fn attempt -> 300 * attempt end
       )
+      |> Req.merge(vertex_ai.req_config |> Keyword.new())
 
     req
     |> Req.post()
@@ -462,6 +486,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
       receive_timeout: vertex_ai.receive_timeout
     )
     |> Req.Request.put_header("accept-encoding", "utf-8")
+    |> Req.merge(vertex_ai.req_config |> Keyword.new())
     |> Req.post(
       into:
         Utils.handle_stream_fn(
@@ -492,7 +517,11 @@ defmodule LangChain.ChatModels.ChatVertexAI do
         )
 
         {:error,
-         LangChainError.exception(type: "unexpected_response", message: "Unexpected response")}
+         LangChainError.exception(
+           type: "unexpected_response",
+           message: "Unexpected response",
+           original: other
+         )}
     end
   end
 
@@ -542,8 +571,15 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     text_part =
       parts
       |> filter_parts_for_types(["text"])
+      |> filter_text_parts()
       |> Enum.map(fn part ->
-        ContentPart.new!(%{type: :text, content: part["text"]})
+        type =
+          case part["thought"] do
+            true -> :thinking
+            _ -> :text
+          end
+
+        ContentPart.new!(%{type: type, content: part["text"]})
       end)
 
     tool_calls_from_parts =
@@ -632,7 +668,12 @@ defmodule LangChain.ChatModels.ChatVertexAI do
       name: name,
       arguments: raw_args,
       complete: true,
-      index: data["index"]
+      index: data["index"],
+      metadata:
+        if(data["thoughtSignature"],
+          do: %{thought_signature: data["thoughtSignature"]},
+          else: nil
+        )
     }
     |> ToolCall.new()
     |> case do
@@ -720,6 +761,16 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     end)
   end
 
+  @doc false
+  def filter_text_parts(parts) when is_list(parts) do
+    Enum.filter(parts, fn p ->
+      case p do
+        %{"text" => text} -> text && text != ""
+        _ -> false
+      end
+    end)
+  end
+
   @doc """
   Return the content parts for the message.
   """
@@ -792,6 +843,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
         :thinking_config,
         :receive_timeout,
         :json_response,
+        :json_schema,
         :stream
       ],
       @current_config_version

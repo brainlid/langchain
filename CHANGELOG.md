@@ -1,5 +1,232 @@
 # Changelog
 
+## Unreleased
+
+### Breaking Changes
+
+- **DeepResearch `ResearchResult.Source` removed**: The inline `Source` embedded schema in `ResearchResult` has been replaced with the unified `Citation`/`CitationSource` structs. See migration steps below.
+
+### Enhancements
+
+- **Citation Support - Core Structs**: Added unified citation abstraction shared across all providers
+  - New `LangChain.Message.Citation` struct with `cited_text`, `source`, `start_index`, `end_index`, `confidence`, and `metadata` fields
+  - New `LangChain.Message.CitationSource` struct with `type` (`:web`, `:document`, `:place`), `title`, `url`, `document_id`, and `metadata` fields
+  - `ContentPart` gains a `citations` field (virtual, defaults to `[]`) with merging support during streaming delta accumulation
+  - Helper functions: `ContentPart.citations/1`, `ContentPart.has_citations?/1`, `Message.all_citations/1`
+
+- **Citation Support - Anthropic**: Added citation parsing for Anthropic responses
+  - Non-streaming responses: Text blocks with `citations` arrays are parsed into `Citation` structs on `ContentPart`
+  - Streaming responses: `citations_delta` events are handled and accumulated during delta merging
+  - API round-trip: Citations on `ContentPart` are serialized back to Anthropic format via `content_part_for_api/1`
+  - All three Anthropic citation types supported: `char_location`, `page_location`, `content_block_location`
+
+- **Citation Support - OpenAI Responses API**: Added annotation parsing for OpenAI Responses API
+  - Non-streaming responses: `annotations` arrays on `output_text` items are parsed into `Citation` structs
+  - Streaming responses: `response.output_text.annotation.added` events are now handled (previously skipped)
+  - Both `url_citation` and `file_citation` annotation types supported
+  - **CAUTION:** Not yet verified against a live OpenAI API call
+
+- **Citation Support - Google AI**: Added grounding metadata parsing for Google AI (Gemini)
+  - `groundingMetadata` on candidates is decomposed into `Citation` structs attached to the appropriate `ContentPart` by `partIndex`
+  - Each `groundingSupport × groundingChunk` pair becomes an individual `Citation` with confidence score
+  - Raw grounding metadata preserved in `message.metadata["grounding_metadata"]`
+  - `searchEntryPoint` HTML stored in `message.metadata["search_entry_point"]`
+  - Streaming responses also supported via `attach_grounding_citations_to_part/3`
+
+- **Citation Support - Perplexity**: Added citation parsing for Perplexity responses
+  - Top-level `citations` URLs and `search_results` arrays are parsed into `Citation` structs
+  - `[N]` inline reference markers in text are matched to citation sources with positional offsets
+  - Streaming: Citation-only deltas are emitted alongside content deltas and merged during accumulation
+  - Non-streaming: Citations are attached to the first text `ContentPart`
+
+- **Citation Support - DeepResearch Migration**: Migrated `ResearchResult` to use unified `Citation`/`CitationSource` structs
+  - `ResearchResult.sources` now contains `Citation` structs instead of `ResearchResult.Source` structs
+  - Source fields mapped to Citation format: `snippet` → `cited_text`, `title`/`url` nested under `citation.source`
+  - All sources tagged with `source.type: :web` and `metadata: %{"provider" => "openai_deep_research"}`
+  - Added public `Citation.changeset/2` for use with Ecto `cast_embed/3`
+  - Not verified against a live Deep Research API call (long-running 5-30 min operation requiring model access)
+
+### Migration
+
+**ContentPart `citations` field (all providers)**: `ContentPart` structs returned from any provider may now have a non-empty `citations` field (list of `Citation` structs). Code that pattern-matches on the exact `ContentPart` struct shape should be unaffected since `citations` defaults to `[]`.
+
+**Anthropic round-trip**: Code that sends assistant messages back to the Anthropic API will automatically include citations in the round-trip. No action required.
+
+**Google AI `groundingMetadata`**: Raw grounding metadata has moved from `message.metadata` (top-level keys like `"groundingChunks"`) to `message.metadata["grounding_metadata"]`. Code reading `message.metadata["groundingChunks"]` should update to `message.metadata["grounding_metadata"]["groundingChunks"]`. The structured citations on `ContentPart` are now the canonical representation.
+
+**OpenAI Responses API**: `ContentPart` structs may now include citation data from annotations that were previously discarded. This is purely additive.
+
+**Perplexity**: Response content is now returned as a list of `ContentPart` structs (consistent with other providers) rather than a plain string. Code that expects `message.content` to be a string should update to handle `[%ContentPart{}]`.
+
+**DeepResearch `ResearchResult.Source`**: Code referencing `ResearchResult.Source` must update to use `Citation` and `CitationSource`:
+  - `%ResearchResult.Source{title: t, url: u}` → `%Citation{source: %CitationSource{title: t, url: u}}`
+  - `source.title` → `citation.source.title`
+  - `source.url` → `citation.source.url`
+  - `source.snippet` → `citation.cited_text`
+  - `source.start_index` → `citation.start_index`
+  - `ResearchResult.source_urls/1` now filters out `nil` URLs (previously returned all, including nil)
+
+## v0.5.2
+
+### Changed
+
+- **Tool Detection Improvements**: Simplified tool execution flow and enhanced UI feedback https://github.com/brainlid/langchain/pull/458
+  - Removed special detection of malformed tool calls (partial rollback of https://github.com/brainlid/langchain/pull/449). The previous approach created a more complicated multi-path flow and could add internally defined user messages that appeared unexpectedly to users
+  - Added `display_text` as a first-class attribute on `ToolCall` for better UI feedback and display control
+  - Fixed early tool use detection and notification timing
+
+### Fixed
+
+- **ChatVertexAI**: Fixed tool calls for ChatVertexAI and added support for Gemini 3 models https://github.com/brainlid/langchain/pull/452
+  - Added `thought_signature` support for Gemini 3 function calls
+  - Removed unsupported "strict" field from function declarations for Vertex AI compatibility
+  - Added Jason encoder derivation for `ContentPart` to ensure proper JSON serialization
+  - Implemented `thoughtSignature` handling for Vertex AI tool calls
+
+---
+
+## v0.5.1
+
+### Enhancements
+
+**Enhanced Tool Execution Callbacks**: Added four new callbacks that provide granular visibility into the complete tool execution lifecycle:
+
+1. **`:on_tool_call_identified`** - Fires as soon as a tool name is detected during streaming (before arguments are fully received). May not have `call_id` yet. Enables early UI feedback like "Searching web..." while the LLM is still streaming.
+
+2. **`:on_tool_execution_started`** - Fires immediately before tool execution begins. Always has `call_id`. Allows tracking when actual execution starts.
+
+3. **`:on_tool_execution_completed`** - Fires after successful tool execution with the result. Useful for logging, metrics, and updating UI state.
+
+4. **`:on_tool_execution_failed`** - Fires when a tool call fails, is invalid, or is rejected during human-in-the-loop approval. Includes error details.
+
+**Key distinction**: The early `:on_tool_call_identified` callback fires during streaming as soon as the tool name appears, while `:on_tool_execution_started` fires later when execution actually begins. This two-phase notification enables responsive UIs that can show immediate feedback.
+
+**Example usage**:
+
+```elixir
+callbacks = %{
+  on_tool_call_identified: fn _chain, tool_call, func ->
+    # Show early UI feedback during streaming (tool args may be incomplete)
+    IO.puts("Tool identified: #{func.display_text || tool_call.name}")
+  end,
+  on_tool_execution_started: fn _chain, tool_call, func ->
+    # Update UI when execution actually begins (tool args complete)
+    IO.puts("Executing: #{func.display_text || tool_call.name}")
+  end,
+  on_tool_execution_completed: fn _chain, tool_call, func, result ->
+    # Handle successful execution
+    IO.puts("Completed: #{tool_call.name}")
+  end,
+  on_tool_execution_failed: fn _chain, tool_call, func, error ->
+    # Handle failures
+    IO.puts("Failed: #{tool_call.name} - #{error}")
+  end
+}
+
+chain = LLMChain.new!(%{
+  llm: model,
+  tools: [my_tool],
+  callbacks: [callbacks]
+})
+```
+
+**Additional improvements**:
+- `MessageDelta` now tracks tool display information in metadata for better UI rendering
+- Callbacks fire correctly across all execution paths (normal, async, HITL workflows)
+- Internal tracking prevents duplicate identification notifications for the same tool call
+
+**Non-breaking change**: Existing applications continue to work without modifications. All new callbacks are optional.
+
+---
+
+## v0.5.0
+
+### Breaking Changes
+
+**Elixir 1.17+ Required**: This release requires Elixir 1.17 or higher. The library uses the `get_in` macro which is only available in Elixir 1.17 onwards. Using Elixir 1.16 will throw a compile error. https://github.com/brainlid/langchain/pull/427
+
+**Async Tool Timeout Default Changed**: The default timeout for async tools (tools with `async: true`) has changed from 2 minutes (`120_000` ms) to `:infinity` (no timeout).
+
+### Upgrading from v0.4.1 - v0.5.0
+
+#### Elixir Version Requirement
+
+**What changed**: Minimum Elixir version is now 1.17.
+
+**Who is affected**: Users running Elixir 1.16 or earlier.
+
+**How to migrate**: Upgrade to Elixir 1.17 or later.
+
+#### Async Tool Timeout Default Change
+
+**What changed**: The default timeout for async tools (tools with `async: true`) has changed from 2 minutes (`120_000` ms) to `:infinity` (no timeout).
+
+**Why**: The previous 2-minute default was problematic for human-interactive agents because:
+- Web research tools often take 3-5+ minutes
+- Sub-agent workflows can run indefinitely
+- Deep analysis tools may need extended processing time
+- Users observing the agent can manually stop it if needed
+
+**Who is affected**: If your application relied on the implicit 2-minute timeout to catch runaway tools, you will need to explicitly set a timeout.
+
+**How to migrate**:
+
+1. **If you were happy with the 2-minute timeout**, add this to your `config/runtime.exs`:
+
+       config :langchain, async_tool_timeout: 2 * 60 * 1000  # 2 minutes (previous default)
+
+2. **If you set an explicit `async_tool_timeout`**, no changes needed - your explicit value is still respected.
+
+3. **If the new `:infinity` default works for you** (human-interactive agents), no changes needed.
+
+**Configuration precedence** (highest to lowest):
+1. `LLMChain.async_tool_timeout` - explicit value on chain
+2. `Agent.async_tool_timeout` - passed through to chain when building
+3. `Application.get_env(:langchain, :async_tool_timeout)` - runtime config
+4. Library default - `:infinity`
+
+**Example configurations**:
+
+    # Application-level (config/runtime.exs)
+    config :langchain, async_tool_timeout: 5 * 60 * 1000  # 5 minutes
+
+    # Agent-level
+    {:ok, agent} = Agent.new(%{
+      model: model,
+      async_tool_timeout: 10 * 60 * 1000  # 10 minutes
+    })
+
+    # Chain-level
+    {:ok, chain} = LLMChain.new(%{
+      llm: model,
+      async_tool_timeout: 35 * 60 * 1000  # 35 minutes for Deep Research
+    })
+
+### Added
+- **Agent Framework Foundation**: Base work for new agent library with middleware-based architecture, including agent orchestration, state management, virtual filesystem, human-in-the-loop (HITL) workflows, sub-agents, summarization, and presence tracking https://github.com/brainlid/langchain/pull/442
+- **ChatOpenAIResponses**: Added `req_config` option for custom Req configuration https://github.com/brainlid/langchain/pull/415
+- **ChatOpenAIResponses**: Added reasoning/thinking events support https://github.com/brainlid/langchain/pull/421
+- **ChatOpenAIResponses**: Added new reasoning effort values https://github.com/brainlid/langchain/pull/419
+- **ChatOpenAIResponses**: Added stateful context support for Response API https://github.com/brainlid/langchain/pull/425
+- **ChatVertexAI**: Added JSON schema support https://github.com/brainlid/langchain/pull/424
+- **ChatVertexAI**: Added thinking configuration support https://github.com/brainlid/langchain/pull/423
+- **ChatGoogleAI**: Added `thought_signature` support for Gemini 3 function calls https://github.com/brainlid/langchain/pull/431
+- **ChatMistralAI**: Added support for parallel tool calls https://github.com/brainlid/langchain/pull/433
+- **ChatMistralAI**: Added thinking content parts support https://github.com/brainlid/langchain/pull/418
+- **ChatPerplexity and ChatMistralAI**: Added `verbose_api` field https://github.com/brainlid/langchain/pull/416
+- **LLMChain**: Changed default `async_tool_timeout` from 2 minutes to `:infinity` https://github.com/brainlid/langchain/pull/442
+
+### Changed
+- **Dependencies**: Updated Elixir requirement to `~> 1.17` https://github.com/brainlid/langchain/pull/427
+- **ChatOpenAIResponses**: Don't include `top_p` parameter for gpt-5.2+ models https://github.com/brainlid/langchain/pull/428
+
+### Fixed
+- **ChatDeepSeek**: Fixed UI bug in deepseek-chat model introduced by reasoning_content support https://github.com/brainlid/langchain/pull/429
+- **Core**: Fixed missing error handling and fallback mechanism on server outages https://github.com/brainlid/langchain/pull/435
+- **ChatOpenAIResponses**: Fixed image `file_id` content type handling https://github.com/brainlid/langchain/pull/438
+
+---
+
 ## v0.4.1
 
 ### Added

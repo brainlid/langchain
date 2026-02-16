@@ -1,6 +1,7 @@
 defmodule ChatModels.ChatVertexAITest do
   alias LangChain.ChatModels.ChatVertexAI
   use LangChain.BaseCase
+  use Mimic
 
   doctest LangChain.ChatModels.ChatVertexAI
   alias LangChain.ChatModels.ChatVertexAI
@@ -13,6 +14,8 @@ defmodule ChatModels.ChatVertexAITest do
   alias LangChain.LangChainError
   alias LangChain.TokenUsage
 
+  @test_model "gemini-2.5-flash"
+
   setup do
     {:ok, hello_world} =
       Function.new(%{
@@ -23,7 +26,7 @@ defmodule ChatModels.ChatVertexAITest do
 
     model =
       ChatVertexAI.new!(%{
-        "model" => "gemini-pro",
+        "model" => @test_model,
         "endpoint" => "http://localhost:1234/"
       })
 
@@ -33,33 +36,64 @@ defmodule ChatModels.ChatVertexAITest do
   describe "new/1" do
     test "works with minimal attr" do
       assert {:ok, %ChatVertexAI{} = vertex_ai} =
-               ChatVertexAI.new(%{
-                 "model" => "gemini-pro",
-                 "endpoint" => "http://localhost:1234/"
-               })
+               ChatVertexAI.new(%{"model" => @test_model, "endpoint" => "http://localhost:1234/"})
 
-      assert vertex_ai.model == "gemini-pro"
+      assert vertex_ai.model == @test_model
     end
 
     test "returns error when invalid" do
-      assert {:error, changeset} = ChatVertexAI.new(%{"model" => nil})
+      assert {:error, changeset} = ChatVertexAI.new(%{"model" => nil, "endpoint" => nil})
       refute changeset.valid?
       assert {"can't be blank", _} = changeset.errors[:model]
+    end
+
+    test "supports overriding the API endpoint" do
+      override_url = "http://localhost:1234/"
+
+      model =
+        ChatVertexAI.new!(%{
+          model: @test_model,
+          endpoint: override_url
+        })
+
+      assert model.endpoint == override_url
+    end
+
+    test "supports setting json_response and json_schema" do
+      json_schema = %{
+        "type" => "object",
+        "properties" => %{
+          "name" => %{"type" => "string"},
+          "age" => %{"type" => "integer"}
+        }
+      }
+
+      {:ok, vertex_ai} =
+        ChatVertexAI.new(%{
+          "model" => @test_model,
+          "endpoint" => "http://localhost:1234/",
+          "json_response" => true,
+          "json_schema" => json_schema
+        })
+
+      assert vertex_ai.json_response == true
+      assert vertex_ai.json_schema == json_schema
     end
   end
 
   describe "for_api/3" do
     setup do
-      {:ok, vertex_ai} =
-        ChatVertexAI.new(%{
-          "model" => "gemini-pro",
-          "endpoint" => "http://localhost:1234/",
-          "temperature" => 1.0,
-          "top_p" => 1.0,
-          "top_k" => 1.0
-        })
+      params = %{
+        "model" => @test_model,
+        "endpoint" => "http://localhost:1234/",
+        "temperature" => 1.0,
+        "top_p" => 1.0,
+        "top_k" => 1.0
+      }
 
-      %{vertex_ai: vertex_ai}
+      {:ok, vertex_ai} = ChatVertexAI.new(params)
+
+      %{vertex_ai: vertex_ai, params: params}
     end
 
     test "generates a map for an API call", %{vertex_ai: vertex_ai} do
@@ -166,6 +200,22 @@ defmodule ChatModels.ChatVertexAITest do
       assert %{"contents" => [msg1, msg2]} = data
       assert %{"role" => :user, "parts" => [%{"text" => ^user_message}]} = msg1
       assert %{"role" => :model, "parts" => [%{"text" => ^assistant_message}]} = msg2
+    end
+
+    test "generated a map containing response_mime_type and response_schema", %{params: params} do
+      vertex_ai =
+        params
+        |> Map.merge(%{"json_response" => true, "json_schema" => %{"type" => "object"}})
+        |> ChatVertexAI.new!()
+
+      data = ChatVertexAI.for_api(vertex_ai, [], [])
+
+      assert %{
+               "generationConfig" => %{
+                 "response_mime_type" => "application/json",
+                 "response_schema" => %{"type" => "object"}
+               }
+             } = data
     end
 
     test "generates a map containing function and function call messages", %{vertex_ai: vertex_ai} do
@@ -437,6 +487,22 @@ defmodule ChatModels.ChatVertexAITest do
     end
   end
 
+  describe "filter_text_parts/1" do
+    test "returns only text parts that are not nil or empty" do
+      parts = [
+        %{"text" => "I have text"},
+        %{"text" => nil},
+        %{"text" => ""},
+        %{"text" => "I have more text"}
+      ]
+
+      assert ChatVertexAI.filter_text_parts(parts) == [
+               %{"text" => "I have text"},
+               %{"text" => "I have more text"}
+             ]
+    end
+  end
+
   describe "get_message_contents/1" do
     test "returns basic text as a ContentPart" do
       message = Message.new_user!("Howdy!")
@@ -464,7 +530,7 @@ defmodule ChatModels.ChatVertexAITest do
 
   describe "serialize_config/2" do
     test "does not include the API key or callbacks" do
-      model = ChatVertexAI.new!(%{model: "gemini-pro", endpoint: "http://localhost:1234/"})
+      model = ChatVertexAI.new!(%{model: @test_model, endpoint: "http://localhost:1234/"})
       result = ChatVertexAI.serialize_config(model)
       assert result["version"] == 1
       refute Map.has_key?(result, "api_key")
@@ -474,7 +540,7 @@ defmodule ChatModels.ChatVertexAITest do
     test "creates expected map" do
       model =
         ChatVertexAI.new!(%{
-          model: "gemini-pro",
+          model: @test_model,
           endpoint: "http://localhost:1234/"
         })
 
@@ -482,7 +548,7 @@ defmodule ChatModels.ChatVertexAITest do
 
       assert result == %{
                "endpoint" => "http://localhost:1234/",
-               "model" => "gemini-pro",
+               "model" => @test_model,
                "module" => "Elixir.LangChain.ChatModels.ChatVertexAI",
                "receive_timeout" => 60000,
                "thinking_config" => nil,
@@ -491,14 +557,15 @@ defmodule ChatModels.ChatVertexAITest do
                "top_k" => 1.0,
                "top_p" => 1.0,
                "version" => 1,
-               "json_response" => false
+               "json_response" => false,
+               "json_schema" => nil
              }
     end
   end
 
   describe "inspect" do
     test "redacts the API key" do
-      chain = ChatVertexAI.new!(%{"model" => "gemini-pro", "endpoint" => "http://localhost:1000"})
+      chain = ChatVertexAI.new!(%{"model" => @test_model, "endpoint" => "http://localhost:1000"})
 
       changeset = Ecto.Changeset.cast(chain, %{api_key: "1234567890"}, [:api_key])
 
@@ -630,6 +697,51 @@ defmodule ChatModels.ChatVertexAITest do
       assert %Message{} = updated_chain.last_message
       assert updated_chain.last_message.role == :assistant
       assert Map.has_key?(updated_chain.last_message.metadata, "groundingChunks")
+    end
+  end
+
+  describe "req_config" do
+    test "merges req_config into the request (non-streaming)" do
+      expect(Req, :post, fn req_struct ->
+        # assert headers from req_config
+        assert req_struct.headers == %{"x-vertex-ai-llm-request-type" => ["shared"]}
+
+        {:error, RuntimeError.exception("Something went wrong")}
+      end)
+
+      model =
+        ChatVertexAI.new!(%{
+          endpoint: "http://localhost:1234/",
+          stream: false,
+          model: @test_model,
+          req_config: %{headers: [{"X-Vertex-AI-LLM-Request-Type", "shared"}]}
+        })
+
+      assert {:error, _} = ChatVertexAI.call(model, "prompt", [])
+      verify!()
+    end
+
+    test "merges req_config into the request (streaming)" do
+      expect(Req, :post, fn req_struct, _opts ->
+        # assert headers from req_config
+        assert req_struct.headers == %{
+                 "x-vertex-ai-llm-request-type" => ["shared"],
+                 "accept-encoding" => ["utf-8"]
+               }
+
+        {:error, RuntimeError.exception("Something went wrong")}
+      end)
+
+      model =
+        ChatVertexAI.new!(%{
+          endpoint: "http://localhost:1234/",
+          stream: true,
+          model: @test_model,
+          req_config: %{headers: [{"X-Vertex-AI-LLM-Request-Type", "shared"}]}
+        })
+
+      assert {:error, _} = ChatVertexAI.call(model, "prompt", [])
+      verify!()
     end
   end
 end

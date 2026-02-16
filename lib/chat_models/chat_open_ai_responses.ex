@@ -30,6 +30,12 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         ContentPart.image_url!("https://example.com/image.jpg")
       ])
 
+      # Using a file ID (after uploading to OpenAI)
+      Message.new_user!([
+        ContentPart.text!("Describe this image:"),
+        ContentPart.image!("file-1234", type: :file_id)
+      ])
+
   For images, you can specify the detail level which affects token usage:
   - `detail: "low"` - Lower resolution, fewer tokens
   - `detail: "high"` - Higher resolution, more tokens
@@ -182,6 +188,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   alias LangChain.ChatModels.ChatModel
   alias LangChain.PromptTemplate
   alias LangChain.Message
+  alias LangChain.Message.Citation
   alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult
@@ -355,8 +362,30 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(openai, tools))
     |> Utils.conditionally_add_to_map(:user, openai.user)
     |> Utils.conditionally_add_to_map(:temperature, openai.temperature)
-    |> Utils.conditionally_add_to_map(:top_p, openai.top_p)
     |> Utils.conditionally_add_to_map(:top_logprobs, openai.top_logprobs)
+    |> maybe_add_top_p(openai)
+  end
+
+  # gpt-5.2 and newer do not support the top_p parameter.
+  # Earlier models (gpt-4.x, gpt-5.0, gpt-5.1) accept top_p.
+  defp maybe_add_top_p(map, %ChatOpenAIResponses{model: model, top_p: top_p}) do
+    if supports_top_p?(model) do
+      Utils.conditionally_add_to_map(map, :top_p, top_p)
+    else
+      map
+    end
+  end
+
+  @doc false
+  @spec supports_top_p?(String.t()) :: boolean()
+  def supports_top_p?(model) when is_binary(model) do
+    # Match models known to support top_p. This set is fixed and won't grow.
+    cond do
+      String.starts_with?(model, "gpt-4") -> true
+      String.starts_with?(model, "gpt-5.0") -> true
+      String.starts_with?(model, "gpt-5.1") -> true
+      true -> false
+    end
   end
 
   defp get_tools_for_api(%ChatOpenAIResponses{} = _model, nil), do: []
@@ -602,31 +631,35 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
 
   def content_part_for_api(%ChatOpenAIResponses{} = _model, %ContentPart{type: image} = part)
       when image in [:image, :image_url] do
-    media_prefix =
-      case Keyword.get(part.options || [], :media, nil) do
-        nil ->
-          ""
+    output =
+      if Keyword.get(part.options, :type) == :file_id do
+        %{"type" => "input_image", "file_id" => part.content}
+      else
+        media_prefix =
+          case Keyword.get(part.options || [], :media, nil) do
+            nil ->
+              ""
 
-        type when is_binary(type) ->
-          "data:#{type};base64,"
+            type when is_binary(type) ->
+              "data:#{type};base64,"
 
-        type when type in [:jpeg, :jpg] ->
-          "data:image/jpg;base64,"
+            type when type in [:jpeg, :jpg] ->
+              "data:image/jpg;base64,"
 
-        :png ->
-          "data:image/png;base64,"
+            :png ->
+              "data:image/png;base64,"
 
-        :gif ->
-          "data:image/gif;base64,"
+            :gif ->
+              "data:image/gif;base64,"
 
-        :webp ->
-          "data:image/webp;base64,"
+            :webp ->
+              "data:image/webp;base64,"
 
-        other ->
-          message = "Received unsupported media type for ContentPart: #{inspect(other)}"
-          Logger.error(message)
-          raise LangChainError, message
-      end
+            other ->
+              message = "Received unsupported media type for ContentPart: #{inspect(other)}"
+              Logger.error(message)
+              raise LangChainError, message
+          end
 
     detail_option = Keyword.get(part.options, :detail, nil)
     file_id = Keyword.get(part.options, :file_id, nil)
@@ -858,7 +891,11 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         )
 
         {:error,
-         LangChainError.exception(type: "unexpected_response", message: "Unexpected response")}
+         LangChainError.exception(
+           type: "unexpected_response",
+           message: "Unexpected response",
+           original: other
+         )}
     end
   end
 
@@ -977,12 +1014,86 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   #   "sequence_number" => 4,
   #   "type" => "response.output_text.delta"
   # }
+  def do_process_response(_model, %{
+        "type" => "response.reasoning.delta",
+        "output_index" => output_index,
+        "delta" => delta_text
+      }) do
+    data = %{
+      content: ContentPart.new!(%{type: :thinking, content: delta_text}),
+      status: :incomplete,
+      role: :assistant,
+      index: output_index
+    }
+
+    case MessageDelta.new(data) do
+      {:ok, message} ->
+        message
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:error, LangChainError.exception(changeset)}
+    end
+  end
+
+  def do_process_response(
+        _model,
+        %{
+          "type" => "response.output_text.delta",
+          "output_index" => output_index,
+          "delta" => delta_text
+        }
+      ) do
+    data = %{
+      content: delta_text,
+      # Will need to be updated to :complete when the response is complete
+      status: :incomplete,
+      role: :assistant,
+      index: output_index
+    }
+
+    case MessageDelta.new(data) do
+      {:ok, message} ->
+        message
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:error, LangChainError.exception(changeset)}
+    end
+  end
+
   def do_process_response(_model, %{"type" => "response.output_text.delta", "delta" => delta_text}) do
     data = %{
       content: delta_text,
       # Will need to be updated to :complete when the response is complete
       status: :incomplete,
       role: :assistant
+    }
+
+    case MessageDelta.new(data) do
+      {:ok, message} ->
+        message
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:error, LangChainError.exception(changeset)}
+    end
+  end
+
+  # Annotation events arrive during streaming when the model cites sources
+  # (e.g., from web search). Each event carries one annotation that we convert
+  # to a Citation and attach to a ContentPart with nil content, which gets
+  # merged into the accumulated delta via ContentPart.merge_part/2.
+  def do_process_response(_model, %{
+        "type" => "response.output_text.annotation.added",
+        "annotation" => annotation_data,
+        "output_index" => output_index
+      }) do
+    citation = parse_openai_annotation(annotation_data)
+    content_part = %ContentPart{type: :text, content: nil, citations: [citation]}
+
+    data = %{
+      content: content_part,
+      status: :incomplete,
+      role: :assistant,
+      index: output_index
     }
 
     case MessageDelta.new(data) do
@@ -1011,6 +1122,33 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     case MessageDelta.new(data) do
       {:ok, message} ->
         message
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:error, LangChainError.exception(changeset)}
+    end
+  end
+
+  # This is the first event we get for a reasoning/thinking block.
+  # It is followed by a series of `response.reasoning.delta` events.
+  # Finally, it is followed by a `response.output_item.done` event.
+  def do_process_response(_model, %{
+        "type" => "response.output_item.added",
+        "output_index" => output_index,
+        "item" => %{
+          "type" => "reasoning",
+          "id" => _reasoning_id
+        }
+      }) do
+    data = %{
+      content: ContentPart.new!(%{type: :thinking, content: ""}),
+      status: :incomplete,
+      role: :assistant,
+      index: output_index
+    }
+
+    case MessageDelta.new(data) do
+      {:ok, delta} ->
+        delta
 
       {:error, %Ecto.Changeset{} = changeset} ->
         {:error, LangChainError.exception(changeset)}
@@ -1075,6 +1213,27 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
            }) do
       message
     else
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:error, LangChainError.exception(changeset)}
+    end
+  end
+
+  def do_process_response(_model, %{
+        "type" => "response.output_item.done",
+        "output_index" => output_index,
+        "item" => %{"type" => "reasoning"}
+      }) do
+    data = %{
+      content: ContentPart.new!(%{type: :thinking, content: ""}),
+      status: :complete,
+      role: :assistant,
+      index: output_index
+    }
+
+    case MessageDelta.new(data) do
+      {:ok, delta} ->
+        delta
+
       {:error, %Ecto.Changeset{} = changeset} ->
         {:error, LangChainError.exception(changeset)}
     end
@@ -1171,9 +1330,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     "response.mcp_call.completed",
     "response.mcp_call.failed",
     "response.mcp_call.in_progress",
-    "response.output_text.annotation.added",
     "response.queued",
-    "response.reasoning.delta",
     "response.reasoning_summary.delta",
     "response.reasoning_summary.done",
     "error"
@@ -1190,6 +1347,19 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     {:error, LangChainError.exception(message: reason)}
   end
 
+  # Handle failed response status (streaming event with type "response.failed")
+  def do_process_response(_model, %{
+        "type" => "response.failed",
+        "response" => %{"status" => "failed"} = response
+      }) do
+    build_failed_response_error(response)
+  end
+
+  # Handle failed response status (non-streaming / full response object)
+  def do_process_response(_model, %{"response" => %{"status" => "failed"} = response}) do
+    build_failed_response_error(response)
+  end
+
   def do_process_response(_model, {:error, %Jason.DecodeError{} = response}) do
     error_message = "Received invalid JSON: #{inspect(response)}"
     Logger.error(error_message)
@@ -1200,7 +1370,48 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
 
   def do_process_response(_model, other) do
     Logger.error("Trying to process an unexpected response. #{inspect(other)}")
-    {:error, LangChainError.exception(message: "Unexpected response")}
+
+    {:error,
+     LangChainError.exception(
+       type: "unexpected_response",
+       message: "Unexpected response",
+       original: other
+     )}
+  end
+
+  # Extracts error details from a failed OpenAI response and builds an error tuple.
+  # Handles various error formats defensively:
+  # - %{"error" => %{"code" => "...", "message" => "..."}}
+  # - %{"error" => "string message"}
+  # - %{} (no error details)
+  @spec build_failed_response_error(map()) :: {:error, LangChainError.t()}
+  defp build_failed_response_error(response) do
+    {error_type, error_message} = extract_error_details(response)
+
+    Logger.error("OpenAI Responses API request failed: #{error_message}")
+
+    {:error,
+     LangChainError.exception(
+       type: error_type,
+       message: "OpenAI request failed: #{error_message}",
+       original: response
+     )}
+  end
+
+  @spec extract_error_details(map()) :: {String.t(), String.t()}
+  defp extract_error_details(response) do
+    case Map.get(response, "error") do
+      %{} = error_info ->
+        message = Map.get(error_info, "message", "Request failed")
+        code = Map.get(error_info, "code", "api_error")
+        {code, message}
+
+      message when is_binary(message) ->
+        {"api_error", message}
+
+      _ ->
+        {"api_error", "Request failed"}
+    end
   end
 
   defp get_token_usage(%{"usage" => usage} = _response_body) when is_map(usage) do
@@ -1238,15 +1449,19 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
          "type" => "message",
          "content" => message_contents
        }) do
-    text =
-      message_contents
-      |> Enum.map(fn
-        %{"type" => "output_text", "text" => text} -> text
-        %{"type" => "refusal", "refusal" => refusal} -> refusal
-      end)
-      |> Enum.join(" ")
+    {text_parts, all_citations} =
+      Enum.reduce(message_contents, {[], []}, fn
+        %{"type" => "output_text", "text" => text} = item, {texts, citations} ->
+          new_citations = parse_openai_annotations(Map.get(item, "annotations", []))
+          {texts ++ [text], citations ++ new_citations}
 
-    ContentPart.text!(text)
+        %{"type" => "refusal", "refusal" => refusal}, {texts, citations} ->
+          {texts ++ [refusal], citations}
+      end)
+
+    text = Enum.join(text_parts, " ")
+    part = ContentPart.text!(text)
+    %{part | citations: all_citations}
   end
 
   defp content_item_to_content_part_or_tool_call(%{
@@ -1409,6 +1624,49 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     Logger.warning("Unknown content item type: #{type}. Item: #{inspect(item)}")
     # Return empty text content to avoid breaking the flow
     ContentPart.text!("")
+  end
+
+  # -- OpenAI annotation parsing helpers --
+
+  defp parse_openai_annotations(annotations) when is_list(annotations) do
+    Enum.map(annotations, &parse_openai_annotation/1)
+  end
+
+  defp parse_openai_annotations(_), do: []
+
+  defp parse_openai_annotation(%{"type" => "url_citation"} = ann) do
+    Citation.new!(%{
+      source: %{
+        type: :web,
+        title: Map.get(ann, "title"),
+        url: Map.get(ann, "url")
+      },
+      start_index: Map.get(ann, "start_index"),
+      end_index: Map.get(ann, "end_index"),
+      metadata: %{"provider_type" => "url_citation"}
+    })
+  end
+
+  defp parse_openai_annotation(%{"type" => "file_citation"} = ann) do
+    Citation.new!(%{
+      source: %{
+        type: :document,
+        document_id: Map.get(ann, "file_id"),
+        title: Map.get(ann, "filename"),
+        metadata: %{"filename" => Map.get(ann, "filename")}
+      },
+      start_index: Map.get(ann, "start_index"),
+      end_index: Map.get(ann, "end_index"),
+      metadata: %{"provider_type" => "file_citation"}
+    })
+  end
+
+  defp parse_openai_annotation(%{"type" => type} = ann) do
+    Logger.warning("Unknown OpenAI annotation type: #{type}")
+
+    Citation.new!(%{
+      metadata: %{"provider_type" => type, "raw" => ann}
+    })
   end
 
   defp maybe_add_org_id_header(%Req.Request{} = req) do

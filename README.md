@@ -8,20 +8,20 @@ Elixir LangChain enables Elixir applications to integrate AI services and self-h
 
 **Currently supported AI services:**
 
-| Model | v0.3.x | v0.4.x |
+| Model | v0.3.x | v0.5.x |
 |-------|---------|---------|
 | OpenAI ChatGPT | ✓ | ✓ |
 | OpenAI DALL-e 2 (image generation) | ✓ | ? |
 | Anthropic Claude | ✓ | ✓ |
 | Anthropic Claude (thinking) | X | ✓ |
 | xAI Grok | X | ✓ |
-| Google Gemini | ✓ | X |
+| Google Gemini | ✓ | ✓ |
 | Google Vertex AI* | ✓ | X |
 | Ollama | ✓ | ? |
 | Mistral | ✓ | X |
 | Bumblebee self-hosted models** | ✓ | ? |
 | LMStudio*** | ✓ | ? |
-| Perplexity | ✓ | ? |
+| Perplexity | ✓ | ✓ |
 
 - *Google Vertex AI is Google's enterprise offering
 - **Bumblebee self-hosted models - including Llama, Mistral and Zephyr
@@ -71,13 +71,15 @@ This library was heavily inspired by, and based on, the way the JavaScript libra
 
 ## Installation
 
+**Requirements:** Elixir 1.17 or higher
+
 The package can be installed by adding `langchain` to your list of dependencies
 in `mix.exs`:
 
 ```elixir
 def deps do
   [
-    {:langchain, "0.4.0"}
+    {:langchain, "~> 0.5.0"}
   ]
 end
 ```

@@ -21,19 +21,29 @@ defmodule LangChain.Tools.DeepResearch do
 
   ## Timeout Configuration
 
-  Deep Research runs as an async tool with a default timeout of 2 minutes, which is insufficient
-  for Deep Research operations. You must configure the `async_tool_timeout` when using this tool:
+  Deep Research runs as an async tool (`async: true`).
 
-      {:ok, chain} =
-        %{
-          llm: model,
-          verbose: true,
-          async_tool_timeout: 35 * 60 * 1000  # 35 minutes in milliseconds
-        }
-        |> LLMChain.new!()
-        |> LLMChain.add_tools(DeepResearch.new!())
+  **Default behavior**: The library defaults to `:infinity` timeout, so Deep Research
+  will run to completion without timing out. This is appropriate for human-interactive
+  agents where the user can manually stop execution if needed.
 
-  Without this configuration, you may encounter timeout errors after 2 minutes.
+  **For automated agents**: If running unattended, you may want to configure a
+  maximum timeout:
+
+      # Application-level (config/runtime.exs)
+      config :langchain, async_tool_timeout: 35 * 60 * 1000  # 35 minutes
+
+      # Or per-agent
+      {:ok, agent} = Agent.new(%{
+        model: model,
+        async_tool_timeout: 35 * 60 * 1000
+      })
+
+      # Or per-chain
+      {:ok, chain} = LLMChain.new(%{
+        llm: model,
+        async_tool_timeout: 35 * 60 * 1000
+      })
 
   ## Example
 
@@ -41,9 +51,8 @@ defmodule LangChain.Tools.DeepResearch do
 
       {:ok, updated_chain, %Message{} = message} =
         %{
-          llm: ChatOpenAI.new!(%{temperature: 0}), 
-          verbose: true,
-          async_tool_timeout: 35 * 60 * 1000  # 35 minutes for Deep Research
+          llm: ChatOpenAI.new!(%{temperature: 0}),
+          verbose: true
         }
         |> LLMChain.new!()
         |> LLMChain.add_message(
@@ -53,6 +62,7 @@ defmodule LangChain.Tools.DeepResearch do
         |> LLMChain.run(mode: :until_success)
 
   The tool will initiate a research request and return comprehensive findings with citations.
+  With the default `:infinity` timeout, the tool will run to completion without timing out.
   """
   require Logger
   alias LangChain.Function

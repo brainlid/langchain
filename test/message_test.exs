@@ -5,6 +5,7 @@ defmodule LangChain.MessageTest do
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult
   alias LangChain.Message.ContentPart
+  alias LangChain.Message.Citation
   alias LangChain.PromptTemplate
   alias LangChain.LangChainError
 
@@ -642,6 +643,42 @@ defmodule LangChain.MessageTest do
       }
 
       refute Message.is_empty?(message)
+    end
+  end
+
+  describe "all_citations/1" do
+    test "collects citations across content parts" do
+      citation1 =
+        Citation.new!(%{cited_text: "first", source: %{type: :web, url: "https://a.com"}})
+
+      citation2 =
+        Citation.new!(%{cited_text: "second", source: %{type: :document, document_id: "doc_1"}})
+
+      %ContentPart{} = base1 = ContentPart.text!("Hello")
+      part1 = %ContentPart{base1 | citations: [citation1]}
+      part2 = ContentPart.text!(" plain text")
+      %ContentPart{} = base3 = ContentPart.text!(" more")
+      part3 = %ContentPart{base3 | citations: [citation2]}
+
+      message = Message.new_assistant!([part1, part2, part3])
+
+      assert [%Citation{cited_text: "first"}, %Citation{cited_text: "second"}] =
+               Message.all_citations(message)
+    end
+
+    test "returns empty list for message with no citations" do
+      message = Message.new_assistant!("No citations here")
+      assert Message.all_citations(message) == []
+    end
+
+    test "returns empty list for string content" do
+      message = %Message{role: :assistant, content: "just a string", status: :complete}
+      assert Message.all_citations(message) == []
+    end
+
+    test "returns empty list for nil content" do
+      message = %Message{role: :assistant, content: nil, status: :complete}
+      assert Message.all_citations(message) == []
     end
   end
 end

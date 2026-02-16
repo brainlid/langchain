@@ -6,6 +6,7 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
   alias LangChain.MessageDelta
   alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
+  alias LangChain.Message.ToolResult
   alias LangChain.LangChainError
   alias LangChain.TokenUsage
   alias LangChain.Function
@@ -40,6 +41,27 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
 
       assert model.endpoint == override_url
     end
+
+    test "supports verbose_api option" do
+      model = ChatMistralAI.new!(%{model: "mistral-tiny", verbose_api: true})
+      assert model.verbose_api == true
+
+      model = ChatMistralAI.new!(%{model: "mistral-tiny", verbose_api: false})
+      assert model.verbose_api == false
+    end
+
+    test "supports passing parallel_tool_calls" do
+      # defaults to true (Mistral API default)
+      %ChatMistralAI{} = mistral_ai = ChatMistralAI.new!(%{"model" => "mistral-tiny"})
+      assert mistral_ai.parallel_tool_calls == true
+
+      # can override the default to false
+      %ChatMistralAI{} =
+        mistral_ai =
+        ChatMistralAI.new!(%{"model" => "mistral-tiny", "parallel_tool_calls" => false})
+
+      assert mistral_ai.parallel_tool_calls == false
+    end
   end
 
   describe "for_api/3" do
@@ -69,8 +91,21 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
                  stream: false,
                  max_tokens: 100,
                  safe_prompt: true,
-                 random_seed: 42
+                 random_seed: 42,
+                 parallel_tool_calls: true
                }
+    end
+
+    test "generates a map for an API call with parallel_tool_calls set to false" do
+      {:ok, mistral_ai} =
+        ChatMistralAI.new(%{
+          model: "mistral-tiny",
+          parallel_tool_calls: false
+        })
+
+      data = ChatMistralAI.for_api(mistral_ai, [], [])
+      assert data.model == "mistral-tiny"
+      assert data.parallel_tool_calls == false
     end
 
     test "generates a map containing user and assistant messages", %{mistral_ai: mistral_ai} do
@@ -88,6 +123,92 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
       assert get_in(data, [:messages, Access.at(0), "content"]) == user_message
       assert get_in(data, [:messages, Access.at(1), "role"]) == :assistant
       assert get_in(data, [:messages, Access.at(1), "content"]) == assistant_message
+    end
+
+    test "converts ToolResult with string content correctly", %{mistral_ai: mistral_ai} do
+      tool_result = ToolResult.new!(%{tool_call_id: "call_123", content: "Hello World!"})
+
+      result = ChatMistralAI.for_api(mistral_ai, tool_result)
+
+      assert result == %{
+               "role" => :tool,
+               "tool_call_id" => "call_123",
+               "content" => "Hello World!"
+             }
+    end
+
+    test "converts ToolResult with ContentParts to string", %{mistral_ai: mistral_ai} do
+      tool_result =
+        ToolResult.new!(%{
+          tool_call_id: "call_456",
+          content: [ContentPart.text!("Result: 42"), ContentPart.text!(" and more")]
+        })
+
+      result = ChatMistralAI.for_api(mistral_ai, tool_result)
+
+      # ContentPart.parts_to_string/1 joins parts with "\n\n"
+      assert result == %{
+               "role" => :tool,
+               "tool_call_id" => "call_456",
+               "content" => "Result: 42\n\n and more"
+             }
+    end
+
+    test "converts Message with tool role and ContentParts to list of tool messages", %{
+      mistral_ai: mistral_ai
+    } do
+      tool_result =
+        ToolResult.new!(%{
+          tool_call_id: "call_789",
+          content: [ContentPart.text!("Tool executed successfully")]
+        })
+
+      message = Message.new_tool_result!(%{tool_results: [tool_result]})
+
+      result = ChatMistralAI.for_api(mistral_ai, message)
+
+      # Returns a list of tool messages, one per tool result
+      assert result == [
+               %{
+                 "role" => :tool,
+                 "tool_call_id" => "call_789",
+                 "content" => "Tool executed successfully"
+               }
+             ]
+    end
+
+    test "converts Message with multiple tool results to list of tool messages", %{
+      mistral_ai: mistral_ai
+    } do
+      tool_result_1 =
+        ToolResult.new!(%{
+          tool_call_id: "call_abc",
+          content: "Result 1"
+        })
+
+      tool_result_2 =
+        ToolResult.new!(%{
+          tool_call_id: "call_def",
+          content: "Result 2"
+        })
+
+      message = Message.new_tool_result!(%{tool_results: [tool_result_1, tool_result_2]})
+
+      result = ChatMistralAI.for_api(mistral_ai, message)
+
+      # Each tool result becomes a separate tool message
+      assert result == [
+               %{
+                 "role" => :tool,
+                 "tool_call_id" => "call_abc",
+                 "content" => "Result 1"
+               },
+               %{
+                 "role" => :tool,
+                 "tool_call_id" => "call_def",
+                 "content" => "Result 2"
+               }
+             ]
     end
   end
 
@@ -158,8 +279,123 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
 
       assert delta.role == :assistant
       assert delta.content == "This is the first part of a mes"
+      assert delta.index == 1
+      assert delta.status == :incomplete
+    end
+
+    test "handles receiving MessageDeltas with thinking content", %{model: model} do
+      response = %{
+        "choices" => [
+          %{
+            "delta" => %{
+              "role" => "assistant",
+              "content" => [
+                %{
+                  "type" => "thinking",
+                  "thinking" => [
+                    %{"type" => "text", "text" => "Let me think about this"}
+                  ]
+                }
+              ]
+            },
+            "finish_reason" => nil,
+            "index" => 0
+          }
+        ]
+      }
+
+      assert [%MessageDelta{} = delta] =
+               ChatMistralAI.do_process_response(model, response)
+
+      assert delta.role == :assistant
+      assert %ContentPart{type: :thinking, content: "Let me think about this"} = delta.content
       assert delta.index == 0
       assert delta.status == :incomplete
+    end
+
+    test "handles receiving MessageDeltas with multiple thinking text parts", %{model: model} do
+      response = %{
+        "choices" => [
+          %{
+            "delta" => %{
+              "role" => "assistant",
+              "content" => [
+                %{
+                  "type" => "thinking",
+                  "thinking" => [
+                    %{"type" => "text", "text" => "First part "},
+                    %{"type" => "text", "text" => "second part"}
+                  ]
+                }
+              ]
+            },
+            "finish_reason" => nil,
+            "index" => 0
+          }
+        ]
+      }
+
+      assert [%MessageDelta{} = delta] =
+               ChatMistralAI.do_process_response(model, response)
+
+      assert delta.role == :assistant
+      assert %ContentPart{type: :thinking, content: "First part second part"} = delta.content
+      assert delta.index == 0
+      assert delta.status == :incomplete
+    end
+
+    test "handles receiving MessageDeltas with text content in list format", %{model: model} do
+      response = %{
+        "choices" => [
+          %{
+            "delta" => %{
+              "role" => "assistant",
+              "content" => [
+                %{
+                  "type" => "text",
+                  "text" => "This is regular text"
+                }
+              ]
+            },
+            "finish_reason" => nil,
+            "index" => 0
+          }
+        ]
+      }
+
+      assert [%MessageDelta{} = delta] =
+               ChatMistralAI.do_process_response(model, response)
+
+      assert delta.role == :assistant
+      assert %ContentPart{type: :text, content: "This is regular text"} = delta.content
+      # Text content at index 0 is shifted to index 1 to avoid merging with thinking at index 0
+      assert delta.index == 1
+      assert delta.status == :incomplete
+    end
+
+    test "handles delta with finish_reason='tool_calls' but no tool_calls", %{model: model} do
+      # This simulates the Mistral streaming bug where finish_reason="tool_calls"
+      # but no actual tool_calls are present in the delta
+      response = %{
+        "choices" => [
+          %{
+            "delta" => %{
+              "role" => "assistant",
+              "content" => "some malformed content"
+            },
+            "finish_reason" => "tool_calls",
+            "index" => 0
+          }
+        ]
+      }
+
+      assert [{:error, %LangChainError{} = error}] =
+               ChatMistralAI.do_process_response(model, response)
+
+      assert error.type == "invalid_tool_calls"
+
+      assert error.message =~
+               "Mistral API returned finish_reason='tool_calls' in delta but tool_calls is empty"
     end
 
     test "handles API error messages", %{model: model} do
@@ -291,6 +527,30 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
       assert error.type == "changeset"
       assert error.message =~ "invalid json"
     end
+
+    test "handles empty tool_calls array when finish_reason is 'tool_calls'", %{
+      model: model
+    } do
+      response = %{
+        "choices" => [
+          %{
+            "message" => %{
+              "role" => "assistant",
+              "content" => "some content",
+              "tool_calls" => []
+            },
+            "finish_reason" => "tool_calls",
+            "index" => 0
+          }
+        ]
+      }
+
+      assert [{:error, %LangChainError{} = error}] =
+               ChatMistralAI.do_process_response(model, response)
+
+      assert error.type == "invalid_tool_calls"
+      assert error.message =~ "finish_reason='tool_calls' but tool_calls is empty"
+    end
   end
 
   describe "do_process_response/2 with token usage" do
@@ -330,6 +590,12 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
       refute Map.has_key?(result, "callbacks")
     end
 
+    test "includes verbose_api field" do
+      model = ChatMistralAI.new!(%{model: "mistral-tiny", verbose_api: true})
+      result = ChatMistralAI.serialize_config(model)
+      assert result["verbose_api"] == true
+    end
+
     test "creates expected map" do
       model =
         ChatMistralAI.new!(%{
@@ -356,7 +622,8 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
                "top_p" => 1.0,
                "version" => 1,
                "json_response" => false,
-               "json_schema" => nil
+               "json_schema" => nil,
+               "verbose_api" => false
              }
     end
   end

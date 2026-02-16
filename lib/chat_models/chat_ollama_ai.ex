@@ -553,7 +553,11 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
         )
 
         {:error,
-         LangChainError.exception(type: "unexpected_response", message: "Unexpected response")}
+         LangChainError.exception(
+           type: "unexpected_response",
+           message: "Unexpected response",
+           original: other
+         )}
     end
   end
 

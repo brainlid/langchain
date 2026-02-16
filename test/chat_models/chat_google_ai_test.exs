@@ -1,9 +1,11 @@
 defmodule ChatModels.ChatGoogleAITest do
   use LangChain.BaseCase
+  use Mimic
 
   doctest LangChain.ChatModels.ChatGoogleAI
   alias LangChain.ChatModels.ChatGoogleAI
   alias LangChain.Message
+  alias LangChain.Message.Citation
   alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult
@@ -125,10 +127,9 @@ defmodule ChatModels.ChatGoogleAITest do
 
     test "generated a map containing response_mime_type and response_schema", %{params: params} do
       google_ai =
-        ChatGoogleAI.new!(
-          params
-          |> Map.merge(%{"json_response" => true, "json_schema" => %{"type" => "object"}})
-        )
+        params
+        |> Map.merge(%{"json_response" => true, "json_schema" => %{"type" => "object"}})
+        |> ChatGoogleAI.new!()
 
       data = ChatGoogleAI.for_api(google_ai, [], [])
 
@@ -193,6 +194,35 @@ defmodule ChatModels.ChatGoogleAITest do
                  }
                }
              } = tool_result
+    end
+
+    test "for_api includes thoughtSignature when present in ToolCall metadata" do
+      tool_call =
+        ToolCall.new!(%{
+          call_id: "call_123",
+          name: "test_function",
+          arguments: %{"arg" => "value"},
+          metadata: %{thought_signature: "sig_abc123"}
+        })
+
+      result = ChatGoogleAI.for_api(tool_call)
+
+      assert result["thoughtSignature"] == "sig_abc123"
+      assert result["functionCall"]["name"] == "test_function"
+    end
+
+    test "for_api excludes thoughtSignature when not in ToolCall metadata" do
+      tool_call =
+        ToolCall.new!(%{
+          call_id: "call_123",
+          name: "test_function",
+          arguments: %{"arg" => "value"}
+        })
+
+      result = ChatGoogleAI.for_api(tool_call)
+
+      refute Map.has_key?(result, "thoughtSignature")
+      assert Map.has_key?(result, "functionCall")
     end
 
     test "generate a map containing text and inline image parts", %{google_ai: google_ai} do
@@ -524,6 +554,50 @@ defmodule ChatModels.ChatGoogleAITest do
       assert call.arguments == %{"value" => 123}
     end
 
+    test "handles function calls with thoughtSignature (Gemini 3)", %{model: model} do
+      response = %{
+        "candidates" => [
+          %{
+            "content" => %{
+              "role" => "model",
+              "parts" => [
+                %{
+                  "functionCall" => %{"args" => %{"key" => "value"}, "name" => "my_func"},
+                  "thoughtSignature" => "gemini3_thought_sig_xyz"
+                }
+              ]
+            },
+            "finishReason" => "STOP",
+            "index" => 0
+          }
+        ]
+      }
+
+      assert [%Message{} = msg] = ChatGoogleAI.do_process_response(model, response)
+      assert [%ToolCall{} = call] = msg.tool_calls
+      assert call.metadata.thought_signature == "gemini3_thought_sig_xyz"
+      assert call.name == "my_func"
+    end
+
+    test "handles function calls without thoughtSignature", %{model: model} do
+      response = %{
+        "candidates" => [
+          %{
+            "content" => %{
+              "role" => "model",
+              "parts" => [%{"functionCall" => %{"args" => %{}, "name" => "my_func"}}]
+            },
+            "finishReason" => "STOP",
+            "index" => 0
+          }
+        ]
+      }
+
+      assert [%Message{} = msg] = ChatGoogleAI.do_process_response(model, response)
+      assert [%ToolCall{} = call] = msg.tool_calls
+      assert call.metadata == nil
+    end
+
     test "handles no parts in content", %{model: model} do
       response = %{
         "candidates" => [
@@ -619,7 +693,7 @@ defmodule ChatModels.ChatGoogleAITest do
       assert {:error, %LangChainError{} = error} =
                ChatGoogleAI.do_process_response(model, response)
 
-      assert error.type == nil
+      assert error.type == "invalid_argument"
       assert error.message == "Invalid request"
     end
 
@@ -793,7 +867,7 @@ defmodule ChatModels.ChatGoogleAITest do
 
   describe "serialize_config/2" do
     test "does not include the API key or callbacks" do
-      model = ChatGoogleAI.new!(%{model: "gpt-4o"})
+      model = ChatGoogleAI.new!(%{model: @test_model})
       result = ChatGoogleAI.serialize_config(model)
       assert result["version"] == 1
       refute Map.has_key?(result, "api_key")
@@ -941,9 +1015,536 @@ defmodule ChatModels.ChatGoogleAITest do
     end
   end
 
+  describe "grounding citations" do
+    test "parses groundingMetadata into citations on ContentParts", %{model: model} do
+      response = %{
+        "candidates" => [
+          %{
+            "content" => %{
+              "role" => "model",
+              "parts" => [%{"text" => "Spain won Euro 2024, defeating England 2-1 in the final."}]
+            },
+            "finishReason" => "STOP",
+            "index" => 0,
+            "groundingMetadata" => %{
+              "webSearchQueries" => ["UEFA Euro 2024 winner"],
+              "groundingChunks" => [
+                %{
+                  "web" => %{
+                    "uri" => "https://example.com/euro2024",
+                    "title" => "UEFA Euro 2024 Results"
+                  }
+                }
+              ],
+              "groundingSupports" => [
+                %{
+                  "segment" => %{
+                    "startIndex" => 0,
+                    "endIndex" => 56,
+                    "text" => "Spain won Euro 2024, defeating England 2-1 in the final."
+                  },
+                  "groundingChunkIndices" => [0],
+                  "confidenceScores" => [0.95]
+                }
+              ]
+            }
+          }
+        ]
+      }
+
+      assert [%Message{} = msg] = ChatGoogleAI.do_process_response(model, response)
+      assert msg.role == :assistant
+      assert [%ContentPart{} = part] = msg.content
+      assert part.content == "Spain won Euro 2024, defeating England 2-1 in the final."
+
+      assert [%Citation{} = citation] = part.citations
+      assert citation.cited_text == "Spain won Euro 2024, defeating England 2-1 in the final."
+      assert citation.start_index == 0
+      assert citation.end_index == 56
+      assert citation.confidence == 0.95
+      assert citation.source.type == :web
+      assert citation.source.title == "UEFA Euro 2024 Results"
+      assert citation.source.url == "https://example.com/euro2024"
+      assert citation.metadata["provider_type"] == "grounding_support"
+      assert citation.metadata["chunk_index"] == 0
+    end
+
+    test "handles multiple groundingSupports mapping to different partIndex values", %{
+      model: model
+    } do
+      response = %{
+        "candidates" => [
+          %{
+            "content" => %{
+              "role" => "model",
+              "parts" => [
+                %{"text" => "First part about Spain."},
+                %{"text" => "Second part about England."}
+              ]
+            },
+            "finishReason" => "STOP",
+            "index" => 0,
+            "groundingMetadata" => %{
+              "groundingChunks" => [
+                %{"web" => %{"uri" => "https://example.com/spain", "title" => "Spain Info"}},
+                %{"web" => %{"uri" => "https://example.com/england", "title" => "England Info"}}
+              ],
+              "groundingSupports" => [
+                %{
+                  "segment" => %{
+                    "partIndex" => 0,
+                    "startIndex" => 0,
+                    "endIndex" => 22,
+                    "text" => "First part about Spain."
+                  },
+                  "groundingChunkIndices" => [0]
+                },
+                %{
+                  "segment" => %{
+                    "partIndex" => 1,
+                    "startIndex" => 0,
+                    "endIndex" => 26,
+                    "text" => "Second part about England."
+                  },
+                  "groundingChunkIndices" => [1]
+                }
+              ]
+            }
+          }
+        ]
+      }
+
+      assert [%Message{} = msg] = ChatGoogleAI.do_process_response(model, response)
+      assert [part0, part1] = msg.content
+
+      assert [%Citation{} = c0] = part0.citations
+      assert c0.source.title == "Spain Info"
+      assert c0.source.url == "https://example.com/spain"
+
+      assert [%Citation{} = c1] = part1.citations
+      assert c1.source.title == "England Info"
+      assert c1.source.url == "https://example.com/england"
+    end
+
+    test "denormalizes support x chunk pairs into individual citations", %{model: model} do
+      response = %{
+        "candidates" => [
+          %{
+            "content" => %{
+              "role" => "model",
+              "parts" => [%{"text" => "Spain won Euro 2024."}]
+            },
+            "finishReason" => "STOP",
+            "index" => 0,
+            "groundingMetadata" => %{
+              "groundingChunks" => [
+                %{"web" => %{"uri" => "https://example.com/a", "title" => "Source A"}},
+                %{"web" => %{"uri" => "https://example.com/b", "title" => "Source B"}}
+              ],
+              "groundingSupports" => [
+                %{
+                  "segment" => %{
+                    "startIndex" => 0,
+                    "endIndex" => 20,
+                    "text" => "Spain won Euro 2024."
+                  },
+                  "groundingChunkIndices" => [0, 1],
+                  "confidenceScores" => [0.9, 0.8]
+                }
+              ]
+            }
+          }
+        ]
+      }
+
+      assert [%Message{} = msg] = ChatGoogleAI.do_process_response(model, response)
+      assert [part] = msg.content
+
+      assert [%Citation{} = c0, %Citation{} = c1] = part.citations
+      assert c0.source.title == "Source A"
+      assert c0.confidence == 0.9
+      assert c0.metadata["chunk_index"] == 0
+
+      assert c1.source.title == "Source B"
+      assert c1.confidence == 0.8
+      assert c1.metadata["chunk_index"] == 1
+
+      # Both share the same segment text
+      assert c0.cited_text == "Spain won Euro 2024."
+      assert c1.cited_text == "Spain won Euro 2024."
+      assert c0.start_index == 0
+      assert c1.start_index == 0
+    end
+
+    test "preserves confidence scores", %{model: model} do
+      response = %{
+        "candidates" => [
+          %{
+            "content" => %{
+              "role" => "model",
+              "parts" => [%{"text" => "Test content."}]
+            },
+            "finishReason" => "STOP",
+            "index" => 0,
+            "groundingMetadata" => %{
+              "groundingChunks" => [
+                %{"web" => %{"uri" => "https://example.com", "title" => "Example"}}
+              ],
+              "groundingSupports" => [
+                %{
+                  "segment" => %{"startIndex" => 0, "endIndex" => 13, "text" => "Test content."},
+                  "groundingChunkIndices" => [0],
+                  "confidenceScores" => [0.42]
+                }
+              ]
+            }
+          }
+        ]
+      }
+
+      assert [%Message{} = msg] = ChatGoogleAI.do_process_response(model, response)
+      assert [%Citation{confidence: 0.42}] = hd(msg.content).citations
+    end
+
+    test "handles missing groundingMetadata gracefully", %{model: model} do
+      response = %{
+        "candidates" => [
+          %{
+            "content" => %{
+              "role" => "model",
+              "parts" => [%{"text" => "Simple response."}]
+            },
+            "finishReason" => "STOP",
+            "index" => 0
+          }
+        ]
+      }
+
+      assert [%Message{} = msg] = ChatGoogleAI.do_process_response(model, response)
+      assert [part] = msg.content
+      assert part.citations == []
+      assert msg.metadata == nil
+    end
+
+    test "handles groundingMetadata with no supports", %{model: model} do
+      response = %{
+        "candidates" => [
+          %{
+            "content" => %{
+              "role" => "model",
+              "parts" => [%{"text" => "Response text."}]
+            },
+            "finishReason" => "STOP",
+            "index" => 0,
+            "groundingMetadata" => %{
+              "webSearchQueries" => ["test query"],
+              "groundingChunks" => [
+                %{"web" => %{"uri" => "https://example.com", "title" => "Example"}}
+              ],
+              "groundingSupports" => []
+            }
+          }
+        ]
+      }
+
+      assert [%Message{} = msg] = ChatGoogleAI.do_process_response(model, response)
+      assert [part] = msg.content
+      assert part.citations == []
+    end
+
+    test "preserves raw grounding_metadata in message metadata", %{model: model} do
+      grounding_metadata = %{
+        "webSearchQueries" => ["test query"],
+        "groundingChunks" => [
+          %{"web" => %{"uri" => "https://example.com", "title" => "Example"}}
+        ],
+        "groundingSupports" => [
+          %{
+            "segment" => %{"startIndex" => 0, "endIndex" => 5, "text" => "Test."},
+            "groundingChunkIndices" => [0]
+          }
+        ]
+      }
+
+      response = %{
+        "candidates" => [
+          %{
+            "content" => %{
+              "role" => "model",
+              "parts" => [%{"text" => "Test."}]
+            },
+            "finishReason" => "STOP",
+            "index" => 0,
+            "groundingMetadata" => grounding_metadata
+          }
+        ]
+      }
+
+      assert [%Message{} = msg] = ChatGoogleAI.do_process_response(model, response)
+      assert msg.metadata["grounding_metadata"] == grounding_metadata
+    end
+
+    test "preserves searchEntryPoint in message metadata", %{model: model} do
+      response = %{
+        "candidates" => [
+          %{
+            "content" => %{
+              "role" => "model",
+              "parts" => [%{"text" => "Result."}]
+            },
+            "finishReason" => "STOP",
+            "index" => 0,
+            "groundingMetadata" => %{
+              "searchEntryPoint" => %{
+                "renderedContent" => "<div>Search Widget</div>"
+              },
+              "groundingChunks" => [],
+              "groundingSupports" => []
+            }
+          }
+        ]
+      }
+
+      assert [%Message{} = msg] = ChatGoogleAI.do_process_response(model, response)
+
+      assert msg.metadata["search_entry_point"] == %{
+               "renderedContent" => "<div>Search Widget</div>"
+             }
+    end
+
+    test "handles retrievedContext chunks", %{model: model} do
+      response = %{
+        "candidates" => [
+          %{
+            "content" => %{
+              "role" => "model",
+              "parts" => [%{"text" => "Retrieved info."}]
+            },
+            "finishReason" => "STOP",
+            "index" => 0,
+            "groundingMetadata" => %{
+              "groundingChunks" => [
+                %{
+                  "retrievedContext" => %{
+                    "uri" => "https://storage.example.com/doc.pdf",
+                    "title" => "Internal Doc"
+                  }
+                }
+              ],
+              "groundingSupports" => [
+                %{
+                  "segment" => %{"startIndex" => 0, "endIndex" => 15, "text" => "Retrieved info."},
+                  "groundingChunkIndices" => [0]
+                }
+              ]
+            }
+          }
+        ]
+      }
+
+      assert [%Message{} = msg] = ChatGoogleAI.do_process_response(model, response)
+      assert [%Citation{} = citation] = hd(msg.content).citations
+      assert citation.source.type == :document
+      assert citation.source.title == "Internal Doc"
+      assert citation.source.url == "https://storage.example.com/doc.pdf"
+      assert citation.source.metadata["retrieved_context"] == true
+    end
+
+    test "handles maps chunks", %{model: model} do
+      response = %{
+        "candidates" => [
+          %{
+            "content" => %{
+              "role" => "model",
+              "parts" => [%{"text" => "The Eiffel Tower is in Paris."}]
+            },
+            "finishReason" => "STOP",
+            "index" => 0,
+            "groundingMetadata" => %{
+              "groundingChunks" => [
+                %{
+                  "maps" => %{
+                    "uri" => "https://maps.google.com/eiffel-tower",
+                    "title" => "Eiffel Tower"
+                  }
+                }
+              ],
+              "groundingSupports" => [
+                %{
+                  "segment" => %{
+                    "startIndex" => 0,
+                    "endIndex" => 28,
+                    "text" => "The Eiffel Tower is in Paris."
+                  },
+                  "groundingChunkIndices" => [0]
+                }
+              ]
+            }
+          }
+        ]
+      }
+
+      assert [%Message{} = msg] = ChatGoogleAI.do_process_response(model, response)
+      assert [%Citation{} = citation] = hd(msg.content).citations
+      assert citation.source.type == :place
+      assert citation.source.title == "Eiffel Tower"
+      assert citation.source.url == "https://maps.google.com/eiffel-tower"
+      assert citation.source.metadata["maps"] == true
+    end
+
+    test "handles streaming delta with grounding metadata", %{model: model} do
+      response = %{
+        "candidates" => [
+          %{
+            "content" => %{
+              "role" => "model",
+              "parts" => [%{"text" => "Grounded response."}]
+            },
+            "finishReason" => "STOP",
+            "index" => 0,
+            "groundingMetadata" => %{
+              "groundingChunks" => [
+                %{"web" => %{"uri" => "https://example.com", "title" => "Example"}}
+              ],
+              "groundingSupports" => [
+                %{
+                  "segment" => %{
+                    "startIndex" => 0,
+                    "endIndex" => 19,
+                    "text" => "Grounded response."
+                  },
+                  "groundingChunkIndices" => [0],
+                  "confidenceScores" => [0.88]
+                }
+              ]
+            }
+          }
+        ]
+      }
+
+      assert [%MessageDelta{} = delta] =
+               ChatGoogleAI.do_process_response(model, response, MessageDelta)
+
+      assert %ContentPart{} = part = delta.content
+      assert part.content == "Grounded response."
+      assert [%Citation{} = citation] = part.citations
+      assert citation.source.type == :web
+      assert citation.source.url == "https://example.com"
+      assert citation.confidence == 0.88
+    end
+
+    test "streaming delta without grounding metadata has no citations", %{model: model} do
+      response = %{
+        "candidates" => [
+          %{
+            "content" => %{
+              "role" => "model",
+              "parts" => [%{"text" => "Simple response."}]
+            },
+            "finishReason" => "STOP",
+            "index" => 0
+          }
+        ]
+      }
+
+      assert [%MessageDelta{} = delta] =
+               ChatGoogleAI.do_process_response(model, response, MessageDelta)
+
+      assert delta.content.citations == []
+    end
+
+    test "uses Message.all_citations/1 to collect citations across parts", %{model: model} do
+      response = %{
+        "candidates" => [
+          %{
+            "content" => %{
+              "role" => "model",
+              "parts" => [
+                %{"text" => "Part one."},
+                %{"text" => "Part two."}
+              ]
+            },
+            "finishReason" => "STOP",
+            "index" => 0,
+            "groundingMetadata" => %{
+              "groundingChunks" => [
+                %{"web" => %{"uri" => "https://a.com", "title" => "A"}},
+                %{"web" => %{"uri" => "https://b.com", "title" => "B"}}
+              ],
+              "groundingSupports" => [
+                %{
+                  "segment" => %{
+                    "partIndex" => 0,
+                    "startIndex" => 0,
+                    "endIndex" => 9,
+                    "text" => "Part one."
+                  },
+                  "groundingChunkIndices" => [0]
+                },
+                %{
+                  "segment" => %{
+                    "partIndex" => 1,
+                    "startIndex" => 0,
+                    "endIndex" => 9,
+                    "text" => "Part two."
+                  },
+                  "groundingChunkIndices" => [1]
+                }
+              ]
+            }
+          }
+        ]
+      }
+
+      assert [%Message{} = msg] = ChatGoogleAI.do_process_response(model, response)
+
+      all_citations = Message.all_citations(msg)
+      assert length(all_citations) == 2
+      assert Enum.any?(all_citations, &(&1.source.title == "A"))
+      assert Enum.any?(all_citations, &(&1.source.title == "B"))
+
+      urls = Citation.source_urls(all_citations)
+      assert "https://a.com" in urls
+      assert "https://b.com" in urls
+    end
+
+    test "handles confidence scores absent from response", %{model: model} do
+      response = %{
+        "candidates" => [
+          %{
+            "content" => %{
+              "role" => "model",
+              "parts" => [%{"text" => "No confidence."}]
+            },
+            "finishReason" => "STOP",
+            "index" => 0,
+            "groundingMetadata" => %{
+              "groundingChunks" => [
+                %{"web" => %{"uri" => "https://example.com", "title" => "Example"}}
+              ],
+              "groundingSupports" => [
+                %{
+                  "segment" => %{
+                    "startIndex" => 0,
+                    "endIndex" => 14,
+                    "text" => "No confidence."
+                  },
+                  "groundingChunkIndices" => [0]
+                }
+              ]
+            }
+          }
+        ]
+      }
+
+      assert [%Message{} = msg] = ChatGoogleAI.do_process_response(model, response)
+      assert [%Citation{confidence: nil}] = hd(msg.content).citations
+    end
+  end
+
   describe "google_search native tool" do
     @tag live_call: true, live_google_ai: true
-    test "should include grounding metadata in response" do
+    test "should include grounding metadata and citations in response" do
       alias LangChain.Chains.LLMChain
       alias LangChain.Message
       alias LangChain.NativeTool
@@ -957,9 +1558,20 @@ defmodule ChatModels.ChatGoogleAITest do
         |> LLMChain.add_tools(NativeTool.new!(%{name: "google_search", configuration: %{}}))
         |> LLMChain.run()
 
-      assert %Message{} = updated_chain.last_message
-      assert updated_chain.last_message.role == :assistant
-      assert Map.has_key?(updated_chain.last_message.metadata, "groundingChunks")
+      assert %Message{} = msg = updated_chain.last_message
+      assert msg.role == :assistant
+      # Raw grounding metadata is preserved under the new key
+      assert Map.has_key?(msg.metadata, "grounding_metadata")
+
+      # Citations should be parsed onto ContentParts
+      all_citations = Message.all_citations(msg)
+      assert length(all_citations) > 0
+
+      # All citations should be web type from Google Search
+      Enum.each(all_citations, fn citation ->
+        assert citation.source.type == :web
+        assert citation.source.url != nil
+      end)
     end
   end
 
@@ -1055,6 +1667,269 @@ defmodule ChatModels.ChatGoogleAITest do
 
       refute inspect(changeset) =~ "1234567890"
       assert inspect(changeset) =~ "**redacted**"
+    end
+  end
+
+  describe "API error handling" do
+    test "non-streaming 404 returns structured error with type" do
+      error_body = %{
+        "error" => %{
+          "code" => 404,
+          "message" =>
+            "models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.",
+          "status" => "NOT_FOUND"
+        }
+      }
+
+      expect(Req, :post, fn _req ->
+        {:ok,
+         %Req.Response{
+           status: 404,
+           headers: %{},
+           body: error_body
+         }}
+      end)
+
+      model = ChatGoogleAI.new!(%{stream: false, model: "gemini-1.5-flash"})
+
+      assert {:error, %LangChainError{} = error} =
+               ChatGoogleAI.call(model, [Message.new_user!("Hello")])
+
+      assert error.type == "not_found"
+      assert error.message =~ "models/gemini-1.5-flash is not found"
+      assert %Req.Response{status: 404} = error.original
+
+      # Should NOT be retried
+      refute ChatGoogleAI.retry_on_fallback?(error)
+    end
+
+    test "non-streaming 429 quota exceeded returns structured error with type" do
+      error_body = %{
+        "error" => %{
+          "code" => 429,
+          "message" =>
+            "You exceeded your current quota, please check your plan and billing details.",
+          "status" => "RESOURCE_EXHAUSTED"
+        }
+      }
+
+      expect(Req, :post, fn _req ->
+        {:ok,
+         %Req.Response{
+           status: 429,
+           headers: %{},
+           body: error_body
+         }}
+      end)
+
+      model = ChatGoogleAI.new!(%{stream: false, model: "gemini-2.5-pro"})
+
+      assert {:error, %LangChainError{} = error} =
+               ChatGoogleAI.call(model, [Message.new_user!("Hello")])
+
+      assert error.type == "resource_exhausted"
+      assert error.message =~ "You exceeded your current quota"
+
+      # Should NOT be retried - quota exceeded is not a transient error
+      refute ChatGoogleAI.retry_on_fallback?(error)
+    end
+
+    test "streaming 404 returns structured error" do
+      # When streaming, the handle_stream_fn processes error chunks and puts
+      # the result of do_process_response into the body. For a 404, the body
+      # would be {:error, %LangChainError{}} from do_process_response.
+      expect(Req, :post, fn _req, _opts ->
+        {:ok,
+         %Req.Response{
+           status: 404,
+           headers: %{},
+           body:
+             {:error,
+              LangChainError.exception(
+                type: "not_found",
+                message: "models/gemini-1.5-flash is not found for API version v1beta.",
+                original: %{
+                  "error" => %{
+                    "code" => 404,
+                    "message" => "models/gemini-1.5-flash is not found for API version v1beta.",
+                    "status" => "NOT_FOUND"
+                  }
+                }
+              )}
+         }}
+      end)
+
+      model = ChatGoogleAI.new!(%{stream: true, model: "gemini-1.5-flash"})
+
+      assert {:error, %LangChainError{} = error} =
+               ChatGoogleAI.call(model, [Message.new_user!("Hello")])
+
+      assert error.type == "not_found"
+      assert error.message =~ "not found"
+    end
+
+    test "streaming 429 quota exceeded returns structured error" do
+      # Simulates what happens after handle_stream_fn processes the 429 error
+      expect(Req, :post, fn _req, _opts ->
+        {:ok,
+         %Req.Response{
+           status: 429,
+           headers: %{},
+           body:
+             {:error,
+              LangChainError.exception(
+                type: "resource_exhausted",
+                message:
+                  "You exceeded your current quota, please check your plan and billing details.",
+                original: %{
+                  "error" => %{
+                    "code" => 429,
+                    "message" =>
+                      "You exceeded your current quota, please check your plan and billing details.",
+                    "status" => "RESOURCE_EXHAUSTED"
+                  }
+                }
+              )}
+         }}
+      end)
+
+      model = ChatGoogleAI.new!(%{stream: true, model: "gemini-2.5-pro"})
+
+      assert {:error, %LangChainError{} = error} =
+               ChatGoogleAI.call(model, [Message.new_user!("Hello")])
+
+      assert error.type == "resource_exhausted"
+      assert error.message =~ "You exceeded your current quota"
+
+      # Should NOT be retried
+      refute ChatGoogleAI.retry_on_fallback?(error)
+    end
+
+    test "streaming error buffer handles chunked error JSON" do
+      # Test the utils.ex buffering directly - when error JSON spans multiple chunks,
+      # the handler should buffer and decode on the second chunk
+      model_struct = %{verbose_api: false}
+
+      transform_fn = fn data ->
+        ChatGoogleAI.do_process_response(
+          ChatGoogleAI.new!(%{stream: true}),
+          data,
+          MessageDelta
+        )
+      end
+
+      handler_fn =
+        LangChain.Utils.handle_stream_fn(
+          model_struct,
+          &LangChain.ChatModels.ChatOpenAI.decode_stream/1,
+          transform_fn
+        )
+
+      full_json =
+        Jason.encode!(%{
+          "error" => %{
+            "code" => 429,
+            "message" => "You exceeded your current quota",
+            "status" => "RESOURCE_EXHAUSTED"
+          }
+        })
+
+      chunk1 = String.slice(full_json, 0, 30)
+      chunk2 = String.slice(full_json, 30..-1//1)
+
+      response = %Req.Response{status: 429, headers: %{}, body: ""}
+
+      # First chunk - incomplete JSON, should buffer and continue
+      assert {:cont, {req1, response1}} =
+               handler_fn.({:data, chunk1}, {Req.Request.new(), response})
+
+      # Verify data was buffered
+      assert Req.Response.get_private(response1, :error_buffer) == chunk1
+
+      # Second chunk - completes the JSON, should halt with parsed error
+      assert {:halt, {_req2, response2}} =
+               handler_fn.({:data, chunk2}, {req1, response1})
+
+      assert {:error, %LangChainError{} = error} = response2.body
+      assert error.type == "resource_exhausted"
+      assert error.message =~ "exceeded"
+    end
+
+    test "streaming error with unbuffered body falls back to error buffer extraction" do
+      # When the stream ends but body wasn't set (e.g. error buffer wasn't decoded
+      # by the handler), the do_api_request should try to extract from the buffer
+      error_json =
+        Jason.encode!(%{
+          "error" => %{
+            "code" => 429,
+            "message" => "Quota exceeded",
+            "status" => "RESOURCE_EXHAUSTED"
+          }
+        })
+
+      expect(Req, :post, fn _req, _opts ->
+        response = %Req.Response{
+          status: 429,
+          headers: %{},
+          body: ""
+        }
+
+        # Simulate a response where the buffer has data but it wasn't decoded
+        response = Req.Response.put_private(response, :error_buffer, error_json)
+        {:ok, response}
+      end)
+
+      model = ChatGoogleAI.new!(%{stream: true, model: "gemini-2.5-pro"})
+
+      assert {:error, %LangChainError{} = error} =
+               ChatGoogleAI.call(model, [Message.new_user!("Hello")])
+
+      assert error.type == "resource_exhausted"
+      assert error.message == "Quota exceeded"
+    end
+
+    test "do_process_response extracts error type from Google NOT_FOUND error", %{model: model} do
+      response = %{
+        "error" => %{
+          "code" => 404,
+          "message" => "models/gemini-1.5-flash is not found",
+          "status" => "NOT_FOUND"
+        }
+      }
+
+      assert {:error, %LangChainError{} = error} =
+               ChatGoogleAI.do_process_response(model, response)
+
+      assert error.type == "not_found"
+      assert error.message =~ "not found"
+    end
+
+    test "do_process_response extracts error type from Google RESOURCE_EXHAUSTED error", %{
+      model: model
+    } do
+      response = %{
+        "error" => %{
+          "code" => 429,
+          "message" => "You exceeded your current quota",
+          "status" => "RESOURCE_EXHAUSTED"
+        }
+      }
+
+      assert {:error, %LangChainError{} = error} =
+               ChatGoogleAI.do_process_response(model, response)
+
+      assert error.type == "resource_exhausted"
+      assert error.message =~ "exceeded"
+    end
+
+    test "retry_on_fallback? returns false for not_found errors" do
+      error = LangChainError.exception(type: "not_found", message: "Not found")
+      refute ChatGoogleAI.retry_on_fallback?(error)
+    end
+
+    test "retry_on_fallback? returns false for resource_exhausted errors" do
+      error = LangChainError.exception(type: "resource_exhausted", message: "Quota exceeded")
+      refute ChatGoogleAI.retry_on_fallback?(error)
     end
   end
 end

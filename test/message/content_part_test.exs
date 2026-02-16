@@ -2,6 +2,7 @@ defmodule LangChain.Message.ContentPartTest do
   use ExUnit.Case
   doctest LangChain.Message.ContentPart, import: true
   alias LangChain.Message.ContentPart
+  alias LangChain.Message.Citation
 
   describe "new/1" do
     test "accepts valid settings" do
@@ -151,6 +152,66 @@ defmodule LangChain.Message.ContentPartTest do
       assert merged.type == :thinking
       assert merged.content == "I'm thinking about how lovely"
       assert merged.options == [signature: "woofwoofwoofbowwowwow"]
+    end
+
+    test "appends citations from new part to existing" do
+      citation1 =
+        Citation.new!(%{cited_text: "first", source: %{type: :web, url: "https://a.com"}})
+
+      citation2 =
+        Citation.new!(%{cited_text: "second", source: %{type: :web, url: "https://b.com"}})
+
+      %ContentPart{} = base_1 = ContentPart.text!("Hello")
+      part_1 = %ContentPart{base_1 | citations: [citation1]}
+      %ContentPart{} = base_2 = ContentPart.text!(" world")
+      part_2 = %ContentPart{base_2 | citations: [citation2]}
+
+      merged = ContentPart.merge_part(part_1, part_2)
+      assert merged.content == "Hello world"
+      assert [%Citation{cited_text: "first"}, %Citation{cited_text: "second"}] = merged.citations
+    end
+
+    test "handles nil citations on primary when merging" do
+      citation = Citation.new!(%{cited_text: "text", source: %{type: :web}})
+      %ContentPart{} = base_1 = ContentPart.text!("Hello")
+      part_1 = %ContentPart{base_1 | citations: nil}
+      %ContentPart{} = base_2 = ContentPart.text!(" world")
+      part_2 = %ContentPart{base_2 | citations: [citation]}
+
+      merged = ContentPart.merge_part(part_1, part_2)
+      assert [%Citation{}] = merged.citations
+    end
+
+    test "handles empty citations gracefully" do
+      part_1 = ContentPart.text!("Hello")
+      part_2 = ContentPart.text!(" world")
+
+      merged = ContentPart.merge_part(part_1, part_2)
+      assert merged.citations == []
+    end
+
+    test "merges citation-only delta (nil content) with text part" do
+      citation =
+        Citation.new!(%{cited_text: "cited", source: %{type: :document, document_id: "0"}})
+
+      part_1 = ContentPart.text!("Some text")
+      part_2 = %ContentPart{type: :text, content: nil, citations: [citation]}
+
+      merged = ContentPart.merge_part(part_1, part_2)
+      assert merged.content == "Some text"
+      assert [%Citation{cited_text: "cited"}] = merged.citations
+    end
+
+    test "merges text delta into citation-only part (nil content primary)" do
+      citation =
+        Citation.new!(%{cited_text: "cited", source: %{type: :document, document_id: "0"}})
+
+      part_1 = %ContentPart{type: :text, content: nil, citations: [citation]}
+      part_2 = ContentPart.text!("Apollo 11")
+
+      merged = ContentPart.merge_part(part_1, part_2)
+      assert merged.content == "Apollo 11"
+      assert [%Citation{cited_text: "cited"}] = merged.citations
     end
 
     test "merges a redacted thinking content" do
@@ -329,6 +390,45 @@ defmodule LangChain.Message.ContentPartTest do
       # Test with string value
       updated_parts = ContentPart.set_option_on_last_part(parts, :filename, "test.pdf")
       assert List.first(updated_parts).options == [filename: "test.pdf"]
+    end
+  end
+
+  describe "citations/1" do
+    test "returns empty list by default" do
+      part = ContentPart.text!("Hello")
+      assert ContentPart.citations(part) == []
+    end
+
+    test "returns citations when present" do
+      citation = Citation.new!(%{cited_text: "text", source: %{type: :web}})
+      %ContentPart{} = base = ContentPart.text!("Hello")
+      part = %ContentPart{base | citations: [citation]}
+      assert ContentPart.citations(part) == [citation]
+    end
+
+    test "returns empty list when citations is nil" do
+      %ContentPart{} = base = ContentPart.text!("Hello")
+      part = %ContentPart{base | citations: nil}
+      assert ContentPart.citations(part) == []
+    end
+  end
+
+  describe "has_citations?/1" do
+    test "returns false for empty citations" do
+      refute ContentPart.has_citations?(ContentPart.text!("Hello"))
+    end
+
+    test "returns true when citations are present" do
+      citation = Citation.new!(%{cited_text: "text", source: %{type: :web}})
+      %ContentPart{} = base = ContentPart.text!("Hello")
+      part = %ContentPart{base | citations: [citation]}
+      assert ContentPart.has_citations?(part)
+    end
+
+    test "returns false when citations is nil" do
+      %ContentPart{} = base = ContentPart.text!("Hello")
+      part = %ContentPart{base | citations: nil}
+      refute ContentPart.has_citations?(part)
     end
   end
 end
