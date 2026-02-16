@@ -661,15 +661,16 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
               raise LangChainError, message
           end
 
-    detail_option = Keyword.get(part.options, :detail, nil)
-    file_id = Keyword.get(part.options, :file_id, nil)
+        detail_option = Keyword.get(part.options, :detail, nil)
+        file_id = Keyword.get(part.options, :file_id, nil)
 
-    %{
-      "type" => "input_image",
-      "image_url" => media_prefix <> part.content
-    }
-    |> Utils.conditionally_add_to_map("detail", detail_option)
-    |> Utils.conditionally_add_to_map("file_id", file_id)
+        %{
+          "type" => "input_image",
+          "image_url" => media_prefix <> part.content
+        }
+        |> Utils.conditionally_add_to_map("detail", detail_option)
+        |> Utils.conditionally_add_to_map("file_id", file_id)
+      end
   end
 
   def content_part_for_api(%ChatOpenAIResponses{} = _model, %ContentPart{
