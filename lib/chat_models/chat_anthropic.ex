@@ -780,6 +780,14 @@ defmodule LangChain.ChatModels.ChatAnthropic do
             result
         end
 
+      {:ok, %Req.Response{status: 401} = error} ->
+        {:error,
+         LangChainError.exception(
+           type: "authentication_error",
+           message: "Authentication Error",
+           original: error
+         )}
+
       {:ok, %Req.Response{status: 429} = response} ->
         rate_limit_info = get_ratelimit_info(response.headers)
 
