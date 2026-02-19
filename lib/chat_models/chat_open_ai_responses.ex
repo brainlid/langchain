@@ -237,6 +237,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     # This can be a string or object. We will need to allow ["none", "auto", "required", "file_search", "web_search_preview", and "computer_use_preview"] and take any other string and turn it to %{name: value, type: "function"}
     field :tool_choice, :any, default: nil, virtual: true
     field :top_p, :float, default: 1.0
+    field :top_logprobs, :integer
     field :truncation, :string
     field :user, :string
 
@@ -268,6 +269,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     :json_schema_name,
     :tool_choice,
     :top_p,
+    :top_logprobs,
     :truncation,
     :user,
     :verbose_api,
@@ -322,6 +324,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     |> validate_required(@required_fields)
     |> validate_number(:temperature, greater_than_or_equal_to: 0, less_than_or_equal_to: 2)
     |> validate_number(:top_p, greater_than_or_equal_to: 0, less_than_or_equal_to: 1)
+    |> validate_number(:top_logprobs, greater_than_or_equal_to: 0, less_than_or_equal_to: 20)
     |> validate_number(:receive_timeout, greater_than_or_equal_to: 0)
   end
 
@@ -349,7 +352,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         end)
         |> Enum.reverse()
     }
-    |> Utils.conditionally_add_to_map(:include, openai.include)
+    |> Utils.conditionally_add_to_map(:include, get_include(openai))
     |> Utils.conditionally_add_to_map(:max_output_tokens, openai.max_output_tokens)
     |> Utils.conditionally_add_to_map(:previous_response_id, openai.previous_response_id)
     |> Utils.conditionally_add_to_map(:reasoning, ReasoningOptions.to_api_map(openai.reasoning))
@@ -359,6 +362,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(openai, tools))
     |> Utils.conditionally_add_to_map(:user, openai.user)
     |> Utils.conditionally_add_to_map(:temperature, openai.temperature)
+    |> Utils.conditionally_add_to_map(:top_logprobs, openai.top_logprobs)
     |> maybe_add_top_p(openai)
   end
 
@@ -436,6 +440,13 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
 
   defp get_tool_choice(%ChatOpenAIResponses{}), do: nil
 
+  defp get_include(%ChatOpenAIResponses{top_logprobs: top_logprobs, include: include})
+       when is_integer(top_logprobs) and top_logprobs > 0 do
+    include ++ ["message.output_text.logprobs"]
+  end
+
+  defp get_include(%ChatOpenAIResponses{include: include}), do: include
+
   @spec for_api(
           struct(),
           Message.t()
@@ -492,6 +503,17 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     Enum.map(tool_results, &for_api(model, &1))
   end
 
+  # Reasoning content should be included back:
+  # https://platform.openai.com/docs/api-reference/responses/object#responses-object-output-reasoning
+  def for_api(
+        %ChatOpenAIResponses{} = model,
+        %Message{role: :assistant, content: [%{type: :thinking}] = content} = msg
+      ) do
+    native_tool_calls_for_api(model, content) ++
+      content_parts_for_api(model, content) ++
+      Enum.map(msg.tool_calls || [], &for_api(model, &1))
+  end
+
   # Native tool calls (such as web_search_call) need to get plucked
   # out of the content parts and become their own input items.
   def for_api(
@@ -502,7 +524,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     native_tool_calls_for_api(model, content) ++
       [
         %{
-          "role" => "user",
+          "role" => "assistant",
           "type" => "message",
           "content" => content_parts_for_api(model, content)
         }
@@ -535,9 +557,9 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
       "arguments" => Jason.encode!(fun.arguments),
       "call_id" => fun.call_id,
       "name" => fun.name,
-      "type" => "function_call"
+      "type" => "function_call",
+      "status" => nil
     }
-    |> Utils.conditionally_add_to_map("status", "completed")
   end
 
   def for_api(%ChatOpenAIResponses{} = _model, %PromptTemplate{} = _template) do
@@ -639,20 +661,31 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
               raise LangChainError, message
           end
 
+        detail_option = Keyword.get(part.options, :detail, nil)
+        file_id = Keyword.get(part.options, :file_id, nil)
+
         %{
           "type" => "input_image",
           "image_url" => media_prefix <> part.content
         }
+        |> Utils.conditionally_add_to_map("detail", detail_option)
+        |> Utils.conditionally_add_to_map("file_id", file_id)
       end
-
-    detail_option = Keyword.get(part.options, :detail, nil)
-
-    Utils.conditionally_add_to_map(output, "detail", detail_option)
   end
 
-  # Thinking content parts are output-only and should be omitted when sending to the API
-  def content_part_for_api(%ChatOpenAIResponses{} = _model, %ContentPart{type: :thinking}),
-    do: nil
+  def content_part_for_api(%ChatOpenAIResponses{} = _model, %ContentPart{
+        type: :thinking,
+        options: %{type: "reasoning"} = opts
+      }) do
+    %{
+      id: opts.id,
+      type: "reasoning",
+      content: opts[:content],
+      encrypted_content: opts[:encrypted_content],
+      status: opts[:status],
+      summary: opts.summary
+    }
+  end
 
   # Ignore unknown, unsupported content parts
   def content_part_for_api(%ChatOpenAIResponses{} = _model, %ContentPart{type: :unsupported}),
@@ -1285,6 +1318,10 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     "response.reasoning_summary_part.done",
     "response.reasoning_summary_text.delta",
     "response.reasoning_summary_text.done",
+    "response.reasoning_part.added",
+    "response.reasoning_text.delta",
+    "response.reasoning_text.done",
+    "response.reasoning_part.done",
     "response.image_generation_call.completed",
     "response.image_generation_call.generating",
     "response.image_generation_call.in_progress",
@@ -1486,8 +1523,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     end
   end
 
-  # Handle reasoning output from gpt-5 and o-series models
-  # We can either ignore it or store it as metadata
+  # Reasoning content part conversion
   defp content_item_to_content_part_or_tool_call(%{
          "type" => "reasoning",
          "id" => reasoning_id,
@@ -1499,6 +1535,49 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
            type: :unsupported,
            options: %{
              id: reasoning_id,
+             summary: summary,
+             type: "reasoning"
+           }
+         }) do
+      {:ok, %ContentPart{} = part} ->
+        part
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        reason = Utils.changeset_error_to_string(changeset)
+        Logger.warning("Failed to process reasoning output. Reason: #{reason}")
+        # Return a minimal content part to avoid breaking the flow
+        ContentPart.text!("")
+    end
+  end
+
+  # Assistant role for LLM messages with thinking content
+  def for_api(
+        %ChatOpenAIResponses{} = model,
+        %Message{role: :assistant, content: [%{type: :thinking}] = content} = msg
+      ) do
+    native_tool_calls_for_api(model, content) ++
+      content_parts_for_api(model, content) ++
+      Enum.map(msg.tool_calls || [], &for_api(model, &1))
+  end
+
+  # Handle reasoning content in response
+  defp content_item_to_content_part_or_tool_call(%{
+         "type" => "reasoning",
+         "id" => reasoning_id,
+         "content" => content,
+         "encrypted_content" => encrypted_content,
+         "status" => status,
+         "summary" => summary
+       }) do
+    # Store reasoning as a thinking content part for now
+    # This preserves the information and surfaces it with no message wrapping
+    case ContentPart.new(%{
+           type: :thinking,
+           options: %{
+             id: reasoning_id,
+             content: content,
+             encrypted_content: encrypted_content,
+             status: status,
              summary: summary,
              type: "reasoning"
            }

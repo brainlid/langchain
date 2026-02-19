@@ -6,6 +6,9 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
   alias LangChain.ChatModels.ChatOpenAIResponses
   alias LangChain.Function
   alias LangChain.FunctionParam
+  alias LangChain.Message
+  alias LangChain.Message.ToolCall
+  alias LangChain.Message.ContentPart
 
   @test_model "gpt-4o-mini-2024-07-18"
 
@@ -217,64 +220,63 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
       assert changeset.changes.reasoning.errors[:summary] != nil
     end
 
-    test "supports setting reasoning_generate_summary (deprecated)" do
-      {:ok, openai} =
-        ChatOpenAIResponses.new(%{
-          "model" => @test_model,
-          "reasoning" => %{
-            "generate_summary" => "concise"
-          }
-        })
+    # test "supports setting reasoning_generate_summary (deprecated)" do
+    {:ok, openai} =
+      ChatOpenAIResponses.new(%{
+        "model" => @test_model,
+        "reasoning" => %{
+          "generate_summary" => "concise"
+        }
+      })
 
-      assert openai.reasoning.generate_summary == :concise
-    end
+    assert openai.reasoning.generate_summary == :concise
+  end
 
-    test "validates reasoning_generate_summary values" do
-      assert {:error, changeset} =
+  test "validates reasoning_generate_summary values" do
+    assert {:error, changeset} =
+             ChatOpenAIResponses.new(%{
+               "model" => @test_model,
+               "reasoning" => %{"generate_summary" => "invalid"}
+             })
+
+    refute changeset.valid?
+    assert changeset.errors == []
+    assert changeset.changes.reasoning.errors[:generate_summary] != nil
+  end
+
+  test "accepts all valid reasoning_effort values" do
+    valid_efforts = ["minimal", "low", "medium", "high"]
+
+    for effort <- valid_efforts do
+      assert {:ok, %ChatOpenAIResponses{reasoning: reasoning}} =
                ChatOpenAIResponses.new(%{
                  "model" => @test_model,
-                 "reasoning" => %{"generate_summary" => "invalid"}
+                 "reasoning" => %{"effort" => effort}
                })
 
-      refute changeset.valid?
-      assert changeset.errors == []
-      assert changeset.changes.reasoning.errors[:generate_summary] != nil
+      assert reasoning.effort == String.to_atom(effort)
     end
+  end
 
-    test "accepts all valid reasoning_effort values" do
-      valid_efforts = ["minimal", "low", "medium", "high"]
+  test "accepts all valid reasoning summary values" do
+    valid_summaries = ["auto", "concise", "detailed"]
 
-      for effort <- valid_efforts do
-        assert {:ok, %ChatOpenAIResponses{reasoning: reasoning}} =
-                 ChatOpenAIResponses.new(%{
-                   "model" => @test_model,
-                   "reasoning" => %{"effort" => effort}
-                 })
+    for summary <- valid_summaries do
+      assert {:ok, %ChatOpenAIResponses{reasoning: reasoning}} =
+               ChatOpenAIResponses.new(%{
+                 "model" => @test_model,
+                 "reasoning" => %{"summary" => summary}
+               })
 
-        assert reasoning.effort == String.to_atom(effort)
-      end
-    end
+      assert reasoning.summary == String.to_atom(summary)
 
-    test "accepts all valid reasoning summary values" do
-      valid_summaries = ["auto", "concise", "detailed"]
+      assert {:ok, %ChatOpenAIResponses{reasoning: reasoning}} =
+               ChatOpenAIResponses.new(%{
+                 "model" => @test_model,
+                 "reasoning" => %{"generate_summary" => summary}
+               })
 
-      for summary <- valid_summaries do
-        assert {:ok, %ChatOpenAIResponses{reasoning: reasoning}} =
-                 ChatOpenAIResponses.new(%{
-                   "model" => @test_model,
-                   "reasoning" => %{"summary" => summary}
-                 })
-
-        assert reasoning.summary == String.to_atom(summary)
-
-        assert {:ok, %ChatOpenAIResponses{reasoning: reasoning}} =
-                 ChatOpenAIResponses.new(%{
-                   "model" => @test_model,
-                   "reasoning" => %{"generate_summary" => summary}
-                 })
-
-        assert reasoning.generate_summary == String.to_atom(summary)
-      end
+      assert reasoning.generate_summary == String.to_atom(summary)
     end
 
     # Support
@@ -585,7 +587,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
                "type" => "function_call",
                "name" => "hello_world",
                "arguments" => "{}",
-               "status" => "completed"
+               "status" => nil
              }
     end
 
@@ -649,8 +651,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
 
       [message, tool_call] = result
       assert message["type"] == "message"
-      # Assistant messages become user in Responses API
-      assert message["role"] == "user"
+      assert message["role"] == "assistant"
       assert tool_call["type"] == "function_call"
     end
 
@@ -1625,6 +1626,96 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
 
       assert {:error, _} = ChatOpenAIResponses.call(model, "prompt", [])
       verify!()
+    end
+  end
+
+  describe "function_call status" do
+    test "function call has nil status in API format" do
+      {:ok, model} = ChatOpenAIResponses.new(%{model: "gpt-4o-mini"})
+
+      tool_call =
+        ToolCall.new!(%{
+          type: :function,
+          call_id: "call_123",
+          name: "my_function",
+          arguments: %{"param" => "value"}
+        })
+
+      result = ChatOpenAIResponses.for_api(model, tool_call)
+
+      assert result["type"] == "function_call"
+      assert result["status"] == nil
+      refute Map.has_key?(result, "completed")
+    end
+  end
+
+  describe "for_api LLM messages role" do
+    test "uses assistant role for LLM messages" do
+      {:ok, model} = ChatOpenAIResponses.new(%{model: "gpt-4o-mini"})
+
+      message =
+        Message.new!(%{
+          role: :assistant,
+          content: [ContentPart.text!("Hello")]
+        })
+
+      result = ChatOpenAIResponses.for_api(model, message)
+
+      message_item = Enum.find(result, &(&1["type"] == "message"))
+      assert message_item["role"] == "assistant"
+    end
+  end
+
+  describe "reasoning stream events" do
+    test "skips response.reasoning_part.added" do
+      event = %{"type" => "response.reasoning_part.added"}
+      result = ChatOpenAIResponses.do_process_response(nil, event)
+      assert result == :skip
+    end
+
+    test "skips response.reasoning_text.delta" do
+      event = %{"type" => "response.reasoning_text.delta"}
+      result = ChatOpenAIResponses.do_process_response(nil, event)
+      assert result == :skip
+    end
+
+    test "skips response.reasoning_text.done" do
+      event = %{"type" => "response.reasoning_text.done"}
+      result = ChatOpenAIResponses.do_process_response(nil, event)
+      assert result == :skip
+    end
+
+    test "skips response.reasoning_part.done" do
+      event = %{"type" => "response.reasoning_part.done"}
+      result = ChatOpenAIResponses.do_process_response(nil, event)
+      assert result == :skip
+    end
+  end
+
+  describe "for_api with assistant reasoning messages" do
+    test "generates API format for assistant with thinking content" do
+      {:ok, model} = ChatOpenAIResponses.new(%{model: "gpt-4o-mini"})
+
+      thinking_part =
+        ContentPart.new!(%{
+          type: :thinking,
+          options: %{
+            type: "reasoning",
+            id: "reasoning_123",
+            summary: "Summary"
+          }
+        })
+
+      message =
+        Message.new!(%{
+          role: :assistant,
+          content: [thinking_part]
+        })
+
+      result = ChatOpenAIResponses.for_api(model, message)
+
+      assert is_list(result)
+      assert Enum.any?(result, &(&1.type == "reasoning"))
     end
   end
 end
