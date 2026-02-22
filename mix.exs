@@ -2,7 +2,7 @@ defmodule LangChain.MixProject do
   use Mix.Project
 
   @source_url "https://github.com/brainlid/langchain"
-  @version "0.5.2"
+  @version "0.6.0"
 
   def project do
     [
@@ -99,6 +99,14 @@ defmodule LangChain.MixProject do
           LangChain.Chains.TextToTitleChain,
           LangChain.Chains.SummarizeConversationChain,
           LangChain.Chains.DataExtractionChain
+        ],
+        "Run Modes": [
+          LangChain.Chains.LLMChain.Mode,
+          LangChain.Chains.LLMChain.Mode.Steps,
+          LangChain.Chains.LLMChain.Modes.WhileNeedsResponse,
+          LangChain.Chains.LLMChain.Modes.UntilSuccess,
+          LangChain.Chains.LLMChain.Modes.Step,
+          LangChain.Chains.LLMChain.Modes.UntilToolUsed
         ],
         Messages: [
           LangChain.Message,

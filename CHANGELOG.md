@@ -1,62 +1,24 @@
 # Changelog
 
-## Unreleased
+## v0.6.0
 
 ### Breaking Changes
 
 - **DeepResearch `ResearchResult.Source` removed**: The inline `Source` embedded schema in `ResearchResult` has been replaced with the unified `Citation`/`CitationSource` structs. See migration steps below.
+- **Perplexity response format**: Response content is now returned as a list of `ContentPart` structs (consistent with other providers) rather than a plain string.
+- **Google AI `groundingMetadata` restructured**: Raw grounding metadata has moved from top-level keys in `message.metadata` to `message.metadata["grounding_metadata"]`.
 
-### Enhancements
-
-- **Citation Support - Core Structs**: Added unified citation abstraction shared across all providers
-  - New `LangChain.Message.Citation` struct with `cited_text`, `source`, `start_index`, `end_index`, `confidence`, and `metadata` fields
-  - New `LangChain.Message.CitationSource` struct with `type` (`:web`, `:document`, `:place`), `title`, `url`, `document_id`, and `metadata` fields
-  - `ContentPart` gains a `citations` field (virtual, defaults to `[]`) with merging support during streaming delta accumulation
-  - Helper functions: `ContentPart.citations/1`, `ContentPart.has_citations?/1`, `Message.all_citations/1`
-
-- **Citation Support - Anthropic**: Added citation parsing for Anthropic responses
-  - Non-streaming responses: Text blocks with `citations` arrays are parsed into `Citation` structs on `ContentPart`
-  - Streaming responses: `citations_delta` events are handled and accumulated during delta merging
-  - API round-trip: Citations on `ContentPart` are serialized back to Anthropic format via `content_part_for_api/1`
-  - All three Anthropic citation types supported: `char_location`, `page_location`, `content_block_location`
-
-- **Citation Support - OpenAI Responses API**: Added annotation parsing for OpenAI Responses API
-  - Non-streaming responses: `annotations` arrays on `output_text` items are parsed into `Citation` structs
-  - Streaming responses: `response.output_text.annotation.added` events are now handled (previously skipped)
-  - Both `url_citation` and `file_citation` annotation types supported
-  - **CAUTION:** Not yet verified against a live OpenAI API call
-
-- **Citation Support - Google AI**: Added grounding metadata parsing for Google AI (Gemini)
-  - `groundingMetadata` on candidates is decomposed into `Citation` structs attached to the appropriate `ContentPart` by `partIndex`
-  - Each `groundingSupport × groundingChunk` pair becomes an individual `Citation` with confidence score
-  - Raw grounding metadata preserved in `message.metadata["grounding_metadata"]`
-  - `searchEntryPoint` HTML stored in `message.metadata["search_entry_point"]`
-  - Streaming responses also supported via `attach_grounding_citations_to_part/3`
-
-- **Citation Support - Perplexity**: Added citation parsing for Perplexity responses
-  - Top-level `citations` URLs and `search_results` arrays are parsed into `Citation` structs
-  - `[N]` inline reference markers in text are matched to citation sources with positional offsets
-  - Streaming: Citation-only deltas are emitted alongside content deltas and merged during accumulation
-  - Non-streaming: Citations are attached to the first text `ContentPart`
-
-- **Citation Support - DeepResearch Migration**: Migrated `ResearchResult` to use unified `Citation`/`CitationSource` structs
-  - `ResearchResult.sources` now contains `Citation` structs instead of `ResearchResult.Source` structs
-  - Source fields mapped to Citation format: `snippet` → `cited_text`, `title`/`url` nested under `citation.source`
-  - All sources tagged with `source.type: :web` and `metadata: %{"provider" => "openai_deep_research"}`
-  - Added public `Citation.changeset/2` for use with Ecto `cast_embed/3`
-  - Not verified against a live Deep Research API call (long-running 5-30 min operation requiring model access)
-
-### Migration
+### Upgrading from v0.5.2 - v0.6.0
 
 **ContentPart `citations` field (all providers)**: `ContentPart` structs returned from any provider may now have a non-empty `citations` field (list of `Citation` structs). Code that pattern-matches on the exact `ContentPart` struct shape should be unaffected since `citations` defaults to `[]`.
 
 **Anthropic round-trip**: Code that sends assistant messages back to the Anthropic API will automatically include citations in the round-trip. No action required.
 
-**Google AI `groundingMetadata`**: Raw grounding metadata has moved from `message.metadata` (top-level keys like `"groundingChunks"`) to `message.metadata["grounding_metadata"]`. Code reading `message.metadata["groundingChunks"]` should update to `message.metadata["grounding_metadata"]["groundingChunks"]`. The structured citations on `ContentPart` are now the canonical representation.
+**Google AI `groundingMetadata`**: Code reading `message.metadata["groundingChunks"]` should update to `message.metadata["grounding_metadata"]["groundingChunks"]`. The structured citations on `ContentPart` are now the canonical representation.
 
 **OpenAI Responses API**: `ContentPart` structs may now include citation data from annotations that were previously discarded. This is purely additive.
 
-**Perplexity**: Response content is now returned as a list of `ContentPart` structs (consistent with other providers) rather than a plain string. Code that expects `message.content` to be a string should update to handle `[%ContentPart{}]`.
+**Perplexity**: Code that expects `message.content` to be a string should update to handle `[%ContentPart{}]`.
 
 **DeepResearch `ResearchResult.Source`**: Code referencing `ResearchResult.Source` must update to use `Citation` and `CitationSource`:
   - `%ResearchResult.Source{title: t, url: u}` → `%Citation{source: %CitationSource{title: t, url: u}}`
@@ -65,6 +27,35 @@
   - `source.snippet` → `citation.cited_text`
   - `source.start_index` → `citation.start_index`
   - `ResearchResult.source_urls/1` now filters out `nil` URLs (previously returned all, including nil)
+
+### Added
+
+- **Citation Support**: Unified citation abstraction shared across all providers https://github.com/brainlid/langchain/pull/461
+  - New `LangChain.Message.Citation` struct with `cited_text`, `source`, `start_index`, `end_index`, `confidence`, and `metadata` fields
+  - New `LangChain.Message.CitationSource` struct with `type` (`:web`, `:document`, `:place`), `title`, `url`, `document_id`, and `metadata` fields
+  - `ContentPart` gains a `citations` field (virtual, defaults to `[]`) with merging support during streaming delta accumulation
+  - Helper functions: `ContentPart.citations/1`, `ContentPart.has_citations?/1`, `Message.all_citations/1`
+  - **Anthropic**: Non-streaming and streaming citation parsing, API round-trip serialization, all three citation types (`char_location`, `page_location`, `content_block_location`)
+  - **OpenAI Responses API**: Annotation parsing for `url_citation` and `file_citation` types (not yet verified against live API)
+  - **Google AI (Gemini)**: Grounding metadata decomposed into `Citation` structs by `partIndex` with confidence scores
+  - **Perplexity**: `citations` URLs and `search_results` parsed into `Citation` structs with `[N]` inline reference matching
+  - **DeepResearch**: Migrated `ResearchResult` to use `Citation`/`CitationSource`; added `Citation.changeset/2` for Ecto `cast_embed/3`
+- **Customizable Run Modes**: Extracted LLMChain execution modes into discrete, composable modules with a `Mode` behaviour https://github.com/brainlid/langchain/pull/469
+  - Built-in modes: `WhileNeedsResponse`, `UntilSuccess`, `Step`, `UntilToolUsed`
+  - Pipe-friendly API for composing custom modes
+  - Backward compatible with existing `LLMChain.run/2` usage
+- **Streaming Reasoning Callbacks**: Added `on_llm_reasoning_delta` callback for reasoning summary streaming from Azure OpenAI Responses API https://github.com/brainlid/langchain/pull/456
+- **ChatVertexAI**: Added `req_config` option for custom Req configuration https://github.com/brainlid/langchain/pull/457
+
+### Changed
+
+- **Error Handling**: Consistently include `original` error info in "Unexpected response" errors across all providers https://github.com/brainlid/langchain/pull/392
+
+### Fixed
+
+- **ChatAnthropic**: Auth error (HTTP 401) for invalid API keys is now handled gracefully https://github.com/brainlid/langchain/pull/464
+- **ChatAnthropic**: Fixed error handling regression introduced by PR #392, added additional catch for `{:error, thing}` shape and tracking of `original` error info on `LangChainError` https://github.com/brainlid/langchain/pull/462
+- **LLMChain**: Fixed exception handling in `run_message_processors` — exceptions now correctly return 3-tuple expected by `process_message` https://github.com/brainlid/langchain/pull/460
 
 ## v0.5.2
 
