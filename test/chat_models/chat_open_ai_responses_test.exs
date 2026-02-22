@@ -277,6 +277,28 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
       end
     end
 
+    test "accepts valid verbosity values" do
+      for verbosity <- ["low", "medium", "high"] do
+        assert {:ok, %ChatOpenAIResponses{} = openai} =
+                 ChatOpenAIResponses.new(%{"model" => @test_model, "verbosity" => verbosity})
+
+        assert openai.verbosity == verbosity
+      end
+    end
+
+    test "rejects invalid verbosity values" do
+      assert {:error, changeset} =
+               ChatOpenAIResponses.new(%{"model" => @test_model, "verbosity" => "max"})
+
+      refute changeset.valid?
+      assert {"is invalid", _} = changeset.errors[:verbosity]
+    end
+
+    test "verbosity defaults to nil" do
+      {:ok, openai} = ChatOpenAIResponses.new(%{"model" => @test_model})
+      assert openai.verbosity == nil
+    end
+
     # Support
   end
 
@@ -466,6 +488,67 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
 
       data = ChatOpenAIResponses.for_api(openai, [], [])
       assert data.tool_choice == %{"type" => "web_search_preview"}
+    end
+  end
+
+  describe "for_api/3 verbosity" do
+    test "includes verbosity in text map when set" do
+      openai =
+        ChatOpenAIResponses.new!(%{"model" => @test_model, "verbosity" => "low"})
+
+      data = ChatOpenAIResponses.for_api(openai, [], [])
+      assert data.text == %{"verbosity" => "low"}
+    end
+
+    test "combines verbosity with json_response format" do
+      openai =
+        ChatOpenAIResponses.new!(%{
+          "model" => @test_model,
+          "json_response" => true,
+          "verbosity" => "high"
+        })
+
+      data = ChatOpenAIResponses.for_api(openai, [], [])
+
+      assert data.text == %{
+               "format" => %{"type" => "json_object"},
+               "verbosity" => "high"
+             }
+    end
+
+    test "combines verbosity with json_schema format" do
+      json_schema = %{
+        "type" => "object",
+        "properties" => %{"name" => %{"type" => "string"}}
+      }
+
+      openai =
+        ChatOpenAIResponses.new!(%{
+          "model" => @test_model,
+          "json_response" => true,
+          "json_schema" => json_schema,
+          "json_schema_name" => "person",
+          "verbosity" => "medium"
+        })
+
+      data = ChatOpenAIResponses.for_api(openai, [], [])
+
+      assert data.text == %{
+               "format" => %{
+                 "type" => "json_schema",
+                 "name" => "person",
+                 "schema" => json_schema,
+                 "strict" => true
+               },
+               "verbosity" => "medium"
+             }
+    end
+
+    test "omits text key when verbosity is nil and no format" do
+      openai = ChatOpenAIResponses.new!(%{"model" => @test_model})
+
+      data = ChatOpenAIResponses.for_api(openai, [], [])
+      refute Map.has_key?(data, :text)
     end
   end
 

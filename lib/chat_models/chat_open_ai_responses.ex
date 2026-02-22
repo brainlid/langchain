@@ -238,6 +238,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     field :tool_choice, :any, default: nil, virtual: true
     field :top_p, :float, default: 1.0
     field :truncation, :string
+    field :verbosity, :string, default: nil
     field :user, :string
 
     field :callbacks, {:array, :map}, default: []
@@ -269,6 +270,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     :tool_choice,
     :top_p,
     :truncation,
+    :verbosity,
     :user,
     :verbose_api,
     :req_config
@@ -323,6 +325,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     |> validate_number(:temperature, greater_than_or_equal_to: 0, less_than_or_equal_to: 2)
     |> validate_number(:top_p, greater_than_or_equal_to: 0, less_than_or_equal_to: 1)
     |> validate_number(:receive_timeout, greater_than_or_equal_to: 0)
+    |> validate_inclusion(:verbosity, ~w(low medium high))
   end
 
   @doc """
@@ -353,7 +356,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     |> Utils.conditionally_add_to_map(:max_output_tokens, openai.max_output_tokens)
     |> Utils.conditionally_add_to_map(:previous_response_id, openai.previous_response_id)
     |> Utils.conditionally_add_to_map(:reasoning, ReasoningOptions.to_api_map(openai.reasoning))
-    |> Utils.conditionally_add_to_map(:text, set_text_format(openai))
+    |> Utils.conditionally_add_to_map(:text, build_text_param(openai))
     |> Utils.conditionally_add_to_map(:tool_choice, get_tool_choice(openai))
     |> Utils.conditionally_add_to_map(:truncation, openai.truncation)
     |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(openai, tools))
@@ -396,29 +399,38 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     end)
   end
 
-  defp set_text_format(%ChatOpenAIResponses{
+  defp build_text_param(%ChatOpenAIResponses{} = openai) do
+    format = text_format(openai)
+    verbosity = openai.verbosity
+
+    case {format, verbosity} do
+      {nil, nil} -> nil
+      {nil, v} -> %{"verbosity" => v}
+      {f, nil} -> %{"format" => f}
+      {f, v} -> %{"format" => f, "verbosity" => v}
+    end
+  end
+
+  defp text_format(%ChatOpenAIResponses{
          json_response: true,
          json_schema: json_schema,
          json_schema_name: json_schema_name
        })
        when not is_nil(json_schema) and not is_nil(json_schema_name) do
     %{
-      "format" => %{
-        "type" => "json_schema",
-        "name" => json_schema_name,
-        "schema" => json_schema,
-        "strict" => true
-      }
+      "type" => "json_schema",
+      "name" => json_schema_name,
+      "schema" => json_schema,
+      "strict" => true
     }
   end
 
-  defp set_text_format(%ChatOpenAIResponses{json_response: true}) do
-    %{"format" => %{"type" => "json_object"}}
+  defp text_format(%ChatOpenAIResponses{json_response: true}) do
+    %{"type" => "json_object"}
   end
 
-  defp set_text_format(%ChatOpenAIResponses{json_response: false}) do
+  defp text_format(%ChatOpenAIResponses{json_response: false}) do
     # NOTE: The default handling when unspecified is `%{"type" => "text"}`
-    # This returns a `nil` which has the same effect.
     nil
   end
 
@@ -1690,7 +1702,8 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         :json_schema,
         :stream,
         :max_tokens,
-        :stream_options
+        :stream_options,
+        :verbosity
       ],
       @current_config_version
     )
