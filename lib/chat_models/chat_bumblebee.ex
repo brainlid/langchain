@@ -238,6 +238,7 @@ defmodule LangChain.ChatModels.ChatBumblebee do
   def call(%ChatBumblebee{} = model, messages, functions) when is_list(messages) do
     metadata = %{
       model: inspect(model.serving),
+      provider: provider(),
       template_format: model.template_format,
       message_count: length(messages),
       tools_count: length(functions)
@@ -533,7 +534,7 @@ defmodule LangChain.ChatModels.ChatBumblebee do
 
         # Track stream completion
         LangChain.Telemetry.emit_event(
-          [:langchain, :llm, :response, streaming: true],
+          [:langchain, :llm, :response, :streaming],
           %{system_time: System.system_time()},
           %{model: inspect(model.serving)}
         )
@@ -582,6 +583,9 @@ defmodule LangChain.ChatModels.ChatBumblebee do
   request rather than a service issue and it should not be retried or fallback
   to another service.
   """
+  @impl ChatModel
+  def provider, do: "bumblebee"
+
   @impl ChatModel
   @spec retry_on_fallback?(LangChainError.t()) :: boolean()
   def retry_on_fallback?(_), do: true

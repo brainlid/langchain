@@ -394,6 +394,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
       when is_list(messages) do
     metadata = %{
       model: vertex_ai.model,
+      provider: provider(),
       message_count: length(messages),
       tools_count: length(tools)
     }
@@ -818,6 +819,9 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   request rather than a service issue and it should not be retried or fallback
   to another service.
   """
+  @impl ChatModel
+  def provider, do: "google"
+
   @impl ChatModel
   @spec retry_on_fallback?(LangChainError.t()) :: boolean()
   def retry_on_fallback?(%LangChainError{type: "rate_limited"}), do: true

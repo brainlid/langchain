@@ -383,6 +383,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   def call(%ChatOllamaAI{} = ollama_ai, messages, tools) when is_list(messages) do
     metadata = %{
       model: ollama_ai.model,
+      provider: provider(),
       message_count: length(messages),
       tools_count: length(tools)
     }
@@ -628,6 +629,9 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   request rather than a service issue and it should not be retried or fallback
   to another service.
   """
+  @impl ChatModel
+  def provider, do: "ollama"
+
   @impl ChatModel
   @spec retry_on_fallback?(LangChainError.t()) :: boolean()
   def retry_on_fallback?(%LangChainError{type: "rate_limited"}), do: true

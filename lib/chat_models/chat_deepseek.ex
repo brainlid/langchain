@@ -482,6 +482,7 @@ defmodule LangChain.ChatModels.ChatDeepSeek do
   def call(%ChatDeepSeek{} = deepseek, messages, tools) when is_list(messages) do
     metadata = %{
       model: deepseek.model,
+      provider: provider(),
       message_count: length(messages),
       tools_count: length(tools)
     }
@@ -1204,6 +1205,9 @@ defmodule LangChain.ChatModels.ChatDeepSeek do
   request rather than a service issue and it should not be retried or fallback
   to another service.
   """
+  @impl ChatModel
+  def provider, do: "deepseek"
+
   @impl ChatModel
   @spec retry_on_fallback?(LangChainError.t()) :: boolean()
   def retry_on_fallback?(%LangChainError{type: "rate_limited"}), do: true

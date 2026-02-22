@@ -632,7 +632,8 @@ defmodule LangChain.Chains.LLMChain do
         chain_type: "llm_chain",
         mode: Keyword.get(opts, :mode, "default"),
         message_count: length(chain.messages),
-        tool_count: length(chain.tools)
+        tool_count: length(chain.tools),
+        custom_context: chain.custom_context
       }
 
       LangChain.Telemetry.span([:langchain, :chain, :execute], metadata, fn ->
@@ -800,7 +801,8 @@ defmodule LangChain.Chains.LLMChain do
         chain_type: "llm_chain",
         mode: "run_until_tool_used",
         message_count: length(chain.messages),
-        tool_count: length(chain.tools)
+        tool_count: length(chain.tools),
+        custom_context: chain.custom_context
       }
 
       LangChain.Telemetry.span([:langchain, :chain, :execute], metadata, fn ->
@@ -1584,7 +1586,8 @@ defmodule LangChain.Chains.LLMChain do
     metadata = %{
       tool_name: function.name,
       tool_call_id: call.call_id,
-      async: function.async
+      async: function.async,
+      custom_context: context
     }
 
     LangChain.Telemetry.span([:langchain, :tool, :call], metadata, fn ->

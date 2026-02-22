@@ -358,6 +358,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
       when is_list(messages) and is_list(tools) do
     metadata = %{
       model: mistralai.model,
+      provider: provider(),
       message_count: length(messages),
       tools_count: length(tools)
     }
@@ -832,6 +833,9 @@ defmodule LangChain.ChatModels.ChatMistralAI do
   request rather than a service issue and it should not be retried or fallback
   to another service.
   """
+  @impl ChatModel
+  def provider, do: "mistralai"
+
   @impl ChatModel
   @spec retry_on_fallback?(LangChainError.t()) :: boolean()
   def retry_on_fallback?(%LangChainError{type: "rate_limited"}), do: true

@@ -661,6 +661,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   def call(%ChatAnthropic{} = anthropic, messages, functions) when is_list(messages) do
     metadata = %{
       model: anthropic.model,
+      provider: provider(),
       message_count: length(messages),
       tools_count: length(functions)
     }
@@ -700,6 +701,9 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   request rather than a service issue and it should not be retried or fallback
   to another service.
   """
+  @impl ChatModel
+  def provider, do: "anthropic"
+
   @impl ChatModel
   @spec retry_on_fallback?(LangChainError.t()) :: boolean()
   def retry_on_fallback?(%LangChainError{type: "rate_limited"}), do: true
@@ -888,7 +892,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
         # Track the stream completion
         LangChain.Telemetry.emit_event(
-          [:langchain, :llm, :response, streaming: true],
+          [:langchain, :llm, :response, :streaming],
           %{system_time: System.system_time()},
           %{model: anthropic.model}
         )

@@ -709,6 +709,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   def call(%ChatOpenAIResponses{} = openai, messages, tools) when is_list(messages) do
     metadata = %{
       model: openai.model,
+      provider: provider(),
       message_count: length(messages),
       tools_count: length(tools)
     }
@@ -1728,6 +1729,9 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   Determine if an error should be retried with a fallback model.
   Aligns with other providers.
   """
+  @impl ChatModel
+  def provider, do: "openai"
+
   @impl ChatModel
   @spec retry_on_fallback?(LangChainError.t()) :: boolean()
   def retry_on_fallback?(%LangChainError{type: "rate_limited"}), do: true

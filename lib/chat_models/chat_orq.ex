@@ -547,6 +547,7 @@ defmodule LangChain.ChatModels.ChatOrq do
   def call(%ChatOrq{} = orq, messages, tools) when is_list(messages) do
     metadata = %{
       model: orq.model,
+      provider: provider(),
       message_count: length(messages),
       tools_count: length(tools)
     }
@@ -1222,6 +1223,9 @@ defmodule LangChain.ChatModels.ChatOrq do
   request rather than a service issue and it should not be retried or fallback
   to another service.
   """
+  @impl ChatModel
+  def provider, do: "orq"
+
   @impl ChatModel
   @spec retry_on_fallback?(LangChainError.t()) :: boolean()
   def retry_on_fallback?(%LangChainError{type: "rate_limited"}), do: true

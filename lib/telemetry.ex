@@ -29,6 +29,33 @@ defmodule LangChain.Telemetry do
   * `[:langchain, :tool, :call, :stop]` - Emitted when a tool call completes
   * `[:langchain, :tool, :call, :exception]` - Emitted when a tool call raises an exception
 
+  ## Metadata Fields
+
+  The following metadata fields are automatically injected or available in events:
+
+  * `:call_id` - A UUID (via `Ecto.UUID.generate/0`) that correlates start, stop, and
+    exception events within a single `span/3` or `start_event/2` call. Automatically
+    injected via `Map.put_new/3`, so callers can supply their own ID to override.
+
+  * `:provider` - The LLM provider name (e.g. `"openai"`, `"anthropic"`, `"google"`).
+    Included in LLM call metadata by each chat model implementation via the
+    `ChatModel.provider/0` callback.
+
+  * `:custom_context` - User-supplied context data from `LLMChain.custom_context`.
+    Included in chain execution and tool call metadata. Not included in LLM-level
+    telemetry (correlate via `call_id` instead).
+
+  ## Expected Metadata Shape by Event
+
+  * **LLM call** (`:start` / `:stop` / `:exception`):
+    `%{model: String.t(), provider: String.t(), message_count: integer(), tools_count: integer(), call_id: String.t()}`
+
+  * **Chain execution** (`:start` / `:stop` / `:exception`):
+    `%{chain_type: String.t(), mode: term(), message_count: integer(), tool_count: integer(), custom_context: term(), call_id: String.t()}`
+
+  * **Tool call** (`:start` / `:stop` / `:exception`):
+    `%{tool_name: String.t(), tool_call_id: String.t(), async: boolean(), custom_context: term(), call_id: String.t()}`
+
   ## Usage
 
   To attach to these events in your application:
@@ -93,6 +120,9 @@ defmodule LangChain.Telemetry do
     start_time = System.monotonic_time()
     start_system_time = System.system_time()
 
+    # Inject a call_id if not already present, so start and stop events share the same ID
+    metadata = Map.put_new(metadata, :call_id, Ecto.UUID.generate())
+
     emit_event(event_prefix ++ [:start], %{system_time: start_system_time}, metadata)
 
     fn additional_metadata ->
@@ -129,6 +159,9 @@ defmodule LangChain.Telemetry do
   """
   @spec span(list(atom()), map(), (-> result)) :: result when result: any()
   def span(event_prefix, metadata, fun) do
+    # Inject call_id before start_event so it's shared across start, stop, and exception events
+    metadata = Map.put_new(metadata, :call_id, Ecto.UUID.generate())
+
     stop = start_event(event_prefix, metadata)
 
     try do

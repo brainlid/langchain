@@ -20,11 +20,41 @@ defmodule LangChain.ChatModels.ChatModel do
               [LangChain.Function.t()]
             ) :: call_response()
 
+  @doc """
+  Returns the provider name for this chat model (e.g. "openai", "anthropic").
+
+  Used in telemetry metadata to identify the LLM provider without inspecting
+  the module name. This is an optional callback — if not implemented, the
+  provider can be derived from the module name via `provider/1`.
+  """
+  @callback provider() :: String.t()
+
   @callback retry_on_fallback?(LangChainError.t()) :: boolean()
 
   @callback serialize_config(t()) :: %{String.t() => any()}
 
   @callback restore_from_map(%{String.t() => any()}) :: {:ok, struct()} | {:error, String.t()}
+
+  @optional_callbacks [provider: 0]
+
+  @doc """
+  Returns the provider name for a given chat model struct.
+
+  Dispatches to the model module's `provider/0` callback if implemented,
+  otherwise derives the provider from the module name.
+  """
+  @spec provider(t()) :: String.t()
+  def provider(%module{}) do
+    if function_exported?(module, :provider, 0) do
+      module.provider()
+    else
+      module
+      |> Module.split()
+      |> List.last()
+      |> String.replace_leading("Chat", "")
+      |> Macro.underscore()
+    end
+  end
 
   @doc """
   Create a serializable map from a ChatModel's current configuration that can

@@ -489,6 +489,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
       when is_list(messages) do
     metadata = %{
       model: google_ai.model,
+      provider: provider(),
       message_count: length(messages),
       tools_count: length(tools)
     }
@@ -549,7 +550,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
           result ->
             # Track non-streaming response completion
             LangChain.Telemetry.emit_event(
-              [:langchain, :llm, :response, streaming: false],
+              [:langchain, :llm, :response, :non_streaming],
               %{system_time: System.system_time()},
               %{
                 model: google_ai.model,
@@ -941,6 +942,9 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   request rather than a service issue and it should not be retried or fallback
   to another service.
   """
+  @impl ChatModel
+  def provider, do: "google"
+
   @impl ChatModel
   @spec retry_on_fallback?(LangChainError.t()) :: boolean()
   def retry_on_fallback?(%LangChainError{type: "rate_limited"}), do: true
