@@ -179,6 +179,19 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         tool_choice: "web_search_preview"
       })
 
+  ## Verbosity
+
+  The `verbosity` option controls the length of the model's response. Accepted
+  values are `"low"`, `"medium"`, and `"high"`. When omitted, the API uses its
+  default behavior.
+
+  This is sent as part of the `text` parameter in the Responses API and can be
+  combined with JSON response formats.
+
+  ### Example
+
+      ChatOpenAIResponses.new!(%{model: "gpt-4o", verbosity: "low"})
+
   """
   use Ecto.Schema
   require Logger
@@ -238,6 +251,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     field :tool_choice, :any, default: nil, virtual: true
     field :top_p, :float, default: 1.0
     field :truncation, :string
+    field :verbosity, :string, default: nil
     field :user, :string
 
     field :callbacks, {:array, :map}, default: []
@@ -269,6 +283,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     :tool_choice,
     :top_p,
     :truncation,
+    :verbosity,
     :user,
     :verbose_api,
     :req_config
@@ -323,6 +338,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     |> validate_number(:temperature, greater_than_or_equal_to: 0, less_than_or_equal_to: 2)
     |> validate_number(:top_p, greater_than_or_equal_to: 0, less_than_or_equal_to: 1)
     |> validate_number(:receive_timeout, greater_than_or_equal_to: 0)
+    |> validate_inclusion(:verbosity, ~w(low medium high))
   end
 
   @doc """
@@ -354,6 +370,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     |> Utils.conditionally_add_to_map(:previous_response_id, openai.previous_response_id)
     |> Utils.conditionally_add_to_map(:reasoning, ReasoningOptions.to_api_map(openai.reasoning))
     |> Utils.conditionally_add_to_map(:text, set_text_format(openai))
+    |> Utils.conditionally_add_to_map(:verbosity, openai.verbosity)
     |> Utils.conditionally_add_to_map(:tool_choice, get_tool_choice(openai))
     |> Utils.conditionally_add_to_map(:truncation, openai.truncation)
     |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(openai, tools))
@@ -1690,7 +1707,8 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         :json_schema,
         :stream,
         :max_tokens,
-        :stream_options
+        :stream_options,
+        :verbosity
       ],
       @current_config_version
     )
