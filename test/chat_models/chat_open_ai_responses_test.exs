@@ -492,63 +492,19 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
   end
 
   describe "for_api/3 verbosity" do
-    test "includes verbosity in text map when set" do
+    test "includes verbosity when set" do
       openai =
         ChatOpenAIResponses.new!(%{"model" => @test_model, "verbosity" => "low"})
 
       data = ChatOpenAIResponses.for_api(openai, [], [])
-      assert data.text == %{"verbosity" => "low"}
+      assert data.verbosity == "low"
     end
 
-    test "combines verbosity with json_response format" do
-      openai =
-        ChatOpenAIResponses.new!(%{
-          "model" => @test_model,
-          "json_response" => true,
-          "verbosity" => "high"
-        })
-
-      data = ChatOpenAIResponses.for_api(openai, [], [])
-
-      assert data.text == %{
-               "format" => %{"type" => "json_object"},
-               "verbosity" => "high"
-             }
-    end
-
-    test "combines verbosity with json_schema format" do
-      json_schema = %{
-        "type" => "object",
-        "properties" => %{"name" => %{"type" => "string"}}
-      }
-
-      openai =
-        ChatOpenAIResponses.new!(%{
-          "model" => @test_model,
-          "json_response" => true,
-          "json_schema" => json_schema,
-          "json_schema_name" => "person",
-          "verbosity" => "medium"
-        })
-
-      data = ChatOpenAIResponses.for_api(openai, [], [])
-
-      assert data.text == %{
-               "format" => %{
-                 "type" => "json_schema",
-                 "name" => "person",
-                 "schema" => json_schema,
-                 "strict" => true
-               },
-               "verbosity" => "medium"
-             }
-    end
-
-    test "omits text key when verbosity is nil and no format" do
+    test "omits verbosity when nil" do
       openai = ChatOpenAIResponses.new!(%{"model" => @test_model})
 
       data = ChatOpenAIResponses.for_api(openai, [], [])
-      refute Map.has_key?(data, :text)
+      refute Map.has_key?(data, :verbosity)
     end
   end
 

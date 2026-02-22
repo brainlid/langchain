@@ -179,6 +179,19 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         tool_choice: "web_search_preview"
       })
 
+  ## Verbosity
+
+  The `verbosity` option controls the length of the model's response. Accepted
+  values are `"low"`, `"medium"`, and `"high"`. When omitted, the API uses its
+  default behavior.
+
+  This is sent as part of the `text` parameter in the Responses API and can be
+  combined with JSON response formats.
+
+  ### Example
+
+      ChatOpenAIResponses.new!(%{model: "gpt-4o", verbosity: "low"})
+
   """
   use Ecto.Schema
   require Logger
@@ -356,7 +369,8 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     |> Utils.conditionally_add_to_map(:max_output_tokens, openai.max_output_tokens)
     |> Utils.conditionally_add_to_map(:previous_response_id, openai.previous_response_id)
     |> Utils.conditionally_add_to_map(:reasoning, ReasoningOptions.to_api_map(openai.reasoning))
-    |> Utils.conditionally_add_to_map(:text, build_text_param(openai))
+    |> Utils.conditionally_add_to_map(:text, set_text_format(openai))
+    |> Utils.conditionally_add_to_map(:verbosity, openai.verbosity)
     |> Utils.conditionally_add_to_map(:tool_choice, get_tool_choice(openai))
     |> Utils.conditionally_add_to_map(:truncation, openai.truncation)
     |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(openai, tools))
@@ -399,38 +413,29 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     end)
   end
 
-  defp build_text_param(%ChatOpenAIResponses{} = openai) do
-    format = text_format(openai)
-    verbosity = openai.verbosity
-
-    case {format, verbosity} do
-      {nil, nil} -> nil
-      {nil, v} -> %{"verbosity" => v}
-      {f, nil} -> %{"format" => f}
-      {f, v} -> %{"format" => f, "verbosity" => v}
-    end
-  end
-
-  defp text_format(%ChatOpenAIResponses{
+  defp set_text_format(%ChatOpenAIResponses{
          json_response: true,
          json_schema: json_schema,
          json_schema_name: json_schema_name
        })
        when not is_nil(json_schema) and not is_nil(json_schema_name) do
     %{
-      "type" => "json_schema",
-      "name" => json_schema_name,
-      "schema" => json_schema,
-      "strict" => true
+      "format" => %{
+        "type" => "json_schema",
+        "name" => json_schema_name,
+        "schema" => json_schema,
+        "strict" => true
+      }
     }
   end
 
-  defp text_format(%ChatOpenAIResponses{json_response: true}) do
-    %{"type" => "json_object"}
+  defp set_text_format(%ChatOpenAIResponses{json_response: true}) do
+    %{"format" => %{"type" => "json_object"}}
   end
 
-  defp text_format(%ChatOpenAIResponses{json_response: false}) do
+  defp set_text_format(%ChatOpenAIResponses{json_response: false}) do
     # NOTE: The default handling when unspecified is `%{"type" => "text"}`
+    # This returns a `nil` which has the same effect.
     nil
   end
 
