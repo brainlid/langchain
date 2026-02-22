@@ -188,9 +188,11 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   This is sent as part of the `text` parameter in the Responses API and can be
   combined with JSON response formats.
 
+  Only supported for gpt-5 or newer models
+
   ### Example
 
-      ChatOpenAIResponses.new!(%{model: "gpt-4o", verbosity: "low"})
+      ChatOpenAIResponses.new!(%{model: "gpt-5", verbosity: "low"})
 
   """
   use Ecto.Schema
