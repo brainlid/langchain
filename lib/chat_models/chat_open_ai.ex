@@ -740,7 +740,9 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           err in LangChainError ->
             {:error, err}
         end
-      end, enrich_stop: &ChatModel.token_usage_from_result/1)
+      end,
+      enrich_stop: &ChatModel.token_usage_from_result/1
+    )
   end
 
   # Make the API request from the OpenAI server.

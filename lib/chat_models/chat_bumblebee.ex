@@ -273,7 +273,9 @@ defmodule LangChain.ChatModels.ChatBumblebee do
           err in LangChainError ->
             {:error, err}
         end
-      end, enrich_stop: &ChatModel.token_usage_from_result/1)
+      end,
+      enrich_stop: &ChatModel.token_usage_from_result/1
+    )
   end
 
   @doc false

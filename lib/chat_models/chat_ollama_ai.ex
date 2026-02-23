@@ -416,7 +416,9 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
           err in LangChainError ->
             {:error, err.message}
         end
-      end, enrich_stop: &ChatModel.token_usage_from_result/1)
+      end,
+      enrich_stop: &ChatModel.token_usage_from_result/1
+    )
   end
 
   # Make the API request from the Ollama server.
