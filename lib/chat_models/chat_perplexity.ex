@@ -323,41 +323,44 @@ defmodule LangChain.ChatModels.ChatPerplexity do
       tool_count: length(tools)
     }
 
-    Telemetry.span([:langchain, :llm, :call], metadata, fn ->
-      try do
-        # Track the prompt being sent
-        Telemetry.llm_prompt(
-          %{system_time: System.system_time()},
-          %{model: perplexity.model, messages: messages}
-        )
+    Telemetry.span(
+      [:langchain, :llm, :call],
+      metadata,
+      fn ->
+        try do
+          # Track the prompt being sent
+          Telemetry.llm_prompt(
+            %{system_time: System.system_time()},
+            %{model: perplexity.model, messages: messages}
+          )
 
-        case do_api_request(perplexity, messages, tools) do
-          {:error, reason} ->
-            {:error, reason}
+          case do_api_request(perplexity, messages, tools) do
+            {:error, reason} ->
+              {:error, reason}
 
-          {:ok, %Req.Response{body: body}} when is_list(body) ->
-            # Streaming response - body contains accumulated MessageDelta lists
-            Telemetry.llm_response(
-              %{system_time: System.system_time()},
-              %{model: perplexity.model, response: body}
-            )
+            {:ok, %Req.Response{body: body}} when is_list(body) ->
+              # Streaming response - body contains accumulated MessageDelta lists
+              Telemetry.llm_response(
+                %{system_time: System.system_time()},
+                %{model: perplexity.model, response: body}
+              )
 
-            {:ok, body}
+              {:ok, body}
 
-          parsed_data ->
-            # Non-streaming response
-            Telemetry.llm_response(
-              %{system_time: System.system_time()},
-              %{model: perplexity.model, response: parsed_data}
-            )
+            parsed_data ->
+              # Non-streaming response
+              Telemetry.llm_response(
+                %{system_time: System.system_time()},
+                %{model: perplexity.model, response: parsed_data}
+              )
 
-            {:ok, [parsed_data]}
+              {:ok, [parsed_data]}
+          end
+        rescue
+          err in LangChainError ->
+            {:error, err}
         end
-      rescue
-        err in LangChainError ->
-          {:error, err}
-      end
-    end)
+      end, enrich_stop: &ChatModel.token_usage_from_result/1)
   end
 
   @doc false

@@ -636,24 +636,35 @@ defmodule LangChain.Chains.LLMChain do
         custom_context: chain.custom_context
       }
 
-      LangChain.Telemetry.span([:langchain, :chain, :execute], metadata, fn ->
-        # Run the chain and return the success or error results. NOTE: We do not add
-        # the current LLM to the list and process everything through a single
-        # codepath because failing after attempted fallbacks returns a different
-        # error.
-        if Keyword.has_key?(opts, :with_fallbacks) do
-          # run function and using fallbacks as needed.
-          with_fallbacks(chain, opts, function_to_run)
-        else
-          # run it directly right now and return the success or error
-          function_to_run.(chain)
-        end
-      end)
+      LangChain.Telemetry.span(
+        [:langchain, :chain, :execute],
+        metadata,
+        fn ->
+          # Run the chain and return the success or error results. NOTE: We do not add
+          # the current LLM to the list and process everything through a single
+          # codepath because failing after attempted fallbacks returns a different
+          # error.
+          if Keyword.has_key?(opts, :with_fallbacks) do
+            # run function and using fallbacks as needed.
+            with_fallbacks(chain, opts, function_to_run)
+          else
+            # run it directly right now and return the success or error
+            function_to_run.(chain)
+          end
+        end,
+        enrich_stop: &chain_stop_metadata/1
+      )
     rescue
       err in LangChainError ->
         {:error, chain, err}
     end
   end
+
+  defp chain_stop_metadata({:ok, %LLMChain{last_message: %Message{} = msg}}) do
+    %{last_message: msg, token_usage: get_in(msg.metadata, [:usage])}
+  end
+
+  defp chain_stop_metadata(_result), do: %{}
 
   defp initial_run_logging(%LLMChain{verbose: false} = _chain), do: :ok
 
@@ -805,9 +816,14 @@ defmodule LangChain.Chains.LLMChain do
         custom_context: chain.custom_context
       }
 
-      LangChain.Telemetry.span([:langchain, :chain, :execute], metadata, fn ->
-        Modes.UntilToolUsed.run(chain, mode_opts)
-      end)
+      LangChain.Telemetry.span(
+        [:langchain, :chain, :execute],
+        metadata,
+        fn ->
+          Modes.UntilToolUsed.run(chain, mode_opts)
+        end,
+        enrich_stop: &chain_stop_metadata/1
+      )
     rescue
       err in LangChainError ->
         {:error, chain, err}

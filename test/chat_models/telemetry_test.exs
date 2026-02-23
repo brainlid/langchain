@@ -14,6 +14,7 @@ defmodule LangChain.ChatModels.TelemetryTest do
   alias LangChain.Function
   alias LangChain.Message
   alias LangChain.Message.ToolCall
+  alias LangChain.TokenUsage
 
   # Setup for test
   setup :verify_on_exit!
@@ -35,27 +36,35 @@ defmodule LangChain.ChatModels.TelemetryTest do
         tool_count: length(tools)
       }
 
-      LangChain.Telemetry.span([:langchain, :llm, :call], metadata, fn ->
-        LangChain.Telemetry.llm_prompt(
-          %{system_time: System.system_time()},
-          %{model: model_name, messages: messages}
-        )
+      usage = TokenUsage.new!(%{input: 10, output: 20})
 
-        response = Message.new_assistant!("Test response")
+      LangChain.Telemetry.span(
+        [:langchain, :llm, :call],
+        metadata,
+        fn ->
+          LangChain.Telemetry.llm_prompt(
+            %{system_time: System.system_time()},
+            %{model: model_name, messages: messages}
+          )
 
-        LangChain.Telemetry.llm_response(
-          %{system_time: System.system_time()},
-          %{model: model_name, response: response}
-        )
+          response =
+            Message.new_assistant!(%{content: "Test response", metadata: %{usage: usage}})
 
-        LangChain.Telemetry.emit_event(
-          [:langchain, :llm, :response, :non_streaming],
-          %{system_time: System.system_time()},
-          %{model: model_name, response_size: byte_size(inspect(response))}
-        )
+          LangChain.Telemetry.llm_response(
+            %{system_time: System.system_time()},
+            %{model: model_name, response: response}
+          )
 
-        {:ok, response}
-      end)
+          LangChain.Telemetry.emit_event(
+            [:langchain, :llm, :response, :non_streaming],
+            %{system_time: System.system_time()},
+            %{model: model_name, response_size: byte_size(inspect(response))}
+          )
+
+          {:ok, response}
+        end,
+        enrich_stop: &ChatModel.token_usage_from_result/1
+      )
     end)
   end
 
@@ -342,6 +351,29 @@ defmodule LangChain.ChatModels.TelemetryTest do
       :telemetry.detach("test-call-id-events")
     end
 
+    test "LLM call stop event includes token_usage from enrich_stop", %{
+      openai: openai,
+      test_messages: messages
+    } do
+      test_pid = self()
+
+      :telemetry.attach_many(
+        "test-token-usage-stop",
+        [[:langchain, :llm, :call, :stop]],
+        fn name, _measurements, metadata, _config ->
+          send(test_pid, {:telemetry_event, name, metadata})
+        end,
+        nil
+      )
+
+      {:ok, _response} = ChatOpenAI.call(openai, messages, [])
+
+      assert_received {:telemetry_event, [:langchain, :llm, :call, :stop], stop_metadata}
+      assert %TokenUsage{input: 10, output: 20} = stop_metadata.token_usage
+
+      :telemetry.detach("test-token-usage-stop")
+    end
+
     test "telemetry includes correct measurements", %{openai: openai, test_messages: messages} do
       test_pid = self()
 
@@ -435,6 +467,38 @@ defmodule LangChain.ChatModels.TelemetryTest do
 
       :telemetry.detach("test-chain-custom-context")
     end
+
+    test "chain stop event includes last_message and token_usage" do
+      test_pid = self()
+      usage = TokenUsage.new!(%{input: 15, output: 25})
+
+      ChatOpenAI
+      |> stub(:call, fn _model, _messages, _tools ->
+        {:ok, Message.new_assistant!(%{content: "Hello!", metadata: %{usage: usage}})}
+      end)
+
+      :telemetry.attach(
+        "test-chain-stop-enrichment",
+        [:langchain, :chain, :execute, :stop],
+        fn _name, _measurements, metadata, _config ->
+          send(test_pid, {:chain_stop, metadata})
+        end,
+        nil
+      )
+
+      {:ok, _chain} =
+        LLMChain.new!(%{
+          llm: ChatOpenAI.new!(%{model: "gpt-4o-mini", api_key: "test-key"})
+        })
+        |> LLMChain.add_message(Message.new_user!("Hi"))
+        |> LLMChain.run()
+
+      assert_received {:chain_stop, stop_metadata}
+      assert %Message{role: :assistant} = stop_metadata.last_message
+      assert %TokenUsage{input: 15, output: 25} = stop_metadata.token_usage
+
+      :telemetry.detach("test-chain-stop-enrichment")
+    end
   end
 
   describe "tool call telemetry with custom_context" do
@@ -488,6 +552,32 @@ defmodule LangChain.ChatModels.TelemetryTest do
     test "dispatches to provider/0 when implemented" do
       openai = ChatOpenAI.new!(%{model: "gpt-4o-mini", api_key: "test-key"})
       assert ChatModel.provider(openai) == "openai"
+    end
+  end
+
+  describe "ChatModel.token_usage_from_result/1" do
+    test "extracts token_usage from a single message result" do
+      usage = TokenUsage.new!(%{input: 5, output: 10})
+      msg = Message.new_assistant!(%{content: "hi", metadata: %{usage: usage}})
+
+      assert %{token_usage: ^usage} = ChatModel.token_usage_from_result({:ok, msg})
+    end
+
+    test "extracts token_usage from a list of messages" do
+      usage = TokenUsage.new!(%{input: 5, output: 10})
+      msg1 = Message.new_assistant!("no usage here")
+      msg2 = Message.new_assistant!(%{content: "hi", metadata: %{usage: usage}})
+
+      assert %{token_usage: ^usage} = ChatModel.token_usage_from_result({:ok, [msg1, msg2]})
+    end
+
+    test "returns nil token_usage for error results" do
+      assert %{token_usage: nil} = ChatModel.token_usage_from_result({:error, "something"})
+    end
+
+    test "returns nil token_usage when message has no usage metadata" do
+      msg = Message.new_assistant!("plain response")
+      assert %{token_usage: nil} = ChatModel.token_usage_from_result({:ok, msg})
     end
   end
 end

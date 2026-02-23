@@ -4,6 +4,7 @@ defmodule LangChain.ChatModels.ChatModel do
   alias LangChain.MessageDelta
   alias LangChain.Function
   alias LangChain.LangChainError
+  alias LangChain.TokenUsage
   alias LangChain.Utils
 
   @type call_response ::
@@ -55,6 +56,29 @@ defmodule LangChain.ChatModels.ChatModel do
       |> Macro.underscore()
     end
   end
+
+  @doc """
+  Extracts token usage from an LLM call result for use as a `span/4` `:enrich_stop` callback.
+
+  Returns a map with `:token_usage` set to the `%TokenUsage{}` struct when
+  available, or `nil` otherwise.
+  """
+  @spec token_usage_from_result(call_response()) :: %{token_usage: TokenUsage.t() | nil}
+  def token_usage_from_result({:ok, %Message{} = msg}) do
+    %{token_usage: get_in(msg.metadata, [:usage])}
+  end
+
+  def token_usage_from_result({:ok, [%Message{} | _] = messages}) do
+    usage =
+      Enum.find_value(messages, fn
+        %Message{metadata: %{usage: %TokenUsage{} = usage}} -> usage
+        _ -> nil
+      end)
+
+    %{token_usage: usage}
+  end
+
+  def token_usage_from_result(_result), do: %{token_usage: nil}
 
   @doc """
   Create a serializable map from a ChatModel's current configuration that can
