@@ -48,7 +48,7 @@ defmodule LangChain.Telemetry do
   ## Expected Metadata Shape by Event
 
   * **LLM call** (`:start` / `:stop` / `:exception`):
-    `%{model: String.t(), provider: String.t(), message_count: integer(), tools_count: integer(), call_id: String.t()}`
+    `%{model: String.t(), provider: String.t(), message_count: integer(), tool_count: integer(), call_id: String.t()}`
 
   * **Chain execution** (`:start` / `:stop` / `:exception`):
     `%{chain_type: String.t(), mode: term(), message_count: integer(), tool_count: integer(), custom_context: term(), call_id: String.t()}`

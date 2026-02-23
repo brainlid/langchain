@@ -663,7 +663,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       model: anthropic.model,
       provider: provider(),
       message_count: length(messages),
-      tools_count: length(functions)
+      tool_count: length(functions)
     }
 
     LangChain.Telemetry.span([:langchain, :llm, :call], metadata, fn ->
@@ -861,7 +861,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
     # Track the prompt being sent for streaming
     LangChain.Telemetry.llm_prompt(
-      %{system_time: System.system_time()},
+      %{system_time: System.system_time(), streaming: true},
       %{model: anthropic.model, messages: messages}
     )
 

@@ -32,7 +32,7 @@ defmodule LangChain.ChatModels.TelemetryTest do
         model: model_name,
         provider: provider,
         message_count: length(messages),
-        tools_count: length(tools)
+        tool_count: length(tools)
       }
 
       LangChain.Telemetry.span([:langchain, :llm, :call], metadata, fn ->
@@ -162,7 +162,7 @@ defmodule LangChain.ChatModels.TelemetryTest do
       assert metadata.model == openai.model
       assert metadata.provider == "openai"
       assert metadata.message_count == length(messages)
-      assert metadata.tools_count == 0
+      assert metadata.tool_count == 0
 
       assert_received {:telemetry_event, [:langchain, :llm, :prompt], _, metadata}
       assert metadata.model == openai.model
@@ -300,7 +300,7 @@ defmodule LangChain.ChatModels.TelemetryTest do
       assert metadata.model == grok.model
       assert metadata.provider == "xai"
       assert metadata.message_count == length(messages)
-      assert metadata.tools_count == 0
+      assert metadata.tool_count == 0
 
       assert_received {:telemetry_event, [:langchain, :llm, :prompt], _, _metadata}
       assert_received {:telemetry_event, [:langchain, :llm, :response], _, _metadata}
@@ -476,16 +476,13 @@ defmodule LangChain.ChatModels.TelemetryTest do
   end
 
   describe "ChatModel.provider/1 fallback" do
-    test "derives provider from module name when provider/0 is not implemented" do
-      # Use an existing model struct — the fallback logic strips "Chat" prefix
-      # and underscores the remainder. Since all current models implement provider/0,
-      # we test the fallback by calling the derivation logic directly.
-      result =
-        "ChatSomeNewProvider"
-        |> String.replace_leading("Chat", "")
-        |> Macro.underscore()
+    defmodule ChatFakeProvider do
+      @moduledoc false
+      defstruct [:model]
+    end
 
-      assert result == "some_new_provider"
+    test "derives provider from module name when provider/0 is not implemented" do
+      assert ChatModel.provider(%ChatFakeProvider{}) == "fake_provider"
     end
 
     test "dispatches to provider/0 when implemented" do
