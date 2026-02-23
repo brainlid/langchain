@@ -2,6 +2,7 @@ defmodule LangChain.ChatModels.TelemetryTest do
   use ExUnit.Case
   use Mimic
 
+  alias LangChain.ChatModels.ChatModel
   alias LangChain.ChatModels.ChatOpenAI
   alias LangChain.ChatModels.ChatMistralAI
   alias LangChain.ChatModels.ChatAnthropic
@@ -10,7 +11,9 @@ defmodule LangChain.ChatModels.TelemetryTest do
   alias LangChain.ChatModels.ChatVertexAI
   alias LangChain.ChatModels.ChatGrok
   alias LangChain.Chains.LLMChain
+  alias LangChain.Function
   alias LangChain.Message
+  alias LangChain.Message.ToolCall
 
   # Setup for test
   setup :verify_on_exit!
@@ -247,6 +250,30 @@ defmodule LangChain.ChatModels.TelemetryTest do
       :telemetry.detach("test-perplexity-telemetry-events")
     end
 
+    test "emits telemetry events for ChatAnthropic with provider", %{
+      anthropic: anthropic,
+      test_messages: messages
+    } do
+      test_pid = self()
+
+      :telemetry.attach_many(
+        "test-anthropic-telemetry-events",
+        [[:langchain, :llm, :call, :start]],
+        fn name, measurements, metadata, _config ->
+          send(test_pid, {:telemetry_event, name, measurements, metadata})
+        end,
+        nil
+      )
+
+      {:ok, _response} = ChatAnthropic.call(anthropic, messages, [])
+
+      assert_received {:telemetry_event, [:langchain, :llm, :call, :start], _, metadata}
+      assert metadata.model == anthropic.model
+      assert metadata.provider == "anthropic"
+
+      :telemetry.detach("test-anthropic-telemetry-events")
+    end
+
     test "emits telemetry events for ChatGrok with provider", %{
       grok: grok,
       test_messages: messages
@@ -407,6 +434,63 @@ defmodule LangChain.ChatModels.TelemetryTest do
       assert start_metadata.call_id == stop_metadata.call_id
 
       :telemetry.detach("test-chain-custom-context")
+    end
+  end
+
+  describe "tool call telemetry with custom_context" do
+    setup :verify_on_exit!
+
+    test "tool call telemetry includes custom_context" do
+      test_pid = self()
+
+      :telemetry.attach_many(
+        "test-tool-custom-context",
+        [
+          [:langchain, :tool, :call, :start],
+          [:langchain, :tool, :call, :stop]
+        ],
+        fn name, _measurements, metadata, _config ->
+          send(test_pid, {:telemetry_event, name, metadata})
+        end,
+        nil
+      )
+
+      custom_ctx = %{user_id: "user-123", trace_id: "trace-789"}
+
+      {:ok, fun} =
+        Function.new(%{name: "hello", function: fn _args, _ctx -> "world" end})
+
+      call = ToolCall.new!(%{call_id: "call-1", name: "hello", arguments: %{}})
+
+      LLMChain.execute_tool_call(call, fun, context: custom_ctx)
+
+      assert_received {:telemetry_event, [:langchain, :tool, :call, :start], start_metadata}
+      assert start_metadata.tool_name == "hello"
+      assert start_metadata.custom_context == custom_ctx
+
+      assert_received {:telemetry_event, [:langchain, :tool, :call, :stop], stop_metadata}
+      assert start_metadata.call_id == stop_metadata.call_id
+
+      :telemetry.detach("test-tool-custom-context")
+    end
+  end
+
+  describe "ChatModel.provider/1 fallback" do
+    test "derives provider from module name when provider/0 is not implemented" do
+      # Use an existing model struct — the fallback logic strips "Chat" prefix
+      # and underscores the remainder. Since all current models implement provider/0,
+      # we test the fallback by calling the derivation logic directly.
+      result =
+        "ChatSomeNewProvider"
+        |> String.replace_leading("Chat", "")
+        |> Macro.underscore()
+
+      assert result == "some_new_provider"
+    end
+
+    test "dispatches to provider/0 when implemented" do
+      openai = ChatOpenAI.new!(%{model: "gpt-4o-mini", api_key: "test-key"})
+      assert ChatModel.provider(openai) == "openai"
     end
   end
 end

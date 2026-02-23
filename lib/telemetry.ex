@@ -159,7 +159,8 @@ defmodule LangChain.Telemetry do
   """
   @spec span(list(atom()), map(), (-> result)) :: result when result: any()
   def span(event_prefix, metadata, fun) do
-    # Inject call_id before start_event so it's shared across start, stop, and exception events
+    # Inject call_id once here so it's shared across start, stop, and exception events.
+    # start_event/2 also calls put_new, but since we set it first, the same ID is reused.
     metadata = Map.put_new(metadata, :call_id, Ecto.UUID.generate())
 
     stop = start_event(event_prefix, metadata)

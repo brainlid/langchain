@@ -861,7 +861,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
     # Track the prompt being sent for streaming
     LangChain.Telemetry.llm_prompt(
-      %{system_time: System.system_time(), streaming: true},
+      %{system_time: System.system_time()},
       %{model: anthropic.model, messages: messages}
     )
 
