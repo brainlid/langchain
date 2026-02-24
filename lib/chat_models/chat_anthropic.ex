@@ -1784,7 +1784,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
           }
         }
 
-      _ ->
+      :base64 ->
         media =
           case Keyword.fetch!(opts, :media) do
             :png ->
@@ -1836,7 +1836,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
             }
           }
 
-        _ ->
+        :base64 ->
           media = Keyword.fetch!(opts, :media)
 
           case media do
