@@ -2820,6 +2820,88 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       assert result == expected
     end
 
+    test "turns a file ContentPart with file_id into the expected document format" do
+      result =
+        ChatAnthropic.content_part_for_api(
+          ContentPart.file!("file_011CNha8iCJcU1wXNR6q4V8w", type: :file_id)
+        )
+
+      assert %{
+               "type" => "document",
+               "source" => %{
+                 "type" => "file",
+                 "file_id" => "file_011CNha8iCJcU1wXNR6q4V8w"
+               }
+             } = result
+
+      refute Map.has_key?(result, "title")
+      refute Map.has_key?(result, "citations")
+      refute Map.has_key?(result, "cache_control")
+    end
+
+    test "file ContentPart with file_id includes title when provided" do
+      result =
+        ChatAnthropic.content_part_for_api(
+          ContentPart.file!("file_011CNha8iCJcU1wXNR6q4V8w",
+            type: :file_id,
+            title: "My Report"
+          )
+        )
+
+      assert %{
+               "type" => "document",
+               "source" => %{"type" => "file", "file_id" => "file_011CNha8iCJcU1wXNR6q4V8w"},
+               "title" => "My Report"
+             } = result
+    end
+
+    test "file ContentPart with file_id includes citations when enabled" do
+      result =
+        ChatAnthropic.content_part_for_api(
+          ContentPart.file!("file_011CNha8iCJcU1wXNR6q4V8w",
+            type: :file_id,
+            citations: true
+          )
+        )
+
+      assert %{
+               "type" => "document",
+               "source" => %{"type" => "file", "file_id" => "file_011CNha8iCJcU1wXNR6q4V8w"},
+               "citations" => %{"enabled" => true}
+             } = result
+    end
+
+    test "file ContentPart with file_id includes cache_control when enabled" do
+      result =
+        ChatAnthropic.content_part_for_api(
+          ContentPart.file!("file_011CNha8iCJcU1wXNR6q4V8w",
+            type: :file_id,
+            cache_control: true
+          )
+        )
+
+      assert %{
+               "type" => "document",
+               "source" => %{"type" => "file", "file_id" => "file_011CNha8iCJcU1wXNR6q4V8w"},
+               "cache_control" => %{"type" => "ephemeral"}
+             } = result
+    end
+
+    test "turns an image ContentPart with file_id into the expected image format" do
+      result =
+        ChatAnthropic.content_part_for_api(
+          ContentPart.image!("file_011CPMxVD3fHLUhvTqtsQA5w", type: :file_id)
+        )
+
+      assert %{
+               "type" => "image",
+               "source" => %{
+                 "type" => "file",
+                 "file_id" => "file_011CPMxVD3fHLUhvTqtsQA5w"
+               }
+             } = result
+    end
+
     test "cache_control: true uses default settings" do
       part = ContentPart.text!("content", cache_control: true)
 
