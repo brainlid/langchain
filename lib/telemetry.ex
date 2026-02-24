@@ -197,7 +197,11 @@ defmodule LangChain.Telemetry do
             %{result: result}
 
           enrich_fn when is_function(enrich_fn, 1) ->
-            Map.merge(%{result: result}, enrich_fn.(result))
+            try do
+              Map.merge(%{result: result}, enrich_fn.(result))
+            rescue
+              _ -> %{result: result}
+            end
         end
 
       stop.(additional_metadata)

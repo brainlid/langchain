@@ -1730,13 +1730,13 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     ChatOpenAIResponses.new(data)
   end
 
+  @impl ChatModel
+  def provider, do: "openai"
+
   @doc """
   Determine if an error should be retried with a fallback model.
   Aligns with other providers.
   """
-  @impl ChatModel
-  def provider, do: "openai"
-
   @impl ChatModel
   @spec retry_on_fallback?(LangChainError.t()) :: boolean()
   def retry_on_fallback?(%LangChainError{type: "rate_limited"}), do: true

@@ -664,7 +664,7 @@ defmodule LangChain.Chains.LLMChain do
     %{last_message: msg, token_usage: get_in(msg.metadata, [:usage])}
   end
 
-  defp chain_stop_metadata(_result), do: %{}
+  defp chain_stop_metadata(_result), do: %{last_message: nil, token_usage: nil}
 
   defp initial_run_logging(%LLMChain{verbose: false} = _chain), do: :ok
 

@@ -836,15 +836,15 @@ defmodule LangChain.ChatModels.ChatGrok do
     ChatGrok.new(data)
   end
 
+  @impl ChatModel
+  def provider, do: "xai"
+
   @doc """
   Determine if an error should be retried. If `true`, a fallback LLM may be
   used. If `false`, the error is understood to be more fundamental with the
   request rather than a service issue and it should not be retried or fallback
   to another service.
   """
-  @impl ChatModel
-  def provider, do: "xai"
-
   @impl ChatModel
   @spec retry_on_fallback?(LangChainError.t()) :: boolean()
   def retry_on_fallback?(%LangChainError{type: "rate_limited"}), do: true
