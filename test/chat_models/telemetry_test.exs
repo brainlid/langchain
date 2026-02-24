@@ -101,7 +101,7 @@ defmodule LangChain.ChatModels.TelemetryTest do
       # Create stubs for all models
       make_llm_stub(ChatOpenAI, "openai")
       make_llm_stub(ChatMistralAI, "mistralai")
-      make_llm_stub(ChatVertexAI, "google")
+      make_llm_stub(ChatVertexAI, "vertex_ai")
       make_llm_stub(ChatPerplexity, "perplexity")
       make_llm_stub(ChatGoogleAI, "google")
       make_llm_stub(ChatAnthropic, "anthropic")
@@ -206,7 +206,7 @@ defmodule LangChain.ChatModels.TelemetryTest do
 
       assert_received {:telemetry_event, [:langchain, :llm, :call, :start], _, metadata}
       assert metadata.model == vertex_ai.model
-      assert metadata.provider == "google"
+      assert metadata.provider == "vertex_ai"
 
       :telemetry.detach("test-vertex-telemetry-events")
     end

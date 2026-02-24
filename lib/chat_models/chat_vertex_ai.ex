@@ -819,7 +819,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   defp unmap_role(role), do: role
 
   @impl ChatModel
-  def provider, do: "google"
+  def provider, do: "vertex_ai"
 
   @doc """
   Determine if an error should be retried. If `true`, a fallback LLM may be
