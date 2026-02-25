@@ -1315,14 +1315,19 @@ defmodule LangChain.Chains.LLMChain do
       # Fire completed/failed callbacks for async tools and extract results
       async_tool_results =
         Enum.map(async_results, fn {call, _func, result} ->
-          if result.is_error do
-            Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
-              chain,
-              call,
-              result.content
-            ])
-          else
-            Callbacks.fire(chain.callbacks, :on_tool_execution_completed, [chain, call, result])
+          cond do
+            result.is_interrupt ->
+              :ok
+
+            result.is_error ->
+              Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
+                chain,
+                call,
+                result.content
+              ])
+
+            true ->
+              Callbacks.fire(chain.callbacks, :on_tool_execution_completed, [chain, call, result])
           end
 
           result
@@ -1334,14 +1339,19 @@ defmodule LangChain.Chains.LLMChain do
           result = execute_tool_call(call, func, verbose: verbose, context: use_context)
 
           # Fire completed/failed callback immediately after execution
-          if result.is_error do
-            Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
-              chain,
-              call,
-              result.content
-            ])
-          else
-            Callbacks.fire(chain.callbacks, :on_tool_execution_completed, [chain, call, result])
+          cond do
+            result.is_interrupt ->
+              :ok
+
+            result.is_error ->
+              Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
+                chain,
+                call,
+                result.content
+              ])
+
+            true ->
+              Callbacks.fire(chain.callbacks, :on_tool_execution_completed, [chain, call, result])
           end
 
           result
@@ -1360,6 +1370,14 @@ defmodule LangChain.Chains.LLMChain do
         end)
 
       combined_results = async_tool_results ++ sync_tool_results ++ invalid_calls
+
+      # Fire interrupt callback if any tools interrupted
+      interrupted_results = Enum.filter(combined_results, & &1.is_interrupt)
+
+      if interrupted_results != [] do
+        Callbacks.fire(chain.callbacks, :on_tool_interrupted, [chain, interrupted_results])
+      end
+
       # create a single tool message that contains all the tool results
       result_message =
         Message.new_tool_result!(%{content: nil, tool_results: combined_results})
@@ -1445,19 +1463,24 @@ defmodule LangChain.Chains.LLMChain do
                 result =
                   execute_tool_call(tool_call, func, verbose: verbose, context: use_context)
 
-                # Fire completed/failed callback after execution
-                if result.is_error do
-                  Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
-                    chain,
-                    tool_call,
-                    result.content
-                  ])
-                else
-                  Callbacks.fire(chain.callbacks, :on_tool_execution_completed, [
-                    chain,
-                    tool_call,
-                    result
-                  ])
+                # Fire completed/failed callback after execution (skip interrupts)
+                cond do
+                  result.is_interrupt ->
+                    :ok
+
+                  result.is_error ->
+                    Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
+                      chain,
+                      tool_call,
+                      result.content
+                    ])
+
+                  true ->
+                    Callbacks.fire(chain.callbacks, :on_tool_execution_completed, [
+                      chain,
+                      tool_call,
+                      result
+                    ])
                 end
 
                 result
@@ -1497,19 +1520,24 @@ defmodule LangChain.Chains.LLMChain do
                 result =
                   execute_tool_call(edited_call, func, verbose: verbose, context: use_context)
 
-                # Fire completed/failed callback after execution
-                if result.is_error do
-                  Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
-                    chain,
-                    edited_call,
-                    result.content
-                  ])
-                else
-                  Callbacks.fire(chain.callbacks, :on_tool_execution_completed, [
-                    chain,
-                    edited_call,
-                    result
-                  ])
+                # Fire completed/failed callback after execution (skip interrupts)
+                cond do
+                  result.is_interrupt ->
+                    :ok
+
+                  result.is_error ->
+                    Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
+                      chain,
+                      edited_call,
+                      result.content
+                    ])
+
+                  true ->
+                    Callbacks.fire(chain.callbacks, :on_tool_execution_completed, [
+                      chain,
+                      edited_call,
+                      result
+                    ])
                 end
 
                 result
@@ -1551,6 +1579,13 @@ defmodule LangChain.Chains.LLMChain do
         end
       end)
 
+    # Fire interrupt callback if any tools interrupted
+    interrupted_results = Enum.filter(results, & &1.is_interrupt)
+
+    if interrupted_results != [] do
+      Callbacks.fire(chain.callbacks, :on_tool_interrupted, [chain, interrupted_results])
+    end
+
     # Create tool result message
     result_message = Message.new_tool_result!(%{content: nil, tool_results: results})
 
@@ -1571,6 +1606,17 @@ defmodule LangChain.Chains.LLMChain do
     updated_chain
     |> fire_callback_and_return(:on_message_processed, [result_message])
     |> fire_callback_and_return(:on_tool_response_created, [result_message])
+  end
+
+  @doc """
+  Replace a tool result in the chain's messages by `tool_call_id`.
+
+  Delegates to `Message.replace_tool_result/3`.
+  """
+  @spec replace_tool_result(t(), String.t(), ToolResult.t()) :: t()
+  def replace_tool_result(%LLMChain{} = chain, tool_call_id, %ToolResult{} = new_result) do
+    updated_messages = Message.replace_tool_result(chain.messages, tool_call_id, new_result)
+    %{chain | messages: updated_messages}
   end
 
   @doc """
@@ -1622,6 +1668,18 @@ defmodule LangChain.Chains.LLMChain do
               content: result,
               name: function.name,
               display_text: function.display_text
+            })
+
+          {:interrupt, display_message, interrupt_data} ->
+            if verbose, do: IO.inspect(display_message, label: "FUNCTION INTERRUPTED")
+
+            ToolResult.new!(%{
+              tool_call_id: call.call_id,
+              content: display_message,
+              name: function.name,
+              display_text: function.display_text,
+              is_interrupt: true,
+              interrupt_data: interrupt_data
             })
 
           {:error, reason} when is_binary(reason) ->

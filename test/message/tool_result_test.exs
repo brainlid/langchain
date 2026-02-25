@@ -102,4 +102,43 @@ defmodule LangChain.Message.ToolResultTest do
       end
     end
   end
+
+  describe "interrupt fields" do
+    test "is_interrupt defaults to false" do
+      {:ok, result} = ToolResult.new(%{tool_call_id: "call_1", content: "OK"})
+      assert result.is_interrupt == false
+      assert result.interrupt_data == nil
+    end
+
+    test "creates with is_interrupt: true and interrupt_data" do
+      interrupt_data = %{type: :subagent_hitl, sub_agent_id: "agent-1"}
+
+      result =
+        ToolResult.new!(%{
+          tool_call_id: "call_1",
+          content: "SubAgent requires approval.",
+          is_interrupt: true,
+          interrupt_data: interrupt_data
+        })
+
+      assert result.is_interrupt == true
+      assert result.interrupt_data == interrupt_data
+      assert result.content == [ContentPart.text!("SubAgent requires approval.")]
+    end
+
+    test "interrupt fields survive round-trip" do
+      data = %{reason: "approval_needed"}
+
+      {:ok, result} =
+        ToolResult.new(%{
+          tool_call_id: "call_1",
+          content: "paused",
+          is_interrupt: true,
+          interrupt_data: data
+        })
+
+      assert result.is_interrupt == true
+      assert result.interrupt_data == data
+    end
+  end
 end

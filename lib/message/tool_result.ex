@@ -43,6 +43,10 @@ defmodule LangChain.Message.ToolResult do
     field :display_text, :string
     # flag if the result is an error
     field :is_error, :boolean, default: false
+    # flag indicating this tool result represents a paused/interrupted tool
+    field :is_interrupt, :boolean, default: false
+    # opaque interrupt data (not sent to LLM, virtual only)
+    field :interrupt_data, :any, virtual: true
     # options potentially LLM specific (i.e. cache control for Anthropic)
     field :options, :any, virtual: true
   end
@@ -57,6 +61,8 @@ defmodule LangChain.Message.ToolResult do
     :processed_content,
     :display_text,
     :is_error,
+    :is_interrupt,
+    :interrupt_data,
     :options
   ]
   @create_fields @update_fields

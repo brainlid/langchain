@@ -195,6 +195,19 @@ defmodule LangChain.Chains.ChainCallbacks do
   @type chain_tool_execution_failed :: (LLMChain.t(), ToolCall.t(), term() -> any())
 
   @typedoc """
+  Executed when one or more tools return an interrupt signal.
+
+  Fires once per tool execution batch with all interrupted results.
+  The tool is paused and awaiting external input to continue.
+
+  - First argument: LLMChain.t()
+  - Second argument: List of ToolResult structs with `is_interrupt: true`
+
+  The handler's return value is discarded.
+  """
+  @type chain_tool_interrupted :: (LLMChain.t(), [ToolResult.t()] -> any())
+
+  @typedoc """
   Executed when the chain uses one or more tools and the resulting ToolResults
   are generated as part of a tool response message.
 
@@ -229,6 +242,7 @@ defmodule LangChain.Chains.ChainCallbacks do
           optional(:on_tool_execution_started) => chain_tool_execution_started(),
           optional(:on_tool_execution_completed) => chain_tool_execution_completed(),
           optional(:on_tool_execution_failed) => chain_tool_execution_failed(),
+          optional(:on_tool_interrupted) => chain_tool_interrupted(),
           optional(:on_tool_response_created) => chain_tool_response_created(),
           optional(:on_retries_exceeded) => chain_retries_exceeded()
         }
