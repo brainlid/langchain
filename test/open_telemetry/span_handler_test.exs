@@ -112,6 +112,92 @@ defmodule LangChain.OpenTelemetry.SpanHandlerTest do
       assert llm_span.attributes["gen_ai.usage.input_tokens"] == 100
       assert llm_span.attributes["gen_ai.usage.output_tokens"] == 50
     end
+
+    test "includes gen_ai.response.model on stop", %{tid: tid} do
+      call_id = Ecto.UUID.generate()
+
+      :telemetry.execute(
+        [:langchain, :llm, :call, :start],
+        %{system_time: System.system_time()},
+        %{call_id: call_id, model: "gpt-4o", provider: "openai"}
+      )
+
+      :telemetry.execute(
+        [:langchain, :llm, :call, :stop],
+        %{duration: 1_000_000, system_time: System.system_time()},
+        %{
+          call_id: call_id,
+          model: "gpt-4o-2024-05-13",
+          token_usage: %{input: 10, output: 5}
+        }
+      )
+
+      spans = flush_spans(tid)
+      assert [llm_span] = spans
+      assert llm_span.attributes["gen_ai.response.model"] == "gpt-4o-2024-05-13"
+    end
+  end
+
+  describe "LLM call spans with capture options" do
+    setup do
+      OpenTelemetry.teardown()
+
+      OpenTelemetry.setup(
+        enable_metrics: false,
+        capture_input_messages: true,
+        capture_output_messages: true
+      )
+
+      :ok
+    end
+
+    test "captures input messages when configured", %{tid: tid} do
+      call_id = Ecto.UUID.generate()
+      messages = [LangChain.Message.new_user!("Hello")]
+
+      :telemetry.execute(
+        [:langchain, :llm, :call, :start],
+        %{system_time: System.system_time()},
+        %{call_id: call_id, model: "gpt-4o", provider: "openai", messages: messages}
+      )
+
+      :telemetry.execute(
+        [:langchain, :llm, :call, :stop],
+        %{duration: 1_000_000, system_time: System.system_time()},
+        %{call_id: call_id}
+      )
+
+      spans = flush_spans(tid)
+      assert [llm_span] = spans
+
+      json = llm_span.attributes["gen_ai.input.messages"]
+      assert json != nil
+      assert [%{"role" => "user", "content" => "Hello"}] = Jason.decode!(json)
+    end
+
+    test "captures output messages when configured", %{tid: tid} do
+      call_id = Ecto.UUID.generate()
+      msg = LangChain.Message.new_assistant!(%{content: "Hi there!"})
+
+      :telemetry.execute(
+        [:langchain, :llm, :call, :start],
+        %{system_time: System.system_time()},
+        %{call_id: call_id, model: "gpt-4o", provider: "openai"}
+      )
+
+      :telemetry.execute(
+        [:langchain, :llm, :call, :stop],
+        %{duration: 1_000_000, system_time: System.system_time()},
+        %{call_id: call_id, result: {:ok, msg}}
+      )
+
+      spans = flush_spans(tid)
+      assert [llm_span] = spans
+
+      json = llm_span.attributes["gen_ai.output.messages"]
+      assert json != nil
+      assert [%{"role" => "assistant", "content" => "Hi there!"}] = Jason.decode!(json)
+    end
   end
 
   describe "chain execute spans" do
@@ -144,6 +230,35 @@ defmodule LangChain.OpenTelemetry.SpanHandlerTest do
       assert chain_span.attributes["gen_ai.operation.name"] == "invoke_agent"
       assert chain_span.attributes["gen_ai.agent.name"] == "llm_chain"
     end
+
+    test "includes langfuse attributes from custom_context", %{tid: tid} do
+      call_id = Ecto.UUID.generate()
+
+      :telemetry.execute(
+        [:langchain, :chain, :execute, :start],
+        %{system_time: System.system_time()},
+        %{
+          call_id: call_id,
+          chain_type: "llm_chain",
+          custom_context: %{
+            langfuse_user_id: "user-abc",
+            langfuse_session_id: "sess-xyz"
+          }
+        }
+      )
+
+      :telemetry.execute(
+        [:langchain, :chain, :execute, :stop],
+        %{duration: 1_000_000, system_time: System.system_time()},
+        %{call_id: call_id}
+      )
+
+      spans = flush_spans(tid)
+      assert [chain_span] = spans
+
+      assert chain_span.attributes["langfuse.user.id"] == "user-abc"
+      assert chain_span.attributes["langfuse.session.id"] == "sess-xyz"
+    end
   end
 
   describe "tool call spans" do
@@ -171,6 +286,68 @@ defmodule LangChain.OpenTelemetry.SpanHandlerTest do
       assert tool_span.attributes["gen_ai.tool.name"] == "calculator"
       assert tool_span.attributes["gen_ai.tool.call.id"] == "tc-1"
       assert tool_span.attributes["gen_ai.tool.type"] == "function"
+    end
+  end
+
+  describe "tool call spans with capture options" do
+    setup do
+      OpenTelemetry.teardown()
+
+      OpenTelemetry.setup(
+        enable_metrics: false,
+        capture_tool_arguments: true,
+        capture_tool_results: true
+      )
+
+      :ok
+    end
+
+    test "captures tool arguments when configured", %{tid: tid} do
+      call_id = Ecto.UUID.generate()
+
+      :telemetry.execute(
+        [:langchain, :tool, :call, :start],
+        %{system_time: System.system_time()},
+        %{
+          call_id: call_id,
+          tool_name: "calculator",
+          tool_call_id: "tc-1",
+          arguments: %{"x" => 1, "y" => 2}
+        }
+      )
+
+      :telemetry.execute(
+        [:langchain, :tool, :call, :stop],
+        %{duration: 500_000, system_time: System.system_time()},
+        %{call_id: call_id}
+      )
+
+      spans = flush_spans(tid)
+      assert [tool_span] = spans
+
+      json = tool_span.attributes["gen_ai.tool.call.arguments"]
+      assert json != nil
+      assert %{"x" => 1, "y" => 2} = Jason.decode!(json)
+    end
+
+    test "captures tool results when configured", %{tid: tid} do
+      call_id = Ecto.UUID.generate()
+
+      :telemetry.execute(
+        [:langchain, :tool, :call, :start],
+        %{system_time: System.system_time()},
+        %{call_id: call_id, tool_name: "calculator", tool_call_id: "tc-1"}
+      )
+
+      :telemetry.execute(
+        [:langchain, :tool, :call, :stop],
+        %{duration: 500_000, system_time: System.system_time()},
+        %{call_id: call_id, tool_result: %{content: "42"}}
+      )
+
+      spans = flush_spans(tid)
+      assert [tool_span] = spans
+      assert tool_span.attributes["gen_ai.tool.call.result"] == "42"
     end
   end
 

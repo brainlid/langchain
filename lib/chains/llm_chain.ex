@@ -1603,70 +1603,78 @@ defmodule LangChain.Chains.LLMChain do
       tool_name: function.name,
       tool_call_id: call.call_id,
       async: function.async,
-      custom_context: context
+      custom_context: context,
+      arguments: call.arguments
     }
 
-    LangChain.Telemetry.span([:langchain, :tool, :call], metadata, fn ->
-      try do
-        if verbose, do: IO.inspect(function.name, label: "EXECUTING FUNCTION")
+    enrich_stop = fn result ->
+      %{tool_result: result}
+    end
 
-        case Function.execute(function, call.arguments, context) do
-          {:ok, %ToolResult{} = result} ->
-            # allow the tool execution to return a ToolResult. Just set the
-            # tool_call_id and fallback settings for name and display_text. This
-            # allows the tool to explicitly set the options for the ToolResult.
-            %{
-              result
-              | tool_call_id: call.call_id,
-                name: result.name || function.name,
-                display_text: result.display_text || function.display_text
-            }
+    LangChain.Telemetry.span(
+      [:langchain, :tool, :call],
+      metadata,
+      fn ->
+        try do
+          if verbose, do: IO.inspect(function.name, label: "EXECUTING FUNCTION")
 
-          {:ok, llm_result, processed_result} ->
-            if verbose, do: IO.inspect(processed_result, label: "FUNCTION PROCESSED RESULT")
-            # successful execution and storage of processed_content.
+          case Function.execute(function, call.arguments, context) do
+            {:ok, %ToolResult{} = result} ->
+              # allow the tool execution to return a ToolResult. Just set the
+              # tool_call_id and fallback settings for name and display_text. This
+              # allows the tool to explicitly set the options for the ToolResult.
+              %{
+                result
+                | tool_call_id: call.call_id,
+                  name: result.name || function.name,
+                  display_text: result.display_text || function.display_text
+              }
+
+            {:ok, llm_result, processed_result} ->
+              if verbose, do: IO.inspect(processed_result, label: "FUNCTION PROCESSED RESULT")
+              # successful execution and storage of processed_content.
+              ToolResult.new!(%{
+                tool_call_id: call.call_id,
+                content: llm_result,
+                processed_content: processed_result,
+                name: function.name,
+                display_text: function.display_text
+              })
+
+            {:ok, result} ->
+              if verbose, do: IO.inspect(result, label: "FUNCTION RESULT")
+              # successful execution.
+              ToolResult.new!(%{
+                tool_call_id: call.call_id,
+                content: result,
+                name: function.name,
+                display_text: function.display_text
+              })
+
+            {:error, reason} when is_binary(reason) ->
+              if verbose, do: IO.inspect(reason, label: "FUNCTION ERROR")
+
+              ToolResult.new!(%{
+                tool_call_id: call.call_id,
+                content: reason,
+                name: function.name,
+                display_text: function.display_text,
+                is_error: true
+              })
+          end
+        rescue
+          err ->
+            Logger.error(
+              "Function #{function.name} failed in execution. Exception: #{LangChainError.format_exception(err, __STACKTRACE__)}"
+            )
+
             ToolResult.new!(%{
               tool_call_id: call.call_id,
-              content: llm_result,
-              processed_content: processed_result,
-              name: function.name,
-              display_text: function.display_text
-            })
-
-          {:ok, result} ->
-            if verbose, do: IO.inspect(result, label: "FUNCTION RESULT")
-            # successful execution.
-            ToolResult.new!(%{
-              tool_call_id: call.call_id,
-              content: result,
-              name: function.name,
-              display_text: function.display_text
-            })
-
-          {:error, reason} when is_binary(reason) ->
-            if verbose, do: IO.inspect(reason, label: "FUNCTION ERROR")
-
-            ToolResult.new!(%{
-              tool_call_id: call.call_id,
-              content: reason,
-              name: function.name,
-              display_text: function.display_text,
+              content: "ERROR executing tool: #{inspect(err)}",
               is_error: true
             })
         end
-      rescue
-        err ->
-          Logger.error(
-            "Function #{function.name} failed in execution. Exception: #{LangChainError.format_exception(err, __STACKTRACE__)}"
-          )
-
-          ToolResult.new!(%{
-            tool_call_id: call.call_id,
-            content: "ERROR executing tool: #{inspect(err)}",
-            is_error: true
-          })
-      end
-    end)
+      end, enrich_stop: enrich_stop)
   end
 
   @doc """

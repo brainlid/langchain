@@ -549,7 +549,8 @@ defmodule LangChain.ChatModels.ChatOrq do
       model: orq.model,
       provider: provider(),
       message_count: length(messages),
-      tool_count: length(tools)
+      tool_count: length(tools),
+      messages: messages
     }
 
     LangChain.Telemetry.span(

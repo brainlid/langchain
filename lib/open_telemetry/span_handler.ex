@@ -63,10 +63,10 @@ if Code.ensure_loaded?(:opentelemetry) do
           [:langchain, :llm, :call, :start],
           _measurements,
           metadata,
-          _config
+          %Config{} = config
         ) do
       span_name = "chat #{metadata[:model] || "unknown"}"
-      attrs = Attributes.llm_call_start(metadata)
+      attrs = Attributes.llm_call_start(metadata, config)
 
       start_span(metadata, span_name, attrs, :client)
     end
@@ -75,9 +75,9 @@ if Code.ensure_loaded?(:opentelemetry) do
           [:langchain, :llm, :call, :stop],
           _measurements,
           metadata,
-          _config
+          %Config{} = config
         ) do
-      stop_attrs = Attributes.llm_call_stop(metadata)
+      stop_attrs = Attributes.llm_call_stop(metadata, config)
       end_span(metadata, stop_attrs)
     end
 
@@ -85,7 +85,7 @@ if Code.ensure_loaded?(:opentelemetry) do
           [:langchain, :llm, :call, :exception],
           _measurements,
           metadata,
-          _config
+          %Config{}
         ) do
       end_span_on_exception(metadata)
     end
@@ -96,7 +96,7 @@ if Code.ensure_loaded?(:opentelemetry) do
           [:langchain, :chain, :execute, :start],
           _measurements,
           metadata,
-          _config
+          %Config{}
         ) do
       chain_type = metadata[:chain_type] || "unknown"
       span_name = "invoke_agent #{chain_type}"
@@ -109,7 +109,7 @@ if Code.ensure_loaded?(:opentelemetry) do
           [:langchain, :chain, :execute, :stop],
           _measurements,
           metadata,
-          _config
+          %Config{}
         ) do
       end_span(metadata, [])
     end
@@ -118,7 +118,7 @@ if Code.ensure_loaded?(:opentelemetry) do
           [:langchain, :chain, :execute, :exception],
           _measurements,
           metadata,
-          _config
+          %Config{}
         ) do
       end_span_on_exception(metadata)
     end
@@ -129,11 +129,11 @@ if Code.ensure_loaded?(:opentelemetry) do
           [:langchain, :tool, :call, :start],
           _measurements,
           metadata,
-          _config
+          %Config{} = config
         ) do
       tool_name = metadata[:tool_name] || "unknown"
       span_name = "execute_tool #{tool_name}"
-      attrs = Attributes.tool_call(metadata)
+      attrs = Attributes.tool_call(metadata, config)
 
       start_span(metadata, span_name, attrs, :internal)
     end
@@ -142,16 +142,17 @@ if Code.ensure_loaded?(:opentelemetry) do
           [:langchain, :tool, :call, :stop],
           _measurements,
           metadata,
-          _config
+          %Config{} = config
         ) do
-      end_span(metadata, [])
+      stop_attrs = Attributes.tool_call_stop(metadata, config)
+      end_span(metadata, stop_attrs)
     end
 
     def handle_event(
           [:langchain, :tool, :call, :exception],
           _measurements,
           metadata,
-          _config
+          %Config{}
         ) do
       end_span_on_exception(metadata)
     end

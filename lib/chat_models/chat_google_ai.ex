@@ -491,7 +491,8 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
       model: google_ai.model,
       provider: provider(),
       message_count: length(messages),
-      tool_count: length(tools)
+      tool_count: length(tools),
+      messages: messages
     }
 
     LangChain.Telemetry.span(

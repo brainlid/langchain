@@ -1,9 +1,11 @@
 defmodule LangChain.OpenTelemetry.AttributesTest do
   use ExUnit.Case, async: true
 
+  alias LangChain.Message
   alias LangChain.OpenTelemetry.Attributes
+  alias LangChain.OpenTelemetry.Config
 
-  describe "llm_call_start/1" do
+  describe "llm_call_start/2" do
     test "builds basic LLM call start attributes" do
       metadata = %{model: "gpt-4o", provider: "openai"}
       attrs = Attributes.llm_call_start(metadata)
@@ -26,9 +28,43 @@ defmodule LangChain.OpenTelemetry.AttributesTest do
 
       refute Enum.any?(attrs, fn {k, _v} -> k == "gen_ai.provider.name" end)
     end
+
+    test "includes input messages when capture_input_messages is true" do
+      config = %Config{capture_input_messages: true}
+      messages = [Message.new_system!("Be helpful"), Message.new_user!("Hello")]
+      metadata = %{model: "gpt-4o", provider: "openai", messages: messages}
+
+      attrs = Attributes.llm_call_start(metadata, config)
+
+      assert {_key, json} =
+               Enum.find(attrs, fn {k, _v} -> k == "gen_ai.input.messages" end)
+
+      decoded = Jason.decode!(json)
+      assert length(decoded) == 2
+      assert [%{"role" => "system"}, %{"role" => "user"}] = decoded
+    end
+
+    test "omits input messages when capture_input_messages is false" do
+      config = %Config{capture_input_messages: false}
+      messages = [Message.new_user!("Hello")]
+      metadata = %{model: "gpt-4o", messages: messages}
+
+      attrs = Attributes.llm_call_start(metadata, config)
+
+      refute Enum.any?(attrs, fn {k, _v} -> k == "gen_ai.input.messages" end)
+    end
+
+    test "omits input messages when messages not in metadata" do
+      config = %Config{capture_input_messages: true}
+      metadata = %{model: "gpt-4o"}
+
+      attrs = Attributes.llm_call_start(metadata, config)
+
+      refute Enum.any?(attrs, fn {k, _v} -> k == "gen_ai.input.messages" end)
+    end
   end
 
-  describe "llm_call_stop/1" do
+  describe "llm_call_stop/2" do
     test "extracts token usage" do
       metadata = %{token_usage: %{input: 100, output: 50}}
       attrs = Attributes.llm_call_stop(metadata)
@@ -49,9 +85,47 @@ defmodule LangChain.OpenTelemetry.AttributesTest do
       assert {"gen_ai.usage.input_tokens", 10} in attrs
       refute Enum.any?(attrs, fn {k, _v} -> k == "gen_ai.usage.output_tokens" end)
     end
+
+    test "includes gen_ai.response.model" do
+      metadata = %{model: "gpt-4o-2024-05-13", token_usage: %{input: 10, output: 5}}
+      attrs = Attributes.llm_call_stop(metadata)
+
+      assert {"gen_ai.response.model", "gpt-4o-2024-05-13"} in attrs
+    end
+
+    test "omits gen_ai.response.model when nil" do
+      metadata = %{token_usage: %{input: 10, output: 5}}
+      attrs = Attributes.llm_call_stop(metadata)
+
+      refute Enum.any?(attrs, fn {k, _v} -> k == "gen_ai.response.model" end)
+    end
+
+    test "includes output messages when capture_output_messages is true" do
+      config = %Config{capture_output_messages: true}
+      msg = Message.new_assistant!(%{content: "Hello there!"})
+      metadata = %{result: {:ok, msg}}
+
+      attrs = Attributes.llm_call_stop(metadata, config)
+
+      assert {_key, json} =
+               Enum.find(attrs, fn {k, _v} -> k == "gen_ai.output.messages" end)
+
+      decoded = Jason.decode!(json)
+      assert [%{"role" => "assistant", "content" => "Hello there!"}] = decoded
+    end
+
+    test "omits output messages when capture_output_messages is false" do
+      config = %Config{capture_output_messages: false}
+      msg = Message.new_assistant!(%{content: "Hello there!"})
+      metadata = %{result: {:ok, msg}}
+
+      attrs = Attributes.llm_call_stop(metadata, config)
+
+      refute Enum.any?(attrs, fn {k, _v} -> k == "gen_ai.output.messages" end)
+    end
   end
 
-  describe "tool_call/1" do
+  describe "tool_call/2" do
     test "builds tool call attributes" do
       metadata = %{tool_name: "calculator", tool_call_id: "call-123"}
       attrs = Attributes.tool_call(metadata)
@@ -70,6 +144,52 @@ defmodule LangChain.OpenTelemetry.AttributesTest do
       refute Enum.any?(attrs, fn {k, _v} -> k == "gen_ai.tool.name" end)
       refute Enum.any?(attrs, fn {k, _v} -> k == "gen_ai.tool.call.id" end)
     end
+
+    test "includes arguments when capture_tool_arguments is true" do
+      config = %Config{capture_tool_arguments: true}
+      args = %{"x" => 1, "y" => 2}
+      metadata = %{tool_name: "add", tool_call_id: "tc-1", arguments: args}
+
+      attrs = Attributes.tool_call(metadata, config)
+
+      assert {_key, json} =
+               Enum.find(attrs, fn {k, _v} -> k == "gen_ai.tool.call.arguments" end)
+
+      assert Jason.decode!(json) == args
+    end
+
+    test "omits arguments when capture_tool_arguments is false" do
+      config = %Config{capture_tool_arguments: false}
+      metadata = %{tool_name: "add", arguments: %{"x" => 1}}
+
+      attrs = Attributes.tool_call(metadata, config)
+
+      refute Enum.any?(attrs, fn {k, _v} -> k == "gen_ai.tool.call.arguments" end)
+    end
+  end
+
+  describe "tool_call_stop/2" do
+    test "includes result when capture_tool_results is true" do
+      config = %Config{capture_tool_results: true}
+      metadata = %{tool_result: %{content: "42"}}
+
+      attrs = Attributes.tool_call_stop(metadata, config)
+
+      assert {"gen_ai.tool.call.result", "42"} in attrs
+    end
+
+    test "returns empty when capture_tool_results is false" do
+      config = %Config{capture_tool_results: false}
+      metadata = %{tool_result: %{content: "42"}}
+
+      assert Attributes.tool_call_stop(metadata, config) == []
+    end
+
+    test "returns empty when no tool_result in metadata" do
+      config = %Config{capture_tool_results: true}
+
+      assert Attributes.tool_call_stop(%{}, config) == []
+    end
   end
 
   describe "chain_start/1" do
@@ -86,6 +206,61 @@ defmodule LangChain.OpenTelemetry.AttributesTest do
 
       assert {"gen_ai.operation.name", "invoke_agent"} in attrs
       refute Enum.any?(attrs, fn {k, _v} -> k == "gen_ai.agent.name" end)
+    end
+
+    test "includes langfuse attributes from custom_context" do
+      metadata = %{
+        chain_type: "llm_chain",
+        custom_context: %{
+          langfuse_user_id: "user-123",
+          langfuse_session_id: "sess-456"
+        }
+      }
+
+      attrs = Attributes.chain_start(metadata)
+
+      assert {"langfuse.user.id", "user-123"} in attrs
+      assert {"langfuse.session.id", "sess-456"} in attrs
+    end
+  end
+
+  describe "custom_context_attributes/1" do
+    test "returns empty list for nil" do
+      assert Attributes.custom_context_attributes(nil) == []
+    end
+
+    test "extracts langfuse_user_id" do
+      attrs = Attributes.custom_context_attributes(%{langfuse_user_id: "u-1"})
+      assert {"langfuse.user.id", "u-1"} in attrs
+    end
+
+    test "extracts langfuse_session_id" do
+      attrs = Attributes.custom_context_attributes(%{langfuse_session_id: "s-1"})
+      assert {"langfuse.session.id", "s-1"} in attrs
+    end
+
+    test "extracts langfuse_tags as comma-separated string" do
+      attrs = Attributes.custom_context_attributes(%{langfuse_tags: ["prod", "v2"]})
+      assert {"langfuse.trace.tags", "prod,v2"} in attrs
+    end
+
+    test "flattens langfuse_metadata into individual attributes" do
+      attrs =
+        Attributes.custom_context_attributes(%{
+          langfuse_metadata: %{env: "production", version: "1.0"}
+        })
+
+      assert {"langfuse.trace.metadata.env", "production"} in attrs
+      assert {"langfuse.trace.metadata.version", "1.0"} in attrs
+    end
+
+    test "handles empty custom_context" do
+      assert Attributes.custom_context_attributes(%{}) == []
+    end
+
+    test "ignores unknown keys" do
+      attrs = Attributes.custom_context_attributes(%{unknown_key: "value"})
+      assert attrs == []
     end
   end
 end
