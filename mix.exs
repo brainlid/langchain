@@ -131,6 +131,13 @@ defmodule LangChain.MixProject do
           LangChain.Chains.RoutingChain,
           LangChain.Routing.PromptRoute
         ],
+        "File Uploaders": [
+          LangChain.FileUploader,
+          LangChain.FileUploader.FileOpenAI,
+          LangChain.FileUploader.FileAnthropic,
+          LangChain.FileUploader.FileGoogle,
+          LangChain.FileUploader.FileResult
+        ],
         Images: [
           LangChain.Images,
           LangChain.Images.OpenAIImage,
