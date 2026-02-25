@@ -45,7 +45,7 @@ defmodule LangChain.MixProject do
     [
       {:ecto, "~> 3.10 or ~> 3.11"},
       {:gettext, "~> 0.26.2 or ~> 1.0.0"},
-      {:req, ">= 0.5.2"},
+      {:req, ">= 0.5.3"},
       {:nimble_parsec, "~> 1.4", optional: true},
       {:abacus, "~> 2.1.0", optional: true},
       {:nx, ">= 0.7.0", optional: true},
