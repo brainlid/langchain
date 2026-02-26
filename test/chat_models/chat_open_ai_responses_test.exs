@@ -1682,6 +1682,27 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
     end
   end
 
+  describe "streaming error handling" do
+    test "returns error when streaming response contains an API error" do
+      expect(Req, :post, fn _req_struct, _opts ->
+        response = %Req.Response{
+          status: 400,
+          body: {:error, LangChain.LangChainError.exception(message: "Unsupported parameter")}
+        }
+
+        {:ok, response}
+      end)
+
+      model =
+        ChatOpenAIResponses.new!(%{stream: true, model: @test_model})
+
+      assert {:error, %LangChain.LangChainError{} = error} =
+               ChatOpenAIResponses.call(model, "prompt", [])
+
+      assert error.message == "Unsupported parameter"
+    end
+  end
+
   describe "req_config" do
     test "merges req_config into the request (non-streaming)" do
       expect(Req, :post, fn req_struct ->

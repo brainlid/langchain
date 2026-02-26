@@ -457,7 +457,6 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   defp maybe_add_verbosity(map, verbosity) when is_binary(verbosity),
     do: Map.put(map, "verbosity", verbosity)
 
-
   defp get_tool_choice(%ChatOpenAIResponses{tool_choice: choice})
        when choice in ["none", "auto", "required"],
        do: choice
@@ -870,6 +869,9 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
       into: Utils.handle_stream_fn(openai, &decode_stream/1, &do_process_response(openai, &1))
     )
     |> case do
+      {:ok, %Req.Response{body: {:error, %LangChainError{} = error}}} ->
+        {:error, error}
+
       {:ok, %Req.Response{body: data} = response} ->
         Callbacks.fire(openai.callbacks, :on_llm_ratelimit_info, [
           get_ratelimit_info(response.headers)
