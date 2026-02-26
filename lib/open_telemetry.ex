@@ -75,6 +75,7 @@ if Code.ensure_loaded?(:opentelemetry) do
 
     | `custom_context` key    | Span attribute                     |
     |-------------------------|------------------------------------|
+    | `:langfuse_trace_name`  | `langfuse.trace.name`              |
     | `:langfuse_user_id`     | `langfuse.user.id`                 |
     | `:langfuse_session_id`  | `langfuse.session.id`              |
     | `:langfuse_tags`        | `langfuse.trace.tags`              |
@@ -114,6 +115,39 @@ if Code.ensure_loaded?(:opentelemetry) do
       end
 
       :ok
+    end
+
+    @doc """
+    Executes a function with OpenTelemetry tracing suppressed.
+
+    Any LangChain operations inside the function will NOT create OTEL spans or traces.
+    Useful for lightweight utility chains (translation, topic generation) that should
+    not appear as separate traces.
+
+    ## Example
+
+        LangChain.OpenTelemetry.without_tracing(fn ->
+          LLM.chain() |> LLMChain.run()
+        end)
+    """
+    @spec without_tracing((-> result)) :: result when result: any()
+    def without_tracing(fun) when is_function(fun, 0) do
+      # Create a non-recording span context and attach it.
+      # Child spans inherit the non-recording flag and are silently dropped
+      # by the SDK, so no traces are exported for operations inside this block.
+      trace_id = :otel_id_generator.generate_trace_id()
+      span_id = :otel_id_generator.generate_span_id()
+      span_ctx = :otel_tracer.non_recording_span(trace_id, span_id, 0)
+
+      ctx = OpenTelemetry.Ctx.get_current()
+      new_ctx = OpenTelemetry.Tracer.set_current_span(ctx, span_ctx)
+      token = OpenTelemetry.Ctx.attach(new_ctx)
+
+      try do
+        fun.()
+      after
+        OpenTelemetry.Ctx.detach(token)
+      end
     end
 
     @doc """

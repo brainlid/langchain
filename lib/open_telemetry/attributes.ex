@@ -197,9 +197,66 @@ defmodule LangChain.OpenTelemetry.Attributes do
   end
 
   @doc """
+  Builds attributes for a chain execution stop event.
+
+  Extracts the first user message as input and the last assistant message as output
+  so they appear on the trace-level span in Langfuse (and other OTEL backends).
+  """
+  @spec chain_stop(map(), Config.t()) :: [{String.t(), term()}]
+  def chain_stop(metadata, %Config{} = config) do
+    attrs = []
+
+    # Extract input from the original messages (first user message)
+    attrs =
+      if config.capture_input_messages do
+        case extract_user_input(metadata) do
+          nil -> attrs
+          input -> [{@input_messages, input} | attrs]
+        end
+      else
+        attrs
+      end
+
+    # Extract output from last_message (the final assistant response)
+    if config.capture_output_messages do
+      case metadata[:last_message] do
+        %LangChain.Message{role: :assistant} = msg ->
+          [{@output_messages, MessageSerializer.serialize_output(msg)} | attrs]
+
+        _ ->
+          attrs
+      end
+    else
+      attrs
+    end
+  end
+
+  defp extract_user_input(metadata) do
+    # The chain stop metadata inherits from start, which includes the chain's messages
+    # via the result tuple. Try to get the first user message.
+    case metadata[:result] do
+      {:ok, %{messages: [_ | _] = messages}} ->
+        user_messages =
+          Enum.filter(messages, fn
+            %LangChain.Message{role: :user} -> true
+            _ -> false
+          end)
+
+        case user_messages do
+          [first_user | _] -> MessageSerializer.serialize_input([first_user])
+          [] -> nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  @doc """
   Extracts Langfuse-specific attributes from a `custom_context` map.
 
   Supported keys:
+  - `:langfuse_trace_name` -> `langfuse.trace.name`
   - `:langfuse_user_id` -> `langfuse.user.id`
   - `:langfuse_session_id` -> `langfuse.session.id`
   - `:langfuse_tags` -> `langfuse.trace.tags`
@@ -210,6 +267,12 @@ defmodule LangChain.OpenTelemetry.Attributes do
 
   def custom_context_attributes(context) when is_map(context) do
     attrs = []
+
+    attrs =
+      case Map.get(context, :langfuse_trace_name) do
+        nil -> attrs
+        name -> [{"langfuse.trace.name", name} | attrs]
+      end
 
     attrs =
       case Map.get(context, :langfuse_user_id) do

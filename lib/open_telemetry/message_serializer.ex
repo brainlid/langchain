@@ -60,7 +60,9 @@ defmodule LangChain.OpenTelemetry.MessageSerializer do
   end
 
   defp serialize_content(parts) when is_list(parts) do
-    Enum.map(parts, &serialize_content_part/1)
+    parts
+    |> Enum.reject(&thinking_or_unsupported?/1)
+    |> Enum.map(&serialize_content_part/1)
   end
 
   defp serialize_content(text) when is_binary(text), do: text
@@ -84,6 +86,10 @@ defmodule LangChain.OpenTelemetry.MessageSerializer do
   end
 
   defp serialize_content_part(other), do: inspect(other)
+
+  defp thinking_or_unsupported?(%ContentPart{type: :thinking}), do: true
+  defp thinking_or_unsupported?(%ContentPart{type: :unsupported}), do: true
+  defp thinking_or_unsupported?(_), do: false
 
   defp serialize_tool_call(%ToolCall{} = tc) do
     %{

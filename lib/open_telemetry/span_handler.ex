@@ -109,9 +109,10 @@ if Code.ensure_loaded?(:opentelemetry) do
           [:langchain, :chain, :execute, :stop],
           _measurements,
           metadata,
-          %Config{}
+          %Config{} = config
         ) do
-      end_span(metadata, [])
+      stop_attrs = Attributes.chain_stop(metadata, config)
+      end_span(metadata, stop_attrs)
     end
 
     def handle_event(

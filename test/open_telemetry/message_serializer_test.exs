@@ -104,4 +104,56 @@ defmodule LangChain.OpenTelemetry.MessageSerializerTest do
       assert [%{"role" => "assistant", "content" => nil, "tool_calls" => [_]}] = decoded
     end
   end
+
+  describe "thinking/reasoning content filtering" do
+    test "filters out thinking content parts from multi-part output" do
+      msg = %Message{
+        role: :assistant,
+        content: [
+          ContentPart.new!(%{type: :thinking, content: "Let me reason about this..."}),
+          ContentPart.text!("Here is the answer")
+        ]
+      }
+
+      json = MessageSerializer.serialize_output(msg)
+      decoded = Jason.decode!(json)
+
+      assert [%{"role" => "assistant", "content" => [text_part]}] = decoded
+      assert text_part == %{"type" => "text", "text" => "Here is the answer"}
+    end
+
+    test "filters out unsupported content parts (e.g. redacted_thinking)" do
+      msg = %Message{
+        role: :assistant,
+        content: [
+          ContentPart.new!(%{type: :unsupported, content: nil, options: [type: "redacted_thinking"]}),
+          ContentPart.text!("The response")
+        ]
+      }
+
+      json = MessageSerializer.serialize_output(msg)
+      decoded = Jason.decode!(json)
+
+      assert [%{"role" => "assistant", "content" => [text_part]}] = decoded
+      assert text_part == %{"type" => "text", "text" => "The response"}
+    end
+
+    test "filters thinking from input messages too" do
+      messages = [
+        %Message{
+          role: :assistant,
+          content: [
+            ContentPart.new!(%{type: :thinking, content: "reasoning..."}),
+            ContentPart.text!("visible text")
+          ]
+        }
+      ]
+
+      json = MessageSerializer.serialize_input(messages)
+      decoded = Jason.decode!(json)
+
+      assert [%{"role" => "assistant", "content" => [text_part]}] = decoded
+      assert text_part == %{"type" => "text", "text" => "visible text"}
+    end
+  end
 end

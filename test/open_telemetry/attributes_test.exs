@@ -229,6 +229,11 @@ defmodule LangChain.OpenTelemetry.AttributesTest do
       assert Attributes.custom_context_attributes(nil) == []
     end
 
+    test "extracts langfuse_trace_name" do
+      attrs = Attributes.custom_context_attributes(%{langfuse_trace_name: "chat_agent"})
+      assert {"langfuse.trace.name", "chat_agent"} in attrs
+    end
+
     test "extracts langfuse_user_id" do
       attrs = Attributes.custom_context_attributes(%{langfuse_user_id: "u-1"})
       assert {"langfuse.user.id", "u-1"} in attrs
