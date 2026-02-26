@@ -497,14 +497,14 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
         ChatOpenAIResponses.new!(%{"model" => @test_model, "verbosity" => "low"})
 
       data = ChatOpenAIResponses.for_api(openai, [], [])
-      assert data.verbosity == "low"
+      assert data.text["verbosity"] == "low"
     end
 
     test "omits verbosity when nil" do
       openai = ChatOpenAIResponses.new!(%{"model" => @test_model})
 
       data = ChatOpenAIResponses.for_api(openai, [], [])
-      refute Map.has_key?(data, :verbosity)
+      refute match?(%{text: %{"verbosity" => _}}, data)
     end
   end
 

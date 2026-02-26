@@ -372,7 +372,6 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     |> Utils.conditionally_add_to_map(:previous_response_id, openai.previous_response_id)
     |> Utils.conditionally_add_to_map(:reasoning, ReasoningOptions.to_api_map(openai.reasoning))
     |> Utils.conditionally_add_to_map(:text, set_text_format(openai))
-    |> Utils.conditionally_add_to_map(:verbosity, openai.verbosity)
     |> Utils.conditionally_add_to_map(:tool_choice, get_tool_choice(openai))
     |> Utils.conditionally_add_to_map(:truncation, openai.truncation)
     |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(openai, tools))
@@ -415,10 +414,12 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     end)
   end
 
+  # JSON schema + optional verbosity
   defp set_text_format(%ChatOpenAIResponses{
          json_response: true,
          json_schema: json_schema,
-         json_schema_name: json_schema_name
+         json_schema_name: json_schema_name,
+         verbosity: verbosity
        })
        when not is_nil(json_schema) and not is_nil(json_schema_name) do
     %{
@@ -429,17 +430,33 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         "strict" => true
       }
     }
+    |> maybe_add_verbosity(verbosity)
   end
 
-  defp set_text_format(%ChatOpenAIResponses{json_response: true}) do
+  # JSON object + optional verbosity
+  defp set_text_format(%ChatOpenAIResponses{json_response: true, verbosity: verbosity}) do
     %{"format" => %{"type" => "json_object"}}
+    |> maybe_add_verbosity(verbosity)
   end
 
+  # Plain text with verbosity
+  defp set_text_format(%ChatOpenAIResponses{json_response: false, verbosity: verbosity})
+       when is_binary(verbosity) do
+    %{"verbosity" => verbosity}
+  end
+
+  # Plain text, no verbosity (default)
   defp set_text_format(%ChatOpenAIResponses{json_response: false}) do
     # NOTE: The default handling when unspecified is `%{"type" => "text"}`
     # This returns a `nil` which has the same effect.
     nil
   end
+
+  defp maybe_add_verbosity(map, nil), do: map
+
+  defp maybe_add_verbosity(map, verbosity) when is_binary(verbosity),
+    do: Map.put(map, "verbosity", verbosity)
+
 
   defp get_tool_choice(%ChatOpenAIResponses{tool_choice: choice})
        when choice in ["none", "auto", "required"],
