@@ -151,14 +151,21 @@ defmodule LangChain.OpenTelemetry.SpanHandlerTest do
       :ok
     end
 
-    test "captures input messages when configured", %{tid: tid} do
+    test "captures input messages from prompt event when configured", %{tid: tid} do
       call_id = Ecto.UUID.generate()
       messages = [LangChain.Message.new_user!("Hello")]
 
       :telemetry.execute(
         [:langchain, :llm, :call, :start],
         %{system_time: System.system_time()},
-        %{call_id: call_id, model: "gpt-4o", provider: "openai", messages: messages}
+        %{call_id: call_id, model: "gpt-4o", provider: "openai"}
+      )
+
+      # Messages are now sent via the prompt event, not the start event
+      :telemetry.execute(
+        [:langchain, :llm, :prompt],
+        %{system_time: System.system_time()},
+        %{model: "gpt-4o", messages: messages}
       )
 
       :telemetry.execute(
@@ -173,6 +180,38 @@ defmodule LangChain.OpenTelemetry.SpanHandlerTest do
       json = llm_span.attributes["gen_ai.input.messages"]
       assert json != nil
       assert [%{"role" => "user", "content" => "Hello"}] = Jason.decode!(json)
+    end
+
+    test "does not capture input messages from prompt event when not configured", %{tid: tid} do
+      # Teardown and re-setup without capture_input_messages
+      OpenTelemetry.teardown()
+      OpenTelemetry.setup(enable_metrics: false, capture_output_messages: true)
+
+      call_id = Ecto.UUID.generate()
+      messages = [LangChain.Message.new_user!("Hello")]
+
+      :telemetry.execute(
+        [:langchain, :llm, :call, :start],
+        %{system_time: System.system_time()},
+        %{call_id: call_id, model: "gpt-4o", provider: "openai"}
+      )
+
+      :telemetry.execute(
+        [:langchain, :llm, :prompt],
+        %{system_time: System.system_time()},
+        %{model: "gpt-4o", messages: messages}
+      )
+
+      :telemetry.execute(
+        [:langchain, :llm, :call, :stop],
+        %{duration: 1_000_000, system_time: System.system_time()},
+        %{call_id: call_id}
+      )
+
+      spans = flush_spans(tid)
+      assert [llm_span] = spans
+
+      refute Map.has_key?(llm_span.attributes, "gen_ai.input.messages")
     end
 
     test "captures output messages when configured", %{tid: tid} do

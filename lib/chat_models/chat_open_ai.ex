@@ -708,8 +708,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       model: openai.model,
       provider: provider(),
       message_count: length(messages),
-      tools_count: length(tools),
-      messages: messages
+      tools_count: length(tools)
     }
 
     LangChain.Telemetry.span(

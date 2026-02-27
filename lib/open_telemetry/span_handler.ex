@@ -22,6 +22,7 @@ if Code.ensure_loaded?(:opentelemetry) do
 
     alias LangChain.OpenTelemetry.Attributes
     alias LangChain.OpenTelemetry.Config
+    alias LangChain.OpenTelemetry.MessageSerializer
 
     require OpenTelemetry.Tracer, as: Tracer
 
@@ -36,6 +37,7 @@ if Code.ensure_loaded?(:opentelemetry) do
         [:langchain, :llm, :call, :start],
         [:langchain, :llm, :call, :stop],
         [:langchain, :llm, :call, :exception],
+        [:langchain, :llm, :prompt],
         [:langchain, :chain, :execute, :start],
         [:langchain, :chain, :execute, :stop],
         [:langchain, :chain, :execute, :exception],
@@ -88,6 +90,31 @@ if Code.ensure_loaded?(:opentelemetry) do
           %Config{}
         ) do
       end_span_on_exception(metadata)
+    end
+
+    # --- LLM prompt event (opt-in message capture) ---
+
+    def handle_event(
+          [:langchain, :llm, :prompt],
+          _measurements,
+          metadata,
+          %Config{} = config
+        ) do
+      if config.capture_input_messages do
+        case metadata[:messages] do
+          [_ | _] = messages ->
+            span_ctx = OpenTelemetry.Tracer.current_span_ctx()
+
+            OpenTelemetry.Span.set_attributes(span_ctx, [
+              {"gen_ai.input.messages", MessageSerializer.serialize_input(messages)}
+            ])
+
+          _ ->
+            :ok
+        end
+      end
+
+      :ok
     end
 
     # --- Chain execute events ---

@@ -29,34 +29,10 @@ defmodule LangChain.OpenTelemetry.AttributesTest do
       refute Enum.any?(attrs, fn {k, _v} -> k == "gen_ai.provider.name" end)
     end
 
-    test "includes input messages when capture_input_messages is true" do
+    test "does not include input messages (moved to prompt event handler)" do
       config = %Config{capture_input_messages: true}
       messages = [Message.new_system!("Be helpful"), Message.new_user!("Hello")]
       metadata = %{model: "gpt-4o", provider: "openai", messages: messages}
-
-      attrs = Attributes.llm_call_start(metadata, config)
-
-      assert {_key, json} =
-               Enum.find(attrs, fn {k, _v} -> k == "gen_ai.input.messages" end)
-
-      decoded = Jason.decode!(json)
-      assert length(decoded) == 2
-      assert [%{"role" => "system"}, %{"role" => "user"}] = decoded
-    end
-
-    test "omits input messages when capture_input_messages is false" do
-      config = %Config{capture_input_messages: false}
-      messages = [Message.new_user!("Hello")]
-      metadata = %{model: "gpt-4o", messages: messages}
-
-      attrs = Attributes.llm_call_start(metadata, config)
-
-      refute Enum.any?(attrs, fn {k, _v} -> k == "gen_ai.input.messages" end)
-    end
-
-    test "omits input messages when messages not in metadata" do
-      config = %Config{capture_input_messages: true}
-      metadata = %{model: "gpt-4o"}
 
       attrs = Attributes.llm_call_start(metadata, config)
 

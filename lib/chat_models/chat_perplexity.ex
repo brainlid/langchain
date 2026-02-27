@@ -320,8 +320,7 @@ defmodule LangChain.ChatModels.ChatPerplexity do
       model: perplexity.model,
       provider: provider(),
       message_count: length(messages),
-      tools_count: length(tools),
-      messages: messages
+      tools_count: length(tools)
     }
 
     Telemetry.span(

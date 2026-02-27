@@ -320,6 +320,30 @@ defmodule LangChain.ChatModels.TelemetryTest do
       :telemetry.detach("test-grok-telemetry-events")
     end
 
+    test "LLM call start metadata does not contain messages (privacy)", %{
+      openai: openai,
+      test_messages: messages
+    } do
+      test_pid = self()
+
+      :telemetry.attach(
+        "test-no-messages-in-start",
+        [:langchain, :llm, :call, :start],
+        fn _name, _measurements, metadata, _config ->
+          send(test_pid, {:start_metadata, metadata})
+        end,
+        nil
+      )
+
+      {:ok, _response} = ChatOpenAI.call(openai, messages, [])
+
+      assert_received {:start_metadata, metadata}
+      refute Map.has_key?(metadata, :messages)
+      assert Map.has_key?(metadata, :message_count)
+
+      :telemetry.detach("test-no-messages-in-start")
+    end
+
     test "call_id is present in start and stop events and is the same UUID", %{
       openai: openai,
       test_messages: messages
@@ -545,8 +569,17 @@ defmodule LangChain.ChatModels.TelemetryTest do
       defstruct [:model]
     end
 
+    defmodule ChatSomethingCustom do
+      @moduledoc false
+      defstruct [:model]
+    end
+
     test "derives provider from module name when provider/0 is not implemented" do
       assert ChatModel.provider(%ChatFakeProvider{}) == "fake_provider"
+    end
+
+    test "strips Chat prefix and underscores the remainder" do
+      assert ChatModel.provider(%ChatSomethingCustom{}) == "something_custom"
     end
 
     test "dispatches to provider/0 when implemented" do

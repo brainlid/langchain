@@ -53,6 +53,13 @@ defmodule LangChain.Telemetry do
     in chain execution `:stop` events. For streaming responses this is the fully
     assembled message (not individual deltas).
 
+  ## Privacy Note
+
+  Message content is intentionally excluded from the lifecycle events (`:start` / `:stop` /
+  `:exception`) to avoid unconditional exposure of user/PII data. Message content is only
+  available through the purpose-specific `[:langchain, :llm, :prompt]` and
+  `[:langchain, :llm, :response]` events — subscribing to these is an explicit opt-in.
+
   ## Expected Metadata Shape by Event
 
   * **LLM call `:start`**:

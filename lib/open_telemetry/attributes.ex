@@ -37,33 +37,20 @@ defmodule LangChain.OpenTelemetry.Attributes do
   @doc """
   Builds attributes for an LLM call start event.
 
-  When `config.capture_input_messages` is true and `metadata[:messages]` is present,
-  serializes input messages into `gen_ai.input.messages`.
+  Returns operation name, model, and provider attributes. Input message capture
+  is handled separately by the prompt event handler in `SpanHandler`.
   """
   @spec llm_call_start(map()) :: [{String.t(), term()}]
   @spec llm_call_start(map(), Config.t()) :: [{String.t(), term()}]
-  def llm_call_start(metadata, %Config{} = config \\ %Config{}) do
+  def llm_call_start(metadata, %Config{} = _config \\ %Config{}) do
     attrs = [
       {@operation_name, "chat"},
       {@request_model, metadata[:model]}
     ]
 
-    attrs =
-      case metadata[:provider] do
-        nil -> attrs
-        provider -> [{@provider_name, ProviderMapping.to_otel(provider)} | attrs]
-      end
-
-    if config.capture_input_messages do
-      case metadata[:messages] do
-        [_ | _] = messages ->
-          [{@input_messages, MessageSerializer.serialize_input(messages)} | attrs]
-
-        _ ->
-          attrs
-      end
-    else
-      attrs
+    case metadata[:provider] do
+      nil -> attrs
+      provider -> [{@provider_name, ProviderMapping.to_otel(provider)} | attrs]
     end
   end
 

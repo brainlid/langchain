@@ -8,6 +8,7 @@ defmodule LangChain.OpenTelemetry.ProviderMapping do
 
   @mapping %{
     "openai" => "openai",
+    "openai_responses" => "openai",
     "anthropic" => "anthropic",
     "google" => "gcp.gemini",
     "vertex_ai" => "gcp.vertex_ai",
@@ -15,7 +16,9 @@ defmodule LangChain.OpenTelemetry.ProviderMapping do
     "deepseek" => "deepseek",
     "perplexity" => "perplexity",
     "xai" => "x_ai",
-    "ollama" => "ollama"
+    "ollama" => "ollama",
+    "orq" => "orq",
+    "bumblebee" => "bumblebee"
   }
 
   @doc """
