@@ -56,16 +56,16 @@ defmodule LangChain.Telemetry do
   ## Expected Metadata Shape by Event
 
   * **LLM call `:start`**:
-    `%{model: String.t(), provider: String.t(), message_count: integer(), tool_count: integer(), call_id: String.t()}`
+    `%{model: String.t(), provider: String.t(), message_count: integer(), tools_count: integer(), call_id: String.t()}`
 
   * **LLM call `:stop`** (includes enriched fields):
-    `%{model: String.t(), provider: String.t(), message_count: integer(), tool_count: integer(), call_id: String.t(), token_usage: TokenUsage.t() | nil, result: term()}`
+    `%{model: String.t(), provider: String.t(), message_count: integer(), tools_count: integer(), call_id: String.t(), token_usage: TokenUsage.t() | nil, result: term()}`
 
   * **Chain execution `:start`**:
-    `%{chain_type: String.t(), mode: term(), message_count: integer(), tool_count: integer(), custom_context: term(), call_id: String.t()}`
+    `%{chain_type: String.t(), mode: term(), message_count: integer(), tools_count: integer(), custom_context: term(), call_id: String.t()}`
 
   * **Chain execution `:stop`** (includes enriched fields):
-    `%{chain_type: String.t(), mode: term(), message_count: integer(), tool_count: integer(), custom_context: term(), call_id: String.t(), last_message: Message.t() | nil, token_usage: TokenUsage.t() | nil, result: term()}`
+    `%{chain_type: String.t(), mode: term(), message_count: integer(), tools_count: integer(), custom_context: term(), call_id: String.t(), last_message: Message.t() | nil, token_usage: TokenUsage.t() | nil, result: term()}`
 
   * **Tool call** (`:start` / `:stop` / `:exception`):
     `%{tool_name: String.t(), tool_call_id: String.t(), async: boolean(), custom_context: term(), call_id: String.t()}`

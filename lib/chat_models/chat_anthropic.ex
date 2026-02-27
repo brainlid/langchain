@@ -663,7 +663,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       model: anthropic.model,
       provider: provider(),
       message_count: length(messages),
-      tool_count: length(functions),
+      tools_count: length(functions),
       messages: messages
     }
 

@@ -241,7 +241,7 @@ defmodule LangChain.ChatModels.ChatBumblebee do
       provider: provider(),
       template_format: model.template_format,
       message_count: length(messages),
-      tool_count: length(functions),
+      tools_count: length(functions),
       messages: messages
     }
 

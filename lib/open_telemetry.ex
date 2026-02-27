@@ -135,8 +135,8 @@ if Code.ensure_loaded?(:opentelemetry) do
       # Create a non-recording span context and attach it.
       # Child spans inherit the non-recording flag and are silently dropped
       # by the SDK, so no traces are exported for operations inside this block.
-      trace_id = :otel_id_generator.generate_trace_id()
-      span_id = :otel_id_generator.generate_span_id()
+      trace_id = apply(:otel_id_generator, :generate_trace_id, [])
+      span_id = apply(:otel_id_generator, :generate_span_id, [])
       span_ctx = :otel_tracer.non_recording_span(trace_id, span_id, 0)
 
       ctx = OpenTelemetry.Ctx.get_current()
@@ -155,12 +155,14 @@ if Code.ensure_loaded?(:opentelemetry) do
     """
     @spec teardown() :: :ok
     def teardown do
-      :telemetry.detach(SpanHandler.handler_id())
-      :telemetry.detach(MetricsHandler.handler_id())
+      for id <- [SpanHandler.handler_id(), MetricsHandler.handler_id()] do
+        case :telemetry.detach(id) do
+          :ok -> :ok
+          {:error, :not_found} -> :ok
+        end
+      end
+
       :ok
-    rescue
-      # detach raises if handler not found; ignore
-      _ -> :ok
     end
   end
 end

@@ -2,17 +2,22 @@ if Code.ensure_loaded?(:opentelemetry) do
   defmodule LangChain.OpenTelemetry.MetricsHandler do
     @moduledoc """
     Telemetry handler that re-emits LangChain telemetry events as GenAI
-    Semantic Convention-aligned metric events.
+    Semantic Convention-aligned intermediary metric events.
 
-    Emits the following telemetry events:
+    **Important:** This module does not directly record OpenTelemetry histograms
+    or counters. It emits `:telemetry.execute/3` events that must be consumed by
+    a metrics library to become actual OTel metrics. Without a consumer attached
+    to these events, `enable_metrics: true` has no visible effect.
+
+    To produce actual OTel metrics, attach a consumer such as `Telemetry.Metrics`
+    with an OpenTelemetry reporter, `PromEx`, or equivalent to the events below.
+
+    ## Emitted events
 
     * `[:langchain, :otel, :operation, :duration]` — with `%{duration_s: float()}`
       measurement and GenAI attributes as metadata
     * `[:langchain, :otel, :token, :usage]` — with `%{tokens: integer()}` measurement
       and GenAI attributes (including `gen_ai.token.type`) as metadata
-
-    These events can be consumed by any `:telemetry`-based metrics library
-    (e.g., `Telemetry.Metrics`, `PromEx`, `OpenTelemetry.Metrics` when available).
 
     ## Usage
 

@@ -528,7 +528,7 @@ defmodule LangChain.ChatModels.ChatGrok do
       model: grok.model,
       provider: provider(),
       message_count: length(messages),
-      tool_count: length(tools),
+      tools_count: length(tools),
       messages: messages
     }
 

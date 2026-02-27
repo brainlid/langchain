@@ -40,6 +40,7 @@ defmodule LangChain.OpenTelemetry.Attributes do
   When `config.capture_input_messages` is true and `metadata[:messages]` is present,
   serializes input messages into `gen_ai.input.messages`.
   """
+  @spec llm_call_start(map()) :: [{String.t(), term()}]
   @spec llm_call_start(map(), Config.t()) :: [{String.t(), term()}]
   def llm_call_start(metadata, %Config{} = config \\ %Config{}) do
     attrs = [
@@ -72,6 +73,7 @@ defmodule LangChain.OpenTelemetry.Attributes do
   When `config.capture_output_messages` is true and `metadata[:result]` contains
   a message, serializes output messages into `gen_ai.output.messages`.
   """
+  @spec llm_call_stop(map()) :: [{String.t(), term()}]
   @spec llm_call_stop(map(), Config.t()) :: [{String.t(), term()}]
   def llm_call_stop(metadata, %Config{} = config \\ %Config{}) do
     attrs =
@@ -113,6 +115,7 @@ defmodule LangChain.OpenTelemetry.Attributes do
   When `config.capture_tool_arguments` is true and `metadata[:arguments]` is present,
   serializes arguments into `gen_ai.tool.call.arguments`.
   """
+  @spec tool_call(map()) :: [{String.t(), term()}]
   @spec tool_call(map(), Config.t()) :: [{String.t(), term()}]
   def tool_call(metadata, %Config{} = config \\ %Config{}) do
     attrs = [

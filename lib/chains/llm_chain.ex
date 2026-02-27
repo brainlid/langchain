@@ -632,7 +632,7 @@ defmodule LangChain.Chains.LLMChain do
         chain_type: "llm_chain",
         mode: Keyword.get(opts, :mode, "default"),
         message_count: length(chain.messages),
-        tool_count: length(chain.tools),
+        tools_count: length(chain.tools),
         custom_context: chain.custom_context
       }
 
@@ -660,11 +660,26 @@ defmodule LangChain.Chains.LLMChain do
     end
   end
 
-  defp chain_stop_metadata({:ok, %LLMChain{last_message: %Message{} = msg}}) do
-    %{last_message: msg, token_usage: get_in(msg.metadata, [:usage])}
+  defp chain_stop_metadata({:ok, %LLMChain{last_message: %Message{} = msg} = chain}) do
+    # Aggregate token usage across all assistant messages in the chain,
+    # not just the last message. In multi-turn chains (e.g., with tool calls),
+    # earlier LLM calls contribute token usage that would otherwise be lost.
+    token_usage = aggregate_token_usage(chain.messages)
+    %{last_message: msg, token_usage: token_usage}
   end
 
   defp chain_stop_metadata(_result), do: %{last_message: nil, token_usage: nil}
+
+  defp aggregate_token_usage(messages) do
+    messages
+    |> Enum.reduce(nil, fn
+      %Message{role: :assistant} = msg, acc ->
+        LangChain.TokenUsage.add(acc, LangChain.TokenUsage.get(msg))
+
+      _, acc ->
+        acc
+    end)
+  end
 
   defp initial_run_logging(%LLMChain{verbose: false} = _chain), do: :ok
 
@@ -812,7 +827,7 @@ defmodule LangChain.Chains.LLMChain do
         chain_type: "llm_chain",
         mode: "run_until_tool_used",
         message_count: length(chain.messages),
-        tool_count: length(chain.tools),
+        tools_count: length(chain.tools),
         custom_context: chain.custom_context
       }
 
@@ -1674,7 +1689,9 @@ defmodule LangChain.Chains.LLMChain do
               is_error: true
             })
         end
-      end, enrich_stop: enrich_stop)
+      end,
+      enrich_stop: enrich_stop
+    )
   end
 
   @doc """

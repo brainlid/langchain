@@ -126,7 +126,11 @@ defmodule LangChain.OpenTelemetry.MessageSerializerTest do
       msg = %Message{
         role: :assistant,
         content: [
-          ContentPart.new!(%{type: :unsupported, content: nil, options: [type: "redacted_thinking"]}),
+          ContentPart.new!(%{
+            type: :unsupported,
+            content: nil,
+            options: [type: "redacted_thinking"]
+          }),
           ContentPart.text!("The response")
         ]
       }

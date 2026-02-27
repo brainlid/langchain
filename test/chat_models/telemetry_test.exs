@@ -33,7 +33,7 @@ defmodule LangChain.ChatModels.TelemetryTest do
         model: model_name,
         provider: provider,
         message_count: length(messages),
-        tool_count: length(tools)
+        tools_count: length(tools)
       }
 
       usage = TokenUsage.new!(%{input: 10, output: 20})
@@ -171,7 +171,7 @@ defmodule LangChain.ChatModels.TelemetryTest do
       assert metadata.model == openai.model
       assert metadata.provider == "openai"
       assert metadata.message_count == length(messages)
-      assert metadata.tool_count == 0
+      assert metadata.tools_count == 0
 
       assert_received {:telemetry_event, [:langchain, :llm, :prompt], _, metadata}
       assert metadata.model == openai.model
@@ -309,7 +309,7 @@ defmodule LangChain.ChatModels.TelemetryTest do
       assert metadata.model == grok.model
       assert metadata.provider == "xai"
       assert metadata.message_count == length(messages)
-      assert metadata.tool_count == 0
+      assert metadata.tools_count == 0
 
       assert_received {:telemetry_event, [:langchain, :llm, :prompt], _, _metadata}
       assert_received {:telemetry_event, [:langchain, :llm, :response], _, _metadata}

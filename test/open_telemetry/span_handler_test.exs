@@ -85,7 +85,7 @@ defmodule LangChain.OpenTelemetry.SpanHandlerTest do
           model: "gpt-4o",
           provider: "openai",
           message_count: 2,
-          tool_count: 0
+          tools_count: 0
         }
       )
 
@@ -212,7 +212,7 @@ defmodule LangChain.OpenTelemetry.SpanHandlerTest do
           chain_type: "llm_chain",
           mode: :run,
           message_count: 1,
-          tool_count: 0
+          tools_count: 0
         }
       )
 

@@ -360,7 +360,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
       model: mistralai.model,
       provider: provider(),
       message_count: length(messages),
-      tool_count: length(tools),
+      tools_count: length(tools),
       messages: messages
     }
 

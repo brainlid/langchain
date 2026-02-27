@@ -385,7 +385,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
       model: ollama_ai.model,
       provider: provider(),
       message_count: length(messages),
-      tool_count: length(tools),
+      tools_count: length(tools),
       messages: messages
     }
 
