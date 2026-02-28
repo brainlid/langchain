@@ -358,36 +358,42 @@ defmodule LangChain.ChatModels.ChatMistralAI do
       when is_list(messages) and is_list(tools) do
     metadata = %{
       model: mistralai.model,
+      provider: provider(),
       message_count: length(messages),
       tools_count: length(tools)
     }
 
-    LangChain.Telemetry.span([:langchain, :llm, :call], metadata, fn ->
-      try do
-        # Track the prompt being sent
-        LangChain.Telemetry.llm_prompt(
-          %{system_time: System.system_time()},
-          %{model: mistralai.model, messages: messages}
-        )
+    LangChain.Telemetry.span(
+      [:langchain, :llm, :call],
+      metadata,
+      fn ->
+        try do
+          # Track the prompt being sent
+          LangChain.Telemetry.llm_prompt(
+            %{system_time: System.system_time()},
+            %{model: mistralai.model, messages: messages}
+          )
 
-        case do_api_request(mistralai, messages, tools) do
-          {:error, reason} ->
-            {:error, reason}
+          case do_api_request(mistralai, messages, tools) do
+            {:error, reason} ->
+              {:error, reason}
 
-          parsed_data ->
-            # Track the response being received
-            LangChain.Telemetry.llm_response(
-              %{system_time: System.system_time()},
-              %{model: mistralai.model, response: parsed_data}
-            )
+            parsed_data ->
+              # Track the response being received
+              LangChain.Telemetry.llm_response(
+                %{system_time: System.system_time()},
+                %{model: mistralai.model, response: parsed_data}
+              )
 
-            {:ok, parsed_data}
+              {:ok, parsed_data}
+          end
+        rescue
+          err in LangChainError ->
+            {:error, err}
         end
-      rescue
-        err in LangChainError ->
-          {:error, err}
-      end
-    end)
+      end,
+      enrich_stop: &ChatModel.token_usage_from_result/1
+    )
   end
 
   # Make the API request. If `stream: true`, we handle partial chunk deltas;
@@ -825,6 +831,9 @@ defmodule LangChain.ChatModels.ChatMistralAI do
   end
 
   defp get_token_usage(_response_body), do: nil
+
+  @impl ChatModel
+  def provider, do: "mistralai"
 
   @doc """
   Determine if an error should be retried. If `true`, a fallback LLM may be

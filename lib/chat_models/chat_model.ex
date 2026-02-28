@@ -4,6 +4,7 @@ defmodule LangChain.ChatModels.ChatModel do
   alias LangChain.MessageDelta
   alias LangChain.Function
   alias LangChain.LangChainError
+  alias LangChain.TokenUsage
   alias LangChain.Utils
 
   @type call_response ::
@@ -20,11 +21,64 @@ defmodule LangChain.ChatModels.ChatModel do
               [LangChain.Function.t()]
             ) :: call_response()
 
+  @doc """
+  Returns the provider name for this chat model (e.g. "openai", "anthropic").
+
+  Used in telemetry metadata to identify the LLM provider without inspecting
+  the module name. This is an optional callback — if not implemented, the
+  provider can be derived from the module name via `provider/1`.
+  """
+  @callback provider() :: String.t()
+
   @callback retry_on_fallback?(LangChainError.t()) :: boolean()
 
   @callback serialize_config(t()) :: %{String.t() => any()}
 
   @callback restore_from_map(%{String.t() => any()}) :: {:ok, struct()} | {:error, String.t()}
+
+  @optional_callbacks [provider: 0]
+
+  @doc """
+  Returns the provider name for a given chat model struct.
+
+  Dispatches to the model module's `provider/0` callback if implemented,
+  otherwise derives the provider from the module name.
+  """
+  @spec provider(t()) :: String.t()
+  def provider(%module{}) do
+    if function_exported?(module, :provider, 0) do
+      module.provider()
+    else
+      module
+      |> Module.split()
+      |> List.last()
+      |> String.replace_leading("Chat", "")
+      |> Macro.underscore()
+    end
+  end
+
+  @doc """
+  Extracts token usage from an LLM call result for use as a `span/4` `:enrich_stop` callback.
+
+  Returns a map with `:token_usage` set to the `%TokenUsage{}` struct when
+  available, or `nil` otherwise.
+  """
+  @spec token_usage_from_result(call_response()) :: %{token_usage: TokenUsage.t() | nil}
+  def token_usage_from_result({:ok, %Message{} = msg}) do
+    %{token_usage: get_in(msg.metadata, [:usage])}
+  end
+
+  def token_usage_from_result({:ok, [%Message{} | _] = messages}) do
+    usage =
+      Enum.find_value(messages, fn
+        %Message{metadata: %{usage: %TokenUsage{} = usage}} -> usage
+        _ -> nil
+      end)
+
+    %{token_usage: usage}
+  end
+
+  def token_usage_from_result(_result), do: %{token_usage: nil}
 
   @doc """
   Create a serializable map from a ChatModel's current configuration that can

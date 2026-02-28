@@ -514,36 +514,42 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
       when is_list(messages) do
     metadata = %{
       model: google_ai.model,
+      provider: provider(),
       message_count: length(messages),
       tools_count: length(tools)
     }
 
-    LangChain.Telemetry.span([:langchain, :llm, :call], metadata, fn ->
-      try do
-        # Track the prompt being sent
-        LangChain.Telemetry.llm_prompt(
-          %{system_time: System.system_time()},
-          %{model: google_ai.model, messages: messages}
-        )
+    LangChain.Telemetry.span(
+      [:langchain, :llm, :call],
+      metadata,
+      fn ->
+        try do
+          # Track the prompt being sent
+          LangChain.Telemetry.llm_prompt(
+            %{system_time: System.system_time()},
+            %{model: google_ai.model, messages: messages}
+          )
 
-        case do_api_request(google_ai, messages, tools) do
-          {:error, reason} ->
-            {:error, reason}
+          case do_api_request(google_ai, messages, tools) do
+            {:error, reason} ->
+              {:error, reason}
 
-          parsed_data ->
-            # Track the response being received
-            LangChain.Telemetry.llm_response(
-              %{system_time: System.system_time()},
-              %{model: google_ai.model, response: parsed_data}
-            )
+            parsed_data ->
+              # Track the response being received
+              LangChain.Telemetry.llm_response(
+                %{system_time: System.system_time()},
+                %{model: google_ai.model, response: parsed_data}
+              )
 
-            {:ok, parsed_data}
+              {:ok, parsed_data}
+          end
+        rescue
+          err in LangChainError ->
+            {:error, err.message}
         end
-      rescue
-        err in LangChainError ->
-          {:error, err.message}
-      end
-    end)
+      end,
+      enrich_stop: &ChatModel.token_usage_from_result/1
+    )
   end
 
   @doc false
@@ -574,7 +580,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
           result ->
             # Track non-streaming response completion
             LangChain.Telemetry.emit_event(
-              [:langchain, :llm, :response, streaming: false],
+              [:langchain, :llm, :response, :non_streaming],
               %{system_time: System.system_time()},
               %{
                 model: google_ai.model,
@@ -959,6 +965,9 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   defp unmap_role("model"), do: "assistant"
   defp unmap_role("user"), do: "user"
   defp unmap_role(invalid_role), do: invalid_role
+
+  @impl ChatModel
+  def provider, do: "google"
 
   @doc """
   Determine if an error should be retried. If `true`, a fallback LLM may be

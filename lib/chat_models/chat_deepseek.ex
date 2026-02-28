@@ -482,37 +482,43 @@ defmodule LangChain.ChatModels.ChatDeepSeek do
   def call(%ChatDeepSeek{} = deepseek, messages, tools) when is_list(messages) do
     metadata = %{
       model: deepseek.model,
+      provider: provider(),
       message_count: length(messages),
       tools_count: length(tools)
     }
 
-    LangChain.Telemetry.span([:langchain, :llm, :call], metadata, fn ->
-      try do
-        # Track the prompt being sent
-        LangChain.Telemetry.llm_prompt(
-          %{system_time: System.system_time()},
-          %{model: deepseek.model, messages: messages}
-        )
+    LangChain.Telemetry.span(
+      [:langchain, :llm, :call],
+      metadata,
+      fn ->
+        try do
+          # Track the prompt being sent
+          LangChain.Telemetry.llm_prompt(
+            %{system_time: System.system_time()},
+            %{model: deepseek.model, messages: messages}
+          )
 
-        # make base api request and perform high-level success/failure checks
-        case do_api_request(deepseek, messages, tools) do
-          {:error, %LangChainError{} = reason} ->
-            {:error, reason}
+          # make base api request and perform high-level success/failure checks
+          case do_api_request(deepseek, messages, tools) do
+            {:error, %LangChainError{} = reason} ->
+              {:error, reason}
 
-          parsed_data ->
-            # Track the response being received
-            LangChain.Telemetry.llm_response(
-              %{system_time: System.system_time()},
-              %{model: deepseek.model, response: parsed_data}
-            )
+            parsed_data ->
+              # Track the response being received
+              LangChain.Telemetry.llm_response(
+                %{system_time: System.system_time()},
+                %{model: deepseek.model, response: parsed_data}
+              )
 
-            {:ok, parsed_data}
+              {:ok, parsed_data}
+          end
+        rescue
+          err in LangChainError ->
+            {:error, err}
         end
-      rescue
-        err in LangChainError ->
-          {:error, err}
-      end
-    end)
+      end,
+      enrich_stop: &ChatModel.token_usage_from_result/1
+    )
   end
 
   # Make the API request from the DeepSeek server.
@@ -1197,6 +1203,9 @@ defmodule LangChain.ChatModels.ChatDeepSeek do
   end
 
   defp get_token_usage(_response_body), do: nil
+
+  @impl ChatModel
+  def provider, do: "deepseek"
 
   @doc """
   Determine if an error should be retried. If `true`, a fallback LLM may be

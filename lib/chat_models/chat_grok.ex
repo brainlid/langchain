@@ -526,22 +526,42 @@ defmodule LangChain.ChatModels.ChatGrok do
   def call(%ChatGrok{} = grok, messages, tools) when is_list(messages) do
     metadata = %{
       model: grok.model,
+      provider: provider(),
       message_count: length(messages),
       tools_count: length(tools)
     }
 
-    try do
-      case do_api_request(grok, messages, tools, metadata) do
-        {:ok, data} ->
-          {:ok, data}
+    LangChain.Telemetry.span(
+      [:langchain, :llm, :call],
+      metadata,
+      fn ->
+        try do
+          # Track the prompt being sent
+          LangChain.Telemetry.llm_prompt(
+            %{system_time: System.system_time()},
+            %{model: grok.model, messages: messages}
+          )
 
-        {:error, reason} ->
-          {:error, reason}
-      end
-    rescue
-      err in LangChainError ->
-        {:error, err}
-    end
+          case do_api_request(grok, messages, tools, metadata) do
+            {:ok, data} = result ->
+              # Track the response being received
+              LangChain.Telemetry.llm_response(
+                %{system_time: System.system_time()},
+                %{model: grok.model, response: data}
+              )
+
+              result
+
+            {:error, reason} ->
+              {:error, reason}
+          end
+        rescue
+          err in LangChainError ->
+            {:error, err}
+        end
+      end,
+      enrich_stop: &ChatModel.token_usage_from_result/1
+    )
   end
 
   defp do_api_request(grok, messages, tools, metadata) do
@@ -638,6 +658,17 @@ defmodule LangChain.ChatModels.ChatGrok do
         # Extract usage information from response and add to metadata
         updated_metadata = Map.put(metadata, :usage, response_data["usage"])
         messages = Enum.map(choices, &(&1 |> choice_to_message(updated_metadata)))
+
+        # Track non-streaming response completion
+        LangChain.Telemetry.emit_event(
+          [:langchain, :llm, :response, :non_streaming],
+          %{system_time: System.system_time()},
+          %{
+            model: grok.model,
+            response_size: byte_size(inspect(messages))
+          }
+        )
+
         {:ok, messages}
 
       %{"error" => error} ->
@@ -804,6 +835,9 @@ defmodule LangChain.ChatModels.ChatGrok do
   def restore_from_map(%{"version" => 1} = data) do
     ChatGrok.new(data)
   end
+
+  @impl ChatModel
+  def provider, do: "xai"
 
   @doc """
   Determine if an error should be retried. If `true`, a fallback LLM may be

@@ -29,6 +29,54 @@ defmodule LangChain.Telemetry do
   * `[:langchain, :tool, :call, :stop]` - Emitted when a tool call completes
   * `[:langchain, :tool, :call, :exception]` - Emitted when a tool call raises an exception
 
+  ## Metadata Fields
+
+  The following metadata fields are automatically injected or available in events:
+
+  * `:call_id` - A UUID (via `Ecto.UUID.generate/0`) that correlates start, stop, and
+    exception events within a single `span/3` or `start_event/2` call. Automatically
+    injected via `Map.put_new/3`, so callers can supply their own ID to override.
+
+  * `:provider` - The LLM provider name (e.g. `"openai"`, `"anthropic"`, `"google"`).
+    Included in LLM call metadata by each chat model implementation via the
+    `ChatModel.provider/0` callback.
+
+  * `:custom_context` - User-supplied context data from `LLMChain.custom_context`.
+    Included in chain execution and tool call metadata. Not included in LLM-level
+    telemetry (correlate via `call_id` instead).
+
+  * `:token_usage` - A `%TokenUsage{}` struct with input/output token counts. Included
+    in LLM call `:stop` events and chain execution `:stop` events when available (via
+    the `:enrich_stop` callback). `nil` when the model does not report usage.
+
+  * `:last_message` - The final assembled `%Message{}` from the LLM response. Included
+    in chain execution `:stop` events. For streaming responses this is the fully
+    assembled message (not individual deltas).
+
+  ## Privacy Note
+
+  Message content is intentionally excluded from the lifecycle events (`:start` / `:stop` /
+  `:exception`) to avoid unconditional exposure of user/PII data. Message content is only
+  available through the purpose-specific `[:langchain, :llm, :prompt]` and
+  `[:langchain, :llm, :response]` events — subscribing to these is an explicit opt-in.
+
+  ## Expected Metadata Shape by Event
+
+  * **LLM call `:start`**:
+    `%{model: String.t(), provider: String.t(), message_count: integer(), tools_count: integer(), call_id: String.t()}`
+
+  * **LLM call `:stop`** (includes enriched fields):
+    `%{model: String.t(), provider: String.t(), message_count: integer(), tools_count: integer(), call_id: String.t(), token_usage: TokenUsage.t() | nil, result: term()}`
+
+  * **Chain execution `:start`**:
+    `%{chain_type: String.t(), mode: term(), message_count: integer(), tools_count: integer(), custom_context: term(), call_id: String.t()}`
+
+  * **Chain execution `:stop`** (includes enriched fields):
+    `%{chain_type: String.t(), mode: term(), message_count: integer(), tools_count: integer(), custom_context: term(), call_id: String.t(), last_message: Message.t() | nil, token_usage: TokenUsage.t() | nil, result: term()}`
+
+  * **Tool call** (`:start` / `:stop` / `:exception`):
+    `%{tool_name: String.t(), tool_call_id: String.t(), async: boolean(), custom_context: term(), call_id: String.t()}`
+
   ## Usage
 
   To attach to these events in your application:
@@ -93,6 +141,9 @@ defmodule LangChain.Telemetry do
     start_time = System.monotonic_time()
     start_system_time = System.system_time()
 
+    # Inject a call_id if not already present, so start and stop events share the same ID
+    metadata = Map.put_new(metadata, :call_id, Ecto.UUID.generate())
+
     emit_event(event_prefix ++ [:start], %{system_time: start_system_time}, metadata)
 
     fn additional_metadata ->
@@ -115,6 +166,10 @@ defmodule LangChain.Telemetry do
     * `event_prefix` - The prefix for the event name as a list of atoms
     * `metadata` - A map of metadata for the event
     * `fun` - The function to execute
+    * `opts` - Optional keyword list:
+      * `:enrich_stop` - A 1-arity function that receives the result and returns
+        a map of additional metadata to merge into the stop event. Useful for
+        extracting data (e.g. token usage) from the result into top-level metadata.
 
   ## Returns
 
@@ -126,14 +181,37 @@ defmodule LangChain.Telemetry do
       ...>   # Call the LLM
       ...>   {:ok, "response"}
       ...> end)
+
+      # With enrich_stop to surface token usage:
+      iex> LangChain.Telemetry.span([:langchain, :llm, :call], %{model: "gpt-4"}, fn ->
+      ...>   {:ok, response}
+      ...> end, enrich_stop: fn {:ok, msg} -> %{token_usage: msg.metadata[:usage]} end)
   """
-  @spec span(list(atom()), map(), (-> result)) :: result when result: any()
-  def span(event_prefix, metadata, fun) do
+  @spec span(list(atom()), map(), (-> result), keyword()) :: result when result: any()
+  def span(event_prefix, metadata, fun, opts \\ []) do
+    # Inject call_id once here so it's shared across start, stop, and exception events.
+    # start_event/2 also calls put_new, but since we set it first, the same ID is reused.
+    metadata = Map.put_new(metadata, :call_id, Ecto.UUID.generate())
+
     stop = start_event(event_prefix, metadata)
 
     try do
       result = fun.()
-      stop.(%{result: result})
+
+      additional_metadata =
+        case Keyword.get(opts, :enrich_stop) do
+          nil ->
+            %{result: result}
+
+          enrich_fn when is_function(enrich_fn, 1) ->
+            try do
+              Map.merge(%{result: result}, enrich_fn.(result))
+            rescue
+              _ -> %{result: result}
+            end
+        end
+
+      stop.(additional_metadata)
       result
     rescue
       exception ->

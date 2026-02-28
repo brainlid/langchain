@@ -725,37 +725,43 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   def call(%ChatOpenAIResponses{} = openai, messages, tools) when is_list(messages) do
     metadata = %{
       model: openai.model,
+      provider: provider(),
       message_count: length(messages),
       tools_count: length(tools)
     }
 
-    LangChain.Telemetry.span([:langchain, :llm, :call], metadata, fn ->
-      try do
-        # Track the prompt being sent
-        LangChain.Telemetry.llm_prompt(
-          %{system_time: System.system_time()},
-          %{model: openai.model, messages: messages}
-        )
+    LangChain.Telemetry.span(
+      [:langchain, :llm, :call],
+      metadata,
+      fn ->
+        try do
+          # Track the prompt being sent
+          LangChain.Telemetry.llm_prompt(
+            %{system_time: System.system_time()},
+            %{model: openai.model, messages: messages}
+          )
 
-        # make base api request and perform high-level success/failure checks
-        case do_api_request(openai, messages, tools) do
-          {:error, reason} ->
-            {:error, reason}
+          # make base api request and perform high-level success/failure checks
+          case do_api_request(openai, messages, tools) do
+            {:error, reason} ->
+              {:error, reason}
 
-          parsed_data ->
-            # Track the response being received
-            LangChain.Telemetry.llm_response(
-              %{system_time: System.system_time()},
-              %{model: openai.model, response: parsed_data}
-            )
+            parsed_data ->
+              # Track the response being received
+              LangChain.Telemetry.llm_response(
+                %{system_time: System.system_time()},
+                %{model: openai.model, response: parsed_data}
+              )
 
-            {:ok, parsed_data}
+              {:ok, parsed_data}
+          end
+        rescue
+          err in LangChainError ->
+            {:error, err}
         end
-      rescue
-        err in LangChainError ->
-          {:error, err}
-      end
-    end)
+      end,
+      enrich_stop: &ChatModel.token_usage_from_result/1
+    )
   end
 
   @spec do_api_request(t(), [Message.t()], ChatModel.tools(), integer()) ::
@@ -1742,6 +1748,9 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   def restore_from_map(%{"version" => 1} = data) do
     ChatOpenAIResponses.new(data)
   end
+
+  @impl ChatModel
+  def provider, do: "openai_responses"
 
   @doc """
   Determine if an error should be retried with a fallback model.
