@@ -1753,7 +1753,9 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   - `:text` - Converts to a text content part, optionally with cache control settings
   - `:thinking` - Converts to a thinking content part with required signature
   - `:unsupported` - Handles custom content types specified in options
-  - `:image` - Converts to an image content part with base64 data and media type
+  - `:image` - Converts to an image content part with base64 data or file_id reference
+  - `:file` - Converts to a document content part with base64 data, plain text, or file_id reference
+  - `:file_url` - Converts to a document content part with a URL source
   - `:image_url` - Raises an error as Anthropic doesn't support image URLs
 
   ## Options
@@ -1768,7 +1770,22 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   - `:type` - Required string specifying the custom content type
 
   For `:image` type:
-  - `:media` - Required media type (`:png`, `:jpg`, `:jpeg`, `:gif`, `:webp`, or a string)
+  - `:type` - Source type. `:file_id` to reference an uploaded file, `:base64` (default) for inline data
+  - `:media` - Required when `:type` is `:base64`. Media type (`:png`, `:jpg`, `:jpeg`, `:gif`, `:webp`, or a string)
+
+  For `:file` type:
+  - `:type` - Source type. `:file_id` to reference an uploaded file, `:base64` (default) for inline data
+  - `:media` - Required when `:type` is `:base64`. Media type (`:pdf`, `:text`, or a string like `"application/pdf"`)
+  - `:title` - Optional document title
+  - `:citations` - Set to `true` to enable citations
+  - `:cache_control` - When provided, adds cache control settings
+
+  Note: Using `:file_id` requires the `"files-api-2025-04-14"` beta header:
+
+      ChatAnthropic.new!(%{
+        model: "claude-sonnet-4-5-20250514",
+        beta_headers: ["structured-outputs-2025-11-13", "files-api-2025-04-14"]
+      })
 
   Returns `nil` for unsupported content without required options.
   """
@@ -1820,81 +1837,110 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   end
 
   def content_part_for_api(%ContentPart{type: :image} = part) do
-    media =
-      case Keyword.fetch!(part.options || [], :media) do
-        :png ->
-          "image/png"
+    opts = part.options || []
 
-        :gif ->
-          "image/gif"
+    case Keyword.get(opts, :type, :base64) do
+      :file_id ->
+        %{
+          "type" => "image",
+          "source" => %{
+            "type" => "file",
+            "file_id" => part.content
+          }
+        }
 
-        :jpg ->
-          "image/jpeg"
+      :base64 ->
+        media =
+          case Keyword.fetch!(opts, :media) do
+            :png ->
+              "image/png"
 
-        :jpeg ->
-          "image/jpeg"
+            :gif ->
+              "image/gif"
 
-        :webp ->
-          "image/webp"
+            :jpg ->
+              "image/jpeg"
 
-        value when is_binary(value) ->
-          value
+            :jpeg ->
+              "image/jpeg"
 
-        other ->
-          message = "Received unsupported media type for ContentPart: #{inspect(other)}"
-          Logger.error(message)
-          raise LangChainError, message
-      end
+            :webp ->
+              "image/webp"
 
-    %{
-      "type" => "image",
-      "source" => %{
-        "type" => "base64",
-        "data" => part.content,
-        "media_type" => media
-      }
-    }
+            value when is_binary(value) ->
+              value
+
+            other ->
+              message = "Received unsupported media type for ContentPart: #{inspect(other)}"
+              Logger.error(message)
+              raise LangChainError, message
+          end
+
+        %{
+          "type" => "image",
+          "source" => %{
+            "type" => "base64",
+            "data" => part.content,
+            "media_type" => media
+          }
+        }
+    end
   end
 
   def content_part_for_api(%ContentPart{type: :file} = part) do
     opts = part.options || []
-    media = Keyword.fetch!(opts, :media)
 
     base =
-      case media do
-        :text ->
+      case Keyword.get(opts, :type, :base64) do
+        :file_id ->
           %{
             "type" => "document",
             "source" => %{
-              "type" => "text",
-              "media_type" => "text/plain",
-              "data" => part.content
+              "type" => "file",
+              "file_id" => part.content
             }
           }
 
-        _ ->
-          media_type =
-            case media do
-              :pdf ->
-                "application/pdf"
+        :base64 ->
+          media = Keyword.fetch!(opts, :media)
 
-              value when is_binary(value) ->
-                value
+          case media do
+            :text ->
+              %{
+                "type" => "document",
+                "source" => %{
+                  "type" => "text",
+                  "media_type" => "text/plain",
+                  "data" => part.content
+                }
+              }
 
-              other ->
-                message = "Received unsupported media type for ContentPart: #{inspect(other)}"
-                Logger.error(message)
-                raise LangChainError, message
-            end
+            _ ->
+              media_type =
+                case media do
+                  :pdf ->
+                    "application/pdf"
 
-          %{
-            "type" => "document",
-            "source" => %{
-              "type" => "base64",
-              "data" => part.content,
-              "media_type" => media_type
-            }
-          }
+                  value when is_binary(value) ->
+                    value
+
+                  other ->
+                    message =
+                      "Received unsupported media type for ContentPart: #{inspect(other)}"
+
+                    Logger.error(message)
+                    raise LangChainError, message
+                end
+
+              %{
+                "type" => "document",
+                "source" => %{
+                  "type" => "base64",
+                  "data" => part.content,
+                  "media_type" => media_type
+                }
+              }
+          end
       end
 
     base
