@@ -364,6 +364,60 @@ defmodule ChatModels.ChatGoogleAITest do
       refute Map.has_key?(data, "system_instruction")
     end
 
+    test "supports inline files (pdf)", %{google_ai: google_ai} do
+      message =
+        Message.new_user!([
+          ContentPart.text!("User prompt"),
+          ContentPart.file!("pdf_base64_data", media: :pdf)
+        ])
+
+      data = ChatGoogleAI.for_api(google_ai, [message], [])
+
+      assert %{
+               "contents" => [
+                 %{
+                   "parts" => [
+                     %{"text" => "User prompt"},
+                     %{
+                       "inline_data" => %{
+                         "data" => "pdf_base64_data",
+                         "mime_type" => "application/pdf"
+                       }
+                     }
+                   ],
+                   "role" => "user"
+                 }
+               ]
+             } = data
+    end
+
+    test "supports inline files (csv)", %{google_ai: google_ai} do
+      message =
+        Message.new_user!([
+          ContentPart.text!("User prompt"),
+          ContentPart.file!("column_a,column_b", media: :csv)
+        ])
+
+      data = ChatGoogleAI.for_api(google_ai, [message], [])
+
+      assert %{
+               "contents" => [
+                 %{
+                   "parts" => [
+                     %{"text" => "User prompt"},
+                     %{
+                       "inline_data" => %{
+                         "data" => "column_a,column_b",
+                         "mime_type" => "text/csv"
+                       }
+                     }
+                   ],
+                   "role" => "user"
+                 }
+               ]
+             } = data
+    end
+
     test "support file_url", %{google_ai: google_ai} do
       message =
         Message.new_user!([
