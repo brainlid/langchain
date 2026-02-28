@@ -998,6 +998,19 @@ defmodule LangChain.Chains.LLMChainTest do
 
       assert message == LLMChain.run_message_processors(chain, message)
     end
+
+    test "handles nil content on assistant message", %{chain: chain} do
+      chain =
+        LLMChain.message_processors(chain, [
+          &fake_success_processor/2
+        ])
+
+      message = Message.new_assistant!(%{content: nil})
+
+      final_message = LLMChain.run_message_processors(chain, message)
+      assert final_message.processed_content == " *"
+      assert is_nil(final_message.content)
+    end
   end
 
   describe "process_message/2" do
