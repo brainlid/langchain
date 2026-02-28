@@ -1107,7 +1107,10 @@ defmodule LangChain.Chains.LLMChain do
       )
       when is_list(processors) and processors != [] do
     # start `processed_content` with the message's content as a string
-    message = %Message{message | processed_content: ContentPart.parts_to_string(message.content)}
+    message = %Message{
+      message
+      | processed_content: ContentPart.content_to_string(message.content) || ""
+    }
 
     processors
     |> Enum.reduce_while(message, fn proc, m = _acc ->
