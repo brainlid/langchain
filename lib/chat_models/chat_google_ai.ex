@@ -383,6 +383,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
       case Keyword.get(part.options || [], :media, nil) do
         :pdf ->
           "application/pdf"
+
         :csv ->
           "text/csv"
 
