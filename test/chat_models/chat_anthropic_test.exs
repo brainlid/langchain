@@ -75,6 +75,39 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
 
       assert model.endpoint == override_url
     end
+
+    test "supports setting json_response and json_schema" do
+      json_schema = %{
+        "type" => "object",
+        "properties" => %{
+          "name" => %{"type" => "string"},
+          "age" => %{"type" => "integer"}
+        },
+        "required" => ["name", "age"],
+        "additionalProperties" => false
+      }
+
+      {:ok, anthropic} =
+        ChatAnthropic.new(%{
+          "model" => @test_model,
+          "json_response" => true,
+          "json_schema" => json_schema
+        })
+
+      assert anthropic.json_response == true
+      assert anthropic.json_schema == json_schema
+    end
+
+    test "returns error when json_response is true but json_schema is nil" do
+      assert {:error, changeset} =
+               ChatAnthropic.new(%{
+                 "model" => @test_model,
+                 "json_response" => true
+               })
+
+      refute changeset.valid?
+      assert {"is required when json_response is true", _} = changeset.errors[:json_schema]
+    end
   end
 
   describe "get_system_text/1" do
@@ -394,6 +427,40 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
                    "role" => "assistant"
                  }
                ]
+    end
+
+    test "does not include output_config when json_response is false" do
+      {:ok, anthropic} = ChatAnthropic.new(%{"model" => @test_model})
+      data = ChatAnthropic.for_api(anthropic, [], [])
+      refute Map.has_key?(data, :output_config)
+    end
+
+    test "includes output_config when json_response is true with schema" do
+      json_schema = %{
+        "type" => "object",
+        "properties" => %{
+          "name" => %{"type" => "string"},
+          "age" => %{"type" => "integer"}
+        },
+        "required" => ["name", "age"],
+        "additionalProperties" => false
+      }
+
+      {:ok, anthropic} =
+        ChatAnthropic.new(%{
+          "model" => @test_model,
+          "json_response" => true,
+          "json_schema" => json_schema
+        })
+
+      data = ChatAnthropic.for_api(anthropic, [], [])
+
+      assert data.output_config == %{
+               "format" => %{
+                 "type" => "json_schema",
+                 "schema" => json_schema
+               }
+             }
     end
   end
 
@@ -3724,9 +3791,31 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
                "top_k" => nil,
                "top_p" => nil,
                "beta_headers" => ["structured-outputs-2025-11-13"],
+               "json_response" => false,
+               "json_schema" => nil,
                "module" => "Elixir.LangChain.ChatModels.ChatAnthropic",
                "version" => 1
              }
+    end
+
+    test "includes json_response and json_schema in the serialized config" do
+      json_schema = %{
+        "type" => "object",
+        "properties" => %{"name" => %{"type" => "string"}},
+        "required" => ["name"],
+        "additionalProperties" => false
+      }
+
+      model =
+        ChatAnthropic.new!(%{
+          model: "claude-3-haiku-20240307",
+          json_response: true,
+          json_schema: json_schema
+        })
+
+      result = ChatAnthropic.serialize_config(model)
+      assert result["json_response"] == true
+      assert result["json_schema"] == json_schema
     end
 
     test "includes beta_headers in the serialized config" do

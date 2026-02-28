@@ -135,6 +135,36 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
   As of the documentation for Claude 3.7 Sonnet, the minimum budget for thinking is 1024 tokens.
 
+  ## Structured Outputs (JSON Response)
+
+  Anthropic supports [structured outputs](https://docs.anthropic.com/en/docs/build-with-claude/structured-outputs)
+  to constrain Claude's response to follow a specific JSON schema. This is supported on
+  Claude Opus 4.6, Sonnet 4.6, Sonnet 4.5, Opus 4.5, and Haiku 4.5.
+
+  Set `json_response: true` and provide a `json_schema` map to enable structured outputs.
+
+  **Example:**
+
+      model = ChatAnthropic.new!(%{
+        model: "claude-sonnet-4-5-20250514",
+        json_response: true,
+        json_schema: %{
+          "type" => "object",
+          "properties" => %{
+            "name" => %{"type" => "string"},
+            "age" => %{"type" => "integer"},
+            "email" => %{"type" => "string"}
+          },
+          "required" => ["name", "age", "email"],
+          "additionalProperties" => false
+        }
+      })
+
+  The response will be returned as a regular text `ContentPart` containing a valid JSON string
+  matching the provided schema.
+
+  **Note:** Structured outputs are incompatible with citations and message prefilling.
+
   ## Prompt Caching
 
   Anthropic supports [prompt caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching) to
@@ -481,6 +511,15 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     # Set to %{enabled: false} or nil to disable automatic message caching.
     field :cache_messages, :map
 
+    # Whether to request a JSON-formatted response with a specific schema.
+    # Only supported on Claude Opus 4.6, Sonnet 4.6, Sonnet 4.5, Opus 4.5, Haiku 4.5.
+    # When set to true, json_schema is required.
+    field :json_response, :boolean, default: false
+
+    # JSON Schema for the structured output response. Required when json_response is true.
+    # The schema follows standard JSON Schema format.
+    field :json_schema, :map, default: nil
+
     # Req options to merge into the request.
     # https://hexdocs.pm/req/Req.html#new/1-options
     field :req_opts, :any, virtual: true, default: []
@@ -504,6 +543,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     :beta_headers,
     :verbose_api,
     :cache_messages,
+    :json_response,
+    :json_schema,
     :req_opts
   ]
   @required_fields [:endpoint, :model]
@@ -539,6 +580,17 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     |> validate_required(@required_fields)
     |> validate_number(:temperature, greater_than_or_equal_to: 0, less_than_or_equal_to: 1)
     |> validate_number(:receive_timeout, greater_than_or_equal_to: 0)
+    |> validate_json_schema_required()
+  end
+
+  defp validate_json_schema_required(changeset) do
+    json_response = Ecto.Changeset.get_field(changeset, :json_response)
+    json_schema = Ecto.Changeset.get_field(changeset, :json_schema)
+
+    case {json_response, json_schema} do
+      {true, nil} -> add_error(changeset, :json_schema, "is required when json_response is true")
+      _ -> changeset
+    end
   end
 
   def get_system_text(nil) do
@@ -587,6 +639,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     |> Utils.conditionally_add_to_map(:top_p, anthropic.top_p)
     |> Utils.conditionally_add_to_map(:top_k, anthropic.top_k)
     |> Utils.conditionally_add_to_map(:thinking, anthropic.thinking)
+    |> Utils.conditionally_add_to_map(:output_config, set_output_config(anthropic))
     |> maybe_transform_for_bedrock(anthropic.bedrock)
   end
 
@@ -619,6 +672,18 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   end
 
   defp get_tool_choice(%ChatAnthropic{}), do: nil
+
+  defp set_output_config(%ChatAnthropic{json_response: true, json_schema: schema})
+       when not is_nil(schema) do
+    %{
+      "format" => %{
+        "type" => "json_schema",
+        "schema" => schema
+      }
+    }
+  end
+
+  defp set_output_config(%ChatAnthropic{}), do: nil
 
   defp get_tools_for_api(nil), do: []
 
@@ -2157,7 +2222,9 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         :top_p,
         :top_k,
         :stream,
-        :beta_headers
+        :beta_headers,
+        :json_response,
+        :json_schema
       ],
       @current_config_version
     )
