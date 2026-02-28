@@ -497,14 +497,14 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
         ChatOpenAIResponses.new!(%{"model" => @test_model, "verbosity" => "low"})
 
       data = ChatOpenAIResponses.for_api(openai, [], [])
-      assert data.verbosity == "low"
+      assert data.text["verbosity"] == "low"
     end
 
     test "omits verbosity when nil" do
       openai = ChatOpenAIResponses.new!(%{"model" => @test_model})
 
       data = ChatOpenAIResponses.for_api(openai, [], [])
-      refute Map.has_key?(data, :verbosity)
+      refute match?(%{text: %{"verbosity" => _}}, data)
     end
   end
 
@@ -1679,6 +1679,27 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
 
       api_data2 = ChatOpenAIResponses.for_api(model2, [], [])
       assert api_data2.previous_response_id == "resp_first_call"
+    end
+  end
+
+  describe "streaming error handling" do
+    test "returns error when streaming response contains an API error" do
+      expect(Req, :post, fn _req_struct, _opts ->
+        response = %Req.Response{
+          status: 400,
+          body: {:error, LangChain.LangChainError.exception(message: "Unsupported parameter")}
+        }
+
+        {:ok, response}
+      end)
+
+      model =
+        ChatOpenAIResponses.new!(%{stream: true, model: @test_model})
+
+      assert {:error, %LangChain.LangChainError{} = error} =
+               ChatOpenAIResponses.call(model, "prompt", [])
+
+      assert error.message == "Unsupported parameter"
     end
   end
 
