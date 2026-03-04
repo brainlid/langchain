@@ -8,6 +8,22 @@ defmodule LangChain.Trajectory do
   arguments — enabling golden-file testing, logging, and correctness assertions
   for agent workflows.
 
+  ## Why trajectories matter
+
+  When building agent systems, the final answer is only part of the story.
+  Two agents can produce the same answer through very different reasoning
+  paths — one might make a single efficient tool call while another makes
+  five redundant ones. Trajectories let you evaluate the *process*, not just
+  the outcome.
+
+  This is especially important for:
+
+  - **Regression testing** — catch when a prompt change causes the agent to
+    take a different (possibly worse) path even if the final answer is correct
+  - **Cost control** — detect unnecessary tool calls that waste tokens and time
+  - **Safety** — verify that dangerous tools were NOT called
+  - **Debugging** — understand exactly what the agent did and why
+
   ## Usage
 
       trajectory = Trajectory.from_chain(chain)
@@ -30,6 +46,79 @@ defmodule LangChain.Trajectory do
       # Group tool calls by conversation turn
       Trajectory.calls_by_turn(trajectory)
 
+  ## Metadata
+
+  Each trajectory captures metadata about the chain run including the model
+  name and LLM module. You can also add custom metadata:
+
+      trajectory = Trajectory.from_chain(chain)
+      trajectory.metadata
+      #=> %{model: "gpt-4", llm_module: LangChain.ChatModels.ChatOpenAI}
+
+  ## Evaluation patterns
+
+  ### Golden-file testing
+
+  Save a known-good trajectory and compare future runs against it:
+
+      # Save the golden file
+      golden = chain |> Trajectory.from_chain() |> Trajectory.to_map()
+      File.write!("test/fixtures/weather_agent.json", Jason.encode!(golden))
+
+      # In your test
+      golden = "test/fixtures/weather_agent.json" |> File.read!() |> Jason.decode!()
+      expected = Trajectory.from_map(golden)
+      actual = Trajectory.from_chain(chain)
+      assert Trajectory.matches?(actual, expected)
+
+  ### Verifying tools were NOT called
+
+  Use `refute` with superset mode to ensure dangerous tools weren't invoked:
+
+      # Using TrajectoryAssertions
+      use LangChain.TrajectoryAssertions
+
+      refute_trajectory trajectory, [
+        %{name: "delete_all", arguments: nil}
+      ], mode: :superset
+
+  ### Flexible matching
+
+  When you care about *which* tools were called but not exact arguments:
+
+      Trajectory.matches?(trajectory, [
+        %{name: "search", arguments: nil},
+        %{name: "summarize", arguments: nil}
+      ])
+
+  When you care that certain tools were called but allow extra calls:
+
+      Trajectory.matches?(trajectory, [
+        %{name: "search", arguments: nil}
+      ], mode: :superset)
+
+  ## Comparison modes
+
+  The `matches?/3` function supports three modes via the `:mode` option:
+
+  - `:strict` (default) — same tool calls in the same order and count
+  - `:unordered` — same tool calls in any order, same count
+  - `:superset` — actual contains at least all expected calls
+
+  And two argument comparison modes via the `:args` option:
+
+  - `:exact` (default) — arguments must match exactly
+  - `:subset` — expected arguments must be a subset of actual arguments
+
+  ## External references
+
+  For more on trajectory-based evaluation of agent systems, see:
+
+  - [LangSmith Trajectory Evaluation](https://docs.smith.langchain.com/) —
+    trajectory-level evaluators for scoring agent behavior
+  - [AgentEvals](https://github.com/langchain-ai/agentevals) — reference
+    implementations of trajectory matching algorithms
+
   ## Arguments use string keys
 
   Tool call arguments come from JSON decoding and use string keys
@@ -44,14 +133,16 @@ defmodule LangChain.Trajectory do
 
   defstruct messages: [],
             tool_calls: [],
-            token_usage: nil
+            token_usage: nil,
+            metadata: %{}
 
   @type tool_call_map :: %{name: String.t(), arguments: map() | nil}
 
   @type t :: %__MODULE__{
           messages: [Message.t()],
           tool_calls: [tool_call_map()],
-          token_usage: TokenUsage.t() | nil
+          token_usage: TokenUsage.t() | nil,
+          metadata: map()
         }
 
   @doc """
@@ -65,14 +156,16 @@ defmodule LangChain.Trajectory do
       trajectory = Trajectory.from_chain(chain)
   """
   @spec from_chain(LLMChain.t()) :: t()
-  def from_chain(%LLMChain{exchanged_messages: messages}) do
+  def from_chain(%LLMChain{exchanged_messages: messages, llm: llm}) do
     tool_calls = extract_tool_calls(messages)
     token_usage = aggregate_token_usage(messages)
+    metadata = extract_metadata(llm)
 
     %__MODULE__{
       messages: messages,
       tool_calls: tool_calls,
-      token_usage: token_usage
+      token_usage: token_usage,
+      metadata: metadata
     }
   end
 
@@ -89,7 +182,8 @@ defmodule LangChain.Trajectory do
     %{
       messages: Enum.map(trajectory.messages, &message_to_map/1),
       tool_calls: trajectory.tool_calls,
-      token_usage: token_usage_to_map(trajectory.token_usage)
+      token_usage: token_usage_to_map(trajectory.token_usage),
+      metadata: trajectory.metadata
     }
   end
 
@@ -111,7 +205,8 @@ defmodule LangChain.Trajectory do
     %__MODULE__{
       messages: Map.get(map, :messages, Map.get(map, "messages", [])),
       tool_calls: normalize_tool_calls(Map.get(map, :tool_calls, Map.get(map, "tool_calls", []))),
-      token_usage: normalize_token_usage(Map.get(map, :token_usage, Map.get(map, "token_usage")))
+      token_usage: normalize_token_usage(Map.get(map, :token_usage, Map.get(map, "token_usage"))),
+      metadata: Map.get(map, :metadata, Map.get(map, "metadata", %{}))
     }
   end
 
@@ -147,6 +242,10 @@ defmodule LangChain.Trajectory do
   """
   @spec matches?(t() | [tool_call_map()], t() | [tool_call_map()], keyword()) :: boolean()
   def matches?(actual, expected, opts \\ [])
+
+  def matches?(%LLMChain{} = chain, expected, opts) do
+    matches?(from_chain(chain), expected, opts)
+  end
 
   def matches?(%__MODULE__{} = actual, %__MODULE__{} = expected, opts) do
     matches?(actual.tool_calls, expected.tool_calls, opts)
@@ -209,6 +308,15 @@ defmodule LangChain.Trajectory do
   end
 
   # --- Private helpers ---
+
+  defp extract_metadata(llm) when is_struct(llm) do
+    %{
+      model: Map.get(llm, :model),
+      llm_module: llm.__struct__
+    }
+  end
+
+  defp extract_metadata(_llm), do: %{}
 
   defp extract_tool_calls(messages) do
     messages

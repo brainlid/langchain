@@ -163,6 +163,14 @@ defmodule LangChain.TrajectoryTest do
       trajectory = Trajectory.from_chain(chain_with_messages(messages))
       assert trajectory.token_usage == nil
     end
+
+    test "populates metadata with model and llm_module" do
+      messages = [user_msg("Hello"), assistant_msg("Hi")]
+      trajectory = Trajectory.from_chain(chain_with_messages(messages))
+
+      assert trajectory.metadata.model == "gpt-3.5-turbo"
+      assert trajectory.metadata.llm_module == ChatOpenAI
+    end
   end
 
   describe "to_map/1" do
@@ -170,7 +178,7 @@ defmodule LangChain.TrajectoryTest do
       trajectory = %Trajectory{messages: [], tool_calls: [], token_usage: nil}
       result = Trajectory.to_map(trajectory)
 
-      assert result == %{messages: [], tool_calls: [], token_usage: nil}
+      assert result == %{messages: [], tool_calls: [], token_usage: nil, metadata: %{}}
     end
 
     test "serializes messages with content" do
@@ -237,6 +245,18 @@ defmodule LangChain.TrajectoryTest do
       result = Trajectory.to_map(trajectory)
       assert [%{content: nil}] = result.messages
     end
+
+    test "serializes metadata" do
+      trajectory = %Trajectory{
+        messages: [],
+        tool_calls: [],
+        token_usage: nil,
+        metadata: %{model: "gpt-4", llm_module: ChatOpenAI}
+      }
+
+      result = Trajectory.to_map(trajectory)
+      assert result.metadata == %{model: "gpt-4", llm_module: ChatOpenAI}
+    end
   end
 
   describe "from_map/1" do
@@ -297,6 +317,37 @@ defmodule LangChain.TrajectoryTest do
 
       trajectory = Trajectory.from_map(map)
       assert [%{role: :user, content: "Hello"}] = trajectory.messages
+    end
+
+    test "roundtrips metadata through to_map/from_map" do
+      original = %Trajectory{
+        messages: [],
+        tool_calls: [],
+        token_usage: nil,
+        metadata: %{model: "gpt-4", llm_module: ChatOpenAI}
+      }
+
+      restored = original |> Trajectory.to_map() |> Trajectory.from_map()
+
+      assert restored.metadata == original.metadata
+    end
+
+    test "handles string-keyed metadata from JSON" do
+      json_map = %{
+        "messages" => [],
+        "tool_calls" => [],
+        "token_usage" => nil,
+        "metadata" => %{"model" => "gpt-4", "custom" => "value"}
+      }
+
+      trajectory = Trajectory.from_map(json_map)
+
+      assert trajectory.metadata == %{"model" => "gpt-4", "custom" => "value"}
+    end
+
+    test "defaults metadata to empty map when missing" do
+      trajectory = Trajectory.from_map(%{})
+      assert trajectory.metadata == %{}
     end
   end
 
@@ -551,6 +602,14 @@ defmodule LangChain.TrajectoryTest do
       assert_raise ExUnit.AssertionError, ~r/Trajectory mismatch/, fn ->
         assert_trajectory(trajectory, [%{name: "other_tool", arguments: nil}])
       end
+    end
+
+    test "accepts an LLMChain directly" do
+      tc = make_tool_call("search", %{"q" => "test"})
+      messages = [user_msg("Search"), assistant_msg(nil, tool_calls: [tc])]
+      chain = chain_with_messages(messages)
+
+      assert_trajectory(chain, [%{name: "search", arguments: %{"q" => "test"}}])
     end
   end
 

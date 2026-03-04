@@ -90,6 +90,10 @@ defmodule LangChain.TrajectoryAssertions do
   end
 
   @doc false
+  def extract_tool_calls(%LangChain.Chains.LLMChain{} = chain) do
+    chain |> LangChain.Trajectory.from_chain() |> extract_tool_calls()
+  end
+
   def extract_tool_calls(%LangChain.Trajectory{tool_calls: calls}), do: calls
   def extract_tool_calls(calls) when is_list(calls), do: calls
 
