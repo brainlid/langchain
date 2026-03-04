@@ -15,17 +15,26 @@ defmodule LangChain.Trajectory do
       # Serialize for logging or golden-file comparison
       map = Trajectory.to_map(trajectory)
 
+      # Deserialize back from stored map
+      trajectory = Trajectory.from_map(map)
+
       # Compare against expected tool call sequence
-      Trajectory.match?(trajectory, [
+      Trajectory.matches?(trajectory, [
         %{name: "search", arguments: %{"query" => "weather"}},
         %{name: "get_forecast", arguments: nil}
       ])
+
+      # Filter tool calls by name
+      Trajectory.calls_by_name(trajectory, "search")
+
+      # Group tool calls by conversation turn
+      Trajectory.calls_by_turn(trajectory)
 
   ## Arguments use string keys
 
   Tool call arguments come from JSON decoding and use string keys
   (e.g. `%{"city" => "Paris"}` not `%{city: "Paris"}`). Expected arguments
-  in `match?/3` should use string keys as well.
+  in `matches?/3` should use string keys as well.
   """
 
   alias LangChain.Chains.LLMChain
@@ -85,6 +94,28 @@ defmodule LangChain.Trajectory do
   end
 
   @doc """
+  Deserialize a trajectory from a plain map previously produced by `to_map/1`.
+
+  Restores `tool_calls` and `token_usage` but stores messages as raw maps
+  since full `Message` struct reconstruction requires schema context that
+  plain maps don't carry.
+
+  ## Example
+
+      map = Trajectory.to_map(trajectory)
+      restored = Trajectory.from_map(map)
+      restored.tool_calls == trajectory.tool_calls
+  """
+  @spec from_map(map()) :: t()
+  def from_map(%{} = map) do
+    %__MODULE__{
+      messages: Map.get(map, :messages, Map.get(map, "messages", [])),
+      tool_calls: normalize_tool_calls(Map.get(map, :tool_calls, Map.get(map, "tool_calls", []))),
+      token_usage: normalize_token_usage(Map.get(map, :token_usage, Map.get(map, "token_usage")))
+    }
+  end
+
+  @doc """
   Compare a trajectory's tool calls against an expected sequence.
 
   `expected` can be a `Trajectory` struct or a bare list of
@@ -107,25 +138,25 @@ defmodule LangChain.Trajectory do
   ## Examples
 
       # Strict order and exact arguments
-      Trajectory.match?(trajectory, [
+      Trajectory.matches?(trajectory, [
         %{name: "search", arguments: %{"query" => "weather"}}
       ])
 
       # Any order, ignore extra calls
-      Trajectory.match?(trajectory, expected, mode: :superset, args: :subset)
+      Trajectory.matches?(trajectory, expected, mode: :superset, args: :subset)
   """
-  @spec match?(t() | [tool_call_map()], t() | [tool_call_map()], keyword()) :: boolean()
-  def match?(actual, expected, opts \\ [])
+  @spec matches?(t() | [tool_call_map()], t() | [tool_call_map()], keyword()) :: boolean()
+  def matches?(actual, expected, opts \\ [])
 
-  def match?(%__MODULE__{} = actual, %__MODULE__{} = expected, opts) do
-    match?(actual.tool_calls, expected.tool_calls, opts)
+  def matches?(%__MODULE__{} = actual, %__MODULE__{} = expected, opts) do
+    matches?(actual.tool_calls, expected.tool_calls, opts)
   end
 
-  def match?(%__MODULE__{} = actual, expected, opts) when is_list(expected) do
-    match?(actual.tool_calls, expected, opts)
+  def matches?(%__MODULE__{} = actual, expected, opts) when is_list(expected) do
+    matches?(actual.tool_calls, expected, opts)
   end
 
-  def match?(actual, expected, opts) when is_list(actual) and is_list(expected) do
+  def matches?(actual, expected, opts) when is_list(actual) and is_list(expected) do
     mode = Keyword.get(opts, :mode, :strict)
     args_mode = Keyword.get(opts, :args, :exact)
 
@@ -134,6 +165,47 @@ defmodule LangChain.Trajectory do
       :unordered -> match_unordered(actual, expected, args_mode)
       :superset -> match_superset(actual, expected, args_mode)
     end
+  end
+
+  @doc """
+  Return all tool calls matching the given tool `name`.
+
+  ## Example
+
+      Trajectory.calls_by_name(trajectory, "search")
+      #=> [%{name: "search", arguments: %{"query" => "weather"}}]
+  """
+  @spec calls_by_name(t(), String.t()) :: [tool_call_map()]
+  def calls_by_name(%__MODULE__{tool_calls: calls}, name) do
+    Enum.filter(calls, &(&1.name == name))
+  end
+
+  @doc """
+  Group tool calls by conversation turn (assistant message index).
+
+  Returns a list of `{turn_index, [tool_call_map]}` tuples where `turn_index`
+  is the 0-based position of the assistant message among all assistant messages
+  that contained tool calls.
+
+  ## Example
+
+      Trajectory.calls_by_turn(trajectory)
+      #=> [{0, [%{name: "search", arguments: %{"query" => "weather"}}]},
+      #    {1, [%{name: "get_forecast", arguments: %{"city" => "Paris"}}]}]
+  """
+  @spec calls_by_turn(t()) :: [{non_neg_integer(), [tool_call_map()]}]
+  def calls_by_turn(%__MODULE__{messages: messages}) do
+    messages
+    |> Enum.filter(&Message.is_tool_call?/1)
+    |> Enum.with_index()
+    |> Enum.map(fn {msg, idx} ->
+      calls =
+        Enum.map(msg.tool_calls, fn tc ->
+          %{name: tc.name, arguments: tc.arguments}
+        end)
+
+      {idx, calls}
+    end)
   end
 
   # --- Private helpers ---
@@ -202,6 +274,30 @@ defmodule LangChain.Trajectory do
 
   defp token_usage_to_map(%TokenUsage{} = usage) do
     %{input: usage.input, output: usage.output}
+  end
+
+  defp normalize_tool_calls(calls) when is_list(calls) do
+    Enum.map(calls, fn call ->
+      %{
+        name: Map.get(call, :name) || Map.get(call, "name"),
+        arguments: Map.get(call, :arguments, Map.get(call, "arguments"))
+      }
+    end)
+  end
+
+  defp normalize_tool_calls(_), do: []
+
+  defp normalize_token_usage(nil), do: nil
+
+  defp normalize_token_usage(%TokenUsage{} = usage), do: usage
+
+  defp normalize_token_usage(%{} = map) do
+    input = Map.get(map, :input) || Map.get(map, "input")
+    output = Map.get(map, :output) || Map.get(map, "output")
+
+    if input || output do
+      TokenUsage.new!(%{input: input, output: output})
+    end
   end
 
   # Strict: same order, same count

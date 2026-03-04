@@ -239,7 +239,68 @@ defmodule LangChain.TrajectoryTest do
     end
   end
 
-  describe "match?/3" do
+  describe "from_map/1" do
+    test "roundtrips tool_calls through to_map/from_map" do
+      original = %Trajectory{
+        messages: [],
+        tool_calls: [
+          %{name: "search", arguments: %{"query" => "weather"}},
+          %{name: "get_forecast", arguments: %{"city" => "Paris"}}
+        ],
+        token_usage: make_usage(10, 20)
+      }
+
+      restored = original |> Trajectory.to_map() |> Trajectory.from_map()
+
+      assert restored.tool_calls == original.tool_calls
+      assert restored.token_usage.input == 10
+      assert restored.token_usage.output == 20
+    end
+
+    test "handles string keys from JSON decoding" do
+      json_map = %{
+        "messages" => [],
+        "tool_calls" => [
+          %{"name" => "search", "arguments" => %{"q" => "test"}}
+        ],
+        "token_usage" => %{"input" => 5, "output" => 10}
+      }
+
+      trajectory = Trajectory.from_map(json_map)
+
+      assert [%{name: "search", arguments: %{"q" => "test"}}] = trajectory.tool_calls
+      assert trajectory.token_usage.input == 5
+      assert trajectory.token_usage.output == 10
+    end
+
+    test "handles nil token_usage" do
+      map = %{messages: [], tool_calls: [], token_usage: nil}
+      trajectory = Trajectory.from_map(map)
+
+      assert trajectory.token_usage == nil
+    end
+
+    test "handles missing keys with defaults" do
+      trajectory = Trajectory.from_map(%{})
+
+      assert trajectory.messages == []
+      assert trajectory.tool_calls == []
+      assert trajectory.token_usage == nil
+    end
+
+    test "preserves messages as raw maps" do
+      map = %{
+        messages: [%{role: :user, content: "Hello"}],
+        tool_calls: [],
+        token_usage: nil
+      }
+
+      trajectory = Trajectory.from_map(map)
+      assert [%{role: :user, content: "Hello"}] = trajectory.messages
+    end
+  end
+
+  describe "matches?/3" do
     setup do
       actual_calls = [
         %{name: "search", arguments: %{"query" => "weather"}},
@@ -257,7 +318,7 @@ defmodule LangChain.TrajectoryTest do
 
     # Strict mode
     test "strict mode matches identical sequences", %{trajectory: trajectory, actual_calls: calls} do
-      assert Trajectory.match?(trajectory, calls)
+      assert Trajectory.matches?(trajectory, calls)
     end
 
     test "strict mode rejects different order", %{trajectory: trajectory} do
@@ -266,12 +327,12 @@ defmodule LangChain.TrajectoryTest do
         %{name: "search", arguments: %{"query" => "weather"}}
       ]
 
-      refute Trajectory.match?(trajectory, expected)
+      refute Trajectory.matches?(trajectory, expected)
     end
 
     test "strict mode rejects different count", %{trajectory: trajectory} do
       expected = [%{name: "search", arguments: %{"query" => "weather"}}]
-      refute Trajectory.match?(trajectory, expected)
+      refute Trajectory.matches?(trajectory, expected)
     end
 
     test "strict mode rejects different arguments", %{trajectory: trajectory} do
@@ -280,7 +341,7 @@ defmodule LangChain.TrajectoryTest do
         %{name: "get_forecast", arguments: %{"city" => "Paris", "units" => "celsius"}}
       ]
 
-      refute Trajectory.match?(trajectory, expected)
+      refute Trajectory.matches?(trajectory, expected)
     end
 
     # Unordered mode
@@ -290,23 +351,23 @@ defmodule LangChain.TrajectoryTest do
         %{name: "search", arguments: %{"query" => "weather"}}
       ]
 
-      assert Trajectory.match?(trajectory, expected, mode: :unordered)
+      assert Trajectory.matches?(trajectory, expected, mode: :unordered)
     end
 
     test "unordered mode rejects different count", %{trajectory: trajectory} do
       expected = [%{name: "search", arguments: %{"query" => "weather"}}]
-      refute Trajectory.match?(trajectory, expected, mode: :unordered)
+      refute Trajectory.matches?(trajectory, expected, mode: :unordered)
     end
 
     # Superset mode
     test "superset mode matches when actual contains all expected", %{trajectory: trajectory} do
       expected = [%{name: "search", arguments: %{"query" => "weather"}}]
-      assert Trajectory.match?(trajectory, expected, mode: :superset)
+      assert Trajectory.matches?(trajectory, expected, mode: :superset)
     end
 
     test "superset mode rejects when expected has calls not in actual", %{trajectory: trajectory} do
       expected = [%{name: "missing_tool", arguments: nil}]
-      refute Trajectory.match?(trajectory, expected, mode: :superset)
+      refute Trajectory.matches?(trajectory, expected, mode: :superset)
     end
 
     # nil arguments = wildcard
@@ -316,7 +377,7 @@ defmodule LangChain.TrajectoryTest do
         %{name: "get_forecast", arguments: nil}
       ]
 
-      assert Trajectory.match?(trajectory, expected)
+      assert Trajectory.matches?(trajectory, expected)
     end
 
     # Subset args mode
@@ -326,7 +387,7 @@ defmodule LangChain.TrajectoryTest do
         %{name: "get_forecast", arguments: %{"city" => "Paris"}}
       ]
 
-      assert Trajectory.match?(trajectory, expected, args: :subset)
+      assert Trajectory.matches?(trajectory, expected, args: :subset)
     end
 
     test "subset args rejects when expected has extra keys" do
@@ -337,7 +398,7 @@ defmodule LangChain.TrajectoryTest do
       }
 
       expected = [%{name: "search", arguments: %{"query" => "weather", "limit" => 10}}]
-      refute Trajectory.match?(trajectory, expected, args: :subset)
+      refute Trajectory.matches?(trajectory, expected, args: :subset)
     end
 
     # Trajectory vs Trajectory
@@ -354,18 +415,105 @@ defmodule LangChain.TrajectoryTest do
         token_usage: nil
       }
 
-      assert Trajectory.match?(t1, t2)
+      assert Trajectory.matches?(t1, t2)
     end
 
     # Empty cases
     test "empty actual matches empty expected" do
       trajectory = %Trajectory{messages: [], tool_calls: [], token_usage: nil}
-      assert Trajectory.match?(trajectory, [])
+      assert Trajectory.matches?(trajectory, [])
     end
 
     test "empty actual does not match non-empty expected" do
       trajectory = %Trajectory{messages: [], tool_calls: [], token_usage: nil}
-      refute Trajectory.match?(trajectory, [%{name: "search", arguments: nil}])
+      refute Trajectory.matches?(trajectory, [%{name: "search", arguments: nil}])
+    end
+  end
+
+  describe "calls_by_name/2" do
+    test "returns matching tool calls" do
+      trajectory = %Trajectory{
+        messages: [],
+        tool_calls: [
+          %{name: "search", arguments: %{"query" => "weather"}},
+          %{name: "get_forecast", arguments: %{"city" => "Paris"}},
+          %{name: "search", arguments: %{"query" => "news"}}
+        ],
+        token_usage: nil
+      }
+
+      result = Trajectory.calls_by_name(trajectory, "search")
+
+      assert [
+               %{name: "search", arguments: %{"query" => "weather"}},
+               %{name: "search", arguments: %{"query" => "news"}}
+             ] = result
+    end
+
+    test "returns empty list when no calls match" do
+      trajectory = %Trajectory{
+        messages: [],
+        tool_calls: [%{name: "search", arguments: %{"q" => "test"}}],
+        token_usage: nil
+      }
+
+      assert [] = Trajectory.calls_by_name(trajectory, "missing")
+    end
+
+    test "returns empty list for empty trajectory" do
+      trajectory = %Trajectory{messages: [], tool_calls: [], token_usage: nil}
+      assert [] = Trajectory.calls_by_name(trajectory, "search")
+    end
+  end
+
+  describe "calls_by_turn/1" do
+    test "groups tool calls by assistant message turn" do
+      tc1 = make_tool_call("search", %{"query" => "weather"})
+      tc2 = make_tool_call("get_forecast", %{"city" => "Paris"})
+      tr1 = make_tool_result("search", "Sunny")
+
+      messages = [
+        user_msg("What's the weather in Paris?"),
+        assistant_msg(nil, tool_calls: [tc1]),
+        tool_msg([tr1]),
+        assistant_msg(nil, tool_calls: [tc2])
+      ]
+
+      trajectory = Trajectory.from_chain(chain_with_messages(messages))
+      turns = Trajectory.calls_by_turn(trajectory)
+
+      assert [
+               {0, [%{name: "search", arguments: %{"query" => "weather"}}]},
+               {1, [%{name: "get_forecast", arguments: %{"city" => "Paris"}}]}
+             ] = turns
+    end
+
+    test "groups parallel tool calls in the same turn" do
+      tc1 = make_tool_call("search", %{"query" => "weather"}, "call_1")
+      tc2 = make_tool_call("search", %{"query" => "news"}, "call_2")
+
+      messages = [
+        user_msg("Search for weather and news"),
+        assistant_msg(nil, tool_calls: [tc1, tc2])
+      ]
+
+      trajectory = Trajectory.from_chain(chain_with_messages(messages))
+      turns = Trajectory.calls_by_turn(trajectory)
+
+      assert [
+               {0,
+                [
+                  %{name: "search", arguments: %{"query" => "weather"}},
+                  %{name: "search", arguments: %{"query" => "news"}}
+                ]}
+             ] = turns
+    end
+
+    test "returns empty list when no tool calls exist" do
+      messages = [user_msg("Hello"), assistant_msg("Hi")]
+      trajectory = Trajectory.from_chain(chain_with_messages(messages))
+
+      assert [] = Trajectory.calls_by_turn(trajectory)
     end
   end
 
@@ -402,6 +550,58 @@ defmodule LangChain.TrajectoryTest do
 
       assert_raise ExUnit.AssertionError, ~r/Trajectory mismatch/, fn ->
         assert_trajectory(trajectory, [%{name: "other_tool", arguments: nil}])
+      end
+    end
+  end
+
+  describe "refute_trajectory/2,3" do
+    test "passes when trajectory does not match" do
+      trajectory = %Trajectory{
+        messages: [],
+        tool_calls: [%{name: "search", arguments: %{"q" => "test"}}],
+        token_usage: nil
+      }
+
+      refute_trajectory(trajectory, [%{name: "delete_all", arguments: nil}])
+    end
+
+    test "passes with superset mode when tool not present" do
+      trajectory = %Trajectory{
+        messages: [],
+        tool_calls: [
+          %{name: "search", arguments: %{"q" => "test"}},
+          %{name: "fetch", arguments: %{"url" => "example.com"}}
+        ],
+        token_usage: nil
+      }
+
+      refute_trajectory(trajectory, [%{name: "delete_all", arguments: nil}], mode: :superset)
+    end
+
+    test "raises ExUnit.AssertionError on unexpected match" do
+      trajectory = %Trajectory{
+        messages: [],
+        tool_calls: [%{name: "search", arguments: %{"q" => "test"}}],
+        token_usage: nil
+      }
+
+      assert_raise ExUnit.AssertionError, ~r/Unexpected trajectory match/, fn ->
+        refute_trajectory(trajectory, [%{name: "search", arguments: %{"q" => "test"}}])
+      end
+    end
+
+    test "raises on superset match" do
+      trajectory = %Trajectory{
+        messages: [],
+        tool_calls: [
+          %{name: "search", arguments: %{"q" => "test"}},
+          %{name: "fetch", arguments: %{"url" => "example.com"}}
+        ],
+        token_usage: nil
+      }
+
+      assert_raise ExUnit.AssertionError, ~r/Unexpected trajectory match/, fn ->
+        refute_trajectory(trajectory, [%{name: "search", arguments: nil}], mode: :superset)
       end
     end
   end
