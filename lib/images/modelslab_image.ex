@@ -51,15 +51,13 @@ defmodule LangChain.Images.ModelsLabImage do
   alias LangChain.Images.GeneratedImage
   alias LangChain.Config
   alias LangChain.LangChainError
-  alias LangChain.Utils
 
   # allow up to 2 minutes for response
   @receive_timeout 120_000
 
   @primary_key false
   embedded_schema do
-    field :endpoint, :string,
-      default: "https://modelslab.com/api/v6/images/text2img"
+    field :endpoint, :string, default: "https://modelslab.com/api/v6/images/text2img"
 
     # API key for ModelsLab. If not set, resolves from config :modelslab_key.
     field :api_key, :string, redact: true
@@ -150,8 +148,14 @@ defmodule LangChain.Images.ModelsLabImage do
     |> validate_number(:width, greater_than_or_equal_to: 256, less_than_or_equal_to: 1024)
     |> validate_number(:height, greater_than_or_equal_to: 256, less_than_or_equal_to: 1024)
     |> validate_number(:samples, greater_than_or_equal_to: 1, less_than_or_equal_to: 4)
-    |> validate_number(:num_inference_steps, greater_than_or_equal_to: 1, less_than_or_equal_to: 50)
-    |> validate_number(:guidance_scale, greater_than_or_equal_to: 1.0, less_than_or_equal_to: 20.0)
+    |> validate_number(:num_inference_steps,
+      greater_than_or_equal_to: 1,
+      less_than_or_equal_to: 50
+    )
+    |> validate_number(:guidance_scale,
+      greater_than_or_equal_to: 1.0,
+      less_than_or_equal_to: 20.0
+    )
   end
 
   @doc """
@@ -235,7 +239,10 @@ defmodule LangChain.Images.ModelsLabImage do
   @doc false
   @spec do_process_response(data :: map(), t()) ::
           {:ok, [GeneratedImage.t()]} | {:error, String.t()}
-  def do_process_response(%{"status" => "success", "output" => urls} = _data, %ModelsLabImage{} = request)
+  def do_process_response(
+        %{"status" => "success", "output" => urls} = _data,
+        %ModelsLabImage{} = request
+      )
       when is_list(urls) do
     created_at = DateTime.utc_now()
 
