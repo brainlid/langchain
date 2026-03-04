@@ -154,9 +154,15 @@ defmodule LangChain.MessageDelta do
         MessageDelta.merge_deltas(list_of_delta_messages)
 
   """
-  @spec merge_delta(nil | t(), t()) :: t()
+  @spec merge_delta(nil | t(), t() | {:error, any()}) :: t()
   def merge_delta(nil, %MessageDelta{} = delta_part) do
     merge_delta(%MessageDelta{role: :assistant}, delta_part)
+  end
+
+  # Skip error tuples that may arrive mid-stream (e.g. content filtering).
+  # Return the accumulated delta unchanged so callers like LiveView don't crash.
+  def merge_delta(primary, {:error, _reason}) do
+    primary || %MessageDelta{role: :assistant}
   end
 
   def merge_delta(%MessageDelta{role: :assistant} = primary, %MessageDelta{} = delta_part) do

@@ -1058,6 +1058,45 @@ defmodule LangChain.MessageDeltaTest do
       # Should preserve existing content and skip unknown types
       assert merged.merged_content == [ContentPart.text!("existing")]
     end
+
+    test "returns accumulated delta unchanged when receiving an error tuple" do
+      accumulated =
+        MessageDelta.merge_delta(nil, %MessageDelta{content: "Hello", role: :assistant})
+
+      result =
+        MessageDelta.merge_delta(
+          accumulated,
+          {:error, LangChainError.exception(type: "content_filter", message: "Content blocked")}
+        )
+
+      # The accumulated delta should be returned unchanged
+      assert result == accumulated
+    end
+
+    test "returns a fresh assistant delta when nil receives an error tuple" do
+      result = MessageDelta.merge_delta(nil, {:error, "some error"})
+
+      assert %MessageDelta{role: :assistant} = result
+    end
+
+    test "preserves accumulated content when error arrives mid-stream" do
+      accumulated =
+        [
+          %MessageDelta{content: "Greetings", role: :assistant},
+          %MessageDelta{content: " from"},
+          %MessageDelta{content: " your assistant"}
+        ]
+        |> Enum.reduce(nil, fn delta, acc -> MessageDelta.merge_delta(acc, delta) end)
+
+      result =
+        MessageDelta.merge_delta(
+          accumulated,
+          {:error, LangChainError.exception(message: "Server error")}
+        )
+
+      assert result.merged_content == [ContentPart.text!("Greetings from your assistant")]
+      assert result.status == :incomplete
+    end
   end
 
   describe "merge_deltas/2" do
