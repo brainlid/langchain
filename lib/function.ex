@@ -359,6 +359,11 @@ defmodule LangChain.Function do
     {:ok, result}
   end
 
+  defp normalize_execution_result({:interrupt, message, data}, _function)
+       when is_binary(message) do
+    {:interrupt, message, data}
+  end
+
   defp normalize_execution_result({:error, reason}, _function) when is_binary(reason) do
     {:error, reason}
   end

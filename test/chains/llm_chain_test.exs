@@ -2649,6 +2649,112 @@ defmodule LangChain.Chains.LLMChainTest do
       assert result.processed_content == nil
       assert result.options == [custom: 1]
     end
+
+    test "execute_tool_call handles {:interrupt, msg, data} return", %{chain: chain} do
+      interrupt_data = %{type: :subagent_hitl, sub_agent_id: "agent-1"}
+
+      interrupting_tool =
+        Function.new!(%{
+          name: "task",
+          description: "Runs a sub-agent",
+          display_text: "Run task",
+          function: fn _args, _context ->
+            {:interrupt, "SubAgent requires approval.", interrupt_data}
+          end
+        })
+
+      chain =
+        chain
+        |> LLMChain.add_tools(interrupting_tool)
+        |> LLMChain.add_message(new_function_call!("call_int_1", "task", "{}"))
+
+      updated_chain = LLMChain.execute_tool_calls(chain)
+      %Message{role: :tool, tool_results: [%ToolResult{} = result]} = updated_chain.last_message
+
+      assert result.is_interrupt == true
+      assert result.interrupt_data == interrupt_data
+      assert result.content == [ContentPart.text!("SubAgent requires approval.")]
+      assert result.name == "task"
+      assert result.display_text == "Run task"
+    end
+
+    test "on_tool_interrupted fires for interrupted tools, skips completed callback", %{
+      chain: chain
+    } do
+      test_pid = self()
+
+      interrupting_tool =
+        Function.new!(%{
+          name: "task",
+          description: "Runs a sub-agent",
+          function: fn _args, _context ->
+            {:interrupt, "Needs approval", %{type: :subagent_hitl}}
+          end
+        })
+
+      normal_tool =
+        Function.new!(%{
+          name: "search",
+          description: "Searches things",
+          function: fn _args, _context -> {:ok, "found it"} end
+        })
+
+      callbacks = %{
+        on_tool_interrupted: fn _chain, interrupted ->
+          send(test_pid, {:interrupted, interrupted})
+        end,
+        on_tool_execution_completed: fn _chain, call, _result ->
+          send(test_pid, {:completed, call.name})
+        end,
+        on_tool_execution_started: fn _chain, _call, _func -> :ok end
+      }
+
+      tool_call1 = ToolCall.new!(%{call_id: "call_1", name: "task", arguments: %{}})
+      tool_call2 = ToolCall.new!(%{call_id: "call_2", name: "search", arguments: %{}})
+
+      assistant_msg = Message.new_assistant!(%{tool_calls: [tool_call1, tool_call2]})
+
+      chain =
+        chain
+        |> LLMChain.add_tools([interrupting_tool, normal_tool])
+        |> LLMChain.add_callback(callbacks)
+        |> LLMChain.add_message(assistant_msg)
+
+      _updated = LLMChain.execute_tool_calls(chain)
+
+      # Verify interrupt callback fired
+      assert_receive {:interrupted, [%ToolResult{is_interrupt: true}]}
+
+      # Verify completed callback fired for normal tool but not interrupted tool
+      assert_receive {:completed, "search"}
+      refute_receive {:completed, "task"}
+    end
+  end
+
+  describe "replace_tool_result/3" do
+    test "replaces tool result in chain messages", %{chain: chain} do
+      result =
+        ToolResult.new!(%{
+          tool_call_id: "call_1",
+          name: "task",
+          content: "placeholder",
+          is_interrupt: true
+        })
+
+      tool_msg = Message.new_tool_result!(%{content: nil, tool_results: [result]})
+      chain = LLMChain.add_message(chain, tool_msg)
+
+      new_result =
+        ToolResult.new!(%{tool_call_id: "call_1", name: "task", content: "completed"})
+
+      updated_chain = LLMChain.replace_tool_result(chain, "call_1", new_result)
+
+      # Find the tool message
+      tool_message = Enum.find(updated_chain.messages, &(&1.role == :tool))
+      assert [replaced] = tool_message.tool_results
+      assert replaced.is_interrupt == false
+      assert replaced.content == [ContentPart.text!("completed")]
+    end
   end
 
   describe "execute_tool_calls_with_decisions/3" do
@@ -3081,6 +3187,118 @@ defmodule LangChain.Chains.LLMChainTest do
       assert result1.is_error == false
       assert result2.is_error == false
       assert result3.is_error == true
+    end
+
+    test "approved tool that returns {:interrupt, ...} produces interrupt ToolResult" do
+      test_pid = self()
+
+      interrupting_tool =
+        Function.new!(%{
+          name: "task",
+          description: "Runs a sub-agent",
+          function: fn _args, _context ->
+            {:interrupt, "SubAgent needs approval.",
+             %{type: :subagent_hitl, sub_agent_id: "sa-1"}}
+          end
+        })
+
+      callbacks = %{
+        on_tool_interrupted: fn _chain, interrupted ->
+          send(test_pid, {:interrupted, interrupted})
+        end,
+        on_tool_execution_completed: fn _chain, call, _result ->
+          send(test_pid, {:completed, call.name})
+        end,
+        on_tool_execution_started: fn _chain, _call, _func -> :ok end
+      }
+
+      chain =
+        LLMChain.new!(%{
+          llm: ChatOpenAI.new!(%{stream: false}),
+          custom_context: %{count: 1}
+        })
+        |> LLMChain.add_tools(interrupting_tool)
+        |> LLMChain.add_callback(callbacks)
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Run task"))
+
+      tool_calls = [
+        ToolCall.new!(%{call_id: "call_int", name: "task", arguments: %{}})
+      ]
+
+      decisions = [%{type: :approve}]
+
+      updated_chain = LLMChain.execute_tool_calls_with_decisions(chain, tool_calls, decisions)
+
+      assert %Message{role: :tool} = updated_chain.last_message
+      [%ToolResult{} = result] = updated_chain.last_message.tool_results
+
+      assert result.is_interrupt == true
+      assert result.interrupt_data == %{type: :subagent_hitl, sub_agent_id: "sa-1"}
+      assert result.content == [ContentPart.text!("SubAgent needs approval.")]
+
+      # on_tool_interrupted should fire
+      assert_receive {:interrupted, [%ToolResult{is_interrupt: true}]}
+      # on_tool_execution_completed should NOT fire for interrupted tool
+      refute_receive {:completed, "task"}
+    end
+
+    test "mix of approved normal tool and approved interrupting tool", %{hello_world: hello_world} do
+      test_pid = self()
+
+      interrupting_tool =
+        Function.new!(%{
+          name: "task",
+          description: "Runs a sub-agent",
+          function: fn _args, _context ->
+            {:interrupt, "Needs approval", %{type: :subagent_hitl}}
+          end
+        })
+
+      callbacks = %{
+        on_tool_interrupted: fn _chain, interrupted ->
+          send(test_pid, {:interrupted, interrupted})
+        end,
+        on_tool_execution_completed: fn _chain, call, _result ->
+          send(test_pid, {:completed, call.name})
+        end,
+        on_tool_execution_started: fn _chain, _call, _func -> :ok end
+      }
+
+      chain =
+        LLMChain.new!(%{
+          llm: ChatOpenAI.new!(%{stream: false}),
+          custom_context: %{count: 1}
+        })
+        |> LLMChain.add_tools([hello_world, interrupting_tool])
+        |> LLMChain.add_callback(callbacks)
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Do both"))
+
+      tool_calls = [
+        ToolCall.new!(%{call_id: "call_normal", name: "hello_world", arguments: %{}}),
+        ToolCall.new!(%{call_id: "call_int", name: "task", arguments: %{}})
+      ]
+
+      decisions = [%{type: :approve}, %{type: :approve}]
+
+      updated_chain = LLMChain.execute_tool_calls_with_decisions(chain, tool_calls, decisions)
+
+      [normal_result, interrupt_result] = updated_chain.last_message.tool_results
+
+      # Normal tool completed normally
+      assert normal_result.is_interrupt == false
+      assert normal_result.is_error == false
+      assert normal_result.content == [ContentPart.text!("Hello world!")]
+
+      # Interrupting tool has interrupt flag
+      assert interrupt_result.is_interrupt == true
+      assert interrupt_result.interrupt_data == %{type: :subagent_hitl}
+
+      # Callbacks: completed fires for normal, interrupted fires for interrupt
+      assert_receive {:completed, "hello_world"}
+      refute_receive {:completed, "task"}
+      assert_receive {:interrupted, [%ToolResult{is_interrupt: true}]}
     end
   end
 
