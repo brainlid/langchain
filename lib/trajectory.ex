@@ -126,6 +126,7 @@ defmodule LangChain.Trajectory do
   in `matches?/3` should use string keys as well.
   """
 
+  alias __MODULE__
   alias LangChain.Chains.LLMChain
   alias LangChain.Message
   alias LangChain.Message.ContentPart
@@ -138,7 +139,7 @@ defmodule LangChain.Trajectory do
 
   @type tool_call_map :: %{name: String.t(), arguments: map() | nil}
 
-  @type t :: %__MODULE__{
+  @type t :: %Trajectory{
           messages: [Message.t()],
           tool_calls: [tool_call_map()],
           token_usage: TokenUsage.t() | nil,
@@ -147,6 +148,10 @@ defmodule LangChain.Trajectory do
 
   @doc """
   Build a `Trajectory` from a chain's `exchanged_messages`.
+
+  Uses `exchanged_messages` — the messages added during the chain run — rather
+  than `messages` which includes pre-loaded system and user messages. This
+  focuses the trajectory on the agent's actual decision-making path.
 
   Extracts tool calls into a flat list and aggregates token usage across all
   assistant messages.
@@ -161,7 +166,7 @@ defmodule LangChain.Trajectory do
     token_usage = aggregate_token_usage(messages)
     metadata = extract_metadata(llm)
 
-    %__MODULE__{
+    %Trajectory{
       messages: messages,
       tool_calls: tool_calls,
       token_usage: token_usage,
@@ -178,7 +183,7 @@ defmodule LangChain.Trajectory do
   `ContentPart.content_to_string/1`.
   """
   @spec to_map(t()) :: map()
-  def to_map(%__MODULE__{} = trajectory) do
+  def to_map(%Trajectory{} = trajectory) do
     %{
       messages: Enum.map(trajectory.messages, &message_to_map/1),
       tool_calls: trajectory.tool_calls,
@@ -202,7 +207,7 @@ defmodule LangChain.Trajectory do
   """
   @spec from_map(map()) :: t()
   def from_map(%{} = map) do
-    %__MODULE__{
+    %Trajectory{
       messages: Map.get(map, :messages, Map.get(map, "messages", [])),
       tool_calls: normalize_tool_calls(Map.get(map, :tool_calls, Map.get(map, "tool_calls", []))),
       token_usage: normalize_token_usage(Map.get(map, :token_usage, Map.get(map, "token_usage"))),
@@ -240,29 +245,48 @@ defmodule LangChain.Trajectory do
       # Any order, ignore extra calls
       Trajectory.matches?(trajectory, expected, mode: :superset, args: :subset)
   """
-  @spec matches?(t() | [tool_call_map()], t() | [tool_call_map()], keyword()) :: boolean()
+  @spec matches?(t() | LLMChain.t() | [tool_call_map()], t() | [tool_call_map()], keyword()) ::
+          boolean()
   def matches?(actual, expected, opts \\ [])
 
   def matches?(%LLMChain{} = chain, expected, opts) do
     matches?(from_chain(chain), expected, opts)
   end
 
-  def matches?(%__MODULE__{} = actual, %__MODULE__{} = expected, opts) do
+  def matches?(%Trajectory{} = actual, %Trajectory{} = expected, opts) do
     matches?(actual.tool_calls, expected.tool_calls, opts)
   end
 
-  def matches?(%__MODULE__{} = actual, expected, opts) when is_list(expected) do
+  def matches?(%Trajectory{} = actual, expected, opts) when is_list(expected) do
     matches?(actual.tool_calls, expected, opts)
+  end
+
+  def matches?(actual, %Trajectory{} = expected, opts) when is_list(actual) do
+    matches?(actual, expected.tool_calls, opts)
   end
 
   def matches?(actual, expected, opts) when is_list(actual) and is_list(expected) do
     mode = Keyword.get(opts, :mode, :strict)
     args_mode = Keyword.get(opts, :args, :exact)
 
+    unless args_mode in [:exact, :subset] do
+      raise ArgumentError,
+            "unknown args mode: #{inspect(args_mode)}, expected :exact or :subset"
+    end
+
     case mode do
-      :strict -> match_strict(actual, expected, args_mode)
-      :unordered -> match_unordered(actual, expected, args_mode)
-      :superset -> match_superset(actual, expected, args_mode)
+      :strict ->
+        match_strict(actual, expected, args_mode)
+
+      :unordered ->
+        match_unordered(actual, expected, args_mode)
+
+      :superset ->
+        match_superset(actual, expected, args_mode)
+
+      other ->
+        raise ArgumentError,
+              "unknown mode: #{inspect(other)}, expected :strict, :unordered, or :superset"
     end
   end
 
@@ -275,7 +299,7 @@ defmodule LangChain.Trajectory do
       #=> [%{name: "search", arguments: %{"query" => "weather"}}]
   """
   @spec calls_by_name(t(), String.t()) :: [tool_call_map()]
-  def calls_by_name(%__MODULE__{tool_calls: calls}, name) do
+  def calls_by_name(%Trajectory{tool_calls: calls}, name) do
     Enum.filter(calls, &(&1.name == name))
   end
 
@@ -293,7 +317,7 @@ defmodule LangChain.Trajectory do
       #    {1, [%{name: "get_forecast", arguments: %{"city" => "Paris"}}]}]
   """
   @spec calls_by_turn(t()) :: [{non_neg_integer(), [tool_call_map()]}]
-  def calls_by_turn(%__MODULE__{messages: messages}) do
+  def calls_by_turn(%Trajectory{messages: messages}) do
     messages
     |> Enum.filter(&Message.is_tool_call?/1)
     |> Enum.with_index()
@@ -348,6 +372,11 @@ defmodule LangChain.Trajectory do
     |> maybe_put_tool_results(msg)
   end
 
+  # Passthrough for raw maps (e.g. from from_map/1 deserialization)
+  defp message_to_map(%{} = raw_map) do
+    raw_map
+  end
+
   defp maybe_put_tool_calls(map, %Message{tool_calls: tool_calls})
        when is_list(tool_calls) and tool_calls != [] do
     Map.put(
@@ -400,8 +429,8 @@ defmodule LangChain.Trajectory do
   defp normalize_token_usage(%TokenUsage{} = usage), do: usage
 
   defp normalize_token_usage(%{} = map) do
-    input = Map.get(map, :input) || Map.get(map, "input")
-    output = Map.get(map, :output) || Map.get(map, "output")
+    input = Map.get(map, :input, Map.get(map, "input"))
+    output = Map.get(map, :output, Map.get(map, "output"))
 
     if input || output do
       TokenUsage.new!(%{input: input, output: output})

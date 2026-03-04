@@ -349,6 +349,22 @@ defmodule LangChain.TrajectoryTest do
       trajectory = Trajectory.from_map(%{})
       assert trajectory.metadata == %{}
     end
+
+    test "to_map works on a trajectory restored from from_map" do
+      original = %Trajectory{
+        messages: [user_msg("Hello"), assistant_msg("Hi")],
+        tool_calls: [%{name: "search", arguments: %{"q" => "test"}}],
+        token_usage: make_usage(10, 20),
+        metadata: %{model: "gpt-4"}
+      }
+
+      # Roundtrip: to_map -> from_map -> to_map should not crash
+      restored = original |> Trajectory.to_map() |> Trajectory.from_map()
+      result = Trajectory.to_map(restored)
+
+      assert result.tool_calls == original.tool_calls
+      assert result.token_usage == %{input: 10, output: 20}
+    end
   end
 
   describe "matches?/3" do
@@ -478,6 +494,90 @@ defmodule LangChain.TrajectoryTest do
     test "empty actual does not match non-empty expected" do
       trajectory = %Trajectory{messages: [], tool_calls: [], token_usage: nil}
       refute Trajectory.matches?(trajectory, [%{name: "search", arguments: nil}])
+    end
+
+    # Combined mode + args options
+    test "unordered mode with subset args", %{trajectory: trajectory} do
+      expected = [
+        %{name: "get_forecast", arguments: %{"city" => "Paris"}},
+        %{name: "search", arguments: %{"query" => "weather"}}
+      ]
+
+      assert Trajectory.matches?(trajectory, expected, mode: :unordered, args: :subset)
+    end
+
+    test "superset mode with subset args", %{trajectory: trajectory} do
+      expected = [%{name: "get_forecast", arguments: %{"city" => "Paris"}}]
+      assert Trajectory.matches?(trajectory, expected, mode: :superset, args: :subset)
+    end
+
+    test "superset mode with empty expected always matches" do
+      trajectory = %Trajectory{
+        messages: [],
+        tool_calls: [%{name: "search", arguments: %{"q" => "test"}}],
+        token_usage: nil
+      }
+
+      assert Trajectory.matches?(trajectory, [], mode: :superset)
+    end
+
+    # LLMChain as actual
+    test "accepts LLMChain as actual" do
+      tc = make_tool_call("search", %{"q" => "test"})
+      messages = [user_msg("Search"), assistant_msg(nil, tool_calls: [tc])]
+      chain = chain_with_messages(messages)
+
+      assert Trajectory.matches?(chain, [%{name: "search", arguments: %{"q" => "test"}}])
+    end
+
+    # List as actual, Trajectory as expected
+    test "accepts bare list as actual and Trajectory as expected" do
+      actual_calls = [%{name: "search", arguments: %{"q" => "test"}}]
+
+      expected_trajectory = %Trajectory{
+        messages: [],
+        tool_calls: [%{name: "search", arguments: %{"q" => "test"}}],
+        token_usage: nil
+      }
+
+      assert Trajectory.matches?(actual_calls, expected_trajectory)
+    end
+
+    # Invalid options
+    test "raises ArgumentError for invalid mode" do
+      trajectory = %Trajectory{messages: [], tool_calls: [], token_usage: nil}
+
+      assert_raise ArgumentError, ~r/unknown mode/, fn ->
+        Trajectory.matches?(trajectory, [], mode: :fuzzy)
+      end
+    end
+
+    test "raises ArgumentError for invalid args mode" do
+      trajectory = %Trajectory{messages: [], tool_calls: [], token_usage: nil}
+
+      assert_raise ArgumentError, ~r/unknown args mode/, fn ->
+        Trajectory.matches?(trajectory, [], args: :partial)
+      end
+    end
+
+    # Duplicate tool names with different counts
+    test "unordered mode rejects when duplicate counts differ" do
+      trajectory = %Trajectory{
+        messages: [],
+        tool_calls: [
+          %{name: "search", arguments: %{"q" => "a"}},
+          %{name: "search", arguments: %{"q" => "b"}},
+          %{name: "fetch", arguments: nil}
+        ],
+        token_usage: nil
+      }
+
+      expected = [
+        %{name: "search", arguments: nil},
+        %{name: "fetch", arguments: nil}
+      ]
+
+      refute Trajectory.matches?(trajectory, expected, mode: :unordered)
     end
   end
 
@@ -611,6 +711,34 @@ defmodule LangChain.TrajectoryTest do
 
       assert_trajectory(chain, [%{name: "search", arguments: %{"q" => "test"}}])
     end
+
+    test "accepts a Trajectory as expected" do
+      actual = %Trajectory{
+        messages: [],
+        tool_calls: [%{name: "search", arguments: %{"q" => "test"}}],
+        token_usage: nil
+      }
+
+      expected = %Trajectory{
+        messages: [],
+        tool_calls: [%{name: "search", arguments: %{"q" => "test"}}],
+        token_usage: nil
+      }
+
+      assert_trajectory(actual, expected)
+    end
+
+    test "passes with subset args option" do
+      trajectory = %Trajectory{
+        messages: [],
+        tool_calls: [%{name: "search", arguments: %{"q" => "test", "limit" => 10}}],
+        token_usage: nil
+      }
+
+      assert_trajectory(trajectory, [%{name: "search", arguments: %{"q" => "test"}}],
+        args: :subset
+      )
+    end
   end
 
   describe "refute_trajectory/2,3" do
@@ -647,6 +775,22 @@ defmodule LangChain.TrajectoryTest do
       assert_raise ExUnit.AssertionError, ~r/Unexpected trajectory match/, fn ->
         refute_trajectory(trajectory, [%{name: "search", arguments: %{"q" => "test"}}])
       end
+    end
+
+    test "accepts a Trajectory as expected" do
+      actual = %Trajectory{
+        messages: [],
+        tool_calls: [%{name: "search", arguments: %{"q" => "test"}}],
+        token_usage: nil
+      }
+
+      expected = %Trajectory{
+        messages: [],
+        tool_calls: [%{name: "delete_all", arguments: nil}],
+        token_usage: nil
+      }
+
+      refute_trajectory(actual, expected)
     end
 
     test "raises on superset match" do

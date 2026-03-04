@@ -77,6 +77,7 @@ defmodule LangChain.TrajectoryAssertions do
 
       if LangChain.Trajectory.matches?(actual_val, expected_val, opts_val) do
         matched_calls = LangChain.TrajectoryAssertions.extract_tool_calls(expected_val)
+        actual_calls = LangChain.TrajectoryAssertions.extract_tool_calls(actual_val)
 
         raise ExUnit.AssertionError,
           message: """
@@ -84,6 +85,9 @@ defmodule LangChain.TrajectoryAssertions do
 
           Did not expect to match:
           #{inspect(matched_calls, pretty: true)}
+
+          Actual:
+          #{inspect(actual_calls, pretty: true)}
           """
       end
     end
