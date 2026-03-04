@@ -248,6 +248,56 @@ defmodule LangChain.Chains.LLMChainTest do
              } =
                new_chain.last_message
     end
+
+    test "cancel_delta/3 stores error in message metadata" do
+      model = ChatOpenAI.new!(%{temperature: 1, stream: true})
+      chain = LLMChain.new!(%{llm: model, verbose: false})
+
+      error =
+        LangChainError.exception(
+          type: "content_filter",
+          message: "Response blocked by safety filter"
+        )
+
+      chain_with_delta =
+        chain
+        |> LLMChain.merge_delta(
+          MessageDelta.new!(%{role: :assistant, content: "Partial content"})
+        )
+
+      new_chain = LLMChain.cancel_delta(chain_with_delta, :cancelled, error)
+      assert new_chain.delta == nil
+
+      assert %Message{status: :cancelled, metadata: metadata} = new_chain.last_message
+      assert %LangChainError{type: "content_filter"} = metadata.streaming_error
+      assert metadata.streaming_error.message == "Response blocked by safety filter"
+    end
+
+    test "cancel_delta/3 with nil error does not set streaming_error in metadata" do
+      model = ChatOpenAI.new!(%{temperature: 1, stream: true})
+      chain = LLMChain.new!(%{llm: model, verbose: false})
+
+      chain_with_delta =
+        chain
+        |> LLMChain.merge_delta(MessageDelta.new!(%{role: :assistant, content: "Some text"}))
+
+      new_chain = LLMChain.cancel_delta(chain_with_delta, :cancelled, nil)
+      assert new_chain.delta == nil
+
+      msg = new_chain.last_message
+      assert msg.status == :cancelled
+      refute match?(%{streaming_error: _}, msg.metadata || %{})
+    end
+
+    test "cancel_delta/3 does nothing when no delta is present" do
+      model = ChatOpenAI.new!(%{temperature: 1, stream: true})
+      chain = LLMChain.new!(%{llm: model, verbose: false})
+      assert chain.delta == nil
+
+      error = LangChainError.exception(message: "Some error")
+      new_chain = LLMChain.cancel_delta(chain, :cancelled, error)
+      assert new_chain == chain
+    end
   end
 
   describe "JS inspired test" do
@@ -510,6 +560,8 @@ defmodule LangChain.Chains.LLMChainTest do
     test "cancels the current delta when applying an overloaded error", %{chain: chain} do
       assert chain.messages == []
 
+      error = LangChainError.exception(type: "overloaded", message: "Overloaded")
+
       updated_chain =
         chain
         |> LLMChain.merge_delta(
@@ -517,9 +569,7 @@ defmodule LangChain.Chains.LLMChainTest do
         )
         |> LLMChain.merge_delta(MessageDelta.new!(%{content: "your "}))
         |> LLMChain.merge_delta(MessageDelta.new!(%{content: "favorite "}))
-        |> LLMChain.merge_delta(
-          {:error, LangChainError.exception(type: "overloaded", message: "Overloaded")}
-        )
+        |> LLMChain.merge_delta({:error, error})
 
       # the delta is complete and removed from the chain
       assert updated_chain.delta == nil
@@ -528,6 +578,29 @@ defmodule LangChain.Chains.LLMChainTest do
       assert new_message.role == :assistant
       assert new_message.content == [ContentPart.text!("Greetings from your favorite ")]
       assert new_message.status == :cancelled
+      # the error is stored in metadata
+      assert new_message.metadata.streaming_error == error
+    end
+
+    test "cancels the current delta on a generic streaming error", %{chain: chain} do
+      error =
+        LangChainError.exception(
+          type: "invalid_request_error",
+          message: "Output blocked by content filtering policy"
+        )
+
+      updated_chain =
+        chain
+        |> LLMChain.merge_delta(MessageDelta.new!(%{role: :assistant, content: "Some partial "}))
+        |> LLMChain.merge_delta(MessageDelta.new!(%{content: "response"}))
+        |> LLMChain.merge_delta({:error, error})
+
+      assert updated_chain.delta == nil
+      assert [%Message{} = msg] = updated_chain.messages
+      assert msg.role == :assistant
+      assert msg.content == [ContentPart.text!("Some partial response")]
+      assert msg.status == :cancelled
+      assert msg.metadata.streaming_error == error
     end
   end
 

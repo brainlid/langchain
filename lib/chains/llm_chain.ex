@@ -981,8 +981,14 @@ defmodule LangChain.Chains.LLMChain do
   end
 
   # Handle when the server is overloaded and cancelled the stream on the server side.
-  def merge_delta(%LLMChain{} = chain, {:error, %LangChainError{type: "overloaded"}}) do
-    cancel_delta(chain, :cancelled)
+  def merge_delta(%LLMChain{} = chain, {:error, %LangChainError{type: "overloaded"} = error}) do
+    cancel_delta(chain, :cancelled, error)
+  end
+
+  # Handle any other error received during streaming (e.g. content filtering, invalid_request_error).
+  def merge_delta(%LLMChain{} = chain, {:error, %LangChainError{} = error}) do
+    Logger.warning("Received error during streaming: #{error.message}")
+    cancel_delta(chain, :cancelled, error)
   end
 
   # Unified function to augment tool calls with display_text and optionally
@@ -1717,13 +1723,34 @@ defmodule LangChain.Chains.LLMChain do
   """
   def cancel_delta(%LLMChain{delta: nil} = chain, _message_status), do: chain
 
-  def cancel_delta(%LLMChain{delta: %MessageDelta{} = delta} = chain, message_status) do
+  def cancel_delta(%LLMChain{} = chain, message_status) do
+    cancel_delta(chain, message_status, nil)
+  end
+
+  @doc """
+  Same as `cancel_delta/2` but stores an optional error in the message's
+  metadata under `:streaming_error`. This preserves the error reason through the
+  chain so higher layers (like the Sagents Agent and AgentServer) can detect and
+  surface it.
+  """
+  def cancel_delta(%LLMChain{delta: nil} = chain, _message_status, _error), do: chain
+
+  def cancel_delta(%LLMChain{delta: %MessageDelta{} = delta} = chain, message_status, error) do
     # remove the in-progress delta and reset streaming state
     updated_chain = reset_streaming_state(chain)
 
     case MessageDelta.to_message(%MessageDelta{delta | status: :complete}) do
       {:ok, %Message{} = message} ->
         message = %Message{message | status: message_status}
+
+        message =
+          if error do
+            metadata = (message.metadata || %{}) |> Map.put(:streaming_error, error)
+            %Message{message | metadata: metadata}
+          else
+            message
+          end
+
         add_message(updated_chain, message)
 
       {:error, reason} ->
