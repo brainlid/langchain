@@ -3197,7 +3197,8 @@ defmodule LangChain.Chains.LLMChainTest do
           name: "task",
           description: "Runs a sub-agent",
           function: fn _args, _context ->
-            {:interrupt, "SubAgent needs approval.", %{type: :subagent_hitl, sub_agent_id: "sa-1"}}
+            {:interrupt, "SubAgent needs approval.",
+             %{type: :subagent_hitl, sub_agent_id: "sa-1"}}
           end
         })
 
