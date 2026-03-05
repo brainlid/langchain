@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.6.1
+
+### Added
+
+- **ModelsLabImage Provider**: New `LangChain.Images.ModelsLabImage` module for text-to-image generation via the ModelsLab REST API, supporting Flux, SDXL, and community models https://github.com/brainlid/langchain/pull/468
+- **ChatAnthropic Structured Output**: Native structured output support via `json_response` and `json_schema` fields, using Anthropic's `output_config.format` API https://github.com/brainlid/langchain/pull/474
+- **ChatAnthropic file_id Support**: `ContentPart` `:file` and `:image` types can now reference files uploaded via Anthropic's Files API using `type: :file_id` option https://github.com/brainlid/langchain/pull/475
+- **Gemini Inline Data for PDF/CSV**: Added `inline_data` support for PDF and CSV content parts in `ChatGoogleAI` and `ChatVertexAI` https://github.com/brainlid/langchain/pull/478
+- **ChatOpenAIResponses Verbosity**: Added `verbosity` parameter to control response length via the OpenAI Responses API `text` configuration https://github.com/brainlid/langchain/pull/470
+- **Tool Result Interrupt/Resume**: `ToolResult` gains `is_interrupt` and `interrupt_data` fields, allowing tools to return `{:interrupt, message, data}` to pause execution for external input (e.g., Human-in-the-Loop approval). Includes `Message.replace_tool_result/3` and `LLMChain.replace_tool_result/3` for resuming with completed results, and a new `on_tool_interrupted` callback https://github.com/brainlid/langchain/pull/479
+
+### Changed
+
+- **Streaming Error Handling**: `LLMChain.merge_delta/2` now gracefully handles any `LangChainError` received during streaming (content moderation, etc.) instead of only `"overloaded"` errors. Cancelled messages store the error in `metadata[:streaming_error]` for higher layers to detect. `MessageDelta.merge_delta/2` absorbs `{:error, _}` tuples mid-stream without crashing https://github.com/brainlid/langchain/pull/480
+
+### Fixed
+
+- **ChatOpenAIResponses**: Fixed verbosity parameter to be passed inside the `text` parameter as required by the API, and improved error handling for malformed API responses https://github.com/brainlid/langchain/pull/476
+- **Message Processors**: Fixed `FunctionClauseError` in `run_message_processors` when assistant messages have nil content (e.g., Groq tool-call-only responses) by using `content_to_string` which handles nil, string, and list content types https://github.com/brainlid/langchain/pull/473
+
 ## v0.6.0
 
 ### Breaking Changes
