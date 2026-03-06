@@ -1,10 +1,10 @@
-defmodule LangChain.TrajectoryAssertions do
+defmodule LangChain.Trajectory.Assertions do
   @moduledoc """
   ExUnit assertion helpers for trajectory comparison.
 
   ## Usage
 
-      use LangChain.TrajectoryAssertions
+      use LangChain.Trajectory.Assertions
 
       test "agent calls the right tools" do
         trajectory = Trajectory.from_chain(chain)
@@ -42,8 +42,8 @@ defmodule LangChain.TrajectoryAssertions do
       opts_val = unquote(opts)
 
       unless LangChain.Trajectory.matches?(actual_val, expected_val, opts_val) do
-        actual_calls = LangChain.TrajectoryAssertions.extract_tool_calls(actual_val)
-        expected_calls = LangChain.TrajectoryAssertions.extract_tool_calls(expected_val)
+        actual_calls = LangChain.Trajectory.Assertions.extract_tool_calls(actual_val)
+        expected_calls = LangChain.Trajectory.Assertions.extract_tool_calls(expected_val)
 
         raise ExUnit.AssertionError,
           message: """
@@ -76,8 +76,8 @@ defmodule LangChain.TrajectoryAssertions do
       opts_val = unquote(opts)
 
       if LangChain.Trajectory.matches?(actual_val, expected_val, opts_val) do
-        matched_calls = LangChain.TrajectoryAssertions.extract_tool_calls(expected_val)
-        actual_calls = LangChain.TrajectoryAssertions.extract_tool_calls(actual_val)
+        matched_calls = LangChain.Trajectory.Assertions.extract_tool_calls(expected_val)
+        actual_calls = LangChain.Trajectory.Assertions.extract_tool_calls(actual_val)
 
         raise ExUnit.AssertionError,
           message: """
@@ -103,7 +103,7 @@ defmodule LangChain.TrajectoryAssertions do
 
   defmacro __using__(_opts) do
     quote do
-      import LangChain.TrajectoryAssertions
+      import LangChain.Trajectory.Assertions
     end
   end
 end

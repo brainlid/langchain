@@ -368,10 +368,10 @@ Trajectory.matches?(trajectory, expected, args: :subset)
 
 ### ExUnit Assertions
 
-`LangChain.TrajectoryAssertions` provides `assert_trajectory` and `refute_trajectory` macros with informative failure diffs:
+`LangChain.Trajectory.Assertions` provides `assert_trajectory` and `refute_trajectory` macros with informative failure diffs:
 
 ```elixir
-use LangChain.TrajectoryAssertions
+use LangChain.Trajectory.Assertions
 
 test "agent calls the right tools in order" do
   trajectory = Trajectory.from_chain(chain)
@@ -431,4 +431,4 @@ trajectory.metadata
 #=> %{model: "gpt-4", llm_module: LangChain.ChatModels.ChatOpenAI}
 ```
 
-See `LangChain.Trajectory` and `LangChain.TrajectoryAssertions` module docs for the full API reference.
+See `LangChain.Trajectory` and `LangChain.Trajectory.Assertions` module docs for the full API reference.

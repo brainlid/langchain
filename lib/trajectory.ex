@@ -75,8 +75,8 @@ defmodule LangChain.Trajectory do
 
   Use `refute` with superset mode to ensure dangerous tools weren't invoked:
 
-      # Using TrajectoryAssertions
-      use LangChain.TrajectoryAssertions
+      # Using Trajectory.Assertions
+      use LangChain.Trajectory.Assertions
 
       refute_trajectory trajectory, [
         %{name: "delete_all", arguments: nil}
@@ -155,6 +155,14 @@ defmodule LangChain.Trajectory do
 
   Extracts tool calls into a flat list and aggregates token usage across all
   assistant messages.
+
+  ## Important: call immediately after `run/2`
+
+  `LLMChain.run/2` clears `exchanged_messages` at the start of each
+  invocation. This means `from_chain/1` captures only the messages from the
+  **most recent** `run` call. If you need to capture a trajectory, call
+  `from_chain/1` immediately after `run/2` returns — before any subsequent
+  `run` call on the same chain.
 
   ## Example
 

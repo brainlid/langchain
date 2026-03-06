@@ -1,6 +1,6 @@
 defmodule LangChain.TrajectoryTest do
   use ExUnit.Case, async: true
-  use LangChain.TrajectoryAssertions
+  use LangChain.Trajectory.Assertions
 
   alias LangChain.Trajectory
   alias LangChain.Chains.LLMChain
