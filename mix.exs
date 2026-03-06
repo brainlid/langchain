@@ -77,6 +77,7 @@ defmodule LangChain.MixProject do
       extra_section: "Guides",
       extras: extras(),
       groups_for_extras: [
+        Guides: ["guides/evaluation.md"],
         Notebooks: Path.wildcard("notebooks/*.livemd")
       ],
       groups_for_modules: [
@@ -149,6 +150,10 @@ defmodule LangChain.MixProject do
           LangChain.Tools.DeepResearch.ResearchStatus,
           LangChain.Tools.DeepResearch.ResearchResult
         ],
+        Evaluation: [
+          LangChain.Trajectory,
+          LangChain.Trajectory.Assertions
+        ],
         Utils: [
           LangChain.Utils,
           LangChain.Utils.BedrockConfig,
@@ -167,6 +172,7 @@ defmodule LangChain.MixProject do
     [
       "README.md",
       "CHANGELOG.md",
+      "guides/evaluation.md",
       "notebooks/getting_started.livemd",
       "notebooks/custom_functions.livemd",
       "notebooks/context-specific-image-descriptions.livemd"
