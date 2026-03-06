@@ -46,15 +46,10 @@ defmodule LangChain.Trajectory.Assertions do
         expected_calls = LangChain.Trajectory.Assertions.extract_tool_calls(expected_val)
 
         raise ExUnit.AssertionError,
-          message: """
-          Trajectory mismatch (mode: #{Keyword.get(opts_val, :mode, :strict)}, args: #{Keyword.get(opts_val, :args, :exact)})
-
-          Expected:
-          #{inspect(expected_calls, pretty: true)}
-
-          Actual:
-          #{inspect(actual_calls, pretty: true)}
-          """
+          left: actual_calls,
+          right: expected_calls,
+          message:
+            "Trajectory mismatch (mode: #{Keyword.get(opts_val, :mode, :strict)}, args: #{Keyword.get(opts_val, :args, :exact)})"
       end
     end
   end
@@ -80,15 +75,10 @@ defmodule LangChain.Trajectory.Assertions do
         actual_calls = LangChain.Trajectory.Assertions.extract_tool_calls(actual_val)
 
         raise ExUnit.AssertionError,
-          message: """
-          Unexpected trajectory match (mode: #{Keyword.get(opts_val, :mode, :strict)}, args: #{Keyword.get(opts_val, :args, :exact)})
-
-          Did not expect to match:
-          #{inspect(matched_calls, pretty: true)}
-
-          Actual:
-          #{inspect(actual_calls, pretty: true)}
-          """
+          left: actual_calls,
+          right: matched_calls,
+          message:
+            "Unexpected trajectory match (mode: #{Keyword.get(opts_val, :mode, :strict)}, args: #{Keyword.get(opts_val, :args, :exact)})"
       end
     end
   end

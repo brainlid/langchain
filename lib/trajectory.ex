@@ -137,6 +137,7 @@ defmodule LangChain.Trajectory do
             token_usage: nil,
             metadata: %{}
 
+  @typedoc "A simplified tool call map with the tool name and its arguments."
   @type tool_call_map :: %{name: String.t(), arguments: map() | nil}
 
   @type t :: %Trajectory{
@@ -206,6 +207,12 @@ defmodule LangChain.Trajectory do
   Restores `tool_calls` and `token_usage` but stores messages as raw maps
   since full `Message` struct reconstruction requires schema context that
   plain maps don't carry.
+
+  **Note:** After a JSON roundtrip (`Jason.encode!` → `Jason.decode!`), atom
+  keys become strings and module names become string representations. This
+  means metadata fields like `:llm_module` will differ between a fresh
+  trajectory and one restored from JSON. The `matches?/3` function compares
+  only tool calls, so this does not affect matching.
 
   ## Example
 
@@ -417,6 +424,8 @@ defmodule LangChain.Trajectory do
 
   defp token_usage_to_map(nil), do: nil
 
+  # Intentionally serialize only input/output for a minimal, portable format.
+  # Provider-specific details in :raw and :cumulative are omitted.
   defp token_usage_to_map(%TokenUsage{} = usage) do
     %{input: usage.input, output: usage.output}
   end
