@@ -12,25 +12,15 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesWebSocketLiveTest do
   @model "gpt-4o-mini"
 
   setup do
-    api_key = System.get_env("OPENAI_API_KEY")
-
-    {:ok, ws} =
-      WebSocket.start_link(
-        url: "wss://api.openai.com/v1/responses",
-        headers: [{"authorization", "Bearer #{api_key}"}]
-      )
+    llm =
+      ChatOpenAIResponses.new!(%{model: @model, stream: false})
+      |> ChatOpenAIResponses.connect_websocket!()
 
     on_exit(fn ->
-      if Process.alive?(ws), do: WebSocket.close(ws)
+      ChatOpenAIResponses.disconnect_websocket!(llm)
     end)
 
-    base = %{
-      model: @model,
-      websocket: ws,
-      stream: false
-    }
-
-    [llm: ChatOpenAIResponses.new!(base), ws: ws]
+    [llm: llm]
   end
 
   test "simple non-streaming chat via WebSocket", %{llm: llm} do
@@ -99,7 +89,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesWebSocketLiveTest do
     assert content_str =~ "55"
   end
 
-  test "WebSocket connection is reused across multiple calls", %{llm: llm, ws: ws} do
+  test "WebSocket connection is reused across multiple calls", %{llm: llm} do
     # First call
     {:ok, msg1} = ChatOpenAIResponses.call(llm, [Message.new_user!("Say one")], [])
     assert msg1.role == :assistant
@@ -109,7 +99,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesWebSocketLiveTest do
     assert msg2.role == :assistant
 
     # WebSocket should still be alive
-    assert WebSocket.connected?(ws)
+    assert WebSocket.connected?(llm.websocket)
   end
 
   test "streaming with tool calling chain via WebSocket", %{llm: llm} do

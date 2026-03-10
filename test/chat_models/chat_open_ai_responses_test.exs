@@ -1878,6 +1878,36 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
       verify!()
     end
 
+    test "connect_websocket! sets websocket pid on model" do
+      LangChain.WebSocket
+      |> expect(:start_link, fn opts ->
+        assert opts[:url] == "wss://api.openai.com/v1/responses"
+        assert [{"authorization", "Bearer " <> _}] = opts[:headers]
+        {:ok, spawn(fn -> Process.sleep(:infinity) end)}
+      end)
+
+      model =
+        ChatOpenAIResponses.new!(%{model: @test_model})
+        |> ChatOpenAIResponses.connect_websocket!()
+
+      assert is_pid(model.websocket)
+      verify!()
+    end
+
+    test "disconnect_websocket! clears websocket and is safe on nil" do
+      model = ChatOpenAIResponses.new!(%{model: @test_model})
+      assert %{websocket: nil} = ChatOpenAIResponses.disconnect_websocket!(model)
+
+      fake_pid = spawn(fn -> Process.sleep(:infinity) end)
+      model = %{model | websocket: fake_pid}
+
+      LangChain.WebSocket
+      |> expect(:close, fn ^fake_pid -> :ok end)
+
+      assert %{websocket: nil} = ChatOpenAIResponses.disconnect_websocket!(model)
+      verify!()
+    end
+
     test "do_api_request with websocket returns error on WebSocket failure" do
       fake_pid = spawn(fn -> Process.sleep(:infinity) end)
 
