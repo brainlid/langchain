@@ -898,8 +898,8 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
                 events
                 |> Enum.find(&match?(%{"type" => "response.failed"}, &1))
                 |> case do
-                  %{"response" => response} ->
-                    do_process_response(openai, response)
+                  %{"type" => "response.failed"} = failed_event ->
+                    do_process_response(openai, failed_event)
 
                   nil ->
                     {:error,
@@ -934,9 +934,13 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
                timeout: openai.receive_timeout
              ) do
           {:ok, results} ->
-            results
-            |> Enum.reject(&(&1 == :skip))
-            |> List.flatten()
+            results = results |> Enum.reject(&(&1 == :skip)) |> List.flatten()
+
+            # Check if any result is an error and return the first one found
+            case Enum.find(results, &match?({:error, %LangChainError{}}, &1)) do
+              {:error, _} = error -> error
+              nil -> results
+            end
 
           {:error, reason} ->
             {:error,

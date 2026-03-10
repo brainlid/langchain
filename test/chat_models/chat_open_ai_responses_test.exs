@@ -1777,6 +1777,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
 
     test "do_api_request with websocket pid delegates to WebSocket (non-streaming)" do
       fake_pid = spawn(fn -> Process.sleep(:infinity) end)
+      on_exit(fn -> Process.exit(fake_pid, :kill) end)
 
       completed_response = %{
         "status" => "completed",
@@ -1829,6 +1830,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
 
     test "do_api_request with websocket pid delegates to WebSocket (streaming)" do
       fake_pid = spawn(fn -> Process.sleep(:infinity) end)
+      on_exit(fn -> Process.exit(fake_pid, :kill) end)
 
       LangChain.WebSocket
       |> expect(:send_and_stream, fn ^fake_pid, payload, callback_fn, _done_fn, _opts ->
@@ -1896,6 +1898,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
         |> ChatOpenAIResponses.connect_websocket!()
 
       assert is_pid(model.websocket)
+      on_exit(fn -> Process.exit(model.websocket, :kill) end)
       verify!()
     end
 
@@ -1904,6 +1907,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
       assert %{websocket: nil} = ChatOpenAIResponses.disconnect_websocket!(model)
 
       fake_pid = spawn(fn -> Process.sleep(:infinity) end)
+      on_exit(fn -> Process.exit(fake_pid, :kill) end)
       model = %{model | websocket: fake_pid}
 
       LangChain.WebSocket
@@ -1915,6 +1919,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
 
     test "do_api_request with websocket returns error on WebSocket failure" do
       fake_pid = spawn(fn -> Process.sleep(:infinity) end)
+      on_exit(fn -> Process.exit(fake_pid, :kill) end)
 
       LangChain.WebSocket
       |> expect(:send_and_collect, fn ^fake_pid, _payload, _done_fn, _opts ->
