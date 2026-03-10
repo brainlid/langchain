@@ -161,6 +161,9 @@ defmodule LangChain.MixProject do
           LangChain.Tools.DeepResearch.ResearchStatus,
           LangChain.Tools.DeepResearch.ResearchResult
         ],
+        WebSocket: [
+          LangChain.WebSocket
+        ],
         Evaluation: [
           LangChain.Trajectory,
           LangChain.Trajectory.Assertions
