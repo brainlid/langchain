@@ -157,6 +157,9 @@ defmodule LangChain.MixProject do
           LangChain.Tools.DeepResearch.ResearchStatus,
           LangChain.Tools.DeepResearch.ResearchResult
         ],
+        WebSocket: [
+          LangChain.WebSocket
+        ],
         Utils: [
           LangChain.Utils,
           LangChain.Utils.BedrockConfig,
