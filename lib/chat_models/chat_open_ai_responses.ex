@@ -340,6 +340,79 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     end
   end
 
+  @doc """
+  Open a `LangChain.WebSocket` connection using the model's endpoint and API key.
+
+  Returns `{:ok, model}` with the `:websocket` field set to the WebSocket PID,
+  or `{:error, reason}` on failure.
+
+  ## Example
+
+      {:ok, model} = ChatOpenAIResponses.connect_websocket(model)
+
+  """
+  @spec connect_websocket(t()) :: {:ok, t()} | {:error, String.t()}
+  def connect_websocket(%ChatOpenAIResponses{} = model) do
+    api_key = model.api_key || Config.resolve(:openai_key, nil)
+
+    unless api_key do
+      {:error, "API key is required to open a WebSocket connection"}
+    end
+
+    ws_url =
+      model.endpoint
+      |> String.replace_leading("https://", "wss://")
+      |> String.replace_leading("http://", "ws://")
+
+    case LangChain.WebSocket.start_link(
+           url: ws_url,
+           headers: [{"authorization", "Bearer #{api_key}"}],
+           receive_timeout: model.receive_timeout
+         ) do
+      {:ok, pid} ->
+        {:ok, %{model | websocket: pid}}
+
+      {:error, reason} ->
+        {:error, "Failed to connect WebSocket: #{inspect(reason)}"}
+    end
+  end
+
+  @doc """
+  Like `connect_websocket/1` but raises on failure.
+
+  ## Example
+
+      model =
+        ChatOpenAIResponses.new!(%{model: "gpt-4o"})
+        |> ChatOpenAIResponses.connect_websocket!()
+
+      # ... use model in chains ...
+
+      ChatOpenAIResponses.disconnect_websocket!(model)
+
+  """
+  @spec connect_websocket!(t()) :: t() | no_return()
+  def connect_websocket!(%ChatOpenAIResponses{} = model) do
+    case connect_websocket(model) do
+      {:ok, model} -> model
+      {:error, reason} -> raise LangChainError, reason
+    end
+  end
+
+  @doc """
+  Close the WebSocket connection associated with this model.
+
+  Returns the model with `:websocket` set to `nil`.
+  Safe to call even if the WebSocket is already closed.
+  """
+  @spec disconnect_websocket!(t()) :: t()
+  def disconnect_websocket!(%ChatOpenAIResponses{websocket: pid} = model) when is_pid(pid) do
+    if Process.alive?(pid), do: LangChain.WebSocket.close(pid)
+    %{model | websocket: nil}
+  end
+
+  def disconnect_websocket!(%ChatOpenAIResponses{} = model), do: model
+
   defp common_validation(changeset) do
     changeset
     |> validate_required(@required_fields)
