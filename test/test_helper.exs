@@ -38,6 +38,7 @@ Mimic.copy(LangChain.Config)
 Mimic.copy(LangChain.ChatModels.ChatVertexAI)
 Mimic.copy(LangChain.ChatModels.ChatGoogleAI)
 Mimic.copy(LangChain.ChatModels.ChatGrok)
+Mimic.copy(LangChain.WebSocket)
 
 Logger.configure(level: :warning)
 ExUnit.configure(exclude: [live_call: true])
