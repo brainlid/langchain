@@ -1,5 +1,7 @@
 # LangChain Elixir
 
+> **IMPORTANT for AI coding agents**: `CLAUDE.md` is a symlink to this file (`AGENTS.md`). They have identical content. Only ever edit `AGENTS.md` — never edit `CLAUDE.md` directly or attempt to apply the same change to both files.
+
 This file provides guidance for Coding Agents working in this repository.
 
 ## Project Overview
@@ -16,9 +18,8 @@ It draws inspiration from LangChain for Python and JavaScript, but follows it's 
 mix deps.get
 
 # Set up environment variables for API keys
-cp .envrc_template .envrc
-# Edit .envrc with API keys, then:
-source .envrc
+cp .env.example .env
+# Edit .env with your API keys
 ```
 
 ### Testing

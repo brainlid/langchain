@@ -1,5 +1,37 @@
 # Changelog
 
+## v0.6.2
+
+### Upgrading from v0.6.1 - v0.6.2
+
+#### Developer Environment: `.envrc` → `.env`
+
+The library now uses [dotenvy](https://hex.pm/packages/dotenvy) to automatically load API keys from a `.env` file when running `mix test` or starting `iex -S mix`. This replaces the previous `direnv`/`.envrc` workflow.
+
+**Who is affected**: Developers running live tests locally.
+
+**How to migrate**:
+
+```bash
+# From the my_langchain/ directory:
+cp .envrc .env
+```
+
+That's it. The `.env` file is gitignored and will be loaded automatically — no shell tool or `source .envrc` step required. AI coding assistants running `mix test` will also pick up the keys without any additional configuration.
+
+The untracked `.envrc` file remains for anyone who prefers to continue using `direnv`. The new `.env.example` is the canonical starting point:
+
+```bash
+cp .env.example .env
+# Populate .env with your API keys
+```
+
+### Added
+
+- **ChatReqLLM**: New experimental `LangChain.ChatModels.ChatReqLLM` adapter that delegates HTTP, authentication, and provider encoding to the [`req_llm`](https://hex.pm/packages/req_llm) library. A single `"provider:model_id"` string (e.g. `"anthropic:claude-haiku-4-5"`, `"openai:gpt-4o"`, `"ollama:llama3"`) unlocks 20+ providers without requiring per-provider adapter code. Supports streaming, tool use, multi-modal content, token usage, `serialize_config/1`, and `restore_from_map/1` https://github.com/brainlid/langchain/pull/486
+- **dotenvy dependency**: Added `dotenvy ~> 1.1` for automatic `.env` file loading in dev/test. The test suite now calls `Dotenvy.source!/1` before reading API keys, so no shell setup is needed to run live tests
+- **`.env.example`**: New template file (dotenv format, no `export` prefix) for setting up local API keys
+
 ## v0.6.1
 
 ### Added
