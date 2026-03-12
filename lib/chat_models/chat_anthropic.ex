@@ -104,7 +104,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       alias LangChain.ChatModels.ChatAnthropic
 
       ChatAnthropic.new!(%{
-        model: "anthropic.claude-3-5-sonnet-20241022-v2:0",
+        model: "anthropic.claude-sonnet-4-6",
         bedrock: BedrockConfig.from_application_env!()
       })
 
@@ -272,7 +272,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   Enable with defaults (3 breakpoints, 5m TTL):
 
       model = ChatAnthropic.new!(%{
-        model: "claude-3-5-sonnet-20241022",
+        model: "claude-sonnet-4-6",
         cache_messages: %{enabled: true}
       })
 
@@ -282,25 +282,25 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
       # Conservative: single breakpoint (original behavior)
       model = ChatAnthropic.new!(%{
-        model: "claude-3-5-sonnet-20241022",
+        model: "claude-sonnet-4-6",
         cache_messages: %{enabled: true, count: 1}
       })
 
       # Balanced: 2 breakpoints for moderate conversations
       model = ChatAnthropic.new!(%{
-        model: "claude-3-5-sonnet-20241022",
+        model: "claude-sonnet-4-6",
         cache_messages: %{enabled: true, count: 2}
       })
 
       # Optimal for tool-heavy: 3 breakpoints (default)
       model = ChatAnthropic.new!(%{
-        model: "claude-3-5-sonnet-20241022",
+        model: "claude-sonnet-4-6",
         cache_messages: %{enabled: true, count: 3}
       })
 
       # Maximum: 4 breakpoints (assuming no system prompt caching)
       model = ChatAnthropic.new!(%{
-        model: "claude-3-5-sonnet-20241022",
+        model: "claude-sonnet-4-6",
         cache_messages: %{enabled: true, count: 4}
       })
 
@@ -309,7 +309,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   Specify a custom TTL (time-to-live):
 
       model = ChatAnthropic.new!(%{
-        model: "claude-3-5-sonnet-20241022",
+        model: "claude-sonnet-4-6",
         cache_messages: %{enabled: true, count: 2, ttl: "1h"}
       })
 
@@ -457,8 +457,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     # goes on too long by itself, it tends to hallucinate more.
     field :receive_timeout, :integer, default: @receive_timeout
 
-    # field :model, :string, default: "claude-3-haiku-20240307"
-    field :model, :string, default: "claude-3-haiku-20240307"
+    field :model, :string, default: "claude-haiku-4-5"
 
     # The maximum tokens allowed for generating a response. This field is
     # required to be present in the API request. The default is a max of 4096

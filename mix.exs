@@ -51,6 +51,7 @@ defmodule LangChain.MixProject do
       {:nx, ">= 0.7.0", optional: true},
       {:ex_doc, "~> 0.40", only: :dev, runtime: false},
       {:mimic, "~> 1.8", only: :test},
+      {:dotenvy, "~> 1.1"},
       {:req_llm, "~> 1.6", optional: true}
     ]
   end

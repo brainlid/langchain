@@ -1,3 +1,7 @@
+# Load .env file for local development so live tests can find API keys.
+# Falls back to already-set OS environment variables if .env is absent.
+Dotenvy.source!([".env", System.get_env()])
+
 # Load the ENV key for running live tests (optional for local testing).
 Application.put_env(:langchain, :openai_key, System.get_env("OPENAI_API_KEY", ""))
 Application.put_env(:langchain, :anthropic_key, System.get_env("ANTHROPIC_API_KEY", ""))
