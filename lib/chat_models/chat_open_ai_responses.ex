@@ -1312,6 +1312,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   ]
 
   @skippable_streaming_events [
+    "keepalive",
     "response.created",
     "response.in_progress",
     "response.incomplete",
