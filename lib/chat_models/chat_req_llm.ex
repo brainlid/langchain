@@ -60,6 +60,7 @@ defmodule LangChain.ChatModels.ChatReqLLM do
   alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult
+  alias LangChain.MessageDelta
   alias LangChain.TokenUsage
   alias LangChain.Function
   alias LangChain.Callbacks
@@ -300,6 +301,293 @@ defmodule LangChain.ChatModels.ChatReqLLM do
     end
   end
 
+  def do_api_request(%ChatReqLLM{stream: true} = model, messages, tools, retry_count) do
+    context = messages_to_req_llm_context(messages)
+    req_llm_tools = functions_to_req_llm_tools(tools)
+    opts = build_req_llm_opts(model, req_llm_tools)
+
+    if model.verbose_api do
+      IO.inspect(context, label: "CHAT_REQ_LLM STREAM CONTEXT")
+      IO.inspect(opts, label: "CHAT_REQ_LLM STREAM OPTS")
+    end
+
+    LangChain.Telemetry.llm_prompt(
+      %{system_time: System.system_time(), streaming: true},
+      %{model: model.model, messages: messages}
+    )
+
+    case ReqLLM.stream_text(model.model, context, opts) do
+      {:ok, stream_response} ->
+        # Stateful reduce: assigns a monotonic content index to each new content
+        # block type (thinking, text, etc.) so that MessageDelta merging places
+        # each type in the correct merged_content slot. Tool call argument
+        # fragments are emitted incrementally (mirroring ChatAnthropic's approach).
+        initial_state = %{next_content_index: 0, type_index_map: %{}}
+
+        {all_deltas, _final_state} =
+          stream_response.stream
+          |> Enum.reduce({[], initial_state}, fn chunk, {acc_deltas, state} ->
+            {new_deltas, new_state} = process_stream_chunk(chunk, state)
+            if new_deltas != [], do: Utils.fire_streamed_callback(model, new_deltas)
+            {acc_deltas ++ new_deltas, new_state}
+          end)
+
+        LangChain.Telemetry.emit_event(
+          [:langchain, :llm, :response],
+          %{system_time: System.system_time()},
+          %{model: model.model, streaming: true}
+        )
+
+        all_deltas
+
+      {:error, %Req.TransportError{reason: :timeout} = err} ->
+        {:error,
+         LangChainError.exception(type: "timeout", message: "Request timed out", original: err)}
+
+      {:error, %Req.TransportError{reason: :closed}} ->
+        Logger.debug(fn ->
+          "Mint connection closed: retry count = #{inspect(retry_count)}"
+        end)
+
+        do_api_request(model, messages, tools, retry_count - 1)
+
+      {:error, %LangChainError{}} = error ->
+        error
+
+      {:error, error} ->
+        translate_req_llm_error(error)
+
+      other ->
+        Logger.error("Unexpected response from ReqLLM stream: #{inspect(other)}")
+
+        {:error,
+         LangChainError.exception(
+           type: "unexpected_response",
+           message: "Unexpected response from stream",
+           original: other
+         )}
+    end
+  end
+
+  # Process a stream chunk with state tracking.
+  # Assigns a monotonic content index per chunk type so each content block type
+  # (thinking, text, image, etc.) gets a stable merged_content slot.
+  # Emits tool call start and argument fragment deltas incrementally (mirroring ChatAnthropic).
+
+  # Thinking chunk: get or assign a stable index for :thinking blocks
+  defp process_stream_chunk(
+         %ReqLLM.StreamChunk{type: :thinking, text: text},
+         state
+       )
+       when is_binary(text) do
+    {index, new_state} = get_or_assign_content_index(state, :thinking)
+
+    delta =
+      MessageDelta.new!(%{
+        role: :assistant,
+        content: ContentPart.new!(%{type: :thinking, content: text}),
+        status: :incomplete,
+        index: index
+      })
+
+    {[delta], new_state}
+  end
+
+  # Text content: get or assign a stable index for :content blocks
+  defp process_stream_chunk(
+         %ReqLLM.StreamChunk{type: :content, text: text},
+         state
+       )
+       when is_binary(text) and text != "" do
+    {index, new_state} = get_or_assign_content_index(state, :content)
+
+    delta =
+      MessageDelta.new!(%{
+        role: :assistant,
+        content: ContentPart.text!(text),
+        status: :incomplete,
+        index: index
+      })
+
+    {[delta], new_state}
+  end
+
+  # Tool call start (Anthropic streaming: metadata has start: true):
+  # emit initial incomplete ToolCall delta with name/id so UI can show tool in progress
+  defp process_stream_chunk(
+         %ReqLLM.StreamChunk{type: :tool_call, name: name, metadata: %{start: true} = meta},
+         state
+       )
+       when is_binary(name) do
+    id = meta[:id] || "tool_#{:erlang.unique_integer([:positive])}"
+    block_index = meta[:index] || 0
+
+    tool_call =
+      ToolCall.new!(%{
+        type: :function,
+        status: :incomplete,
+        call_id: id,
+        name: name,
+        index: block_index
+      })
+
+    delta =
+      MessageDelta.new!(%{
+        role: :assistant,
+        tool_calls: [tool_call],
+        status: :incomplete,
+        index: 0
+      })
+
+    {[delta], state}
+  end
+
+  # Tool call arg fragment: emit incomplete ToolCall delta with the partial JSON string.
+  # ToolCall.merge/2 will concatenate binary arguments strings across deltas.
+  defp process_stream_chunk(
+         %ReqLLM.StreamChunk{
+           type: :meta,
+           metadata: %{tool_call_args: %{index: block_index, fragment: fragment}}
+         },
+         state
+       )
+       when is_binary(fragment) and fragment != "" do
+    tool_call =
+      ToolCall.new!(%{
+        type: :function,
+        status: :incomplete,
+        arguments: fragment,
+        index: block_index
+      })
+
+    delta =
+      MessageDelta.new!(%{
+        role: :assistant,
+        tool_calls: [tool_call],
+        status: :incomplete,
+        index: 0
+      })
+
+    {[delta], state}
+  end
+
+  # All other chunks: delegate to stateless translation
+  defp process_stream_chunk(chunk, state) do
+    {translate_stream_chunk(chunk), state}
+  end
+
+  # Assigns a monotonic content index per chunk type. The first time a chunk type
+  # is seen it gets the next available index; subsequent chunks of the same type
+  # reuse that index so MessageDelta merging accumulates into the correct slot.
+  defp get_or_assign_content_index(state, chunk_type) do
+    case Map.get(state.type_index_map, chunk_type) do
+      nil ->
+        index = state.next_content_index
+
+        new_state = %{
+          state
+          | next_content_index: index + 1,
+            type_index_map: Map.put(state.type_index_map, chunk_type, index)
+        }
+
+        {index, new_state}
+
+      existing_index ->
+        {existing_index, state}
+    end
+  end
+
+  @doc """
+  Translate a single `ReqLLM.StreamChunk` to a list of `LangChain.MessageDelta` structs.
+
+  Returns an empty list for chunks that produce no LangChain deltas (e.g. empty content,
+  non-terminal metadata).
+  """
+  @spec translate_stream_chunk(ReqLLM.StreamChunk.t()) :: [MessageDelta.t()]
+  def translate_stream_chunk(%ReqLLM.StreamChunk{type: :content, text: text})
+      when is_binary(text) and text != "" do
+    delta =
+      MessageDelta.new!(%{
+        role: :assistant,
+        content: ContentPart.text!(text),
+        status: :incomplete,
+        index: 0
+      })
+
+    [delta]
+  end
+
+  def translate_stream_chunk(%ReqLLM.StreamChunk{type: :thinking, text: text})
+      when is_binary(text) do
+    delta =
+      MessageDelta.new!(%{
+        role: :assistant,
+        content: ContentPart.new!(%{type: :thinking, content: text}),
+        status: :incomplete,
+        index: 0
+      })
+
+    [delta]
+  end
+
+  def translate_stream_chunk(%ReqLLM.StreamChunk{
+        type: :tool_call,
+        name: name,
+        arguments: args,
+        metadata: meta
+      })
+      when is_binary(name) do
+    id = (meta || %{})[:id] || "tool_#{:erlang.unique_integer([:positive])}"
+
+    args_map = if is_map(args), do: args, else: %{}
+
+    tool_call =
+      ToolCall.new!(%{
+        type: :function,
+        status: :complete,
+        call_id: id,
+        name: name,
+        arguments: args_map
+      })
+
+    delta =
+      MessageDelta.new!(%{
+        role: :assistant,
+        tool_calls: [tool_call],
+        status: :incomplete,
+        index: 0
+      })
+
+    [delta]
+  end
+
+  def translate_stream_chunk(%ReqLLM.StreamChunk{type: :meta, metadata: meta})
+      when is_map(meta) do
+    usage_deltas =
+      case meta[:usage] do
+        nil ->
+          []
+
+        usage_map ->
+          case translate_usage(usage_map) do
+            nil -> []
+            token_usage -> [MessageDelta.new!(%{role: :assistant, metadata: %{usage: token_usage}})]
+          end
+      end
+
+    finish_deltas =
+      if meta[:terminal?] do
+        status = translate_finish_reason(meta[:finish_reason])
+        [MessageDelta.new!(%{role: :assistant, status: status, index: 0})]
+      else
+        []
+      end
+
+    usage_deltas ++ finish_deltas
+  end
+
+  def translate_stream_chunk(_), do: []
+
   defp build_req_llm_opts(%ChatReqLLM{} = model, tools) do
     []
     |> then(fn opts ->
@@ -463,14 +751,19 @@ defmodule LangChain.ChatModels.ChatReqLLM do
   end
 
   def content_part_to_req_llm(%ContentPart{type: :file, content: b64, options: opts}) do
-    media_type = (opts || []) |> Keyword.get(:media, "application/octet-stream") |> media_to_mime()
+    media_type =
+      (opts || []) |> Keyword.get(:media, "application/octet-stream") |> media_to_mime()
+
     filename = (opts || []) |> Keyword.get(:filename, "file")
     decoded = Base.decode64!(b64)
     ReqLLM.Message.ContentPart.file(decoded, filename, media_type)
   end
 
   def content_part_to_req_llm(%ContentPart{type: :file_url, content: url}) do
-    Logger.warning("ContentPart type :file_url is not directly supported by ReqLLM; converting to text URL reference")
+    Logger.warning(
+      "ContentPart type :file_url is not directly supported by ReqLLM; converting to text URL reference"
+    )
+
     ReqLLM.Message.ContentPart.text("URL: #{url}")
   end
 
@@ -609,7 +902,7 @@ defmodule LangChain.ChatModels.ChatReqLLM do
          text: text,
          metadata: meta
        }) do
-    signature = (meta || %{}) |> Map.get("signature") || Map.get(meta || %{}, :signature)
+    signature = (meta || %{})[:signature]
     opts = if signature, do: [signature: signature], else: []
     ContentPart.new!(%{type: :thinking, content: text, options: opts})
   end
@@ -649,9 +942,9 @@ defmodule LangChain.ChatModels.ChatReqLLM do
 
   defp translate_response_tool_calls(tool_calls) when is_list(tool_calls) do
     Enum.map(tool_calls, fn %ReqLLM.ToolCall{
-                               id: id,
-                               function: %{name: name, arguments: args_json}
-                             } ->
+                              id: id,
+                              function: %{name: name, arguments: args_json}
+                            } ->
       arguments =
         case Jason.decode(args_json || "{}") do
           {:ok, map} when is_map(map) -> map
@@ -694,8 +987,8 @@ defmodule LangChain.ChatModels.ChatReqLLM do
   def translate_usage(nil), do: nil
 
   def translate_usage(usage) when is_map(usage) do
-    input = usage[:input_tokens] || usage["input_tokens"] || 0
-    output = usage[:output_tokens] || usage["output_tokens"] || 0
+    input = usage[:input_tokens] || 0
+    output = usage[:output_tokens] || 0
 
     case TokenUsage.new(%{input: input, output: output, raw: usage}) do
       {:ok, token_usage} -> token_usage

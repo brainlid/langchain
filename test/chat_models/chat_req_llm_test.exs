@@ -8,6 +8,7 @@ defmodule LangChain.ChatModels.ChatReqLLMTest do
   alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult
+  alias LangChain.MessageDelta
   alias LangChain.TokenUsage
   alias LangChain.Function
   alias LangChain.LangChainError
@@ -33,7 +34,8 @@ defmodule LangChain.ChatModels.ChatReqLLMTest do
   end
 
   defp req_llm_text_response(text, finish_reason \\ :stop, usage \\ nil) do
-    struct!(ReqLLM.Response,
+    struct!(
+      ReqLLM.Response,
       Map.merge(base_response_fields(), %{
         message: %ReqLLM.Message{
           role: :assistant,
@@ -47,7 +49,8 @@ defmodule LangChain.ChatModels.ChatReqLLMTest do
   end
 
   defp req_llm_tool_call_response(tool_calls) do
-    struct!(ReqLLM.Response,
+    struct!(
+      ReqLLM.Response,
       Map.merge(base_response_fields(), %{
         message: %ReqLLM.Message{
           role: :assistant,
@@ -266,10 +269,11 @@ defmodule LangChain.ChatModels.ChatReqLLMTest do
       assert result.raw == usage
     end
 
-    test "maps string-key usage map to TokenUsage" do
-      usage = %{"input_tokens" => 80, "output_tokens" => 40}
+    test "maps usage with extra provider fields to TokenUsage" do
+      usage = %{input_tokens: 80, output_tokens: 40, cached_tokens: 10}
       result = ChatReqLLM.translate_usage(usage)
       assert %TokenUsage{input: 80, output: 40} = result
+      assert result.raw == usage
     end
 
     test "handles missing fields gracefully" do
@@ -298,6 +302,7 @@ defmodule LangChain.ChatModels.ChatReqLLMTest do
     test "translates :image_url ContentPart" do
       part = ContentPart.new!(%{type: :image_url, content: "https://example.com/img.png"})
       result = ChatReqLLM.content_part_to_req_llm(part)
+
       assert %ReqLLM.Message.ContentPart{type: :image_url, url: "https://example.com/img.png"} =
                result
     end
@@ -315,7 +320,14 @@ defmodule LangChain.ChatModels.ChatReqLLMTest do
     test "translates :file ContentPart with base64 data" do
       raw_bytes = <<10, 20, 30>>
       b64 = Base.encode64(raw_bytes)
-      part = ContentPart.new!(%{type: :file, content: b64, options: [media: :pdf, filename: "doc.pdf"]})
+
+      part =
+        ContentPart.new!(%{
+          type: :file,
+          content: b64,
+          options: [media: :pdf, filename: "doc.pdf"]
+        })
+
       result = ChatReqLLM.content_part_to_req_llm(part)
 
       assert %ReqLLM.Message.ContentPart{
@@ -377,6 +389,7 @@ defmodule LangChain.ChatModels.ChatReqLLMTest do
       msg = Message.new_assistant!(%{content: "I can help with that."})
       [result] = ChatReqLLM.message_to_req_llm_messages(msg)
       assert %ReqLLM.Message{role: :assistant} = result
+
       assert [%ReqLLM.Message.ContentPart{type: :text, text: "I can help with that."}] =
                result.content
     end
@@ -556,7 +569,8 @@ defmodule LangChain.ChatModels.ChatReqLLMTest do
 
     test "returns error when response has error field set", %{model: model} do
       response =
-        struct!(ReqLLM.Response,
+        struct!(
+          ReqLLM.Response,
           Map.merge(base_response_fields(), %{
             message: nil,
             finish_reason: :error,
@@ -571,7 +585,8 @@ defmodule LangChain.ChatModels.ChatReqLLMTest do
 
     test "returns error when response has no message", %{model: model} do
       response =
-        struct!(ReqLLM.Response,
+        struct!(
+          ReqLLM.Response,
           Map.merge(base_response_fields(), %{
             message: nil,
             finish_reason: nil,
@@ -617,7 +632,8 @@ defmodule LangChain.ChatModels.ChatReqLLMTest do
 
     test "handles empty tool_calls list as nil tool_calls in output", %{model: model} do
       response =
-        struct!(ReqLLM.Response,
+        struct!(
+          ReqLLM.Response,
           Map.merge(base_response_fields(), %{
             message: %ReqLLM.Message{
               role: :assistant,
@@ -630,6 +646,7 @@ defmodule LangChain.ChatModels.ChatReqLLMTest do
         )
 
       result = ChatReqLLM.do_process_response(model, response)
+
       # Empty [] from ReqLLM maps to nil/[] in LangChain (our translate_response_tool_calls returns nil for [])
       assert result.tool_calls == nil or result.tool_calls == []
     end
@@ -779,6 +796,281 @@ defmodule LangChain.ChatModels.ChatReqLLMTest do
   end
 
   # ============================================================
+  # Streaming helpers
+  # ============================================================
+
+  # Build a fake ReqLLM.StreamResponse for unit tests.
+  # All 5 enforce_keys are required; metadata_handle is a PID (won't be called).
+  defp fake_stream_response(chunks) do
+    %ReqLLM.StreamResponse{
+      stream: chunks,
+      metadata_handle: self(),
+      cancel: fn -> :ok end,
+      model: nil,
+      context: ReqLLM.Context.new([])
+    }
+  end
+
+  # ============================================================
+  # translate_stream_chunk/1
+  # ============================================================
+
+  describe "translate_stream_chunk/1" do
+    test "translates a content chunk to a text MessageDelta" do
+      chunk = %ReqLLM.StreamChunk{type: :content, text: "Hello"}
+      [delta] = ChatReqLLM.translate_stream_chunk(chunk)
+      assert %MessageDelta{role: :assistant, status: :incomplete, index: 0} = delta
+      assert %ContentPart{type: :text, content: "Hello"} = delta.content
+    end
+
+    test "returns [] for empty content chunk" do
+      chunk = %ReqLLM.StreamChunk{type: :content, text: ""}
+      assert [] = ChatReqLLM.translate_stream_chunk(chunk)
+    end
+
+    test "returns [] for nil content chunk" do
+      chunk = %ReqLLM.StreamChunk{type: :content, text: nil}
+      assert [] = ChatReqLLM.translate_stream_chunk(chunk)
+    end
+
+    test "translates a thinking chunk to a thinking MessageDelta" do
+      chunk = %ReqLLM.StreamChunk{type: :thinking, text: "I am reasoning"}
+      [delta] = ChatReqLLM.translate_stream_chunk(chunk)
+      assert %MessageDelta{role: :assistant, status: :incomplete} = delta
+      assert %ContentPart{type: :thinking, content: "I am reasoning"} = delta.content
+    end
+
+    test "translates a tool_call chunk to a tool_calls MessageDelta" do
+      chunk = %ReqLLM.StreamChunk{
+        type: :tool_call,
+        name: "get_weather",
+        arguments: %{"city" => "Paris"},
+        metadata: %{id: "call_abc"}
+      }
+
+      [delta] = ChatReqLLM.translate_stream_chunk(chunk)
+      assert %MessageDelta{role: :assistant, status: :incomplete} = delta
+      [tc] = delta.tool_calls
+      assert %ToolCall{name: "get_weather", call_id: "call_abc", status: :complete} = tc
+      assert tc.arguments == %{"city" => "Paris"}
+    end
+
+    test "tool_call chunk generates a non-empty fallback id when metadata has no id" do
+      chunk = %ReqLLM.StreamChunk{
+        type: :tool_call,
+        name: "search",
+        arguments: %{},
+        metadata: %{}
+      }
+
+      [delta] = ChatReqLLM.translate_stream_chunk(chunk)
+      [tc] = delta.tool_calls
+      assert is_binary(tc.call_id) && tc.call_id != ""
+    end
+
+    test "terminal meta chunk produces a complete MessageDelta" do
+      chunk = %ReqLLM.StreamChunk{
+        type: :meta,
+        metadata: %{finish_reason: :stop, terminal?: true}
+      }
+
+      [delta] = ChatReqLLM.translate_stream_chunk(chunk)
+      assert %MessageDelta{role: :assistant, status: :complete} = delta
+    end
+
+    test "terminal meta with :length finish reason produces :length status" do
+      chunk = %ReqLLM.StreamChunk{
+        type: :meta,
+        metadata: %{finish_reason: :length, terminal?: true}
+      }
+
+      [delta] = ChatReqLLM.translate_stream_chunk(chunk)
+      assert delta.status == :length
+    end
+
+    test "meta chunk with usage produces a usage MessageDelta" do
+      chunk = %ReqLLM.StreamChunk{
+        type: :meta,
+        metadata: %{usage: %{input_tokens: 10, output_tokens: 5}}
+      }
+
+      [delta] = ChatReqLLM.translate_stream_chunk(chunk)
+      assert %MessageDelta{} = delta
+      assert %TokenUsage{input: 10, output: 5} = delta.metadata[:usage]
+    end
+
+    test "terminal meta with usage produces both usage and finish deltas" do
+      chunk = %ReqLLM.StreamChunk{
+        type: :meta,
+        metadata: %{
+          finish_reason: :stop,
+          terminal?: true,
+          usage: %{input_tokens: 20, output_tokens: 10}
+        }
+      }
+
+      deltas = ChatReqLLM.translate_stream_chunk(chunk)
+      assert length(deltas) == 2
+      usage_delta = Enum.find(deltas, &(&1.metadata != nil))
+      finish_delta = Enum.find(deltas, &(&1.status == :complete))
+      assert %TokenUsage{input: 20, output: 10} = usage_delta.metadata[:usage]
+      assert finish_delta.status == :complete
+    end
+
+    test "non-terminal meta chunk with no usage produces []" do
+      chunk = %ReqLLM.StreamChunk{
+        type: :meta,
+        metadata: %{some_info: "value"}
+      }
+
+      assert [] = ChatReqLLM.translate_stream_chunk(chunk)
+    end
+
+    test "unknown chunk type produces []" do
+      chunk = %ReqLLM.StreamChunk{type: :content, text: nil}
+      assert [] = ChatReqLLM.translate_stream_chunk(chunk)
+    end
+  end
+
+  # ============================================================
+  # do_api_request streaming (mocked)
+  # ============================================================
+
+  describe "do_api_request/4 streaming (mocked)" do
+    test "returns a flat list of MessageDeltas from stream chunks" do
+      model = ChatReqLLM.new!(%{model: @live_model, stream: true})
+
+      chunks = [
+        %ReqLLM.StreamChunk{type: :content, text: "Hello"},
+        %ReqLLM.StreamChunk{type: :content, text: " world"},
+        %ReqLLM.StreamChunk{type: :meta, metadata: %{finish_reason: :stop, terminal?: true}}
+      ]
+
+      stub(ReqLLM, :stream_text, fn _model, _context, _opts ->
+        {:ok, fake_stream_response(chunks)}
+      end)
+
+      result = ChatReqLLM.do_api_request(model, [Message.new_user!("hi")], [], 3)
+      assert is_list(result)
+      assert length(result) == 3
+
+      text_deltas = Enum.filter(result, &(&1.content != nil))
+      assert length(text_deltas) == 2
+
+      final_delta = List.last(result)
+      assert final_delta.status == :complete
+    end
+
+    test "fires on_llm_new_delta callback for each chunk" do
+      test_pid = self()
+
+      model =
+        %{
+          ChatReqLLM.new!(%{model: @live_model, stream: true})
+          | callbacks: [%{on_llm_new_delta: fn deltas -> send(test_pid, {:delta, deltas}) end}]
+        }
+
+      chunks = [
+        %ReqLLM.StreamChunk{type: :content, text: "Hi"},
+        %ReqLLM.StreamChunk{type: :meta, metadata: %{finish_reason: :stop, terminal?: true}}
+      ]
+
+      stub(ReqLLM, :stream_text, fn _model, _context, _opts ->
+        {:ok, fake_stream_response(chunks)}
+      end)
+
+      ChatReqLLM.do_api_request(model, [Message.new_user!("hi")], [], 3)
+
+      assert_received {:delta, [%MessageDelta{status: :incomplete}]}
+      assert_received {:delta, [%MessageDelta{status: :complete}]}
+    end
+
+    test "translates tool call chunks correctly" do
+      model = ChatReqLLM.new!(%{model: @live_model, stream: true})
+
+      chunks = [
+        %ReqLLM.StreamChunk{
+          type: :tool_call,
+          name: "get_weather",
+          arguments: %{"city" => "Paris"},
+          metadata: %{id: "call_1"}
+        },
+        %ReqLLM.StreamChunk{type: :meta, metadata: %{finish_reason: :tool_calls, terminal?: true}}
+      ]
+
+      stub(ReqLLM, :stream_text, fn _model, _context, _opts ->
+        {:ok, fake_stream_response(chunks)}
+      end)
+
+      result = ChatReqLLM.do_api_request(model, [Message.new_user!("weather?")], [], 3)
+
+      tool_delta = Enum.find(result, &(&1.tool_calls != nil and &1.tool_calls != []))
+      assert tool_delta != nil
+      [tc] = tool_delta.tool_calls
+      assert tc.name == "get_weather"
+      assert tc.arguments == %{"city" => "Paris"}
+    end
+
+    test "returns {:error, LangChainError} when stream_text fails" do
+      model = ChatReqLLM.new!(%{model: @live_model, stream: true})
+
+      stub(ReqLLM, :stream_text, fn _model, _context, _opts ->
+        {:error, %{status: 401}}
+      end)
+
+      assert {:error, %LangChainError{type: "authentication_error"}} =
+               ChatReqLLM.do_api_request(model, [Message.new_user!("hi")], [], 3)
+    end
+
+    test "call/3 with stream:true returns {:ok, [MessageDelta]}" do
+      model = ChatReqLLM.new!(%{model: @live_model, stream: true})
+
+      chunks = [
+        %ReqLLM.StreamChunk{type: :content, text: "Streaming!"},
+        %ReqLLM.StreamChunk{type: :meta, metadata: %{finish_reason: :stop, terminal?: true}}
+      ]
+
+      stub(ReqLLM, :stream_text, fn _model, _context, _opts ->
+        {:ok, fake_stream_response(chunks)}
+      end)
+
+      assert {:ok, deltas} = ChatReqLLM.call(model, [Message.new_user!("hi")], [])
+      assert is_list(deltas)
+      assert Enum.all?(deltas, &match?(%MessageDelta{}, &1))
+    end
+
+    test "LLMChain runs successfully with stream:true" do
+      model = ChatReqLLM.new!(%{model: @live_model, stream: true})
+
+      chunks = [
+        %ReqLLM.StreamChunk{type: :content, text: "Hello "},
+        %ReqLLM.StreamChunk{type: :content, text: "there!"},
+        %ReqLLM.StreamChunk{type: :meta, metadata: %{finish_reason: :stop, terminal?: true}}
+      ]
+
+      stub(ReqLLM, :stream_text, fn _model, _context, _opts ->
+        {:ok, fake_stream_response(chunks)}
+      end)
+
+      assert {:ok, chain} =
+               %{llm: model}
+               |> LLMChain.new!()
+               |> LLMChain.add_message(Message.new_user!("Say hello"))
+               |> LLMChain.run()
+
+      last_msg = List.last(chain.messages)
+      assert last_msg.role == :assistant
+
+      text =
+        last_msg.content
+        |> Enum.filter(&(&1.type == :text))
+        |> Enum.map_join("", & &1.content)
+
+      assert text == "Hello there!"
+    end
+  end
+
+  # ============================================================
   # Live API Tests (tagged :live_call — excluded by default)
   # ============================================================
 
@@ -885,6 +1177,7 @@ defmodule LangChain.ChatModels.ChatReqLLMTest do
 
     # Final response should be text after tool execution
     assert response.role == :assistant
+
     content_text =
       response.content
       |> Enum.filter(&(&1.type == :text))
@@ -892,5 +1185,103 @@ defmodule LangChain.ChatModels.ChatReqLLMTest do
 
     assert String.contains?(content_text, "Paris") or String.contains?(content_text, "22")
     IO.inspect(response, label: "LIVE TOOL CHAIN FINAL RESPONSE")
+  end
+
+  @tag :live_call
+  @tag :live_anthropic
+  test "live: streaming simple text response via Anthropic" do
+    test_pid = self()
+
+    model =
+      ChatReqLLM.new!(%{
+        model: @live_model,
+        stream: true
+      })
+
+    # Set callbacks after construction — Ecto cast strips function values
+    model = %{model | callbacks: [%{on_llm_new_delta: fn deltas -> send(test_pid, {:delta, deltas}) end}]}
+
+    assert {:ok, deltas} =
+             ChatReqLLM.call(model, [Message.new_user!("Reply with: STREAM_OK")], [])
+
+    assert is_list(deltas)
+    assert Enum.any?(deltas, &match?(%MessageDelta{}, &1))
+
+    # Verify callbacks fired
+    assert_received {:delta, _}
+
+    # Collect text from individual delta content parts
+    text =
+      deltas
+      |> Enum.flat_map(fn
+        %MessageDelta{content: %ContentPart{type: :text, content: c}} when is_binary(c) -> [c]
+        _ -> []
+      end)
+      |> Enum.join("")
+
+    assert String.contains?(text, "STREAM_OK")
+  end
+
+  @tag :live_call
+  @tag :live_anthropic
+  test "live: streaming LLMChain assembles complete message" do
+    model = ChatReqLLM.new!(%{model: @live_model, stream: true})
+
+    assert {:ok, chain} =
+             %{llm: model}
+             |> LLMChain.new!()
+             |> LLMChain.add_message(Message.new_user!("Reply with: ASSEMBLED"))
+             |> LLMChain.run()
+
+    last_msg = List.last(chain.messages)
+    assert last_msg.role == :assistant
+
+    text =
+      last_msg.content
+      |> Enum.filter(&(&1.type == :text))
+      |> Enum.map_join("", & &1.content)
+
+    assert String.contains?(text, "ASSEMBLED")
+
+    IO.inspect(last_msg, label: "LIVE STREAMING ASSEMBLED MESSAGE")
+  end
+
+  @tag :live_call
+  @tag :live_anthropic
+  test "live: streaming tool call" do
+    weather_fn =
+      Function.new!(%{
+        name: "get_weather",
+        description: "Get the current weather for a city",
+        parameters_schema: %{
+          "type" => "object",
+          "properties" => %{"city" => %{"type" => "string"}},
+          "required" => ["city"]
+        },
+        function: fn %{"city" => city}, _ctx -> {:ok, "Sunny in #{city}"} end
+      })
+
+    model = ChatReqLLM.new!(%{model: @live_model, stream: true})
+
+    assert {:ok, chain} =
+             %{llm: model}
+             |> LLMChain.new!()
+             |> LLMChain.add_tools([weather_fn])
+             |> LLMChain.add_message(
+               Message.new_user!("What's the weather in Paris? Use get_weather.")
+             )
+             |> LLMChain.run(mode: :while_needs_response)
+
+    last_msg = List.last(chain.messages)
+    assert last_msg.role == :assistant
+
+    text =
+      last_msg.content
+      |> Enum.filter(&(&1.type == :text))
+      |> Enum.map_join("", & &1.content)
+
+    assert String.contains?(text, "Paris") or String.contains?(text, "Sunny")
+
+    IO.inspect(last_msg, label: "LIVE STREAMING TOOL CHAIN FINAL MESSAGE")
   end
 end
