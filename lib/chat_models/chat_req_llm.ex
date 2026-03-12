@@ -570,8 +570,11 @@ defmodule LangChain.ChatModels.ChatReqLLM do
 
         usage_map ->
           case translate_usage(usage_map) do
-            nil -> []
-            token_usage -> [MessageDelta.new!(%{role: :assistant, metadata: %{usage: token_usage}})]
+            nil ->
+              []
+
+            token_usage ->
+              [MessageDelta.new!(%{role: :assistant, metadata: %{usage: token_usage}})]
           end
       end
 

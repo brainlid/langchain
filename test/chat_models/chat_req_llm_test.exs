@@ -1199,7 +1199,10 @@ defmodule LangChain.ChatModels.ChatReqLLMTest do
       })
 
     # Set callbacks after construction — Ecto cast strips function values
-    model = %{model | callbacks: [%{on_llm_new_delta: fn deltas -> send(test_pid, {:delta, deltas}) end}]}
+    model = %{
+      model
+      | callbacks: [%{on_llm_new_delta: fn deltas -> send(test_pid, {:delta, deltas}) end}]
+    }
 
     assert {:ok, deltas} =
              ChatReqLLM.call(model, [Message.new_user!("Reply with: STREAM_OK")], [])
