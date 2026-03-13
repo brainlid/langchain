@@ -42,9 +42,12 @@ Mimic.copy(LangChain.Config)
 Mimic.copy(LangChain.ChatModels.ChatVertexAI)
 Mimic.copy(LangChain.ChatModels.ChatGoogleAI)
 Mimic.copy(LangChain.ChatModels.ChatGrok)
-Mimic.copy(ReqLLM)
-Mimic.copy(ReqLLM.StreamResponse)
-Mimic.copy(LangChain.ChatModels.ChatReqLLM)
+
+if Code.ensure_loaded?(ReqLLM) do
+  Mimic.copy(ReqLLM)
+  Mimic.copy(ReqLLM.StreamResponse)
+  Mimic.copy(LangChain.ChatModels.ChatReqLLM)
+end
 
 Logger.configure(level: :warning)
 ExUnit.configure(exclude: [live_call: true])
