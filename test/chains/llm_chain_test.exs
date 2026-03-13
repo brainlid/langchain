@@ -2290,6 +2290,34 @@ defmodule LangChain.Chains.LLMChainTest do
 
       assert_received :before_fallback_fired
     end
+
+    test "returns error when LLM produces an empty response (no messages or deltas)", %{
+      chain: chain
+    } do
+      # Simulate what happens with thinking models during streaming:
+      # all chunks produce empty parsed results, so the body becomes [[], [], ...]
+      # which after filtering becomes []. This previously caused a CaseClauseError.
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:ok, []}
+      end)
+
+      chain = LLMChain.add_message(chain, Message.new_user!("Hello"))
+
+      assert {:error, _chain, %LangChainError{} = error} = LLMChain.run(chain)
+      assert error.type == "empty_response"
+      assert error.message =~ "empty response"
+    end
+
+    test "returns error when LLM produces an unexpected response format", %{chain: chain} do
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:ok, :unexpected_atom}
+      end)
+
+      chain = LLMChain.add_message(chain, Message.new_user!("Hello"))
+
+      assert {:error, _chain, %LangChainError{} = error} = LLMChain.run(chain)
+      assert error.type == "unexpected_response"
+    end
   end
 
   describe "run_until_tool_used/3" do

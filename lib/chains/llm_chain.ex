@@ -888,6 +888,29 @@ defmodule LangChain.Chains.LLMChain do
         if chain.verbose, do: IO.inspect(string_reason, label: "ERROR")
         Logger.error("Error during chat call. Reason: #{inspect(string_reason)}")
         {:error, chain, LangChainError.exception(message: string_reason)}
+
+      {:ok, []} ->
+        # Empty response — all choices were filtered out (e.g., thinking model
+        # streaming where all chunks produce empty parsed results). Treat as
+        # an error rather than crashing with CaseClauseError.
+        Logger.warning("LLM returned an empty response (no messages or deltas)")
+
+        {:error, chain,
+         LangChainError.exception(
+           type: "empty_response",
+           message:
+             "LLM returned an empty response with no messages. " <>
+               "This can happen with thinking/reasoning models during streaming."
+         )}
+
+      {:ok, unexpected} ->
+        Logger.warning("Unexpected LLM response format: #{inspect(unexpected)}")
+
+        {:error, chain,
+         LangChainError.exception(
+           type: "unexpected_response",
+           message: "Unexpected response format from LLM: #{inspect(unexpected)}"
+         )}
     end
   end
 
