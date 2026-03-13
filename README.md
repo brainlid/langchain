@@ -308,3 +308,122 @@ Executing a specific test, whether it is a `live_call` or not, will execute it c
 **Multi-modal support:**
 
 LangChain now supports multi-modal messages and tool results. This means you can include text, images, files, and even "thinking" blocks in a single message using ContentParts. See module docs for details. Support for this depends on the LLM and service. Not all models may yet support all modalities.
+
+## Evaluating Agent Behavior
+
+When building agent systems, the final answer is only part of the story. Two agents can produce the same answer through very different reasoning paths — one might make a single efficient tool call while another makes five redundant ones. LangChain provides `LangChain.Trajectory` to evaluate the *process*, not just the outcome.
+
+A trajectory captures the structured sequence of tool calls produced during an `LLMChain` run, enabling regression testing, cost control, safety verification, and debugging of agent workflows.
+
+### Capturing a Trajectory
+
+After running a chain, extract its trajectory:
+
+```elixir
+alias LangChain.Trajectory
+
+{:ok, chain} =
+  LLMChain.new!(%{llm: llm})
+  |> LLMChain.add_tools(my_tools)
+  |> LLMChain.add_message(Message.new_user!("What's the weather in Paris?"))
+  |> LLMChain.run(mode: :while_needs_response)
+
+trajectory = Trajectory.from_chain(chain)
+trajectory.tool_calls
+#=> [%{name: "search", arguments: %{"query" => "weather paris"}},
+#    %{name: "get_forecast", arguments: %{"city" => "Paris"}}]
+```
+
+### Matching Tool Call Sequences
+
+Use `Trajectory.matches?/3` to compare actual tool calls against expected patterns:
+
+```elixir
+# Strict: exact order and arguments
+Trajectory.matches?(trajectory, [
+  %{name: "search", arguments: %{"query" => "weather paris"}},
+  %{name: "get_forecast", arguments: %{"city" => "Paris"}}
+])
+
+# Wildcard arguments: pass nil to match any arguments
+Trajectory.matches?(trajectory, [
+  %{name: "search", arguments: nil},
+  %{name: "get_forecast", arguments: nil}
+])
+
+# Unordered: same calls in any order
+Trajectory.matches?(trajectory, expected, mode: :unordered)
+
+# Superset: actual contains at least all expected calls
+Trajectory.matches?(trajectory, [%{name: "search", arguments: nil}], mode: :superset)
+
+# Subset args: expected arguments are a subset of actual
+Trajectory.matches?(trajectory, expected, args: :subset)
+```
+
+### ExUnit Assertions
+
+`LangChain.Trajectory.Assertions` provides `assert_trajectory` and `refute_trajectory` macros with informative failure diffs:
+
+```elixir
+use LangChain.Trajectory.Assertions
+
+test "agent calls the right tools in order" do
+  trajectory = Trajectory.from_chain(chain)
+
+  assert_trajectory trajectory, [
+    %{name: "search", arguments: %{"query" => "weather"}},
+    %{name: "get_forecast", arguments: nil}
+  ]
+end
+
+test "agent does not call dangerous tools" do
+  trajectory = Trajectory.from_chain(chain)
+
+  refute_trajectory trajectory, [
+    %{name: "delete_all", arguments: nil}
+  ], mode: :superset
+end
+```
+
+Both macros also accept an `LLMChain` directly, extracting the trajectory automatically.
+
+### Golden-File Testing
+
+Save a known-good trajectory and compare future runs against it to catch regressions:
+
+```elixir
+# Save the golden file
+golden = chain |> Trajectory.from_chain() |> Trajectory.to_map()
+File.write!("test/fixtures/weather_agent.json", Jason.encode!(golden))
+
+# In your test
+golden_map = "test/fixtures/weather_agent.json" |> File.read!() |> Jason.decode!()
+expected = Trajectory.from_map(golden_map)
+actual = Trajectory.from_chain(chain)
+
+assert_trajectory actual, expected
+```
+
+### Inspecting Trajectories
+
+Filter and group tool calls for deeper analysis:
+
+```elixir
+# All calls to a specific tool
+Trajectory.calls_by_name(trajectory, "search")
+
+# Group calls by conversation turn
+Trajectory.calls_by_turn(trajectory)
+#=> [{0, [%{name: "search", ...}]}, {1, [%{name: "get_forecast", ...}]}]
+
+# Check aggregated token usage
+trajectory.token_usage
+#=> %TokenUsage{input: 150, output: 45}
+
+# Check metadata
+trajectory.metadata
+#=> %{model: "gpt-4", llm_module: LangChain.ChatModels.ChatOpenAI}
+```
+
+See `LangChain.Trajectory` and `LangChain.Trajectory.Assertions` module docs for the full API reference.
