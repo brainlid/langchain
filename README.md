@@ -273,15 +273,14 @@ See the [`LangChain.ChatModels.ChatBumblebee` documentation](https://hexdocs.pm/
 
 ## Testing
 
-Before you can run the tests, make sure you have the environment variables set.
-
-You can do this by running:
+Before you can run live API tests, you need to provide your API keys. Copy the example file and populate it with your values:
 
 ```
-source .envrc_template
+cp .env.example .env
+# Edit .env with your private API keys
 ```
 
-Or you can copy it to `.envrc` and populate it with your private API values.
+The `.env` file is gitignored and is loaded automatically by the test suite via [dotenvy](https://hex.pm/packages/dotenvy) — no shell setup or external tools required.
 
 To run all the tests including the ones that perform live calls against the OpenAI API, use the following command:
 
@@ -305,10 +304,6 @@ mix test
 ```
 
 Executing a specific test, whether it is a `live_call` or not, will execute it creating a potentially billable event.
-
-When doing local development on the `LangChain` library itself, rename the `.envrc_template` to `.envrc` and populate it with your private API values. This is only used when running live test when explicitly requested.
-
-Use a tool like [Direnv](https://direnv.net/) or [Dotenv](https://github.com/motdotla/dotenv) to load the API values into the ENV when using the library locally.
 
 **Multi-modal support:**
 

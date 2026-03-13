@@ -9,7 +9,7 @@ defmodule LangChain.Utils.BedrockConfig do
   you can pull the current cached credentials from `ExAws`.
 
       ChatAnthropic.new!(%{
-        model: "anthropic.claude-3-5-sonnet-20241022-v2:0",
+        model: "anthropic.claude-sonnet-4-6",
         bedrock: %{
           credentials: fn ->
             ExAws.Config.new(:s3)
@@ -33,7 +33,7 @@ defmodule LangChain.Utils.BedrockConfig do
   it:
 
         ChatAnthropic.new!(%{
-          model: "anthropic.claude-3-5-sonnet-20241022-v2:0",
+          model: "anthropic.claude-sonnet-4-6",
           bedrock: BedrockConfig.from_application_env!()
         })
 

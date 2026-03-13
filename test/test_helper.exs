@@ -1,3 +1,7 @@
+# Load .env file for local development so live tests can find API keys.
+# Falls back to already-set OS environment variables if .env is absent.
+Dotenvy.source!([".env", System.get_env()])
+
 # Load the ENV key for running live tests (optional for local testing).
 Application.put_env(:langchain, :openai_key, System.get_env("OPENAI_API_KEY", ""))
 Application.put_env(:langchain, :anthropic_key, System.get_env("ANTHROPIC_API_KEY", ""))
@@ -38,6 +42,12 @@ Mimic.copy(LangChain.Config)
 Mimic.copy(LangChain.ChatModels.ChatVertexAI)
 Mimic.copy(LangChain.ChatModels.ChatGoogleAI)
 Mimic.copy(LangChain.ChatModels.ChatGrok)
+
+if Code.ensure_loaded?(ReqLLM) do
+  Mimic.copy(ReqLLM)
+  Mimic.copy(ReqLLM.StreamResponse)
+  Mimic.copy(LangChain.ChatModels.ChatReqLLM)
+end
 
 Logger.configure(level: :warning)
 ExUnit.configure(exclude: [live_call: true])

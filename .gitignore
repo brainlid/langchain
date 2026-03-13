@@ -29,6 +29,7 @@ langchain-*.tar
 /tmp/
 
 .envrc
+.env
 
 DEV_NOTES.md
 PERSONAL.md

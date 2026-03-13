@@ -19,9 +19,8 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
   alias LangChain.Utils.BedrockStreamDecoder
 
   @test_model "claude-haiku-4-5"
-  @sonnet_4_5 "claude-sonnet-4-5"
-  @bedrock_test_model "anthropic.claude-3-5-sonnet-20241022-v2:0"
-  @claude_3_7 "claude-3-7-sonnet-20250219"
+  @sonnet "claude-sonnet-4-6"
+  @bedrock_test_model "us.anthropic.claude-haiku-4-5-20251001-v1:0"
   @apis [:anthropic, :anthropic_bedrock]
 
   defp hello_world(_args, _context) do
@@ -687,7 +686,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
         "message" => %{
           "content" => [],
           "id" => "msg_017vYxGobHipWyoZT5uDbGnJ",
-          "model" => @claude_3_7,
+          "model" => @sonnet,
           "role" => "assistant",
           "stop_reason" => nil,
           "stop_sequence" => nil,
@@ -986,7 +985,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
             "message" => %{
               "content" => [],
               "id" => "msg_017vYxGobHipWyoZT5uDbGnJ",
-              "model" => @claude_3_7,
+              "model" => "claude-3-7-sonnet-20250219",
               "role" => "assistant",
               "stop_reason" => nil,
               "stop_sequence" => nil,
@@ -1859,7 +1858,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
       chat =
         ChatAnthropic.new!(%{
           stream: false,
-          model: @sonnet_4_5,
+          model: @sonnet,
           verbose_api: false
         })
 
@@ -2368,7 +2367,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 
   describe "parse_stream_events/2" do
     setup _ do
-      model = ChatAnthropic.new!(%{stream: true, model: @claude_3_7})
+      model = ChatAnthropic.new!(%{stream: true, model: @sonnet})
 
       chunks = [
         "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_017vYxGobHipWyoZT5uDbGnJ\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude-3-7-sonnet-20250219\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":55,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"output_tokens\":4}} }\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\",\"signature\":\"\"}             }\n\n",
@@ -2398,7 +2397,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
                    "id" => "msg_017vYxGobHipWyoZT5uDbGnJ",
                    "type" => "message",
                    "role" => "assistant",
-                   "model" => @claude_3_7,
+                   "model" => "claude-3-7-sonnet-20250219",
                    "content" => [],
                    "stop_reason" => nil,
                    "stop_sequence" => nil,
@@ -2503,7 +2502,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
             "message" => %{
               "content" => [],
               "id" => "msg_017vYxGobHipWyoZT5uDbGnJ",
-              "model" => @claude_3_7,
+              "model" => "claude-3-7-sonnet-20250219",
               "role" => "assistant",
               "stop_reason" => nil,
               "stop_sequence" => nil,
@@ -2593,7 +2592,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       llm =
         ChatAnthropic.new!(%{
           stream: true,
-          model: @claude_3_7,
+          model: @sonnet,
           thinking: %{type: "enabled", budget_tokens: 1024},
           verbose_api: false
         })
@@ -2616,7 +2615,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
     #   llm =
     #     ChatAnthropic.new!(%{
     #       stream: true,
-    #       model: @claude_3_7,
+    #       model: @sonnet,
     #       thinking: %{type: "enabled", budget_tokens: 1024},
     #       verbose_api: true
     #     })
