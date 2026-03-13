@@ -1166,6 +1166,11 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
       end
     end
 
+    test "skips Azure keepalive events", %{model: model} do
+      event = %{"type" => "keepalive", "sequence_number" => 3}
+      assert :skip == ChatOpenAIResponses.do_process_response(model, event)
+    end
+
     test "handles list of streaming events", %{model: model} do
       events = [
         %{"type" => "response.output_text.delta", "delta" => "Hello"},
