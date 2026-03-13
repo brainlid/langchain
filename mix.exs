@@ -2,7 +2,7 @@ defmodule LangChain.MixProject do
   use Mix.Project
 
   @source_url "https://github.com/brainlid/langchain"
-  @version "0.6.1"
+  @version "0.6.2"
 
   def project do
     [
@@ -83,6 +83,7 @@ defmodule LangChain.MixProject do
       ],
       groups_for_modules: [
         "Chat Models": [
+          LangChain.ChatModels.ChatModel,
           LangChain.ChatModels.ChatOpenAI,
           LangChain.ChatModels.ChatOpenAIResponses,
           LangChain.ChatModels.ChatAnthropic,
@@ -94,7 +95,7 @@ defmodule LangChain.MixProject do
           LangChain.ChatModels.ChatPerplexity,
           LangChain.ChatModels.ChatGrok,
           LangChain.ChatModels.ChatDeepSeek,
-          LangChain.ChatModels.ChatModel
+          LangChain.ChatModels.ChatReqLLM
         ],
         Chains: [
           LangChain.Chains.LLMChain,

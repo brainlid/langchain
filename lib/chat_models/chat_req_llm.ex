@@ -46,7 +46,7 @@ if Code.ensure_loaded?(ReqLLM) do
     via `provider_opts`:
 
         ChatReqLLM.new!(%{
-          model: "google:gemini-2.0-flash-thinking-exp",
+          model: "anthropic:claude-haiku-4-5",
           provider_opts: %{"thinking" => %{"type" => "enabled", "budget_tokens" => 2000}}
         })
     """
