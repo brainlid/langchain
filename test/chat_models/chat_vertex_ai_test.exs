@@ -316,6 +316,71 @@ defmodule ChatModels.ChatVertexAITest do
              } = data
     end
 
+    test "preserves display names for inline image tool results", %{vertex_ai: vertex_ai} do
+      data =
+        ChatVertexAI.for_api(
+          vertex_ai,
+          [
+            Message.new_tool_result!(%{
+              tool_results: [
+                ToolResult.new!(%{
+                  tool_call_id: "call_123",
+                  name: "list_assets",
+                  content: [
+                    ContentPart.text!(
+                      Jason.encode!(%{
+                        "assets" => [
+                          %{
+                            "label" => "preview",
+                            "image" => %{"$ref" => "asset_preview.png"}
+                          }
+                        ]
+                      })
+                    ),
+                    ContentPart.image!("base64-image-data",
+                      media: "image/png",
+                      display_name: "asset_preview.png"
+                    )
+                  ]
+                })
+              ]
+            })
+          ],
+          []
+        )
+
+      assert %{
+               "contents" => [
+                 %{
+                   "parts" => [
+                     %{
+                       "functionResponse" => %{
+                         "name" => "list_assets",
+                         "response" => %{
+                           "assets" => [
+                             %{
+                               "label" => "preview",
+                               "image" => %{"$ref" => "asset_preview.png"}
+                             }
+                           ]
+                         },
+                         "parts" => [
+                           %{
+                             "inlineData" => %{
+                               "mimeType" => "image/png",
+                               "data" => "base64-image-data",
+                               "displayName" => "asset_preview.png"
+                             }
+                           }
+                         ]
+                       }
+                     }
+                   ]
+                 }
+               ]
+             } = data
+    end
+
     test "preserves image URLs as nested functionResponse parts", %{vertex_ai: vertex_ai} do
       data =
         ChatVertexAI.for_api(
@@ -348,6 +413,104 @@ defmodule ChatModels.ChatVertexAITest do
                              "fileData" => %{
                                "mimeType" => "image/png",
                                "fileUri" => "https://example.com/chart.png"
+                             }
+                           }
+                         ]
+                       }
+                     }
+                   ]
+                 }
+               ]
+             } = data
+    end
+
+    test "preserves display names for image URLs as nested functionResponse parts", %{
+      vertex_ai: vertex_ai
+    } do
+      data =
+        ChatVertexAI.for_api(
+          vertex_ai,
+          [
+            Message.new_tool_result!(%{
+              tool_results: [
+                ToolResult.new!(%{
+                  tool_call_id: "call_123",
+                  name: "render_chart",
+                  content: [
+                    ContentPart.text!(Jason.encode!(%{"summary" => "See attached chart"})),
+                    ContentPart.image_url!("https://example.com/chart.png",
+                      media: "image/png",
+                      display_name: "frame_1712345678901.png"
+                    )
+                  ]
+                })
+              ]
+            })
+          ],
+          []
+        )
+
+      assert %{
+               "contents" => [
+                 %{
+                   "parts" => [
+                     %{
+                       "functionResponse" => %{
+                         "parts" => [
+                           %{
+                             "fileData" => %{
+                               "mimeType" => "image/png",
+                               "fileUri" => "https://example.com/chart.png",
+                               "displayName" => "frame_1712345678901.png"
+                             }
+                           }
+                         ]
+                       }
+                     }
+                   ]
+                 }
+               ]
+             } = data
+    end
+
+    test "preserves display names for file URLs as nested functionResponse parts", %{
+      vertex_ai: vertex_ai
+    } do
+      data =
+        ChatVertexAI.for_api(
+          vertex_ai,
+          [
+            Message.new_tool_result!(%{
+              tool_results: [
+                ToolResult.new!(%{
+                  tool_call_id: "call_123",
+                  name: "render_chart",
+                  content: [
+                    ContentPart.text!(Jason.encode!(%{"summary" => "See attached chart"})),
+                    ContentPart.file_url!("https://example.com/chart.png",
+                      media: "image/png",
+                      display_name: "frame_1712345678901.png"
+                    )
+                  ]
+                })
+              ]
+            })
+          ],
+          []
+        )
+
+      assert %{
+               "contents" => [
+                 %{
+                   "parts" => [
+                     %{
+                       "functionResponse" => %{
+                         "parts" => [
+                           %{
+                             "fileData" => %{
+                               "mimeType" => "image/png",
+                               "fileUri" => "https://example.com/chart.png",
+                               "displayName" => "frame_1712345678901.png"
                              }
                            }
                          ]

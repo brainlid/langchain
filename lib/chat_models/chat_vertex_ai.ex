@@ -384,7 +384,47 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   defp tool_result_parts_for_api(content_parts) when is_list(content_parts) do
     content_parts
     |> Enum.filter(&tool_result_media_part?/1)
-    |> Enum.map(&for_api/1)
+    |> Enum.map(&tool_result_media_part_for_api/1)
+  end
+
+  defp tool_result_media_part_for_api(%ContentPart{type: :image} = part) do
+    %{
+      "inlineData" =>
+        %{
+          "mimeType" => Keyword.fetch!(part.options, :media),
+          "data" => part.content
+        }
+        |> maybe_add_display_name(part.options)
+    }
+  end
+
+  defp tool_result_media_part_for_api(%ContentPart{type: :image_url} = part) do
+    %{
+      "fileData" =>
+        %{
+          "mimeType" => Keyword.fetch!(part.options, :media),
+          "fileUri" => part.content
+        }
+        |> maybe_add_display_name(part.options)
+    }
+  end
+
+  defp tool_result_media_part_for_api(%ContentPart{type: :file_url} = part) do
+    %{
+      "fileData" =>
+        %{
+          "mimeType" => Keyword.fetch!(part.options, :media),
+          "fileUri" => part.content
+        }
+        |> maybe_add_display_name(part.options)
+    }
+  end
+
+  defp maybe_add_display_name(data, options) do
+    case Keyword.get(options || [], :display_name) do
+      nil -> data
+      display_name -> Map.put(data, "displayName", display_name)
+    end
   end
 
   defp tool_result_media_part?(%ContentPart{type: type})
