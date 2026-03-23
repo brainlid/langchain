@@ -361,6 +361,16 @@ defmodule LangChain.ChatModels.ChatVertexAI do
 
   defp tool_result_response_for_api(nil), do: %{}
 
+  defp tool_result_response_for_api(content) when is_binary(content) do
+    case Jason.decode(content) do
+      {:ok, data} ->
+        data
+
+      {:error, %Jason.DecodeError{}} ->
+        %{"result" => content}
+    end
+  end
+
   defp tool_result_response_for_api(content_parts) when is_list(content_parts) do
     text_parts = Enum.filter(content_parts, &(&1.type == :text))
 
@@ -374,12 +384,14 @@ defmodule LangChain.ChatModels.ChatVertexAI do
             data
 
           {:error, %Jason.DecodeError{}} ->
-            %{"result" => text_parts}
+            %{"result" => text_content}
         end
     end
   end
 
   defp tool_result_parts_for_api(nil), do: []
+
+  defp tool_result_parts_for_api(content) when is_binary(content), do: []
 
   defp tool_result_parts_for_api(content_parts) when is_list(content_parts) do
     content_parts

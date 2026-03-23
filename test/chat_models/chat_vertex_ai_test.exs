@@ -593,10 +593,47 @@ defmodule ChatModels.ChatVertexAITest do
                      %{
                        "functionResponse" => %{
                          "name" => "render_chart",
+                         "response" => %{"result" => "plain text result"}
+                       }
+                     }
+                   ]
+                 }
+               ]
+             } = data
+    end
+
+    test "decodes JSON string tool results into function responses", %{vertex_ai: vertex_ai} do
+      data =
+        ChatVertexAI.for_api(
+          vertex_ai,
+          [
+            Message.new_tool_result!(%{
+              tool_results: [
+                ToolResult.new!(%{
+                  tool_call_id: "call_123",
+                  name: "resize_plan",
+                  content:
+                    Jason.encode!(%{
+                      "error" => "Unknown element alias: 05ba59c1-1234",
+                      "status" => "validation_error"
+                    })
+                })
+              ]
+            })
+          ],
+          []
+        )
+
+      assert %{
+               "contents" => [
+                 %{
+                   "parts" => [
+                     %{
+                       "functionResponse" => %{
+                         "name" => "resize_plan",
                          "response" => %{
-                           "result" => [
-                             %ContentPart{type: :text, content: "plain text result"}
-                           ]
+                           "error" => "Unknown element alias: 05ba59c1-1234",
+                           "status" => "validation_error"
                          }
                        }
                      }
