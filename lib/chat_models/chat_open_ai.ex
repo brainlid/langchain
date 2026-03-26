@@ -151,11 +151,17 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       })
 
   When enabled, the logprobs data from the API response is placed in the
-  `metadata` field of the returned `LangChain.Message` or
-  `LangChain.MessageDelta` under the `"logprobs"` key:
+  `metadata` field under the `"logprobs"` key. This works for both
+  non-streaming (`LangChain.Message`) and streaming (`LangChain.MessageDelta`)
+  responses:
 
+      # Non-streaming
       {:ok, [%Message{metadata: %{"logprobs" => logprobs}}]} =
         ChatOpenAI.call(chat, [message], [])
+
+      # Streaming - logprobs appear on each delta chunk
+      chat = ChatOpenAI.new!(%{model: "gpt-4o", stream: true, logprobs: true})
+      # Each MessageDelta will have metadata: %{"logprobs" => ...}
 
       # logprobs contains the raw OpenAI response structure:
       # %{
@@ -177,7 +183,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   When `logprobs` is not enabled or the response contains no logprobs data,
   `metadata` will be `nil`.
 
-  See the [OpenAI documentation](https://platform.openai.com/docs/api-reference/chat/create#chat-create-logprobs)
+  See the [OpenAI documentation](https://developers.openai.com/api/reference/resources/completions/methods/create)
   for full details on the response structure.
 
   ## Azure OpenAI Support
