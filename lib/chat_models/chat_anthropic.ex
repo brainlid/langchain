@@ -1965,13 +1965,14 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   defp get_parameters(%Function{parameters: [], parameters_schema: nil} = _fun) do
     %{
       "type" => "object",
-      "properties" => %{}
+      "properties" => %{},
+      "additionalProperties" => false
     }
   end
 
   defp get_parameters(%Function{parameters: [], parameters_schema: schema} = _fun)
        when is_map(schema) do
-    schema
+    Map.put_new(schema, "additionalProperties", false)
   end
 
   defp get_parameters(%Function{parameters: params} = _fun) do

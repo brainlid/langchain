@@ -223,7 +223,8 @@ defmodule LangChain.FunctionParam do
     %{
       "type" => "object",
       "properties" => Enum.reduce(params, %{}, &to_json_schema(&2, &1)),
-      "required" => required_properties(params)
+      "required" => required_properties(params),
+      "additionalProperties" => false
     }
   end
 

@@ -267,7 +267,8 @@ defmodule ChatModels.ChatOllamaAITest do
             "parameters" => %{
               "properties" => %{"name" => %{"type" => "string"}},
               "required" => ["name"],
-              "type" => "object"
+              "type" => "object",
+              "additionalProperties" => false
             }
           },
           "type" => "function"
@@ -388,7 +389,8 @@ defmodule ChatModels.ChatOllamaAITest do
             "name" => %{"type" => "string"}
           },
           "required" => ["name"],
-          "type" => "object"
+          "type" => "object",
+          "additionalProperties" => false
         }
       }
 

@@ -404,7 +404,8 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
             "type" => "string"
           }
         },
-        "required" => ["p1"]
+        "required" => ["p1"],
+        "additionalProperties" => false
       }
 
       {:ok, fun} =
