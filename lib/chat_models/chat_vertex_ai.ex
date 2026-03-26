@@ -328,26 +328,16 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   end
 
   defp for_api(%ToolResult{} = result) do
-    content =
-      result.content
-      |> ContentPart.parts_to_string()
-      |> Jason.decode()
-      |> case do
-        {:ok, data} ->
-          # content was converted through JSON
-          data
-
-        {:error, %Jason.DecodeError{}} ->
-          # assume the result is intended to be a string and return it as-is
-          %{"result" => result.content}
-      end
+    response = tool_result_response_for_api(result.content)
+    response_parts = tool_result_parts_for_api(result.content)
 
     %{
       "functionResponse" => %{
         "name" => result.name,
-        "response" => content
+        "response" => response
       }
     }
+    |> maybe_add_function_response_parts(response_parts)
   end
 
   defp for_api(%NativeTool{name: name, configuration: %{} = config}) do
@@ -359,6 +349,112 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   end
 
   defp for_api(nil), do: nil
+
+  defp maybe_add_function_response_parts(
+         %{"functionResponse" => function_response} = data,
+         [_ | _] = response_parts
+       ) do
+    put_in(data, ["functionResponse"], Map.put(function_response, "parts", response_parts))
+  end
+
+  defp maybe_add_function_response_parts(data, _response_parts), do: data
+
+  defp tool_result_response_for_api(nil), do: %{}
+
+  defp tool_result_response_for_api(content) when is_binary(content) do
+    case Jason.decode(content) do
+      {:ok, data} ->
+        data
+
+      {:error, %Jason.DecodeError{}} ->
+        %{"result" => content}
+    end
+  end
+
+  defp tool_result_response_for_api(content_parts) when is_list(content_parts) do
+    text_parts = Enum.filter(content_parts, &(&1.type == :text))
+
+    case ContentPart.parts_to_string(text_parts) do
+      nil ->
+        %{}
+
+      text_content ->
+        case Jason.decode(text_content) do
+          {:ok, data} ->
+            data
+
+          {:error, %Jason.DecodeError{}} ->
+            %{"result" => text_content}
+        end
+    end
+  end
+
+  defp tool_result_parts_for_api(nil), do: []
+
+  defp tool_result_parts_for_api(content) when is_binary(content), do: []
+
+  defp tool_result_parts_for_api(content_parts) when is_list(content_parts) do
+    content_parts
+    |> Enum.filter(&tool_result_media_part?/1)
+    |> Enum.map(&tool_result_media_part_for_api/1)
+  end
+
+  defp tool_result_media_part_for_api(%ContentPart{type: :image} = part) do
+    %{
+      "inlineData" =>
+        %{
+          "mimeType" => Keyword.fetch!(part.options, :media),
+          "data" => part.content
+        }
+        |> maybe_add_display_name(part.options)
+    }
+  end
+
+  defp tool_result_media_part_for_api(%ContentPart{type: :file} = part) do
+    %{
+      "inlineData" =>
+        %{
+          "mimeType" => Keyword.fetch!(part.options, :media),
+          "data" => part.content
+        }
+        |> maybe_add_display_name(part.options)
+    }
+  end
+
+  defp tool_result_media_part_for_api(%ContentPart{type: :image_url} = part) do
+    %{
+      "fileData" =>
+        %{
+          "mimeType" => Keyword.fetch!(part.options, :media),
+          "fileUri" => part.content
+        }
+        |> maybe_add_display_name(part.options)
+    }
+  end
+
+  defp tool_result_media_part_for_api(%ContentPart{type: :file_url} = part) do
+    %{
+      "fileData" =>
+        %{
+          "mimeType" => Keyword.fetch!(part.options, :media),
+          "fileUri" => part.content
+        }
+        |> maybe_add_display_name(part.options)
+    }
+  end
+
+  defp maybe_add_display_name(data, options) do
+    case Keyword.get(options || [], :display_name) do
+      nil -> data
+      display_name -> Map.put(data, "displayName", display_name)
+    end
+  end
+
+  defp tool_result_media_part?(%ContentPart{type: type})
+       when type in [:image, :file, :image_url, :file_url],
+       do: true
+
+  defp tool_result_media_part?(%ContentPart{}), do: false
 
   @doc """
   Calls the Google AI API passing the ChatVertexAI struct with configuration,
