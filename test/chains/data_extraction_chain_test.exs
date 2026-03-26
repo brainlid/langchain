@@ -37,7 +37,8 @@ defmodule LangChain.Chains.DataExtractionChainTest do
                        "person_hair_color" => %{"type" => "string"},
                        "person_name" => %{"type" => "string"}
                      },
-                     "required" => []
+                     "required" => [],
+                     "additionalProperties" => false
                    }
                  }
                },

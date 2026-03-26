@@ -511,7 +511,8 @@ defmodule ChatModels.ChatGoogleAITest do
                    }
                  },
                  "required" => ["city", "state"],
-                 "type" => "object"
+                 "type" => "object",
+                 "additionalProperties" => false
                }
              } == ChatGoogleAI.for_api(weather)
     end

@@ -334,11 +334,13 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
                        "person" => %{
                          "properties" => %{"name" => %{"type" => "string"}},
                          "required" => ["name"],
-                         "type" => "object"
+                         "type" => "object",
+                         "additionalProperties" => false
                        }
                      },
                      "required" => ["person"],
-                     "type" => "object"
+                     "type" => "object",
+                     "additionalProperties" => false
                    }
                  }
                ]
@@ -3141,7 +3143,11 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 
       assert output == %{
                "name" => "do_something",
-               "input_schema" => %{"properties" => %{}, "type" => "object"}
+               "input_schema" => %{
+                 "properties" => %{},
+                 "type" => "object",
+                 "additionalProperties" => false
+               }
              }
 
       # with no parameters but has description
@@ -3158,7 +3164,11 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       assert output == %{
                "name" => "do_something",
                "description" => "Does something",
-               "input_schema" => %{"properties" => %{}, "type" => "object"}
+               "input_schema" => %{
+                 "properties" => %{},
+                 "type" => "object",
+                 "additionalProperties" => false
+               }
              }
 
       # with parameters
@@ -3194,10 +3204,12 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
                        "name" => %{"type" => "string"},
                        "occupation" => %{"type" => "string"}
                      },
-                     "required" => ["name"]
+                     "required" => ["name"],
+                     "additionalProperties" => false
                    }
                  },
-                 "required" => ["person"]
+                 "required" => ["person"],
+                 "additionalProperties" => false
                }
              }
     end
@@ -3215,7 +3227,11 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 
       assert output == %{
                "name" => "do_something",
-               "input_schema" => %{"properties" => %{}, "type" => "object"},
+               "input_schema" => %{
+                 "properties" => %{},
+                 "type" => "object",
+                 "additionalProperties" => false
+               },
                "cache_control" => %{"type" => "ephemeral"}
              }
     end
@@ -3249,7 +3265,11 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       assert result == %{
                "name" => "hello_world",
                #  NOTE: Sends the required empty parameter definition when none set
-               "input_schema" => %{"properties" => %{}, "type" => "object"}
+               "input_schema" => %{
+                 "properties" => %{},
+                 "type" => "object",
+                 "additionalProperties" => false
+               }
              }
     end
 
@@ -3281,8 +3301,31 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       assert result == %{
                "name" => "say_hi",
                "description" => "Provide a friendly greeting.",
-               "input_schema" => params_def
+               "input_schema" => Map.put(params_def, "additionalProperties", false)
              }
+    end
+
+    test "does not override explicit additionalProperties in user-provided schema" do
+      params_def = %{
+        "type" => "object",
+        "properties" => %{
+          "data" => %{"type" => "string"}
+        },
+        "required" => [],
+        "additionalProperties" => true
+      }
+
+      fun =
+        Function.new!(%{
+          name: "flexible_tool",
+          parameters_schema: params_def,
+          function: fn _args, _context -> :ok end
+        })
+
+      result = ChatAnthropic.function_for_api(fun)
+
+      # put_new should not override the explicit true value
+      assert result["input_schema"]["additionalProperties"] == true
     end
   end
 
