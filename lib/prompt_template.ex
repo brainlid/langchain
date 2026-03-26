@@ -29,7 +29,6 @@ defmodule LangChain.PromptTemplate do
   """
   use Ecto.Schema
   import Ecto.Changeset
-  require Logger
   alias __MODULE__
   alias LangChain.LangChainError
   alias LangChain.Message
@@ -268,9 +267,8 @@ defmodule LangChain.PromptTemplate do
           Map.put(acc, key, text_prompt)
 
         {key, other}, _acc ->
-          msg = "Unsupported `composed_of` entry for #{inspect(key)}: #{inspect(other)}"
-          Logger.error(msg)
-          raise LangChainError, msg
+          raise LangChainError,
+                "Unsupported `composed_of` entry for #{inspect(key)}: #{inspect(other)}"
       end)
 
     PromptTemplate.format(full_prompt, composed_inputs)

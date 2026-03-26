@@ -498,7 +498,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
         do_api_request(ollama_ai, messages, tools, retry_count - 1)
 
       other ->
-        Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
+        Logger.warning(fn -> "Unexpected and unhandled API response! #{inspect(other)}" end)
         other
     end
   end
@@ -548,9 +548,9 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
         do_api_request(ollama_ai, messages, tools, retry_count - 1)
 
       other ->
-        Logger.error(
+        Logger.warning(fn ->
           "Unhandled and unexpected response from streamed post call. #{inspect(other)}"
-        )
+        end)
 
         {:error,
          LangChainError.exception(
@@ -586,7 +586,6 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   end
 
   def do_process_response(_model, %{"error" => reason} = response) do
-    Logger.error("Received error from API: #{inspect(reason)}")
     {:error, LangChainError.exception(message: reason, original: response)}
   end
 
@@ -607,7 +606,6 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
 
       {:error, changeset} ->
         reason = Utils.changeset_error_to_string(changeset)
-        Logger.error("Failed to process ToolCall for a function. Reason: #{reason}")
         {:error, reason}
     end
   end

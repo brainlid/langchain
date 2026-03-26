@@ -569,7 +569,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
          LangChainError.exception(type: "timeout", message: "Request timed out", original: err)}
 
       other ->
-        Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
+        Logger.warning(fn -> "Unexpected and unhandled API response! #{inspect(other)}" end)
         other
     end
   end
@@ -608,9 +608,9 @@ defmodule LangChain.ChatModels.ChatVertexAI do
          LangChainError.exception(type: "timeout", message: "Request timed out", original: err)}
 
       other ->
-        Logger.error(
+        Logger.warning(fn ->
           "Unhandled and unexpected response from streamed post call. #{inspect(other)}"
-        )
+        end)
 
         {:error,
          LangChainError.exception(
@@ -827,21 +827,17 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   end
 
   def do_process_response(_model, %{"error" => %{"message" => reason}} = response, _) do
-    Logger.error("Received error from API: #{inspect(reason)}")
     {:error, LangChainError.exception(message: reason, original: response)}
   end
 
   def do_process_response(_model, {:error, %Jason.DecodeError{} = response}, _) do
     error_message = "Received invalid JSON: #{inspect(response)}"
-    Logger.error(error_message)
 
     {:error,
      LangChainError.exception(type: "invalid_json", message: error_message, original: response)}
   end
 
   def do_process_response(_model, other, _) do
-    Logger.error("Trying to process an unexpected response. #{inspect(other)}")
-
     {:error,
      LangChainError.exception(
        type: "unexpected_response",

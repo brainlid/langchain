@@ -364,7 +364,6 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
 
         other ->
           message = "Received unsupported media type for ContentPart: #{inspect(other)}"
-          Logger.error(message)
           raise LangChainError, message
       end
 
@@ -389,7 +388,6 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
 
         other ->
           message = "Received unsupported media type for ContentPart: #{inspect(other)}"
-          Logger.error(message)
           raise LangChainError, message
       end
 
@@ -588,7 +586,6 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
 
       {:ok, %Req.Response{body: %{"error" => %{"message" => message} = error}} = response} ->
         error_type = google_error_type(error)
-        Logger.error("Received error from API: #{inspect(message)}")
 
         {:error,
          LangChainError.exception(
@@ -609,7 +606,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
          LangChainError.exception(type: "timeout", message: "Request timed out", original: err)}
 
       other ->
-        Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
+        Logger.warning(fn -> "Unexpected and unhandled API response! #{inspect(other)}" end)
         other
     end
   end
@@ -691,9 +688,9 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
          LangChainError.exception(type: "timeout", message: "Request timed out", original: err)}
 
       other ->
-        Logger.error(
+        Logger.warning(fn ->
           "Unhandled and unexpected response from streamed post call. #{inspect(other)}"
-        )
+        end)
 
         {:error,
          LangChainError.exception(
@@ -892,21 +889,17 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
 
   def do_process_response(_model, %{"error" => %{"message" => reason} = error} = response, _) do
     error_type = google_error_type(error)
-    Logger.error("Received error from API: #{inspect(reason)}")
     {:error, LangChainError.exception(type: error_type, message: reason, original: response)}
   end
 
   def do_process_response(_model, {:error, %Jason.DecodeError{} = response}, _) do
     error_message = "Received invalid JSON: #{inspect(response)}"
-    Logger.error(error_message)
 
     {:error,
      LangChainError.exception(type: "invalid_json", message: error_message, original: response)}
   end
 
   def do_process_response(_model, other, _) do
-    Logger.error("Trying to process an unexpected response. #{inspect(other)}")
-
     {:error,
      LangChainError.exception(
        type: "unexpected_response",

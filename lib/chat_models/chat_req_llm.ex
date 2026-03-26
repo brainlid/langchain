@@ -291,7 +291,7 @@ if Code.ensure_loaded?(ReqLLM) do
           translate_req_llm_error(error)
 
         other ->
-          Logger.error("Unexpected response from ReqLLM: #{inspect(other)}")
+          Logger.warning(fn -> "Unexpected response from ReqLLM: #{inspect(other)}" end)
 
           {:error,
            LangChainError.exception(
@@ -359,7 +359,7 @@ if Code.ensure_loaded?(ReqLLM) do
           translate_req_llm_error(error)
 
         other ->
-          Logger.error("Unexpected response from ReqLLM stream: #{inspect(other)}")
+          Logger.warning(fn -> "Unexpected response from ReqLLM stream: #{inspect(other)}" end)
 
           {:error,
            LangChainError.exception(
@@ -655,7 +655,7 @@ if Code.ensure_loaded?(ReqLLM) do
            )}
 
         _ ->
-          Logger.error("Unhandled error from ReqLLM: #{inspect(error)}")
+          Logger.warning(fn -> "Unhandled error from ReqLLM: #{inspect(error)}" end)
 
           {:error,
            LangChainError.exception(
@@ -847,8 +847,6 @@ if Code.ensure_loaded?(ReqLLM) do
             Message.t() | {:error, LangChainError.t()}
     def do_process_response(%ChatReqLLM{} = _model, %ReqLLM.Response{error: error})
         when not is_nil(error) do
-      Logger.error("ReqLLM returned error in response body: #{inspect(error)}")
-
       {:error,
        LangChainError.exception(
          type: "api_error",

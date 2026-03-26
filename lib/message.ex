@@ -90,7 +90,6 @@ defmodule LangChain.Message do
   """
   use Ecto.Schema
   import Ecto.Changeset
-  require Logger
   alias __MODULE__
   alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
@@ -222,10 +221,6 @@ defmodule LangChain.Message do
           end
         else
           # only a user message can have ContentParts (except for ChatAnthropic system messages)
-          Logger.error(
-            "Invalid message content #{inspect(get_field(changeset, :content))} for role #{role}"
-          )
-
           add_error(changeset, :content, "is invalid for role #{role}")
         end
 
