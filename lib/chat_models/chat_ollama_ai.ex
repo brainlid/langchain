@@ -604,8 +604,9 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
       {:ok, %ToolCall{} = call} ->
         call
 
-      {:error, _changeset} ->
-        {:error, "Failed to process ToolCall"}
+      {:error, changeset} ->
+        reason = Utils.changeset_error_to_string(changeset)
+        {:error, reason}
     end
   end
 
