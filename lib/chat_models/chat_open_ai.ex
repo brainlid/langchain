@@ -135,6 +135,51 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         tool_choice: %{"type" => "function", "function" => %{"name" => "get_weather"}}
       })
 
+  ## Log Probabilities
+
+  OpenAI can return log probability information for output tokens, which is
+  useful for evaluating model confidence, building classifiers, or debugging
+  token selection.
+
+  Enable with the `logprobs` option. Optionally set `top_logprobs` to receive
+  the N most likely tokens (0-20) at each position:
+
+      chat = ChatOpenAI.new!(%{
+        model: "gpt-4o",
+        logprobs: true,
+        top_logprobs: 3
+      })
+
+  When enabled, the logprobs data from the API response is placed in the
+  `metadata` field of the returned `LangChain.Message` or
+  `LangChain.MessageDelta` under the `"logprobs"` key:
+
+      {:ok, [%Message{metadata: %{"logprobs" => logprobs}}]} =
+        ChatOpenAI.call(chat, [message], [])
+
+      # logprobs contains the raw OpenAI response structure:
+      # %{
+      #   "content" => [
+      #     %{
+      #       "token" => "Hello",
+      #       "logprob" => -0.0002,
+      #       "bytes" => [72, 101, 108, 108, 111],
+      #       "top_logprobs" => [
+      #         %{"token" => "Hello", "logprob" => -0.0002, ...},
+      #         %{"token" => "Hi", "logprob" => -8.53, ...},
+      #         ...
+      #       ]
+      #     },
+      #     ...
+      #   ]
+      # }
+
+  When `logprobs` is not enabled or the response contains no logprobs data,
+  `metadata` will be `nil`.
+
+  See the [OpenAI documentation](https://platform.openai.com/docs/api-reference/chat/create#chat-create-logprobs)
+  for full details on the response structure.
+
   ## Azure OpenAI Support
 
   To use `ChatOpenAI` with Microsoft's Azure hosted OpenAI models, the
