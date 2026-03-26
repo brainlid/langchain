@@ -239,11 +239,20 @@ defmodule LangChain.Message.ToolCall do
     %ToolCall{primary | arguments: new_arguments}
   end
 
-  defp append_arguments(%ToolCall{} = primary, %ToolCall{
+  defp append_arguments(%ToolCall{arguments: existing} = primary, %ToolCall{
          arguments: new_arguments
        })
-       when is_binary(new_arguments) do
-    %ToolCall{primary | arguments: (primary.arguments || "") <> new_arguments}
+       when is_binary(new_arguments) and (is_binary(existing) or is_nil(existing)) do
+    %ToolCall{primary | arguments: (existing || "") <> new_arguments}
+  end
+
+  # When arguments have already been decoded to a map (via the :incomplete ->
+  # :complete clause above), ignore stray binary fragments from subsequent deltas.
+  defp append_arguments(%ToolCall{arguments: existing} = primary, %ToolCall{
+         arguments: new_arguments
+       })
+       when is_map(existing) and is_binary(new_arguments) do
+    primary
   end
 
   defp append_arguments(%ToolCall{} = primary, %ToolCall{} = _delta_part) do

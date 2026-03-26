@@ -890,9 +890,6 @@ defmodule LangChain.Chains.LLMChain do
         {:error, chain, LangChainError.exception(message: string_reason)}
 
       {:ok, []} ->
-        # Empty response — all choices were filtered out (e.g., thinking model
-        # streaming where all chunks produce empty parsed results). Treat as
-        # an error rather than crashing with CaseClauseError.
         Logger.warning("LLM returned an empty response (no messages or deltas)")
 
         {:error, chain,
@@ -903,6 +900,12 @@ defmodule LangChain.Chains.LLMChain do
                "This can happen with thinking/reasoning models during streaming."
          )}
 
+      {:ok, [[error: %LangChainError{} = reason] | _]} ->
+        # API returned an error wrapped in an :ok tuple (e.g., overloaded_error)
+        if chain.verbose, do: IO.inspect(reason, label: "ERROR")
+        Logger.error("Error during chat call. Reason: #{inspect(reason)}")
+        {:error, chain, reason}
+
       {:ok, unexpected} ->
         Logger.warning("Unexpected LLM response format: #{inspect(unexpected)}")
 
@@ -910,6 +913,15 @@ defmodule LangChain.Chains.LLMChain do
          LangChainError.exception(
            type: "unexpected_response",
            message: "Unexpected response format from LLM: #{inspect(unexpected)}"
+         )}
+
+      {:error, reason} ->
+        Logger.error("Error during chat call. Reason: #{inspect(reason)}")
+
+        {:error, chain,
+         LangChainError.exception(
+           type: "unknown_error",
+           message: "LLM error: #{inspect(reason)}"
          )}
     end
   end
@@ -1073,6 +1085,7 @@ defmodule LangChain.Chains.LLMChain do
   end
 
   defp augment_and_notify_tool_calls(_chain, struct, _opts), do: struct
+
 
   @doc """
   Drop the current delta. This is useful when needing to ignore a partial or

@@ -1,0 +1,7 @@
+abacus
+ecto
+ex_doc
+gettext
+nimble_parsec
+nx
+req
