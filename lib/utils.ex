@@ -243,7 +243,7 @@ defmodule LangChain.Utils do
         {:cont, {req, updated_response}}
 
       {:data, _raw_data}, {req, %Req.Response{status: 401} = _response} ->
-        Logger.error("Check API key settings. Request rejected for authentication failure.")
+        Logger.warning("Check API key settings. Request rejected for authentication failure.")
         {:halt, {req, LangChainError.exception("Authentication failure with request")}}
 
       {:data, raw_data}, {req, %Req.Response{status: status} = response}
@@ -264,7 +264,7 @@ defmodule LangChain.Utils do
         end
 
       {:data, _raw_data}, {req, response} ->
-        Logger.error("Unhandled API response!")
+        Logger.warning("Unhandled API response!")
         {:halt, {req, response}}
     end
   end
@@ -374,15 +374,12 @@ defmodule LangChain.Utils do
       {:ok, String.to_existing_atom(module_name)}
     rescue
       _err ->
-        Logger.error("Failed to restore using module_name #{inspect(module_name)}. Not found.")
         {:error, "ChatModel module #{inspect(module_name)} not found"}
     end
   end
 
   def module_from_name(module_name) do
-    msg = "Not an Elixir module: #{inspect(module_name)}"
-    Logger.error(msg)
-    {:error, msg}
+    {:error, "Not an Elixir module: #{inspect(module_name)}"}
   end
 
   @doc """

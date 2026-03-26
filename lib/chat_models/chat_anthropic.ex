@@ -886,7 +886,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         error
 
       {:error, err} ->
-        Logger.error("Unhandled error non-streamed post call. #{inspect(err)}")
+        Logger.warning(fn -> "Unhandled error non-streamed post call. #{inspect(err)}" end)
 
         {:error,
          LangChainError.exception(
@@ -896,7 +896,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
          )}
 
       other ->
-        Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
+        Logger.warning(fn -> "Unexpected and unhandled API response! #{inspect(other)}" end)
 
         {:error,
          LangChainError.exception(
@@ -978,7 +978,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         error
 
       {:error, err} ->
-        Logger.error("Unhandled error streamed post call. #{inspect(err)}")
+        Logger.warning(fn -> "Unhandled error streamed post call. #{inspect(err)}" end)
 
         {:error,
          LangChainError.exception(
@@ -988,9 +988,9 @@ defmodule LangChain.ChatModels.ChatAnthropic do
          )}
 
       other ->
-        Logger.error(
+        Logger.warning(fn ->
           "Unhandled and unexpected response from streamed post call. #{inspect(other)}"
-        )
+        end)
 
         {:error,
          LangChainError.exception(
@@ -1274,18 +1274,15 @@ defmodule LangChain.ChatModels.ChatAnthropic do
           "error" => %{"type" => type, "message" => reason}
         } = response
       ) do
-    Logger.error("Received error from API: #{inspect(response)}")
     {:error, LangChainError.exception(type: type, message: reason, original: response)}
   end
 
   def do_process_response(_model, %{"error" => %{"message" => reason} = error} = response) do
-    Logger.error("Received error from API: #{inspect(response)}")
     {:error, LangChainError.exception(type: error["type"], message: reason, original: response)}
   end
 
   def do_process_response(_model, {:error, %Jason.DecodeError{} = response}) do
     error_message = "Received invalid JSON: #{inspect(response)}"
-    Logger.error(error_message)
 
     {:error,
      LangChainError.exception(type: "invalid_json", message: error_message, original: response)}
@@ -1324,8 +1321,6 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   end
 
   def do_process_response(_model, other) do
-    Logger.error("Failed to process an unexpected response. #{inspect(other)}")
-
     {:error,
      LangChainError.exception(
        type: "unexpected_response",
@@ -1522,7 +1517,10 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   def relevant_event?(%{"type" => "message_stop"}), do: false
   # catch-all for when we miss something
   def relevant_event?(event) do
-    Logger.error("Unsupported event received when parsing Anthropic response: #{inspect(event)}")
+    Logger.warning(fn ->
+      "Unsupported event received when parsing Anthropic response: #{inspect(event)}"
+    end)
+
     false
   end
 
@@ -1870,9 +1868,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
               value
 
             other ->
-              message = "Received unsupported media type for ContentPart: #{inspect(other)}"
-              Logger.error(message)
-              raise LangChainError, message
+              raise LangChainError,
+                    "Received unsupported media type for ContentPart: #{inspect(other)}"
           end
 
         %{
@@ -1924,11 +1921,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
                     value
 
                   other ->
-                    message =
-                      "Received unsupported media type for ContentPart: #{inspect(other)}"
-
-                    Logger.error(message)
-                    raise LangChainError, message
+                    raise LangChainError,
+                          "Received unsupported media type for ContentPart: #{inspect(other)}"
                 end
 
               %{

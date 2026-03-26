@@ -203,7 +203,10 @@ You expertly summarize the User Text into a short title or phrase to represent a
         title
 
       {:error, _chain, reason} ->
-        Logger.error("TextToTitleChain failed. Reason: #{inspect(reason)}. Returning DEFAULT")
+        Logger.warning(fn ->
+          "TextToTitleChain failed. Reason: #{inspect(reason)}. Returning DEFAULT"
+        end)
+
         chain.fallback_title
     end
   end

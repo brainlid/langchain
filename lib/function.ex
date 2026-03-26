@@ -341,9 +341,9 @@ defmodule LangChain.Function do
     |> normalize_execution_result(function)
   rescue
     err ->
-      Logger.error(
+      Logger.warning(fn ->
         "Function! #{function.name} failed in execution. Exception: #{LangChainError.format_exception(err, __STACKTRACE__)}"
-      )
+      end)
 
       {:error, "ERROR: #{LangChainError.format_exception(err, __STACKTRACE__, :short)}"}
   end

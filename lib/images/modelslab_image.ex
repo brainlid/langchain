@@ -231,7 +231,7 @@ defmodule LangChain.Images.ModelsLabImage do
         do_api_request(ml_image, retry_count - 1)
 
       other ->
-        Logger.error("Unexpected ModelsLab API response: #{inspect(other)}")
+        Logger.warning(fn -> "Unexpected ModelsLab API response: #{inspect(other)}" end)
         {:error, "Unexpected response from ModelsLab API"}
     end
   end
@@ -275,7 +275,7 @@ defmodule LangChain.Images.ModelsLabImage do
   end
 
   def do_process_response(data, _request) do
-    Logger.error("Unexpected ModelsLab response: #{inspect(data)}")
+    Logger.warning(fn -> "Unexpected ModelsLab response: #{inspect(data)}" end)
     {:error, "Unexpected response format from ModelsLab"}
   end
 end

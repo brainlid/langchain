@@ -724,9 +724,9 @@ defmodule LangChain.Chains.LLMChain do
     rescue
       err ->
         # Log the error and stack trace, then try again.
-        Logger.error(
+        Logger.warning(fn ->
           "Rescued from exception during with_fallback processing. Error: #{inspect(err)}\nStack trace:\n#{Exception.format(:error, err, __STACKTRACE__)}"
-        )
+        end)
 
         try_chain_with_llm(use_chain, tail, before_fallback_fn, run_fn)
     end
@@ -881,12 +881,10 @@ defmodule LangChain.Chains.LLMChain do
 
       {:error, %LangChainError{} = reason} ->
         if chain.verbose, do: IO.inspect(reason, label: "ERROR")
-        Logger.error("Error during chat call. Reason: #{inspect(reason)}")
         {:error, chain, reason}
 
       {:error, string_reason} when is_binary(string_reason) ->
         if chain.verbose, do: IO.inspect(string_reason, label: "ERROR")
-        Logger.error("Error during chat call. Reason: #{inspect(string_reason)}")
         {:error, chain, LangChainError.exception(message: string_reason)}
 
       {:ok, []} ->
@@ -1157,7 +1155,7 @@ defmodule LangChain.Chains.LLMChain do
         end
       rescue
         err ->
-          Logger.error("Exception raised in processor #{inspect(proc)}")
+          Logger.warning(fn -> "Exception raised in processor #{inspect(proc)}" end)
 
           {:halt,
            {:halted, m,
@@ -1727,9 +1725,9 @@ defmodule LangChain.Chains.LLMChain do
         end
       rescue
         err ->
-          Logger.error(
+          Logger.warning(fn ->
             "Function #{function.name} failed in execution. Exception: #{LangChainError.format_exception(err, __STACKTRACE__)}"
-          )
+          end)
 
           ToolResult.new!(%{
             tool_call_id: call.call_id,
@@ -1776,8 +1774,7 @@ defmodule LangChain.Chains.LLMChain do
 
         add_message(updated_chain, message)
 
-      {:error, reason} ->
-        Logger.error("Error attempting to cancel_delta. Reason: #{inspect(reason)}")
+      {:error, _reason} ->
         chain
     end
   end
