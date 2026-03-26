@@ -1046,17 +1046,16 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           data
       )
       when finish_reason in ["tool_calls", "stop"] do
-    attrs =
-      %{
-        "role" => "assistant",
-        "content" => message["content"],
-        "complete" => true,
-        "index" => data["index"],
-        "tool_calls" => Enum.map(calls || [], &do_process_response(model, &1))
-      }
-      |> Map.merge(logprobs_metadata(data))
-
-    case Message.new(attrs) do
+    %{
+      "role" => "assistant",
+      "content" => message["content"],
+      "complete" => true,
+      "index" => data["index"],
+      "tool_calls" => Enum.map(calls || [], &do_process_response(model, &1))
+    }
+    |> Map.merge(logprobs_metadata(data))
+    |> Message.new()
+    |> case do
       {:ok, message} ->
         message
 
