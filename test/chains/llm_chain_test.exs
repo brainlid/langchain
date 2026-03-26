@@ -885,6 +885,69 @@ defmodule LangChain.Chains.LLMChainTest do
 
       assert content_text == "Hello world!"
     end
+
+    test "clears delta when tool call has malformed JSON arguments (issue #443)" do
+      # When an LLM returns truncated/malformed JSON in tool_call.arguments,
+      # the delta must be cleared so subsequent API calls don't append new
+      # responses to the old garbage, creating an infinite loop.
+      #
+      # See: https://github.com/brainlid/langchain/issues/443
+
+      malformed_tool_deltas = [
+        [
+          %LangChain.MessageDelta{
+            content: nil,
+            status: :incomplete,
+            index: 0,
+            role: :assistant,
+            tool_calls: [
+              %LangChain.Message.ToolCall{
+                status: :incomplete,
+                type: :function,
+                call_id: "call_test123",
+                name: "search_web",
+                arguments: nil,
+                index: 0
+              }
+            ]
+          }
+        ],
+        [
+          %LangChain.MessageDelta{
+            content: nil,
+            status: :incomplete,
+            index: 0,
+            tool_calls: [
+              %LangChain.Message.ToolCall{
+                status: :incomplete,
+                type: :function,
+                # Truncated JSON - missing closing brace
+                arguments: "{\"query\": \"test search\",\"",
+                index: 0
+              }
+            ]
+          }
+        ],
+        [
+          %LangChain.MessageDelta{
+            content: nil,
+            status: :complete,
+            index: 0
+          }
+        ]
+      ]
+
+      chain = LLMChain.new!(%{llm: ChatOpenAI.new!()})
+
+      updated_chain = LLMChain.apply_deltas(chain, malformed_tool_deltas)
+
+      # Delta must be cleared so it doesn't accumulate garbage on retries
+      assert updated_chain.delta == nil
+
+      # No message should have been added since the tool call was malformed
+      assert updated_chain.messages == []
+      assert updated_chain.last_message == nil
+    end
   end
 
   describe "add_message/2" do
@@ -2317,6 +2380,90 @@ defmodule LangChain.Chains.LLMChainTest do
 
       assert {:error, _chain, %LangChainError{} = error} = LLMChain.run(chain)
       assert error.type == "unexpected_response"
+    end
+
+    test "does not loop infinitely when streaming tool call has malformed JSON (issue #443)" do
+      # When an LLM returns truncated JSON in tool_call.arguments during streaming,
+      # the chain should clear the delta and retry cleanly rather than appending
+      # new responses to the old garbage and looping forever.
+      call_counter = :counters.new(1, [:atomics])
+
+      expect(ChatOpenAI, :call, 2, fn _model, _messages, _tools ->
+        call_num = :counters.get(call_counter, 1)
+        :counters.add(call_counter, 1, 1)
+
+        if call_num == 0 do
+          # First call: return truncated/malformed JSON in tool call arguments
+          {:ok,
+           [
+             %MessageDelta{role: :assistant, status: :incomplete, index: 0},
+             %MessageDelta{
+               status: :incomplete,
+               index: 0,
+               tool_calls: [
+                 ToolCall.new!(%{
+                   status: :incomplete,
+                   type: :function,
+                   call_id: "call_bad",
+                   name: "search_web",
+                   arguments: nil,
+                   index: 0
+                 })
+               ]
+             },
+             %MessageDelta{
+               status: :incomplete,
+               index: 0,
+               tool_calls: [
+                 ToolCall.new!(%{
+                   status: :incomplete,
+                   type: :function,
+                   # Truncated JSON - missing closing brace
+                   arguments: "{\"query\": \"test\",\"",
+                   index: 0
+                 })
+               ]
+             },
+             %MessageDelta{status: :complete, index: 0}
+           ]}
+        else
+          # Subsequent call: return a normal text response to end the loop
+          {:ok,
+           [
+             Message.new_assistant!(%{content: "I encountered an error with the tool call."})
+           ]}
+        end
+      end)
+
+      search_web =
+        Function.new!(%{
+          name: "search_web",
+          description: "Search the web",
+          parameters_schema: %{
+            type: "object",
+            properties: %{query: %{type: "string"}},
+            required: ["query"]
+          },
+          function: fn _args, _ctx -> {:ok, "results"} end
+        })
+
+      chain =
+        LLMChain.new!(%{llm: ChatOpenAI.new!(%{stream: true})})
+        |> LLMChain.add_tools(search_web)
+        |> LLMChain.add_message(Message.new_user!("Search for something"))
+
+      # This must complete without hanging - previously it would loop forever
+      task =
+        Task.async(fn ->
+          ExUnit.CaptureLog.capture_log(fn ->
+            LLMChain.run(chain, mode: :while_needs_response)
+          end)
+        end)
+
+      result = Task.yield(task, 5_000) || Task.shutdown(task, :brutal_kill)
+
+      assert {:ok, log} = result
+      assert log =~ "Error applying delta message"
     end
   end
 
