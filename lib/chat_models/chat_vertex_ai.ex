@@ -410,6 +410,17 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     }
   end
 
+  defp tool_result_media_part_for_api(%ContentPart{type: :file} = part) do
+    %{
+      "inlineData" =>
+        %{
+          "mimeType" => Keyword.fetch!(part.options, :media),
+          "data" => part.content
+        }
+        |> maybe_add_display_name(part.options)
+    }
+  end
+
   defp tool_result_media_part_for_api(%ContentPart{type: :image_url} = part) do
     %{
       "fileData" =>
@@ -440,7 +451,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   end
 
   defp tool_result_media_part?(%ContentPart{type: type})
-       when type in [:image, :image_url, :file_url],
+       when type in [:image, :file, :image_url, :file_url],
        do: true
 
   defp tool_result_media_part?(%ContentPart{}), do: false

@@ -316,6 +316,57 @@ defmodule ChatModels.ChatVertexAITest do
              } = data
     end
 
+    test "preserves inline file parts as inlineData in functionResponse", %{
+      vertex_ai: vertex_ai
+    } do
+      data =
+        ChatVertexAI.for_api(
+          vertex_ai,
+          [
+            Message.new_tool_result!(%{
+              tool_results: [
+                ToolResult.new!(%{
+                  tool_call_id: "call_123",
+                  name: "read_document",
+                  content: [
+                    ContentPart.text!(Jason.encode!(%{"summary" => "See attached document"})),
+                    ContentPart.file!("base64-pdf-data",
+                      media: "application/pdf",
+                      display_name: "report.pdf"
+                    )
+                  ]
+                })
+              ]
+            })
+          ],
+          []
+        )
+
+      assert %{
+               "contents" => [
+                 %{
+                   "parts" => [
+                     %{
+                       "functionResponse" => %{
+                         "name" => "read_document",
+                         "response" => %{"summary" => "See attached document"},
+                         "parts" => [
+                           %{
+                             "inlineData" => %{
+                               "mimeType" => "application/pdf",
+                               "data" => "base64-pdf-data",
+                               "displayName" => "report.pdf"
+                             }
+                           }
+                         ]
+                       }
+                     }
+                   ]
+                 }
+               ]
+             } = data
+    end
+
     test "preserves display names for inline image tool results", %{vertex_ai: vertex_ai} do
       data =
         ChatVertexAI.for_api(
