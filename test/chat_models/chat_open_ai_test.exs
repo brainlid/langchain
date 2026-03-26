@@ -135,6 +135,52 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       %ChatOpenAI{} = openai = ChatOpenAI.new!(%{"parallel_tool_calls" => false})
       assert openai.parallel_tool_calls == false
     end
+
+    test "supports setting logprobs and top_logprobs" do
+      {:ok, openai} =
+        ChatOpenAI.new(%{
+          "model" => @test_model,
+          "logprobs" => true,
+          "top_logprobs" => 5
+        })
+
+      assert openai.logprobs == true
+      assert openai.top_logprobs == 5
+    end
+
+    test "validates top_logprobs requires logprobs to be enabled" do
+      assert {:error, changeset} =
+               ChatOpenAI.new(%{
+                 "model" => @test_model,
+                 "top_logprobs" => 5
+               })
+
+      refute changeset.valid?
+      assert {"requires logprobs to be enabled", _} = changeset.errors[:top_logprobs]
+    end
+
+    test "validates top_logprobs range 0-20" do
+      assert {:error, changeset} =
+               ChatOpenAI.new(%{
+                 "model" => @test_model,
+                 "logprobs" => true,
+                 "top_logprobs" => 21
+               })
+
+      refute changeset.valid?
+      assert {_msg, _} = changeset.errors[:top_logprobs]
+    end
+
+    test "allows logprobs without top_logprobs" do
+      {:ok, openai} =
+        ChatOpenAI.new(%{
+          "model" => @test_model,
+          "logprobs" => true
+        })
+
+      assert openai.logprobs == true
+      assert openai.top_logprobs == nil
+    end
   end
 
   describe "for_api/3" do
@@ -269,6 +315,26 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       data = ChatOpenAI.for_api(openai, [], [])
       assert data.model == @test_model
       assert data.parallel_tool_calls == false
+    end
+
+    test "includes logprobs and top_logprobs when set" do
+      {:ok, openai} =
+        ChatOpenAI.new(%{
+          model: @test_model,
+          logprobs: true,
+          top_logprobs: 3
+        })
+
+      data = ChatOpenAI.for_api(openai, [], [])
+      assert data.logprobs == true
+      assert data.top_logprobs == 3
+    end
+
+    test "omits logprobs when not set" do
+      {:ok, openai} = ChatOpenAI.new(%{model: @test_model})
+      data = ChatOpenAI.for_api(openai, [], [])
+      assert data[:logprobs] == nil
+      assert data[:top_logprobs] == nil
     end
   end
 
@@ -948,6 +1014,62 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert %TokenUsage{} = usage = result.metadata.usage
       assert usage.input == 15
       assert usage.output == 3
+    end
+
+    @tag live_call: true, live_open_ai: true
+    test "non-streamed response returns logprobs when enabled" do
+      {:ok, chat} =
+        ChatOpenAI.new(%{
+          temperature: 1,
+          seed: 0,
+          stream: false,
+          logprobs: true,
+          top_logprobs: 3
+        })
+
+      {:ok, [result]} =
+        ChatOpenAI.call(chat, [
+          Message.new_user!("Return the response 'Colorful Threads'.")
+        ])
+
+      assert %{"logprobs" => logprobs} = result.metadata
+      assert %{"content" => [first_token | _rest]} = logprobs
+      assert is_binary(first_token["token"])
+      assert is_float(first_token["logprob"])
+      assert [_ | _] = first_token["top_logprobs"]
+      assert length(first_token["top_logprobs"]) <= 3
+    end
+
+    @tag live_call: true, live_open_ai: true
+    test "streamed response returns logprobs on each delta" do
+      {:ok, chat} =
+        ChatOpenAI.new(%{
+          temperature: 1,
+          seed: 0,
+          stream: true,
+          logprobs: true,
+          top_logprobs: 2
+        })
+
+      {:ok, result} =
+        ChatOpenAI.call(chat, [
+          Message.new_user!("Return the response 'Colorful Threads'.")
+        ])
+
+      deltas = List.flatten(result)
+
+      # Content-bearing deltas should have logprobs in metadata
+      content_deltas = Enum.filter(deltas, &(&1.content != nil and &1.content != ""))
+
+      for delta <- content_deltas do
+        assert %{"logprobs" => %{"content" => [token_info]}} = delta.metadata
+        assert is_binary(token_info["token"])
+        assert is_float(token_info["logprob"])
+        assert is_list(token_info["top_logprobs"])
+        assert length(token_info["top_logprobs"]) <= 2
+      end
+
+      assert length(content_deltas) > 0
     end
 
     @tag live_call: true, live_open_ai: true
@@ -1674,6 +1796,73 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert msg1.content == [ContentPart.text!("Greetings!")]
       assert msg2.content == [ContentPart.text!("Howdy!")]
     end
+
+    test "includes logprobs in message metadata when present", %{model: model} do
+      logprobs_data = %{
+        "content" => [
+          %{
+            "token" => "Hello",
+            "logprob" => -0.0002,
+            "bytes" => [72, 101, 108, 108, 111],
+            "top_logprobs" => [
+              %{"token" => "Hello", "logprob" => -0.0002, "bytes" => [72, 101, 108, 108, 111]}
+            ]
+          }
+        ]
+      }
+
+      response = %{
+        "message" => %{"role" => "assistant", "content" => "Hello"},
+        "finish_reason" => "stop",
+        "index" => 0,
+        "logprobs" => logprobs_data
+      }
+
+      assert %Message{} = msg = ChatOpenAI.do_process_response(model, response)
+      assert msg.metadata == %{"logprobs" => logprobs_data}
+    end
+
+    test "does not set logprobs metadata when logprobs is nil", %{model: model} do
+      response = %{
+        "message" => %{"role" => "assistant", "content" => "Hello"},
+        "finish_reason" => "stop",
+        "index" => 0,
+        "logprobs" => nil
+      }
+
+      assert %Message{} = msg = ChatOpenAI.do_process_response(model, response)
+      assert msg.metadata == nil
+    end
+
+    test "includes logprobs in metadata for tool call messages", %{model: model} do
+      logprobs_data = %{
+        "content" => nil,
+        "refusal" => nil
+      }
+
+      response = %{
+        "finish_reason" => "tool_calls",
+        "message" => %{
+          "role" => "assistant",
+          "content" => nil,
+          "tool_calls" => [
+            %{
+              "id" => "call_123",
+              "type" => "function",
+              "function" => %{
+                "name" => "hello_world",
+                "arguments" => "{}"
+              }
+            }
+          ]
+        },
+        "index" => 0,
+        "logprobs" => logprobs_data
+      }
+
+      assert %Message{} = msg = ChatOpenAI.do_process_response(model, response)
+      assert msg.metadata == %{"logprobs" => logprobs_data}
+    end
   end
 
   describe "streaming examples" do
@@ -1980,6 +2169,30 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert call.index == 0
       assert call.type == :function
       assert call.arguments == nil
+    end
+
+    test "includes logprobs in delta metadata when present", %{model: model} do
+      logprobs_data = %{
+        "content" => [
+          %{
+            "token" => "Hi",
+            "logprob" => -0.001,
+            "bytes" => [72, 105],
+            "top_logprobs" => []
+          }
+        ]
+      }
+
+      raw_delta = %{
+        "delta" => %{"content" => "Hi", "role" => "assistant"},
+        "finish_reason" => nil,
+        "index" => 0,
+        "logprobs" => logprobs_data
+      }
+
+      %MessageDelta{} = delta = ChatOpenAI.do_process_response(model, raw_delta)
+      assert delta.content == "Hi"
+      assert delta.metadata == %{"logprobs" => logprobs_data}
     end
 
     test "parses individual tool_calls in a delta message", %{model: model} do
