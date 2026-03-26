@@ -284,6 +284,15 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
     field :parallel_tool_calls, :boolean
 
+    # When true, the API returns log probability information for each output
+    # token. Ref: https://platform.openai.com/docs/api-reference/chat/create#chat-create-logprobs
+    field :logprobs, :boolean
+
+    # An integer between 0 and 20 specifying the number of most likely tokens
+    # to return at each position. Requires `logprobs` to be set to `true`.
+    # Ref: https://platform.openai.com/docs/api-reference/chat/create#chat-create-top_logprobs
+    field :top_logprobs, :integer
+
     # A list of maps for callback handlers (treated as internal)
     field :callbacks, {:array, :map}, default: []
 
@@ -325,6 +334,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     :user,
     :tool_choice,
     :parallel_tool_calls,
+    :logprobs,
+    :top_logprobs,
     :verbose_api,
     :req_config
   ]
@@ -377,6 +388,19 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     |> validate_number(:frequency_penalty, greater_than_or_equal_to: -2, less_than_or_equal_to: 2)
     |> validate_number(:n, greater_than_or_equal_to: 1)
     |> validate_number(:receive_timeout, greater_than_or_equal_to: 0)
+    |> validate_number(:top_logprobs, greater_than_or_equal_to: 0, less_than_or_equal_to: 20)
+    |> validate_top_logprobs_requires_logprobs()
+  end
+
+  defp validate_top_logprobs_requires_logprobs(changeset) do
+    top_logprobs = get_field(changeset, :top_logprobs)
+    logprobs = get_field(changeset, :logprobs)
+
+    if top_logprobs && !logprobs do
+      add_error(changeset, :top_logprobs, "requires logprobs to be enabled")
+    else
+      changeset
+    end
   end
 
   @doc """
@@ -422,6 +446,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(openai, tools))
     |> Utils.conditionally_add_to_map(:tool_choice, get_tool_choice(openai))
     |> Utils.conditionally_add_to_map(:parallel_tool_calls, openai.parallel_tool_calls)
+    |> Utils.conditionally_add_to_map(:logprobs, openai.logprobs)
+    |> Utils.conditionally_add_to_map(:top_logprobs, openai.top_logprobs)
   end
 
   defp get_tools_for_api(%_{} = _model, nil), do: []
@@ -1020,13 +1046,17 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           data
       )
       when finish_reason in ["tool_calls", "stop"] do
-    case Message.new(%{
-           "role" => "assistant",
-           "content" => message["content"],
-           "complete" => true,
-           "index" => data["index"],
-           "tool_calls" => Enum.map(calls || [], &do_process_response(model, &1))
-         }) do
+    attrs =
+      %{
+        "role" => "assistant",
+        "content" => message["content"],
+        "complete" => true,
+        "index" => data["index"],
+        "tool_calls" => Enum.map(calls || [], &do_process_response(model, &1))
+      }
+      |> Map.merge(logprobs_metadata(data))
+
+    case Message.new(attrs) do
       {:ok, message} ->
         message
 
@@ -1068,6 +1098,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       |> Map.put("index", index)
       |> Map.put("status", status)
       |> Map.put("tool_calls", tool_calls)
+      |> Map.merge(logprobs_metadata(msg))
 
     case MessageDelta.new(data) do
       {:ok, message} ->
@@ -1122,14 +1153,22 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     end
   end
 
-  def do_process_response(_model, %{
-        "finish_reason" => finish_reason,
-        "message" => message,
-        "index" => index
-      }) do
+  def do_process_response(
+        _model,
+        %{
+          "finish_reason" => finish_reason,
+          "message" => message,
+          "index" => index
+        } = data
+      ) do
     status = finish_reason_to_status(finish_reason)
 
-    case Message.new(Map.merge(message, %{"status" => status, "index" => index})) do
+    merged =
+      message
+      |> Map.merge(%{"status" => status, "index" => index})
+      |> Map.merge(logprobs_metadata(data))
+
+    case Message.new(merged) do
       {:ok, message} ->
         message
 
@@ -1184,6 +1223,13 @@ defmodule LangChain.ChatModels.ChatOpenAI do
        original: other
      )}
   end
+
+  # Extract logprobs from a choice-level response map and return a metadata map.
+  # Returns an empty map when logprobs is nil or absent, so it can be safely merged.
+  defp logprobs_metadata(%{"logprobs" => logprobs}) when not is_nil(logprobs),
+    do: %{"metadata" => %{"logprobs" => logprobs}}
+
+  defp logprobs_metadata(_data), do: %{}
 
   defp finish_reason_to_status(nil), do: :incomplete
   defp finish_reason_to_status("stop"), do: :complete
