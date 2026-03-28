@@ -443,6 +443,39 @@ if Code.ensure_loaded?(ReqLLM) do
       {[delta], state}
     end
 
+    # Tool call start (OpenAI/OpenRouter streaming: no start: true in metadata).
+    # req_llm decodes the first streaming tool_call delta with name, id, and index
+    # but without start: true. Emit as incomplete so ToolCall.merge accumulates
+    # subsequent argument fragments correctly.
+    defp process_stream_chunk(
+           %ReqLLM.StreamChunk{type: :tool_call, name: name, metadata: meta},
+           state
+         )
+         when is_binary(name) do
+      meta = meta || %{}
+      id = meta[:id] || "tool_#{:erlang.unique_integer([:positive])}"
+      block_index = meta[:index] || 0
+
+      tool_call =
+        ToolCall.new!(%{
+          type: :function,
+          status: :incomplete,
+          call_id: id,
+          name: name,
+          index: block_index
+        })
+
+      delta =
+        MessageDelta.new!(%{
+          role: :assistant,
+          tool_calls: [tool_call],
+          status: :incomplete,
+          index: 0
+        })
+
+      {[delta], state}
+    end
+
     # Tool call arg fragment: emit incomplete ToolCall delta with the partial JSON string.
     # ToolCall.merge/2 will concatenate binary arguments strings across deltas.
     defp process_stream_chunk(
