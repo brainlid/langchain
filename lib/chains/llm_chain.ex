@@ -879,6 +879,10 @@ defmodule LangChain.Chains.LLMChain do
 
         {:ok, updated_chain}
 
+      {:ok, []} ->
+        Logger.error("LLM returned empty response — no messages or deltas")
+        {:error, chain, LangChainError.exception(message: "LLM returned empty response")}
+
       {:error, %LangChainError{} = reason} ->
         if chain.verbose, do: IO.inspect(reason, label: "ERROR")
         {:error, chain, reason}
