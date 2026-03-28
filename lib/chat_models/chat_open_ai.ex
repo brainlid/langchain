@@ -958,12 +958,19 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         )
     )
     |> case do
-      {:ok, %Req.Response{body: data} = response} ->
+      {:ok, %Req.Response{body: data, status: status} = response} ->
         Callbacks.fire(openai.callbacks, :on_llm_response_headers, [response.headers])
 
         Callbacks.fire(openai.callbacks, :on_llm_ratelimit_info, [
           get_ratelimit_info(response.headers)
         ])
+
+        if data == [] or data == nil do
+          Logger.warning(
+            "ChatOpenAI streaming: empty response body. " <>
+              "Model: #{openai.model}, endpoint: #{openai.endpoint}, status: #{status}"
+          )
+        end
 
         data
 
@@ -1078,6 +1085,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
       # no data and no token usage. Skip.
       %{"choices" => []} ->
+        Logger.warning("ChatOpenAI: received empty choices with no usage data — raw: #{inspect(Map.drop(data, ["choices"]))}")
         :skip
 
       %{"choices" => choices} ->

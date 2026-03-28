@@ -880,7 +880,12 @@ defmodule LangChain.Chains.LLMChain do
         {:ok, updated_chain}
 
       {:ok, []} ->
-        Logger.error("LLM returned empty response — no messages or deltas")
+        Logger.error(
+          "LLM returned empty response — no messages or deltas. " <>
+            "Model: #{inspect(chain.llm.model)}, " <>
+            "messages_sent: #{length(chain.messages)}"
+        )
+
         {:error, chain, LangChainError.exception(message: "LLM returned empty response")}
 
       {:error, %LangChainError{} = reason} ->
