@@ -240,6 +240,62 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
       assert msg.status == :complete
     end
 
+    test "handles complete message without tool_calls key", %{model: model} do
+      response = %{
+        "choices" => [
+          %{
+            "message" => %{
+              "role" => "assistant",
+              "content" => "Hello User!"
+            },
+            "finish_reason" => "stop",
+            "index" => 0
+          }
+        ],
+        "usage" => %{
+          "prompt_tokens" => 7,
+          "completion_tokens" => 10,
+          "total_tokens" => 17
+        }
+      }
+
+      assert [%Message{} = msg] = ChatMistralAI.do_process_response(model, response)
+      assert msg.role == :assistant
+      assert msg.content == [ContentPart.text!("Hello User!")]
+      assert msg.index == 0
+      assert msg.status == :complete
+    end
+
+    test "handles complete message without tool_calls key and extra fields", %{model: model} do
+      # Simulates Azure Foundry response with content_filter_results
+      response = %{
+        "choices" => [
+          %{
+            "content_filter_results" => %{
+              "hate" => %{"filtered" => false, "severity" => "safe"},
+              "self_harm" => %{"filtered" => false, "severity" => "safe"}
+            },
+            "finish_reason" => "stop",
+            "index" => 0,
+            "message" => %{
+              "content" => "Hello from Azure!",
+              "role" => "assistant"
+            }
+          }
+        ],
+        "usage" => %{
+          "prompt_tokens" => 10,
+          "completion_tokens" => 5,
+          "total_tokens" => 15
+        }
+      }
+
+      assert [%Message{} = msg] = ChatMistralAI.do_process_response(model, response)
+      assert msg.role == :assistant
+      assert msg.content == [ContentPart.text!("Hello from Azure!")]
+      assert msg.status == :complete
+    end
+
     test "errors with invalid role", %{model: model} do
       response = %{
         "choices" => [
