@@ -707,6 +707,33 @@ defmodule LangChain.ChatModels.ChatMistralAI do
     end
   end
 
+  # Complete message without tool calls (e.g., Azure Foundry responses that omit the "tool_calls" key)
+  def do_process_response(
+        _model,
+        %{"finish_reason" => finish_reason, "message" => message} = data
+      )
+      when finish_reason in ["stop", "length", "model_length"] do
+    status =
+      case finish_reason do
+        "stop" -> :complete
+        "length" -> :length
+        "model_length" -> :length
+      end
+
+    case Message.new(%{
+           "role" => message["role"] || "assistant",
+           "content" => message["content"],
+           "status" => status,
+           "index" => data["index"]
+         }) do
+      {:ok, msg} ->
+        msg
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:error, LangChainError.exception(changeset)}
+    end
+  end
+
   # Tool call from a complete message
   def do_process_response(
         _model,
