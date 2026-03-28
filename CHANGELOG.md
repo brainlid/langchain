@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.6.3
+
+### Added
+
+- **ChatOpenAI Logprobs**: Added `logprobs` and `top_logprobs` parameters to `ChatOpenAI`, allowing users to request log probability information from the OpenAI API. When present, logprobs data is surfaced in message/delta metadata under the `"logprobs"` key. Supports both streaming and non-streaming modes https://github.com/brainlid/langchain/pull/494
+- **LangChain.Trajectory**: New `LangChain.Trajectory` module for easier evaluation of agents, providing a structured way to assess agent execution paths https://github.com/brainlid/langchain/pull/481
+- **ChatVertexAI Multimodal Tool Results**: Tool results in `ChatVertexAI` now support multimodal content including images, files (base64-encoded PDFs, etc.), JSON responses, and display names https://github.com/brainlid/langchain/pull/491
+
+### Changed
+
+- **Reduced Logger.error usage**: Replaced excessive `Logger.error` calls across the library with a more nuanced approach — errors already captured in return values no longer log redundantly, and catch-all/rescue clauses now use `Logger.warning` with lazy evaluation. This gives library consumers control over their logging levels https://github.com/brainlid/langchain/pull/492
+
+### Fixed
+
+- **Mistral responses without tool_calls**: Fixed crash when Mistral (or Azure-hosted Mistral) returns a complete message without a `"tool_calls"` key. The response previously fell through to the catch-all error handler https://github.com/brainlid/langchain/pull/495
+- **Tool schema compatibility**: Added `additionalProperties: false` to tool parameter schemas for Anthropic API compatibility, which strictly requires this field on all object-type schemas https://github.com/brainlid/langchain/pull/490
+- **Azure streaming keepalive**: Fixed crash caused by Azure OpenAI keepalive SSE events during long-running streaming responses, which were not matched by any `do_process_response/2` clause https://github.com/brainlid/langchain/pull/485
+- **Empty/unexpected LLM streaming responses**: Added catch-all clauses in `do_run/1` for `{:ok, []}` and other unrecognized response formats (e.g., from thinking/reasoning models like Qwen3 and DeepSeek-R1 that emit `<think>` tokens), returning typed `LangChainError` instead of crashing with `CaseClauseError` https://github.com/brainlid/langchain/pull/484
+- **Malformed tool call JSON loop**: Added regression tests verifying that truncated/malformed JSON in `tool_call.arguments` during streaming is properly cleared, preventing infinite loops https://github.com/brainlid/langchain/pull/493
+
 ## v0.6.2
 
 ### Upgrading from v0.6.1 - v0.6.2
