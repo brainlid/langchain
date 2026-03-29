@@ -355,25 +355,25 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   def connect_websocket(%ChatOpenAIResponses{} = model) do
     api_key = model.api_key || Config.resolve(:openai_key, nil)
 
-    unless api_key do
+    if api_key do
+      ws_url =
+        model.endpoint
+        |> String.replace_leading("https://", "wss://")
+        |> String.replace_leading("http://", "ws://")
+
+      case LangChain.WebSocket.start_link(
+             url: ws_url,
+             headers: [{"authorization", "Bearer #{api_key}"}],
+             receive_timeout: model.receive_timeout
+           ) do
+        {:ok, pid} ->
+          {:ok, %{model | websocket: pid}}
+
+        {:error, reason} ->
+          {:error, "Failed to connect WebSocket: #{inspect(reason)}"}
+      end
+    else
       {:error, "API key is required to open a WebSocket connection"}
-    end
-
-    ws_url =
-      model.endpoint
-      |> String.replace_leading("https://", "wss://")
-      |> String.replace_leading("http://", "ws://")
-
-    case LangChain.WebSocket.start_link(
-           url: ws_url,
-           headers: [{"authorization", "Bearer #{api_key}"}],
-           receive_timeout: model.receive_timeout
-         ) do
-      {:ok, pid} ->
-        {:ok, %{model | websocket: pid}}
-
-      {:error, reason} ->
-        {:error, "Failed to connect WebSocket: #{inspect(reason)}"}
     end
   end
 
