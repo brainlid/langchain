@@ -30,10 +30,63 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   Usage examples and more details are in the LangChain documentation or the
   module's function docs.
 
+  ## Callbacks
+
+  See the set of available callbacks: `LangChain.Chains.ChainCallbacks`
+
   ## Tool Support
 
-  Currently, `ChatOllamaAI` supports tool calls when not streaming the responses.
-  Streaming tool calls is not yet supported.
+  `ChatOllamaAI` supports tool calls in both streaming and non-streaming modes.
+  Tools are defined using `LangChain.Function` and passed to the chain or call.
+
+  Not all Ollama models support tool calling. Models that support tools include
+  `llama3.1`, `mistral`, `qwen2.5`, and others. Check the
+  [Ollama model library](https://ollama.com/library) for the latest supported models.
+
+  ### Example: Non-streaming with tools
+
+      {:ok, chat} = ChatOllamaAI.new(%{model: "llama3.1:latest", stream: false})
+
+      weather_tool = LangChain.Function.new!(%{
+        name: "get_weather",
+        description: "Get the current weather for a location",
+        parameters: [
+          LangChain.FunctionParam.new!(%{
+            name: "location",
+            type: :string,
+            description: "City name"
+          })
+        ],
+        function: fn %{"location" => location}, _context ->
+          {:ok, "72F and sunny in \#{location}"}
+        end
+      })
+
+      {:ok, result} = ChatOllamaAI.call(chat,
+        [LangChain.Message.new_user!("What's the weather in Portland?")],
+        [weather_tool]
+      )
+
+  ### Example: Streaming with tools
+
+      {:ok, chat} = ChatOllamaAI.new(%{model: "llama3.1:latest", stream: true})
+
+      # Streaming returns a list of MessageDelta structs followed by a final Message.
+      # When tool calls are present, they appear in the delta's tool_calls field.
+      {:ok, deltas} = ChatOllamaAI.call(chat,
+        [LangChain.Message.new_user!("What's the weather in Portland?")],
+        [weather_tool]
+      )
+
+  ## Configuration
+
+  The Ollama endpoint defaults to `http://localhost:11434/api/chat`. Override
+  it using the `:endpoint` option:
+
+      ChatOllamaAI.new(%{
+        model: "llama3.1:latest",
+        endpoint: "http://my-ollama-host:11434/api/chat"
+      })
   """
   use Ecto.Schema
   require Logger
@@ -423,7 +476,6 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   # - `{:error, reason}` - Where reason is a `LangChain.LangChainError`
   #   explanation of what went wrong.
   #
-  # **NOTE:** callback function are IGNORED for ollama ai When `stream: true` is
   # If `stream: false`, the completed message is returned.
   #
   # If `stream: true`, the completed message is returned after MessageDelta's.
@@ -561,6 +613,18 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
     end
   end
 
+  def do_process_response(%{stream: true} = model, %{
+        "message" => %{"tool_calls" => calls} = message,
+        "done" => true
+      })
+      when calls != [] do
+    message
+    |> Map.merge(%{
+      "tool_calls" => Enum.map(calls, &do_process_response(model, &1))
+    })
+    |> create_message(:complete, MessageDelta)
+  end
+
   def do_process_response(%{stream: true} = _model, %{"message" => message, "done" => true}) do
     create_message(message, :complete, MessageDelta)
   end
@@ -579,6 +643,18 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
 
   def do_process_response(_model, %{"message" => message, "done" => true}) do
     create_message(message, :complete, Message)
+  end
+
+  def do_process_response(%{stream: true} = model, %{
+        "message" => %{"tool_calls" => calls} = message,
+        "done" => _other
+      })
+      when calls != [] do
+    message
+    |> Map.merge(%{
+      "tool_calls" => Enum.map(calls, &do_process_response(model, &1))
+    })
+    |> create_message(:incomplete, MessageDelta)
   end
 
   def do_process_response(_model, %{"message" => message, "done" => _other}) do

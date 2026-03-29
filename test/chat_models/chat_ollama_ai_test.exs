@@ -739,6 +739,111 @@ defmodule ChatModels.ChatOllamaAITest do
                }
              ] = msg.tool_calls
     end
+
+    test "handles receiving a streamed complete tool call response" do
+      model = ChatOllamaAI.new!(%{model: "llama3.1:latest", stream: true})
+
+      response = %{
+        "created_at" => "2024-08-05T09:13:24.222066Z",
+        "done" => true,
+        "done_reason" => "stop",
+        "message" => %{
+          "content" => "",
+          "role" => "assistant",
+          "tool_calls" => [
+            %{
+              "function" => %{
+                "arguments" => %{"thing" => "hairbrush"},
+                "name" => "locator"
+              }
+            }
+          ]
+        },
+        "model" => "llama3.1"
+      }
+
+      assert %MessageDelta{} = delta = ChatOllamaAI.do_process_response(model, response)
+      assert delta.role == :assistant
+      assert delta.status == :complete
+
+      assert [
+               %LangChain.Message.ToolCall{
+                 type: :function,
+                 name: "locator",
+                 arguments: %{"thing" => "hairbrush"}
+               }
+             ] = delta.tool_calls
+    end
+
+    test "handles receiving a streamed incomplete tool call response" do
+      model = ChatOllamaAI.new!(%{model: "llama3.1:latest", stream: true})
+
+      response = %{
+        "created_at" => "2024-08-05T09:13:24.222066Z",
+        "done" => false,
+        "message" => %{
+          "content" => "",
+          "role" => "assistant",
+          "tool_calls" => [
+            %{
+              "function" => %{
+                "arguments" => %{"thing" => "hairbrush"},
+                "name" => "locator"
+              }
+            }
+          ]
+        },
+        "model" => "llama3.1"
+      }
+
+      assert %MessageDelta{} = delta = ChatOllamaAI.do_process_response(model, response)
+      assert delta.role == :assistant
+      assert delta.status == :incomplete
+
+      assert [
+               %LangChain.Message.ToolCall{
+                 type: :function,
+                 name: "locator",
+                 arguments: %{"thing" => "hairbrush"}
+               }
+             ] = delta.tool_calls
+    end
+
+    test "handles receiving a streamed response with multiple tool calls" do
+      model = ChatOllamaAI.new!(%{model: "llama3.1:latest", stream: true})
+
+      response = %{
+        "done" => true,
+        "done_reason" => "stop",
+        "message" => %{
+          "content" => "",
+          "role" => "assistant",
+          "tool_calls" => [
+            %{
+              "function" => %{
+                "arguments" => %{"thing" => "hairbrush"},
+                "name" => "locator"
+              }
+            },
+            %{
+              "function" => %{
+                "arguments" => %{"thing" => "keys"},
+                "name" => "locator"
+              }
+            }
+          ]
+        },
+        "model" => "llama3.1"
+      }
+
+      assert %MessageDelta{} = delta = ChatOllamaAI.do_process_response(model, response)
+      assert delta.status == :complete
+
+      assert [
+               %LangChain.Message.ToolCall{name: "locator", arguments: %{"thing" => "hairbrush"}},
+               %LangChain.Message.ToolCall{name: "locator", arguments: %{"thing" => "keys"}}
+             ] = delta.tool_calls
+    end
   end
 
   describe "serialize_config/2" do
