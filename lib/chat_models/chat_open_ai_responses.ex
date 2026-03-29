@@ -194,6 +194,61 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
 
       ChatOpenAIResponses.new!(%{model: "gpt-5", verbosity: "low"})
 
+  ## WebSocket Transport
+
+  Instead of HTTP, requests can be sent over a persistent WebSocket connection
+  for lower latency. Use `connect_websocket!/1` to open a connection and
+  `disconnect_websocket!/1` to close it:
+
+      model =
+        ChatOpenAIResponses.new!(%{model: "gpt-4o"})
+        |> ChatOpenAIResponses.connect_websocket!()
+
+      {:ok, chain} =
+        %{llm: model}
+        |> LLMChain.new!()
+        |> LLMChain.add_message(Message.new_user!("Hello"))
+        |> LLMChain.run()
+
+      ChatOpenAIResponses.disconnect_websocket!(model)
+
+  The WebSocket connection is reused across multiple LLM calls within the same
+  chain run (e.g. multi-turn tool calling with `:while_needs_response`).
+
+  ### Lifecycle Management
+
+  **The application is responsible for managing the WebSocket lifecycle.**
+  `connect_websocket!/1` starts a `LangChain.WebSocket` GenServer via
+  `start_link/1`, linking it to the calling process. The PID is stored in
+  the model struct's `:websocket` field. There is no supervisor, automatic
+  reconnection, or health monitoring built in.
+
+  This means:
+
+  - If the calling process exits, the WebSocket is terminated (process link).
+  - The WebSocket PID cannot be serialized. If the model struct is persisted
+    to a database and restored later, the `:websocket` field will be stale.
+  - The server may close idle connections at any time. There is no automatic
+    reconnection.
+  - There is no retry logic for WebSocket failures (unlike the HTTP transport).
+
+  **The WebSocket transport is best suited for short-lived, synchronous
+  sessions** where you control the full lifecycle. It is not currently safe
+  for long-lived agent processes, human-in-the-loop workflows with
+  interruptions, or any scenario where the model struct is serialized and
+  restored across process boundaries.
+
+  For long-running or interruptible workloads, use the default HTTP transport.
+
+  ### Known Limitation: temperature and top_p
+
+  The `:temperature` and `:top_p` parameters are currently excluded from
+  WebSocket payloads due to an
+  [OpenAI bug](https://community.openai.com/t/1375536) that silently closes
+  the connection when these are sent as decimals. A `Logger.warning` is
+  emitted when these values are dropped. This workaround will be removed
+  once OpenAI resolves the issue.
+
   """
   use Ecto.Schema
   require Logger

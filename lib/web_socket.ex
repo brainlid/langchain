@@ -3,7 +3,7 @@ defmodule LangChain.WebSocket do
   A generic WebSocket client GenServer built on `Mint.WebSocket`.
 
   Provides a persistent WebSocket connection that can send text frames and
-  collect responses. This module is provider-agnostic — it handles connection
+  collect responses. This module is provider-agnostic -- it handles connection
   lifecycle, frame encoding/decoding, and ping/pong, but has no knowledge of
   any specific API protocol.
 
@@ -23,10 +23,43 @@ defmodule LangChain.WebSocket do
 
   ## Options for `start_link/1`
 
-  - `:url` (required) — WebSocket URL (e.g. `"wss://example.com/ws"`)
-  - `:headers` — additional HTTP headers for the upgrade request (default: `[]`)
-  - `:receive_timeout` — timeout in ms for receiving responses (default: `60_000`)
-  - `:connect_timeout` — timeout in ms for initial connection (default: `10_000`)
+  - `:url` (required) -- WebSocket URL (e.g. `"wss://example.com/ws"`)
+  - `:headers` -- additional HTTP headers for the upgrade request (default: `[]`)
+  - `:receive_timeout` -- timeout in ms for receiving responses (default: `60_000`)
+  - `:connect_timeout` -- timeout in ms for initial connection (default: `10_000`)
+
+  ## Lifecycle Management
+
+  **The application is responsible for managing the WebSocket lifecycle.**
+
+  `start_link/1` links the WebSocket process to the caller and connects
+  immediately during `init/1`. The connection stays open until explicitly
+  closed with `close/1`, the linked process exits, or the server disconnects.
+
+  There is no built-in supervisor, reconnection logic, or health monitoring.
+  The underlying `mint_web_socket` library is intentionally low-level and
+  leaves these concerns to the application.
+
+  Key things to be aware of:
+
+  - **Process linking**: The WebSocket is linked to the process that calls
+    `start_link/1`. If that process exits, the WebSocket is terminated.
+  - **No reconnection**: If the server closes the connection or the network
+    drops, the GenServer transitions to `:disconnected` status. Subsequent
+    `send_and_collect/4` or `send_and_stream/5` calls will return
+    `{:error, :not_connected}`. The application must detect this and start
+    a new WebSocket.
+  - **No retry logic**: Failed sends are not retried. The application should
+    implement retry or fallback behavior as needed.
+  - **Not serializable**: The WebSocket is identified by its PID. If the
+    PID is stored in a struct that gets serialized (e.g. to a database),
+    it will be stale when restored.
+  - **Server-side timeouts**: Remote servers may close idle connections at
+    any time. Use `connected?/1` to check status before sending.
+
+  For higher-level usage with `ChatOpenAIResponses`, see
+  `ChatOpenAIResponses.connect_websocket!/1` which wraps `start_link/1`
+  with the correct URL and headers.
   """
 
   use GenServer
