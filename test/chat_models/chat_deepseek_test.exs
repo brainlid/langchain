@@ -1173,5 +1173,50 @@ defmodule LangChain.ChatModels.ChatDeepSeekTest do
       assert msg.metadata.usage.input == 5
       assert msg.metadata.usage.output == 3
     end
+
+    test "handles streaming chunk with both choices and usage data" do
+      model = ChatDeepSeek.new!(%{"model" => @test_model})
+
+      # DeepSeek sends token usage in the final streaming chunk alongside a
+      # choice that has a delta with empty content and finish_reason "stop",
+      # unlike OpenAI which sends usage in a chunk with empty choices.
+      response = %{
+        "id" => "339eade8-b499-472e-bc0d-b267b6e4bceb",
+        "object" => "chat.completion.chunk",
+        "model" => "deepseek-chat",
+        "system_fingerprint" => "fp_3d5141a69a_prod0225",
+        "choices" => [
+          %{
+            "index" => 0,
+            "delta" => %{
+              "content" => ""
+            },
+            "logprobs" => nil,
+            "finish_reason" => "stop"
+          }
+        ],
+        "usage" => %{
+          "prompt_tokens" => 11,
+          "completion_tokens" => 12,
+          "total_tokens" => 23,
+          "prompt_tokens_details" => %{
+            "cached_tokens" => 0
+          },
+          "prompt_cache_hit_tokens" => 0,
+          "prompt_cache_miss_tokens" => 11
+        }
+      }
+
+      assert [%MessageDelta{} = delta] = ChatDeepSeek.do_process_response(model, response)
+      assert delta.status == :complete
+
+      # Token usage is extracted and attached to the delta
+      assert %TokenUsage{input: 11, output: 12} = delta.metadata.usage
+      assert delta.metadata.usage.raw["prompt_cache_hit_tokens"] == 0
+      assert delta.metadata.usage.raw["prompt_cache_miss_tokens"] == 11
+
+      # DeepSeek metadata is preserved
+      assert delta.metadata.system_fingerprint == "fp_3d5141a69a_prod0225"
+    end
   end
 end
