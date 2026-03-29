@@ -1743,4 +1743,186 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
       verify!()
     end
   end
+
+  describe "websocket transport" do
+    test "new/1 accepts websocket option" do
+      fake_pid = spawn(fn -> :ok end)
+
+      assert {:ok, %ChatOpenAIResponses{websocket: ^fake_pid}} =
+               ChatOpenAIResponses.new(%{model: @test_model, websocket: fake_pid})
+    end
+
+    test "new/1 defaults websocket to nil" do
+      assert {:ok, %ChatOpenAIResponses{websocket: nil}} =
+               ChatOpenAIResponses.new(%{model: @test_model})
+    end
+
+    test "do_api_request with websocket wraps payload in response.create envelope (non-streaming)" do
+      fake_pid = spawn(fn -> Process.sleep(:infinity) end)
+      on_exit(fn -> Process.exit(fake_pid, :kill) end)
+
+      completed_response = %{
+        "status" => "completed",
+        "output" => [
+          %{
+            "type" => "message",
+            "role" => "assistant",
+            "content" => [%{"type" => "output_text", "text" => "Hello from WebSocket!"}]
+          }
+        ],
+        "usage" => %{
+          "input_tokens" => 10,
+          "output_tokens" => 5,
+          "total_tokens" => 15
+        },
+        "id" => "resp_ws_123"
+      }
+
+      LangChain.WebSocket
+      |> expect(:send_and_collect, fn ^fake_pid, payload, _done_fn, _opts ->
+        assert is_binary(payload)
+        decoded = Jason.decode!(payload)
+        # Verify the WebSocket envelope format
+        assert decoded["type"] == "response.create"
+        assert decoded["model"] == @test_model
+        assert is_list(decoded["input"])
+        # These should be stripped for WebSocket
+        refute Map.has_key?(decoded, "stream")
+        refute Map.has_key?(decoded, "temperature")
+        refute Map.has_key?(decoded, "top_p")
+
+        {:ok,
+         [
+           %{"type" => "response.created"},
+           %{"type" => "response.completed", "response" => completed_response}
+         ]}
+      end)
+
+      model =
+        ChatOpenAIResponses.new!(%{
+          model: @test_model,
+          stream: false,
+          websocket: fake_pid
+        })
+
+      assert %Message{role: :assistant, content: content} =
+               ChatOpenAIResponses.do_api_request(model, [Message.new_user!("Hi")], [])
+
+      assert [%LangChain.Message.ContentPart{type: :text, content: "Hello from WebSocket!"}] =
+               content
+
+      verify!()
+    end
+
+    test "do_api_request with websocket pid delegates to WebSocket (streaming)" do
+      fake_pid = spawn(fn -> Process.sleep(:infinity) end)
+      on_exit(fn -> Process.exit(fake_pid, :kill) end)
+
+      LangChain.WebSocket
+      |> expect(:send_and_stream, fn ^fake_pid, payload, callback_fn, _done_fn, _opts ->
+        assert is_binary(payload)
+        decoded = Jason.decode!(payload)
+        assert decoded["type"] == "response.create"
+
+        # Simulate streaming events
+        results = [
+          callback_fn.(%{"type" => "response.created"}),
+          callback_fn.(%{
+            "type" => "response.output_text.delta",
+            "output_index" => 0,
+            "delta" => "Hello"
+          }),
+          callback_fn.(%{
+            "type" => "response.output_text.delta",
+            "output_index" => 0,
+            "delta" => " world"
+          }),
+          callback_fn.(%{
+            "type" => "response.completed",
+            "response" => %{
+              "status" => "completed",
+              "usage" => %{
+                "input_tokens" => 10,
+                "output_tokens" => 5,
+                "total_tokens" => 15
+              },
+              "id" => "resp_ws_456"
+            }
+          })
+        ]
+
+        {:ok, results}
+      end)
+
+      model =
+        ChatOpenAIResponses.new!(%{
+          model: @test_model,
+          stream: true,
+          websocket: fake_pid
+        })
+
+      result = ChatOpenAIResponses.do_api_request(model, [Message.new_user!("Hi")], [])
+
+      assert is_list(result)
+      # Should contain MessageDeltas (skipping :skip results)
+      deltas = Enum.filter(result, &match?(%MessageDelta{}, &1))
+      assert length(deltas) > 0
+
+      verify!()
+    end
+
+    test "connect_websocket! sets websocket pid on model" do
+      LangChain.WebSocket
+      |> expect(:start_link, fn opts ->
+        assert opts[:url] == "wss://api.openai.com/v1/responses"
+        assert [{"authorization", "Bearer " <> _}] = opts[:headers]
+        {:ok, spawn(fn -> Process.sleep(:infinity) end)}
+      end)
+
+      model =
+        ChatOpenAIResponses.new!(%{model: @test_model})
+        |> ChatOpenAIResponses.connect_websocket!()
+
+      assert is_pid(model.websocket)
+      on_exit(fn -> Process.exit(model.websocket, :kill) end)
+      verify!()
+    end
+
+    test "disconnect_websocket! clears websocket and is safe on nil" do
+      model = ChatOpenAIResponses.new!(%{model: @test_model})
+      assert %{websocket: nil} = ChatOpenAIResponses.disconnect_websocket!(model)
+
+      fake_pid = spawn(fn -> Process.sleep(:infinity) end)
+      on_exit(fn -> Process.exit(fake_pid, :kill) end)
+      model = %{model | websocket: fake_pid}
+
+      LangChain.WebSocket
+      |> expect(:close, fn ^fake_pid -> :ok end)
+
+      assert %{websocket: nil} = ChatOpenAIResponses.disconnect_websocket!(model)
+      verify!()
+    end
+
+    test "do_api_request with websocket returns error on WebSocket failure" do
+      fake_pid = spawn(fn -> Process.sleep(:infinity) end)
+      on_exit(fn -> Process.exit(fake_pid, :kill) end)
+
+      LangChain.WebSocket
+      |> expect(:send_and_collect, fn ^fake_pid, _payload, _done_fn, _opts ->
+        {:error, :not_connected}
+      end)
+
+      model =
+        ChatOpenAIResponses.new!(%{
+          model: @test_model,
+          stream: false,
+          websocket: fake_pid
+        })
+
+      assert {:error, %LangChain.LangChainError{type: "websocket_error"}} =
+               ChatOpenAIResponses.do_api_request(model, [Message.new_user!("Hi")], [])
+
+      verify!()
+    end
+  end
 end
