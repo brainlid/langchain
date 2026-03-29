@@ -467,9 +467,20 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   # This is an OpenAI bug — see:
   # https://community.openai.com/t/responses-websocket-v1-responses-closes-with-code-1000-and-no-events-when-temperature-is-a-decimal-e-g-1-2/1375536
   defp for_api_websocket(%ChatOpenAIResponses{} = openai, messages, tools) do
-    openai
-    |> for_api(messages, tools)
-    |> Map.drop([:stream, :background, :temperature, :top_p])
+    payload = for_api(openai, messages, tools)
+
+    dropped = [:stream, :background, :temperature, :top_p]
+
+    if payload[:temperature] || payload[:top_p] do
+      Logger.warning(
+        "WebSocket transport: dropping :temperature and :top_p from payload " <>
+          "due to an OpenAI bug that silently closes the connection when these " <>
+          "are sent as decimals. See: https://community.openai.com/t/1375536"
+      )
+    end
+
+    payload
+    |> Map.drop(dropped)
     |> Map.put(:type, "response.create")
     |> Jason.encode!()
   end

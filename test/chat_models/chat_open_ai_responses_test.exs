@@ -1757,25 +1757,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
                ChatOpenAIResponses.new(%{model: @test_model})
     end
 
-    test "for_api_websocket wraps payload in response.create envelope" do
-      model = ChatOpenAIResponses.new!(%{model: @test_model, stream: true})
-
-      user_msg = Message.new_user!("Hello")
-
-      # Access the private function through the module
-      payload =
-        model
-        |> ChatOpenAIResponses.for_api([user_msg], [])
-        |> Map.drop([:stream, :background, :temperature, :top_p])
-        |> Map.put(:type, "response.create")
-
-      assert payload.type == "response.create"
-      refute Map.has_key?(payload, :stream)
-      assert payload.model == @test_model
-      assert is_list(payload.input)
-    end
-
-    test "do_api_request with websocket pid delegates to WebSocket (non-streaming)" do
+    test "do_api_request with websocket wraps payload in response.create envelope (non-streaming)" do
       fake_pid = spawn(fn -> Process.sleep(:infinity) end)
       on_exit(fn -> Process.exit(fake_pid, :kill) end)
 
@@ -1800,8 +1782,14 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
       |> expect(:send_and_collect, fn ^fake_pid, payload, _done_fn, _opts ->
         assert is_binary(payload)
         decoded = Jason.decode!(payload)
+        # Verify the WebSocket envelope format
         assert decoded["type"] == "response.create"
+        assert decoded["model"] == @test_model
+        assert is_list(decoded["input"])
+        # These should be stripped for WebSocket
         refute Map.has_key?(decoded, "stream")
+        refute Map.has_key?(decoded, "temperature")
+        refute Map.has_key?(decoded, "top_p")
 
         {:ok,
          [
@@ -1817,10 +1805,8 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
           websocket: fake_pid
         })
 
-      result = ChatOpenAIResponses.do_api_request(model, [Message.new_user!("Hi")], [])
-
-      assert %Message{role: :assistant, content: content} = result
-      assert is_list(content)
+      assert %Message{role: :assistant, content: content} =
+               ChatOpenAIResponses.do_api_request(model, [Message.new_user!("Hi")], [])
 
       assert [%LangChain.Message.ContentPart{type: :text, content: "Hello from WebSocket!"}] =
                content
