@@ -2373,6 +2373,40 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert delta4.index == 0
       assert delta4.tool_calls == nil
     end
+
+    test "handles streaming chunk with both choices and usage data", %{model: model} do
+      # Some OpenAI-compatible providers (e.g. DeepSeek) send token usage in
+      # the final streaming chunk alongside a choice with a delta, rather
+      # than in a separate chunk with empty choices.
+      {:ok, model} = model
+
+      response = %{
+        "choices" => [
+          %{
+            "index" => 0,
+            "delta" => %{
+              "content" => ""
+            },
+            "logprobs" => nil,
+            "finish_reason" => "stop"
+          }
+        ],
+        "usage" => %{
+          "prompt_tokens" => 11,
+          "completion_tokens" => 12,
+          "total_tokens" => 23,
+          "prompt_tokens_details" => %{
+            "cached_tokens" => 0
+          }
+        }
+      }
+
+      assert [%MessageDelta{} = delta] = ChatOpenAI.do_process_response(model, response)
+      assert delta.status == :complete
+
+      # Token usage is extracted and attached to the delta
+      assert %TokenUsage{input: 11, output: 12} = delta.metadata.usage
+    end
   end
 
   def get_streamed_deltas_basic_text do
