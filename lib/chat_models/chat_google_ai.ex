@@ -631,30 +631,39 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
       {:ok, %Req.Response{status: 200, body: data} = response} ->
         Callbacks.fire(google_ai.callbacks, :on_llm_response_headers, [response.headers])
 
-        # Separate message deltas by their content type
-        {data, _last_index} =
-          data
-          |> List.flatten()
-          |> Enum.reduce({[], nil}, fn
-            message_delta, {[], nil} ->
-              {[message_delta], message_delta.index}
+        # Stream responses may contain error tuples from do_process_response
+        # when the API errors mid-stream (503 overloaded, rate limit, etc.).
+        # Filter them out before processing message deltas.
+        flattened = List.flatten(data)
+        {deltas, errors} = Enum.split_with(flattened, &(not match?({:error, _}, &1)))
 
-            message_delta, {acc, last_index} ->
-              [last_message_delta | _] = acc
-              last_content_type = get_in(last_message_delta.content.type)
-              content_type = get_in(message_delta.content.type)
+        if deltas == [] and errors != [] do
+          # All stream chunks were errors — return the first one
+          hd(errors)
+        else
+          # Separate message deltas by their content type
+          {deltas, _last_index} =
+            Enum.reduce(deltas, {[], nil}, fn
+              message_delta, {[], nil} ->
+                {[message_delta], message_delta.index}
 
-              new_index =
-                case not is_nil(content_type) && content_type != last_content_type do
-                  true -> last_index + 1
-                  false -> last_index
-                end
+              message_delta, {acc, last_index} ->
+                [last_message_delta | _] = acc
+                last_content_type = get_in(last_message_delta.content.type)
+                content_type = get_in(message_delta.content.type)
 
-              {[%{message_delta | index: new_index} | acc], new_index}
-          end)
+                new_index =
+                  case not is_nil(content_type) && content_type != last_content_type do
+                    true -> last_index + 1
+                    false -> last_index
+                  end
 
-        data
-        |> Enum.reverse()
+                {[%{message_delta | index: new_index} | acc], new_index}
+            end)
+
+          deltas
+          |> Enum.reverse()
+        end
 
       {:ok, %Req.Response{body: {:error, %LangChainError{} = error}}} ->
         {:error, error}
