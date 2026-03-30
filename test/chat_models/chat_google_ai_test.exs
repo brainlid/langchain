@@ -1987,4 +1987,100 @@ defmodule ChatModels.ChatGoogleAITest do
       refute ChatGoogleAI.retry_on_fallback?(error)
     end
   end
+
+  describe "parallel tool calls (non-streaming)" do
+    test "multiple functionCall parts get distinct indices" do
+      model = ChatGoogleAI.new!(%{})
+
+      response = %{
+        "candidates" => [
+          %{
+            "content" => %{
+              "role" => "model",
+              "parts" => [
+                %{
+                  "functionCall" => %{
+                    "name" => "write_todos",
+                    "args" => %{"items" => ["task1"]}
+                  }
+                },
+                %{
+                  "functionCall" => %{
+                    "name" => "navigate_slide",
+                    "args" => %{"deck_id" => "pres-abc", "action" => "next"}
+                  }
+                }
+              ]
+            },
+            "finishReason" => "STOP"
+          }
+        ]
+      }
+
+      [message] = ChatGoogleAI.do_process_response(model, response)
+      assert %Message{tool_calls: tool_calls} = message
+      assert length(tool_calls) == 2
+
+      [tc1, tc2] = tool_calls
+      assert tc1.name == "write_todos"
+      assert tc2.name == "navigate_slide"
+      assert tc1.index != tc2.index
+    end
+  end
+
+  describe "parallel tool calls (streaming)" do
+    test "multiple functionCall parts in one delta get distinct indices" do
+      model = ChatGoogleAI.new!(%{})
+
+      streaming_data = %{
+        "content" => %{
+          "role" => "model",
+          "parts" => [
+            %{
+              "functionCall" => %{
+                "name" => "write_todos",
+                "args" => %{"items" => ["task1"]}
+              }
+            },
+            %{
+              "functionCall" => %{
+                "name" => "navigate_slide",
+                "args" => %{"deck_id" => "pres-abc", "action" => "next"}
+              }
+            }
+          ]
+        },
+        "finishReason" => "STOP"
+      }
+
+      delta = ChatGoogleAI.do_process_response(model, streaming_data, MessageDelta)
+      assert %MessageDelta{tool_calls: tool_calls} = delta
+      assert length(tool_calls) == 2
+
+      [tc1, tc2] = tool_calls
+      assert tc1.name == "write_todos"
+      assert tc2.name == "navigate_slide"
+      assert tc1.index == 0
+      assert tc2.index == 1
+    end
+
+    test "merging deltas with parallel tool calls preserves all calls" do
+      delta1 = %MessageDelta{
+        role: :assistant,
+        content: nil,
+        tool_calls: [
+          %ToolCall{index: 0, name: "write_todos", call_id: "call-write_todos", arguments: %{"items" => ["task1"]}, status: :complete},
+          %ToolCall{index: 1, name: "navigate_slide", call_id: "call-navigate_slide", arguments: %{"action" => "next"}, status: :complete}
+        ],
+        status: :complete
+      }
+
+      merged = MessageDelta.merge_delta(nil, delta1)
+      assert length(merged.tool_calls) == 2
+
+      [tc1, tc2] = Enum.sort_by(merged.tool_calls, & &1.index)
+      assert tc1.name == "write_todos"
+      assert tc2.name == "navigate_slide"
+    end
+  end
 end

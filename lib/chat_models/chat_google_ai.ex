@@ -781,8 +781,14 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     tool_calls_from_parts =
       parts
       |> filter_parts_for_types(["functionCall"])
-      |> Enum.map(fn part ->
-        do_process_response(model, part, nil)
+      |> Enum.with_index()
+      |> Enum.map(fn {part, idx} ->
+        tool_call = do_process_response(model, part, nil)
+        if is_struct(tool_call, ToolCall) and is_nil(tool_call.index) do
+          %{tool_call | index: idx}
+        else
+          tool_call
+        end
       end)
 
     tool_result_from_parts =
@@ -836,11 +842,22 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
           nil
       end
 
+    # Assign sequential indices to tool calls so that parallel calls from Gemini
+    # (multiple functionCall parts in a single streaming chunk) are not merged
+    # into one ToolCall during MessageDelta.merge_delta/2. Without distinct
+    # indices, merge_tool_calls/2 matches all nil-index calls and concatenates
+    # their names (e.g., "write_todosnavigate_slide").
     tool_calls_from_parts =
       parts
       |> filter_parts_for_types(["functionCall"])
-      |> Enum.map(fn part ->
-        do_process_response(model, part, nil)
+      |> Enum.with_index()
+      |> Enum.map(fn {part, idx} ->
+        tool_call = do_process_response(model, part, nil)
+        if is_struct(tool_call, ToolCall) and is_nil(tool_call.index) do
+          %{tool_call | index: idx}
+        else
+          tool_call
+        end
       end)
 
     %{

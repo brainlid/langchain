@@ -365,14 +365,23 @@ defmodule LangChain.MessageDelta do
 
   # Merge tool call delta by matching on index value (not list position).
   # Anthropic's index differentiates calls but doesn't correspond to list offset.
+  # Handles both single and multiple tool calls per delta (Gemini sends multiple
+  # functionCall parts in one streaming chunk).
   @spec merge_tool_calls(t(), t()) :: t()
   defp merge_tool_calls(%MessageDelta{tool_calls: primary_calls} = primary, %MessageDelta{
-         tool_calls: [delta_call]
-       }) do
+         tool_calls: delta_calls
+       })
+       when is_list(delta_calls) and delta_calls != [] do
     calls = primary_calls || []
-    initial = Enum.find(calls, &(&1.index == delta_call.index))
-    merged_call = ToolCall.merge(initial, delta_call)
-    %MessageDelta{primary | tool_calls: upsert_by_index(calls, merged_call)}
+
+    updated_calls =
+      Enum.reduce(delta_calls, calls, fn delta_call, acc ->
+        initial = Enum.find(acc, &(&1.index == delta_call.index))
+        merged_call = ToolCall.merge(initial, delta_call)
+        upsert_by_index(acc, merged_call)
+      end)
+
+    %MessageDelta{primary | tool_calls: updated_calls}
   end
 
   defp merge_tool_calls(%MessageDelta{} = primary, %MessageDelta{}), do: primary
