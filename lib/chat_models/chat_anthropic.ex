@@ -769,6 +769,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   def retry_on_fallback?(%LangChainError{type: "rate_limited"}), do: true
   def retry_on_fallback?(%LangChainError{type: "rate_limit_exceeded"}), do: true
   def retry_on_fallback?(%LangChainError{type: "overloaded"}), do: true
+  def retry_on_fallback?(%LangChainError{type: "overloaded_error"}), do: true
   def retry_on_fallback?(%LangChainError{type: "timeout"}), do: true
   def retry_on_fallback?(%LangChainError{type: "invalid_request_error"}), do: false
   def retry_on_fallback?(_), do: false
@@ -957,7 +958,15 @@ defmodule LangChain.ChatModels.ChatAnthropic do
           %{model: anthropic.model}
         )
 
-        data
+        # Check for error tuples embedded in the accumulated streaming data.
+        # When an API error event (e.g., overloaded_error) arrives mid-stream
+        # on a 200 connection, do_process_response returns
+        # {:error, %LangChainError{}} which gets accumulated in the response
+        # body list instead of short-circuiting the stream.
+        case extract_streaming_error(data) do
+          {:error, _} = error -> error
+          nil -> data
+        end
 
       # The error tuple was successfully received from the API. Unwrap it and
       # return it as an error.
@@ -1000,6 +1009,21 @@ defmodule LangChain.ChatModels.ChatAnthropic do
          )}
     end
   end
+
+  # Scan the accumulated streaming response body for error tuples. During
+  # streaming on a 200 connection, API error events (like overloaded_error)
+  # get accumulated into the body list as {:error, %LangChainError{}} tuples
+  # instead of being returned directly. This extracts the first such error.
+  defp extract_streaming_error(data) when is_list(data) do
+    data
+    |> List.flatten()
+    |> Enum.find_value(fn
+      {:error, %LangChainError{}} = error -> error
+      _ -> nil
+    end)
+  end
+
+  defp extract_streaming_error(_data), do: nil
 
   defp aws_sigv4_opts(nil), do: nil
   defp aws_sigv4_opts(%BedrockConfig{} = bedrock), do: BedrockConfig.aws_sigv4_opts(bedrock)

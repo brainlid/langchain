@@ -2008,6 +2008,31 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
       assert reason.message == "Overloaded (from test)"
     end
 
+    test "returns error when overloaded_error arrives as SSE event in streaming response" do
+      # Simulates the real streaming scenario: HTTP 200 succeeds, but an
+      # overloaded_error arrives as an SSE event. The streaming accumulator
+      # puts the {:error, error} tuple into the response body list.
+      error =
+        LangChainError.exception(
+          type: "overloaded_error",
+          message: "Overloaded",
+          original: %{
+            "type" => "error",
+            "error" => %{"type" => "overloaded_error", "message" => "Overloaded"}
+          }
+        )
+
+      expect(Req, :post, fn _req_struct, _opts ->
+        {:ok, %Req.Response{status: 200, body: [[{:error, error}]], headers: %{}}}
+      end)
+
+      model = ChatAnthropic.new!(%{stream: true, model: @test_model})
+      assert {:error, reason} = ChatAnthropic.call(model, "prompt", [])
+
+      assert reason.type == "overloaded_error"
+      assert reason.message == "Overloaded"
+    end
+
     for api <- @apis do
       Module.put_attribute(__MODULE__, :tag, {:"live_#{api}", true})
       @tag live_call: true, live_api: api
@@ -4739,6 +4764,44 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       # Message-level helper collects all citations
       all_citations = Message.all_citations(merged)
       assert length(all_citations) == 2
+    end
+  end
+
+  describe "retry_on_fallback?/1" do
+    test "returns true for overloaded (non-streaming HTTP 529 type)" do
+      assert ChatAnthropic.retry_on_fallback?(
+               LangChainError.exception(type: "overloaded", message: "Overloaded")
+             )
+    end
+
+    test "returns true for overloaded_error (streaming SSE event type)" do
+      assert ChatAnthropic.retry_on_fallback?(
+               LangChainError.exception(type: "overloaded_error", message: "Overloaded")
+             )
+    end
+
+    test "returns true for rate_limited" do
+      assert ChatAnthropic.retry_on_fallback?(
+               LangChainError.exception(type: "rate_limited", message: "Rate limited")
+             )
+    end
+
+    test "returns true for timeout" do
+      assert ChatAnthropic.retry_on_fallback?(
+               LangChainError.exception(type: "timeout", message: "Timed out")
+             )
+    end
+
+    test "returns false for invalid_request_error" do
+      refute ChatAnthropic.retry_on_fallback?(
+               LangChainError.exception(type: "invalid_request_error", message: "Bad request")
+             )
+    end
+
+    test "returns false for unknown error types" do
+      refute ChatAnthropic.retry_on_fallback?(
+               LangChainError.exception(type: "something_else", message: "Unknown")
+             )
     end
   end
 end
