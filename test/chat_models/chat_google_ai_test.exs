@@ -1989,6 +1989,31 @@ defmodule ChatModels.ChatGoogleAITest do
   end
 
   describe "parallel tool calls (non-streaming)" do
+    test "same tool called twice produces distinct call_ids" do
+      model = ChatGoogleAI.new!(%{})
+
+      response = %{
+        "candidates" => [
+          %{
+            "content" => %{
+              "role" => "model",
+              "parts" => [
+                %{"functionCall" => %{"name" => "read_thread", "args" => %{"thread_id" => "t1"}}},
+                %{"functionCall" => %{"name" => "read_thread", "args" => %{"thread_id" => "t2"}}}
+              ]
+            },
+            "finishReason" => "STOP"
+          }
+        ]
+      }
+
+      [message] = ChatGoogleAI.do_process_response(model, response)
+      assert %Message{tool_calls: [tc1, tc2]} = message
+      assert tc1.name == "read_thread"
+      assert tc2.name == "read_thread"
+      assert tc1.call_id != tc2.call_id, "parallel calls to same tool must have distinct call_ids"
+    end
+
     test "multiple functionCall parts get distinct indices" do
       model = ChatGoogleAI.new!(%{})
 

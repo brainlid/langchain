@@ -892,7 +892,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
         _
       ) do
     %{
-      call_id: "call-#{name}",
+      call_id: Ecto.UUID.generate(),
       name: name,
       arguments: raw_args,
       complete: true,
