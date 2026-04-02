@@ -1733,7 +1733,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
       assert {:error, %LangChain.LangChainError{message: "Retries exceeded. Connection failed."}} =
                ChatOpenAIResponses.call(model, "prompt", [])
 
-      # retry_count: 2 means 2 attempts before the 0 clause returns error
+      # retry_count: 2 = 2 total attempts (1 original + 1 retry)
       assert :counters.get(call_count, 1) == 2
     end
 

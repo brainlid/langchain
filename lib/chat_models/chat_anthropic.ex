@@ -503,8 +503,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     # Additional level of raw api request and response data
     field :verbose_api, :boolean, default: false
 
-    # Number of times to retry on closed connection errors. Each retry
-    # creates a fresh HTTP request. Set to 0 to disable retries entirely.
+    # Max number of API call attempts when a connection error occurs.
+    # Defaults to 3. Set to 1 to disable retries (single attempt only).
     field :retry_count, :integer, default: 3
 
     # Automatically cache messages in multi-turn conversations.
