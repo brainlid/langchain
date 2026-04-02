@@ -4767,6 +4767,54 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
     end
   end
 
+  describe "retry_count" do
+    test "defaults to 2" do
+      model = ChatAnthropic.new!(%{model: @test_model})
+      assert model.retry_count == 2
+    end
+
+    test "is configurable via new/1" do
+      model = ChatAnthropic.new!(%{model: @test_model, retry_count: 0})
+      assert model.retry_count == 0
+    end
+
+    test "retry_count controls the number of retries after the initial attempt" do
+      call_count = :counters.new(1, [])
+
+      stub(Req, :post, fn _req_struct ->
+        count = :counters.get(call_count, 1) + 1
+        :counters.put(call_count, 1, count)
+        {:error, %Req.TransportError{reason: :closed}}
+      end)
+
+      # retry_count: 2 = 1 initial attempt + 2 retries = 3 total HTTP requests
+      model = ChatAnthropic.new!(%{stream: false, model: @test_model, retry_count: 2})
+
+      assert {:error, %LangChainError{message: "Retries exceeded. Connection failed."}} =
+               ChatAnthropic.call(model, "prompt", [])
+
+      assert :counters.get(call_count, 1) == 3
+    end
+
+    test "retry_count: 0 makes one attempt with no retries" do
+      call_count = :counters.new(1, [])
+
+      stub(Req, :post, fn _req_struct ->
+        count = :counters.get(call_count, 1) + 1
+        :counters.put(call_count, 1, count)
+        {:error, %Req.TransportError{reason: :closed}}
+      end)
+
+      model = ChatAnthropic.new!(%{stream: false, model: @test_model, retry_count: 0})
+
+      assert {:error, %LangChainError{message: "Retries exceeded. Connection failed."}} =
+               ChatAnthropic.call(model, "prompt", [])
+
+      # Exactly 1 HTTP request, no retries
+      assert :counters.get(call_count, 1) == 1
+    end
+  end
+
   describe "retry_on_fallback?/1" do
     test "returns true for overloaded (non-streaming HTTP 529 type)" do
       assert ChatAnthropic.retry_on_fallback?(

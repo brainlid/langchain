@@ -21,6 +21,28 @@ defmodule LangChain.ChatModels.ChatOrq do
 
   Notes:
   - Azure is not supported.
+
+  ## Connection Retry Behavior
+
+  When a connection error occurs (e.g., a stale pooled connection is closed by
+  the server), LangChain automatically retries the request. The `retry_count`
+  option controls how many **retries** are made after the initial attempt:
+
+  | `retry_count` | Total HTTP requests |
+  |---|---|
+  | `0` | 1 (no retries) |
+  | `1` | 2 (1 initial + 1 retry) |
+  | `2` (default) | 3 (1 initial + 2 retries) |
+
+  This is separate from Req's built-in HTTP retry, which is disabled by default
+  to prevent the two retry layers from compounding.
+
+  When running LLM calls from a background job queue (e.g., Oban) that has its
+  own retry logic, set `retry_count: 0` to avoid hidden retries that compound
+  with the job-level retries:
+
+      ChatOrq.new!(%{model: "...", retry_count: 0})
+
   """
   use Ecto.Schema
   require Logger
