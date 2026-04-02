@@ -400,6 +400,31 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   - **Haiku considerations**: Haiku has a high minimum (4096 tokens) which can mean low initial utilization. However, enabling `:cache_messages` has minimal cost impact, so it's safe to enable.
   - **TTL tradeoff**: Default TTL is 5m (1.25x write cost). Setting TTL to 1h increases write cost to 3x but may improve utilization for longer sessions.
 
+  ## Connection Retry Behavior
+
+  The `retry_count` option controls how many times a request is retried when
+  a pooled HTTP connection turns out to be stale (server closed it between
+  requests). This is a transport-level issue where retrying with a fresh
+  connection is the correct response.
+
+  **Only closed-connection errors are retried.** Timeouts, rate limits (429),
+  overloaded (529), authentication errors, and invalid requests all return
+  immediately -- they are not problems that a simple retry will fix.
+
+  | `retry_count` | Total HTTP requests |
+  |---|---|
+  | `0` | 1 (no retries) |
+  | `1` | 2 (1 initial + 1 retry) |
+  | `2` (default) | 3 (1 initial + 2 retries) |
+
+  Req's built-in HTTP retry is disabled to prevent the two retry layers from
+  compounding. See [GitHub issue #503](https://github.com/brainlid/langchain/issues/503).
+
+  When running LLM calls from a background job queue (e.g., Oban) that has its
+  own retry logic, set `retry_count: 0` so there are no hidden retries:
+
+      ChatAnthropic.new!(%{model: "...", retry_count: 0})
+
   """
   use Ecto.Schema
   require Logger
@@ -503,6 +528,10 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     # Additional level of raw api request and response data
     field :verbose_api, :boolean, default: false
 
+    # Number of retries on closed-connection errors (stale pool). The initial
+    # request always runs; this controls additional attempts only.
+    field :retry_count, :integer, default: 2
+
     # Automatically cache messages in multi-turn conversations.
     # Set to %{enabled: true} to add cache_control to the last N user messages (default: 3).
     # Can include count: %{enabled: true, count: 2} (max: 4, default: 3)
@@ -541,6 +570,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     :tool_choice,
     :beta_headers,
     :verbose_api,
+    :retry_count,
     :cache_messages,
     :json_response,
     :json_schema,
@@ -787,7 +817,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   @doc false
   @spec do_api_request(t(), [Message.t()], ChatModel.tools(), non_neg_integer()) ::
           list() | struct() | {:error, LangChainError.t()} | no_return()
-  def do_api_request(anthropic, messages, tools, retry_count \\ 3)
+  def do_api_request(anthropic, messages, tools, retry_count \\ nil)
 
   def do_api_request(_anthropic, _messages, _functions, 0) do
     raise LangChainError,
@@ -801,6 +831,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         tools,
         retry_count
       ) do
+    retry_count = retry_count || anthropic.retry_count + 1
     raw_data = for_api(anthropic, messages, tools)
 
     if anthropic.verbose_api do
@@ -914,6 +945,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         tools,
         retry_count
       ) do
+    retry_count = retry_count || anthropic.retry_count + 1
     raw_data = for_api(anthropic, messages, tools)
 
     if anthropic.verbose_api do

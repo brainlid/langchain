@@ -87,6 +87,32 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
         model: "llama3.1:latest",
         endpoint: "http://my-ollama-host:11434/api/chat"
       })
+
+  ## Connection Retry Behavior
+
+  The `retry_count` option controls how many times a request is retried when
+  a pooled HTTP connection turns out to be stale (server closed it between
+  requests). This is a transport-level issue where retrying with a fresh
+  connection is the correct response.
+
+  **Only closed-connection errors are retried.** Timeouts, rate limits (429),
+  overloaded (529), authentication errors, and invalid requests all return
+  immediately -- they are not problems that a simple retry will fix.
+
+  | `retry_count` | Total HTTP requests |
+  |---|---|
+  | `0` | 1 (no retries) |
+  | `1` | 2 (1 initial + 1 retry) |
+  | `2` (default) | 3 (1 initial + 2 retries) |
+
+  Req's built-in HTTP retry is disabled to prevent the two retry layers from
+  compounding. See [GitHub issue #503](https://github.com/brainlid/langchain/issues/503).
+
+  When running LLM calls from a background job queue (e.g., Oban) that has its
+  own retry logic, set `retry_count: 0` so there are no hidden retries:
+
+      ChatOllamaAI.new!(%{model: "...", retry_count: 0})
+
   """
   use Ecto.Schema
   require Logger
@@ -133,7 +159,8 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
     :tfs_z,
     :top_k,
     :top_p,
-    :verbose_api
+    :verbose_api,
+    :retry_count
   ]
 
   @required_fields [:endpoint, :model]
@@ -227,6 +254,10 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
     # For help with debugging. It outputs the RAW Req response received and the
     # RAW Elixir map being submitted to the API.
     field :verbose_api, :boolean, default: false
+
+    # Number of retries on closed-connection errors (stale pool). The initial
+    # request always runs; this controls additional attempts only.
+    field :retry_count, :integer, default: 2
   end
 
   @doc """
@@ -484,7 +515,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   @doc false
   @spec do_api_request(t(), [Message.t()], ChatModel.tools(), integer()) ::
           list() | struct() | {:error, String.t()}
-  def do_api_request(ollama_ai, messages, tools, retry_count \\ 3)
+  def do_api_request(ollama_ai, messages, tools, retry_count \\ nil)
 
   def do_api_request(_ollama_ai, _messages, _tools, 0) do
     raise LangChainError, "Retries exceeded. Connection failed."
@@ -496,6 +527,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
         tools,
         retry_count
       ) do
+    retry_count = retry_count || ollama_ai.retry_count + 1
     raw_data = for_api(ollama_ai, messages, tools)
 
     if ollama_ai.verbose_api do
@@ -561,6 +593,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
         tools,
         retry_count
       ) do
+    retry_count = retry_count || ollama_ai.retry_count + 1
     raw_data = for_api(ollama_ai, messages, tools)
 
     if ollama_ai.verbose_api do

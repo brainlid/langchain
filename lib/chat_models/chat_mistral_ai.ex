@@ -71,6 +71,10 @@ defmodule LangChain.ChatModels.ChatMistralAI do
     # For help with debugging. It outputs the RAW Req response received and the
     # RAW Elixir map being submitted to the API.
     field :verbose_api, :boolean, default: false
+
+    # Number of retries on closed-connection errors (stale pool). The initial
+    # request always runs; this controls additional attempts only.
+    field :retry_count, :integer, default: 2
   end
 
   @type t :: %ChatMistralAI{}
@@ -90,7 +94,8 @@ defmodule LangChain.ChatModels.ChatMistralAI do
     :json_schema,
     :json_response,
     :parallel_tool_calls,
-    :verbose_api
+    :verbose_api,
+    :retry_count
   ]
   @required_fields [
     :model
@@ -395,7 +400,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
   @doc false
   @spec do_api_request(t(), [Message.t()], ChatModel.tools(), integer()) ::
           list() | struct() | {:error, LangChainError.t()}
-  def do_api_request(openai, messages, tools, retry_count \\ 3)
+  def do_api_request(openai, messages, tools, retry_count \\ nil)
 
   def do_api_request(_mistralai, _messages, _tools, 0) do
     raise LangChainError, "Retries exceeded. Connection failed."
@@ -407,6 +412,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
         tools,
         retry_count
       ) do
+    retry_count = retry_count || mistralai.retry_count + 1
     raw_data = for_api(mistralai, messages, tools)
 
     req =
@@ -472,6 +478,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
         tools,
         retry_count
       ) do
+    retry_count = retry_count || mistralai.retry_count + 1
     raw_data = for_api(mistralai, messages, tools)
 
     req =
