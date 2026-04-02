@@ -594,7 +594,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       when is_list(content) do
     %{
       "role" => msg.role,
-      "content" => Enum.map(content, &for_api(model, &1))
+      "content" => content_parts_for_api(model, content)
     }
     |> Utils.conditionally_add_to_map("name", msg.name)
   end
@@ -654,6 +654,13 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   @doc """
   Convert a list of ContentParts to the expected map of data for the OpenAI API.
   """
+  def content_parts_for_api(%_{} = _model, [%ContentPart{type: :text} = part]) do
+    # Single text-only content → plain string for maximum compatibility
+    # with OpenAI-compatible servers (MLX, llama.cpp, Ollama) that reject
+    # the array-of-objects format.
+    part.content
+  end
+
   def content_parts_for_api(%_{} = model, content_parts) when is_list(content_parts) do
     Enum.map(content_parts, &content_part_for_api(model, &1))
   end

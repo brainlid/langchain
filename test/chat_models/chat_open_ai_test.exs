@@ -399,7 +399,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       [json] = ChatOpenAI.for_api(ChatOpenAI.new!(), msg)
 
       assert json == %{
-               "content" => [%{"text" => "Hello World!", "type" => "text"}],
+               "content" => "Hello World!",
                "tool_call_id" => "tool_abc123",
                "role" => :tool
              }
@@ -429,19 +429,19 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       [r1, r2, r3] = list
 
       assert r1 == %{
-               "content" => [%{"text" => "Hello World!", "type" => "text"}],
+               "content" => "Hello World!",
                "tool_call_id" => "tool_abc123",
                "role" => :tool
              }
 
       assert r2 == %{
-               "content" => [%{"text" => "Hello", "type" => "text"}],
+               "content" => "Hello",
                "tool_call_id" => "tool_abc234",
                "role" => :tool
              }
 
       assert r3 == %{
-               "content" => [%{"text" => "World!", "type" => "text"}],
+               "content" => "World!",
                "tool_call_id" => "tool_abc345",
                "role" => :tool
              }
@@ -558,7 +558,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     test "turns a basic user message into the expected JSON format" do
       openai = ChatOpenAI.new!()
 
-      expected = %{"role" => :user, "content" => [%{"type" => "text", "text" => "Hi."}]}
+      expected = %{"role" => :user, "content" => "Hi."}
       result = ChatOpenAI.for_api(openai, Message.new_user!("Hi."))
       assert result == expected
     end
@@ -568,7 +568,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
 
       expected = %{
         "role" => :user,
-        "content" => [%{"type" => "text", "text" => "Hi."}],
+        "content" => "Hi.",
         "name" => "Harold"
       }
 
@@ -582,7 +582,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       openai = ChatOpenAI.new!()
 
       # NOTE: Does not include tool_calls if empty
-      expected = %{"role" => :assistant, "content" => [%{"type" => "text", "text" => "Hi."}]}
+      expected = %{"role" => :assistant, "content" => "Hi."}
 
       result =
         ChatOpenAI.for_api(openai, Message.new_assistant!(%{content: "Hi.", tool_calls: []}))
@@ -641,7 +641,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       json = ChatOpenAI.for_api(openai, result)
 
       assert json == %{
-               "content" => [%{"text" => "Hello World!", "type" => "text"}],
+               "content" => "Hello World!",
                "tool_call_id" => "tool_abc123",
                "role" => :tool
              }
