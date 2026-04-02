@@ -2396,6 +2396,26 @@ defmodule LangChain.Chains.LLMChainTest do
       assert %LLMChain{} = returned_chain
     end
 
+    test "with_fallbacks: passes through {:ok, chain, extra} without retrying" do
+      # The custom mode returns {:ok, chain, extra} (3-tuple) without calling the LLM.
+      # This is used by Steps.check_until_tool when a target tool is found.
+
+      chain =
+        %{llm: ChatOpenAI.new!(%{stream: false})}
+        |> LLMChain.new!()
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Do something"))
+
+      {:ok, returned_chain, returned_extra} =
+        LLMChain.run(chain,
+          mode: LangChain.Test.OkExtraMode,
+          with_fallbacks: [ChatAnthropic.new!(%{stream: false})]
+        )
+
+      assert %LLMChain{} = returned_chain
+      assert returned_extra == %{tool_result: "found_it"}
+    end
+
     test "returns error when LLM produces an empty response (no messages or deltas)", %{
       chain: chain
     } do

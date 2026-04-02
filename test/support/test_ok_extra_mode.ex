@@ -1,9 +1,9 @@
-defmodule LangChain.Test.InterruptMode do
+defmodule LangChain.Test.OkExtraMode do
   @moduledoc false
   @behaviour LangChain.Chains.LLMChain.Mode
 
   @impl true
   def run(chain, _opts) do
-    {:interrupt, chain, %{reason: "needs_approval"}}
+    {:ok, chain, %{tool_result: "found_it"}}
   end
 end

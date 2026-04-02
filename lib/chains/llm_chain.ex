@@ -705,8 +705,11 @@ defmodule LangChain.Chains.LLMChain do
 
     try do
       case run_fn.(use_chain) do
-        {:ok, result} ->
-          {:ok, result}
+        {:ok, _chain} = ok ->
+          ok
+
+        {:ok, _chain, _extra} = ok ->
+          ok
 
         {:interrupt, _chain, _data} = interrupt ->
           # Interrupt is a deliberate pause for human-in-the-loop or similar
