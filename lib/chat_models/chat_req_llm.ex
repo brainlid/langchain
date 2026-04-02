@@ -104,6 +104,10 @@ if Code.ensure_loaded?(ReqLLM) do
       # Log raw req_llm requests/responses for debugging
       field :verbose_api, :boolean, default: false
 
+      # Number of times to retry on closed connection errors. Each retry
+      # creates a fresh HTTP request. Set to 0 to disable retries entirely.
+      field :retry_count, :integer, default: 3
+
       # Req options merged into the underlying Req.Request (advanced use)
       field :req_opts, :any, virtual: true, default: []
     end
@@ -120,6 +124,7 @@ if Code.ensure_loaded?(ReqLLM) do
       :receive_timeout,
       :provider_opts,
       :verbose_api,
+      :retry_count,
       :req_opts
     ]
 
@@ -240,7 +245,7 @@ if Code.ensure_loaded?(ReqLLM) do
     @doc false
     @spec do_api_request(t(), [Message.t()], ChatModel.tools(), non_neg_integer()) ::
             Message.t() | {:error, LangChainError.t()} | no_return()
-    def do_api_request(model, messages, tools, retry_count \\ 3)
+    def do_api_request(model, messages, tools, retry_count \\ nil)
 
     def do_api_request(_model, _messages, _tools, 0) do
       raise LangChainError,
@@ -249,6 +254,7 @@ if Code.ensure_loaded?(ReqLLM) do
     end
 
     def do_api_request(%ChatReqLLM{stream: false} = model, messages, tools, retry_count) do
+      retry_count = retry_count || model.retry_count
       context = messages_to_req_llm_context(messages)
       req_llm_tools = functions_to_req_llm_tools(tools)
       opts = build_req_llm_opts(model, req_llm_tools)
@@ -303,6 +309,7 @@ if Code.ensure_loaded?(ReqLLM) do
     end
 
     def do_api_request(%ChatReqLLM{stream: true} = model, messages, tools, retry_count) do
+      retry_count = retry_count || model.retry_count
       context = messages_to_req_llm_context(messages)
       req_llm_tools = functions_to_req_llm_tools(tools)
       opts = build_req_llm_opts(model, req_llm_tools)

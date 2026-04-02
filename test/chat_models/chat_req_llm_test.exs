@@ -760,6 +760,23 @@ if Code.ensure_loaded?(ReqLLM) do
         assert {:ok, %Message{}} = ChatReqLLM.call(model, "Test", [])
       end
 
+      test "retry_count is configurable and limits :closed retries" do
+        call_count = :counters.new(1, [])
+
+        stub(ReqLLM, :generate_text, fn _model_spec, _context, _opts ->
+          count = :counters.get(call_count, 1) + 1
+          :counters.put(call_count, 1, count)
+          {:error, %Req.TransportError{reason: :closed}}
+        end)
+
+        model = ChatReqLLM.new!(%{model: "anthropic:claude-haiku-4-5", retry_count: 1})
+
+        assert {:error, %LangChainError{message: "Retries exceeded. Connection failed."}} =
+                 ChatReqLLM.call(model, "Test", [])
+
+        assert :counters.get(call_count, 1) == 1
+      end
+
       test "fires on_llm_new_message callback on success", %{model: model} do
         test_pid = self()
 

@@ -503,6 +503,10 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     # Additional level of raw api request and response data
     field :verbose_api, :boolean, default: false
 
+    # Number of times to retry on closed connection errors. Each retry
+    # creates a fresh HTTP request. Set to 0 to disable retries entirely.
+    field :retry_count, :integer, default: 3
+
     # Automatically cache messages in multi-turn conversations.
     # Set to %{enabled: true} to add cache_control to the last N user messages (default: 3).
     # Can include count: %{enabled: true, count: 2} (max: 4, default: 3)
@@ -541,6 +545,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     :tool_choice,
     :beta_headers,
     :verbose_api,
+    :retry_count,
     :cache_messages,
     :json_response,
     :json_schema,
@@ -787,7 +792,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   @doc false
   @spec do_api_request(t(), [Message.t()], ChatModel.tools(), non_neg_integer()) ::
           list() | struct() | {:error, LangChainError.t()} | no_return()
-  def do_api_request(anthropic, messages, tools, retry_count \\ 3)
+  def do_api_request(anthropic, messages, tools, retry_count \\ nil)
 
   def do_api_request(_anthropic, _messages, _functions, 0) do
     raise LangChainError,
@@ -801,6 +806,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         tools,
         retry_count
       ) do
+    retry_count = retry_count || anthropic.retry_count
     raw_data = for_api(anthropic, messages, tools)
 
     if anthropic.verbose_api do
@@ -914,6 +920,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         tools,
         retry_count
       ) do
+    retry_count = retry_count || anthropic.retry_count
     raw_data = for_api(anthropic, messages, tools)
 
     if anthropic.verbose_api do

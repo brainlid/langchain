@@ -91,6 +91,9 @@ defmodule LangChain.Images.ModelsLabImage do
 
     # Optional seed for reproducible results.
     field :seed, :integer
+
+    # Number of times to retry on closed connection errors.
+    field :retry_count, :integer, default: 3
   end
 
   @type t :: %ModelsLabImage{}
@@ -107,7 +110,8 @@ defmodule LangChain.Images.ModelsLabImage do
     :samples,
     :num_inference_steps,
     :guidance_scale,
-    :seed
+    :seed,
+    :retry_count
   ]
   @required_fields [:endpoint, :model, :prompt]
 
@@ -200,13 +204,15 @@ defmodule LangChain.Images.ModelsLabImage do
   @doc false
   @spec do_api_request(t(), retry_count :: integer()) ::
           {:ok, [GeneratedImage.t()]} | {:error, String.t()}
-  def do_api_request(ml_image, retry_count \\ 3)
+  def do_api_request(ml_image, retry_count \\ nil)
 
   def do_api_request(_ml_image, 0) do
     raise LangChainError, "Retries exceeded. Connection failed."
   end
 
   def do_api_request(%ModelsLabImage{} = ml_image, retry_count) do
+    retry_count = retry_count || ml_image.retry_count
+
     req =
       Req.new(
         url: ml_image.endpoint,

@@ -78,6 +78,9 @@ defmodule LangChain.Images.OpenAIImage do
     # A unique identifier representing your end-user, which can help OpenAI to
     # monitor and detect abuse
     field :user, :string
+
+    # Number of times to retry on closed connection errors.
+    field :retry_count, :integer, default: 3
   end
 
   @type t :: %OpenAIImage{}
@@ -94,7 +97,8 @@ defmodule LangChain.Images.OpenAIImage do
     :output_format,
     :size,
     :style,
-    :user
+    :user,
+    :retry_count
   ]
   @required_fields [:endpoint, :model, :prompt]
 
@@ -236,13 +240,15 @@ defmodule LangChain.Images.OpenAIImage do
   # Retries the request up to 3 times on transient errors with a brief delay
   @doc false
   @spec do_api_request(t(), retry_count :: integer()) :: {:ok, list()} | {:error, String.t()}
-  def do_api_request(openai, retry_count \\ 3)
+  def do_api_request(openai, retry_count \\ nil)
 
   def do_api_request(_openai, 0) do
     raise LangChainError, "Retries exceeded. Connection failed."
   end
 
   def do_api_request(%OpenAIImage{} = openai, retry_count) do
+    retry_count = retry_count || openai.retry_count
+
     req =
       Req.new(
         url: openai.endpoint,

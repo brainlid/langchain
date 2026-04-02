@@ -116,6 +116,10 @@ defmodule LangChain.ChatModels.ChatPerplexity do
     # For help with debugging. It outputs the RAW Req response received and the
     # RAW Elixir map being submitted to the API.
     field :verbose_api, :boolean, default: false
+
+    # Number of times to retry on closed connection errors. Each retry
+    # creates a fresh HTTP request. Set to 0 to disable retries entirely.
+    field :retry_count, :integer, default: 3
   end
 
   @type t :: %ChatPerplexity{}
@@ -137,7 +141,8 @@ defmodule LangChain.ChatModels.ChatPerplexity do
     :search_recency_filter,
     :response_format,
     :receive_timeout,
-    :verbose_api
+    :verbose_api,
+    :retry_count
   ]
 
   @required_fields [:model]
@@ -362,7 +367,7 @@ defmodule LangChain.ChatModels.ChatPerplexity do
   @doc false
   @spec do_api_request(t(), [Message.t()], ChatModel.tools(), integer()) ::
           list() | struct() | {:error, LangChainError.t()}
-  def do_api_request(perplexity, messages, tools, retry_count \\ 3)
+  def do_api_request(perplexity, messages, tools, retry_count \\ nil)
 
   def do_api_request(_perplexity, _messages, _tools, 0) do
     raise LangChainError, "Retries exceeded. Connection failed."
@@ -374,6 +379,8 @@ defmodule LangChain.ChatModels.ChatPerplexity do
         tools,
         retry_count
       ) do
+    retry_count = retry_count || perplexity.retry_count
+
     req =
       Req.new(
         url: perplexity.endpoint,
@@ -432,6 +439,8 @@ defmodule LangChain.ChatModels.ChatPerplexity do
         tools,
         retry_count
       ) do
+    retry_count = retry_count || perplexity.retry_count
+
     Req.new(
       url: perplexity.endpoint,
       json: for_api(perplexity, messages, tools),

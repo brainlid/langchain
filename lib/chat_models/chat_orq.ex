@@ -89,6 +89,10 @@ defmodule LangChain.ChatModels.ChatOrq do
     # For help with debugging. It outputs the RAW Req response received and the
     # RAW Elixir map being submitted to the API.
     field :verbose_api, :boolean, default: false
+
+    # Number of times to retry on closed connection errors. Each retry
+    # creates a fresh HTTP request. Set to 0 to disable retries entirely.
+    field :retry_count, :integer, default: 3
   end
 
   @type t :: %ChatOrq{}
@@ -113,7 +117,8 @@ defmodule LangChain.ChatModels.ChatOrq do
     :thread,
     :knowledge_filter,
     :callbacks,
-    :verbose_api
+    :verbose_api,
+    :retry_count
   ]
   @required_fields [:endpoint, :stream_endpoint, :key]
 
@@ -583,7 +588,7 @@ defmodule LangChain.ChatModels.ChatOrq do
   @doc false
   @spec do_api_request(t(), [Message.t()], ChatModel.tools(), integer()) ::
           list() | struct() | {:error, LangChainError.t()}
-  def do_api_request(orq, messages, tools, retry_count \\ 3)
+  def do_api_request(orq, messages, tools, retry_count \\ nil)
 
   def do_api_request(_orq, _messages, _tools, 0) do
     raise LangChainError, "Retries exceeded. Connection failed."
@@ -595,6 +600,7 @@ defmodule LangChain.ChatModels.ChatOrq do
         tools,
         retry_count
       ) do
+    retry_count = retry_count || orq.retry_count
     raw_data = for_api(orq, messages, tools)
 
     if orq.verbose_api do
@@ -684,6 +690,7 @@ defmodule LangChain.ChatModels.ChatOrq do
         tools,
         retry_count
       ) do
+    retry_count = retry_count || orq.retry_count
     raw_data = for_api(orq, messages, tools)
 
     if orq.verbose_api do

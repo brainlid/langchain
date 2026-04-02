@@ -1708,6 +1708,53 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
     end
   end
 
+  describe "retry_count" do
+    test "defaults to 3" do
+      model = ChatOpenAIResponses.new!(%{model: @test_model})
+      assert model.retry_count == 3
+    end
+
+    test "is configurable via new/1" do
+      model = ChatOpenAIResponses.new!(%{model: @test_model, retry_count: 1})
+      assert model.retry_count == 1
+    end
+
+    test "retries on :closed up to retry_count times" do
+      call_count = :counters.new(1, [])
+
+      stub(Req, :post, fn _req_struct ->
+        count = :counters.get(call_count, 1) + 1
+        :counters.put(call_count, 1, count)
+        {:error, %Req.TransportError{reason: :closed}}
+      end)
+
+      model = ChatOpenAIResponses.new!(%{stream: false, model: @test_model, retry_count: 2})
+
+      assert {:error, %LangChain.LangChainError{message: "Retries exceeded. Connection failed."}} =
+               ChatOpenAIResponses.call(model, "prompt", [])
+
+      # retry_count: 2 means 2 attempts before the 0 clause returns error
+      assert :counters.get(call_count, 1) == 2
+    end
+
+    test "retry_count: 1 makes a single attempt then fails on :closed" do
+      call_count = :counters.new(1, [])
+
+      stub(Req, :post, fn _req_struct ->
+        count = :counters.get(call_count, 1) + 1
+        :counters.put(call_count, 1, count)
+        {:error, %Req.TransportError{reason: :closed}}
+      end)
+
+      model = ChatOpenAIResponses.new!(%{stream: false, model: @test_model, retry_count: 1})
+
+      assert {:error, %LangChain.LangChainError{message: "Retries exceeded. Connection failed."}} =
+               ChatOpenAIResponses.call(model, "prompt", [])
+
+      assert :counters.get(call_count, 1) == 1
+    end
+  end
+
   describe "req_config" do
     test "disables Req-level retry by default to avoid compounding with LangChain retries" do
       expect(Req, :post, fn req_struct ->

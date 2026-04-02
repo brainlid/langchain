@@ -356,6 +356,10 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     # RAW Elixir map being submitted to the API.
     field :verbose_api, :boolean, default: false
 
+    # Number of times to retry on closed connection errors. Each retry
+    # creates a fresh HTTP request. Set to 0 to disable retries entirely.
+    field :retry_count, :integer, default: 3
+
     # Req options to merge into the request.
     # Refer to `https://hexdocs.pm/req/Req.html#new/1-options` for
     # `Req.new` supported set of options.
@@ -388,6 +392,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     :logprobs,
     :top_logprobs,
     :verbose_api,
+    :retry_count,
     :req_config
   ]
   @required_fields [:endpoint, :model]
@@ -836,7 +841,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   @doc false
   @spec do_api_request(t(), [Message.t()], ChatModel.tools(), integer()) ::
           list() | struct() | {:error, LangChainError.t()}
-  def do_api_request(openai, messages, tools, retry_count \\ 3)
+  def do_api_request(openai, messages, tools, retry_count \\ nil)
 
   def do_api_request(_openai, _messages, _tools, 0) do
     raise LangChainError, "Retries exceeded. Connection failed."
@@ -848,6 +853,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         tools,
         retry_count
       ) do
+    retry_count = retry_count || openai.retry_count
     raw_data = for_api(openai, messages, tools)
 
     if openai.verbose_api do
@@ -929,6 +935,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         tools,
         retry_count
       ) do
+    retry_count = retry_count || openai.retry_count
     raw_data = for_api(openai, messages, tools)
 
     if openai.verbose_api do
