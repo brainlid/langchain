@@ -2354,6 +2354,68 @@ defmodule LangChain.Chains.LLMChainTest do
       assert_received :before_fallback_fired
     end
 
+    test "with_fallbacks: passes through {:interrupt, chain, data} without retrying" do
+      # The custom mode returns {:interrupt, ...} without calling the LLM.
+      # This should pass through immediately, not be treated as an error.
+      # If the interrupt were incorrectly retried, the fallback LLM would be called.
+
+      chain =
+        %{llm: ChatOpenAI.new!(%{stream: false})}
+        |> LLMChain.new!()
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Do something"))
+
+      interrupt_data = %{reason: "needs_approval"}
+
+      {:interrupt, returned_chain, returned_data} =
+        LLMChain.run(chain,
+          mode: LangChain.Test.InterruptMode,
+          with_fallbacks: [ChatAnthropic.new!(%{stream: false})]
+        )
+
+      assert %LLMChain{} = returned_chain
+      assert returned_data == interrupt_data
+    end
+
+    test "with_fallbacks: passes through {:pause, chain} without retrying" do
+      # The custom mode returns {:pause, ...} without calling the LLM.
+      # This should pass through immediately, not be treated as an error.
+
+      chain =
+        %{llm: ChatOpenAI.new!(%{stream: false})}
+        |> LLMChain.new!()
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Do something"))
+
+      {:pause, returned_chain} =
+        LLMChain.run(chain,
+          mode: LangChain.Test.PauseMode,
+          with_fallbacks: [ChatAnthropic.new!(%{stream: false})]
+        )
+
+      assert %LLMChain{} = returned_chain
+    end
+
+    test "with_fallbacks: passes through {:ok, chain, extra} without retrying" do
+      # The custom mode returns {:ok, chain, extra} (3-tuple) without calling the LLM.
+      # This is used by Steps.check_until_tool when a target tool is found.
+
+      chain =
+        %{llm: ChatOpenAI.new!(%{stream: false})}
+        |> LLMChain.new!()
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Do something"))
+
+      {:ok, returned_chain, returned_extra} =
+        LLMChain.run(chain,
+          mode: LangChain.Test.OkExtraMode,
+          with_fallbacks: [ChatAnthropic.new!(%{stream: false})]
+        )
+
+      assert %LLMChain{} = returned_chain
+      assert returned_extra == %{tool_result: "found_it"}
+    end
+
     test "returns error when LLM produces an empty response (no messages or deltas)", %{
       chain: chain
     } do

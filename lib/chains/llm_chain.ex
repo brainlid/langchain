@@ -705,8 +705,21 @@ defmodule LangChain.Chains.LLMChain do
 
     try do
       case run_fn.(use_chain) do
-        {:ok, result} ->
-          {:ok, result}
+        {:ok, _chain} = ok ->
+          ok
+
+        {:ok, _chain, _extra} = ok ->
+          ok
+
+        {:interrupt, _chain, _data} = interrupt ->
+          # Interrupt is a deliberate pause for human-in-the-loop or similar
+          # workflows. It is not an error and should not be retried.
+          interrupt
+
+        {:pause, _chain} = pause ->
+          # Pause is a clean checkpoint that can be resumed later.
+          # It is not an error and should not be retried.
+          pause
 
         {:error, _error_chain, reason} = error ->
           # Check with the chat model if this error should be retried on a
