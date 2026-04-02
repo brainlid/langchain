@@ -1709,9 +1709,9 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
   end
 
   describe "retry_count" do
-    test "defaults to 3" do
+    test "defaults to 2" do
       model = ChatOpenAIResponses.new!(%{model: @test_model})
-      assert model.retry_count == 3
+      assert model.retry_count == 2
     end
 
     test "is configurable via new/1" do
@@ -1719,7 +1719,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
       assert model.retry_count == 1
     end
 
-    test "retries on :closed up to retry_count times" do
+    test "retry_count controls the number of retries after the initial attempt" do
       call_count = :counters.new(1, [])
 
       stub(Req, :post, fn _req_struct ->
@@ -1728,16 +1728,16 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
         {:error, %Req.TransportError{reason: :closed}}
       end)
 
+      # retry_count: 2 = 1 initial attempt + 2 retries = 3 total HTTP requests
       model = ChatOpenAIResponses.new!(%{stream: false, model: @test_model, retry_count: 2})
 
       assert {:error, %LangChain.LangChainError{message: "Retries exceeded. Connection failed."}} =
                ChatOpenAIResponses.call(model, "prompt", [])
 
-      # retry_count: 2 = 2 total attempts (1 original + 1 retry)
-      assert :counters.get(call_count, 1) == 2
+      assert :counters.get(call_count, 1) == 3
     end
 
-    test "retry_count: 1 makes a single attempt then fails on :closed" do
+    test "retry_count: 0 makes one attempt with no retries" do
       call_count = :counters.new(1, [])
 
       stub(Req, :post, fn _req_struct ->
@@ -1746,11 +1746,12 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
         {:error, %Req.TransportError{reason: :closed}}
       end)
 
-      model = ChatOpenAIResponses.new!(%{stream: false, model: @test_model, retry_count: 1})
+      model = ChatOpenAIResponses.new!(%{stream: false, model: @test_model, retry_count: 0})
 
       assert {:error, %LangChain.LangChainError{message: "Retries exceeded. Connection failed."}} =
                ChatOpenAIResponses.call(model, "prompt", [])
 
+      # Exactly 1 HTTP request, no retries
       assert :counters.get(call_count, 1) == 1
     end
   end

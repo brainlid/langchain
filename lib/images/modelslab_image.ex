@@ -92,8 +92,8 @@ defmodule LangChain.Images.ModelsLabImage do
     # Optional seed for reproducible results.
     field :seed, :integer
 
-    # Max number of API call attempts when a connection error occurs.
-    field :retry_count, :integer, default: 3
+    # Number of retries when a connection error occurs. The initial request
+    field :retry_count, :integer, default: 2
   end
 
   @type t :: %ModelsLabImage{}
@@ -211,7 +211,7 @@ defmodule LangChain.Images.ModelsLabImage do
   end
 
   def do_api_request(%ModelsLabImage{} = ml_image, retry_count) do
-    retry_count = retry_count || ml_image.retry_count
+    retry_count = retry_count || ml_image.retry_count + 1
 
     req =
       Req.new(

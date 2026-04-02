@@ -117,9 +117,9 @@ defmodule LangChain.ChatModels.ChatPerplexity do
     # RAW Elixir map being submitted to the API.
     field :verbose_api, :boolean, default: false
 
-    # Max number of API call attempts when a connection error occurs.
-    # Defaults to 3. Set to 1 to disable retries (single attempt only).
-    field :retry_count, :integer, default: 3
+    # Number of retries when a connection error occurs. The initial request
+    # always runs; this controls additional attempts. Set to 0 for no retries.
+    field :retry_count, :integer, default: 2
   end
 
   @type t :: %ChatPerplexity{}
@@ -379,7 +379,7 @@ defmodule LangChain.ChatModels.ChatPerplexity do
         tools,
         retry_count
       ) do
-    retry_count = retry_count || perplexity.retry_count
+    retry_count = retry_count || perplexity.retry_count + 1
 
     req =
       Req.new(
@@ -439,7 +439,7 @@ defmodule LangChain.ChatModels.ChatPerplexity do
         tools,
         retry_count
       ) do
-    retry_count = retry_count || perplexity.retry_count
+    retry_count = retry_count || perplexity.retry_count + 1
 
     Req.new(
       url: perplexity.endpoint,

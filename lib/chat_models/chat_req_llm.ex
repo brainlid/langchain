@@ -104,9 +104,9 @@ if Code.ensure_loaded?(ReqLLM) do
       # Log raw req_llm requests/responses for debugging
       field :verbose_api, :boolean, default: false
 
-      # Max number of API call attempts when a connection error occurs.
-      # Defaults to 3. Set to 1 to disable retries (single attempt only).
-      field :retry_count, :integer, default: 3
+      # Number of retries when a connection error occurs. The initial request
+      # always runs; this controls additional attempts. Set to 0 for no retries.
+      field :retry_count, :integer, default: 2
 
       # Req options merged into the underlying Req.Request (advanced use)
       field :req_opts, :any, virtual: true, default: []
@@ -254,7 +254,7 @@ if Code.ensure_loaded?(ReqLLM) do
     end
 
     def do_api_request(%ChatReqLLM{stream: false} = model, messages, tools, retry_count) do
-      retry_count = retry_count || model.retry_count
+      retry_count = retry_count || model.retry_count + 1
       context = messages_to_req_llm_context(messages)
       req_llm_tools = functions_to_req_llm_tools(tools)
       opts = build_req_llm_opts(model, req_llm_tools)
@@ -309,7 +309,7 @@ if Code.ensure_loaded?(ReqLLM) do
     end
 
     def do_api_request(%ChatReqLLM{stream: true} = model, messages, tools, retry_count) do
-      retry_count = retry_count || model.retry_count
+      retry_count = retry_count || model.retry_count + 1
       context = messages_to_req_llm_context(messages)
       req_llm_tools = functions_to_req_llm_tools(tools)
       opts = build_req_llm_opts(model, req_llm_tools)

@@ -79,8 +79,8 @@ defmodule LangChain.Images.OpenAIImage do
     # monitor and detect abuse
     field :user, :string
 
-    # Max number of API call attempts when a connection error occurs.
-    field :retry_count, :integer, default: 3
+    # Number of retries when a connection error occurs. The initial request
+    field :retry_count, :integer, default: 2
   end
 
   @type t :: %OpenAIImage{}
@@ -247,7 +247,7 @@ defmodule LangChain.Images.OpenAIImage do
   end
 
   def do_api_request(%OpenAIImage{} = openai, retry_count) do
-    retry_count = retry_count || openai.retry_count
+    retry_count = retry_count || openai.retry_count + 1
 
     req =
       Req.new(
