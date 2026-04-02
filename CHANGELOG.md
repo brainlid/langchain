@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.7.0
+
+### Changed
+
+- **Req-level HTTP retry disabled by default**: All chat model and image generator modules now set `retry: false` on Req HTTP requests. Previously, Req's `retry: :transient` (up to 3 retries) compounded with LangChain's own connection retry, potentially causing up to 12 HTTP requests per call. Server errors (503/429) now bubble up immediately to the caller, which is the correct behavior for applications using job queues like Oban with proper backoff strategies. The `req_config` option can still be used to re-enable Req retry if needed https://github.com/brainlid/langchain/pull/504
+
+### Added
+
+- **Configurable `retry_count` on chat models**: All chat model and image generator structs now expose a `retry_count` field (default: `2`) controlling how many times LangChain retries on connection errors. Set `retry_count: 0` to disable retries entirely and let your application's job queue handle retry strategy. Default behavior is unchanged (1 initial attempt + 2 retries = 3 total requests) https://github.com/brainlid/langchain/pull/505
+- **WebSocket transport for `ChatOpenAIResponses`**: New optional WebSocket transport allows requests over a persistent connection instead of HTTP. Includes a generic `LangChain.WebSocket` client GenServer built on `mint_web_socket`. Use `connect_websocket!/1` and `disconnect_websocket!/1` to manage the lifecycle. Best suited for short-lived, synchronous sessions -- not for long-lived agents or HITL workflows https://github.com/brainlid/langchain/pull/497
+- **Streaming tool calls for `ChatOllamaAI`**: Tool calls in streaming responses are now correctly handled instead of being silently dropped. Supports both complete and incomplete tool call responses https://github.com/brainlid/langchain/pull/498
+- **Regression tests for DeepSeek streaming token usage**: Added test coverage for the DeepSeek streaming format where usage data arrives bundled in the final chunk alongside non-empty choices, verifying existing code handles both DeepSeek and OpenAI formats correctly https://github.com/brainlid/langchain/pull/499
+
+### Fixed
+
+- **`{:interrupt, ...}` and `{:pause, ...}` with fallback LLMs**: These valid execution results from HITL middleware now pass through `try_chain_with_llm/4` correctly instead of causing a `CaseClauseError` or being incorrectly retried on fallback models. Fallback models and HITL interrupts are no longer mutually exclusive https://github.com/brainlid/langchain/pull/502
+- **Streaming `overloaded_error` from Anthropic API**: When Anthropic sends an `overloaded_error` as an SSE event during streaming on a 200 connection, it is now extracted and returned as a proper `{:error, %LangChainError{}}` instead of causing a crash. The `"overloaded_error"` type is also now recognized by `retry_on_fallback?/1` for fallback model retry https://github.com/brainlid/langchain/pull/500
+
 ## v0.6.3
 
 ### Added
