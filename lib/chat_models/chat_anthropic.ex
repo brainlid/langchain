@@ -813,9 +813,9 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         json: raw_data,
         headers: headers(anthropic),
         receive_timeout: anthropic.receive_timeout,
-        retry: :transient,
-        max_retries: 3,
-        retry_delay: fn attempt -> 300 * attempt end,
+        # Disable Req-level retry to prevent compounding with LangChain's own
+        # :closed retry. See https://github.com/brainlid/langchain/issues/503
+        retry: false,
         aws_sigv4: aws_sigv4_opts(anthropic.bedrock)
       )
       |> Req.merge(anthropic.req_opts)
@@ -932,7 +932,9 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       headers: headers(anthropic),
       receive_timeout: anthropic.receive_timeout,
       aws_sigv4: aws_sigv4_opts(anthropic.bedrock),
-      retry: :transient
+      # Disable Req-level retry to prevent compounding with LangChain's own
+      # :closed retry. See https://github.com/brainlid/langchain/issues/503
+      retry: false
     )
     |> Req.merge(anthropic.req_opts)
     |> Req.post(

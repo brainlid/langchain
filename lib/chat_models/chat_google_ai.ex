@@ -553,9 +553,9 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
         url: build_url(google_ai),
         json: for_api(google_ai, messages, tools),
         receive_timeout: google_ai.receive_timeout,
-        retry: :transient,
-        max_retries: 3,
-        retry_delay: fn attempt -> 300 * attempt end
+        # Disable Req-level retry to prevent compounding with LangChain's own
+        # :closed retry. See https://github.com/brainlid/langchain/issues/503
+        retry: false
       )
       |> Req.merge(google_ai.req_config |> Keyword.new())
 

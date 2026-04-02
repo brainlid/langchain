@@ -1709,9 +1709,26 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
   end
 
   describe "req_config" do
+    test "disables Req-level retry by default to avoid compounding with LangChain retries" do
+      expect(Req, :post, fn req_struct ->
+        # Req retry must be disabled by default. LangChain has its own retry on
+        # :closed (stale pooled connections). If Req also retries :closed, 503, and
+        # 429, a single call can produce up to 12 HTTP requests (3 LangChain retries
+        # x 4 Req attempts). Server errors should bubble up to the caller (e.g. Oban)
+        # who has the context for proper backoff. See GitHub issue #503.
+        assert req_struct.options.retry == false
+
+        {:error, RuntimeError.exception("Something went wrong")}
+      end)
+
+      model = ChatOpenAIResponses.new!(%{stream: false, model: @test_model})
+
+      assert {:error, _} = ChatOpenAIResponses.call(model, "prompt", [])
+      verify!()
+    end
+
     test "merges req_config into the request (non-streaming)" do
       expect(Req, :post, fn req_struct ->
-        # assert retry value from req_config
         assert req_struct.options.retry == false
 
         {:error, RuntimeError.exception("Something went wrong")}
@@ -1730,7 +1747,6 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
 
     test "merges req_config into the request (streaming)" do
       expect(Req, :post, fn req_struct, _opts ->
-        # assert retry value from req_config
         assert req_struct.options.retry == false
 
         {:error, RuntimeError.exception("Something went wrong")}

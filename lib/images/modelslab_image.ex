@@ -212,9 +212,9 @@ defmodule LangChain.Images.ModelsLabImage do
         url: ml_image.endpoint,
         json: for_api(ml_image),
         receive_timeout: ml_image.receive_timeout,
-        retry: :transient,
-        max_retries: 3,
-        retry_delay: fn attempt -> 300 * attempt end
+        # Disable Req-level retry to prevent compounding with LangChain's own
+        # :closed retry. See https://github.com/brainlid/langchain/issues/503
+        retry: false
       )
 
     req

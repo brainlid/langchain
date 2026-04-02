@@ -88,9 +88,9 @@ defmodule LangChain.FileUploader.FileAnthropic do
       url: uploader.endpoint,
       headers: headers(uploader),
       receive_timeout: uploader.receive_timeout,
-      retry: :transient,
-      max_retries: 3,
-      retry_delay: fn attempt -> 300 * attempt end
+      # Disable Req-level retry to prevent compounding with LangChain's own
+      # :closed retry. See https://github.com/brainlid/langchain/issues/503
+      retry: false
     )
     |> Req.merge(uploader.req_opts)
     |> Req.post(

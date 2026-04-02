@@ -507,10 +507,10 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
         url: ollama_ai.endpoint,
         json: raw_data,
         receive_timeout: ollama_ai.receive_timeout,
-        retry: :transient,
-        max_retries: 3,
-        inet6: true,
-        retry_delay: fn attempt -> 300 * attempt end
+        # Disable Req-level retry to prevent compounding with LangChain's own
+        # :closed retry. See https://github.com/brainlid/langchain/issues/503
+        retry: false,
+        inet6: true
       )
 
     req
