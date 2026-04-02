@@ -72,8 +72,8 @@ defmodule LangChain.ChatModels.ChatMistralAI do
     # RAW Elixir map being submitted to the API.
     field :verbose_api, :boolean, default: false
 
-    # Number of retries when a connection error occurs. The initial request
-    # always runs; this controls additional attempts. Set to 0 for no retries.
+    # Number of retries on closed-connection errors (stale pool). The initial
+    # request always runs; this controls additional attempts only.
     field :retry_count, :integer, default: 2
   end
 

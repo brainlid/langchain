@@ -92,7 +92,7 @@ defmodule LangChain.Images.ModelsLabImage do
     # Optional seed for reproducible results.
     field :seed, :integer
 
-    # Number of retries when a connection error occurs. The initial request
+    # Number of retries on closed-connection errors (stale pool). The initial
     field :retry_count, :integer, default: 2
   end
 
