@@ -531,10 +531,10 @@ defmodule LangChain.ChatModels.ChatVertexAI do
         url: build_url(vertex_ai),
         json: for_api(vertex_ai, messages, tools),
         receive_timeout: vertex_ai.receive_timeout,
-        retry: :transient,
-        max_retries: 3,
-        auth: {:bearer, get_api_key(vertex_ai)},
-        retry_delay: fn attempt -> 300 * attempt end
+        # Disable Req-level retry to prevent compounding with LangChain's own
+        # :closed retry. See https://github.com/brainlid/langchain/issues/503
+        retry: false,
+        auth: {:bearer, get_api_key(vertex_ai)}
       )
       |> Req.merge(vertex_ai.req_config |> Keyword.new())
 

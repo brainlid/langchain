@@ -547,9 +547,9 @@ defmodule LangChain.ChatModels.ChatDeepSeek do
           {"Content-Type", "application/json"}
         ],
         receive_timeout: deepseek.receive_timeout,
-        retry: :transient,
-        max_retries: 3,
-        retry_delay: fn attempt -> 300 * attempt end
+        # Disable Req-level retry to prevent compounding with LangChain's own
+        # :closed retry. See https://github.com/brainlid/langchain/issues/503
+        retry: false
       )
 
     req
@@ -690,9 +690,9 @@ defmodule LangChain.ChatModels.ChatDeepSeek do
         {"Content-Type", "application/json"}
       ],
       receive_timeout: deepseek.receive_timeout,
-      retry: :transient,
-      max_retries: 3,
-      retry_delay: fn attempt -> 300 * attempt end
+      # Disable Req-level retry to prevent compounding with LangChain's own
+      # :closed retry. See https://github.com/brainlid/langchain/issues/503
+      retry: false
     )
     |> Req.merge(deepseek.req_config |> Keyword.new())
     |> Req.post(

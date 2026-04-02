@@ -307,7 +307,8 @@ defmodule LangChain.Tools.DeepResearchClient do
       headers: headers,
       # 30 seconds for API calls
       receive_timeout: 30_000,
-      retry: :transient
+      # Disable Req-level retry. See https://github.com/brainlid/langchain/issues/503
+      retry: false
     ]
 
     request_options =
