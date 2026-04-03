@@ -2527,6 +2527,208 @@ defmodule LangChain.Chains.LLMChainTest do
       assert {:ok, log} = result
       assert log =~ "Error applying delta message"
     end
+
+    test "on_llm_error fires on each LLM call failure" do
+      handler = %{
+        on_llm_error: fn _chain, error ->
+          send(self(), {:llm_error_callback, error})
+        end
+      }
+
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:error, LangChainError.exception(type: "rate_limit", message: "Rate limited")}
+      end)
+
+      {:error, _chain, _reason} =
+        %{llm: ChatOpenAI.new!(%{stream: false}), callbacks: [handler]}
+        |> LLMChain.new!()
+        |> LLMChain.add_message(Message.new_user!("Hello"))
+        |> LLMChain.run()
+
+      assert_received {:llm_error_callback, %LangChainError{type: "rate_limit"}}
+    end
+
+    test "on_llm_error fires for string error reasons" do
+      handler = %{
+        on_llm_error: fn _chain, error ->
+          send(self(), {:llm_error_callback, error})
+        end
+      }
+
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:error, "Something went wrong"}
+      end)
+
+      {:error, _chain, _reason} =
+        %{llm: ChatOpenAI.new!(%{stream: false}), callbacks: [handler]}
+        |> LLMChain.new!()
+        |> LLMChain.add_message(Message.new_user!("Hello"))
+        |> LLMChain.run()
+
+      assert_received {:llm_error_callback, %LangChainError{message: "Something went wrong"}}
+    end
+
+    test "on_llm_error fires for each failed model during fallbacks" do
+      handler = %{
+        on_llm_error: fn _chain, error ->
+          send(self(), {:llm_error_callback, error})
+        end
+      }
+
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:error, LangChainError.exception(type: "too_many_requests", message: "Too many requests!")}
+      end)
+
+      expect(ChatAnthropic, :call, fn _model, _messages, _tools ->
+        {:error, LangChainError.exception(type: "overloaded", message: "Overloaded")}
+      end)
+
+      {:error, _chain, _reason} =
+        %{llm: ChatOpenAI.new!(%{stream: false}), callbacks: [handler]}
+        |> LLMChain.new!()
+        |> LLMChain.add_message(Message.new_user!("Hello"))
+        |> LLMChain.run(with_fallbacks: [ChatAnthropic.new!(%{stream: false})])
+
+      # Both individual LLM failures should have fired
+      assert_received {:llm_error_callback, %LangChainError{type: "too_many_requests"}}
+      assert_received {:llm_error_callback, %LangChainError{type: "overloaded"}}
+    end
+
+    test "on_llm_error fires but on_error does not when fallback recovers" do
+      handler = %{
+        on_llm_error: fn _chain, error ->
+          send(self(), {:llm_error_callback, error})
+        end,
+        on_error: fn _chain, error ->
+          send(self(), {:error_callback, error})
+        end
+      }
+
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:error, LangChainError.exception(type: "too_many_requests", message: "Too many requests!")}
+      end)
+
+      expect(ChatAnthropic, :call, fn _model, _messages, _tools ->
+        {:ok, [Message.new_assistant!(%{content: "Recovered!"})]}
+      end)
+
+      {:ok, _chain} =
+        %{llm: ChatOpenAI.new!(%{stream: false}), callbacks: [handler]}
+        |> LLMChain.new!()
+        |> LLMChain.add_message(Message.new_user!("Hello"))
+        |> LLMChain.run(with_fallbacks: [ChatAnthropic.new!(%{stream: false})])
+
+      # Transient LLM error was observed
+      assert_received {:llm_error_callback, %LangChainError{type: "too_many_requests"}}
+      # But the chain succeeded, so on_error should NOT fire
+      refute_received {:error_callback, _}
+    end
+
+    test "on_error fires once on terminal failure" do
+      handler = %{
+        on_error: fn _chain, error ->
+          send(self(), {:error_callback, error})
+        end
+      }
+
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:error, LangChainError.exception(type: "auth_error", message: "Invalid API key")}
+      end)
+
+      {:error, _chain, _reason} =
+        %{llm: ChatOpenAI.new!(%{stream: false}), callbacks: [handler]}
+        |> LLMChain.new!()
+        |> LLMChain.add_message(Message.new_user!("Hello"))
+        |> LLMChain.run()
+
+      assert_received {:error_callback, %LangChainError{type: "auth_error"}}
+      # Should only fire once
+      refute_received {:error_callback, _}
+    end
+
+    test "on_error fires once when all fallbacks fail" do
+      handler = %{
+        on_error: fn _chain, error ->
+          send(self(), {:error_callback, error})
+        end
+      }
+
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:error, LangChainError.exception(type: "too_many_requests", message: "Too many requests!")}
+      end)
+
+      expect(ChatAnthropic, :call, fn _model, _messages, _tools ->
+        {:error, LangChainError.exception(type: "overloaded", message: "Overloaded")}
+      end)
+
+      {:error, _chain, _reason} =
+        %{llm: ChatOpenAI.new!(%{stream: false}), callbacks: [handler]}
+        |> LLMChain.new!()
+        |> LLMChain.add_message(Message.new_user!("Hello"))
+        |> LLMChain.run(with_fallbacks: [ChatAnthropic.new!(%{stream: false})])
+
+      # on_error fires once with the terminal "all_fallbacks_failed" error
+      assert_received {:error_callback, %LangChainError{type: "all_fallbacks_failed"}}
+      refute_received {:error_callback, _}
+    end
+
+    test "on_error fires when retries are exceeded" do
+      handler = %{
+        on_llm_error: fn _chain, error ->
+          send(self(), {:llm_error_callback, error})
+        end,
+        on_error: fn _chain, error ->
+          send(self(), {:error_callback, error})
+        end
+      }
+
+      # Will be called 2 times (initial + 1 retry before exhausting max_retry_count of 2)
+      fake_messages = [
+        Message.new_assistant!(%{content: "Not valid JSON"})
+      ]
+
+      expect(ChatOpenAI, :call, 2, fn _model, _messages, _tools ->
+        {:ok, fake_messages}
+      end)
+
+      {:error, _chain, reason} =
+        %{
+          llm: ChatOpenAI.new!(%{stream: false}),
+          max_retry_count: 2,
+          callbacks: [handler]
+        }
+        |> LLMChain.new!()
+        |> LLMChain.message_processors([JsonProcessor.new!()])
+        |> LLMChain.add_message(Message.new_user!("Give me JSON"))
+        |> LLMChain.run(mode: :while_needs_response)
+
+      assert reason.type == "exceeded_failure_count"
+
+      # on_error fires once for the terminal failure
+      assert_received {:error_callback, %LangChainError{type: "exceeded_failure_count"}}
+      refute_received {:error_callback, _}
+
+      # on_llm_error should NOT have fired -- the LLM calls themselves succeeded,
+      # it was the message processor that failed
+      refute_received {:llm_error_callback, _}
+    end
+
+    test "on_error fires for rescued LangChainError exceptions" do
+      handler = %{
+        on_error: fn _chain, error ->
+          send(self(), {:error_callback, error})
+        end
+      }
+
+      # Running with no messages raises a LangChainError which is rescued in run/2
+      {:error, _chain, error} =
+        %{llm: ChatOpenAI.new!(%{stream: false}), callbacks: [handler]}
+        |> LLMChain.new!()
+        |> LLMChain.run()
+
+      assert error.message == "LLMChain cannot be run without messages"
+      assert_received {:error_callback, %LangChainError{message: "LLMChain cannot be run without messages"}}
+    end
   end
 
   describe "run_until_tool_used/3" do
@@ -2637,6 +2839,32 @@ defmodule LangChain.Chains.LLMChainTest do
 
       assert error.type == "invalid_tool_name"
       assert error.message == "Tool name 'non_existent_tool' not found in available tools"
+    end
+
+    test "on_error fires on terminal failure in run_until_tool_used", %{greet: greet} do
+      handler = %{
+        on_llm_error: fn _chain, error ->
+          send(self(), {:llm_error_callback, error})
+        end,
+        on_error: fn _chain, error ->
+          send(self(), {:error_callback, error})
+        end
+      }
+
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:error, LangChainError.exception(type: "server_error", message: "Internal error")}
+      end)
+
+      {:error, _chain, _reason} =
+        %{llm: ChatOpenAI.new!(%{stream: false}), callbacks: [handler]}
+        |> LLMChain.new!()
+        |> LLMChain.add_tools([greet])
+        |> LLMChain.add_message(Message.new_user!("Say hello to Tim."))
+        |> LLMChain.run_until_tool_used("greet")
+
+      assert_received {:llm_error_callback, %LangChainError{type: "server_error"}}
+      assert_received {:error_callback, %LangChainError{type: "server_error"}}
+      refute_received {:error_callback, _}
     end
   end
 

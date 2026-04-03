@@ -216,6 +216,74 @@ defmodule LangChain.Chains.ChainCallbacks do
   @type chain_tool_response_created :: (LLMChain.t(), Message.t() -> any())
 
   @typedoc """
+  Executed when an individual LLM API call fails with an error.
+
+  This fires on **every** LLM call failure, including transient errors that may
+  be retried or recovered from via fallbacks. It provides visibility into errors
+  that would otherwise be invisible when retries succeed.
+
+  Use this callback for diagnostic/observational purposes -- logging, metrics,
+  debug dashboards. The chain may continue executing after this callback fires.
+
+  ## Examples
+
+  Common scenarios where this fires:
+  - Rate limit errors (may be retried)
+  - Overloaded/server errors (may fall back to another model)
+  - Authentication errors (terminal)
+  - Network timeouts (may be retried)
+
+  In a retry loop: fires once per failed attempt, not just when retries are
+  exhausted. In a fallback chain: fires for each model that fails before the
+  next one is tried.
+
+      callback_handler = %{
+        on_llm_error: fn _chain, error ->
+          Logger.warning("LLM call failed: \#{inspect(error)}")
+        end
+      }
+
+  - First argument: LLMChain.t() - Current chain state
+  - Second argument: LangChainError.t() - The error from the LLM call
+
+  The handler's return value is discarded.
+  """
+  @type chain_llm_error :: (LLMChain.t(), LangChainError.t() -> any())
+
+  @typedoc """
+  Executed when the chain encounters a terminal error and is returning an error
+  result to the caller.
+
+  Unlike `on_llm_error` which fires on every individual LLM failure (including
+  transient ones), this callback fires exactly **once** when the chain has
+  exhausted all recovery options (retries, fallbacks) and is giving up.
+
+  This is the chain-level "final answer is an error" signal. Use this for
+  application-level error handling -- updating UI state, notifying users,
+  recording failures.
+
+  ## Examples
+
+  Scenarios where this fires:
+  - All retry attempts exhausted
+  - All fallback models failed
+  - Unrecoverable error (e.g., invalid request)
+  - Rescued exception during chain execution
+
+      callback_handler = %{
+        on_error: fn _chain, error ->
+          send(live_view_pid, {:chain_error, error})
+        end
+      }
+
+  - First argument: LLMChain.t() - Chain state at time of failure
+  - Second argument: LangChainError.t() - The terminal error
+
+  The handler's return value is discarded.
+  """
+  @type chain_error :: (LLMChain.t(), LangChainError.t() -> any())
+
+  @typedoc """
   Executed when the chain failed multiple times used up the `max_retry_count`
   resulting in the process aborting and returning an error.
 
@@ -244,6 +312,8 @@ defmodule LangChain.Chains.ChainCallbacks do
           optional(:on_tool_execution_failed) => chain_tool_execution_failed(),
           optional(:on_tool_interrupted) => chain_tool_interrupted(),
           optional(:on_tool_response_created) => chain_tool_response_created(),
+          optional(:on_llm_error) => chain_llm_error(),
+          optional(:on_error) => chain_error(),
           optional(:on_retries_exceeded) => chain_retries_exceeded()
         }
 end

@@ -635,21 +635,32 @@ defmodule LangChain.Chains.LLMChain do
         tool_count: length(chain.tools)
       }
 
-      LangChain.Telemetry.span([:langchain, :chain, :execute], metadata, fn ->
-        # Run the chain and return the success or error results. NOTE: We do not add
-        # the current LLM to the list and process everything through a single
-        # codepath because failing after attempted fallbacks returns a different
-        # error.
-        if Keyword.has_key?(opts, :with_fallbacks) do
-          # run function and using fallbacks as needed.
-          with_fallbacks(chain, opts, function_to_run)
-        else
-          # run it directly right now and return the success or error
-          function_to_run.(chain)
-        end
-      end)
+      result =
+        LangChain.Telemetry.span([:langchain, :chain, :execute], metadata, fn ->
+          # Run the chain and return the success or error results. NOTE: We do not add
+          # the current LLM to the list and process everything through a single
+          # codepath because failing after attempted fallbacks returns a different
+          # error.
+          if Keyword.has_key?(opts, :with_fallbacks) do
+            # run function and using fallbacks as needed.
+            with_fallbacks(chain, opts, function_to_run)
+          else
+            # run it directly right now and return the success or error
+            function_to_run.(chain)
+          end
+        end)
+
+      case result do
+        {:error, error_chain, reason} ->
+          Callbacks.fire(error_chain.callbacks, :on_error, [error_chain, reason])
+          result
+
+        _other ->
+          result
+      end
     rescue
       err in LangChainError ->
+        Callbacks.fire(chain.callbacks, :on_error, [chain, err])
         {:error, chain, err}
     end
   end
@@ -816,11 +827,22 @@ defmodule LangChain.Chains.LLMChain do
         tool_count: length(chain.tools)
       }
 
-      LangChain.Telemetry.span([:langchain, :chain, :execute], metadata, fn ->
-        Modes.UntilToolUsed.run(chain, mode_opts)
-      end)
+      result =
+        LangChain.Telemetry.span([:langchain, :chain, :execute], metadata, fn ->
+          Modes.UntilToolUsed.run(chain, mode_opts)
+        end)
+
+      case result do
+        {:error, error_chain, reason} ->
+          Callbacks.fire(error_chain.callbacks, :on_error, [error_chain, reason])
+          result
+
+        _other ->
+          result
+      end
     rescue
       err in LangChainError ->
+        Callbacks.fire(chain.callbacks, :on_error, [chain, err])
         {:error, chain, err}
     end
   end
@@ -894,11 +916,14 @@ defmodule LangChain.Chains.LLMChain do
 
       {:error, %LangChainError{} = reason} ->
         if chain.verbose, do: IO.inspect(reason, label: "ERROR")
+        Callbacks.fire(chain.callbacks, :on_llm_error, [chain, reason])
         {:error, chain, reason}
 
       {:error, string_reason} when is_binary(string_reason) ->
         if chain.verbose, do: IO.inspect(string_reason, label: "ERROR")
-        {:error, chain, LangChainError.exception(message: string_reason)}
+        reason = LangChainError.exception(message: string_reason)
+        Callbacks.fire(chain.callbacks, :on_llm_error, [chain, reason])
+        {:error, chain, reason}
 
       {:ok, []} ->
         # Empty response — all choices were filtered out (e.g., thinking model
