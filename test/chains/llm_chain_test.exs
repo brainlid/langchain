@@ -788,7 +788,7 @@ defmodule LangChain.Chains.LLMChainTest do
       ]
 
       chain = LLMChain.new!(%{llm: ChatOpenAI.new!()})
-      updated_chain = LLMChain.apply_deltas(chain, deltas)
+      {:ok, updated_chain} = LLMChain.apply_deltas(chain, deltas)
 
       assert updated_chain.delta == nil
       %Message{} = last = updated_chain.last_message
@@ -800,17 +800,10 @@ defmodule LangChain.Chains.LLMChainTest do
       assert %TokenUsage{input: 15, output: 4, raw: %{}} = last.metadata.usage
     end
 
-    test "clears delta when conversion to message fails (empty assistant message)" do
-      # This test verifies that when delta-to-message conversion fails,
-      # the delta is cleared from the chain to prevent it from interfering
-      # with subsequent API calls.
-      #
-      # This can happen with Mistral when the model returns empty streaming
-      # responses (no content, no tool_calls), which violates conversation
-      # flow rules.
-
-      # Create deltas that result in an empty assistant message
-      # (no content, no tool_calls) - this will fail to convert to a message
+    test "empty assistant message converts successfully" do
+      # LLMs can return empty assistant messages (e.g., after processing tool
+      # results with nothing more to say). These are valid and should produce
+      # an empty Message rather than an error.
       empty_deltas = [
         [
           %LangChain.MessageDelta{
@@ -834,25 +827,20 @@ defmodule LangChain.Chains.LLMChainTest do
 
       chain = LLMChain.new!(%{llm: ChatOpenAI.new!()})
 
-      # Apply the empty deltas - this should fail to convert but clear the delta
-      updated_chain = LLMChain.apply_deltas(chain, empty_deltas)
+      {:ok, updated_chain} = LLMChain.apply_deltas(chain, empty_deltas)
 
-      # The delta should be cleared (nil) even though conversion failed
       assert updated_chain.delta == nil
-
-      # No message should have been added since conversion failed
-      assert updated_chain.messages == []
-      assert updated_chain.last_message == nil
+      assert updated_chain.last_message.role == :assistant
+      assert updated_chain.last_message.status == :complete
+      assert updated_chain.last_message.content == []
+      assert updated_chain.last_message.tool_calls == []
+      assert updated_chain.needs_response == false
     end
 
-    test "failed delta does not interfere with subsequent delta processing" do
-      # This test verifies that after a failed delta conversion,
-      # subsequent deltas can be processed correctly without interference
-      # from the previous failed delta.
-
+    test "empty assistant message followed by valid deltas processes correctly" do
       chain = LLMChain.new!(%{llm: ChatOpenAI.new!()})
 
-      # First, apply empty deltas that will fail to convert
+      # First, apply empty deltas - these now succeed as empty messages
       empty_deltas = [
         [
           %LangChain.MessageDelta{
@@ -874,8 +862,8 @@ defmodule LangChain.Chains.LLMChainTest do
         ]
       ]
 
-      chain_after_failure = LLMChain.apply_deltas(chain, empty_deltas)
-      assert chain_after_failure.delta == nil
+      {:ok, chain_after_empty} = LLMChain.apply_deltas(chain, empty_deltas)
+      assert chain_after_empty.delta == nil
 
       # Now apply valid deltas - they should work correctly
       valid_deltas = [
@@ -899,18 +887,110 @@ defmodule LangChain.Chains.LLMChainTest do
         ]
       ]
 
-      final_chain = LLMChain.apply_deltas(chain_after_failure, valid_deltas)
+      {:ok, final_chain} = LLMChain.apply_deltas(chain_after_empty, valid_deltas)
 
-      # The valid deltas should have been processed correctly
       assert final_chain.delta == nil
-      assert final_chain.last_message != nil
       assert final_chain.last_message.role == :assistant
 
-      # Content should be the merged result
       content_text =
         LangChain.Message.ContentPart.parts_to_string(final_chain.last_message.content)
 
       assert content_text == "Hello world!"
+    end
+
+    test "merges empty end-of-turn response with usage metadata" do
+      # Simulates the Anthropic scenario: after processing tool results, the
+      # model responds with only a message_delta containing stop_reason and
+      # usage info but no content or tool calls.
+      empty_deltas_with_usage = [
+        [
+          %LangChain.MessageDelta{
+            content: [],
+            merged_content: [],
+            status: :incomplete,
+            index: nil,
+            role: :assistant,
+            tool_calls: nil,
+            metadata: %{
+              usage: %LangChain.TokenUsage{
+                input: 1,
+                output: 2,
+                raw: %{
+                  "cache_creation_input_tokens" => 221,
+                  "cache_read_input_tokens" => 18890,
+                  "input_tokens" => 1,
+                  "output_tokens" => 2
+                }
+              }
+            }
+          }
+        ],
+        [
+          %LangChain.MessageDelta{
+            content: nil,
+            status: :complete,
+            role: :assistant,
+            tool_calls: nil,
+            metadata: %{
+              usage: %LangChain.TokenUsage{
+                input: 2,
+                output: 4,
+                raw: %{
+                  "cache_creation_input_tokens" => 442,
+                  "cache_read_input_tokens" => 37780,
+                  "input_tokens" => 2,
+                  "output_tokens" => 4
+                }
+              }
+            }
+          }
+        ]
+      ]
+
+      chain = LLMChain.new!(%{llm: ChatOpenAI.new!()})
+      {:ok, updated_chain} = LLMChain.apply_deltas(chain, empty_deltas_with_usage)
+
+      assert updated_chain.delta == nil
+      assert updated_chain.last_message.role == :assistant
+      assert updated_chain.last_message.status == :complete
+      assert updated_chain.last_message.content == []
+      assert updated_chain.last_message.tool_calls == []
+      assert updated_chain.needs_response == false
+
+      # Usage metadata should be preserved on the message
+      assert %LangChain.TokenUsage{input: 3, output: 6} =
+               updated_chain.last_message.metadata.usage
+    end
+
+    test "merges bare end-of-turn response with no additional information" do
+      # Simplest empty response: just "I'm done" with no usage or other metadata.
+      bare_deltas = [
+        [
+          %LangChain.MessageDelta{
+            content: nil,
+            status: :incomplete,
+            role: :assistant,
+            tool_calls: nil
+          }
+        ],
+        [
+          %LangChain.MessageDelta{
+            content: nil,
+            status: :complete,
+            role: :assistant,
+            tool_calls: nil
+          }
+        ]
+      ]
+
+      chain = LLMChain.new!(%{llm: ChatOpenAI.new!()})
+      {:ok, updated_chain} = LLMChain.apply_deltas(chain, bare_deltas)
+
+      assert updated_chain.delta == nil
+      assert updated_chain.last_message.role == :assistant
+      assert updated_chain.last_message.status == :complete
+      assert updated_chain.last_message.content == []
+      assert updated_chain.needs_response == false
     end
 
     test "clears delta when tool call has malformed JSON arguments (issue #443)" do
@@ -966,7 +1046,8 @@ defmodule LangChain.Chains.LLMChainTest do
 
       chain = LLMChain.new!(%{llm: ChatOpenAI.new!()})
 
-      updated_chain = LLMChain.apply_deltas(chain, malformed_tool_deltas)
+      {:error, updated_chain, %LangChainError{type: "delta_conversion_failed"}} =
+        LLMChain.apply_deltas(chain, malformed_tool_deltas)
 
       # Delta must be cleared so it doesn't accumulate garbage on retries
       assert updated_chain.delta == nil
@@ -2473,55 +2554,44 @@ defmodule LangChain.Chains.LLMChainTest do
 
     test "does not loop infinitely when streaming tool call has malformed JSON (issue #443)" do
       # When an LLM returns truncated JSON in tool_call.arguments during streaming,
-      # the chain should clear the delta and retry cleanly rather than appending
-      # new responses to the old garbage and looping forever.
-      call_counter = :counters.new(1, [:atomics])
+      # the chain should return an error rather than silently swallowing the failure.
+      # Previously the delta was silently cleared and appeared as success; now the
+      # error propagates through apply_deltas -> do_run -> run.
 
-      expect(ChatOpenAI, :call, 2, fn _model, _messages, _tools ->
-        call_num = :counters.get(call_counter, 1)
-        :counters.add(call_counter, 1, 1)
-
-        if call_num == 0 do
-          # First call: return truncated/malformed JSON in tool call arguments
-          {:ok,
-           [
-             %MessageDelta{role: :assistant, status: :incomplete, index: 0},
-             %MessageDelta{
-               status: :incomplete,
-               index: 0,
-               tool_calls: [
-                 ToolCall.new!(%{
-                   status: :incomplete,
-                   type: :function,
-                   call_id: "call_bad",
-                   name: "search_web",
-                   arguments: nil,
-                   index: 0
-                 })
-               ]
-             },
-             %MessageDelta{
-               status: :incomplete,
-               index: 0,
-               tool_calls: [
-                 ToolCall.new!(%{
-                   status: :incomplete,
-                   type: :function,
-                   # Truncated JSON - missing closing brace
-                   arguments: "{\"query\": \"test\",\"",
-                   index: 0
-                 })
-               ]
-             },
-             %MessageDelta{status: :complete, index: 0}
-           ]}
-        else
-          # Subsequent call: return a normal text response to end the loop
-          {:ok,
-           [
-             Message.new_assistant!(%{content: "I encountered an error with the tool call."})
-           ]}
-        end
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        # Return truncated/malformed JSON in tool call arguments
+        {:ok,
+         [
+           %MessageDelta{role: :assistant, status: :incomplete, index: 0},
+           %MessageDelta{
+             status: :incomplete,
+             index: 0,
+             tool_calls: [
+               ToolCall.new!(%{
+                 status: :incomplete,
+                 type: :function,
+                 call_id: "call_bad",
+                 name: "search_web",
+                 arguments: nil,
+                 index: 0
+               })
+             ]
+           },
+           %MessageDelta{
+             status: :incomplete,
+             index: 0,
+             tool_calls: [
+               ToolCall.new!(%{
+                 status: :incomplete,
+                 type: :function,
+                 # Truncated JSON - missing closing brace
+                 arguments: "{\"query\": \"test\",\"",
+                 index: 0
+               })
+             ]
+           },
+           %MessageDelta{status: :complete, index: 0}
+         ]}
       end)
 
       search_web =
@@ -2541,18 +2611,61 @@ defmodule LangChain.Chains.LLMChainTest do
         |> LLMChain.add_tools(search_web)
         |> LLMChain.add_message(Message.new_user!("Search for something"))
 
-      # This must complete without hanging - previously it would loop forever
-      task =
-        Task.async(fn ->
-          ExUnit.CaptureLog.capture_log(fn ->
-            LLMChain.run(chain, mode: :while_needs_response)
-          end)
-        end)
+      # The malformed delta should now propagate as an error instead of being
+      # silently swallowed
+      assert {:error, _chain, %LangChainError{type: "delta_conversion_failed"}} =
+               LLMChain.run(chain, mode: :while_needs_response)
+    end
 
-      result = Task.yield(task, 5_000) || Task.shutdown(task, :brutal_kill)
+    test "empty streaming response succeeds in run" do
+      # Return deltas that produce an empty assistant message (no content, no tool_calls).
+      # This is valid -- e.g., LLM has nothing to say after processing tool results.
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:ok,
+         [
+           MessageDelta.new!(%{role: :assistant, content: nil, status: :incomplete}),
+           MessageDelta.new!(%{content: nil, status: :complete})
+         ]}
+      end)
 
-      assert {:ok, log} = result
-      assert log =~ "Error applying delta message"
+      {:ok, chain} =
+        %{llm: ChatOpenAI.new!(%{stream: true})}
+        |> LLMChain.new!()
+        |> LLMChain.add_message(Message.new_user!("Hello"))
+        |> LLMChain.run()
+
+      assert chain.last_message.role == :assistant
+      assert chain.last_message.content == []
+      assert chain.needs_response == false
+    end
+
+    test "streaming error with empty delta produces cancelled message" do
+      # A streaming error occurs while the delta has no content yet.
+      # The cancel_delta path converts it to a cancelled message.
+      handler = %{
+        on_error: fn _chain, error ->
+          send(self(), {:error_callback, error})
+        end
+      }
+
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:ok,
+         [
+           MessageDelta.new!(%{role: :assistant, content: nil, status: :incomplete}),
+           {:error, LangChainError.exception(type: "overloaded", message: "Server overloaded")}
+         ]}
+      end)
+
+      {:ok, chain} =
+        %{llm: ChatOpenAI.new!(%{stream: true}), callbacks: [handler]}
+        |> LLMChain.new!()
+        |> LLMChain.add_message(Message.new_user!("Hello"))
+        |> LLMChain.run()
+
+      # Empty delta converts successfully to a cancelled message
+      assert chain.last_message.role == :assistant
+      assert chain.last_message.status == :cancelled
+      assert chain.needs_response == false
     end
 
     test "on_llm_error fires on each LLM call failure" do
@@ -2603,7 +2716,8 @@ defmodule LangChain.Chains.LLMChainTest do
       }
 
       expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
-        {:error, LangChainError.exception(type: "too_many_requests", message: "Too many requests!")}
+        {:error,
+         LangChainError.exception(type: "too_many_requests", message: "Too many requests!")}
       end)
 
       expect(ChatAnthropic, :call, fn _model, _messages, _tools ->
@@ -2632,7 +2746,8 @@ defmodule LangChain.Chains.LLMChainTest do
       }
 
       expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
-        {:error, LangChainError.exception(type: "too_many_requests", message: "Too many requests!")}
+        {:error,
+         LangChainError.exception(type: "too_many_requests", message: "Too many requests!")}
       end)
 
       expect(ChatAnthropic, :call, fn _model, _messages, _tools ->
@@ -2681,7 +2796,8 @@ defmodule LangChain.Chains.LLMChainTest do
       }
 
       expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
-        {:error, LangChainError.exception(type: "too_many_requests", message: "Too many requests!")}
+        {:error,
+         LangChainError.exception(type: "too_many_requests", message: "Too many requests!")}
       end)
 
       expect(ChatAnthropic, :call, fn _model, _messages, _tools ->
@@ -2754,7 +2870,9 @@ defmodule LangChain.Chains.LLMChainTest do
         |> LLMChain.run()
 
       assert error.message == "LLMChain cannot be run without messages"
-      assert_received {:error_callback, %LangChainError{message: "LLMChain cannot be run without messages"}}
+
+      assert_received {:error_callback,
+                       %LangChainError{message: "LLMChain cannot be run without messages"}}
     end
   end
 
