@@ -171,7 +171,55 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   reduce costs and latency for frequently repeated content. Prompt caching works by caching large blocks of
   content that are likely to be reused across multiple requests.
 
-  Prompt caching is configured through the `cache_control` option in `ContentPart` options. It can be applied
+  ### Automatic Caching (Recommended for Multi-Turn Conversations)
+
+  The simplest way to enable prompt caching is with the top-level `:cache_control` option. Instead of placing
+  `cache_control` on individual content blocks, set it once on the model and Anthropic automatically applies
+  the cache breakpoint to the last cacheable block in each request.
+
+  See [Automatic caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching#automatic-caching)
+  in the Anthropic docs for full details.
+
+  **Basic usage (5-minute TTL, the default):**
+
+      model = ChatAnthropic.new!(%{
+        model: "claude-sonnet-4-6",
+        cache_control: %{"type" => "ephemeral"}
+      })
+
+  **With a 1-hour TTL (2x base input token price):**
+
+      model = ChatAnthropic.new!(%{
+        model: "claude-sonnet-4-6",
+        cache_control: %{"type" => "ephemeral", "ttl" => "1h"}
+      })
+
+  #### How It Works in Multi-Turn Conversations
+
+  With automatic caching the cache breakpoint moves forward automatically as conversations grow.
+  Each new request caches everything up to the last cacheable block, and previous content is read
+  from cache:
+
+  - **Request 1**: System + messages written to cache
+  - **Request 2**: Previous content read from cache; new messages written to cache
+  - **Request 3+**: Pattern continues -- old content from cache, new content written
+
+  You do not need to update any cache markers as the conversation grows.
+
+  #### Replaces Manual Message Caching
+
+  Automatic caching supersedes the explicitly managed `:cache_messages` setting. You should use one
+  or the other, not both:
+
+  - **`:cache_control`** (recommended) -- API-managed, automatic breakpoint placement
+  - **`:cache_messages`** -- client-managed, explicit breakpoints on individual user messages
+
+  For new code, prefer `:cache_control` for its simplicity. The `:cache_messages` option remains
+  available for cases where you need fine-grained control over exactly which content blocks are cached.
+
+  ### Per-Block Cache Control
+
+  For fine-grained control, prompt caching can also be configured through the `cache_control` option in `ContentPart` options. It can be applied
   to both system messages, regular user messages, tool results, and tool definitions.
 
   Anthropic limits a conversation to max of 4 cache_control blocks and will refuse to service requests with more.
@@ -510,6 +558,12 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     # Set to %{enabled: false} or nil to disable automatic message caching.
     field :cache_messages, :map
 
+    # Top-level automatic cache control. When set, Anthropic auto-applies the
+    # cache breakpoint to the last cacheable block in the request.
+    # Example: %{"type" => "ephemeral"} or %{"type" => "ephemeral", "ttl" => "1h"}
+    # See: https://platform.claude.com/docs/en/build-with-claude/prompt-caching#automatic-caching
+    field :cache_control, :map
+
     # Whether to request a JSON-formatted response with a specific schema.
     # Only supported on Claude Opus 4.6, Sonnet 4.6, Sonnet 4.5, Opus 4.5, Haiku 4.5.
     # When set to true, json_schema is required.
@@ -542,6 +596,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     :beta_headers,
     :verbose_api,
     :cache_messages,
+    :cache_control,
     :json_response,
     :json_schema,
     :req_opts
@@ -639,6 +694,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     |> Utils.conditionally_add_to_map(:top_k, anthropic.top_k)
     |> Utils.conditionally_add_to_map(:thinking, anthropic.thinking)
     |> Utils.conditionally_add_to_map(:output_config, set_output_config(anthropic))
+    |> Utils.conditionally_add_to_map(:cache_control, anthropic.cache_control)
     |> maybe_transform_for_bedrock(anthropic.bedrock)
   end
 
