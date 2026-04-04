@@ -51,7 +51,7 @@ defmodule LangChain.MessageDelta do
   """
   use Ecto.Schema
   import Ecto.Changeset
-  require Logger
+
   alias __MODULE__
   alias LangChain.LangChainError
   alias LangChain.Message
@@ -438,10 +438,10 @@ defmodule LangChain.MessageDelta do
       |> Map.from_struct()
       |> Map.put(:content, content)
 
-    with :ok <- validate_not_empty(delta),
-         {:ok, message} <- Message.new(attrs) do
-      {:ok, message}
-    else
+    case Message.new(attrs) do
+      {:ok, message} ->
+        {:ok, message}
+
       {:error, %Ecto.Changeset{} = changeset} ->
         {:error, Utils.changeset_error_to_string(changeset)}
 
@@ -449,23 +449,6 @@ defmodule LangChain.MessageDelta do
         error
     end
   end
-
-  # Validate that assistant message is not empty (no content and no tool_calls).
-  # Empty assistant messages violate conversation flow rules in most LLM APIs.
-  defp validate_not_empty(%MessageDelta{
-         role: :assistant,
-         merged_content: merged_content,
-         tool_calls: tool_calls,
-         status: :complete
-       })
-       when (merged_content == [] or merged_content == nil) and
-              (tool_calls == [] or tool_calls == nil) do
-    Logger.warning("Received empty assistant message with no content and no tool_calls")
-
-    {:error, "Empty assistant message: no content and no tool_calls"}
-  end
-
-  defp validate_not_empty(_delta), do: :ok
 
   # Filter nil values from list (from index padding during delta merging)
   @spec reject_nil(list() | any()) :: list() | any()
