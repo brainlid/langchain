@@ -431,34 +431,42 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   Returns `{:ok, model}` with the `:websocket` field set to the WebSocket PID,
   or `{:error, reason}` on failure.
 
+  Requires the optional `mint_web_socket` dependency.
+
   ## Example
 
       {:ok, model} = ChatOpenAIResponses.connect_websocket(model)
 
   """
   @spec connect_websocket(t()) :: {:ok, t()} | {:error, String.t()}
-  def connect_websocket(%ChatOpenAIResponses{} = model) do
-    api_key = model.api_key || Config.resolve(:openai_key, nil)
+  if Code.ensure_loaded?(Mint.WebSocket) do
+    def connect_websocket(%ChatOpenAIResponses{} = model) do
+      api_key = model.api_key || Config.resolve(:openai_key, nil)
 
-    if api_key do
-      ws_url =
-        model.endpoint
-        |> String.replace_leading("https://", "wss://")
-        |> String.replace_leading("http://", "ws://")
+      if api_key do
+        ws_url =
+          model.endpoint
+          |> String.replace_leading("https://", "wss://")
+          |> String.replace_leading("http://", "ws://")
 
-      case LangChain.WebSocket.start_link(
-             url: ws_url,
-             headers: [{"authorization", "Bearer #{api_key}"}],
-             receive_timeout: model.receive_timeout
-           ) do
-        {:ok, pid} ->
-          {:ok, %{model | websocket: pid}}
+        case LangChain.WebSocket.start_link(
+               url: ws_url,
+               headers: [{"authorization", "Bearer #{api_key}"}],
+               receive_timeout: model.receive_timeout
+             ) do
+          {:ok, pid} ->
+            {:ok, %{model | websocket: pid}}
 
-        {:error, reason} ->
-          {:error, "Failed to connect WebSocket: #{inspect(reason)}"}
+          {:error, reason} ->
+            {:error, "Failed to connect WebSocket: #{inspect(reason)}"}
+        end
+      else
+        {:error, "API key is required to open a WebSocket connection"}
       end
-    else
-      {:error, "API key is required to open a WebSocket connection"}
+    end
+  else
+    def connect_websocket(%ChatOpenAIResponses{}) do
+      {:error, "WebSocket support requires the :mint_web_socket dependency"}
     end
   end
 
@@ -477,10 +485,16 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
 
   """
   @spec connect_websocket!(t()) :: t() | no_return()
-  def connect_websocket!(%ChatOpenAIResponses{} = model) do
-    case connect_websocket(model) do
-      {:ok, model} -> model
-      {:error, reason} -> raise LangChainError, reason
+  if Code.ensure_loaded?(Mint.WebSocket) do
+    def connect_websocket!(%ChatOpenAIResponses{} = model) do
+      case connect_websocket(model) do
+        {:ok, model} -> model
+        {:error, reason} -> raise LangChainError, reason
+      end
+    end
+  else
+    def connect_websocket!(%ChatOpenAIResponses{}) do
+      raise LangChainError, "WebSocket support requires the :mint_web_socket dependency"
     end
   end
 
@@ -491,9 +505,15 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   Safe to call even if the WebSocket is already closed.
   """
   @spec disconnect_websocket!(t()) :: t()
-  def disconnect_websocket!(%ChatOpenAIResponses{websocket: pid} = model) when is_pid(pid) do
-    if Process.alive?(pid), do: LangChain.WebSocket.close(pid)
-    %{model | websocket: nil}
+  if Code.ensure_loaded?(Mint.WebSocket) do
+    def disconnect_websocket!(%ChatOpenAIResponses{websocket: pid} = model) when is_pid(pid) do
+      if Process.alive?(pid), do: LangChain.WebSocket.close(pid)
+      %{model | websocket: nil}
+    end
+  else
+    def disconnect_websocket!(%ChatOpenAIResponses{websocket: pid} = model) when is_pid(pid) do
+      %{model | websocket: nil}
+    end
   end
 
   def disconnect_websocket!(%ChatOpenAIResponses{} = model), do: model
@@ -551,23 +571,25 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   # silently closes the connection (code 1000) when these are sent as decimals.
   # This is an OpenAI bug — see:
   # https://community.openai.com/t/responses-websocket-v1-responses-closes-with-code-1000-and-no-events-when-temperature-is-a-decimal-e-g-1-2/1375536
-  defp for_api_websocket(%ChatOpenAIResponses{} = openai, messages, tools) do
-    payload = for_api(openai, messages, tools)
+  if Code.ensure_loaded?(Mint.WebSocket) do
+    defp for_api_websocket(%ChatOpenAIResponses{} = openai, messages, tools) do
+      payload = for_api(openai, messages, tools)
 
-    dropped = [:stream, :background, :temperature, :top_p]
+      dropped = [:stream, :background, :temperature, :top_p]
 
-    if payload[:temperature] || payload[:top_p] do
-      Logger.warning(
-        "WebSocket transport: dropping :temperature and :top_p from payload " <>
-          "due to an OpenAI bug that silently closes the connection when these " <>
-          "are sent as decimals. See: https://community.openai.com/t/1375536"
-      )
+      if payload[:temperature] || payload[:top_p] do
+        Logger.warning(
+          "WebSocket transport: dropping :temperature and :top_p from payload " <>
+            "due to an OpenAI bug that silently closes the connection when these " <>
+            "are sent as decimals. See: https://community.openai.com/t/1375536"
+        )
+      end
+
+      payload
+      |> Map.drop(dropped)
+      |> Map.put(:type, "response.create")
+      |> Jason.encode!()
     end
-
-    payload
-    |> Map.drop(dropped)
-    |> Map.put(:type, "response.create")
-    |> Jason.encode!()
   end
 
   # gpt-5.2 and newer do not support the top_p parameter.
@@ -955,95 +977,97 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     raise LangChainError, "Retries exceeded. Connection failed."
   end
 
-  def do_api_request(
-        %ChatOpenAIResponses{websocket: ws_pid} = openai,
-        messages,
-        tools,
-        _retry_count
-      )
-      when is_pid(ws_pid) do
-    payload = for_api_websocket(openai, messages, tools)
+  if Code.ensure_loaded?(Mint.WebSocket) do
+    def do_api_request(
+          %ChatOpenAIResponses{websocket: ws_pid} = openai,
+          messages,
+          tools,
+          _retry_count
+        )
+        when is_pid(ws_pid) do
+      payload = for_api_websocket(openai, messages, tools)
 
-    done_fn = fn event ->
-      event["type"] in ["response.completed", "response.failed"]
-    end
+      done_fn = fn event ->
+        event["type"] in ["response.completed", "response.failed"]
+      end
 
-    case openai.stream do
-      false ->
-        case LangChain.WebSocket.send_and_collect(ws_pid, payload, done_fn,
-               timeout: openai.receive_timeout
-             ) do
-          {:ok, events} ->
-            # Find the completed/failed event and process its response
-            events
-            |> Enum.find(&match?(%{"type" => "response.completed"}, &1))
-            |> case do
-              %{"response" => response} ->
-                case do_process_response(openai, response) do
-                  {:error, %LangChainError{} = reason} ->
-                    {:error, reason}
+      case openai.stream do
+        false ->
+          case LangChain.WebSocket.send_and_collect(ws_pid, payload, done_fn,
+                 timeout: openai.receive_timeout
+               ) do
+            {:ok, events} ->
+              # Find the completed/failed event and process its response
+              events
+              |> Enum.find(&match?(%{"type" => "response.completed"}, &1))
+              |> case do
+                %{"response" => response} ->
+                  case do_process_response(openai, response) do
+                    {:error, %LangChainError{} = reason} ->
+                      {:error, reason}
 
-                  result ->
-                    Callbacks.fire(openai.callbacks, :on_llm_new_message, [result])
-                    result
-                end
+                    result ->
+                      Callbacks.fire(openai.callbacks, :on_llm_new_message, [result])
+                      result
+                  end
 
-              nil ->
-                # Check for failed response
-                events
-                |> Enum.find(&match?(%{"type" => "response.failed"}, &1))
-                |> case do
-                  %{"type" => "response.failed"} = failed_event ->
-                    do_process_response(openai, failed_event)
+                nil ->
+                  # Check for failed response
+                  events
+                  |> Enum.find(&match?(%{"type" => "response.failed"}, &1))
+                  |> case do
+                    %{"type" => "response.failed"} = failed_event ->
+                      do_process_response(openai, failed_event)
 
-                  nil ->
-                    {:error,
-                     LangChainError.exception(
-                       type: "unexpected_response",
-                       message: "No completed or failed event received via WebSocket"
-                     )}
-                end
-            end
+                    nil ->
+                      {:error,
+                       LangChainError.exception(
+                         type: "unexpected_response",
+                         message: "No completed or failed event received via WebSocket"
+                       )}
+                  end
+              end
 
-          {:error, reason} ->
-            {:error,
-             LangChainError.exception(
-               type: "websocket_error",
-               message: "WebSocket request failed: #{inspect(reason)}"
-             )}
-        end
-
-      true ->
-        callback_fn = fn event ->
-          case do_process_response(openai, event) do
-            :skip ->
-              :skip
-
-            result ->
-              Utils.fire_streamed_callback(openai, List.wrap(result))
-              result
+            {:error, reason} ->
+              {:error,
+               LangChainError.exception(
+                 type: "websocket_error",
+                 message: "WebSocket request failed: #{inspect(reason)}"
+               )}
           end
-        end
 
-        case LangChain.WebSocket.send_and_stream(ws_pid, payload, callback_fn, done_fn,
-               timeout: openai.receive_timeout
-             ) do
-          {:ok, results} ->
-            results = results |> Enum.reject(&(&1 == :skip)) |> List.flatten()
+        true ->
+          callback_fn = fn event ->
+            case do_process_response(openai, event) do
+              :skip ->
+                :skip
 
-            # Check if any result is an error and return the first one found
-            case Enum.find(results, &match?({:error, %LangChainError{}}, &1)) do
-              {:error, _} = error -> error
-              nil -> results
+              result ->
+                Utils.fire_streamed_callback(openai, List.wrap(result))
+                result
             end
+          end
 
-          {:error, reason} ->
-            {:error,
-             LangChainError.exception(
-               type: "websocket_error",
-               message: "WebSocket streaming request failed: #{inspect(reason)}"
-             )}
-        end
+          case LangChain.WebSocket.send_and_stream(ws_pid, payload, callback_fn, done_fn,
+                 timeout: openai.receive_timeout
+               ) do
+            {:ok, results} ->
+              results = results |> Enum.reject(&(&1 == :skip)) |> List.flatten()
+
+              # Check if any result is an error and return the first one found
+              case Enum.find(results, &match?({:error, %LangChainError{}}, &1)) do
+                {:error, _} = error -> error
+                nil -> results
+              end
+
+            {:error, reason} ->
+              {:error,
+               LangChainError.exception(
+                 type: "websocket_error",
+                 message: "WebSocket streaming request failed: #{inspect(reason)}"
+               )}
+          end
+      end
     end
   end
 
