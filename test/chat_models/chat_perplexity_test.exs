@@ -469,7 +469,7 @@ defmodule LangChain.ChatModels.ChatPerplexityTest do
       assert length(deltas) > 0
 
       # Apply deltas to the original chain (same pattern as Anthropic test)
-      delta_merged_chain = LLMChain.apply_deltas(original_chain, deltas)
+      {:ok, delta_merged_chain} = LLMChain.apply_deltas(original_chain, deltas)
 
       # Check citations on the chain's final message
       all_citations = Message.all_citations(last_message)

@@ -1327,7 +1327,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       deltas = collect_messages() |> List.flatten()
 
       # apply the deltas to the original chain
-      delta_merged_chain = LLMChain.apply_deltas(original_chain, deltas)
+      {:ok, delta_merged_chain} = LLMChain.apply_deltas(original_chain, deltas)
 
       # the received merged deltas should match the ones assembled by the chain.
       # This is also verifying that we're receiving the token usage via sent
