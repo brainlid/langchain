@@ -902,8 +902,7 @@ defmodule LangChain.Chains.LLMChain do
         case apply_deltas(chain, deltas) do
           {:ok, updated_chain} ->
             if chain.verbose,
-              do:
-                IO.inspect(updated_chain.last_message, label: "COMBINED DELTA MESSAGE RESPONSE")
+              do: IO.inspect(updated_chain.last_message, label: "COMBINED DELTA MESSAGE RESPONSE")
 
             {:ok, updated_chain}
 
@@ -917,8 +916,7 @@ defmodule LangChain.Chains.LLMChain do
         case apply_deltas(chain, deltas) do
           {:ok, updated_chain} ->
             if chain.verbose,
-              do:
-                IO.inspect(updated_chain.last_message, label: "COMBINED DELTA MESSAGE RESPONSE")
+              do: IO.inspect(updated_chain.last_message, label: "COMBINED DELTA MESSAGE RESPONSE")
 
             {:ok, updated_chain}
 
