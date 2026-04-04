@@ -208,14 +208,16 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
   #### Replaces Manual Message Caching
 
-  Automatic caching supersedes the explicitly managed `:cache_messages` setting. You should use one
-  or the other, not both:
+  Automatic caching supersedes the `:cache_messages` setting. The `:cache_messages` option was a
+  client-side behavior coded into this module that applied `cache_control` blocks to the last N user
+  messages, approximating the automatic breakpoint behavior that Anthropic now offers natively through
+  the API. It remains available for backward compatibility, but you should use one or the other, not both:
 
   - **`:cache_control`** (recommended) -- API-managed, automatic breakpoint placement
-  - **`:cache_messages`** -- client-managed, explicit breakpoints on individual user messages
+  - **`:cache_messages`** (legacy) -- client-managed, adds `cache_control` to the last N user messages
 
-  For new code, prefer `:cache_control` for its simplicity. The `:cache_messages` option remains
-  available for cases where you need fine-grained control over exactly which content blocks are cached.
+  For fine-grained control over exactly which content blocks are cached, use the `cache_control` option
+  directly on `ContentPart`, `ToolResult`, and `Function` structs (see "Per-Block Cache Control" below).
 
   ### Per-Block Cache Control
 
