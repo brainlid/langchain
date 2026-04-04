@@ -1964,7 +1964,11 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
       :base64 ->
         media =
-          case Keyword.fetch!(opts, :media) do
+          case Keyword.get(opts, :media) do
+            nil ->
+              raise LangChainError,
+                    "Required :media option missing for base64-encoded image ContentPart"
+
             :png ->
               "image/png"
 
@@ -2014,7 +2018,15 @@ defmodule LangChain.ChatModels.ChatAnthropic do
           }
 
         :base64 ->
-          media = Keyword.fetch!(opts, :media)
+          media =
+            case Keyword.get(opts, :media) do
+              nil ->
+                raise LangChainError,
+                      "Required :media option missing for base64-encoded document ContentPart"
+
+              value ->
+                value
+            end
 
           case media do
             :text ->

@@ -3202,6 +3202,37 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       assert api_citation["cited_text"] == "The sky is blue."
       assert api_citation["document_index"] == 0
     end
+
+    test "raises LangChainError (not KeyError) when :media option is missing for base64 image" do
+      # Previously this raised KeyError which bypassed LangChainError rescue blocks
+      part =
+        ContentPart.new!(%{
+          type: :image,
+          content: "base64encodeddata",
+          options: [source: :base64]
+        })
+
+      assert_raise LangChainError,
+                   ~r/Required :media option missing for base64-encoded image/,
+                   fn ->
+                     ChatAnthropic.content_part_for_api(part)
+                   end
+    end
+
+    test "raises LangChainError (not KeyError) when :media option is missing for base64 document" do
+      part =
+        ContentPart.new!(%{
+          type: :file,
+          content: "base64encodeddata",
+          options: [source: :base64]
+        })
+
+      assert_raise LangChainError,
+                   ~r/Required :media option missing for base64-encoded document/,
+                   fn ->
+                     ChatAnthropic.content_part_for_api(part)
+                   end
+    end
   end
 
   describe "function_for_api/1" do
