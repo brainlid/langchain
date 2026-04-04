@@ -231,6 +231,56 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
                ]
     end
 
+    test "does not include cache_control when not set" do
+      {:ok, anthropic} = ChatAnthropic.new(%{model: @test_model})
+
+      data = ChatAnthropic.for_api(anthropic, [], [])
+      refute Map.has_key?(data, :cache_control)
+    end
+
+    test "includes top-level cache_control when set to ephemeral" do
+      {:ok, anthropic} =
+        ChatAnthropic.new(%{
+          model: @test_model,
+          cache_control: %{"type" => "ephemeral"}
+        })
+
+      data = ChatAnthropic.for_api(anthropic, [], [])
+      assert %{cache_control: %{"type" => "ephemeral"}} = data
+    end
+
+    test "includes top-level cache_control with TTL" do
+      {:ok, anthropic} =
+        ChatAnthropic.new(%{
+          model: @test_model,
+          cache_control: %{"type" => "ephemeral", "ttl" => "1h"}
+        })
+
+      data = ChatAnthropic.for_api(anthropic, [], [])
+      assert %{cache_control: %{"type" => "ephemeral", "ttl" => "1h"}} = data
+    end
+
+    test "top-level cache_control works alongside messages and system prompt" do
+      {:ok, anthropic} =
+        ChatAnthropic.new(%{
+          model: @test_model,
+          cache_control: %{"type" => "ephemeral"}
+        })
+
+      data =
+        ChatAnthropic.for_api(
+          anthropic,
+          [
+            Message.new_system!("You are helpful."),
+            Message.new_user!("Hello")
+          ],
+          []
+        )
+
+      assert %{cache_control: %{"type" => "ephemeral"}, messages: [_user_msg]} = data
+      assert [%{"text" => "You are helpful.", "type" => "text"}] = data.system
+    end
+
     test "generates a map for an API call with max_tokens set" do
       {:ok, anthropic} =
         ChatAnthropic.new(%{
