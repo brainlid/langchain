@@ -6,27 +6,21 @@
 
 Elixir LangChain enables Elixir applications to integrate AI services and self-hosted models into an application.
 
-**Currently supported AI services:**
+**Supported chat models:**
 
-| Model | v0.3.x | v0.5.x |
-|-------|---------|---------|
-| OpenAI ChatGPT | ✓ | ✓ |
-| OpenAI DALL-e 2 (image generation) | ✓ | ? |
-| Anthropic Claude | ✓ | ✓ |
-| Anthropic Claude (thinking) | X | ✓ |
-| xAI Grok | X | ✓ |
-| Google Gemini | ✓ | ✓ |
-| Google Vertex AI* | ✓ | X |
-| Ollama | ✓ | ? |
-| Mistral | ✓ | X |
-| Bumblebee self-hosted models** | ✓ | ? |
-| LMStudio*** | ✓ | ? |
-| Perplexity | ✓ | ✓ |
-
-- *Google Vertex AI is Google's enterprise offering
-- **Bumblebee self-hosted models - including Llama, Mistral and Zephyr
-- ***[LMStudio](https://lmstudio.ai/docs/api/endpoints/openai) via their OpenAI compatibility API
-- ****xAI Grok models including Grok-4, Grok-3-mini, Grok-4 Heavy (multi-agent)
+- **Anthropic Claude** - Claude models including extended thinking support and AWS Bedrock
+- **OpenAI ChatGPT** - GPT models via the Chat Completions API
+- **OpenAI Responses API** - OpenAI's newer Responses API with WebSocket transport support
+- **xAI Grok** - Grok-4, Grok-3-mini, Grok-4 Heavy (multi-agent), and more
+- **Google Gemini** - Gemini AI models
+- **Google Vertex AI** - Google's enterprise AI offering
+- **DeepSeek** - DeepSeek models with prompt caching support
+- **Ollama** - Locally hosted open-source models
+- **Mistral** - Mistral AI models
+- **Perplexity** - Perplexity AI models
+- **orq.ai** - orq.ai Deployments API
+- **Bumblebee** - Self-hosted models via Nx (Llama, Mistral, Zephyr)
+- **ReqLLM** - Multi-provider adapter via the `req_llm` library (Anthropic, OpenAI, Gemini, Groq, Ollama, AWS Bedrock, etc.)
 
 **LangChain** is short for Language Chain. An LLM, or Large Language Model, is the "Language" part. This library makes it easier for Elixir applications to "chain" or connect different processes, integrations, libraries, services, or functionality together with an LLM.
 
@@ -79,7 +73,7 @@ in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:langchain, "~> 0.7.0"}
+    {:langchain, "~> 0.8.0"}
   ]
 end
 ```

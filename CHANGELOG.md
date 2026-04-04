@@ -1,5 +1,53 @@
 # Changelog
 
+## v0.8.0
+
+**Breaking changes** in this release. Delta-related functions in `LLMChain` now return `{:ok, chain}` / `{:error, chain, reason}` tuples instead of bare chain structs. See upgrade guide below.
+
+This release greatly improves the stability of the library. There were long-standing issues where errors were difficult to detect or handle, and this release is focused on improving error detection, insight, and the general stability of longer running multi-turn agents.
+
+In particular, a validation was introduced some time back when trying to deal with older Mistral models that was causing problems for modern LLMs. It is valid for an LLM to return an empty `MessageDelta` (no content and no tool calls) when closing out an exchange where it has nothing else to say. This commonly happened when the final action was a tool call and result with nothing left to add. The overly strict validation was rejecting these as errors, causing difficult to diagnose, intermittent failures.
+
+That long-standing issue has finally been resolved! If you've had stability issues with the library in the past when building agents or working with multi-turn LLM conversations, this release is worth evaluating. With the empty delta issue resolved, improved error detection and handling within the streaming pipeline, and the new error-focused callbacks (`on_error` and `on_llm_error`), it's a great time to try it out.
+
+### Upgrading from v0.7.0 - v0.8.0
+
+#### Breaking: Delta functions return `:ok`/`:error` tuples
+
+The following `LLMChain` functions now return `{:ok, chain}` or `{:error, chain, reason}` instead of a bare `%LLMChain{}` struct:
+
+- `apply_deltas/2`
+- `merge_deltas/2` (returns `%LLMChain{}` on success, `{:error, chain, reason}` on failure)
+- `delta_to_message_when_complete/1`
+
+If you call these functions directly, update your pattern matches:
+
+```elixir
+# Before (v0.7.0)
+chain = LLMChain.apply_deltas(chain, deltas)
+chain = LLMChain.delta_to_message_when_complete(chain)
+
+# After (v0.8.0)
+{:ok, chain} = LLMChain.apply_deltas(chain, deltas)
+{:ok, chain} = LLMChain.delta_to_message_when_complete(chain)
+```
+
+These changes allow errors during streaming delta processing (e.g., failed delta-to-message conversion) to propagate as structured errors rather than being silently swallowed.
+
+### Added
+
+- **`on_error` and `on_llm_error` callbacks**: Two new chain callbacks for error observability. `on_llm_error` fires on every individual LLM call failure (including transient ones that may be retried or recovered via fallbacks). `on_error` fires exactly once when the chain has exhausted all recovery options and is returning a terminal error to the caller https://github.com/brainlid/langchain/pull/511
+- **Top-level `cache_control` for `ChatAnthropic`**: New `cache_control` field on the `ChatAnthropic` struct enables Anthropic's automatic caching feature, which applies cache breakpoints to the last cacheable block in each request. This is the simplest way to enable prompt caching for multi-turn conversations without manual breakpoint management. Existing `cache_messages` option is clarified as legacy client-side behavior https://github.com/brainlid/langchain/pull/509
+
+### Changed
+
+- **Delta functions return `:ok`/`:error` tuples** (breaking): `apply_deltas/2`, `delta_to_message_when_complete/1`, and `merge_deltas/2` now return structured result tuples, enabling proper error propagation through the streaming pipeline. Failed delta-to-message conversions now return `{:error, chain, %LangChainError{type: "delta_conversion_failed"}}` instead of silently resetting streaming state https://github.com/brainlid/langchain/pull/511
+- **Removed `validate_not_empty` from `MessageDelta.to_message/1`**: Empty assistant deltas (no content, no tool calls) are no longer rejected during delta-to-message conversion. This validation was overly strict and could mask legitimate responses https://github.com/brainlid/langchain/pull/511
+
+### Fixed
+
+- **Compiler warnings with optional `mint_web_socket` dependency**: Fixed warnings in `ChatOpenAIResponses` and `WebSocket` modules when the optional `mint_web_socket` library is not included as a dependency https://github.com/brainlid/langchain/pull/510
+
 ## v0.7.0
 
 ### Changed
