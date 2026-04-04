@@ -1502,9 +1502,10 @@ defmodule LangChain.MessageDeltaTest do
       assert length(msg.tool_calls) == 1
     end
 
-    test "rejects empty assistant message with no content and no tool_calls" do
-      # Mistral sometimes returns completely empty assistant messages
-      # which violate conversation flow rules
+    test "converts empty assistant message with no content and no tool_calls" do
+      # LLMs can return empty assistant messages (e.g., after processing tool
+      # results with nothing more to say). This is valid -- downstream code
+      # can use Message.is_empty?/1 to detect this case if needed.
       delta = %LangChain.MessageDelta{
         role: :assistant,
         merged_content: [],
@@ -1512,11 +1513,14 @@ defmodule LangChain.MessageDeltaTest do
         status: :complete
       }
 
-      {:error, reason} = MessageDelta.to_message(delta)
-      assert reason =~ "Empty assistant message"
+      assert {:ok, %Message{} = msg} = MessageDelta.to_message(delta)
+      assert msg.role == :assistant
+      assert msg.content == []
+      assert msg.tool_calls == []
+      assert msg.status == :complete
     end
 
-    test "rejects empty assistant message with nil content and nil tool_calls" do
+    test "converts empty assistant message with nil content and nil tool_calls" do
       delta = %LangChain.MessageDelta{
         role: :assistant,
         merged_content: nil,
@@ -1524,8 +1528,9 @@ defmodule LangChain.MessageDeltaTest do
         status: :complete
       }
 
-      {:error, reason} = MessageDelta.to_message(delta)
-      assert reason =~ "Empty assistant message"
+      assert {:ok, %Message{} = msg} = MessageDelta.to_message(delta)
+      assert msg.role == :assistant
+      assert msg.status == :complete
     end
 
     test "handles merged_content with nil values from index padding" do
