@@ -298,6 +298,33 @@ defmodule LangChain.Chains.LLMChainTest do
       new_chain = LLMChain.cancel_delta(chain, :cancelled, error)
       assert new_chain == chain
     end
+
+    test "cancel_delta/3 with empty delta converts to cancelled message" do
+      model = ChatOpenAI.new!(%{temperature: 1, stream: true})
+      chain = LLMChain.new!(%{llm: model, verbose: false})
+
+      # Create a delta with no content and no tool_calls
+      %LLMChain{} =
+        chain_with_empty_delta =
+        chain
+        |> LLMChain.merge_delta(
+          MessageDelta.new!(%{role: :assistant, content: nil, status: :incomplete})
+        )
+
+      # Force it to :complete so cancel_delta attempts conversion
+      %MessageDelta{} = delta = chain_with_empty_delta.delta
+      empty_delta = %MessageDelta{delta | status: :complete}
+      chain_with_empty_delta = %LLMChain{chain_with_empty_delta | delta: empty_delta}
+
+      error = LangChainError.exception(type: "overloaded", message: "Server overloaded")
+
+      # Empty deltas now convert successfully, so cancel_delta produces a
+      # cancelled message rather than an error tuple
+      result = LLMChain.cancel_delta(chain_with_empty_delta, :cancelled, error)
+      assert %LLMChain{} = result
+      assert result.delta == nil
+      assert [%LangChain.Message{status: :cancelled}] = result.messages
+    end
   end
 
   describe "JS inspired test" do
