@@ -1724,11 +1724,21 @@ defmodule LangChain.Chains.LLMChain do
       async: function.async
     }
 
+    # Enrich the context with the current call's tool_call_id so tool
+    # implementations can correlate side-effects (e.g. spawned sub-processes)
+    # back to the originating tool call without threading it through arguments.
+    enriched_context =
+      case context do
+        nil -> %{tool_call_id: call.call_id}
+        ctx when is_map(ctx) -> Map.put(ctx, :tool_call_id, call.call_id)
+        other -> other
+      end
+
     LangChain.Telemetry.span([:langchain, :tool, :call], metadata, fn ->
       try do
         if verbose, do: IO.inspect(function.name, label: "EXECUTING FUNCTION")
 
-        case Function.execute(function, call.arguments, context) do
+        case Function.execute(function, call.arguments, enriched_context) do
           {:ok, %ToolResult{} = result} ->
             # allow the tool execution to return a ToolResult. Just set the
             # tool_call_id and fallback settings for name and display_text. This
