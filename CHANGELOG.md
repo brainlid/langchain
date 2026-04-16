@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.8.1
+
+A small follow-up to v0.8.0. The headline change is improved sub-agent cancellation: tools that spawn sub-agents (or any other long-running side-effect) now receive the originating `tool_call_id` in their execution context, making it possible to correlate the spawned work back to the tool call and update its status when the user cancels.
+
+### Added
+
+- **`tool_call_id` available in tool execution context**: When `LLMChain` executes a tool, the call's `tool_call_id` is now injected into the tool's `context` map under the `:tool_call_id` key. Tools that spawn sub-agents or other asynchronous side-effects can use this to correlate the spawned work back to the originating tool call, enabling a cleaner cancellation UX where a cancelled sub-agent can mark its tool call as cancelled instead of leaving it dangling https://github.com/brainlid/langchain/pull/514
+
+### Changed
+
+- **Relaxed `req_llm` dependency constraint**: The optional `req_llm` dependency now uses `>= 1.6.0` instead of `~> 1.6`, allowing host applications to pull in newer major versions of `req_llm` (such as 2.x) without waiting on a LangChain release. Because `req_llm` is `optional: true`, applications that use `ChatReqLLM` should pin the version they want in their own `mix.exs` https://github.com/brainlid/langchain/pull/513
+- **Hardened GitHub Actions CI configuration**: Applied [zizmor](https://github.com/woodruffw/zizmor) security recommendations to the Elixir workflow and added a `dependabot.yml` for automated workflow updates. No effect on library users; relevant for contributors running CI https://github.com/brainlid/langchain/pull/515
+
 ## v0.8.0
 
 **Breaking changes** in this release. Delta-related functions in `LLMChain` now return `{:ok, chain}` / `{:error, chain, reason}` tuples instead of bare chain structs. See upgrade guide below.
