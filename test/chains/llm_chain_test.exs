@@ -2970,7 +2970,8 @@ defmodule LangChain.Chains.LLMChainTest do
         |> LLMChain.run_until_tool_used("do_thing", max_runs: 3)
 
       assert error.type == "exceeded_max_runs"
-      assert error.message == "Exceeded maximum number of runs"
+
+      assert error.message == "Exceeded maximum number of runs (3/3)"
     end
 
     test "returns error when tool_name does not exist in available tools", %{greet: greet} do
