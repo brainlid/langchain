@@ -81,7 +81,7 @@ defmodule LangChain.Chains.LLMChain.Mode.Steps do
       {:error, chain,
        LangChain.LangChainError.exception(
          type: "exceeded_max_runs",
-         message: "Exceeded maximum number of runs"
+         message: "Exceeded maximum number of runs (#{count}/#{max})"
        )}
     else
       {:continue, chain}

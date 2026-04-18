@@ -149,6 +149,18 @@ defmodule LangChain.Chains.LLMChain.Mode.StepsTest do
       ok = {:ok, chain}
       assert ^ok = Steps.check_max_runs(ok, max_runs: 25)
     end
+
+    test "includes count and limit in error message", %{chain: chain} do
+      chain =
+        chain
+        |> Steps.ensure_mode_state()
+        |> LLMChain.update_custom_context(%{mode_state: %{run_count: 50}})
+
+      assert {:error, _chain, %LangChainError{message: message}} =
+               Steps.check_max_runs({:continue, chain}, max_runs: 50)
+
+      assert message == "Exceeded maximum number of runs (50/50)"
+    end
   end
 
   describe "check_pause/2" do
