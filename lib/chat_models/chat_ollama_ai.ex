@@ -88,6 +88,46 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
         endpoint: "http://my-ollama-host:11434/api/chat"
       })
 
+  ## Structured Outputs (`:format`)
+
+  Ollama supports server-side structured output via the request's top-level
+  `format` field. Set the `:format` option to either `"json"` for plain JSON
+  mode, or a JSON Schema map for schema-enforced generation:
+
+      {:ok, chat} = ChatOllamaAI.new(%{
+        model: "llama3.1:latest",
+        format: %{
+          "type" => "object",
+          "required" => ["name", "city"],
+          "properties" => %{
+            "name" => %{"type" => "string"},
+            "city" => %{"type" => "string"}
+          }
+        }
+      })
+
+  See https://github.com/ollama/ollama/blob/main/docs/api.md#request-structured-outputs.
+
+  ## Multimodal (images)
+
+  Ollama accepts images on user messages via a top-level `images` array of
+  base64-encoded strings. Provide image content as `:image` `ContentPart`s
+  on a user message; `ChatOllamaAI` strips them out of the message content
+  and re-attaches them to the `images` field on the wire:
+
+      {:ok, bytes} = File.read("photo.jpg")
+
+      user_msg = Message.new_user!([
+        ContentPart.text!("What's in this picture?"),
+        ContentPart.image!(Base.encode64(bytes), media: :jpg)
+      ])
+
+      ChatOllamaAI.call(chat, [user_msg], [])
+
+  Note: `:image_url` content parts are not supported because the Ollama
+  server has no URL fetcher — they will raise. Fetch the bytes yourself and
+  pass them as `:image` parts.
+
   ## Connection Retry Behavior
 
   The `retry_count` option controls how many times a request is retried when
@@ -139,6 +179,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
 
   @create_fields [
     :endpoint,
+    :format,
     :keep_alive,
     :mirostat,
     :mirostat_eta,
@@ -170,6 +211,16 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   @primary_key false
   embedded_schema do
     field :endpoint, :string, default: "http://localhost:11434/api/chat"
+
+    # Ollama's native structured-output constraint. Forwarded as the
+    # request's top-level `format` field.
+    #
+    # * `"json"` — plain JSON mode (no schema enforcement).
+    # * A JSON Schema map — schema-enforced output. The server will
+    #   constrain generation to match the schema.
+    #
+    # See https://github.com/ollama/ollama/blob/main/docs/api.md#request-structured-outputs
+    field :format, :any, virtual: true
 
     # Change Keep Alive setting for unloading the model from memory.
     # (Default: "5m", set to a negative interval to disable)
@@ -332,6 +383,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
         |> Utils.conditionally_add_to_map(:stop, model.stop),
       receive_timeout: model.receive_timeout
     }
+    |> Utils.conditionally_add_to_map(:format, model.format)
     |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(tools))
   end
 
@@ -392,11 +444,20 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   end
 
   def for_api(%Message{role: :user, content: content} = msg) when is_list(content) do
+    {text_parts, image_parts} =
+      Enum.split_with(content, fn
+        %ContentPart{type: :text} -> true
+        _ -> false
+      end)
+
+    images = Enum.map(image_parts, &image_part_for_api/1)
+
     %{
       "role" => msg.role,
-      "content" => ContentPart.content_to_string(content)
+      "content" => ContentPart.content_to_string(text_parts)
     }
     |> Utils.conditionally_add_to_map("name", msg.name)
+    |> Utils.conditionally_add_to_map("images", images)
   end
 
   # Handle messages with ContentPart content for non-user roles
@@ -411,6 +472,17 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   # Handle ContentPart structures
   def for_api(%ContentPart{type: :text, content: content}) do
     content
+  end
+
+  # Ollama's native chat API takes images as base64 strings in a top-level
+  # `images` array on the user message. Only `:image` (base64) parts are
+  # supported — `:image_url` is rejected because Ollama has no fetcher.
+  defp image_part_for_api(%ContentPart{type: :image, content: base64}), do: base64
+
+  defp image_part_for_api(%ContentPart{type: :image_url}) do
+    raise LangChainError,
+          "ChatOllamaAI does not support :image_url content parts. Fetch the image " <>
+            "and pass it as a :image (base64) ContentPart instead."
   end
 
   defp get_tools_for_api(nil), do: []
@@ -753,6 +825,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
       model,
       [
         :endpoint,
+        :format,
         :keep_alive,
         :model,
         :mirostat,

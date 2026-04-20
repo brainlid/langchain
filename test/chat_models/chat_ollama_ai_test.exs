@@ -206,6 +206,84 @@ defmodule ChatModels.ChatOllamaAITest do
       assert user_msg["content"] == "What color is the sky?"
     end
 
+    test "omits :format when not set", %{ollama_ai: ollama_ai} do
+      data = ChatOllamaAI.for_api(ollama_ai, [Message.new_user!("hi")], [])
+      refute Map.has_key?(data, :format)
+    end
+
+    test "passes :format through as a string (json mode)" do
+      ollama = ChatOllamaAI.new!(%{model: "llama3.1:latest", format: "json"})
+      data = ChatOllamaAI.for_api(ollama, [Message.new_user!("hi")], [])
+      assert data.format == "json"
+    end
+
+    test "passes :format through as a JSON Schema map" do
+      schema = %{
+        "type" => "object",
+        "required" => ["name"],
+        "properties" => %{"name" => %{"type" => "string"}}
+      }
+
+      ollama = ChatOllamaAI.new!(%{model: "llama3.1:latest", format: schema})
+      data = ChatOllamaAI.for_api(ollama, [Message.new_user!("hi")], [])
+      assert data.format == schema
+    end
+
+    test "user message with no images has no :images key", %{ollama_ai: ollama_ai} do
+      msg = Message.new_user!([ContentPart.text!("describe the sky")])
+      data = ChatOllamaAI.for_api(ollama_ai, [msg], [])
+
+      assert [user_msg] = data.messages
+      assert user_msg["content"] == "describe the sky"
+      refute Map.has_key?(user_msg, "images")
+    end
+
+    test "user message with an :image ContentPart puts base64 in top-level :images", %{
+      ollama_ai: ollama_ai
+    } do
+      b64 = "iVBORw0KGgoBASE64="
+
+      msg =
+        Message.new_user!([
+          ContentPart.text!("what's in this image?"),
+          ContentPart.image!(b64, media: :png)
+        ])
+
+      data = ChatOllamaAI.for_api(ollama_ai, [msg], [])
+
+      assert [user_msg] = data.messages
+      assert user_msg["role"] == :user
+      assert user_msg["content"] == "what's in this image?"
+      assert user_msg["images"] == [b64]
+    end
+
+    test "user message with multiple :image parts collects them in order", %{
+      ollama_ai: ollama_ai
+    } do
+      msg =
+        Message.new_user!([
+          ContentPart.text!("compare"),
+          ContentPart.image!("AAA=", media: :png),
+          ContentPart.image!("BBB=", media: :jpg)
+        ])
+
+      data = ChatOllamaAI.for_api(ollama_ai, [msg], [])
+
+      assert [%{"images" => ["AAA=", "BBB="]}] = data.messages
+    end
+
+    test "user message with :image_url raises a clear error", %{ollama_ai: ollama_ai} do
+      msg =
+        Message.new_user!([
+          ContentPart.text!("describe"),
+          ContentPart.image_url!("https://example.com/img.png")
+        ])
+
+      assert_raise LangChain.LangChainError, ~r/does not support :image_url/, fn ->
+        ChatOllamaAI.for_api(ollama_ai, [msg], [])
+      end
+    end
+
     test "generates a map for an API call with a tool", %{ollama_ai: ollama_ai} do
       fun =
         Function.new!(%{
@@ -875,6 +953,7 @@ defmodule ChatModels.ChatOllamaAITest do
 
       assert result == %{
                "endpoint" => "http://localhost:11434/api/chat",
+               "format" => nil,
                "keep_alive" => "5m",
                "mirostat" => 0,
                "mirostat_eta" => 0.1,
