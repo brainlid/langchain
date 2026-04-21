@@ -2,7 +2,7 @@ defmodule LangChain.MixProject do
   use Mix.Project
 
   @source_url "https://github.com/brainlid/langchain"
-  @version "0.8.1"
+  @version "0.8.2"
 
   def project do
     [
@@ -89,6 +89,7 @@ defmodule LangChain.MixProject do
           LangChain.ChatModels.ChatOpenAI,
           LangChain.ChatModels.ChatOpenAIResponses,
           LangChain.ChatModels.ChatAnthropic,
+          LangChain.ChatModels.ChatAwsMantle,
           LangChain.ChatModels.ChatBumblebee,
           LangChain.ChatModels.ChatGoogleAI,
           LangChain.ChatModels.ChatVertexAI,

@@ -22,7 +22,7 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
   - **Per-model quirks** — Kimi prepends a leading space to text content; uses
     `functions.NAME:N` for `call_id` shape; narrates before tool calls
 
-  ## Available Models (as of writing)
+  ## Tested Models (as of writing)
 
   | Model ID                         | Vendor    | Notes                                  |
   | -------------------------------- | --------- | -------------------------------------- |
@@ -30,8 +30,7 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
   | `moonshotai.kimi-k2.5`           | Moonshot  | Multimodal, hybrid thinking via `:reasoning_effort` |
   | `openai.gpt-oss-120b`            | OpenAI    | Open-source GPT, hosted by AWS         |
 
-  More models may be available — call `GET /v1/models` against the Mantle
-  endpoint to discover what's currently published.
+  Refer to the [published list of supported models](https://docs.aws.amazon.com/bedrock/latest/userguide/models.html).
 
   ## Authentication
 
