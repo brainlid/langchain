@@ -363,19 +363,27 @@ defmodule LangChain.MessageDelta do
     %MessageDelta{primary | merged_content: updated_list}
   end
 
-  # Merge tool call delta by matching on index value (not list position).
-  # Anthropic's index differentiates calls but doesn't correspond to list offset.
+  # Merge tool call deltas by matching on each fragment's index value (not
+  # list position). The incoming delta may carry any number of tool_call
+  # fragments per chunk — OpenAI's spec allows an SSE event's `tool_calls`
+  # array to hold multiple argument fragments bound for the same `index`.
+  # gpt-oss-120b on AWS Mantle batches fragments this way; most providers
+  # emit one per chunk. Fold each fragment in turn so the accumulation is
+  # correct regardless of batching style.
   @spec merge_tool_calls(t(), t()) :: t()
-  defp merge_tool_calls(%MessageDelta{tool_calls: primary_calls} = primary, %MessageDelta{
-         tool_calls: [delta_call]
-       }) do
-    calls = primary_calls || []
-    initial = Enum.find(calls, &(&1.index == delta_call.index))
-    merged_call = ToolCall.merge(initial, delta_call)
-    %MessageDelta{primary | tool_calls: upsert_by_index(calls, merged_call)}
+  defp merge_tool_calls(%MessageDelta{} = primary, %MessageDelta{tool_calls: new_calls})
+       when is_list(new_calls) and new_calls != [] do
+    Enum.reduce(new_calls, primary, &merge_one_tool_call/2)
   end
 
   defp merge_tool_calls(%MessageDelta{} = primary, %MessageDelta{}), do: primary
+
+  defp merge_one_tool_call(%ToolCall{} = delta_call, %MessageDelta{tool_calls: primary_calls} = acc) do
+    calls = primary_calls || []
+    initial = Enum.find(calls, &(&1.index == delta_call.index))
+    merged_call = ToolCall.merge(initial, delta_call)
+    %MessageDelta{acc | tool_calls: upsert_by_index(calls, merged_call)}
+  end
 
   @spec update_index(t(), t()) :: t()
   defp update_index(%MessageDelta{} = primary, %MessageDelta{index: idx}) when is_number(idx) do
