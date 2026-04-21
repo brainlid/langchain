@@ -9,6 +9,7 @@ Elixir LangChain enables Elixir applications to integrate AI services and self-h
 **Supported chat models:**
 
 - **Anthropic Claude** - Claude models including extended thinking support and AWS Bedrock
+- **AWS Bedrock Mantle** - OpenAI-compatible gateway for third-party models hosted on Bedrock (Moonshot Kimi K2 family, OpenAI gpt-oss, and future additions)
 - **OpenAI ChatGPT** - GPT models via the Chat Completions API
 - **OpenAI Responses API** - OpenAI's newer Responses API with WebSocket transport support
 - **xAI Grok** - Grok-4, Grok-3-mini, Grok-4 Heavy (multi-agent), and more
@@ -167,6 +168,43 @@ Grok models offer unique capabilities:
 - **Specialized coding support** (Grok-4 Code)
 - **Multimodal capabilities** including vision and image analysis
 
+### AWS Bedrock Mantle Support
+
+LangChain supports AWS Bedrock's **Mantle** endpoint, an OpenAI-compatible gateway for third-party models hosted on Bedrock. A single `ChatAwsMantle` module covers the entire Mantle catalog, including Moonshot's Kimi K2 family (`moonshotai.kimi-k2-thinking`, `moonshotai.kimi-k2.5`) and OpenAI's gpt-oss series (`openai.gpt-oss-120b`), with new models becoming available as AWS adds them.
+
+```elixir
+alias LangChain.ChatModels.ChatAwsMantle
+alias LangChain.Chains.LLMChain
+alias LangChain.Message
+
+# Bearer auth with a Bedrock API key
+{:ok, mantle} = ChatAwsMantle.new(%{
+  model: "moonshotai.kimi-k2.5",
+  region: "us-east-1",
+  api_key: System.fetch_env!("AWS_BEARER_TOKEN_BEDROCK")
+})
+
+{:ok, chain} =
+  LLMChain.new!(%{llm: mantle})
+  |> LLMChain.add_message(Message.new_user!("Summarize Elixir's actor model"))
+  |> LLMChain.run()
+```
+
+Two authentication modes are supported:
+
+- **Bearer token** (simplest): pass `:api_key` with a long-term Bedrock API key.
+- **AWS SigV4** (IAM-friendly): pass `:credentials` as a zero-arity function returning IAM credentials (e.g. from `ExAws.Config`). Useful when the host already has IAM-based auth configured.
+
+Key capabilities:
+
+- **Reasoning extraction**: models that produce chain-of-thought (Kimi K2 Thinking always, K2.5 via `reasoning_effort: "high"`) surface their reasoning as a `ContentPart` of type `:thinking` on the assistant message, so downstream UIs can render thinking the same way as Anthropic extended thinking.
+- **Multimodal (K2.5)**: send images using the standard `ContentPart.image!/2` helper; Mantle accepts the OpenAI-shaped `image_url` wire format.
+- **Streaming** with per-chunk `MessageDelta` updates, including separate deltas for reasoning and content.
+- **Tool calling** via the standard OpenAI `tool_calls` shape.
+- **Region-aware URL building**: set `:region` and the endpoint is derived as `https://bedrock-mantle.{region}.api.aws/v1/chat/completions`.
+
+See the `LangChain.ChatModels.ChatAwsMantle` module documentation for the full list of tested models, per-model quirks, sampling controls (`:temperature`, `:top_p`, `:frequency_penalty`, `:presence_penalty`), and usage notes.
+
 ### Exposing a custom Elixir function to ChatGPT
 
 A really powerful feature of LangChain is making it easy to integrate an LLM into your application and expose features, data, and functionality _from_ your application to the LLM.
@@ -283,6 +321,7 @@ mix test --include live_call
 mix test --include live_open_ai
 mix test --include live_ollama_ai
 mix test --include live_anthropic
+mix test --include live_aws_mantle
 mix test --include live_mistral_ai
 mix test --include live_grok
 mix test --include live_vertex_ai
