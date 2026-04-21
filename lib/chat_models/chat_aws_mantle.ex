@@ -310,7 +310,11 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
         )
 
       not is_nil(credentials) and not is_function(credentials, 0) ->
-        add_error(changeset, :credentials, "must be a zero-arity function returning IAM credentials")
+        add_error(
+          changeset,
+          :credentials,
+          "must be a zero-arity function returning IAM credentials"
+        )
 
       true ->
         changeset
@@ -388,7 +392,10 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
     |> Utils.conditionally_add_to_map(:response_format, response_format(model))
     |> Utils.conditionally_add_to_map(:tools, tools_for_api(model, tools))
     |> Utils.conditionally_add_to_map(:tool_choice, tool_choice_for_api(model))
-    |> Utils.conditionally_add_to_map(:stream_options, stream_options_for_api(model.stream_options))
+    |> Utils.conditionally_add_to_map(
+      :stream_options,
+      stream_options_for_api(model.stream_options)
+    )
   end
 
   # Strip :thinking ContentParts before sending a message back to Mantle.
@@ -479,7 +486,9 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
   end
 
   @impl ChatModel
-  def retry_on_fallback?(%LangChainError{type: type}) when type in ["timeout", "connection"], do: true
+  def retry_on_fallback?(%LangChainError{type: type}) when type in ["timeout", "connection"],
+    do: true
+
   def retry_on_fallback?(_), do: false
 
   @impl ChatModel
@@ -629,7 +638,10 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
 
   @doc false
   # Streaming delta chunk — matched first because each choice has a "delta" key.
-  def do_process_response(%ChatAwsMantle{} = model, %{"choices" => [%{"delta" => _} | _] = choices} = msg) do
+  def do_process_response(
+        %ChatAwsMantle{} = model,
+        %{"choices" => [%{"delta" => _} | _] = choices} = msg
+      ) do
     choices
     |> Enum.flat_map(&process_stream_choice(model, &1, msg))
     |> case do

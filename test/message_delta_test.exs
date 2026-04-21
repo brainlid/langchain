@@ -229,9 +229,30 @@ defmodule LangChain.MessageDeltaTest do
           index: 0,
           status: :incomplete,
           tool_calls: [
-            %ToolCall{status: :incomplete, type: :function, call_id: nil, name: nil, arguments: " \"", index: 0},
-            %ToolCall{status: :incomplete, type: :function, call_id: nil, name: nil, arguments: "file_path\":", index: 0},
-            %ToolCall{status: :incomplete, type: :function, call_id: nil, name: nil, arguments: " \"/Memories/dad_jokes.txt\"}", index: 0}
+            %ToolCall{
+              status: :incomplete,
+              type: :function,
+              call_id: nil,
+              name: nil,
+              arguments: " \"",
+              index: 0
+            },
+            %ToolCall{
+              status: :incomplete,
+              type: :function,
+              call_id: nil,
+              name: nil,
+              arguments: "file_path\":",
+              index: 0
+            },
+            %ToolCall{
+              status: :incomplete,
+              type: :function,
+              call_id: nil,
+              name: nil,
+              arguments: " \"/Memories/dad_jokes.txt\"}",
+              index: 0
+            }
           ]
         }
 

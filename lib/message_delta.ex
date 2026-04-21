@@ -378,7 +378,10 @@ defmodule LangChain.MessageDelta do
 
   defp merge_tool_calls(%MessageDelta{} = primary, %MessageDelta{}), do: primary
 
-  defp merge_one_tool_call(%ToolCall{} = delta_call, %MessageDelta{tool_calls: primary_calls} = acc) do
+  defp merge_one_tool_call(
+         %ToolCall{} = delta_call,
+         %MessageDelta{tool_calls: primary_calls} = acc
+       ) do
     calls = primary_calls || []
     initial = Enum.find(calls, &(&1.index == delta_call.index))
     merged_call = ToolCall.merge(initial, delta_call)

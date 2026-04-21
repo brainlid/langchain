@@ -193,7 +193,9 @@ defmodule LangChain.ChatModels.ChatAwsMantleTest do
       refute Map.has_key?(body, :reasoning_effort)
     end
 
-    test "passes :top_p, :frequency_penalty, :presence_penalty through to the body when set", %{model: m} do
+    test "passes :top_p, :frequency_penalty, :presence_penalty through to the body when set", %{
+      model: m
+    } do
       updated = %{m | top_p: 0.9, frequency_penalty: 0.5, presence_penalty: 0.2}
       body = ChatAwsMantle.for_api(updated, [Message.new_user!("hi")], [])
       assert body.top_p == 0.9
@@ -232,7 +234,9 @@ defmodule LangChain.ChatModels.ChatAwsMantleTest do
       body = ChatAwsMantle.for_api(m, history, [])
 
       assistant_serialized = Enum.at(body.messages, 1)
-      content = Map.get(assistant_serialized, "content") || Map.get(assistant_serialized, :content)
+
+      content =
+        Map.get(assistant_serialized, "content") || Map.get(assistant_serialized, :content)
 
       # Thinking was stripped; text survived.
       assert [%{"type" => "text", "text" => "I'm gpt-oss-120b."}] = content
@@ -291,7 +295,10 @@ defmodule LangChain.ChatModels.ChatAwsMantleTest do
       assert msg.role == :assistant
 
       assert [
-               %ContentPart{type: :thinking, content: "100 mod 7 = 2, so Wednesday + 2 = Friday."},
+               %ContentPart{
+                 type: :thinking,
+                 content: "100 mod 7 = 2, so Wednesday + 2 = Friday."
+               },
                %ContentPart{type: :text, content: "The answer is Friday."}
              ] = msg.content
 
@@ -317,7 +324,9 @@ defmodule LangChain.ChatModels.ChatAwsMantleTest do
 
     test "returns an error tuple on Mantle error envelope", %{model: m} do
       body = %{"error" => %{"message" => "bad token", "type" => "auth_error"}}
-      assert {:error, %LangChainError{message: "bad token"}} = ChatAwsMantle.do_process_response(m, body)
+
+      assert {:error, %LangChainError{message: "bad token"}} =
+               ChatAwsMantle.do_process_response(m, body)
     end
   end
 
@@ -501,7 +510,9 @@ defmodule LangChain.ChatModels.ChatAwsMantleTest do
       %{model: m}
     end
 
-    test "reasoning chunks followed by content chunks produce [thinking, text] message", %{model: m} do
+    test "reasoning chunks followed by content chunks produce [thinking, text] message", %{
+      model: m
+    } do
       # Simulate Mantle's observed streaming shape:
       #   role → reasoning fragments → content fragments → terminal stop
       chunks = [
@@ -543,6 +554,7 @@ defmodule LangChain.ChatModels.ChatAwsMantleTest do
         |> List.flatten()
 
       merged = MessageDelta.merge_deltas(deltas)
+
       assert {:ok, %Message{content: [%ContentPart{type: :text, content: "pong"}]}} =
                MessageDelta.to_message(merged)
     end
@@ -616,7 +628,8 @@ defmodule LangChain.ChatModels.ChatAwsMantleTest do
   describe "live: streaming through ChatAwsMantle" do
     # Callbacks are not part of the cast fields (library convention — they're
     # runtime handlers, not config). Set via struct update after new!/1.
-    defp with_callbacks(%ChatAwsMantle{} = m, handlers), do: %ChatAwsMantle{m | callbacks: handlers}
+    defp with_callbacks(%ChatAwsMantle{} = m, handlers),
+      do: %ChatAwsMantle{m | callbacks: handlers}
 
     defp delta_capture_handler(test_pid) do
       %{
