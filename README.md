@@ -9,7 +9,7 @@ Elixir LangChain enables Elixir applications to integrate AI services and self-h
 **Supported chat models:**
 
 - **Anthropic Claude** - Claude models including extended thinking support and AWS Bedrock
-- **AWS Bedrock Mantle** - OpenAI-compatible gateway for third-party models hosted on Bedrock (Moonshot Kimi K2 family, OpenAI gpt-oss, and future additions)
+- **AWS Bedrock Mantle** - OpenAI-compatible gateway for third-party models hosted on Bedrock (Moonshot Kimi K2 family, OpenAI gpt-oss, and many others)
 - **OpenAI ChatGPT** - GPT models via the Chat Completions API
 - **OpenAI Responses API** - OpenAI's newer Responses API with WebSocket transport support
 - **xAI Grok** - Grok-4, Grok-3-mini, Grok-4 Heavy (multi-agent), and more

@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.8.2
+
+This release introduces **experimental** support for AWS Bedrock's Mantle endpoint via a new `ChatAwsMantle` chat model. Mantle is AWS's OpenAI-compatible gateway for third-party Bedrock models, so one new module unlocks a whole family of providers at once: Moonshot's Kimi K2 line, OpenAI's gpt-oss series, and any models AWS adds in the future.
+
+### Added
+
+- **`ChatAwsMantle` chat model (experimental)**: New module for AWS Bedrock's Mantle endpoint. Supports both Bearer auth (Bedrock API key) and AWS SigV4 (IAM credentials via a zero-arity `:credentials` function). Region-aware URL building derives `https://bedrock-mantle.{region}.api.aws/v1/chat/completions` from `:region`. Reasoning extraction surfaces Mantle's `message.reasoning` / `delta.reasoning` field as `:thinking` `ContentPart`s on the assistant message (including streaming), so reasoning-model output renders the same way as Anthropic extended thinking. Streaming (with separate reasoning and content deltas), tool calling, K2.5 multimodal input, and the OpenAI-standard `:reasoning_effort` field all work. Defaults to `receive_timeout: 120_000` and `max_tokens: 4096` to bound Mantle's intermittent slow-starts and Kimi's occasional token-repetition loops. Verified against `moonshotai.kimi-k2-thinking`, `moonshotai.kimi-k2.5`, and `openai.gpt-oss-120b` https://github.com/brainlid/langchain/pull/521
+
+### Changed
+
+- **`MessageDelta` merges batched tool-call fragments**: The tool-call merge path now folds over every fragment in a chunk's `tool_calls` array rather than assuming one fragment per chunk. Most providers emit one fragment per chunk (no behavior change); gpt-oss-120b on AWS Mantle batches multiple argument fragments per SSE event, and this generalization handles either batching style correctly https://github.com/brainlid/langchain/pull/521
+- **`LLMChain` `max_runs` error includes the configured value**: When the chain halts because the `max_runs` ceiling was reached, the returned error now reports the configured limit so callers can log or surface the exact threshold that was hit. Additional test coverage was also added around this mode's termination paths https://github.com/brainlid/langchain/pull/519
+
+### Fixed
+
+- **`ContentPart.parts_to_string/2` tolerates `nil` entries**: When `MessageDelta.merge_content_part_at_index/3` pads `merged_content` with `nil` (common mid-stream when reasoning lands at index 0 and visible content at index 1), the string-serializer now filters those nils instead of raising `BadMapError` on the first mid-stream read https://github.com/brainlid/langchain/pull/521
+
 ## v0.8.1
 
 A small follow-up to v0.8.0. The headline change is improved sub-agent cancellation: tools that spawn sub-agents (or any other long-running side-effect) now receive the originating `tool_call_id` in their execution context, making it possible to correlate the spawned work back to the tool call and update its status when the user cancels.
