@@ -323,9 +323,14 @@ defmodule LangChain.Message.ContentPart do
       iex> parts_to_string([])
       nil
   """
-  @spec parts_to_string([t()], type :: atom()) :: nil | String.t()
+  @spec parts_to_string([t() | nil], type :: atom()) :: nil | String.t()
   def parts_to_string(parts, type \\ :text) when is_list(parts) do
+    # Streaming `MessageDelta.merged_content` may contain nil entries when
+    # the index-based merge pads around an unfilled position (see
+    # `MessageDelta.merge_content_part_at_index/3`). Filter those before
+    # inspecting `.type` so callers don't need to sanitize first.
     parts
+    |> Enum.reject(&is_nil/1)
     |> Enum.filter(fn part -> part.type == type end)
     |> Enum.map_join("\n\n", fn part -> part.content end)
     |> case do

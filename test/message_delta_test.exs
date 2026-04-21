@@ -200,6 +200,74 @@ defmodule LangChain.MessageDeltaTest do
       assert merged == expected
     end
 
+    test "merges multiple tool_call fragments carried in a single delta" do
+      # OpenAI's streaming spec allows an SSE event's `tool_calls` array to
+      # carry any number of argument fragments bound for the same `index`.
+      # Most providers emit one per chunk, but gpt-oss-120b on AWS Mantle
+      # batches fragments more aggressively and can send 3+ in one delta.
+      # Each fragment must accumulate into the same ToolCall.
+      initial =
+        %MessageDelta{
+          role: :assistant,
+          index: 0,
+          status: :incomplete,
+          tool_calls: [
+            %ToolCall{
+              status: :incomplete,
+              type: :function,
+              call_id: "call_abc",
+              name: "read_file",
+              arguments: "{\n",
+              index: 0
+            }
+          ]
+        }
+
+      multi_fragment_delta =
+        %MessageDelta{
+          role: :unknown,
+          index: 0,
+          status: :incomplete,
+          tool_calls: [
+            %ToolCall{
+              status: :incomplete,
+              type: :function,
+              call_id: nil,
+              name: nil,
+              arguments: " \"",
+              index: 0
+            },
+            %ToolCall{
+              status: :incomplete,
+              type: :function,
+              call_id: nil,
+              name: nil,
+              arguments: "file_path\":",
+              index: 0
+            },
+            %ToolCall{
+              status: :incomplete,
+              type: :function,
+              call_id: nil,
+              name: nil,
+              arguments: " \"/Memories/dad_jokes.txt\"}",
+              index: 0
+            }
+          ]
+        }
+
+      merged = MessageDelta.merge_delta(initial, multi_fragment_delta)
+
+      assert [
+               %ToolCall{
+                 call_id: "call_abc",
+                 name: "read_file",
+                 arguments: "{\n \"file_path\": \"/Memories/dad_jokes.txt\"}",
+                 index: 0
+               }
+             ] = merged.tool_calls
+    end
+
     test "correctly merges assistant content with a tool_call" do
       merged = delta_content_with_function_call() |> List.flatten() |> MessageDelta.merge_deltas()
 
