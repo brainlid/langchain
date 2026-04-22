@@ -2789,7 +2789,11 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
           }
         ],
         tool_calls: [
-          ToolCall.new!(%{call_id: "toolu_abc", name: "web_lookup", arguments: %{"query" => "elixir"}})
+          ToolCall.new!(%{
+            call_id: "toolu_abc",
+            name: "web_lookup",
+            arguments: %{"query" => "elixir"}
+          })
         ]
       }
 
