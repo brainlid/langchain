@@ -1,13 +1,19 @@
 # Changelog
 
-## Unreleased
+## v0.8.3
 
 ### Added
 
 - **`ChatOllamaAI`: native `:format` (structured outputs) and image support**: Two gaps in the Ollama chat model are now closed.
   - `:format` accepts either `"json"` (plain JSON mode) or a JSON Schema map, and is forwarded as the request's top-level `format` field. Schema-enforced generation is handled server-side by Ollama, mirroring what `/api/generate` has always supported.
   - User messages containing `:image` `ContentPart`s now have their base64 payloads split out of the message content and re-attached as Ollama's native top-level `images` array on the message. Multiple image parts are preserved in order. `:image_url` parts raise a clear error because Ollama has no server-side URL fetcher — callers must fetch bytes themselves and pass them as `:image` parts.
-  - Prior behavior dropped image parts silently via `ContentPart.parts_to_string/1` and had no way to request structured output, forcing users to route through `ChatOpenAI` against Ollama's `/v1/chat/completions` endpoint — which doesn't reliably enforce schemas.
+  - Prior behavior dropped image parts silently via `ContentPart.parts_to_string/1` and had no way to request structured output, forcing users to route through `ChatOpenAI` against Ollama's `/v1/chat/completions` endpoint — which doesn't reliably enforce schemas. https://github.com/brainlid/langchain/pull/520
+
+### Fixed
+
+- **Cross-model message serialization for `:thinking` and `:unsupported` content parts**: When conversation history crosses model providers (e.g. a Claude response with extended thinking is replayed to an OpenAI-compatible endpoint, or vice versa), the receiving model's serializer could encounter `ContentPart` types it doesn't recognize.
+  - `ChatAnthropic.content_parts_for_api/1` now filters out `nil` entries after mapping, preventing Anthropic from rejecting requests with unsigned or unrecognised `:thinking` parts.
+  - `ChatAwsMantle.strip_thinking_parts/1` now also strips `:unsupported` parts (in addition to `:thinking`), so Anthropic `redacted_thinking` blocks don't crash the Mantle serializer when forwarded as conversation history. https://github.com/brainlid/langchain/pull/523
 
 ## v0.8.2
 
