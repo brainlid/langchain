@@ -404,7 +404,13 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
   # and will crash if one round-trips, so we filter them here.
   @spec strip_thinking_parts(Message.t()) :: Message.t()
   defp strip_thinking_parts(%Message{content: content} = msg) when is_list(content) do
-    cleaned = Enum.reject(content, &match?(%ContentPart{type: :thinking}, &1))
+    cleaned =
+      Enum.reject(content, fn
+        %ContentPart{type: :thinking} -> true
+        %ContentPart{type: :unsupported} -> true
+        _ -> false
+      end)
+
     %{msg | content: cleaned}
   end
 

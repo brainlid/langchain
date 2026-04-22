@@ -2771,6 +2771,36 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       assert expected == ChatAnthropic.message_for_api(msg)
     end
 
+    test "strips thinking ContentParts without a signature from assistant messages with tool calls" do
+      # When a conversation crosses models (e.g. Kimi K2 → Claude), the history
+      # may include assistant messages whose :thinking ContentParts have no
+      # Anthropic signature. content_part_for_api/1 returns nil for those, and
+      # they must not appear in the serialized content array or Anthropic rejects
+      # the request with "Input should be a valid dictionary or object to extract
+      # fields from" (the exact error seen in production logs).
+      msg = %Message{
+        role: :assistant,
+        status: :complete,
+        content: [
+          %ContentPart{
+            type: :thinking,
+            content: "Let me look that up.",
+            options: []
+          }
+        ],
+        tool_calls: [
+          ToolCall.new!(%{call_id: "toolu_abc", name: "web_lookup", arguments: %{"query" => "elixir"}})
+        ]
+      }
+
+      result = ChatAnthropic.message_for_api(msg)
+
+      assert result["role"] == "assistant"
+      # The nil produced by the signatureless thinking part must be gone;
+      # only the tool_use block should remain.
+      assert [%{"type" => "tool_use", "id" => "toolu_abc"}] = result["content"]
+    end
+
     test "turns a tool message into expected JSON format" do
       tool_success_result =
         Message.new_tool_result!(%{
