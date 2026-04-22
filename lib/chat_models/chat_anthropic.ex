@@ -1819,7 +1819,9 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   def content_parts_for_api(nil), do: []
 
   def content_parts_for_api(contents) when is_list(contents) do
-    Enum.map(contents, &content_part_for_api/1)
+    contents
+    |> Enum.map(&content_part_for_api/1)
+    |> Enum.reject(&is_nil/1)
   end
 
   def content_parts_for_api(content) when is_binary(content) do

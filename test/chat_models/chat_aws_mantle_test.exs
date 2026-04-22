@@ -241,6 +241,44 @@ defmodule LangChain.ChatModels.ChatAwsMantleTest do
       # Thinking was stripped; text survived.
       assert [%{"type" => "text", "text" => "I'm gpt-oss-120b."}] = content
     end
+
+    test "strips :unsupported ContentParts (e.g. redacted_thinking) from assistant messages before serialization",
+         %{model: m} do
+      # Anthropic returns `redacted_thinking` blocks when extended thinking is
+      # enabled but the content is encrypted. LangChain stores these as
+      # %ContentPart{type: :unsupported, options: [type: "redacted_thinking"]}.
+      # If such a message is sent back to Mantle as history, the :unsupported
+      # part must be stripped — ChatOpenAI.content_part_for_api/2 has no clause
+      # for it and will crash.
+      redacted_thinking = %ContentPart{
+        type: :unsupported,
+        content: "<encrypted_thinking_data>",
+        options: [type: "redacted_thinking"]
+      }
+
+      history = [
+        Message.new_user!("Think hard about this."),
+        %Message{
+          role: :assistant,
+          status: :complete,
+          content: [
+            redacted_thinking,
+            ContentPart.text!("The answer is 42.")
+          ]
+        },
+        Message.new_user!("Are you sure?")
+      ]
+
+      body = ChatAwsMantle.for_api(m, history, [])
+
+      assistant_serialized = Enum.at(body.messages, 1)
+
+      content =
+        Map.get(assistant_serialized, "content") || Map.get(assistant_serialized, :content)
+
+      # :unsupported was stripped; text survived.
+      assert [%{"type" => "text", "text" => "The answer is 42."}] = content
+    end
   end
 
   describe "new/1 — sampling knob validation" do
