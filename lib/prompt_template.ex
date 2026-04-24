@@ -25,6 +25,39 @@ defmodule LangChain.PromptTemplate do
       PromptTemplate.format(prompt, %{product: "colorful socks"})
       #=> "What's a name for a company that makes colorful socks?"
 
+  > #### Security — template text is executable Elixir code {: .warning}
+  >
+  > A `PromptTemplate`'s `text` is rendered with `EEx.eval_string/2`, which
+  > means it is evaluated as Elixir. Any expression inside `<%= … %>` runs with
+  > the full privileges of the BEAM node — it can read files, call
+  > `System.cmd/2`, read environment variables, spawn processes, and exfiltrate
+  > secrets.
+  >
+  > **Templates must be authored by developers and treated as source code.**
+  > Never construct a `PromptTemplate` from user input, LLM output, or any
+  > other data that can be influenced by an attacker — doing so is equivalent
+  > to calling `Code.eval_string/1` on that input.
+  >
+  > Untrusted data — user messages, LLM output, retrieved documents — is only
+  > safe when supplied as **assigns** (the `inputs` map, substituted into
+  > `<%= @name %>` slots). Assign values are inserted into the rendered output
+  > as strings and are **not** re-evaluated as EEx.
+  >
+  > ##### Safe
+  >
+  >     # Template is a developer-authored string literal;
+  >     # user text flows in as an assign.
+  >     prompt =
+  >       PromptTemplate.from_template!(
+  >         "Summarize this for <%= @audience %>: <%= @text %>"
+  >       )
+  >
+  >     PromptTemplate.format(prompt, %{audience: user_input, text: llm_output})
+  >
+  > ##### Unsafe (remote code execution)
+  >
+  >     # NEVER do this — `user_input` becomes executable Elixir code.
+  >     PromptTemplate.from_template!(user_input)
 
   """
   use Ecto.Schema
@@ -46,6 +79,15 @@ defmodule LangChain.PromptTemplate do
   @create_fields [:role, :text, :inputs]
   @required_fields [:text]
 
+  @doc """
+  Create a new PromptTemplate struct from the given attributes.
+
+  > #### Security {: .warning}
+  >
+  > `:text` is evaluated as EEx when rendered — it must be developer-authored.
+  > Never pass user or LLM input here. See the module documentation for
+  > details.
+  """
   @spec new(attrs :: map()) :: {:ok, t()} | {:error, Ecto.Changeset.t()}
   def new(attrs) do
     %PromptTemplate{}
@@ -69,6 +111,12 @@ defmodule LangChain.PromptTemplate do
   it's primary purpose. EEx is used to render the final text.
 
       PromptTemplate.new!(%{text: "My name is <%= @user_name %>. Warmly welcome me.", role: :user})
+
+  > #### Security {: .warning}
+  >
+  > `:text` is evaluated as EEx when rendered — it must be developer-authored.
+  > Never pass user or LLM input here. See the module documentation for
+  > details.
   """
   @spec new!(attrs :: map()) :: t() | no_return()
   def new!(attrs) do
@@ -93,6 +141,11 @@ defmodule LangChain.PromptTemplate do
 
       {:ok, prompt} = PromptTemplate.from_template("Suggest a good name for a company that makes <%= @product %>?")
 
+  > #### Security {: .warning}
+  >
+  > `text` is evaluated as EEx when rendered — it must be developer-authored.
+  > Never pass user or LLM input here. See the module documentation for
+  > details.
   """
   @spec from_template(text :: String.t()) :: {:ok, t()} | {:error, Ecto.Changeset.t()}
   def from_template(text) do
@@ -106,6 +159,11 @@ defmodule LangChain.PromptTemplate do
 
       prompt = PromptTemplate.from_template!("Suggest a good name for a company that makes <%= @product %>?")
 
+  > #### Security {: .warning}
+  >
+  > `text` is evaluated as EEx when rendered — it must be developer-authored.
+  > Never pass user or LLM input here. See the module documentation for
+  > details.
   """
   @spec from_template!(text :: String.t()) :: t() | no_return()
   def from_template!(text) do
@@ -140,6 +198,12 @@ defmodule LangChain.PromptTemplate do
       PromptTemplate.format_text("Hi! My name is <%= @name %>.", %{name: "Jose"})
       #=> "Hi! My name is Jose."
 
+  > #### Security {: .warning}
+  >
+  > `text` is evaluated as EEx — it must be developer-authored. Never pass
+  > user or LLM input here. `inputs` values, in contrast, are substituted as
+  > strings and are NOT re-evaluated, so untrusted data is safe to pass as an
+  > input. See the module documentation for details.
   """
   @spec format_text(text :: String.t(), inputs :: %{atom() => any()}) :: String.t()
   def format_text(text, %{} = inputs) do
