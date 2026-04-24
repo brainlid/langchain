@@ -646,7 +646,7 @@ if Code.ensure_loaded?(ReqLLM) do
     defp merge_provider_opts(opts, provider_opts) when is_map(provider_opts) do
       extra =
         Enum.map(provider_opts, fn {k, v} ->
-          key = if is_binary(k), do: String.to_atom(k), else: k
+          key = if is_binary(k), do: String.to_existing_atom(k), else: k
           {key, v}
         end)
 

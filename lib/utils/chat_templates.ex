@@ -89,6 +89,14 @@ defmodule LangChain.Utils.ChatTemplates do
   It's possible to pass a callback as a template.
   The function receives the list of messages as first argument and `opts` as second and must return a string.
   """
+
+  # Every `EEx.eval_string/2` call in this module evaluates a hardcoded
+  # string-literal template defined inline in the function body. Message
+  # content, tool JSON, dates, and other runtime data flow in only through
+  # `assigns`, which EEx inserts into the output as strings (not re-evaluated
+  # as code). The per-function `# sobelow_skip ["RCE.EEx"]` comments
+  # below reflect that review.
+
   alias LangChain.LangChainError
   alias LangChain.Message
   alias LangChain.Message.ContentPart
@@ -187,6 +195,7 @@ defmodule LangChain.Utils.ChatTemplates do
           String.t() | no_return()
   def apply_chat_template!(messages, chat_format, opts \\ [])
 
+  # sobelow_skip ["RCE.EEx"]
   def apply_chat_template!(messages, :inst, _opts) do
     # https://huggingface.co/docs/transformers/main/en/chat_templating the
     # `:inst` format does not "add_generation_prompt"
@@ -220,6 +229,7 @@ defmodule LangChain.Utils.ChatTemplates do
   end
 
   # Does Zephyr formatted text
+  # sobelow_skip ["RCE.EEx"]
   def apply_chat_template!(messages, :zephyr, opts) do
     # https://huggingface.co/HuggingFaceH4/zephyr-7b-alpha/blob/main/tokenizer_config.json#L34
     # {% for message in messages %}\n
@@ -253,6 +263,7 @@ defmodule LangChain.Utils.ChatTemplates do
   end
 
   # Does ChatML formatted text
+  # sobelow_skip ["RCE.EEx"]
   def apply_chat_template!(messages, :im_start, opts) do
     # <|im_start|>user
     # Hi there!<|im_end|>
@@ -278,6 +289,7 @@ defmodule LangChain.Utils.ChatTemplates do
     )
   end
 
+  # sobelow_skip ["RCE.EEx"]
   def apply_chat_template!(messages, :phi_4, _opts) do
     # translation form https://huggingface.co/microsoft/phi-4/blob/main/tokenizer_config.json#L774 to Elixir via Claude 3.5 Sonnet Copilot
     # {% for message in messages %}{% if (message['role'] == 'system') %}{{'<|im_start|>system<|im_sep|>' + message['content'] + '<|im_end|>'}}{% elif (message['role'] == 'user') %}{{'<|im_start|>user<|im_sep|>' + message['content'] + '<|im_end|><|im_start|>assistant<|im_sep|>'}}{% elif (message['role'] == 'assistant') %}{{message['content'] + '<|im_end|>'}}{% endif %}{% endfor %}
@@ -302,6 +314,7 @@ defmodule LangChain.Utils.ChatTemplates do
   end
 
   # Does LLaMa 2 formatted text
+  # sobelow_skip ["RCE.EEx"]
   def apply_chat_template!(messages, :llama_2, _opts) do
     # https://huggingface.co/blog/llama2#how-to-prompt-llama-2
 
@@ -328,6 +341,7 @@ defmodule LangChain.Utils.ChatTemplates do
   end
 
   # Does LLaMa 3 formatted text
+  # sobelow_skip ["RCE.EEx"]
   def apply_chat_template!(messages, :llama_3, opts) do
     # <|begin_of_text|>
     # <|start_header_id|>system<|end_header_id|>
@@ -374,6 +388,7 @@ defmodule LangChain.Utils.ChatTemplates do
   """
   def apply_chat_template_with_tools!(messages, chat_format, tools \\ [], opts \\ [])
   # Does LLaMa 3.1 json tool calling formatted text
+  # sobelow_skip ["RCE.EEx"]
   def apply_chat_template_with_tools!(messages, :llama_3_1_json_tool_calling, tools, opts) do
     # <|begin_of_text|>
     # <|start_header_id|>system<|end_header_id|>
@@ -469,6 +484,7 @@ defmodule LangChain.Utils.ChatTemplates do
     )
   end
 
+  # sobelow_skip ["RCE.EEx"]
   def apply_chat_template_with_tools!(messages, :llama_3_1_custom_tool_calling, tools, opts) do
     add_generation_prompt =
       Keyword.get(opts, :add_generation_prompt, default_add_generation_prompt_value(messages))
@@ -568,6 +584,7 @@ defmodule LangChain.Utils.ChatTemplates do
     )
   end
 
+  # sobelow_skip ["RCE.EEx"]
   def apply_chat_template_with_tools!(messages, :llama_3_2_custom_tool_calling, tools, opts) do
     add_generation_prompt =
       Keyword.get(opts, :add_generation_prompt, default_add_generation_prompt_value(messages))

@@ -555,8 +555,6 @@ defmodule LangChain.ChatModels.ChatGrok do
       IO.puts("  Headers:")
 
       Enum.each(headers, fn {k, v} ->
-        IO.inspect({k, v})
-
         if k == "authorization" do
           IO.puts("    #{k}: Bearer ***#{String.slice(v, -10, 10)}")
         else

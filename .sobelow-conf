@@ -1,0 +1,18 @@
+# Sobelow configuration — consumed by `mix sobelow` (and therefore `mix precommit`).
+#
+# - skip: true           — honor @sobelow_skip attributes placed above specific
+#                          functions that have been reviewed and deemed safe.
+#                          See SecurityReviewReport.md for the rationale on each
+#                          one.
+# - exit: :low           — exit non-zero when any finding at Low confidence or
+#                          higher is reported (fails CI / precommit).
+# - format: "compact"    — one line per finding; silent when clean.
+# - threshold: :low      — consider findings down to Low confidence.
+#
+# When a new finding appears, either fix the underlying issue or — if the call
+# is safe and documented — annotate the function with
+# `@sobelow_skip ["<RuleName>"]` and add the rationale to the code and to
+# SecurityReviewReport.md. Do not edit the `skip` or `exit` keys below to
+# silence a new finding without that review step.
+
+[exit: :low, format: "compact", ignore_files: [], ignore: [], out: nil, private: false, router: nil, skip: true, threshold: :low, verbose: false, version: false]
