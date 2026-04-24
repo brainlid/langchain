@@ -33,5 +33,7 @@ langchain-*.tar
 
 DEV_NOTES.md
 PERSONAL.md
+my_docs/
+
 # macOS system files
 .DS_Store
