@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.8.4
+
+A security-focused release. Fixes an API-key leak in `ChatGrok` verbose logging, hardens an atom-table exposure in `ChatReqLLM`, documents `PromptTemplate`'s EEx trust boundary, and wires `mix sobelow` into `mix precommit`.
+
+### Added
+
+- **`PromptTemplate` EEx security documentation**: Added a security admonition to `PromptTemplate` and the raw-text constructors warning that `text` is evaluated as EEx. Developer-controlled templates are safe; user- or LLM-controlled strings are not. https://github.com/brainlid/langchain/pull/526
+- **`mix sobelow` in `mix precommit`**: Sobelow runs between `format` and `test` with a committed `.sobelow-conf`. Reviewed call sites carry inline `# sobelow_skip` annotations. https://github.com/brainlid/langchain/pull/526
+
+### Changed
+
+- **`ChatReqLLM.merge_provider_opts/2` uses `String.to_existing_atom/1`**: Unknown provider-opt keys now raise `ArgumentError` instead of growing the atom table. https://github.com/brainlid/langchain/pull/526
+
+### Fixed
+
+- **`ChatGrok` verbose logging leaked the API key**: An unconditional `IO.inspect/1` ran before the redaction branch, so `verbose_api: true` printed the raw `Bearer` token to stdout. Rotate any Grok keys that may have been captured in logs. https://github.com/brainlid/langchain/pull/526
+
 ## v0.8.3
 
 ### Added
