@@ -80,6 +80,12 @@ defmodule LangChain.Images do
   end
 
   # write the contents to the file
+  #
+  # `target_path` is fully developer-controlled: it is built from the `path` and
+  # `filename_prefix` arguments to `save_images/3` plus an index and the image's
+  # `image_type`, which is an `Ecto.Enum` restricted to `[:png, :jpg, :webp]`.
+  # No user or LLM input flows into the path. See SecurityReviewReport.md §F-8.
+  # sobelow_skip ["Traversal.FileModule"]
   @spec do_write_to_file(binary(), String.t()) :: :ok | {:error, String.t()}
   defp do_write_to_file(data, target_path) do
     case File.write(target_path, data) do

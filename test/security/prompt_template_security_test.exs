@@ -77,9 +77,7 @@ defmodule LangChain.Security.PromptTemplateSecurityTest do
 
     test "Code.eval_string/1 gives full arbitrary code evaluation" do
       prompt =
-        PromptTemplate.from_template!(
-          "<%= {res, _} = Code.eval_string(\"1 + 2 + 3\"); res %>"
-        )
+        PromptTemplate.from_template!("<%= {res, _} = Code.eval_string(\"1 + 2 + 3\"); res %>")
 
       assert PromptTemplate.format(prompt, %{}) == "6"
     end
@@ -166,9 +164,7 @@ defmodule LangChain.Security.PromptTemplateSecurityTest do
 
     test "format_composed/3: raw-string composed_of values are inserted as strings, not re-evaluated" do
       full =
-        PromptTemplate.from_template!(
-          "intro: <%= @intro %>\nbody: <%= @body %>"
-        )
+        PromptTemplate.from_template!("intro: <%= @intro %>\nbody: <%= @body %>")
 
       # Raw string branch of format_composed.
       result =
@@ -220,9 +216,7 @@ defmodule LangChain.Security.PromptTemplateSecurityTest do
     test "prose with an embedded EEx payload is inserted verbatim" do
       # Developer-authored template — trusted.
       prompt =
-        PromptTemplate.from_template!(
-          "Assistant, the user said: <%= @user_message %>"
-        )
+        PromptTemplate.from_template!("Assistant, the user said: <%= @user_message %>")
 
       # User-supplied text — hostile.
       hostile =
@@ -281,9 +275,8 @@ defmodule LangChain.Security.PromptTemplateSecurityTest do
       # Inner template whose rendered output contains `<%= File.read!(...) %>`
       # as a literal. We construct it by producing the EEx-looking string via a
       # plain string expression inside the inner template.
-      inner_literal_template = PromptTemplate.from_template!(
-        ~S[<%= ~s(<%= File.read!("/etc/hostname") %>) %>]
-      )
+      inner_literal_template =
+        PromptTemplate.from_template!(~S[<%= ~s(<%= File.read!("/etc/hostname") %>) %>])
 
       result =
         PromptTemplate.format_composed(

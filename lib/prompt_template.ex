@@ -205,6 +205,12 @@ defmodule LangChain.PromptTemplate do
   > strings and are NOT re-evaluated, so untrusted data is safe to pass as an
   > input. See the module documentation for details.
   """
+  # `text` is the developer-authored template per the contract documented on
+  # the module and on this function (see `> #### Security {: .warning}` callout
+  # above). Untrusted data flows in via `inputs` (assigns), which EEx inserts
+  # into the rendered output as strings — assigns are not re-evaluated as EEx.
+  # See SecurityReviewReport.md §3 / F-1.
+  # sobelow_skip ["RCE.EEx"]
   @spec format_text(text :: String.t(), inputs :: %{atom() => any()}) :: String.t()
   def format_text(text, %{} = inputs) do
     # https://hexdocs.pm/eex/1.18.3/EEx.html

@@ -53,7 +53,8 @@ defmodule LangChain.MixProject do
       {:ex_doc, "~> 0.40", only: :dev, runtime: false},
       {:mimic, "~> 1.8", only: :test},
       {:dotenvy, "~> 1.1"},
-      {:req_llm, ">= 1.6.0", optional: true}
+      {:req_llm, ">= 1.6.0", optional: true},
+      {:sobelow, "~> 0.14", only: [:dev, :test], runtime: false, warn_if_outdated: true}
     ]
   end
 
@@ -65,7 +66,13 @@ defmodule LangChain.MixProject do
   # See the documentation for `Mix` for more info on aliases.
   defp aliases do
     [
-      precommit: ["compile --warning-as-errors", "deps.unlock --unused", "format", "test"]
+      precommit: [
+        "compile --warning-as-errors",
+        "deps.unlock --unused",
+        "format",
+        "sobelow",
+        "test"
+      ]
     ]
   end
 
