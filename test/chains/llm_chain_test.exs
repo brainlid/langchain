@@ -2557,6 +2557,8 @@ defmodule LangChain.Chains.LLMChainTest do
       # the chain should return an error rather than silently swallowing the failure.
       # Previously the delta was silently cleared and appeared as success; now the
       # error propagates through apply_deltas -> do_run -> run.
+      # Uses max_retry_count: 1 to keep this test focused on the propagation
+      # behavior — retry exhaustion has its own dedicated tests below.
 
       expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
         # Return truncated/malformed JSON in tool call arguments
@@ -2607,7 +2609,7 @@ defmodule LangChain.Chains.LLMChainTest do
         })
 
       chain =
-        LLMChain.new!(%{llm: ChatOpenAI.new!(%{stream: true})})
+        LLMChain.new!(%{llm: ChatOpenAI.new!(%{stream: true}), max_retry_count: 1})
         |> LLMChain.add_tools(search_web)
         |> LLMChain.add_message(Message.new_user!("Search for something"))
 
@@ -2615,6 +2617,207 @@ defmodule LangChain.Chains.LLMChainTest do
       # silently swallowed
       assert {:error, _chain, %LangChainError{type: "delta_conversion_failed"}} =
                LLMChain.run(chain, mode: :while_needs_response)
+    end
+
+    test "transient malformed JSON delta recovers on retry" do
+      # First streaming attempt produces a tool_call with truncated JSON;
+      # the chain should fire :on_llm_error, retry, and succeed when the
+      # second attempt returns a valid stream.
+      handler = %{
+        on_llm_error: fn _chain, error ->
+          send(self(), {:llm_error_callback, error})
+        end,
+        on_retries_exceeded: fn _chain ->
+          send(self(), :retries_exceeded_callback)
+        end
+      }
+
+      bad_deltas = [
+        %MessageDelta{role: :assistant, status: :incomplete, index: 0},
+        %MessageDelta{
+          status: :incomplete,
+          index: 0,
+          tool_calls: [
+            ToolCall.new!(%{
+              status: :incomplete,
+              type: :function,
+              call_id: "call_bad",
+              name: "search_web",
+              arguments: nil,
+              index: 0
+            })
+          ]
+        },
+        %MessageDelta{
+          status: :incomplete,
+          index: 0,
+          tool_calls: [
+            ToolCall.new!(%{
+              status: :incomplete,
+              type: :function,
+              # Truncated JSON
+              arguments: "{\"query\": \"test\",\"",
+              index: 0
+            })
+          ]
+        },
+        %MessageDelta{status: :complete, index: 0}
+      ]
+
+      good_deltas = [
+        %MessageDelta{role: :assistant, status: :incomplete, index: 0},
+        %MessageDelta{
+          status: :incomplete,
+          index: 0,
+          tool_calls: [
+            ToolCall.new!(%{
+              status: :incomplete,
+              type: :function,
+              call_id: "call_good",
+              name: "search_web",
+              arguments: nil,
+              index: 0
+            })
+          ]
+        },
+        %MessageDelta{
+          status: :incomplete,
+          index: 0,
+          tool_calls: [
+            ToolCall.new!(%{
+              status: :incomplete,
+              type: :function,
+              arguments: "{\"query\": \"test\"}",
+              index: 0
+            })
+          ]
+        },
+        %MessageDelta{status: :complete, index: 0}
+      ]
+
+      # First call returns bad JSON, second call returns valid JSON.
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools -> {:ok, bad_deltas} end)
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools -> {:ok, good_deltas} end)
+
+      search_web =
+        Function.new!(%{
+          name: "search_web",
+          description: "Search the web",
+          parameters_schema: %{
+            type: "object",
+            properties: %{query: %{type: "string"}},
+            required: ["query"]
+          },
+          function: fn _args, _ctx -> {:ok, "results"} end
+        })
+
+      chain =
+        LLMChain.new!(%{
+          llm: ChatOpenAI.new!(%{stream: true}),
+          max_retry_count: 3,
+          callbacks: [handler]
+        })
+        |> LLMChain.add_tools(search_web)
+        |> LLMChain.add_message(Message.new_user!("Search for something"))
+
+      assert {:ok, updated_chain} = LLMChain.run(chain)
+
+      # The successfully parsed tool call landed on the chain
+      assert %Message{role: :assistant, tool_calls: [tool_call]} = updated_chain.last_message
+      assert tool_call.name == "search_web"
+      assert tool_call.arguments == %{"query" => "test"}
+
+      # :on_llm_error fired exactly once for the transient failure
+      assert_received {:llm_error_callback, %LangChainError{type: "delta_conversion_failed"}}
+      refute_received {:llm_error_callback, _}
+
+      # Retries did not exhaust
+      refute_received :retries_exceeded_callback
+
+      # Failure count was reset by process_message after the successful retry
+      # (reset_current_failure_count_if fires when message is not tool-related,
+      # but for tool_calls it stays — what matters is that retry budget worked).
+      assert updated_chain.current_failure_count == 1
+    end
+
+    test "persistent malformed JSON delta exhausts retries" do
+      handler = %{
+        on_llm_error: fn _chain, error ->
+          send(self(), {:llm_error_callback, error})
+        end,
+        on_retries_exceeded: fn _chain ->
+          send(self(), :retries_exceeded_callback)
+        end
+      }
+
+      bad_deltas = [
+        %MessageDelta{role: :assistant, status: :incomplete, index: 0},
+        %MessageDelta{
+          status: :incomplete,
+          index: 0,
+          tool_calls: [
+            ToolCall.new!(%{
+              status: :incomplete,
+              type: :function,
+              call_id: "call_bad",
+              name: "search_web",
+              arguments: nil,
+              index: 0
+            })
+          ]
+        },
+        %MessageDelta{
+          status: :incomplete,
+          index: 0,
+          tool_calls: [
+            ToolCall.new!(%{
+              status: :incomplete,
+              type: :function,
+              # Persistently truncated JSON
+              arguments: "{\"query\": \"test\",\"",
+              index: 0
+            })
+          ]
+        },
+        %MessageDelta{status: :complete, index: 0}
+      ]
+
+      # max_retry_count: 3 → expect exactly 3 LLM calls before exhausting
+      expect(ChatOpenAI, :call, 3, fn _model, _messages, _tools -> {:ok, bad_deltas} end)
+
+      search_web =
+        Function.new!(%{
+          name: "search_web",
+          description: "Search the web",
+          parameters_schema: %{
+            type: "object",
+            properties: %{query: %{type: "string"}},
+            required: ["query"]
+          },
+          function: fn _args, _ctx -> {:ok, "results"} end
+        })
+
+      chain =
+        LLMChain.new!(%{
+          llm: ChatOpenAI.new!(%{stream: true}),
+          max_retry_count: 3,
+          callbacks: [handler]
+        })
+        |> LLMChain.add_tools(search_web)
+        |> LLMChain.add_message(Message.new_user!("Search for something"))
+
+      assert {:error, _chain, %LangChainError{type: "delta_conversion_failed"}} =
+               LLMChain.run(chain)
+
+      # :on_llm_error fired once per attempt (3 total)
+      assert_received {:llm_error_callback, %LangChainError{type: "delta_conversion_failed"}}
+      assert_received {:llm_error_callback, %LangChainError{type: "delta_conversion_failed"}}
+      assert_received {:llm_error_callback, %LangChainError{type: "delta_conversion_failed"}}
+      refute_received {:llm_error_callback, _}
+
+      # :on_retries_exceeded fired exactly once at the end
+      assert_received :retries_exceeded_callback
+      refute_received :retries_exceeded_callback
     end
 
     test "empty streaming response succeeds in run" do

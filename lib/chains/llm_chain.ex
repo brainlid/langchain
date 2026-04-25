@@ -907,7 +907,7 @@ defmodule LangChain.Chains.LLMChain do
             {:ok, updated_chain}
 
           {:error, _chain, _reason} = error ->
-            error
+            handle_delta_error(error)
         end
 
       {:ok, [[%MessageDelta{} | _] | _] = deltas} ->
@@ -921,7 +921,7 @@ defmodule LangChain.Chains.LLMChain do
             {:ok, updated_chain}
 
           {:error, _chain, _reason} = error ->
-            error
+            handle_delta_error(error)
         end
 
       {:error, %LangChainError{} = reason} ->
@@ -1139,6 +1139,28 @@ defmodule LangChain.Chains.LLMChain do
   @spec reset_streaming_state(t()) :: t()
   defp reset_streaming_state(%LLMChain{} = chain) do
     %LLMChain{chain | delta: nil}
+  end
+
+  # Handle a delta-conversion error like a retryable LLM error: fire
+  # :on_llm_error, increment the failure count, and recurse into do_run/1 if
+  # retries remain. Streaming state is already cleared by
+  # delta_to_message_when_complete/1 before this is called, so the retry starts
+  # from a clean chain. On final failure we propagate the original `reason`
+  # (e.g. "delta_conversion_failed") rather than letting do_run/1's guard
+  # convert it to a generic "exceeded_failure_count" — downstream apps
+  # pattern-match on the original type for user-facing copy.
+  @spec handle_delta_error({:error, t(), LangChainError.t()}) ::
+          {:ok, t()} | {:error, t(), LangChainError.t()}
+  defp handle_delta_error({:error, error_chain, reason}) do
+    Callbacks.fire(error_chain.callbacks, :on_llm_error, [error_chain, reason])
+    bumped = increment_current_failure_count(error_chain)
+
+    if bumped.current_failure_count >= bumped.max_retry_count do
+      Callbacks.fire(bumped.callbacks, :on_retries_exceeded, [bumped])
+      {:error, bumped, reason}
+    else
+      do_run(bumped)
+    end
   end
 
   # Resolve display text for a tool call by looking up the Function definition.
