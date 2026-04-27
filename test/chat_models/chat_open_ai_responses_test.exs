@@ -667,6 +667,54 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
       assert output["output"] == "Result: 42"
     end
 
+    test "converts multimodal tool result to function_call_output content array" do
+      tool_result =
+        LangChain.Message.ToolResult.new!(%{
+          tool_call_id: "call_123",
+          content: [
+            LangChain.Message.ContentPart.text!(~s({"status":"ok"})),
+            LangChain.Message.ContentPart.image!("base64-image-data",
+              media: "image/jpeg",
+              display_name: "preview.jpg"
+            )
+          ]
+        })
+
+      msg = LangChain.Message.new_tool_result!(%{tool_results: [tool_result]})
+      result = ChatOpenAIResponses.for_api(ChatOpenAIResponses.new!(), msg)
+
+      assert [%{"type" => "function_call_output", "output" => content}] = result
+
+      assert [
+               %{"type" => "input_text", "text" => ~s({"status":"ok"})},
+               %{
+                 "type" => "input_image",
+                 "image_url" => "data:image/jpeg;base64,base64-image-data"
+               }
+             ] = content
+    end
+
+    test "converts multi-text tool result to function_call_output content array" do
+      tool_result =
+        LangChain.Message.ToolResult.new!(%{
+          tool_call_id: "call_123",
+          content: [
+            LangChain.Message.ContentPart.text!("First"),
+            LangChain.Message.ContentPart.text!("Second")
+          ]
+        })
+
+      msg = LangChain.Message.new_tool_result!(%{tool_results: [tool_result]})
+      result = ChatOpenAIResponses.for_api(ChatOpenAIResponses.new!(), msg)
+
+      assert [%{"type" => "function_call_output", "output" => content}] = result
+
+      assert content == [
+               %{"type" => "input_text", "text" => "First"},
+               %{"type" => "input_text", "text" => "Second"}
+             ]
+    end
+
     test "handles assistant message with both content and tool calls" do
       msg =
         LangChain.Message.new_assistant!(%{

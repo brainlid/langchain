@@ -765,13 +765,11 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     Enum.map(tool_calls, &for_api(model, &1))
   end
 
-  def for_api(%ChatOpenAIResponses{} = _model, %ToolResult{type: :function} = result) do
-    # a ToolResult becomes a stand-alone %Message{role: :tool} response.
-    [%ContentPart{type: :text, content: output, options: []}] = result.content
-
+  def for_api(%ChatOpenAIResponses{} = model, %ToolResult{type: :function} = result) do
+    # a ToolResult becomes a stand-alone function_call_output item.
     %{
       "call_id" => result.tool_call_id,
-      "output" => output,
+      "output" => tool_result_output_for_api(model, result.content),
       "type" => "function_call_output"
     }
   end
@@ -789,6 +787,21 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
 
   def for_api(%ChatOpenAIResponses{} = _model, %PromptTemplate{} = _template) do
     raise LangChainError, "PromptTemplates must be converted to messages."
+  end
+
+  defp tool_result_output_for_api(_model, nil), do: ""
+
+  defp tool_result_output_for_api(_model, content) when is_binary(content), do: content
+
+  defp tool_result_output_for_api(_model, [
+         %ContentPart{type: :text, content: output, options: []}
+       ]) do
+    output
+  end
+
+  defp tool_result_output_for_api(%ChatOpenAIResponses{} = model, content_parts)
+       when is_list(content_parts) do
+    content_parts_for_api(model, content_parts)
   end
 
   def native_tool_calls_for_api(%ChatOpenAIResponses{} = model, content_parts)
