@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.8.5
+
+A small reliability and observability release. Streaming runs now recover from delta-conversion errors instead of failing the chain outright, and a new tool callback fires inside the per-tool process so per-process context (tenancy, OTel, Sentry) can be re-applied across the async Task boundary.
+
+### Added
+
+- **`:on_tool_pre_execution` chain callback**: New callback that fires inside the process that will actually run the tool, immediately before the tool function is invoked. For `async: true` tools it fires inside the spawned `Task.async/1`; for `async: false` tools and tools run through `execute_tool_calls_with_decisions/3` it fires in the chain's own process. Use this hook (instead of `:on_tool_execution_started`, which always fires in the parent chain process) when you need to re-apply per-process state — tenant context, OpenTelemetry spans, Sentry scope, etc. — that does not propagate across the async boundary on its own. https://github.com/brainlid/langchain/pull/530
+
+### Fixed
+
+- **Streaming delta-conversion errors are now retried like transport errors**: When `delta_to_message_when_complete/1` returned `{:error, chain, reason}` (for example, `"delta_conversion_failed"` from invalid streamed JSON), `LLMChain` previously surfaced the error immediately and abandoned the run. The chain now routes that failure through the same path as other LLM errors: it fires `:on_llm_error`, increments `current_failure_count`, and recurses into `do_run/1` if retries remain. On final exhaustion the original reason is preserved (rather than being rewritten to `"exceeded_failure_count"`), so downstream apps that pattern-match on the reason to render user-facing copy continue to work. https://github.com/brainlid/langchain/pull/528
+
 ## v0.8.4
 
 A security-focused release. Fixes an API-key leak in `ChatGrok` verbose logging, hardens an atom-table exposure in `ChatReqLLM`, documents `PromptTemplate`'s EEx trust boundary, and wires `mix sobelow` into `mix precommit`.
