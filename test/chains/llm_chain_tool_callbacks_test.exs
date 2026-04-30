@@ -590,4 +590,247 @@ defmodule LangChain.Chains.LLMChainToolCallbacksTest do
       refute_received {:identified, _}
     end
   end
+
+  describe ":on_tool_pre_execution callback" do
+    test "fires inside the per-tool Task for async tools" do
+      test_pid = self()
+      chain_pid = self()
+
+      tool =
+        Function.new!(%{
+          name: "async_marker",
+          description: "Reports the PID it ran in",
+          async: true,
+          parameters_schema: %{type: "object", properties: %{}},
+          function: fn _args, _ctx ->
+            send(test_pid, {:tool_ran_in, self()})
+            {:ok, "ok"}
+          end
+        })
+
+      callbacks = %{
+        on_tool_pre_execution: fn _chain, tool_call, _function ->
+          send(test_pid, {:pre_execution_in, tool_call.name, self()})
+        end
+      }
+
+      chain =
+        LLMChain.new!(%{
+          llm: ChatAnthropic.new!(%{model: "claude-sonnet-4-5-20250929"}),
+          tools: [tool],
+          callbacks: [callbacks]
+        })
+
+      message =
+        Message.new_assistant!(%{
+          content: nil,
+          tool_calls: [
+            ToolCall.new!(%{call_id: "call_async", name: "async_marker", arguments: %{}})
+          ]
+        })
+
+      chain = LLMChain.add_message(chain, message)
+      _ = LLMChain.execute_tool_calls(chain)
+
+      assert_received {:pre_execution_in, "async_marker", pre_pid}
+      assert_received {:tool_ran_in, run_pid}
+
+      # The decisive assertion: callback ran in the same process as the tool,
+      # NOT in the chain's parent process.
+      assert pre_pid == run_pid
+      refute pre_pid == chain_pid
+    end
+
+    test "fires in the chain's process for sync tools" do
+      test_pid = self()
+      chain_pid = self()
+
+      tool =
+        Function.new!(%{
+          name: "sync_marker",
+          description: "Reports the PID it ran in",
+          async: false,
+          parameters_schema: %{type: "object", properties: %{}},
+          function: fn _args, _ctx ->
+            send(test_pid, {:tool_ran_in, self()})
+            {:ok, "ok"}
+          end
+        })
+
+      callbacks = %{
+        on_tool_pre_execution: fn _chain, tool_call, _function ->
+          send(test_pid, {:pre_execution_in, tool_call.name, self()})
+        end
+      }
+
+      chain =
+        LLMChain.new!(%{
+          llm: ChatAnthropic.new!(%{model: "claude-sonnet-4-5-20250929"}),
+          tools: [tool],
+          callbacks: [callbacks]
+        })
+
+      message =
+        Message.new_assistant!(%{
+          content: nil,
+          tool_calls: [
+            ToolCall.new!(%{call_id: "call_sync", name: "sync_marker", arguments: %{}})
+          ]
+        })
+
+      chain = LLMChain.add_message(chain, message)
+      _ = LLMChain.execute_tool_calls(chain)
+
+      assert_received {:pre_execution_in, "sync_marker", pre_pid}
+      assert_received {:tool_ran_in, run_pid}
+
+      # Sync path runs in the chain's own process.
+      assert pre_pid == run_pid
+      assert pre_pid == chain_pid
+    end
+
+    test "fires before :on_tool_execution_completed" do
+      test_pid = self()
+
+      tool =
+        Function.new!(%{
+          name: "ordered_tool",
+          description: "Ordering check",
+          async: true,
+          parameters_schema: %{type: "object", properties: %{}},
+          function: fn _args, _ctx -> {:ok, "ok"} end
+        })
+
+      callbacks = %{
+        on_tool_pre_execution: fn _chain, _tc, _f -> send(test_pid, :pre) end,
+        on_tool_execution_completed: fn _chain, _tc, _r -> send(test_pid, :completed) end
+      }
+
+      chain =
+        LLMChain.new!(%{
+          llm: ChatAnthropic.new!(%{model: "claude-sonnet-4-5-20250929"}),
+          tools: [tool],
+          callbacks: [callbacks]
+        })
+
+      message =
+        Message.new_assistant!(%{
+          content: nil,
+          tool_calls: [
+            ToolCall.new!(%{call_id: "call_order", name: "ordered_tool", arguments: %{}})
+          ]
+        })
+
+      chain = LLMChain.add_message(chain, message)
+      _ = LLMChain.execute_tool_calls(chain)
+
+      assert_received :pre
+      assert_received :completed
+    end
+
+    test "is optional - chain runs normally without a handler" do
+      tool =
+        Function.new!(%{
+          name: "plain_tool",
+          description: "No callback registered",
+          parameters_schema: %{type: "object", properties: %{}},
+          function: fn _args, _ctx -> {:ok, "ok"} end
+        })
+
+      chain =
+        LLMChain.new!(%{
+          llm: ChatAnthropic.new!(%{model: "claude-sonnet-4-5-20250929"}),
+          tools: [tool],
+          callbacks: []
+        })
+
+      message =
+        Message.new_assistant!(%{
+          content: nil,
+          tool_calls: [
+            ToolCall.new!(%{call_id: "call_plain", name: "plain_tool", arguments: %{}})
+          ]
+        })
+
+      chain = LLMChain.add_message(chain, message)
+      updated_chain = LLMChain.execute_tool_calls(chain)
+
+      # Last message should be the tool result, no errors raised.
+      assert %Message{role: :tool} = List.last(updated_chain.messages)
+    end
+
+    test "fires for tools executed via execute_tool_calls_with_decisions/3" do
+      test_pid = self()
+
+      tool =
+        Function.new!(%{
+          name: "decided_tool",
+          description: "Run via decisions path",
+          parameters_schema: %{type: "object", properties: %{}},
+          function: fn _args, _ctx -> {:ok, "ok"} end
+        })
+
+      callbacks = %{
+        on_tool_pre_execution: fn _chain, tool_call, _function ->
+          send(test_pid, {:pre, tool_call.name, tool_call.arguments})
+        end
+      }
+
+      chain =
+        LLMChain.new!(%{
+          llm: ChatAnthropic.new!(%{model: "claude-sonnet-4-5-20250929"}),
+          tools: [tool],
+          callbacks: [callbacks]
+        })
+
+      tool_call =
+        ToolCall.new!(%{call_id: "call_dec", name: "decided_tool", arguments: %{"x" => 1}})
+
+      _ =
+        LLMChain.execute_tool_calls_with_decisions(
+          chain,
+          [tool_call],
+          [%{type: :approve}]
+        )
+
+      assert_received {:pre, "decided_tool", %{"x" => 1}}
+    end
+
+    test "fires with edited arguments in the :edit decision path" do
+      test_pid = self()
+
+      tool =
+        Function.new!(%{
+          name: "decided_tool",
+          description: "Run via decisions path with edits",
+          parameters_schema: %{type: "object", properties: %{}},
+          function: fn _args, _ctx -> {:ok, "ok"} end
+        })
+
+      callbacks = %{
+        on_tool_pre_execution: fn _chain, tool_call, _function ->
+          send(test_pid, {:pre, tool_call.arguments})
+        end
+      }
+
+      chain =
+        LLMChain.new!(%{
+          llm: ChatAnthropic.new!(%{model: "claude-sonnet-4-5-20250929"}),
+          tools: [tool],
+          callbacks: [callbacks]
+        })
+
+      tool_call =
+        ToolCall.new!(%{call_id: "call_edit", name: "decided_tool", arguments: %{"x" => 1}})
+
+      _ =
+        LLMChain.execute_tool_calls_with_decisions(
+          chain,
+          [tool_call],
+          [%{type: :edit, arguments: %{"x" => 99}}]
+        )
+
+      assert_received {:pre, %{"x" => 99}}
+    end
+  end
 end

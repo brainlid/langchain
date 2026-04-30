@@ -159,6 +159,11 @@ defmodule LangChain.Chains.ChainCallbacks do
   This fires immediately before tool execution starts, allowing UIs to show
   real-time feedback like "Searching the web..." or "Creating file...".
 
+  Note: This callback fires in the **parent chain process**, before any per-tool
+  async Task is spawned. For code that must run *inside* the per-tool process
+  (e.g. propagating tenancy/OTel/Sentry context across the async boundary), use
+  `:on_tool_pre_execution` instead.
+
   - First argument: LLMChain.t()
   - Second argument: ToolCall struct being executed
   - Third argument: Function struct for the tool (includes display_text)
@@ -166,6 +171,31 @@ defmodule LangChain.Chains.ChainCallbacks do
   The handler's return value is discarded.
   """
   @type chain_tool_execution_started :: (LLMChain.t(), ToolCall.t(), Function.t() -> any())
+
+  @typedoc """
+  Executed inside the process that will run the tool, immediately before the
+  tool function is invoked.
+
+  Unlike `:on_tool_execution_started` (which fires in the parent chain process
+  before any async Task is spawned), `:on_tool_pre_execution` fires in whichever
+  process actually runs the tool:
+
+  - For `async: true` tools — fires inside the spawned `Task.async/1`.
+  - For `async: false` tools — fires in the chain's own process.
+  - For tools executed via `execute_tool_calls_with_decisions/3` — fires in
+    the chain's own process.
+
+  This is the correct hook for code that depends on per-process state — for
+  example, re-applying tenant/observability context that lives in the process
+  dictionary across an async Task boundary.
+
+  - First argument: LLMChain.t()
+  - Second argument: ToolCall struct about to be executed
+  - Third argument: Function struct for the tool
+
+  The handler's return value is discarded.
+  """
+  @type chain_tool_pre_execution :: (LLMChain.t(), ToolCall.t(), Function.t() -> any())
 
   @typedoc """
   Executed when a single tool execution completes successfully.
@@ -308,6 +338,7 @@ defmodule LangChain.Chains.ChainCallbacks do
           optional(:on_error_message_created) => chain_error_message_created(),
           optional(:on_tool_call_identified) => chain_tool_call_identified(),
           optional(:on_tool_execution_started) => chain_tool_execution_started(),
+          optional(:on_tool_pre_execution) => chain_tool_pre_execution(),
           optional(:on_tool_execution_completed) => chain_tool_execution_completed(),
           optional(:on_tool_execution_failed) => chain_tool_execution_failed(),
           optional(:on_tool_interrupted) => chain_tool_interrupted(),

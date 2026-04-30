@@ -1419,6 +1419,9 @@ defmodule LangChain.Chains.LLMChain do
         grouped[:async]
         |> Enum.map(fn {call, func} ->
           Task.async(fn ->
+            # Fires inside the spawned Task so handlers (e.g. tenancy/OTel
+            # propagation) can re-apply per-process state before the tool runs.
+            Callbacks.fire(chain.callbacks, :on_tool_pre_execution, [chain, call, func])
             result = execute_tool_call(call, func, verbose: verbose, context: use_context)
             {call, func, result}
           end)
@@ -1449,6 +1452,7 @@ defmodule LangChain.Chains.LLMChain do
       # Execute sync tools with immediate callbacks
       sync_tool_results =
         Enum.map(grouped[:sync], fn {call, func} ->
+          Callbacks.fire(chain.callbacks, :on_tool_pre_execution, [chain, call, func])
           result = execute_tool_call(call, func, verbose: verbose, context: use_context)
 
           # Fire completed/failed callback immediately after execution
@@ -1573,6 +1577,12 @@ defmodule LangChain.Chains.LLMChain do
                   func
                 ])
 
+                Callbacks.fire(chain.callbacks, :on_tool_pre_execution, [
+                  chain,
+                  tool_call,
+                  func
+                ])
+
                 result =
                   execute_tool_call(tool_call, func, verbose: verbose, context: use_context)
 
@@ -1625,6 +1635,12 @@ defmodule LangChain.Chains.LLMChain do
 
                 # Fire started callback before execution
                 Callbacks.fire(chain.callbacks, :on_tool_execution_started, [
+                  chain,
+                  edited_call,
+                  func
+                ])
+
+                Callbacks.fire(chain.callbacks, :on_tool_pre_execution, [
                   chain,
                   edited_call,
                   func
