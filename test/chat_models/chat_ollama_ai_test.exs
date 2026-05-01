@@ -229,6 +229,23 @@ defmodule ChatModels.ChatOllamaAITest do
       assert data.format == schema
     end
 
+    test "omits :think when not set", %{ollama_ai: ollama_ai} do
+      data = ChatOllamaAI.for_api(ollama_ai, [Message.new_user!("hi")], [])
+      refute Map.has_key?(data, :think)
+    end
+
+    test "passes :think through when set to true" do
+      ollama = ChatOllamaAI.new!(%{model: "gpt-oss:20b", think: true})
+      data = ChatOllamaAI.for_api(ollama, [Message.new_user!("hi")], [])
+      assert data.think == true
+    end
+
+    test "passes :think through when set to false" do
+      ollama = ChatOllamaAI.new!(%{model: "gpt-oss:20b", think: false})
+      data = ChatOllamaAI.for_api(ollama, [Message.new_user!("hi")], [])
+      assert data.think == false
+    end
+
     test "user message with no images has no :images key", %{ollama_ai: ollama_ai} do
       msg = Message.new_user!([ContentPart.text!("describe the sky")])
       data = ChatOllamaAI.for_api(ollama_ai, [msg], [])
@@ -759,6 +776,51 @@ defmodule ChatModels.ChatOllamaAITest do
       assert struct.index == nil
     end
 
+    test "promotes a non-streamed `thinking` field into a :thinking ContentPart", %{model: model} do
+      response = %{
+        "model" => "gpt-oss:20b",
+        "message" => %{
+          "role" => "assistant",
+          "thinking" => "The user said hi, so I'll greet them.",
+          "content" => "Hello!"
+        },
+        "done" => true
+      }
+
+      assert %Message{} = msg = ChatOllamaAI.do_process_response(model, response)
+
+      assert [
+               %ContentPart{type: :thinking, content: "The user said hi, so I'll greet them."},
+               %ContentPart{type: :text, content: "Hello!"}
+             ] = msg.content
+    end
+
+    test "promotes a thinking-only non-streamed message (empty content)", %{model: model} do
+      response = %{
+        "model" => "gpt-oss:20b",
+        "message" => %{
+          "role" => "assistant",
+          "thinking" => "Reasoning...",
+          "content" => ""
+        },
+        "done" => true
+      }
+
+      assert %Message{} = msg = ChatOllamaAI.do_process_response(model, response)
+      assert [%ContentPart{type: :thinking, content: "Reasoning..."}] = msg.content
+    end
+
+    test "leaves content untouched when `thinking` is absent or empty", %{model: model} do
+      empty_thinking = %{
+        "model" => "llama2",
+        "message" => %{"role" => "assistant", "thinking" => "", "content" => "Hi"},
+        "done" => true
+      }
+
+      assert %Message{content: [%ContentPart{type: :text, content: "Hi"}]} =
+               ChatOllamaAI.do_process_response(model, empty_thinking)
+    end
+
     test "handles receiving a streamed message result", %{model: model} do
       response = %{
         "model" => "llama2",
@@ -774,6 +836,23 @@ defmodule ChatModels.ChatOllamaAITest do
       assert struct.role == :assistant
       assert struct.content == "Gre"
       assert struct.status == :incomplete
+    end
+
+    test "promotes a streamed `thinking` chunk into a single :thinking ContentPart delta", %{
+      model: model
+    } do
+      # Matches the shape used by `chat_anthropic.ex` for thinking deltas:
+      # a single ContentPart, not a list.
+      response = %{
+        "model" => "gpt-oss:20b",
+        "message" => %{"role" => "assistant", "thinking" => "step ", "content" => ""},
+        "done" => false
+      }
+
+      assert %MessageDelta{} = delta = ChatOllamaAI.do_process_response(model, response)
+      assert delta.role == :assistant
+      assert delta.status == :incomplete
+      assert %ContentPart{type: :thinking, content: "step "} = delta.content
     end
 
     test "handles receiving a tool call request response", %{model: model} do
@@ -973,6 +1052,7 @@ defmodule ChatModels.ChatOllamaAITest do
                "stream" => true,
                "temperature" => 0.0,
                "tfs_z" => 1.0,
+               "think" => nil,
                "top_k" => 40,
                "top_p" => 0.9,
                "verbose_api" => false,

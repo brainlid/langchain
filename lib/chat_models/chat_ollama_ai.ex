@@ -128,6 +128,20 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   server has no URL fetcher — they will raise. Fetch the bytes yourself and
   pass them as `:image` parts.
 
+  ## Thinking / reasoning output (`:think`)
+
+  Set `:think` to `true` to enable Ollama's native thinking output for
+  reasoning-capable models (e.g. `gpt-oss`, `deepseek-r1`, `qwen3`,
+  `gemma3`). When enabled, Ollama returns a `thinking` field alongside
+  `content`; `ChatOllamaAI` surfaces it as a `LangChain.Message.ContentPart`
+  of type `:thinking` prepended to the message content so callers can
+  render or strip the reasoning trace.
+
+      {:ok, chat} = ChatOllamaAI.new(%{model: "gpt-oss:20b", think: true})
+
+  Leave unset (the default) for non-thinking models — the field is only
+  sent on the wire when explicitly assigned.
+
   ## Connection Retry Behavior
 
   The `retry_count` option controls how many times a request is retried when
@@ -198,6 +212,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
     :stream,
     :temperature,
     :tfs_z,
+    :think,
     :top_k,
     :top_p,
     :verbose_api,
@@ -290,6 +305,19 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
     # Tail free sampling is used to reduce the impact of less probable tokens from the output. A higher value (e.g., 2.0)
     # will reduce the impact more, while a value of 1.0 disables this setting. (default: 1)
     field :tfs_z, :float, default: 1.0
+
+    # Enables Ollama's native "thinking" output for reasoning-capable models
+    # (e.g. gpt-oss, deepseek-r1, qwen3, gemma3). When `true`, Ollama returns
+    # a separate `thinking` field on assistant messages alongside `content`.
+    # `ChatOllamaAI` surfaces it as a `LangChain.Message.ContentPart` of
+    # type `:thinking` prepended to the message content.
+    #
+    # Leave as `nil` (default) to preserve back-compat — the field is only
+    # sent when explicitly set, so older Ollama servers / non-thinking
+    # models won't reject the request.
+    #
+    # See https://github.com/ollama/ollama/blob/main/docs/api.md#chat-request-with-thinking
+    field :think, :boolean, default: nil
 
     # Reduces the probability of generating nonsense. A higher value (e.g. 100) will give more diverse answers,
     # while a lower value (e.g. 10) will be more conservative. (Default: 40)
@@ -384,6 +412,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
       receive_timeout: model.receive_timeout
     }
     |> Utils.conditionally_add_to_map(:format, model.format)
+    |> Utils.conditionally_add_to_map(:think, model.think)
     |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(tools))
   end
 
@@ -792,6 +821,8 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   end
 
   defp create_message(message, status, message_type) do
+    message = promote_thinking(message, message_type)
+
     case message_type.new(Map.merge(message, %{"status" => status})) do
       {:ok, new_message} ->
         new_message
@@ -800,6 +831,40 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
         {:error, LangChainError.exception(changeset)}
     end
   end
+
+  # Ollama returns reasoning output in a `thinking` field alongside `content`
+  # when `think: true` is set on the request. Convert it into a `:thinking`
+  # `ContentPart` so downstream code can render or strip it.
+  #
+  # Shape matches the Anthropic / Google convention:
+  #
+  #   * `Message` (complete) — a list of parts, with the thinking part first
+  #     and any text part after.
+  #   * `MessageDelta` (streaming chunk) — a single `ContentPart` when the
+  #     chunk is thinking-only (matches `chat_anthropic.ex`'s
+  #     `thinking_delta` handler); otherwise a list when both fields land in
+  #     one chunk.
+  #
+  # No-op when `thinking` is absent or empty.
+  defp promote_thinking(%{"thinking" => t} = message, message_type)
+       when is_binary(t) and t != "" do
+    thinking_part = ContentPart.new!(%{type: :thinking, content: t})
+    text = message["content"]
+    has_text? = is_binary(text) and text != ""
+
+    content =
+      cond do
+        message_type == MessageDelta and not has_text? -> thinking_part
+        has_text? -> [thinking_part, ContentPart.text!(text)]
+        true -> [thinking_part]
+      end
+
+    message
+    |> Map.delete("thinking")
+    |> Map.put("content", content)
+  end
+
+  defp promote_thinking(message, _message_type), do: message
 
   @doc """
   Determine if an error should be retried. If `true`, a fallback LLM may be
@@ -844,6 +909,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
         :stream,
         :temperature,
         :tfs_z,
+        :think,
         :top_k,
         :top_p,
         :verbose_api
