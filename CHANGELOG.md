@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- **`DataExtractionChain` accepts a single object in the extraction tool `info` argument**: The tool schema describes `info` as a JSON array of rows, but some models return one object when a single entity is extracted, which previously surfaced as `{:error, "Unexpected response…"}`. `run/4` now normalises a lone map to a one-element list so callers consistently receive `{:ok, [row | rows]}`. Adds public `normalize_extraction_info/1` for coercion (and unit tests) without mocking the LLM.
+- **`DataExtractionChain` normalises single-object `info` tool payloads**: The schema describes `info` as a JSON array, but some models return one object for a single row; that previously failed the `run/4` pattern match and returned `{:error, LangChainError.exception("Unexpected response...")}`. A lone map is now wrapped in a list. Adds `normalize_extraction_info/1` for coercion and unit tests without a live LLM. https://github.com/brainlid/langchain/pull/533
 
 ## v0.8.5
 
