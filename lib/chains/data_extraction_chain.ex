@@ -111,7 +111,8 @@ Passage:
   def normalize_extraction_info(info) when is_map(info), do: {:ok, [info]}
 
   def normalize_extraction_info(other) do
-    {:error, LangChainError.exception("Unexpected response. #{inspect(other)}")}
+    {:error,
+     LangChainError.exception("Extracted data must be a list or map, got: #{inspect(other)}")}
   end
 
   @doc """
@@ -152,6 +153,9 @@ Passage:
            }
          }} ->
           normalize_extraction_info(info)
+
+        other ->
+          {:error, LangChainError.exception("Unexpected response. #{inspect(other)}")}
       end
     rescue
       exception ->
