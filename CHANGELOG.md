@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.8.6
+
+### Fixed
+
+- **`DataExtractionChain` accepts a single object in the extraction tool `info` argument**: The tool schema describes `info` as a JSON array of rows, but some models return one object when a single entity is extracted, which previously surfaced as `{:error, "Unexpected response…"}`. `run/4` now normalises a lone map to a one-element list so callers consistently receive `{:ok, [row | rows]}`. Adds public `normalize_extraction_info/1` for coercion (and unit tests) without mocking the LLM.
+
 ## v0.8.5
 
 A small reliability and observability release. Streaming runs now recover from delta-conversion errors instead of failing the chain outright, and a new tool callback fires inside the per-tool process so per-process context (tenancy, OTel, Sentry) can be re-applied across the async Task boundary.
