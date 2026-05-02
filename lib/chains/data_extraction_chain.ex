@@ -6,6 +6,10 @@ defmodule LangChain.Chains.DataExtractionChain do
   though there are 0 to many instances of the data structure being described so
   information is returned as an array.
 
+  The result is always a list. If the LLM returns a single map instead of an
+  array, it is automatically wrapped in a list so callers can rely on a
+  consistent return type.
+
   Originally based on:
   - https://github.com/langchain-ai/langchainjs/blob/main/langchain/src/chains/openai_functions/extraction.ts#L43
 
@@ -52,6 +56,18 @@ defmodule LangChain.Chains.DataExtractionChain do
         }
       ]
 
+  If the LLM returns a single map (e.g. when only one entity is found), it is
+  wrapped in a list automatically:
+
+      # Single-entity result normalised to a list
+      [
+        %{
+          "person_name" => "Alex",
+          "person_age" => nil,
+          ...
+        }
+      ]
+
   The `schema_parameters` in the previous example can also be expressed using a
   list of `LangChain.FunctionParam` structs. An equivalent version looks like
   this:
@@ -82,6 +98,21 @@ defmodule LangChain.Chains.DataExtractionChain do
 
 Passage:
 <%= @input %>"
+
+  @doc """
+  Coerces the extraction tool's `info` argument to a list of rows.
+
+  Models sometimes return one JSON object instead of a one-element array; `run/4`
+  uses this so callers always get `{:ok, list}`.
+  """
+  @spec normalize_extraction_info(term()) :: {:ok, [any()]} | {:error, LangChainError.t()}
+  def normalize_extraction_info(info) when is_list(info), do: {:ok, info}
+
+  def normalize_extraction_info(info) when is_map(info), do: {:ok, [info]}
+
+  def normalize_extraction_info(other) do
+    {:error, LangChainError.exception("Unexpected response. #{inspect(other)}")}
+  end
 
   @doc """
   Run the data extraction chain.
@@ -119,12 +150,8 @@ Passage:
                }
              ]
            }
-         }}
-        when is_list(info) ->
-          {:ok, info}
-
-        other ->
-          {:error, LangChainError.exception("Unexpected response. #{inspect(other)}")}
+         }} ->
+          normalize_extraction_info(info)
       end
     rescue
       exception ->
