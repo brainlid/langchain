@@ -1,5 +1,11 @@
 # Changelog
 
+## vNEXT
+
+### Changed
+
+- **`DataExtractionChain` normalises single-object `info` tool payloads**: The schema describes `info` as a JSON array, but some models return one object for a single row; that previously failed the `run/4` pattern match and returned `{:error, LangChainError.exception("Unexpected response...")}`. A lone map is now wrapped in a list. Adds `normalize_extraction_info/1` for coercion and unit tests without a live LLM. https://github.com/brainlid/langchain/pull/533
+
 ## v0.8.5
 
 A small reliability and observability release. Streaming runs now recover from delta-conversion errors instead of failing the chain outright, and a new tool callback fires inside the per-tool process so per-process context (tenancy, OTel, Sentry) can be re-applied across the async Task boundary.
