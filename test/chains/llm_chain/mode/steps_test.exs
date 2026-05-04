@@ -378,7 +378,9 @@ defmodule LangChain.Chains.LLMChain.Mode.StepsTest do
       assert returned_data == %{tool_call_id: "call_1"}
     end
 
-    test "does not crash when multiple interrupted results have nil interrupt_data", %{chain: chain} do
+    test "does not crash when multiple interrupted results have nil interrupt_data", %{
+      chain: chain
+    } do
       result1 =
         ToolResult.new!(%{
           tool_call_id: "call_1",
