@@ -355,6 +355,60 @@ defmodule LangChain.Chains.LLMChain.Mode.StepsTest do
       pause = {:pause, chain}
       assert ^pause = Steps.check_tool_interrupts(pause, [])
     end
+
+    test "does not crash when single interrupted result has nil interrupt_data", %{chain: chain} do
+      # Simulates a ToolResult restored from persistence: `interrupt_data` is a
+      # virtual field, so it always comes back as nil. Without the guard,
+      # extract_interrupt_data/1 would raise BadMapError on Map.put(nil, ...).
+      tool_result =
+        ToolResult.new!(%{
+          tool_call_id: "call_1",
+          name: "ask_user",
+          content: "Waiting for user response...",
+          is_interrupt: true,
+          interrupt_data: nil
+        })
+
+      tool_message = Message.new_tool_result!(%{content: nil, tool_results: [tool_result]})
+      chain = LLMChain.add_message(chain, tool_message)
+
+      assert {:interrupt, ^chain, returned_data} =
+               Steps.check_tool_interrupts({:continue, chain}, [])
+
+      assert returned_data == %{tool_call_id: "call_1"}
+    end
+
+    test "does not crash when multiple interrupted results have nil interrupt_data", %{chain: chain} do
+      result1 =
+        ToolResult.new!(%{
+          tool_call_id: "call_1",
+          name: "ask_user",
+          content: "Interrupted",
+          is_interrupt: true,
+          interrupt_data: nil
+        })
+
+      result2 =
+        ToolResult.new!(%{
+          tool_call_id: "call_2",
+          name: "ask_user",
+          content: "Interrupted",
+          is_interrupt: true,
+          interrupt_data: nil
+        })
+
+      tool_message =
+        Message.new_tool_result!(%{content: nil, tool_results: [result1, result2]})
+
+      chain = LLMChain.add_message(chain, tool_message)
+
+      assert {:interrupt, ^chain, data} =
+               Steps.check_tool_interrupts({:continue, chain}, [])
+
+      assert data.type == :multiple_interrupts
+      assert Enum.at(data.interrupts, 0) == %{tool_call_id: "call_1"}
+      assert Enum.at(data.interrupts, 1) == %{tool_call_id: "call_2"}
+    end
   end
 
   describe "end-to-end pipeline" do
