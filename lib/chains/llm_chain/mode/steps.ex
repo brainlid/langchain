@@ -148,7 +148,8 @@ defmodule LangChain.Chains.LLMChain.Mode.Steps do
   end
 
   defp extract_interrupt_data([single]) do
-    Map.put(single.interrupt_data, :tool_call_id, single.tool_call_id)
+    data = single.interrupt_data || %{}
+    Map.put(data, :tool_call_id, single.tool_call_id)
   end
 
   defp extract_interrupt_data(multiple) do
@@ -156,7 +157,8 @@ defmodule LangChain.Chains.LLMChain.Mode.Steps do
       type: :multiple_interrupts,
       interrupts:
         Enum.map(multiple, fn result ->
-          Map.merge(result.interrupt_data, %{tool_call_id: result.tool_call_id})
+          data = result.interrupt_data || %{}
+          Map.merge(data, %{tool_call_id: result.tool_call_id})
         end)
     }
   end
