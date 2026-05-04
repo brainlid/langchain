@@ -548,7 +548,7 @@ defmodule LangChain.ChatModels.ChatDeepSeek do
 
   # Make the API request from the DeepSeek server.
   @doc false
-  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), integer()) ::
+  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), integer() | nil) ::
           list() | struct() | {:error, LangChainError.t()}
   def do_api_request(deepseek, messages, tools, retry_count \\ nil)
 
@@ -1157,13 +1157,8 @@ defmodule LangChain.ChatModels.ChatDeepSeek do
   # Merge response metadata with existing message metadata
   defp merge_response_metadata(message, response_data) do
     response_metadata = extract_response_metadata(response_data)
-
-    if map_size(response_metadata) > 0 do
-      current_metadata = message.metadata || %{}
-      %{message | metadata: Map.merge(current_metadata, response_metadata)}
-    else
-      message
-    end
+    current_metadata = message.metadata || %{}
+    %{message | metadata: Map.merge(current_metadata, response_metadata)}
   end
 
   defp finish_reason_to_status(nil), do: :incomplete

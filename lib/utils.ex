@@ -145,7 +145,7 @@ defmodule LangChain.Utils do
   Fire a streaming callback if present.
   """
   @spec fire_streamed_callback(
-          %{optional(:stream) => boolean(), callbacks: [map()]},
+          map(),
           data :: callback_data() | [callback_data()]
         ) :: :ok | no_return()
 
@@ -182,7 +182,7 @@ defmodule LangChain.Utils do
     `transform_data_fn`.
   """
   @spec handle_stream_fn(
-          %{optional(:stream) => boolean()},
+          map(),
           decode_stream_fn :: function(),
           transform_data_fn :: function()
         ) :: function()

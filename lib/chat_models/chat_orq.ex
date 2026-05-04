@@ -612,7 +612,7 @@ defmodule LangChain.ChatModels.ChatOrq do
 
   # Make the API request to orq.ai
   @doc false
-  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), integer()) ::
+  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), integer() | nil) ::
           list() | struct() | {:error, LangChainError.t()}
   def do_api_request(orq, messages, tools, retry_count \\ nil)
 
@@ -773,23 +773,21 @@ defmodule LangChain.ChatModels.ChatOrq do
   Decode a streamed response (SSE). Delegates to ChatOpenAI-compatible decoder.
   """
   @spec decode_stream({String.t(), String.t()}, list()) ::
-          {%{String.t() => any()}}
+          {[%{String.t() => any()}], String.t()}
   defdelegate decode_stream(data, done \\ []),
     to: LangChain.ChatModels.ChatOpenAI,
     as: :decode_stream
 
   # Parse responses (compatible with OpenAI-like shapes used by orq)
   @doc false
-  @spec do_process_response(
-          %{:callbacks => [map()]},
-          data :: %{String.t() => any()} | {:error, any()}
-        ) ::
+  @spec do_process_response(t(), data :: any()) ::
           :skip
+          | TokenUsage.t()
           | Message.t()
-          | [Message.t()]
+          | [Message.t() | MessageDelta.t() | TokenUsage.t() | {:error, LangChainError.t()}]
           | MessageDelta.t()
           | [MessageDelta.t()]
-          | {:error, String.t()}
+          | {:error, LangChainError.t()}
   def do_process_response(model, %{"choices" => _choices} = data) do
     token_usage = get_token_usage(data)
 

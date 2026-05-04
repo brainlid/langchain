@@ -873,7 +873,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   #
   # Retries the request up to 3 times on transient errors with a 1 second delay
   @doc false
-  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), non_neg_integer()) ::
+  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), non_neg_integer() | nil) ::
           list() | struct() | {:error, LangChainError.t()} | no_return()
   def do_api_request(anthropic, messages, tools, retry_count \\ nil)
 
@@ -1655,7 +1655,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   @doc """
   Convert a LangChain structure to the expected map of data for the Anthropic API.
   """
-  @spec for_api(Message.t() | ContentPart.t() | Function.t()) ::
+  @spec for_api(ToolCall.t() | ToolResult.t()) ::
           %{String.t() => any()} | no_return()
   # def for_api(%Message{role: :assistant, tool_calls: calls} = msg)
   #     when is_list(calls) and calls != [] do

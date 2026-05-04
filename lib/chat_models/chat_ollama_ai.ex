@@ -614,7 +614,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   #
   # Retries the request up to 3 times on transient errors with a 1 second delay
   @doc false
-  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), integer()) ::
+  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), integer() | nil) ::
           list() | struct() | {:error, String.t()}
   def do_api_request(ollama_ai, messages, tools, retry_count \\ nil)
 

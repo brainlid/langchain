@@ -398,7 +398,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
   # Make the API request. If `stream: true`, we handle partial chunk deltas;
   # otherwise, we parse a single complete body.
   @doc false
-  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), integer()) ::
+  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), integer() | nil) ::
           list() | struct() | {:error, LangChainError.t()}
   def do_api_request(openai, messages, tools, retry_count \\ nil)
 
@@ -533,16 +533,15 @@ defmodule LangChain.ChatModels.ChatMistralAI do
 
   # Parse final or partial responses to produce the appropriate LangChain structure.
   @doc false
-  @spec do_process_response(
-          %{:callbacks => [map()]},
-          data :: %{String.t() => any()} | {:error, any()}
-        ) ::
+  @spec do_process_response(t(), data :: any()) ::
           :skip
+          | :ok
+          | TokenUsage.t()
           | Message.t()
-          | [Message.t()]
+          | [Message.t() | MessageDelta.t() | TokenUsage.t() | {:error, LangChainError.t()}]
           | MessageDelta.t()
           | [MessageDelta.t()]
-          | {:error, String.t()}
+          | {:error, LangChainError.t()}
   # The last chunk of the response contains both the final delta in the "choices" key,
   # and the token usage in the "usage" key
   def do_process_response(model, %{"choices" => choices, "usage" => %{} = _usage} = data) do

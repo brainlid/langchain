@@ -865,7 +865,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   # structures.
   # Retries the request up to 3 times on transient errors with a 1 second delay
   @doc false
-  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), integer()) ::
+  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), integer() | nil) ::
           list() | struct() | {:error, LangChainError.t()}
   def do_api_request(openai, messages, tools, retry_count \\ nil)
 
@@ -1036,7 +1036,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   buffer data from a previous call, and assembling it to parse.
   """
   @spec decode_stream({String.t(), String.t()}, list()) ::
-          {%{String.t() => any()}}
+          {[%{String.t() => any()}], String.t()}
   def decode_stream({raw_data, buffer}, done \\ []) do
     # Data comes back like this:
     #
@@ -1091,16 +1091,14 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
   # Parse a new message response
   @doc false
-  @spec do_process_response(
-          %{:callbacks => [map()]},
-          data :: %{String.t() => any()} | {:error, any()}
-        ) ::
+  @spec do_process_response(map(), data :: any()) ::
           :skip
+          | TokenUsage.t()
           | Message.t()
-          | [Message.t()]
+          | [Message.t() | MessageDelta.t() | TokenUsage.t() | {:error, LangChainError.t()}]
           | MessageDelta.t()
           | [MessageDelta.t()]
-          | {:error, String.t()}
+          | {:error, LangChainError.t()}
   def do_process_response(model, %{"choices" => _choices} = data) do
     token_usage = get_token_usage(data)
 
