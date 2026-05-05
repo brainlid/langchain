@@ -1,10 +1,19 @@
 # Changelog
 
-## vNEXT
+## v0.8.6
 
-### Changed
+A reliability and tooling release: `ChatOllamaAI` gains native thinking/reasoning support, Dialyzer is wired into the project and CI, and two crash-resistance fixes harden `DataExtractionChain` and the step-mode interrupt path.
 
-- **`DataExtractionChain` normalises single-object `info` tool payloads**: The schema describes `info` as a JSON array, but some models return one object for a single row; that previously failed the `run/4` pattern match and returned `{:error, LangChainError.exception("Unexpected response...")}`. A lone map is now wrapped in a list. Adds `normalize_extraction_info/1` for coercion and unit tests without a live LLM. https://github.com/brainlid/langchain/pull/533
+### Added
+
+- **`ChatOllamaAI` thinking support via `:think`**: New boolean field enables Ollama's native reasoning output for models like `gpt-oss`, `deepseek-r1`, `qwen3`, and `gemma3`. Surfaced as a `:thinking` `ContentPart` matching the Anthropic / Google convention. https://github.com/brainlid/langchain/pull/532
+- **Dialyzer added to the project and CI**: `dialyxir` dependency, PLT caching, GitHub PR annotations, and a sweep of pre-existing type-spec issues across the codebase. https://github.com/brainlid/langchain/pull/535
+- **`LLMChain.run/2` typespec includes `{:interrupt, t(), term()}`**: The interrupt return variant is now declared, fixing a Dialyzer false positive for callers pattern-matching on `:interrupt`. https://github.com/brainlid/langchain/pull/536
+
+### Fixed
+
+- **`DataExtractionChain` normalises single-object `info` tool payloads**: A lone map returned for a single-row extraction is now wrapped in a list instead of failing the `run/4` pattern match. https://github.com/brainlid/langchain/pull/533
+- **`Steps.extract_interrupt_data/1` tolerates `nil` interrupt data**: A tool result with `interrupt_data: nil` no longer crashes step-mode with `BadMapError`. https://github.com/brainlid/langchain/pull/534
 
 ## v0.8.5
 
