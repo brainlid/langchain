@@ -202,7 +202,7 @@ defmodule LangChain.Images.ModelsLabImage do
   end
 
   @doc false
-  @spec do_api_request(t(), retry_count :: integer()) ::
+  @spec do_api_request(t(), retry_count :: integer() | nil) ::
           {:ok, [GeneratedImage.t()]} | {:error, String.t()}
   def do_api_request(ml_image, retry_count \\ nil)
 

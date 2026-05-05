@@ -391,8 +391,11 @@ defmodule LangChain.ChatModels.ChatPerplexity do
   end
 
   @doc false
-  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), integer()) ::
-          list() | struct() | {:error, LangChainError.t()}
+  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), integer() | nil) ::
+          list()
+          | struct()
+          | {:ok, Req.Response.t()}
+          | {:error, term()}
   def do_api_request(perplexity, messages, tools, retry_count \\ nil)
 
   def do_api_request(_perplexity, _messages, _tools, 0) do
@@ -504,7 +507,8 @@ defmodule LangChain.ChatModels.ChatPerplexity do
   @doc """
   Decode a streamed response from the Perplexity API.
   """
-  @spec decode_stream({String.t(), String.t()}) :: {%{String.t() => any()}}
+  @spec decode_stream({String.t(), String.t()}, list()) ::
+          {[%{String.t() => any()}], String.t()}
   def decode_stream({raw_data, buffer}, done \\ []) do
     raw_data
     |> String.split("data: ")

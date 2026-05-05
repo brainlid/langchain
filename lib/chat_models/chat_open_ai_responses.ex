@@ -969,7 +969,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     end)
   end
 
-  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), integer()) ::
+  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), integer() | nil) ::
           list() | struct() | {:error, LangChainError.t()}
   def do_api_request(openai, messages, tools, retry_count \\ nil)
 
@@ -1221,7 +1221,8 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
 
   # Unlike the Chat Completions API, we do not get a [DONE] token at the end of the stream.
 
-  @spec decode_stream({String.t(), String.t()}) :: {%{String.t() => any()}}
+  @spec decode_stream({String.t(), String.t()}, list()) ::
+          {[%{String.t() => any()}], String.t()}
   def decode_stream({raw_data, buffer}, done \\ []) do
     raw_data
     |> String.split(~r/event: /)
@@ -1273,16 +1274,14 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
 
   # Parse a new message response
   @doc false
-  @spec do_process_response(
-          %{:callbacks => [map()]},
-          data :: %{String.t() => any()} | {:error, any()}
-        ) ::
+  @spec do_process_response(t(), data :: any()) ::
           :skip
+          | TokenUsage.t()
           | Message.t()
-          | [Message.t()]
+          | [Message.t() | MessageDelta.t() | TokenUsage.t() | {:error, LangChainError.t()}]
           | MessageDelta.t()
           | [MessageDelta.t()]
-          | {:error, String.t()}
+          | {:error, LangChainError.t()}
 
   # Complete Response with output lists
   def do_process_response(

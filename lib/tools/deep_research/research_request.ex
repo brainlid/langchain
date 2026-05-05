@@ -9,14 +9,14 @@ defmodule LangChain.Tools.DeepResearch.ResearchRequest do
   import Ecto.Changeset
 
   @type t() :: %__MODULE__{
-          query: String.t(),
-          model: String.t(),
+          query: String.t() | nil,
+          model: String.t() | nil,
           system_message: String.t() | nil,
           max_tool_calls: integer() | nil,
           background: boolean(),
           temperature: float(),
           max_output_tokens: integer() | nil,
-          summary: String.t()
+          summary: String.t() | nil
         }
 
   @primary_key false
@@ -34,6 +34,7 @@ defmodule LangChain.Tools.DeepResearch.ResearchRequest do
   @doc """
   Creates a changeset for a research request.
   """
+  @spec changeset(map()) :: Ecto.Changeset.t()
   @spec changeset(__MODULE__.t(), map()) :: Ecto.Changeset.t()
   def changeset(request \\ %__MODULE__{}, attrs) do
     request

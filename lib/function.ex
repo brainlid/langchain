@@ -335,7 +335,10 @@ defmodule LangChain.Function do
   defp do_validate_parameter_exclusivity(changeset, _params, _schema), do: changeset
 
   @spec execute_with_error_handling(t(), function(), arguments(), context()) ::
-          {:ok, any()} | {:ok, any(), any()} | {:error, String.t()}
+          {:ok, any()}
+          | {:ok, any(), any()}
+          | {:interrupt, String.t(), any()}
+          | {:error, String.t()}
   defp execute_with_error_handling(function, fun, arguments, context) do
     fun.(arguments, context)
     |> normalize_execution_result(function)
@@ -350,7 +353,10 @@ defmodule LangChain.Function do
 
   # Normalizes the various return types from function execution into consistent tagged tuples
   @spec normalize_execution_result(any(), t()) ::
-          {:ok, any()} | {:ok, any(), any()} | {:error, String.t()}
+          {:ok, any()}
+          | {:ok, any(), any()}
+          | {:interrupt, String.t(), any()}
+          | {:error, String.t()}
   defp normalize_execution_result({:ok, llm_result, processed_content}, _function) do
     {:ok, llm_result, processed_content}
   end

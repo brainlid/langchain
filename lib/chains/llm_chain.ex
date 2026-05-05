@@ -668,13 +668,9 @@ defmodule LangChain.Chains.LLMChain do
   defp initial_run_logging(%LLMChain{verbose: false} = _chain), do: :ok
 
   defp initial_run_logging(%LLMChain{verbose: true} = chain) do
-    # set the callback function on the chain
-    if chain.verbose, do: IO.inspect(chain.llm, label: "LLM")
-
-    if chain.verbose, do: IO.inspect(chain.messages, label: "MESSAGES")
-
-    if chain.verbose, do: IO.inspect(chain.tools, label: "TOOLS")
-
+    IO.inspect(chain.llm, label: "LLM")
+    IO.inspect(chain.messages, label: "MESSAGES")
+    IO.inspect(chain.tools, label: "TOOLS")
     :ok
   end
 

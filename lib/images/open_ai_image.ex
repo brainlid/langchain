@@ -239,7 +239,8 @@ defmodule LangChain.Images.OpenAIImage do
 
   # Retries the request up to 3 times on transient errors with a brief delay
   @doc false
-  @spec do_api_request(t(), retry_count :: integer()) :: {:ok, list()} | {:error, String.t()}
+  @spec do_api_request(t(), retry_count :: integer() | nil) ::
+          {:ok, list()} | {:error, String.t()}
   def do_api_request(openai, retry_count \\ nil)
 
   def do_api_request(_openai, 0) do

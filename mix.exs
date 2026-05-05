@@ -14,6 +14,11 @@ defmodule LangChain.MixProject do
       start_permanent: Mix.env() == :prod,
       aliases: aliases(),
       deps: deps(),
+      dialyzer: [
+        ignore_warnings: ".dialyzer_ignore.exs",
+        plt_file: {:no_warn, "priv/plts/project.plt"},
+        plt_core_path: "priv/plts"
+      ],
       package: package(),
       docs: &docs/0,
       name: "LangChain",
@@ -54,7 +59,8 @@ defmodule LangChain.MixProject do
       {:mimic, "~> 1.8", only: :test},
       {:dotenvy, "~> 1.1"},
       {:req_llm, ">= 1.6.0", optional: true},
-      {:sobelow, "~> 0.14", only: [:dev, :test], runtime: false, warn_if_outdated: true}
+      {:sobelow, "~> 0.14", only: [:dev, :test], runtime: false, warn_if_outdated: true},
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
     ]
   end
 

@@ -29,6 +29,7 @@ defmodule LangChain.Chains.ChainCallbacks do
 
   alias LangChain.Chains.LLMChain
   alias LangChain.Function
+  alias LangChain.LangChainError
   alias LangChain.Message
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult

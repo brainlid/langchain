@@ -37,3 +37,6 @@ my_docs/
 
 # macOS system files
 .DS_Store
+
+# Dialyzer PLT files
+/priv/plts/
