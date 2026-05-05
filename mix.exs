@@ -14,7 +14,11 @@ defmodule LangChain.MixProject do
       start_permanent: Mix.env() == :prod,
       aliases: aliases(),
       deps: deps(),
-      dialyzer: [ignore_warnings: ".dialyzer_ignore.exs"],
+      dialyzer: [
+        ignore_warnings: ".dialyzer_ignore.exs",
+        plt_file: {:no_warn, "priv/plts/project.plt"},
+        plt_core_path: "priv/plts"
+      ],
       package: package(),
       docs: &docs/0,
       name: "LangChain",
