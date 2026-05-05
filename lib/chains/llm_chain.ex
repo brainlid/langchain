@@ -589,6 +589,7 @@ defmodule LangChain.Chains.LLMChain do
           {:ok, t()}
           | {:ok, t(), term()}
           | {:pause, t()}
+          | {:interrupt, t(), term()}
           | {:error, t(), LangChainError.t()}
   def run(chain, opts \\ [])
 
