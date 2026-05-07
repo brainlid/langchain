@@ -3445,6 +3445,46 @@ defmodule LangChain.Chains.LLMChainTest do
              ]
 
       assert result.is_error == true
+      assert result.name == "go_time"
+    end
+
+    test "outer rescue in execute_tool_call/2 produces a ToolResult tagged with the function name" do
+      # Function.execute/3 has its own inner rescue, so the outer rescue in
+      # execute_tool_call/2 only fires if Function.execute/3 itself raises.
+      # Stub it to raise so we exercise that defensive branch and verify the
+      # produced ToolResult carries the function's name
+      tool =
+        Function.new!(%{
+          name: "go_time",
+          description: "Tool that we'll cause to raise outside its inner rescue.",
+          function: fn _args, _context -> :unreachable end
+        })
+
+      Mimic.expect(Function, :execute, fn _function, _args, _context ->
+        raise RuntimeError, "boom outside inner rescue"
+      end)
+
+      chain =
+        LLMChain.new!(%{
+          llm: ChatOpenAI.new!(%{stream: false}),
+          custom_context: %{count: 1}
+        })
+        |> LLMChain.add_tools(tool)
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("It's go time!"))
+        |> LLMChain.add_message(new_function_call!("call_fake123", "go_time", "{}"))
+
+      updated_chain = LLMChain.execute_tool_calls(chain)
+
+      assert updated_chain.last_message.role == :tool
+      [%ToolResult{} = result] = updated_chain.last_message.tool_results
+      assert result.tool_call_id == "call_fake123"
+      assert result.name == "go_time"
+      assert result.is_error == true
+
+      assert [%ContentPart{type: :text, content: text}] = result.content
+      assert text =~ "ERROR executing tool:"
+      assert text =~ "boom outside inner rescue"
     end
 
     test "returns error tool result when tool_call is a hallucination" do
@@ -3469,6 +3509,8 @@ defmodule LangChain.Chains.LLMChainTest do
       assert result.content == [ContentPart.text!("Tool call made to greet but tool not found")]
       # tool response is linked to original call
       assert result.tool_call_id == "call_fake123"
+      # name is preserved from the original tool call
+      assert result.name == "greet"
       assert result.is_error == true
     end
 

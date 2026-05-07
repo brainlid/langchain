@@ -1480,7 +1480,12 @@ defmodule LangChain.Chains.LLMChain do
           # Fire failed callback for invalid tools
           Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [chain, call, text])
 
-          ToolResult.new!(%{tool_call_id: call.call_id, content: text, is_error: true})
+          ToolResult.new!(%{
+            tool_call_id: call.call_id,
+            name: call.name,
+            content: text,
+            is_error: true
+          })
         end)
 
       combined_results = async_tool_results ++ sync_tool_results ++ invalid_calls
@@ -1837,6 +1842,7 @@ defmodule LangChain.Chains.LLMChain do
 
           ToolResult.new!(%{
             tool_call_id: call.call_id,
+            name: function.name,
             content: "ERROR executing tool: #{inspect(err)}",
             is_error: true
           })

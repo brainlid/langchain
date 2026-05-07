@@ -43,6 +43,7 @@ Mimic.copy(LangChain.ChatModels.ChatVertexAI)
 Mimic.copy(LangChain.ChatModels.ChatGoogleAI)
 Mimic.copy(LangChain.ChatModels.ChatGrok)
 Mimic.copy(LangChain.WebSocket)
+Mimic.copy(LangChain.Function)
 
 if Code.ensure_loaded?(ReqLLM) do
   Mimic.copy(ReqLLM)
