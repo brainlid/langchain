@@ -1564,6 +1564,43 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
       assert parsed == %{"delta" => "test"}
       assert buffer2 == ""
     end
+
+    test "handles event line and data line split across chunks" do
+      chunk1 = "event: response.output_text.done\n"
+      chunk2 = "data: {\"type\":\"response.output_text.done\",\"text\":\"Hello\"}\n\n"
+
+      {[], buffer1} = ChatOpenAIResponses.decode_stream({chunk1, ""})
+
+      {[parsed], buffer2} = ChatOpenAIResponses.decode_stream({chunk2, buffer1})
+      assert parsed["type"] == "response.output_text.done"
+      assert parsed["text"] == "Hello"
+      assert buffer2 == ""
+    end
+
+    test "handles multiple complete events followed by more events" do
+      chunk1 =
+        "event: response.created\ndata: {\"type\":\"response.created\"}\n\n" <>
+          "event: response.in_progress\ndata: {\"type\":\"response.in_progress\"}\n\n"
+
+      chunk2 =
+        "event: response.output_text.done\ndata: {\"type\":\"response.output_text.done\",\"text\":\"Hi!\"}\n\n"
+
+      {parsed1, buffer1} = ChatOpenAIResponses.decode_stream({chunk1, ""})
+      assert length(parsed1) == 2
+      assert buffer1 == ""
+
+      {[parsed2], buffer2} = ChatOpenAIResponses.decode_stream({chunk2, buffer1})
+      assert parsed2["text"] == "Hi!"
+      assert buffer2 == ""
+    end
+
+    test "handles data line without space after colon" do
+      raw = "event: response.output_text.delta\ndata:{\"delta\":\"Hi\"}\n\n"
+
+      {[parsed], buffer} = ChatOpenAIResponses.decode_stream({raw, ""})
+      assert parsed == %{"delta" => "Hi"}
+      assert buffer == ""
+    end
   end
 
   describe "serialize and restore" do
