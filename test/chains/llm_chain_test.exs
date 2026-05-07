@@ -2552,6 +2552,30 @@ defmodule LangChain.Chains.LLMChainTest do
       assert error.type == "unexpected_response"
     end
 
+    test "handles overloaded_error wrapped in :ok tuple", %{chain: chain} do
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:ok,
+         [[error: LangChainError.exception(type: "overloaded_error", message: "Overloaded")]]}
+      end)
+
+      chain = LLMChain.add_message(chain, Message.new_user!("Hi"))
+
+      assert {:error, _chain, %LangChainError{} = reason} = LLMChain.run(chain)
+      assert reason.type == "overloaded_error"
+      assert reason.message == "Overloaded"
+    end
+
+    test "handles non-standard error shapes gracefully", %{chain: chain} do
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:error, %{status: 500, body: "Internal Server Error"}}
+      end)
+
+      chain = LLMChain.add_message(chain, Message.new_user!("Hi"))
+
+      assert {:error, _chain, %LangChainError{} = reason} = LLMChain.run(chain)
+      assert reason.type == "unknown_error"
+    end
+
     test "does not loop infinitely when streaming tool call has malformed JSON (issue #443)" do
       # When an LLM returns truncated JSON in tool_call.arguments during streaming,
       # the chain should return an error rather than silently swallowing the failure.

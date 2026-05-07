@@ -946,6 +946,11 @@ defmodule LangChain.Chains.LLMChain do
                "This can happen with thinking/reasoning models during streaming."
          )}
 
+      {:ok, [[error: %LangChainError{} = reason] | _]} ->
+        if chain.verbose, do: IO.inspect(reason, label: "ERROR")
+        Logger.error("Error during chat call. Reason: #{inspect(reason)}")
+        {:error, chain, reason}
+
       {:ok, unexpected} ->
         Logger.warning("Unexpected LLM response format: #{inspect(unexpected)}")
 
@@ -953,6 +958,15 @@ defmodule LangChain.Chains.LLMChain do
          LangChainError.exception(
            type: "unexpected_response",
            message: "Unexpected response format from LLM: #{inspect(unexpected)}"
+         )}
+
+      {:error, reason} ->
+        Logger.error("Error during chat call. Reason: #{inspect(reason)}")
+
+        {:error, chain,
+         LangChainError.exception(
+           type: "unknown_error",
+           message: "LLM error: #{inspect(reason)}"
          )}
     end
   end
