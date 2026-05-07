@@ -476,5 +476,27 @@ defmodule LangChain.Message.ToolCallTest do
 
       assert result.arguments == "{\"code\": \"def my_function(x):\n    return x + 1\"}"
     end
+
+    test "handles binary arguments delta when primary arguments is already a map" do
+      primary = %ToolCall{
+        status: :complete,
+        call_id: "call_123",
+        name: "my_tool",
+        arguments: %{"key" => "value"},
+        index: 0
+      }
+
+      delta = %ToolCall{
+        status: :incomplete,
+        call_id: "call_123",
+        name: "my_tool",
+        arguments: "{\"key\":",
+        index: 0
+      }
+
+      result = ToolCall.merge(primary, delta)
+      assert result.arguments == %{"key" => "value"}
+      assert result.status == :complete
+    end
   end
 end

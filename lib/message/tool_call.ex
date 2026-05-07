@@ -239,11 +239,25 @@ defmodule LangChain.Message.ToolCall do
     %ToolCall{primary | arguments: new_arguments}
   end
 
-  defp append_arguments(%ToolCall{} = primary, %ToolCall{
+  defp append_arguments(%ToolCall{arguments: existing} = primary, %ToolCall{
          arguments: new_arguments
        })
-       when is_binary(new_arguments) do
-    %ToolCall{primary | arguments: (primary.arguments || "") <> new_arguments}
+       when is_binary(new_arguments) and (is_binary(existing) or is_nil(existing)) do
+    %ToolCall{primary | arguments: (existing || "") <> new_arguments}
+  end
+
+  # Once a complete delta with map arguments has been merged (via the clause
+  # above), the primary's arguments are a decoded map. Some providers then send
+  # trailing deltas that still carry binary JSON fragments for the same tool
+  # call. Appending a binary to a map would crash with an ArgumentError on <>.
+  # The complete arguments are already present, so the fragment is safely
+  # discarded — there is no meaningful way to merge a partial JSON string into
+  # an already-decoded map.
+  defp append_arguments(%ToolCall{arguments: existing} = primary, %ToolCall{
+         arguments: new_arguments
+       })
+       when is_map(existing) and is_binary(new_arguments) do
+    primary
   end
 
   defp append_arguments(%ToolCall{} = primary, %ToolCall{} = _delta_part) do
