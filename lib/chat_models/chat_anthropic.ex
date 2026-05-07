@@ -604,6 +604,10 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     # The schema follows standard JSON Schema format.
     field :json_schema, :map, default: nil
 
+    # Output configuration for controlling model behavior.
+    # e.g., %{"effort" => "medium"} for adaptive thinking effort control.
+    field :output_config, :map
+
     # Req options to merge into the request.
     # https://hexdocs.pm/req/Req.html#new/1-options
     field :req_opts, :any, virtual: true, default: []
@@ -631,6 +635,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     :cache_control,
     :json_response,
     :json_schema,
+    :output_config,
     :req_opts
   ]
   @required_fields [:endpoint, :model]
@@ -770,6 +775,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     }
   end
 
+  defp set_output_config(%ChatAnthropic{output_config: config}) when is_map(config), do: config
   defp set_output_config(%ChatAnthropic{}), do: nil
 
   defp get_tools_for_api(nil), do: []
