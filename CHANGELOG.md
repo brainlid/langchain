@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.8.7
+
+A streaming-resilience and tooling release. Three production crashes in the streaming path are fixed (OpenAI Responses SSE chunking, post-complete tool-call fragments, and unexpected `do_run/1` shapes), Gemini gets unstuck when a `ToolResult` is built from an error case, and `LangChain.Function` gains an opt-in `:parse_args` callback that lets tools "parse, don't validate" the LLM's arguments at the centralized execution point. `ChatAnthropic` also picks up `:output_config` so callers can drive Anthropic's adaptive thinking-effort knob.
+
+### Added
+
+- **`LangChain.Function` `:parse_args` callback**: New 1-arity hook that runs after the required-key check and before the tool body, receiving the raw string-keyed arguments map and returning `:ok`, `{:ok, parsed_map}`, or `{:error, reason_string}`. On rejection the body is skipped and `reason` flows through as the tool result so the model can self-correct on the next turn; the call still produces a `ToolResult{is_error: true}`, fires `:on_tool_response_created`, and emits the `[:langchain, :tool, :call]` telemetry span, so trajectory and token-usage consumers see the attempted call rather than a silent drop. Designed to plug in Zoi, NimbleOptions, Ecto changesets, JSV, or plain Elixir without LangChain taking a new hard dependency; `zoi` is added as an optional dep purely so the integration test can exercise an end-to-end adapter. https://github.com/brainlid/langchain/pull/544
+- **`ChatAnthropic` `:output_config` field**: New top-level `:map` field on the chat-model schema that is forwarded to Anthropic as the `output_config` request parameter, enabling adaptive thinking-effort control alongside the existing `:thinking` settings. https://github.com/brainlid/langchain/pull/541
+
+### Fixed
+
+- **`ChatOpenAIResponses` streaming parser handled split SSE event boundaries**: `decode_stream/2` previously split the buffer on `"event: "`, which silently assumed each event and its `data:` line arrived in the same TCP chunk. After a change in OpenAI's chunking behavior that assumption broke: typically only the first delta arrived, the buffer poisoned itself with an "invalid JSON" fragment, no further callbacks fired, and the chain hung. The parser now splits on the actual SSE event boundary (`\n\n`) and extracts the `data:` line from each complete event block, correctly handling split events, multiple events per chunk, and incomplete JSON across chunks. https://github.com/brainlid/langchain/pull/540
+- **`ToolCall.merge/2` no longer crashes on trailing binary fragments after a complete tool call**: During streaming, some providers emit overlapping or trailing argument deltas after a tool call has already been marked `:complete` with a decoded map. The previous code path tried to concatenate a binary JSON fragment onto a map via `<>` and raised `ArgumentError`. A new guard detects the map-plus-binary case and returns the primary unchanged, safely discarding the unmergeable fragment. https://github.com/brainlid/langchain/pull/543
+- **`LLMChain.do_run/1` handles unexpected response shapes instead of crashing**: Added catch-all clauses for two shapes seen in production: `{:ok, [[error: %LangChainError{}] | _]}` (for example, an Anthropic `overloaded_error` surfacing through the streaming path inside an `:ok` tuple) and `{:error, reason}` where `reason` is neither a string nor a `LangChainError`. Both are now converted into structured `{:error, chain, reason}` tuples with appropriate type and message. https://github.com/brainlid/langchain/pull/542
+- **`ToolResult` always carries the tool name, including on error paths**: Several internal construction sites built a `ToolResult` without populating `:name`, which Gemini rejected with `GenerateContentRequest.contents[*].parts[0].function_response.name: Name cannot be empty`. The name is now propagated through the error branches as well, so Gemini-routed conversations no longer fail with `INVALID_ARGUMENT` after a tool error. https://github.com/brainlid/langchain/pull/539
+
 ## v0.8.6
 
 A reliability and tooling release: `ChatOllamaAI` gains native thinking/reasoning support, Dialyzer is wired into the project and CI, and two crash-resistance fixes harden `DataExtractionChain` and the step-mode interrupt path.
