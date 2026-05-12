@@ -1222,7 +1222,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   # Unlike the Chat Completions API, we do not get a [DONE] token at the end of the stream.
 
   @spec decode_stream({String.t(), String.t()}) :: {[map()], String.t()}
-  def decode_stream({raw_data, buffer}, done \\ []) do
+  def decode_stream({raw_data, buffer}) do
     combined = buffer <> raw_data
 
     segments = String.split(combined, "\n\n")
@@ -1251,7 +1251,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         end
       end)
 
-    {done ++ parsed, maybe_incomplete}
+    {parsed, maybe_incomplete}
   end
 
   # Parse a new message response
