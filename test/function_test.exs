@@ -343,4 +343,151 @@ defmodule LangChain.FunctionTest do
       assert result == {:ok, "SUCCESS"}
     end
   end
+
+  describe "new/1 with :parse_args" do
+    test "accepts a 1-arity anonymous function" do
+      parser = fn args -> {:ok, args} end
+
+      assert {:ok, %Function{} = fun} =
+               Function.new(%{
+                 name: "with_parser",
+                 function: &hello_world/2,
+                 parse_args: parser
+               })
+
+      assert fun.parse_args == parser
+    end
+
+    test "rejects an anonymous function with the wrong arity" do
+      assert {:error, changeset} =
+               Function.new(%{
+                 name: "bad_parser",
+                 function: &hello_world/2,
+                 parse_args: fn _a, _b -> :ok end
+               })
+
+      assert {"expected arity of 1 but has arity 2", _} = changeset.errors[:parse_args]
+    end
+
+    test "rejects something that isn't an Elixir function" do
+      assert {:error, changeset} =
+               Function.new(%{
+                 name: "bad_parser",
+                 function: &hello_world/2,
+                 parse_args: "not a function"
+               })
+
+      assert {"is not an Elixir function", _} = changeset.errors[:parse_args]
+    end
+
+    test ":parse_args defaults to nil" do
+      assert {:ok, %Function{parse_args: nil}} =
+               Function.new(%{name: "no_parser", function: &hello_world/2})
+    end
+  end
+
+  describe "execute/3 with :parse_args" do
+    # A tool body that returns the parsed arguments it was handed. Lets us
+    # observe whether `parse_args` actually transformed the arguments.
+    defp echo_args(args, _context), do: {:ok, "received: #{inspect(args)}", args}
+
+    test "absent parser leaves arguments untouched" do
+      function = Function.new!(%{name: "echo", function: &echo_args/2})
+
+      assert {:ok, _llm, %{"a" => 1}} = Function.execute(function, %{"a" => 1}, nil)
+    end
+
+    test ":ok return passes original arguments through to the function body" do
+      parser = fn _args -> :ok end
+      function = Function.new!(%{name: "echo", function: &echo_args/2, parse_args: parser})
+
+      assert {:ok, _llm, %{"a" => 1}} = Function.execute(function, %{"a" => 1}, nil)
+    end
+
+    test "{:ok, parsed} return replaces arguments handed to the function body" do
+      # Parser coerces string keys → atom keys and narrows the shape — the
+      # function body should receive the parsed map, not the raw input.
+      parser = fn %{"value" => v} -> {:ok, %{value: String.to_integer(v)}} end
+      function = Function.new!(%{name: "echo", function: &echo_args/2, parse_args: parser})
+
+      assert {:ok, _llm, %{value: 42}} = Function.execute(function, %{"value" => "42"}, nil)
+    end
+
+    test "{:error, reason} short-circuits without running the function body" do
+      parent = self()
+
+      function =
+        Function.new!(%{
+          name: "rejecter",
+          function: fn _args, _context ->
+            send(parent, :function_ran)
+            {:ok, "should not reach here"}
+          end,
+          parse_args: fn _args -> {:error, "device_task_id is required"} end
+        })
+
+      assert {:error, "device_task_id is required"} =
+               Function.execute(function, %{"value" => "anything"}, nil)
+
+      refute_received :function_ran
+    end
+
+    test "{:error, term} return that isn't a binary is stringified" do
+      function =
+        Function.new!(%{
+          name: "rejecter",
+          function: &echo_args/2,
+          parse_args: fn _args -> {:error, %{validation: :failed}} end
+        })
+
+      assert {:error, "%{validation: :failed}"} = Function.execute(function, %{}, nil)
+    end
+
+    test "unexpected return shape is normalized to an :error tuple" do
+      function =
+        Function.new!(%{
+          name: "weird",
+          function: &echo_args/2,
+          parse_args: fn _args -> :totally_invalid end
+        })
+
+      assert {:error, "parse_args returned unexpected shape: :totally_invalid"} =
+               Function.execute(function, %{}, nil)
+    end
+
+    test "an exception raised inside :parse_args is caught and reported" do
+      function =
+        Function.new!(%{
+          name: "raiser",
+          function: &echo_args/2,
+          parse_args: fn _args -> raise ArgumentError, "boom" end
+        })
+
+      assert {:error, "ERROR: " <> message} = Function.execute(function, %{}, nil)
+      assert message =~ "boom"
+    end
+
+    test "the built-in required-params check fires before :parse_args" do
+      alias LangChain.FunctionParam
+
+      # If parse_args ran first we'd see :parser_ran in the mailbox; instead
+      # the required-params check should reject the call first.
+      parent = self()
+
+      function =
+        Function.new!(%{
+          name: "required_first",
+          parameters: [FunctionParam.new!(%{name: "id", type: :string, required: true})],
+          function: &echo_args/2,
+          parse_args: fn args ->
+            send(parent, :parser_ran)
+            {:ok, args}
+          end
+        })
+
+      assert {:error, message} = Function.execute(function, %{}, nil)
+      assert message =~ "Missing required parameters"
+      refute_received :parser_ran
+    end
+  end
 end

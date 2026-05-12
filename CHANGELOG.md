@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`LangChain.Function` `:parse_args` callback**: New optional 1-arity callback that runs after the built-in required-key check and before the user-supplied tool body. Accepts the raw, string-keyed arguments map from the LLM and returns `:ok`, `{:ok, parsed_map}`, or `{:error, reason_string}`. On rejection the tool body is skipped and `reason` is returned to the LLM as the tool result so the model can self-correct. Tool-execution callbacks (`:on_tool_response_created`) and the `[:langchain, :tool, :call]` telemetry span still fire on parse failure, preserving observability for token accounting and trajectory analysis. Library-agnostic: works with Zoi, NimbleOptions, Ecto changesets, JSV, or plain Elixir parsers. Zoi is included as an optional dependency for integration tests.
+
 ## v0.8.6
 
 A reliability and tooling release: `ChatOllamaAI` gains native thinking/reasoning support, Dialyzer is wired into the project and CI, and two crash-resistance fixes harden `DataExtractionChain` and the step-mode interrupt path.

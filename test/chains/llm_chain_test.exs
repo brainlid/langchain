@@ -3447,6 +3447,74 @@ defmodule LangChain.Chains.LLMChainTest do
       assert result.is_error == true
     end
 
+    test "parse_args rejection produces an error ToolResult and fires response callbacks" do
+      # When the optional :parse_args parser rejects the args, the function
+      # body must NOT run, but the tool-call must still produce a ToolResult
+      # and fire :on_tool_response_created so token usage, telemetry, and
+      # trajectory consumers can see that the tool call was attempted.
+      test_pid = self()
+      parent = self()
+
+      tool =
+        Function.new!(%{
+          name: "diagnose",
+          description: "Diagnose a thing.",
+          function: fn _args, _ctx ->
+            send(parent, :function_body_ran)
+            {:ok, "should not reach this"}
+          end,
+          parse_args: fn _args -> {:error, "device_task_id is required"} end
+        })
+
+      handler = %{
+        on_tool_response_created: fn _chain, tool_msg ->
+          send(test_pid, {:response_created_callback_fired, tool_msg})
+        end
+      }
+
+      :telemetry.attach(
+        "parse-args-telemetry-test",
+        [:langchain, :tool, :call, :stop],
+        fn _event, _measurements, metadata, _config ->
+          send(test_pid, {:telemetry_fired, metadata})
+        end,
+        nil
+      )
+
+      chain =
+        LLMChain.new!(%{
+          llm: ChatOpenAI.new!(%{stream: false}),
+          custom_context: %{count: 1}
+        })
+        |> LLMChain.add_tools(tool)
+        |> LLMChain.add_callback(handler)
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("diagnose this"))
+        |> LLMChain.add_message(new_function_call!("call_parse_fail", "diagnose", "{}"))
+
+      updated_chain = LLMChain.execute_tool_calls(chain)
+
+      # Function body must not have run.
+      refute_received :function_body_ran
+
+      # The tool call still produced a tool-result message.
+      assert %Message{role: :tool} = result_message = updated_chain.last_message
+      assert [%ToolResult{} = result] = result_message.tool_results
+      assert result.tool_call_id == "call_parse_fail"
+      assert result.is_error == true
+      assert result.content == [ContentPart.text!("device_task_id is required")]
+
+      # :on_tool_response_created fired with the error result so downstream
+      # observers see the attempted call.
+      assert_receive {:response_created_callback_fired, %Message{role: :tool} = callback_msg}
+      assert [%ToolResult{is_error: true}] = callback_msg.tool_results
+
+      # The tool-call telemetry span still fired — observability is preserved.
+      assert_receive {:telemetry_fired, %{tool_name: "diagnose", tool_call_id: "call_parse_fail"}}
+
+      :telemetry.detach("parse-args-telemetry-test")
+    end
+
     test "returns error tool result when tool_call is a hallucination" do
       chain =
         LLMChain.new!(%{

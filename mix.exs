@@ -59,6 +59,12 @@ defmodule LangChain.MixProject do
       {:mimic, "~> 1.8", only: :test},
       {:dotenvy, "~> 1.1"},
       {:req_llm, ">= 1.6.0", optional: true},
+      # Zoi is declared as an optional dependency so the test suite can
+      # exercise the `LangChain.Function` `:parse_args` callback against a
+      # real schema library without taking on the full dependency.
+      # Downstream apps that want to use Zoi with `:parse_args`
+      # must list `:zoi` in their own deps.
+      {:zoi, "~> 0.17.0", optional: true},
       {:sobelow, "~> 0.14", only: [:dev, :test], runtime: false, warn_if_outdated: true},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
     ]
