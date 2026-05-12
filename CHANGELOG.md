@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.8.8
+
+A dependency-hygiene release that unblocks downstream apps from upgrading `:langchain` when they already use `:zoi`.
+
+### Changed
+
+- **Removed `:zoi` from `mix.exs`**: v0.8.7 declared `:zoi` as an optional dep so the `:parse_args` integration test could exercise a real schema library. That declaration propagated a version constraint to downstream apps and conflicted with projects pinning a different `:zoi` version. The dep is now gone from `mix.exs` entirely; the test suite picks up `:zoi` transitively through the optional `:req_llm` -> `:llm_db` chain. Downstream apps that want to use Zoi with `:parse_args` continue to list `:zoi` in their own deps (the recommended pattern from the start) and are no longer constrained by `:langchain`.
+
 ## v0.8.7
 
 A streaming-resilience and tooling release. Three production crashes in the streaming path are fixed (OpenAI Responses SSE chunking, post-complete tool-call fragments, and unexpected `do_run/1` shapes), Gemini gets unstuck when a `ToolResult` is built from an error case, and `LangChain.Function` gains an opt-in `:parse_args` callback that lets tools "parse, don't validate" the LLM's arguments at the centralized execution point. `ChatAnthropic` also picks up `:output_config` so callers can drive Anthropic's adaptive thinking-effort knob.
