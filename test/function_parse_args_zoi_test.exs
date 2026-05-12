@@ -68,7 +68,7 @@ defmodule LangChain.FunctionParseArgsZoiTest do
         })
 
       assert {:error, reason} = Function.execute(function, %{}, nil)
-      assert reason =~ "device_task_id"
+      assert reason == "device_task_id: is required"
 
       refute_received :function_ran
     end
@@ -84,7 +84,7 @@ defmodule LangChain.FunctionParseArgsZoiTest do
       assert {:error, reason} =
                Function.execute(function, %{"device_task_id" => ""}, nil)
 
-      assert reason =~ "device_task_id"
+      assert reason == "device_task_id: too small: must have at least 1 character(s)"
     end
   end
 end
