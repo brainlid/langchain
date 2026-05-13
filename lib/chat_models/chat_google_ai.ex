@@ -631,30 +631,23 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
       {:ok, %Req.Response{status: 200, body: data} = response} ->
         Callbacks.fire(google_ai.callbacks, :on_llm_response_headers, [response.headers])
 
-        # Separate message deltas by their content type
-        {data, _last_index} =
-          data
-          |> List.flatten()
-          |> Enum.reduce({[], nil}, fn
-            message_delta, {[], nil} ->
-              {[message_delta], message_delta.index}
+        flattened = List.flatten(data)
 
-            message_delta, {acc, last_index} ->
-              [last_message_delta | _] = acc
-              last_content_type = get_in(last_message_delta.content.type)
-              content_type = get_in(message_delta.content.type)
+        # Some candidates can come back as `{:error, %LangChainError{}}` from
+        # `do_process_response/3` (e.g. `MALFORMED_FUNCTION_CALL`, candidates
+        # without a "content" key, or unknown shapes). The reindexing logic below
+        # assumes every item is a `%MessageDelta{}` with an `:index`, so any error
+        # tuple in the list must be surfaced before the reduce — otherwise it
+        # crashes with `KeyError` on `message_delta.index`.
+        case Enum.find(flattened, &match?({:error, _}, &1)) do
+          {:error, %LangChainError{} = error} ->
+            {:error, error}
 
-              new_index =
-                case not is_nil(content_type) && content_type != last_content_type do
-                  true -> last_index + 1
-                  false -> last_index
-                end
-
-              {[%{message_delta | index: new_index} | acc], new_index}
-          end)
-
-        data
-        |> Enum.reverse()
+          nil ->
+            flattened
+            |> reindex_deltas()
+            |> Enum.reverse()
+        end
 
       {:ok, %Req.Response{body: {:error, %LangChainError{} = error}}} ->
         {:error, error}
@@ -699,6 +692,30 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
            original: other
          )}
     end
+  end
+
+  # Separate message deltas by their content type by reindexing them.
+  defp reindex_deltas(deltas) do
+    {data, _last_index} =
+      Enum.reduce(deltas, {[], nil}, fn
+        message_delta, {[], nil} ->
+          {[message_delta], message_delta.index}
+
+        message_delta, {acc, last_index} ->
+          [last_message_delta | _] = acc
+          last_content_type = get_in(last_message_delta.content.type)
+          content_type = get_in(message_delta.content.type)
+
+          new_index =
+            case not is_nil(content_type) && content_type != last_content_type do
+              true -> last_index + 1
+              false -> last_index
+            end
+
+          {[%{message_delta | index: new_index} | acc], new_index}
+      end)
+
+    data
   end
 
   # Convert Google AI error status to a LangChainError type string.
