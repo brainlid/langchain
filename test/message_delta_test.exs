@@ -1819,8 +1819,14 @@ defmodule LangChain.MessageDeltaTest do
         tool_calls: [%ToolCall{call_id: "abc", display_text: "Reading file"}]
       }
 
-      assert %MessageDelta{tool_calls: [%ToolCall{display_text: "Reading outline.md (lines 60-100)"}]} =
-               MessageDelta.set_tool_display_text(delta, "abc", "Reading outline.md (lines 60-100)")
+      assert %MessageDelta{
+               tool_calls: [%ToolCall{display_text: "Reading outline.md (lines 60-100)"}]
+             } =
+               MessageDelta.set_tool_display_text(
+                 delta,
+                 "abc",
+                 "Reading outline.md (lines 60-100)"
+               )
     end
 
     test "is a no-op when display_text is nil so the UI never loses a value" do
