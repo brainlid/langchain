@@ -2,7 +2,7 @@ defmodule LangChain.MixProject do
   use Mix.Project
 
   @source_url "https://github.com/brainlid/langchain"
-  @version "0.8.8"
+  @version "0.8.9"
 
   def project do
     [

@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.8.9
+
+A streaming-helpers release. `LangChain.MessageDelta` gains four small, well-documented functions that codify the merge rules every streaming consumer (Phoenix LiveView, Sagents, etc.) was reimplementing locally: append-vs-merge of tool calls by `call_id`, one-way status promotion, no-regression `display_text` updates, and a terminal-status gate for UI cleanup. All additions are pure data transforms; no existing `MessageDelta` behavior changes.
+
+### Added
+
+- **`LangChain.MessageDelta` streaming tool-call status helpers**: Four new functions codify the merge logic that streaming consumers previously reimplemented by hand.
+  - `upsert_tool_call/2` appends a new `ToolCall` or merges non-nil fields onto an existing one with the same `call_id`. `status` is promoted one-way (`:incomplete` to `:complete`, never back), and `metadata` is shallow-merged with incoming keys winning per-key.
+  - `set_tool_execution_status/3` drives the `metadata["execution_status"]` lifecycle for a specific `call_id`, delegating to `ToolCall.set_execution_status/2`.
+  - `set_tool_display_text/3` refines `display_text` as more is learned (e.g. `"Reading file"` to `"Reading \"outline.md\" (lines 60-100)"`). A `nil` incoming value is an explicit no-op so the UI never regresses from showing something to showing nothing.
+  - `all_tools_terminal?/1` gates UI cleanup on every tool call reaching a terminal status. Returns `false` for `nil` or empty `tool_calls`, so empty deltas don't trigger premature clears.
+
+  All helpers tolerate `nil`/empty `tool_calls`, so callers don't need to guard. https://github.com/brainlid/langchain/pull/549
+
 ## v0.8.8
 
 A dependency-hygiene release that unblocks downstream apps from upgrading `:langchain` when they already use `:zoi`.
