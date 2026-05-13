@@ -2022,14 +2022,14 @@ defmodule ChatModels.ChatGoogleAITest do
         )
 
       delta1 = %LangChain.MessageDelta{
-        content: [%LangChain.Message.ContentPart{type: :text, content: "Part 1"}],
+        content: %LangChain.Message.ContentPart{type: :text, content: "Part 1"},
         index: 0,
         role: :assistant,
         status: :incomplete
       }
 
       delta2 = %LangChain.MessageDelta{
-        content: [%LangChain.Message.ContentPart{type: :text, content: "Part 2"}],
+        content: %LangChain.Message.ContentPart{type: :text, content: "Part 2"},
         index: 0,
         role: :assistant,
         status: :incomplete
