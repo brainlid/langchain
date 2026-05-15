@@ -1067,6 +1067,95 @@ if Code.ensure_loaded?(ReqLLM) do
         assert Enum.all?(deltas, &match?(%MessageDelta{}, &1))
       end
 
+      test "openai-style streaming tool call assembles a valid Message (regression)" do
+        # Reproduces the pattern emitted by ReqLLM's default OpenAI decoder
+        # (used by direct OpenAI, LiteLLM proxy, etc.):
+        #   - one :tool_call chunk with metadata: %{id, index}, name, arguments: %{}
+        #   - one or more :meta chunks with tool_call_args: %{index, fragment}
+        #   - a terminal :meta with finish_reason: :tool_calls
+        #
+        # Before the fix, the initial chunk landed at index: nil while the
+        # fragment chunks landed at index: 0, producing an orphan ToolCall
+        # without call_id/name and a "delta_conversion_failed" error from
+        # Message.new — exactly the LiteLLM-proxied OpenAI failure mode.
+        model = ChatReqLLM.new!(%{model: "openai:gpt-4o", stream: true})
+
+        chunks = [
+          %ReqLLM.StreamChunk{
+            type: :tool_call,
+            name: "ask_user",
+            arguments: %{},
+            metadata: %{id: "call_abc123", index: 0}
+          },
+          %ReqLLM.StreamChunk{
+            type: :meta,
+            metadata: %{tool_call_args: %{index: 0, fragment: "{\"question\":"}}
+          },
+          %ReqLLM.StreamChunk{
+            type: :meta,
+            metadata: %{tool_call_args: %{index: 0, fragment: "\"hi?\"}"}}
+          },
+          %ReqLLM.StreamChunk{
+            type: :meta,
+            metadata: %{finish_reason: :tool_calls, terminal?: true}
+          }
+        ]
+
+        stub(ReqLLM, :stream_text, fn _model, _context, _opts ->
+          {:ok, fake_stream_response(chunks)}
+        end)
+
+        assert {:ok, chain} =
+                 %{llm: model}
+                 |> LLMChain.new!()
+                 |> LLMChain.add_message(Message.new_user!("ask"))
+                 |> LLMChain.run()
+
+        last_msg = List.last(chain.messages)
+        assert %Message{role: :assistant, status: :complete} = last_msg
+        assert [%ToolCall{} = tc] = last_msg.tool_calls
+        assert tc.call_id == "call_abc123"
+        assert tc.name == "ask_user"
+        assert tc.status == :complete
+        assert tc.arguments == %{"question" => "hi?"}
+      end
+
+      test "openai-style streaming tool call with no follow-up fragments still completes" do
+        # If args fit in the initial chunk (non-empty map), no fragment :meta
+        # chunks will follow. The ToolCall should be emitted as :complete with
+        # the arguments already populated.
+        model = ChatReqLLM.new!(%{model: "openai:gpt-4o", stream: true})
+
+        chunks = [
+          %ReqLLM.StreamChunk{
+            type: :tool_call,
+            name: "get_time",
+            arguments: %{"zone" => "UTC"},
+            metadata: %{id: "call_xyz", index: 0}
+          },
+          %ReqLLM.StreamChunk{
+            type: :meta,
+            metadata: %{finish_reason: :tool_calls, terminal?: true}
+          }
+        ]
+
+        stub(ReqLLM, :stream_text, fn _model, _context, _opts ->
+          {:ok, fake_stream_response(chunks)}
+        end)
+
+        assert {:ok, chain} =
+                 %{llm: model}
+                 |> LLMChain.new!()
+                 |> LLMChain.add_message(Message.new_user!("time?"))
+                 |> LLMChain.run()
+
+        last_msg = List.last(chain.messages)
+        assert [%ToolCall{} = tc] = last_msg.tool_calls
+        assert tc.call_id == "call_xyz"
+        assert tc.name == "get_time"
+        assert tc.arguments == %{"zone" => "UTC"}
+      end
+
       test "LLMChain runs successfully with stream:true" do
         model = ChatReqLLM.new!(%{model: @live_model, stream: true})
 
