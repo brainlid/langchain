@@ -476,6 +476,54 @@ if Code.ensure_loaded?(ReqLLM) do
       {[delta], state}
     end
 
+    # OpenAI-style streaming initial tool_call chunk: metadata carries :index
+    # (and usually :id), and the name is present. When :arguments is an empty
+    # map (placeholder for "args will arrive as tool_call_args fragments"),
+    # emit an :incomplete ToolCall with :arguments left nil so subsequent
+    # string fragments can be concatenated by ToolCall.append_arguments/2 and
+    # later JSON-decoded by ToolCall.complete/1. When :arguments is already a
+    # non-empty map (single-shot delivery — no fragments will follow), emit
+    # the ToolCall as :complete. In both cases the :index is preserved so the
+    # ToolCall lands in the same MessageDelta slot the fragment chunks target.
+    defp process_stream_chunk(
+           %ReqLLM.StreamChunk{
+             type: :tool_call,
+             name: name,
+             arguments: args,
+             metadata: %{index: block_index} = meta
+           },
+           state
+         )
+         when is_binary(name) and is_integer(block_index) do
+      id = meta[:id] || "tool_#{:erlang.unique_integer([:positive])}"
+
+      base_attrs = %{
+        type: :function,
+        call_id: id,
+        name: name,
+        index: block_index
+      }
+
+      attrs =
+        if is_map(args) and map_size(args) > 0 do
+          Map.merge(base_attrs, %{status: :complete, arguments: args})
+        else
+          Map.put(base_attrs, :status, :incomplete)
+        end
+
+      tool_call = ToolCall.new!(attrs)
+
+      delta =
+        MessageDelta.new!(%{
+          role: :assistant,
+          tool_calls: [tool_call],
+          status: :incomplete,
+          index: 0
+        })
+
+      {[delta], state}
+    end
+
     # Tool call arg fragment: emit incomplete ToolCall delta with the partial JSON string.
     # ToolCall.merge/2 will concatenate binary arguments strings across deltas.
     defp process_stream_chunk(
