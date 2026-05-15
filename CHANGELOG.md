@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.8.10
+
+A focused fix for `ChatReqLLM` streaming tool calls against the default OpenAI decoder shape (direct OpenAI, LiteLLM proxy, and any other ReqLLM provider that emits the OpenAI tool-call pattern).
+
+### Fixed
+
+- **`ChatReqLLM` correctly assembles OpenAI-style streamed tool calls**: handles ReqLLM's default OpenAI tool-call chunk shape (direct OpenAI, LiteLLM proxy, etc.), which previously produced an orphan `ToolCall` and a `"delta_conversion_failed"` error. https://github.com/brainlid/langchain/pull/551
+
 ## v0.8.9
 
 A streaming-helpers release. `LangChain.MessageDelta` gains four small, well-documented functions that codify the merge rules every streaming consumer (Phoenix LiveView, Sagents, etc.) was reimplementing locally: append-vs-merge of tool calls by `call_id`, one-way status promotion, no-regression `display_text` updates, and a terminal-status gate for UI cleanup. All additions are pure data transforms; no existing `MessageDelta` behavior changes.
