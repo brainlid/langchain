@@ -60,7 +60,8 @@ defmodule LangChain.MixProject do
       {:dotenvy, "~> 1.1"},
       {:req_llm, ">= 1.6.0", optional: true},
       {:sobelow, "~> 0.14", only: [:dev, :test], runtime: false, warn_if_outdated: true},
-      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
+      {:mix_audit, "~> 2.1", only: [:dev, :test], runtime: false}
     ]
   end
 
@@ -77,6 +78,7 @@ defmodule LangChain.MixProject do
         "deps.unlock --unused",
         "format",
         "sobelow",
+        "deps.audit",
         "test"
       ]
     ]
