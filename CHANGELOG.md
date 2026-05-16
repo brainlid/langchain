@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.8.11
+
+A small correctness and supply-chain release. `LLMChain.run_until_tool_used/3` no longer discards a successful tool call when the success happens on the same LLM call that hits the `max_runs` ceiling, and `mix_audit` is wired into `mix precommit` so dependency advisories are caught before merge. The `:jsv` and `:decimal` deps are also refreshed.
+
+### Changed
+
+- **Dependency refresh and `mix_audit` in `precommit`**: Bumped `:jsv` and `:decimal` via `mix.lock`, added `:mix_audit` (`~> 2.1`, dev/test only) as a dep, and inserted `deps.audit` into the `precommit` alias so known vulnerable dependencies fail the pre-commit gate. https://github.com/brainlid/langchain/pull/554
+
+### Fixed
+
+- **`LLMChain.run_until_tool_used/3` no longer discards a successful tool call that lands on the `max_runs` boundary**: A first-call success with `max_runs: 1` previously surfaced as `"Exceeded maximum number of runs (1/1)"` because the ceiling check ran before the tool-used check. The pipeline now evaluates success first. https://github.com/brainlid/langchain/pull/553
+
 ## v0.8.10
 
 A focused fix for `ChatReqLLM` streaming tool calls against the default OpenAI decoder shape (direct OpenAI, LiteLLM proxy, and any other ReqLLM provider that emits the OpenAI tool-call pattern).
