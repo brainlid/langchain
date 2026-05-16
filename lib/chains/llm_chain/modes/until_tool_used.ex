@@ -53,11 +53,18 @@ defmodule LangChain.Chains.LLMChain.Modes.UntilToolUsed do
   end
 
   defp do_run(chain, opts) do
+    # Order matters: `check_max_runs` must come AFTER `check_until_tool`,
+    # otherwise the very LLM call that successfully invokes the target
+    # tool can have its result discarded — `call_llm` increments the run
+    # counter, the check fires and short-circuits the pipeline before
+    # `execute_tools`/`check_until_tool` get to see the result. With this
+    # order, a successful run terminates first; `check_max_runs` is a
+    # no-op on terminal pipeline states.
     {:continue, chain}
     |> call_llm()
-    |> check_max_runs(opts)
     |> execute_tools()
     |> check_until_tool(opts)
+    |> check_max_runs(opts)
     |> continue_or_done(&do_run/2, opts)
   end
 end

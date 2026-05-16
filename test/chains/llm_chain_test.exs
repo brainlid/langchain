@@ -3201,6 +3201,33 @@ defmodule LangChain.Chains.LLMChainTest do
       assert error.message == "Exceeded maximum number of runs (3/3)"
     end
 
+    # Regression: a successful tool call on the LLM call that hits the
+    # max_runs ceiling must terminate with success, not be discarded.
+    # Previously `check_max_runs` ran before `check_until_tool` and a
+    # max_runs=1 + first-call success path errored out instead of
+    # returning the tool result.
+    test "succeeds when the target tool is called on the same LLM call that hits max_runs",
+         %{greet: greet, sync: do_thing} do
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:ok,
+         new_function_calls!([
+           ToolCall.new!(%{call_id: "call_doThing", name: "do_thing", arguments: nil})
+         ])}
+      end)
+
+      {:ok, updated_chain, tool_result} =
+        %{llm: ChatOpenAI.new!(%{stream: false}), verbose: false}
+        |> LLMChain.new!()
+        |> LLMChain.add_tools([greet, do_thing])
+        |> LLMChain.add_message(Message.new_system!())
+        |> LLMChain.add_message(Message.new_user!("Call do_thing right away."))
+        |> LLMChain.run_until_tool_used("do_thing", max_runs: 1)
+
+      assert updated_chain.last_message.role == :tool
+      assert %ToolResult{is_error: false} = tool_result
+      assert tool_result.name == "do_thing"
+    end
+
     test "returns error when tool_name does not exist in available tools", %{greet: greet} do
       {:error, _updated_chain, error} =
         %{llm: ChatOpenAI.new!(%{stream: false}), verbose: false}
