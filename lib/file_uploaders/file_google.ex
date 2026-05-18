@@ -25,6 +25,20 @@ defmodule LangChain.FileUploader.FileGoogle do
   available for use with `ContentPart.file_url!/2`.
 
   Note: Files uploaded to Gemini expire after 48 hours.
+
+  ## Client-side direct upload
+
+  Step 2 can be performed by a browser or mobile client instead of your server.
+  Call `request_upload_url/5` with the client's origin and forward the returned
+  URL to the client — the client then PUTs the file bytes to that URL directly.
+
+      {:ok, upload_url} =
+        FileGoogle.request_upload_url(uploader, "doc.pdf", "application/pdf", 12_345,
+          origin: "https://app.example.com"
+        )
+
+  The `:origin` option is required for browser uploads because Google uses it
+  to set `Access-Control-Allow-Origin` on the step 2 response.
   """
   use Ecto.Schema
   import Ecto.Changeset
@@ -190,22 +204,44 @@ defmodule LangChain.FileUploader.FileGoogle do
   The returned URL can be passed to `upload_file_bytes/4` to complete the upload, or
   forwarded directly to a client (e.g. a browser or mobile app) so it can upload
   the file bytes itself without routing them through your server.
+
+  ## Options
+
+    * `:origin` — When step 2 will be performed by a browser or mobile client,
+      pass the client's origin (scheme + host, e.g. `"https://app.example.com"`).
+      Google uses this origin to set `Access-Control-Allow-Origin` on the step 2
+      response, allowing the cross-origin upload to succeed. Omit when step 2 is
+      performed server-side.
   """
-  @spec request_upload_url(t(), String.t(), String.t(), non_neg_integer()) ::
+  @spec request_upload_url(t(), String.t(), String.t(), non_neg_integer(), keyword()) ::
           {:ok, String.t()} | {:error, LangChain.LangChainError.t()}
-  def request_upload_url(%FileGoogle{} = uploader, display_name, mime_type, byte_count) do
+  def request_upload_url(
+        %FileGoogle{} = uploader,
+        display_name,
+        mime_type,
+        byte_count,
+        opts \\ []
+      ) do
     api_key = get_api_key(uploader)
     url = "#{uploader.endpoint}#{@upload_path}?key=#{api_key}"
+
+    headers = %{
+      "x-goog-upload-protocol" => "resumable",
+      "x-goog-upload-command" => "start",
+      "x-goog-upload-header-content-length" => to_string(byte_count),
+      "x-goog-upload-header-content-type" => mime_type
+    }
+
+    headers =
+      case Keyword.get(opts, :origin) do
+        nil -> headers
+        origin when is_binary(origin) -> Map.put(headers, "origin", origin)
+      end
 
     Req.new(
       url: url,
       json: %{"file" => %{"display_name" => display_name}},
-      headers: %{
-        "x-goog-upload-protocol" => "resumable",
-        "x-goog-upload-command" => "start",
-        "x-goog-upload-header-content-length" => to_string(byte_count),
-        "x-goog-upload-header-content-type" => mime_type
-      },
+      headers: headers,
       receive_timeout: uploader.receive_timeout
     )
     |> Req.merge(uploader.req_opts)

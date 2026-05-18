@@ -188,6 +188,46 @@ defmodule LangChain.FileUploader.FileGoogleTest do
     end
   end
 
+  describe "request_upload_url/5" do
+    test "injects origin header when :origin option is given" do
+      expect(Req, :post, fn req ->
+        assert req.headers["origin"] == ["https://app.example.com"]
+
+        {:ok,
+         %Req.Response{
+           status: 200,
+           headers: %{"x-goog-upload-url" => ["https://upload.example.com/upload?id=cors"]},
+           body: %{}
+         }}
+      end)
+
+      uploader = FileGoogle.new!(%{api_key: "AIza-test"})
+
+      assert {:ok, "https://upload.example.com/upload?id=cors"} =
+               FileGoogle.request_upload_url(uploader, "doc.pdf", "application/pdf", 123,
+                 origin: "https://app.example.com"
+               )
+    end
+
+    test "omits origin header when :origin option is absent" do
+      expect(Req, :post, fn req ->
+        refute Map.has_key?(req.headers, "origin")
+
+        {:ok,
+         %Req.Response{
+           status: 200,
+           headers: %{"x-goog-upload-url" => ["https://upload.example.com/upload?id=no-cors"]},
+           body: %{}
+         }}
+      end)
+
+      uploader = FileGoogle.new!(%{api_key: "AIza-test"})
+
+      assert {:ok, "https://upload.example.com/upload?id=no-cors"} =
+               FileGoogle.request_upload_url(uploader, "doc.pdf", "application/pdf", 123)
+    end
+  end
+
   describe "get/2" do
     test "returns FileResult on success with resource name" do
       expect(Req, :get, fn req ->
