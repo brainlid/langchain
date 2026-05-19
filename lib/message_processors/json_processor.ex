@@ -112,7 +112,7 @@ defmodule LangChain.MessageProcessors.JsonProcessor do
   Response values:
 
   - `{:cont, %Message{}}` - The returned message replaces the one being
-    processed and no additional processors are run.
+    processed and processing continues with subsequent processors.
   - `{:halt, %Message{}}` - Future processors are skipped. The Message is
     returned as a response to the LLM for reporting errors.
   """
