@@ -2063,5 +2063,25 @@ defmodule ChatModels.ChatGoogleAITest do
       assert error.message == "Unexpected response 1"
       assert error.original["finishReason"] == "MALFORMED_FUNCTION_CALL"
     end
+
+    test "streaming 200 with empty body returns empty_stream error instead of crashing" do
+      # `Req.Response.body` starts as the binary `""` and is converted to `[]`
+      # by `Utils.handle_stream_fn/3` only on the first `{:data, ...}` callback.
+      # If Gemini returns 200 with zero streamed chunks (e.g. immediate finish
+      # without content, or all chunks filtered by the SSE decoder), the body
+      # stays as the binary `""` and `List.flatten/1` crashes with a
+      # FunctionClauseError. This test guards that path.
+      expect(Req, :post, fn _req, _opts ->
+        {:ok, %Req.Response{status: 200, headers: %{}, body: ""}}
+      end)
+
+      model = ChatGoogleAI.new!(%{stream: true, model: "gemini-2.5-flash"})
+
+      assert {:error, %LangChainError{} = error} =
+               ChatGoogleAI.call(model, [Message.new_user!("Hello")])
+
+      assert error.type == "empty_stream"
+      assert error.message =~ "Empty streaming response"
+    end
   end
 end
