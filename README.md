@@ -12,6 +12,7 @@ Elixir LangChain enables Elixir applications to integrate AI services and self-h
 - **AWS Bedrock Mantle** - OpenAI-compatible gateway for third-party models hosted on Bedrock (Moonshot Kimi K2 family, OpenAI gpt-oss, and many others)
 - **OpenAI ChatGPT** - GPT models via the Chat Completions API
 - **OpenAI Responses API** - OpenAI's newer Responses API with WebSocket transport support
+- **Cloudflare Workers AI** - OpenAI-compatible gateway via `ChatOpenAI` (e.g. Moonshot Kimi K2.6 and other Workers AI models)
 - **xAI Grok** - Grok-4, Grok-3-mini, Grok-4 Heavy (multi-agent), and more
 - **Google Gemini** - Gemini AI models
 - **Google Vertex AI** - Google's enterprise AI offering
@@ -284,6 +285,43 @@ For example, if a locally running service provided that feature, the following c
   |> LLMChain.add_message(Message.new_user!("Hello!"))
   |> LLMChain.run()
 ```
+
+### Cloudflare Workers AI
+
+Cloudflare Workers AI exposes an OpenAI-compatible `/chat/completions` endpoint, so it works through `ChatOpenAI` by overriding the `endpoint` and supplying a Cloudflare API token. Any model in the Workers AI catalog (e.g. `@cf/moonshotai/kimi-k2.6`) can be used this way, including with streaming and tool calling.
+
+```elixir
+alias LangChain.ChatModels.ChatOpenAI
+alias LangChain.Chains.LLMChain
+alias LangChain.Message
+
+account_id = System.fetch_env!("CLOUDFLARE_ACCOUNT_ID")
+api_key = System.fetch_env!("CLOUDFLARE_API_TOKEN")
+
+endpoint =
+  "https://api.cloudflare.com/client/v4/accounts/#{account_id}/ai/v1/chat/completions"
+
+{:ok, chat} =
+  ChatOpenAI.new(%{
+    endpoint: endpoint,
+    api_key: api_key,
+    model: "@cf/moonshotai/kimi-k2.6",
+    temperature: 0,
+    seed: 0,
+    stream: false
+  })
+
+{:ok, updated_chain} =
+  %{llm: chat}
+  |> LLMChain.new!()
+  |> LLMChain.add_messages([
+    Message.new_system!("You answer with a single word."),
+    Message.new_user!("Reply with the single word: PONG")
+  ])
+  |> LLMChain.run()
+```
+
+Streaming and tool calling work the same as with native OpenAI: set `stream: true` and add tools via `LLMChain.add_tools/2`.
 
 ### Bumblebee Chat Support
 

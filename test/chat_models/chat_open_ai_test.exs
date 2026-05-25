@@ -1248,6 +1248,105 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert message.role == :assistant
       assert message.index == 0
     end
+
+    @tag live_call: true, live_cloudflare: true
+    test "supports Cloudflare Workers AI (OpenAI-compatible) with Kimi K2.6" do
+      # https://developers.cloudflare.com/workers-ai/configuration/open-ai-compatibility/
+      account_id = System.fetch_env!("CLOUDFLARE_ACCOUNT_ID")
+      api_key = System.fetch_env!("CLOUDFLARE_API_TOKEN")
+
+      endpoint =
+        "https://api.cloudflare.com/client/v4/accounts/#{account_id}" <>
+          "/ai/v1/chat/completions"
+
+      {:ok, chat} =
+        ChatOpenAI.new(%{
+          endpoint: endpoint,
+          api_key: api_key,
+          model: "@cf/moonshotai/kimi-k2.6",
+          temperature: 0,
+          seed: 0,
+          stream: false
+        })
+
+      {:ok, [message]} =
+        ChatOpenAI.call(
+          chat,
+          [
+            Message.new_system!("You answer with a single word."),
+            Message.new_user!("Reply with the single word: PONG")
+          ],
+          []
+        )
+
+      assert message.role == :assistant
+      assert ContentPart.parts_to_string(message.content) =~ ~r/PONG/i
+    end
+
+    @tag live_call: true, live_cloudflare: true
+    test "Cloudflare Kimi K2.6 streamed tool call assembles into a complete ToolCall",
+         %{weather: weather} do
+      account_id = System.fetch_env!("CLOUDFLARE_ACCOUNT_ID")
+      api_key = System.fetch_env!("CLOUDFLARE_API_TOKEN")
+
+      endpoint =
+        "https://api.cloudflare.com/client/v4/accounts/#{account_id}" <>
+          "/ai/v1/chat/completions"
+
+      handler = %{
+        on_llm_new_delta: fn %LLMChain{} = _chain, deltas ->
+          send(self(), deltas)
+        end,
+        on_message_processed: fn _chain, message ->
+          send(self(), {:test_message_processed, message})
+        end
+      }
+
+      model =
+        ChatOpenAI.new!(%{
+          endpoint: endpoint,
+          api_key: api_key,
+          model: "@cf/moonshotai/kimi-k2.6",
+          temperature: 0,
+          seed: 0,
+          stream: true
+        })
+
+      original_chain =
+        %{llm: model}
+        |> LLMChain.new!()
+        |> LLMChain.add_callback(handler)
+        |> LLMChain.add_tools([weather])
+        |> LLMChain.add_messages([
+          Message.new_user!("What is the weather like in Moab, Utah? Use the tool.")
+        ])
+
+      {:ok, updated_chain} = LLMChain.run(original_chain)
+
+      # The model should have streamed back an assistant message containing
+      # the get_weather tool call with both required arguments parsed.
+      assert %Message{role: :assistant} = updated_chain.last_message
+      assert [%ToolCall{} = call] = updated_chain.last_message.tool_calls
+      assert call.name == "get_weather"
+      assert call.type == :function
+      assert call.status == :complete
+      assert is_map(call.arguments)
+      assert call.arguments["city"] =~ ~r/moab/i
+      assert call.arguments["state"] =~ ~r/ut/i
+
+      assert_received {:test_message_processed, %Message{} = processed}
+      assert processed == updated_chain.last_message
+
+      # Collect every delta the streaming callback sent us and confirm that
+      # merging them produces the same final message LLMChain assembled.
+      # This is the real streaming-pipeline test: SSE frame decoding +
+      # incremental tool_call argument accumulation + merge.
+      deltas = collect_messages() |> List.flatten()
+      assert length(deltas) > 0, "expected at least one streamed delta, got none"
+
+      {:ok, delta_merged_chain} = LLMChain.apply_deltas(original_chain, deltas)
+      assert delta_merged_chain.last_message == updated_chain.last_message
+    end
   end
 
   describe "use in LLMChain" do
