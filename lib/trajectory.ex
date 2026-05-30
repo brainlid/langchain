@@ -28,6 +28,11 @@ defmodule LangChain.Trajectory do
 
       trajectory = Trajectory.from_chain(chain)
 
+      # Or build from a bare message list when no live chain is available
+      # (e.g. a persisted agent state). The llm is optional and only feeds
+      # metadata.
+      trajectory = Trajectory.from_messages(messages, llm)
+
       # Serialize for logging or golden-file comparison
       map = Trajectory.to_map(trajectory)
 
@@ -170,16 +175,45 @@ defmodule LangChain.Trajectory do
       trajectory = Trajectory.from_chain(chain)
   """
   @spec from_chain(LLMChain.t()) :: t()
-  def from_chain(%LLMChain{exchanged_messages: messages, llm: llm}) do
-    tool_calls = extract_tool_calls(messages)
-    token_usage = aggregate_token_usage(messages)
-    metadata = extract_metadata(llm)
+  def from_chain(%LLMChain{exchanged_messages: exchanged_messages, llm: llm}) do
+    from_messages(exchanged_messages, llm)
+  end
 
+  @doc """
+  Build a `Trajectory` from a list of exchanged messages.
+
+  Use this when you have the messages from an assistant operation, workflow,
+  or set of tool-call iterations but do **not** have a live `LLMChain` — for
+  example, a persisted agent state or a sliced "last turn" of a conversation.
+
+  The `messages` argument should be the **exchanged messages for the operation
+  you want to analyze**, not necessarily an entire conversation. Including the
+  leading system/user preamble is harmless for tool-call extraction and
+  matching (those messages carry no tool calls), but for token aggregation and
+  `calls_by_turn/1` semantics you generally want just the turns produced during
+  the operation under analysis.
+
+  `llm` is optional and is only used to populate `metadata` (`:model` and
+  `:llm_module`). Pass `nil` (the default) to produce an empty metadata map.
+  Note that metadata does not survive a JSON roundtrip anyway (see the
+  `from_map/1` note), so it is safe to omit when you only have a stored
+  message list.
+
+  ## Example
+
+      # From a persisted agent state, analyzing the whole conversation:
+      trajectory = Trajectory.from_messages(state.messages, agent.model)
+
+      # From a pre-sliced "last turn" with no llm handy:
+      trajectory = Trajectory.from_messages(last_turn_messages)
+  """
+  @spec from_messages([Message.t()], struct() | nil) :: t()
+  def from_messages(messages, llm \\ nil) when is_list(messages) do
     %Trajectory{
       messages: messages,
-      tool_calls: tool_calls,
-      token_usage: token_usage,
-      metadata: metadata
+      tool_calls: extract_tool_calls(messages),
+      token_usage: aggregate_token_usage(messages),
+      metadata: extract_metadata(llm)
     }
   end
 
