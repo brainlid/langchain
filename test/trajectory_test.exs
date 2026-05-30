@@ -173,6 +173,95 @@ defmodule LangChain.TrajectoryTest do
     end
   end
 
+  describe "from_messages/2" do
+    test "builds a trajectory from a bare message list without an llm" do
+      tc = make_tool_call("search", %{"query" => "weather"})
+
+      messages = [
+        user_msg("What's the weather?"),
+        assistant_msg(nil, tool_calls: [tc])
+      ]
+
+      trajectory = Trajectory.from_messages(messages)
+
+      assert trajectory.messages == messages
+      assert [%{name: "search", arguments: %{"query" => "weather"}}] = trajectory.tool_calls
+      # No llm provided, so metadata is empty
+      assert trajectory.metadata == %{}
+    end
+
+    test "populates metadata when an llm is provided" do
+      {:ok, llm} = ChatOpenAI.new(%{temperature: 0})
+
+      messages = [user_msg("Hello"), assistant_msg("Hi")]
+      trajectory = Trajectory.from_messages(messages, llm)
+
+      assert trajectory.metadata.model == "gpt-3.5-turbo"
+      assert trajectory.metadata.llm_module == ChatOpenAI
+    end
+
+    test "aggregates token usage over a hand-built message list" do
+      usage1 = make_usage(10, 20)
+      usage2 = make_usage(5, 15)
+
+      messages = [
+        user_msg("Hello"),
+        assistant_msg("Hi", usage: usage1),
+        user_msg("More"),
+        assistant_msg("Sure", usage: usage2)
+      ]
+
+      trajectory = Trajectory.from_messages(messages)
+
+      assert trajectory.token_usage.input == 15
+      assert trajectory.token_usage.output == 35
+    end
+
+    test "is equivalent to from_chain/1 on the chain's exchanged_messages" do
+      tc1 = make_tool_call("search", %{"query" => "weather"})
+      tc2 = make_tool_call("get_forecast", %{"city" => "Paris"})
+      tr1 = make_tool_result("search", "Sunny")
+
+      messages = [
+        user_msg("What's the weather in Paris?"),
+        assistant_msg(nil, tool_calls: [tc1], usage: make_usage(10, 20)),
+        tool_msg([tr1]),
+        assistant_msg(nil, tool_calls: [tc2], usage: make_usage(5, 15))
+      ]
+
+      chain = chain_with_messages(messages)
+
+      from_chain = Trajectory.from_chain(chain)
+      from_messages = Trajectory.from_messages(chain.exchanged_messages, chain.llm)
+
+      assert from_chain == from_messages
+    end
+
+    test "a bare-list-without-llm trajectory still matches?/3 correctly" do
+      tc1 = make_tool_call("search", %{"query" => "weather"})
+      tc2 = make_tool_call("get_forecast", %{"city" => "Paris"})
+
+      messages = [
+        user_msg("What's the weather in Paris?"),
+        assistant_msg(nil, tool_calls: [tc1]),
+        assistant_msg(nil, tool_calls: [tc2])
+      ]
+
+      trajectory = Trajectory.from_messages(messages)
+
+      assert Trajectory.matches?(trajectory, [
+               %{name: "search", arguments: %{"query" => "weather"}},
+               %{name: "get_forecast", arguments: %{"city" => "Paris"}}
+             ])
+
+      assert Trajectory.matches?(trajectory, [%{name: "search", arguments: nil}], mode: :superset)
+
+      refute Trajectory.matches?(trajectory, [%{name: "delete_all", arguments: nil}],
+               mode: :superset
+             )
+    end
+  end
+
   describe "to_map/1" do
     test "serializes empty trajectory" do
       trajectory = %Trajectory{messages: [], tool_calls: [], token_usage: nil}
