@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.8.12
+
+A reliability and reach release. A Google AI streaming crash on malformed/empty candidates is fixed, latent bugs surfaced by Elixir 1.20-rc.6's new warnings are corrected (including a `MessageDelta` clause that silently dropped already-merged content), `Trajectory` gains a constructor for bare message lists, Google file uploads can target a specific `:origin`, and Cloudflare Workers AI (e.g. Moonshot Kimi K2.6) is verified and documented via `ChatOpenAI`. No breaking changes.
+
+### Added
+
+- **`Trajectory.from_messages/2`**: Build a trajectory from a bare `[Message.t()]` (with optional `llm`) instead of requiring a live `%LLMChain{}`; `from_chain/1` now delegates to it. https://github.com/brainlid/langchain/pull/560
+- **`FileGoogle.request_upload_url/*` `:origin` option**: Set the request origin when generating a Google file upload URL. https://github.com/brainlid/langchain/pull/556
+- **Cloudflare Workers AI support**: Verified and documented using Workers AI models (e.g. `@cf/moonshotai/kimi-k2.6`) through `ChatOpenAI`, including streaming and tool calling. https://github.com/brainlid/langchain/pull/558
+
+### Changed
+
+- **Elixir 1.20-rc.6 compiler-warning cleanup**: Removed dead code and unreachable clauses to compile cleanly under Elixir 1.20-rc.6's stricter warnings. https://github.com/brainlid/langchain/pull/561
+
+### Fixed
+
+- **`ChatGoogleAI` streaming crash on malformed/empty candidates**: An error candidate (e.g. `MALFORMED_FUNCTION_CALL`) in the stream is now surfaced before delta-reindexing instead of crashing with a `KeyError`. https://github.com/brainlid/langchain/pull/548
+- **Latent bugs exposed by Elixir 1.20-rc.6 warnings**: Reordered a `MessageDelta` clause that was silently dropping already-merged content, plus smaller `ContentPart` and `FunctionParam` fixes. https://github.com/brainlid/langchain/pull/561
+
 ## v0.8.11
 
 A small correctness and supply-chain release. `LLMChain.run_until_tool_used/3` no longer discards a successful tool call when the success happens on the same LLM call that hits the `max_runs` ceiling, and `mix_audit` is wired into `mix precommit` so dependency advisories are caught before merge. The `:jsv` and `:decimal` deps are also refreshed.
