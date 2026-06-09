@@ -602,7 +602,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     end
   end
 
-  def do_api_request(%ChatGoogleAI{stream: true} = google_ai, messages, tools) do
+  def do_api_request(%ChatGoogleAI{stream: true, model: model} = google_ai, messages, tools) do
     Req.new(
       url: build_url(google_ai),
       json: for_api(google_ai, messages, tools),
@@ -646,7 +646,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
       {:ok, %Req.Response{status: 200} = response} ->
         # Stream ended with zero delta chunks — `Utils.handle_stream_fn/3`
         # converts the default binary body `""` to `[]` only on the first
-        # `{:data, ...}` callback. If Gemini returns 200 with no streamed
+        # `{:data, ...}` callback. If LLM returns 200 with no streamed
         # chunks (e.g. immediate finish without content, or all chunks
         # filtered by the SSE decoder), the body stays `""` and crashes
         # `List.flatten/1`. Surface as a structured error so the chain can
@@ -654,7 +654,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
         {:error,
          LangChainError.exception(
            type: "empty_stream",
-           message: "Empty streaming response from Gemini (no delta chunks received)",
+           message: "Empty streaming response from #{model} (no delta chunks received)",
            original: response
          )}
 
