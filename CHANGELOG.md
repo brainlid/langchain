@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.8.13
+
+A trajectory eval helper plus a Google AI streaming fix. `Trajectory` gains a `called_before?/4` predicate (and `assert_called_before`/`refute_called_before` macros) for asserting the relative order of two tool calls, and a `ChatGoogleAI` crash on empty streaming responses is fixed. No breaking changes.
+
+### Added
+
+- **`Trajectory.called_before?/4`**: Assert that tool A was called before tool B, independent of intervening calls — the middle ground between `:superset` (containment) and `:strict` (exact sequence). Uses "any A before any B" (`min(index A) < max(index B)`) semantics, accepts a `Trajectory`/`LLMChain`/tool-call list, and supports `require_both: true` to raise on a missing tool. Adds companion `assert_called_before/4` and `refute_called_before/4` macros. https://github.com/brainlid/langchain/pull/565
+
+### Fixed
+
+- **`ChatGoogleAI` crash on an empty streaming response**: A streaming request that returns `200 OK` with zero delta chunks left the response body as `""`, crashing with a `FunctionClauseError` in `:lists.flatten/1`. It now returns a structured `%LangChainError{type: "empty_stream"}` that the chain surfaces cleanly. https://github.com/brainlid/langchain/pull/563
+
 ## v0.8.12
 
 A reliability and reach release. A Google AI streaming crash on malformed/empty candidates is fixed, latent bugs surfaced by Elixir 1.20-rc.6's new warnings are corrected (including a `MessageDelta` clause that silently dropped already-merged content), `Trajectory` gains a constructor for bare message lists, Google file uploads can target a specific `:origin`, and Cloudflare Workers AI (e.g. Moonshot Kimi K2.6) is verified and documented via `ChatOpenAI`. No breaking changes.
