@@ -446,8 +446,10 @@ defmodule LangChain.ChatModels.ChatOrqTest do
       merged = MessageDelta.merge_delta(delta_1, delta_2)
 
       assert merged.role == :assistant
-      # The merged content should contain text from both deltas
-      merged_text = merged.content || ""
+      # The merged content should contain text from both deltas. After merging,
+      # `content` is cleared to nil and the accumulated text lives in
+      # `merged_content` as ContentParts.
+      merged_text = ContentPart.content_to_string(merged.merged_content) || ""
       assert is_binary(merged_text)
       # Most deltas will be incomplete until the final one
       assert merged.status == :incomplete

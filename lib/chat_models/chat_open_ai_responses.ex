@@ -861,7 +861,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         %{"type" => "input_image", "file_id" => part.content}
       else
         media_prefix =
-          case Keyword.get(part.options || [], :media, nil) do
+          case Keyword.get(part.options, :media, nil) do
             nil ->
               ""
 

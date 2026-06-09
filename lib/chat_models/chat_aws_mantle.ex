@@ -135,7 +135,6 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
   `ChatOpenAI` — see the smoke tests for verified behavior.
   """
   use Ecto.Schema
-  require Logger
   import Ecto.Changeset
   alias __MODULE__
   alias LangChain.ChatModels.ChatModel

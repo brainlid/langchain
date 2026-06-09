@@ -311,15 +311,6 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     }
   end
 
-  def for_api(%Message{content: content} = message) when is_list(content) do
-    %{
-      "role" => map_role(message.role),
-      "parts" =>
-        Enum.map(content, &for_api/1)
-        |> List.flatten()
-    }
-  end
-
   def for_api(%ContentPart{type: :text} = part) do
     %{"text" => part.content}
   end

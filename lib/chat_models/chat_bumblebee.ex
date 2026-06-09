@@ -96,7 +96,6 @@ defmodule LangChain.ChatModels.ChatBumblebee do
         recompile; MyApp.BumblebeeChat.run_chat
   """
   use Ecto.Schema
-  require Logger
   import Ecto.Changeset
   alias __MODULE__
   alias LangChain.ChatModels.ChatModel

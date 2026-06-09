@@ -22,7 +22,6 @@ defmodule LangChain.Message.ToolResult do
   """
   use Ecto.Schema
   import Ecto.Changeset
-  require Logger
   alias __MODULE__
   alias LangChain.LangChainError
   alias LangChain.Utils

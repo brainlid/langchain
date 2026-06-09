@@ -224,9 +224,6 @@ defmodule LangChain.Message do
           add_error(changeset, :content, "is invalid for role #{role}")
         end
 
-      {:ok, []} ->
-        put_change(changeset, :content, nil)
-
       # any other value is not valid
       {:ok, _value} ->
         add_error(changeset, :content, "must be text or a list of ContentParts")

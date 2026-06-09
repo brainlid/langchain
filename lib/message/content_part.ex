@@ -222,7 +222,7 @@ defmodule LangChain.Message.ContentPart do
          }
        )
        when is_binary(primary_content) and is_binary(new_content) and primary_type == new_type do
-    %ContentPart{primary | content: (primary.content || "") <> new_content}
+    %ContentPart{primary | content: primary_content <> new_content}
   end
 
   defp append_content(%ContentPart{} = primary, %ContentPart{content: nil}), do: primary

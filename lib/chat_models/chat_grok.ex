@@ -73,7 +73,6 @@ defmodule LangChain.ChatModels.ChatGrok do
 
   """
   use Ecto.Schema
-  require Logger
   import Ecto.Changeset
   alias __MODULE__
   alias LangChain.Config
