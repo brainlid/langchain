@@ -619,6 +619,9 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
         )
     )
     |> case do
+      {:ok, %Req.Response{body: {:error, %LangChainError{} = error}}} ->
+        {:error, error}
+
       {:ok, %Req.Response{status: 200, body: data} = response} when is_list(data) ->
         Callbacks.fire(google_ai.callbacks, :on_llm_response_headers, [response.headers])
 
@@ -654,9 +657,6 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
            message: "Empty streaming response from Gemini (no delta chunks received)",
            original: response
          )}
-
-      {:ok, %Req.Response{body: {:error, %LangChainError{} = error}}} ->
-        {:error, error}
 
       {:ok, %Req.Response{status: status} = response} when status != 200 ->
         # Try to extract error from the buffered error data

@@ -2072,7 +2072,7 @@ defmodule ChatModels.ChatGoogleAITest do
       # stays as the binary `""` and `List.flatten/1` crashes with a
       # FunctionClauseError. This test guards that path.
       expect(Req, :post, fn _req, _opts ->
-        {:ok, %Req.Response{status: 200, headers: %{}, body: ""}}
+        {:ok, %Req.Response{status: 200, headers: [], body: ""}}
       end)
 
       model = ChatGoogleAI.new!(%{stream: true, model: "gemini-2.5-flash"})
