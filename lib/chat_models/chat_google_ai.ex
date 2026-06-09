@@ -602,7 +602,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     end
   end
 
-  def do_api_request(%ChatGoogleAI{stream: true} = google_ai, messages, tools) do
+  def do_api_request(%ChatGoogleAI{stream: true, model: model} = google_ai, messages, tools) do
     Req.new(
       url: build_url(google_ai),
       json: for_api(google_ai, messages, tools),
@@ -619,7 +619,10 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
         )
     )
     |> case do
-      {:ok, %Req.Response{status: 200, body: data} = response} ->
+      {:ok, %Req.Response{body: {:error, %LangChainError{} = error}}} ->
+        {:error, error}
+
+      {:ok, %Req.Response{status: 200, body: data} = response} when is_list(data) ->
         Callbacks.fire(google_ai.callbacks, :on_llm_response_headers, [response.headers])
 
         flattened = List.flatten(data)
@@ -640,8 +643,20 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
             |> Enum.reverse()
         end
 
-      {:ok, %Req.Response{body: {:error, %LangChainError{} = error}}} ->
-        {:error, error}
+      {:ok, %Req.Response{status: 200} = response} ->
+        # Stream ended with zero delta chunks — `Utils.handle_stream_fn/3`
+        # converts the default binary body `""` to `[]` only on the first
+        # `{:data, ...}` callback. If LLM returns 200 with no streamed
+        # chunks (e.g. immediate finish without content, or all chunks
+        # filtered by the SSE decoder), the body stays `""` and crashes
+        # `List.flatten/1`. Surface as a structured error so the chain can
+        # propagate it cleanly instead of taking down the Task.
+        {:error,
+         LangChainError.exception(
+           type: "empty_stream",
+           message: "Empty streaming response from #{model} (no delta chunks received)",
+           original: response
+         )}
 
       {:ok, %Req.Response{status: status} = response} when status != 200 ->
         # Try to extract error from the buffered error data
