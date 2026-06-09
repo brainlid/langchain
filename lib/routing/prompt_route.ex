@@ -55,7 +55,6 @@ defmodule LangChain.Routing.PromptRoute do
   """
   use Ecto.Schema
   import Ecto.Changeset
-  require Logger
   alias __MODULE__
   alias LangChain.LangChainError
 

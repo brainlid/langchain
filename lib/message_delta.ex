@@ -245,6 +245,17 @@ defmodule LangChain.MessageDelta do
     %MessageDelta{delta | content: nil}
   end
 
+  # ContentPart from merged_content (already processed delta). Must precede the
+  # "empty content" clause below: such a delta has `content: nil` but still
+  # carries a part to merge, so the broad `content in [nil, []]` guard would
+  # otherwise shadow this and silently drop the merged_content.
+  defp append_to_merged_content(
+         %MessageDelta{} = primary,
+         %MessageDelta{content: nil, merged_content: %ContentPart{} = part}
+       ) do
+    merge_content_part_into(primary, part)
+  end
+
   # Empty content - nothing to merge
   defp append_to_merged_content(%MessageDelta{} = primary, %MessageDelta{content: content})
        when content in [nil, []],
@@ -254,14 +265,6 @@ defmodule LangChain.MessageDelta do
   defp append_to_merged_content(%MessageDelta{} = primary, %MessageDelta{content: content})
        when is_binary(content) do
     append_to_merged_content(primary, %MessageDelta{content: ContentPart.text!(content)})
-  end
-
-  # ContentPart from merged_content (already processed delta)
-  defp append_to_merged_content(
-         %MessageDelta{} = primary,
-         %MessageDelta{content: nil, merged_content: %ContentPart{} = part}
-       ) do
-    merge_content_part_into(primary, part)
   end
 
   # Single ContentPart content
@@ -455,9 +458,6 @@ defmodule LangChain.MessageDelta do
 
       {:error, %Ecto.Changeset{} = changeset} ->
         {:error, Utils.changeset_error_to_string(changeset)}
-
-      {:error, _reason} = error ->
-        error
     end
   end
 

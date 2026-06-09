@@ -1,5 +1,4 @@
 defmodule LangChain.ChatModels.ChatModel do
-  require Logger
   alias LangChain.Message
   alias LangChain.MessageDelta
   alias LangChain.Function

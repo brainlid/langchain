@@ -131,6 +131,10 @@ defmodule LangChain.Utils.ChatTemplates do
   """
   @spec prep_and_validate_messages([Message.t()]) ::
           {Message.t() | nil, Message.t(), [Message.t()]} | no_return()
+  def prep_and_validate_messages([]) do
+    raise LangChainError, "Messages are required."
+  end
+
   def prep_and_validate_messages(messages) do
     {system, first_user, rest} =
       case messages do
@@ -142,9 +146,6 @@ defmodule LangChain.Utils.ChatTemplates do
 
         [%Message{role: :system} = _system | _rest] ->
           raise LangChainError, "Messages must include a user prompt after a system message."
-
-        [] ->
-          raise LangChainError, "Messages are required."
 
         _other ->
           raise LangChainError, "Messages must start with either a system or user message."
