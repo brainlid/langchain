@@ -83,6 +83,67 @@ defmodule LangChain.Trajectory.Assertions do
     end
   end
 
+  @doc """
+  Assert that tool `name_a` was called before tool `name_b`.
+
+  Wraps `LangChain.Trajectory.called_before?/4` and accepts the same options:
+
+    * `:require_both` — when `true`, a missing tool raises rather than failing
+      the ordering check (see `LangChain.Trajectory.called_before?/4`)
+
+  ## Examples
+
+      assert_called_before trajectory, "search", "answer"
+      assert_called_before trajectory, "search", "answer", require_both: true
+  """
+  defmacro assert_called_before(actual, name_a, name_b, opts \\ []) do
+    quote do
+      actual_val = unquote(actual)
+      name_a_val = unquote(name_a)
+      name_b_val = unquote(name_b)
+      opts_val = unquote(opts)
+
+      unless LangChain.Trajectory.called_before?(actual_val, name_a_val, name_b_val, opts_val) do
+        actual_calls = LangChain.Trajectory.Assertions.extract_tool_calls(actual_val)
+
+        raise ExUnit.AssertionError,
+          left: actual_calls,
+          right: [name_a_val, name_b_val],
+          message: "Expected #{inspect(name_a_val)} to be called before #{inspect(name_b_val)}"
+      end
+    end
+  end
+
+  @doc """
+  Assert that tool `name_a` was NOT called before tool `name_b`.
+
+  Accepts the same options as `assert_called_before/4`. Note that with the
+  default options a missing tool makes this pass vacuously; pass
+  `require_both: true` to surface a missing tool as an error instead.
+
+  ## Examples
+
+      refute_called_before trajectory, "write_file", "read_file"
+  """
+  defmacro refute_called_before(actual, name_a, name_b, opts \\ []) do
+    quote do
+      actual_val = unquote(actual)
+      name_a_val = unquote(name_a)
+      name_b_val = unquote(name_b)
+      opts_val = unquote(opts)
+
+      if LangChain.Trajectory.called_before?(actual_val, name_a_val, name_b_val, opts_val) do
+        actual_calls = LangChain.Trajectory.Assertions.extract_tool_calls(actual_val)
+
+        raise ExUnit.AssertionError,
+          left: actual_calls,
+          right: [name_a_val, name_b_val],
+          message:
+            "Did not expect #{inspect(name_a_val)} to be called before #{inspect(name_b_val)}"
+      end
+    end
+  end
+
   @doc false
   def extract_tool_calls(%LangChain.Chains.LLMChain{} = chain) do
     chain |> LangChain.Trajectory.from_chain() |> extract_tool_calls()
