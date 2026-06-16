@@ -2080,6 +2080,29 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert parsed == [json_1, json_2]
     end
 
+    test "ignores SSE comment lines (e.g. OpenRouter keep-alives)" do
+      # OpenRouter sends SSE comments (lines starting with ":") to keep the
+      # connection alive. They are ignorable per the SSE spec and must not be
+      # buffered as incomplete JSON, which would poison all following chunks.
+      data = ": OPENROUTER PROCESSING\n\n"
+
+      {parsed, incomplete} = ChatOpenAI.decode_stream({data, ""})
+
+      assert incomplete == ""
+      assert parsed == []
+    end
+
+    test "parses a data chunk that follows an SSE comment", %{json_1: json_1} do
+      data =
+        ": OPENROUTER PROCESSING\n\n" <>
+          "data: {\"id\":\"chatcmpl-7e8yp1xBhriNXiqqZ0xJkgNrmMuGS\",\"object\":\"chat.completion.chunk\",\"created\":1689801995,\"model\":\"gpt-4-0613\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":null,\"function_call\":{\"name\":\"calculator\",\"arguments\":\"\"}},\"finish_reason\":null}]}\n\n"
+
+      {parsed, incomplete} = ChatOpenAI.decode_stream({data, ""})
+
+      assert incomplete == ""
+      assert parsed == [json_1]
+    end
+
     test "correctly parses when data content contains spaces such as python code with indentation" do
       data =
         "data: {\"id\":\"chatcmpl-7e8yp1xBhriNXiqqZ0xJkgNrmMuGS\",\"object\":\"chat.completion.chunk\",\"created\":1689801995,\"model\":\"gpt-4-0613\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"def my_function(x):\\n    return x + 1\"},\"finish_reason\":null}]}\n\n"

@@ -1055,6 +1055,13 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       str
       |> String.trim()
       |> case do
+        ":" <> _sse_comment ->
+          # A line starting with a colon is an SSE comment and can be ignored per
+          # https://html.spec.whatwg.org/multipage/server-sent-events.html#event-stream-interpretation
+          # OpenRouter sends ": OPENROUTER PROCESSING" keep-alive comments which
+          # otherwise poison the incomplete-JSON buffer and break the whole stream.
+          acc
+
         "" ->
           acc
 
