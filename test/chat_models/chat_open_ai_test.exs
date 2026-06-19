@@ -2080,6 +2080,26 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert parsed == [json_1, json_2]
     end
 
+    test "ignores SSE comment lines while still parsing data", %{json_1: json_1} do
+      # Per the SSE spec, lines starting with a colon are comments and must be
+      # ignored. OpenRouter sends ": OPENROUTER PROCESSING" comments to keep the
+      # connection alive.
+      data =
+        ": OPENROUTER PROCESSING\n\n: OPENROUTER PROCESSING\n\ndata: {\"id\":\"chatcmpl-7e8yp1xBhriNXiqqZ0xJkgNrmMuGS\",\"object\":\"chat.completion.chunk\",\"created\":1689801995,\"model\":\"gpt-4-0613\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":null,\"function_call\":{\"name\":\"calculator\",\"arguments\":\"\"}},\"finish_reason\":null}]}\n\n"
+
+      {parsed, incomplete} = ChatOpenAI.decode_stream({data, ""})
+
+      assert incomplete == ""
+      assert parsed == [json_1]
+    end
+
+    test "a comment-only chunk yields no results and an empty buffer" do
+      {parsed, incomplete} = ChatOpenAI.decode_stream({": OPENROUTER PROCESSING\n\n", ""})
+
+      assert parsed == []
+      assert incomplete == ""
+    end
+
     test "correctly parses when data content contains spaces such as python code with indentation" do
       data =
         "data: {\"id\":\"chatcmpl-7e8yp1xBhriNXiqqZ0xJkgNrmMuGS\",\"object\":\"chat.completion.chunk\",\"created\":1689801995,\"model\":\"gpt-4-0613\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"def my_function(x):\\n    return x + 1\"},\"finish_reason\":null}]}\n\n"

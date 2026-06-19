@@ -1061,6 +1061,13 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         "[DONE]" ->
           acc
 
+        ":" <> _sse_comment ->
+          # A line starting with a colon is a comment and is ignored per the SSE
+          # spec: https://html.spec.whatwg.org/multipage/server-sent-events.html
+          # OpenRouter sends ": OPENROUTER PROCESSING" comments to keep the
+          # connection alive.
+          acc
+
         json ->
           parse_combined_data(incomplete, json, done)
       end
