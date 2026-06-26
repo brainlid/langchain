@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.8.14
+
+A streaming-compatibility fix for OpenAI-compatible providers that emit SSE comment lines (notably OpenRouter's `: OPENROUTER PROCESSING` keep-alives). No breaking changes.
+
+### Fixed
+
+- **`ChatOpenAI.decode_stream/2` now ignores SSE comment lines**: A line beginning with `:` is an ignorable SSE comment per spec, but it previously failed JSON decoding and got stuck in the incomplete-buffer, poisoning every subsequent chunk and collapsing the whole stream to an empty response. Comment lines are now skipped. Fixes #259. https://github.com/brainlid/langchain/pull/569
+
+### Changed
+
+- **CI**: Bumped `actions/checkout` from 6.0.2 to 7.0.0. https://github.com/brainlid/langchain/pull/570
+
 ## v0.8.13
 
 A trajectory eval helper plus a Google AI streaming fix. `Trajectory` gains a `called_before?/4` predicate (and `assert_called_before`/`refute_called_before` macros) for asserting the relative order of two tool calls, and a `ChatGoogleAI` crash on empty streaming responses is fixed. No breaking changes.
