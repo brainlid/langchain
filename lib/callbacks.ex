@@ -5,7 +5,6 @@ defmodule LangChain.Callbacks do
   See `LangChain.Chains.ChainCallbacks` for the list of callbacks that can be
   used.
   """
-  require Logger
   alias LangChain.LangChainError
 
   @doc """
@@ -38,19 +37,13 @@ defmodule LangChain.Callbacks do
             apply(callback_fn, arguments)
           rescue
             err ->
-              msg =
-                "Callback handler for #{inspect(callback_name)} raised an exception: #{LangChainError.format_exception(err, __STACKTRACE__, :short)}"
-
-              Logger.error(msg)
-              raise LangChainError, msg
+              raise LangChainError,
+                    "Callback handler for #{inspect(callback_name)} raised an exception: #{LangChainError.format_exception(err, __STACKTRACE__, :short)}"
           end
 
         other ->
-          msg =
-            "Unexpected callback handler. Callback #{inspect(callback_name)} was assigned #{inspect(other)}"
-
-          Logger.error(msg)
-          raise LangChainError, msg
+          raise LangChainError,
+                "Unexpected callback handler. Callback #{inspect(callback_name)} was assigned #{inspect(other)}"
       end
     end)
   end

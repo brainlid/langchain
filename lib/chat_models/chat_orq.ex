@@ -21,6 +21,32 @@ defmodule LangChain.ChatModels.ChatOrq do
 
   Notes:
   - Azure is not supported.
+
+  ## Connection Retry Behavior
+
+  The `retry_count` option controls how many times a request is retried when
+  a pooled HTTP connection turns out to be stale (server closed it between
+  requests). This is a transport-level issue where retrying with a fresh
+  connection is the correct response.
+
+  **Only closed-connection errors are retried.** Timeouts, rate limits (429),
+  overloaded (529), authentication errors, and invalid requests all return
+  immediately -- they are not problems that a simple retry will fix.
+
+  | `retry_count` | Total HTTP requests |
+  |---|---|
+  | `0` | 1 (no retries) |
+  | `1` | 2 (1 initial + 1 retry) |
+  | `2` (default) | 3 (1 initial + 2 retries) |
+
+  Req's built-in HTTP retry is disabled to prevent the two retry layers from
+  compounding. See [GitHub issue #503](https://github.com/brainlid/langchain/issues/503).
+
+  When running LLM calls from a background job queue (e.g., Oban) that has its
+  own retry logic, set `retry_count: 0` so there are no hidden retries:
+
+      ChatOrq.new!(%{model: "...", retry_count: 0})
+
   """
   use Ecto.Schema
   require Logger
@@ -89,6 +115,10 @@ defmodule LangChain.ChatModels.ChatOrq do
     # For help with debugging. It outputs the RAW Req response received and the
     # RAW Elixir map being submitted to the API.
     field :verbose_api, :boolean, default: false
+
+    # Number of retries on closed-connection errors (stale pool). The initial
+    # request always runs; this controls additional attempts only.
+    field :retry_count, :integer, default: 2
   end
 
   @type t :: %ChatOrq{}
@@ -113,7 +143,8 @@ defmodule LangChain.ChatModels.ChatOrq do
     :thread,
     :knowledge_filter,
     :callbacks,
-    :verbose_api
+    :verbose_api,
+    :retry_count
   ]
   @required_fields [:endpoint, :stream_endpoint, :key]
 
@@ -587,9 +618,9 @@ defmodule LangChain.ChatModels.ChatOrq do
 
   # Make the API request to orq.ai
   @doc false
-  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), integer()) ::
+  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), integer() | nil) ::
           list() | struct() | {:error, LangChainError.t()}
-  def do_api_request(orq, messages, tools, retry_count \\ 3)
+  def do_api_request(orq, messages, tools, retry_count \\ nil)
 
   def do_api_request(_orq, _messages, _tools, 0) do
     raise LangChainError, "Retries exceeded. Connection failed."
@@ -601,6 +632,7 @@ defmodule LangChain.ChatModels.ChatOrq do
         tools,
         retry_count
       ) do
+    retry_count = retry_count || orq.retry_count + 1
     raw_data = for_api(orq, messages, tools)
 
     if orq.verbose_api do
@@ -613,9 +645,9 @@ defmodule LangChain.ChatModels.ChatOrq do
         json: raw_data,
         auth: {:bearer, get_api_key(orq)},
         receive_timeout: orq.receive_timeout,
-        retry: :transient,
-        max_retries: 3,
-        retry_delay: fn attempt -> 300 * attempt end
+        # Disable Req-level retry to prevent compounding with LangChain's own
+        # :closed retry. See https://github.com/brainlid/langchain/issues/503
+        retry: false
       )
 
     req
@@ -679,7 +711,7 @@ defmodule LangChain.ChatModels.ChatOrq do
         do_api_request(orq, messages, tools, retry_count - 1)
 
       other ->
-        Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
+        Logger.warning(fn -> "Unexpected and unhandled API response! #{inspect(other)}" end)
         other
     end
   end
@@ -690,6 +722,7 @@ defmodule LangChain.ChatModels.ChatOrq do
         tools,
         retry_count
       ) do
+    retry_count = retry_count || orq.retry_count + 1
     raw_data = for_api(orq, messages, tools)
 
     if orq.verbose_api do
@@ -729,9 +762,9 @@ defmodule LangChain.ChatModels.ChatOrq do
         do_api_request(orq, messages, tools, retry_count - 1)
 
       other ->
-        Logger.error(
+        Logger.warning(fn ->
           "Unhandled and unexpected response from streamed post call. #{inspect(other)}"
-        )
+        end)
 
         {:error,
          LangChainError.exception(
@@ -746,23 +779,21 @@ defmodule LangChain.ChatModels.ChatOrq do
   Decode a streamed response (SSE). Delegates to ChatOpenAI-compatible decoder.
   """
   @spec decode_stream({String.t(), String.t()}, list()) ::
-          {%{String.t() => any()}}
+          {[%{String.t() => any()}], String.t()}
   defdelegate decode_stream(data, done \\ []),
     to: LangChain.ChatModels.ChatOpenAI,
     as: :decode_stream
 
   # Parse responses (compatible with OpenAI-like shapes used by orq)
   @doc false
-  @spec do_process_response(
-          %{:callbacks => [map()]},
-          data :: %{String.t() => any()} | {:error, any()}
-        ) ::
+  @spec do_process_response(t(), data :: any()) ::
           :skip
+          | TokenUsage.t()
           | Message.t()
-          | [Message.t()]
+          | [Message.t() | MessageDelta.t() | TokenUsage.t() | {:error, LangChainError.t()}]
           | MessageDelta.t()
           | [MessageDelta.t()]
-          | {:error, String.t()}
+          | {:error, LangChainError.t()}
   def do_process_response(model, %{"choices" => _choices} = data) do
     token_usage = get_token_usage(data)
 
@@ -1064,8 +1095,6 @@ defmodule LangChain.ChatModels.ChatOrq do
         call
 
       {:error, %Ecto.Changeset{} = changeset} ->
-        reason = Utils.changeset_error_to_string(changeset)
-        Logger.error("Failed to process ToolCall for a function. Reason: #{reason}")
         {:error, LangChainError.exception(changeset)}
     end
   end
@@ -1089,8 +1118,6 @@ defmodule LangChain.ChatModels.ChatOrq do
         call
 
       {:error, %Ecto.Changeset{} = changeset} ->
-        reason = Utils.changeset_error_to_string(changeset)
-        Logger.error("Failed to process ToolCall for a function. Reason: #{reason}")
         {:error, LangChainError.exception(changeset)}
     end
   end
@@ -1114,8 +1141,6 @@ defmodule LangChain.ChatModels.ChatOrq do
         call
 
       {:error, %Ecto.Changeset{} = changeset} ->
-        reason = Utils.changeset_error_to_string(changeset)
-        Logger.error("Failed to process ToolCall for a function. Reason: #{reason}")
         {:error, LangChainError.exception(changeset)}
     end
   end
@@ -1140,8 +1165,6 @@ defmodule LangChain.ChatModels.ChatOrq do
         call
 
       {:error, %Ecto.Changeset{} = changeset} ->
-        reason = Utils.changeset_error_to_string(changeset)
-        Logger.error("Failed to process ToolCall for a function. Reason: #{reason}")
         {:error, LangChainError.exception(changeset)}
     end
   end
@@ -1189,21 +1212,17 @@ defmodule LangChain.ChatModels.ChatOrq do
   end
 
   def do_process_response(_model, %{"error" => %{"message" => reason}} = response) do
-    Logger.error("Received error from API: #{inspect(reason)}")
     {:error, LangChainError.exception(message: reason, original: response)}
   end
 
   def do_process_response(_model, {:error, %Jason.DecodeError{} = response}) do
     error_message = "Received invalid JSON: #{inspect(response)}"
-    Logger.error(error_message)
 
     {:error,
      LangChainError.exception(type: "invalid_json", message: error_message, original: response)}
   end
 
   def do_process_response(_model, other) do
-    Logger.error("Trying to process an unexpected response. #{inspect(other)}")
-
     {:error,
      LangChainError.exception(
        type: "unexpected_response",

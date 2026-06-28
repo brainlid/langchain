@@ -30,10 +30,143 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   Usage examples and more details are in the LangChain documentation or the
   module's function docs.
 
+  ## Callbacks
+
+  See the set of available callbacks: `LangChain.Chains.ChainCallbacks`
+
   ## Tool Support
 
-  Currently, `ChatOllamaAI` supports tool calls when not streaming the responses.
-  Streaming tool calls is not yet supported.
+  `ChatOllamaAI` supports tool calls in both streaming and non-streaming modes.
+  Tools are defined using `LangChain.Function` and passed to the chain or call.
+
+  Not all Ollama models support tool calling. Models that support tools include
+  `llama3.1`, `mistral`, `qwen2.5`, and others. Check the
+  [Ollama model library](https://ollama.com/library) for the latest supported models.
+
+  ### Example: Non-streaming with tools
+
+      {:ok, chat} = ChatOllamaAI.new(%{model: "llama3.1:latest", stream: false})
+
+      weather_tool = LangChain.Function.new!(%{
+        name: "get_weather",
+        description: "Get the current weather for a location",
+        parameters: [
+          LangChain.FunctionParam.new!(%{
+            name: "location",
+            type: :string,
+            description: "City name"
+          })
+        ],
+        function: fn %{"location" => location}, _context ->
+          {:ok, "72F and sunny in \#{location}"}
+        end
+      })
+
+      {:ok, result} = ChatOllamaAI.call(chat,
+        [LangChain.Message.new_user!("What's the weather in Portland?")],
+        [weather_tool]
+      )
+
+  ### Example: Streaming with tools
+
+      {:ok, chat} = ChatOllamaAI.new(%{model: "llama3.1:latest", stream: true})
+
+      # Streaming returns a list of MessageDelta structs followed by a final Message.
+      # When tool calls are present, they appear in the delta's tool_calls field.
+      {:ok, deltas} = ChatOllamaAI.call(chat,
+        [LangChain.Message.new_user!("What's the weather in Portland?")],
+        [weather_tool]
+      )
+
+  ## Configuration
+
+  The Ollama endpoint defaults to `http://localhost:11434/api/chat`. Override
+  it using the `:endpoint` option:
+
+      ChatOllamaAI.new(%{
+        model: "llama3.1:latest",
+        endpoint: "http://my-ollama-host:11434/api/chat"
+      })
+
+  ## Structured Outputs (`:format`)
+
+  Ollama supports server-side structured output via the request's top-level
+  `format` field. Set the `:format` option to either `"json"` for plain JSON
+  mode, or a JSON Schema map for schema-enforced generation:
+
+      {:ok, chat} = ChatOllamaAI.new(%{
+        model: "llama3.1:latest",
+        format: %{
+          "type" => "object",
+          "required" => ["name", "city"],
+          "properties" => %{
+            "name" => %{"type" => "string"},
+            "city" => %{"type" => "string"}
+          }
+        }
+      })
+
+  See https://github.com/ollama/ollama/blob/main/docs/api.md#request-structured-outputs.
+
+  ## Multimodal (images)
+
+  Ollama accepts images on user messages via a top-level `images` array of
+  base64-encoded strings. Provide image content as `:image` `ContentPart`s
+  on a user message; `ChatOllamaAI` strips them out of the message content
+  and re-attaches them to the `images` field on the wire:
+
+      {:ok, bytes} = File.read("photo.jpg")
+
+      user_msg = Message.new_user!([
+        ContentPart.text!("What's in this picture?"),
+        ContentPart.image!(Base.encode64(bytes), media: :jpg)
+      ])
+
+      ChatOllamaAI.call(chat, [user_msg], [])
+
+  Note: `:image_url` content parts are not supported because the Ollama
+  server has no URL fetcher — they will raise. Fetch the bytes yourself and
+  pass them as `:image` parts.
+
+  ## Thinking / reasoning output (`:think`)
+
+  Set `:think` to `true` to enable Ollama's native thinking output for
+  reasoning-capable models (e.g. `gpt-oss`, `deepseek-r1`, `qwen3`,
+  `gemma3`). When enabled, Ollama returns a `thinking` field alongside
+  `content`; `ChatOllamaAI` surfaces it as a `LangChain.Message.ContentPart`
+  of type `:thinking` prepended to the message content so callers can
+  render or strip the reasoning trace.
+
+      {:ok, chat} = ChatOllamaAI.new(%{model: "gpt-oss:20b", think: true})
+
+  Leave unset (the default) for non-thinking models — the field is only
+  sent on the wire when explicitly assigned.
+
+  ## Connection Retry Behavior
+
+  The `retry_count` option controls how many times a request is retried when
+  a pooled HTTP connection turns out to be stale (server closed it between
+  requests). This is a transport-level issue where retrying with a fresh
+  connection is the correct response.
+
+  **Only closed-connection errors are retried.** Timeouts, rate limits (429),
+  overloaded (529), authentication errors, and invalid requests all return
+  immediately -- they are not problems that a simple retry will fix.
+
+  | `retry_count` | Total HTTP requests |
+  |---|---|
+  | `0` | 1 (no retries) |
+  | `1` | 2 (1 initial + 1 retry) |
+  | `2` (default) | 3 (1 initial + 2 retries) |
+
+  Req's built-in HTTP retry is disabled to prevent the two retry layers from
+  compounding. See [GitHub issue #503](https://github.com/brainlid/langchain/issues/503).
+
+  When running LLM calls from a background job queue (e.g., Oban) that has its
+  own retry logic, set `retry_count: 0` so there are no hidden retries:
+
+      ChatOllamaAI.new!(%{model: "...", retry_count: 0})
+
   """
   use Ecto.Schema
   require Logger
@@ -60,6 +193,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
 
   @create_fields [
     :endpoint,
+    :format,
     :keep_alive,
     :mirostat,
     :mirostat_eta,
@@ -78,9 +212,11 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
     :stream,
     :temperature,
     :tfs_z,
+    :think,
     :top_k,
     :top_p,
-    :verbose_api
+    :verbose_api,
+    :retry_count
   ]
 
   @required_fields [:endpoint, :model]
@@ -90,6 +226,16 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   @primary_key false
   embedded_schema do
     field :endpoint, :string, default: "http://localhost:11434/api/chat"
+
+    # Ollama's native structured-output constraint. Forwarded as the
+    # request's top-level `format` field.
+    #
+    # * `"json"` — plain JSON mode (no schema enforcement).
+    # * A JSON Schema map — schema-enforced output. The server will
+    #   constrain generation to match the schema.
+    #
+    # See https://github.com/ollama/ollama/blob/main/docs/api.md#request-structured-outputs
+    field :format, :any, virtual: true
 
     # Change Keep Alive setting for unloading the model from memory.
     # (Default: "5m", set to a negative interval to disable)
@@ -160,6 +306,19 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
     # will reduce the impact more, while a value of 1.0 disables this setting. (default: 1)
     field :tfs_z, :float, default: 1.0
 
+    # Enables Ollama's native "thinking" output for reasoning-capable models
+    # (e.g. gpt-oss, deepseek-r1, qwen3, gemma3). When `true`, Ollama returns
+    # a separate `thinking` field on assistant messages alongside `content`.
+    # `ChatOllamaAI` surfaces it as a `LangChain.Message.ContentPart` of
+    # type `:thinking` prepended to the message content.
+    #
+    # Leave as `nil` (default) to preserve back-compat — the field is only
+    # sent when explicitly set, so older Ollama servers / non-thinking
+    # models won't reject the request.
+    #
+    # See https://github.com/ollama/ollama/blob/main/docs/api.md#chat-request-with-thinking
+    field :think, :boolean, default: nil
+
     # Reduces the probability of generating nonsense. A higher value (e.g. 100) will give more diverse answers,
     # while a lower value (e.g. 10) will be more conservative. (Default: 40)
     field :top_k, :integer, default: 40
@@ -174,6 +333,10 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
     # For help with debugging. It outputs the RAW Req response received and the
     # RAW Elixir map being submitted to the API.
     field :verbose_api, :boolean, default: false
+
+    # Number of retries on closed-connection errors (stale pool). The initial
+    # request always runs; this controls additional attempts only.
+    field :retry_count, :integer, default: 2
   end
 
   @doc """
@@ -248,6 +411,8 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
         |> Utils.conditionally_add_to_map(:stop, model.stop),
       receive_timeout: model.receive_timeout
     }
+    |> Utils.conditionally_add_to_map(:format, model.format)
+    |> Utils.conditionally_add_to_map(:think, model.think)
     |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(tools))
   end
 
@@ -308,11 +473,20 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   end
 
   def for_api(%Message{role: :user, content: content} = msg) when is_list(content) do
+    {text_parts, image_parts} =
+      Enum.split_with(content, fn
+        %ContentPart{type: :text} -> true
+        _ -> false
+      end)
+
+    images = Enum.map(image_parts, &image_part_for_api/1)
+
     %{
       "role" => msg.role,
-      "content" => ContentPart.content_to_string(content)
+      "content" => ContentPart.content_to_string(text_parts)
     }
     |> Utils.conditionally_add_to_map("name", msg.name)
+    |> Utils.conditionally_add_to_map("images", images)
   end
 
   # Handle messages with ContentPart content for non-user roles
@@ -327,6 +501,17 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   # Handle ContentPart structures
   def for_api(%ContentPart{type: :text, content: content}) do
     content
+  end
+
+  # Ollama's native chat API takes images as base64 strings in a top-level
+  # `images` array on the user message. Only `:image` (base64) parts are
+  # supported — `:image_url` is rejected because Ollama has no fetcher.
+  defp image_part_for_api(%ContentPart{type: :image, content: base64}), do: base64
+
+  defp image_part_for_api(%ContentPart{type: :image_url}) do
+    raise LangChainError,
+          "ChatOllamaAI does not support :image_url content parts. Fetch the image " <>
+            "and pass it as a :image (base64) ContentPart instead."
   end
 
   defp get_tools_for_api(nil), do: []
@@ -429,16 +614,15 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   # - `{:error, reason}` - Where reason is a `LangChain.LangChainError`
   #   explanation of what went wrong.
   #
-  # **NOTE:** callback function are IGNORED for ollama ai When `stream: true` is
   # If `stream: false`, the completed message is returned.
   #
   # If `stream: true`, the completed message is returned after MessageDelta's.
   #
   # Retries the request up to 3 times on transient errors with a 1 second delay
   @doc false
-  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), integer()) ::
+  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), integer() | nil) ::
           list() | struct() | {:error, String.t()}
-  def do_api_request(ollama_ai, messages, tools, retry_count \\ 3)
+  def do_api_request(ollama_ai, messages, tools, retry_count \\ nil)
 
   def do_api_request(_ollama_ai, _messages, _tools, 0) do
     raise LangChainError, "Retries exceeded. Connection failed."
@@ -450,6 +634,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
         tools,
         retry_count
       ) do
+    retry_count = retry_count || ollama_ai.retry_count + 1
     raw_data = for_api(ollama_ai, messages, tools)
 
     if ollama_ai.verbose_api do
@@ -461,10 +646,10 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
         url: ollama_ai.endpoint,
         json: raw_data,
         receive_timeout: ollama_ai.receive_timeout,
-        retry: :transient,
-        max_retries: 3,
-        inet6: true,
-        retry_delay: fn attempt -> 300 * attempt end
+        # Disable Req-level retry to prevent compounding with LangChain's own
+        # :closed retry. See https://github.com/brainlid/langchain/issues/503
+        retry: false,
+        inet6: true
       )
 
     req
@@ -504,7 +689,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
         do_api_request(ollama_ai, messages, tools, retry_count - 1)
 
       other ->
-        Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
+        Logger.warning(fn -> "Unexpected and unhandled API response! #{inspect(other)}" end)
         other
     end
   end
@@ -515,6 +700,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
         tools,
         retry_count
       ) do
+    retry_count = retry_count || ollama_ai.retry_count + 1
     raw_data = for_api(ollama_ai, messages, tools)
 
     if ollama_ai.verbose_api do
@@ -554,9 +740,9 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
         do_api_request(ollama_ai, messages, tools, retry_count - 1)
 
       other ->
-        Logger.error(
+        Logger.warning(fn ->
           "Unhandled and unexpected response from streamed post call. #{inspect(other)}"
-        )
+        end)
 
         {:error,
          LangChainError.exception(
@@ -565,6 +751,18 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
            original: other
          )}
     end
+  end
+
+  def do_process_response(%{stream: true} = model, %{
+        "message" => %{"tool_calls" => calls} = message,
+        "done" => true
+      })
+      when calls != [] do
+    message
+    |> Map.merge(%{
+      "tool_calls" => Enum.map(calls, &do_process_response(model, &1))
+    })
+    |> create_message(:complete, MessageDelta)
   end
 
   def do_process_response(%{stream: true} = _model, %{"message" => message, "done" => true}) do
@@ -587,12 +785,23 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
     create_message(message, :complete, Message)
   end
 
+  def do_process_response(%{stream: true} = model, %{
+        "message" => %{"tool_calls" => calls} = message,
+        "done" => _other
+      })
+      when calls != [] do
+    message
+    |> Map.merge(%{
+      "tool_calls" => Enum.map(calls, &do_process_response(model, &1))
+    })
+    |> create_message(:incomplete, MessageDelta)
+  end
+
   def do_process_response(_model, %{"message" => message, "done" => _other}) do
     create_message(message, :incomplete, MessageDelta)
   end
 
   def do_process_response(_model, %{"error" => reason} = response) do
-    Logger.error("Received error from API: #{inspect(reason)}")
     {:error, LangChainError.exception(message: reason, original: response)}
   end
 
@@ -613,12 +822,13 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
 
       {:error, changeset} ->
         reason = Utils.changeset_error_to_string(changeset)
-        Logger.error("Failed to process ToolCall for a function. Reason: #{reason}")
         {:error, reason}
     end
   end
 
   defp create_message(message, status, message_type) do
+    message = promote_thinking(message, message_type)
+
     case message_type.new(Map.merge(message, %{"status" => status})) do
       {:ok, new_message} ->
         new_message
@@ -630,6 +840,40 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
 
   @impl ChatModel
   def provider, do: "ollama"
+
+  # Ollama returns reasoning output in a `thinking` field alongside `content`
+  # when `think: true` is set on the request. Convert it into a `:thinking`
+  # `ContentPart` so downstream code can render or strip it.
+  #
+  # Shape matches the Anthropic / Google convention:
+  #
+  #   * `Message` (complete) — a list of parts, with the thinking part first
+  #     and any text part after.
+  #   * `MessageDelta` (streaming chunk) — a single `ContentPart` when the
+  #     chunk is thinking-only (matches `chat_anthropic.ex`'s
+  #     `thinking_delta` handler); otherwise a list when both fields land in
+  #     one chunk.
+  #
+  # No-op when `thinking` is absent or empty.
+  defp promote_thinking(%{"thinking" => t} = message, message_type)
+       when is_binary(t) and t != "" do
+    thinking_part = ContentPart.new!(%{type: :thinking, content: t})
+    text = message["content"]
+    has_text? = is_binary(text) and text != ""
+
+    content =
+      cond do
+        message_type == MessageDelta and not has_text? -> thinking_part
+        has_text? -> [thinking_part, ContentPart.text!(text)]
+        true -> [thinking_part]
+      end
+
+    message
+    |> Map.delete("thinking")
+    |> Map.put("content", content)
+  end
+
+  defp promote_thinking(message, _message_type), do: message
 
   @doc """
   Determine if an error should be retried. If `true`, a fallback LLM may be
@@ -655,6 +899,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
       model,
       [
         :endpoint,
+        :format,
         :keep_alive,
         :model,
         :mirostat,
@@ -673,6 +918,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
         :stream,
         :temperature,
         :tfs_z,
+        :think,
         :top_k,
         :top_p,
         :verbose_api

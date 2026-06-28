@@ -497,14 +497,14 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
         ChatOpenAIResponses.new!(%{"model" => @test_model, "verbosity" => "low"})
 
       data = ChatOpenAIResponses.for_api(openai, [], [])
-      assert data.verbosity == "low"
+      assert data.text["verbosity"] == "low"
     end
 
     test "omits verbosity when nil" do
       openai = ChatOpenAIResponses.new!(%{"model" => @test_model})
 
       data = ChatOpenAIResponses.for_api(openai, [], [])
-      refute Map.has_key?(data, :verbosity)
+      refute match?(%{text: %{"verbosity" => _}}, data)
     end
   end
 
@@ -1166,6 +1166,11 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
       end
     end
 
+    test "skips Azure keepalive events", %{model: model} do
+      event = %{"type" => "keepalive", "sequence_number" => 3}
+      assert :skip == ChatOpenAIResponses.do_process_response(model, event)
+    end
+
     test "handles list of streaming events", %{model: model} do
       events = [
         %{"type" => "response.output_text.delta", "delta" => "Hello"},
@@ -1559,6 +1564,43 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
       assert parsed == %{"delta" => "test"}
       assert buffer2 == ""
     end
+
+    test "handles event line and data line split across chunks" do
+      chunk1 = "event: response.output_text.done\n"
+      chunk2 = "data: {\"type\":\"response.output_text.done\",\"text\":\"Hello\"}\n\n"
+
+      {[], buffer1} = ChatOpenAIResponses.decode_stream({chunk1, ""})
+
+      {[parsed], buffer2} = ChatOpenAIResponses.decode_stream({chunk2, buffer1})
+      assert parsed["type"] == "response.output_text.done"
+      assert parsed["text"] == "Hello"
+      assert buffer2 == ""
+    end
+
+    test "handles multiple complete events followed by more events" do
+      chunk1 =
+        "event: response.created\ndata: {\"type\":\"response.created\"}\n\n" <>
+          "event: response.in_progress\ndata: {\"type\":\"response.in_progress\"}\n\n"
+
+      chunk2 =
+        "event: response.output_text.done\ndata: {\"type\":\"response.output_text.done\",\"text\":\"Hi!\"}\n\n"
+
+      {parsed1, buffer1} = ChatOpenAIResponses.decode_stream({chunk1, ""})
+      assert length(parsed1) == 2
+      assert buffer1 == ""
+
+      {[parsed2], buffer2} = ChatOpenAIResponses.decode_stream({chunk2, buffer1})
+      assert parsed2["text"] == "Hi!"
+      assert buffer2 == ""
+    end
+
+    test "handles data line without space after colon" do
+      raw = "event: response.output_text.delta\ndata:{\"delta\":\"Hi\"}\n\n"
+
+      {[parsed], buffer} = ChatOpenAIResponses.decode_stream({raw, ""})
+      assert parsed == %{"delta" => "Hi"}
+      assert buffer == ""
+    end
   end
 
   describe "serialize and restore" do
@@ -1682,10 +1724,96 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
     end
   end
 
+  describe "streaming error handling" do
+    test "returns error when streaming response contains an API error" do
+      expect(Req, :post, fn _req_struct, _opts ->
+        response = %Req.Response{
+          status: 400,
+          body: {:error, LangChain.LangChainError.exception(message: "Unsupported parameter")}
+        }
+
+        {:ok, response}
+      end)
+
+      model =
+        ChatOpenAIResponses.new!(%{stream: true, model: @test_model})
+
+      assert {:error, %LangChain.LangChainError{} = error} =
+               ChatOpenAIResponses.call(model, "prompt", [])
+
+      assert error.message == "Unsupported parameter"
+    end
+  end
+
+  describe "retry_count" do
+    test "defaults to 2" do
+      model = ChatOpenAIResponses.new!(%{model: @test_model})
+      assert model.retry_count == 2
+    end
+
+    test "is configurable via new/1" do
+      model = ChatOpenAIResponses.new!(%{model: @test_model, retry_count: 1})
+      assert model.retry_count == 1
+    end
+
+    test "retry_count controls the number of retries after the initial attempt" do
+      call_count = :counters.new(1, [])
+
+      stub(Req, :post, fn _req_struct ->
+        count = :counters.get(call_count, 1) + 1
+        :counters.put(call_count, 1, count)
+        {:error, %Req.TransportError{reason: :closed}}
+      end)
+
+      # retry_count: 2 = 1 initial attempt + 2 retries = 3 total HTTP requests
+      model = ChatOpenAIResponses.new!(%{stream: false, model: @test_model, retry_count: 2})
+
+      assert {:error, %LangChain.LangChainError{message: "Retries exceeded. Connection failed."}} =
+               ChatOpenAIResponses.call(model, "prompt", [])
+
+      assert :counters.get(call_count, 1) == 3
+    end
+
+    test "retry_count: 0 makes one attempt with no retries" do
+      call_count = :counters.new(1, [])
+
+      stub(Req, :post, fn _req_struct ->
+        count = :counters.get(call_count, 1) + 1
+        :counters.put(call_count, 1, count)
+        {:error, %Req.TransportError{reason: :closed}}
+      end)
+
+      model = ChatOpenAIResponses.new!(%{stream: false, model: @test_model, retry_count: 0})
+
+      assert {:error, %LangChain.LangChainError{message: "Retries exceeded. Connection failed."}} =
+               ChatOpenAIResponses.call(model, "prompt", [])
+
+      # Exactly 1 HTTP request, no retries
+      assert :counters.get(call_count, 1) == 1
+    end
+  end
+
   describe "req_config" do
+    test "disables Req-level retry by default to avoid compounding with LangChain retries" do
+      expect(Req, :post, fn req_struct ->
+        # Req retry must be disabled by default. LangChain has its own retry on
+        # :closed (stale pooled connections). If Req also retries :closed, 503, and
+        # 429, a single call can produce up to 12 HTTP requests (3 LangChain retries
+        # x 4 Req attempts). Server errors should bubble up to the caller (e.g. Oban)
+        # who has the context for proper backoff. See GitHub issue #503.
+        assert req_struct.options.retry == false
+
+        {:error, RuntimeError.exception("Something went wrong")}
+      end)
+
+      model = ChatOpenAIResponses.new!(%{stream: false, model: @test_model})
+
+      assert {:error, _} = ChatOpenAIResponses.call(model, "prompt", [])
+      verify!()
+    end
+
     test "merges req_config into the request (non-streaming)" do
       expect(Req, :post, fn req_struct ->
-        # assert retry value from req_config
         assert req_struct.options.retry == false
 
         {:error, RuntimeError.exception("Something went wrong")}
@@ -1704,7 +1832,6 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
 
     test "merges req_config into the request (streaming)" do
       expect(Req, :post, fn req_struct, _opts ->
-        # assert retry value from req_config
         assert req_struct.options.retry == false
 
         {:error, RuntimeError.exception("Something went wrong")}
@@ -1714,6 +1841,188 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
         ChatOpenAIResponses.new!(%{stream: true, model: @test_model, req_config: %{retry: false}})
 
       assert {:error, _} = ChatOpenAIResponses.call(model, "prompt", [])
+      verify!()
+    end
+  end
+
+  describe "websocket transport" do
+    test "new/1 accepts websocket option" do
+      fake_pid = spawn(fn -> :ok end)
+
+      assert {:ok, %ChatOpenAIResponses{websocket: ^fake_pid}} =
+               ChatOpenAIResponses.new(%{model: @test_model, websocket: fake_pid})
+    end
+
+    test "new/1 defaults websocket to nil" do
+      assert {:ok, %ChatOpenAIResponses{websocket: nil}} =
+               ChatOpenAIResponses.new(%{model: @test_model})
+    end
+
+    test "do_api_request with websocket wraps payload in response.create envelope (non-streaming)" do
+      fake_pid = spawn(fn -> Process.sleep(:infinity) end)
+      on_exit(fn -> Process.exit(fake_pid, :kill) end)
+
+      completed_response = %{
+        "status" => "completed",
+        "output" => [
+          %{
+            "type" => "message",
+            "role" => "assistant",
+            "content" => [%{"type" => "output_text", "text" => "Hello from WebSocket!"}]
+          }
+        ],
+        "usage" => %{
+          "input_tokens" => 10,
+          "output_tokens" => 5,
+          "total_tokens" => 15
+        },
+        "id" => "resp_ws_123"
+      }
+
+      LangChain.WebSocket
+      |> expect(:send_and_collect, fn ^fake_pid, payload, _done_fn, _opts ->
+        assert is_binary(payload)
+        decoded = Jason.decode!(payload)
+        # Verify the WebSocket envelope format
+        assert decoded["type"] == "response.create"
+        assert decoded["model"] == @test_model
+        assert is_list(decoded["input"])
+        # These should be stripped for WebSocket
+        refute Map.has_key?(decoded, "stream")
+        refute Map.has_key?(decoded, "temperature")
+        refute Map.has_key?(decoded, "top_p")
+
+        {:ok,
+         [
+           %{"type" => "response.created"},
+           %{"type" => "response.completed", "response" => completed_response}
+         ]}
+      end)
+
+      model =
+        ChatOpenAIResponses.new!(%{
+          model: @test_model,
+          stream: false,
+          websocket: fake_pid
+        })
+
+      assert %Message{role: :assistant, content: content} =
+               ChatOpenAIResponses.do_api_request(model, [Message.new_user!("Hi")], [])
+
+      assert [%LangChain.Message.ContentPart{type: :text, content: "Hello from WebSocket!"}] =
+               content
+
+      verify!()
+    end
+
+    test "do_api_request with websocket pid delegates to WebSocket (streaming)" do
+      fake_pid = spawn(fn -> Process.sleep(:infinity) end)
+      on_exit(fn -> Process.exit(fake_pid, :kill) end)
+
+      LangChain.WebSocket
+      |> expect(:send_and_stream, fn ^fake_pid, payload, callback_fn, _done_fn, _opts ->
+        assert is_binary(payload)
+        decoded = Jason.decode!(payload)
+        assert decoded["type"] == "response.create"
+
+        # Simulate streaming events
+        results = [
+          callback_fn.(%{"type" => "response.created"}),
+          callback_fn.(%{
+            "type" => "response.output_text.delta",
+            "output_index" => 0,
+            "delta" => "Hello"
+          }),
+          callback_fn.(%{
+            "type" => "response.output_text.delta",
+            "output_index" => 0,
+            "delta" => " world"
+          }),
+          callback_fn.(%{
+            "type" => "response.completed",
+            "response" => %{
+              "status" => "completed",
+              "usage" => %{
+                "input_tokens" => 10,
+                "output_tokens" => 5,
+                "total_tokens" => 15
+              },
+              "id" => "resp_ws_456"
+            }
+          })
+        ]
+
+        {:ok, results}
+      end)
+
+      model =
+        ChatOpenAIResponses.new!(%{
+          model: @test_model,
+          stream: true,
+          websocket: fake_pid
+        })
+
+      result = ChatOpenAIResponses.do_api_request(model, [Message.new_user!("Hi")], [])
+
+      assert is_list(result)
+      # Should contain MessageDeltas (skipping :skip results)
+      deltas = Enum.filter(result, &match?(%MessageDelta{}, &1))
+      assert length(deltas) > 0
+
+      verify!()
+    end
+
+    test "connect_websocket! sets websocket pid on model" do
+      LangChain.WebSocket
+      |> expect(:start_link, fn opts ->
+        assert opts[:url] == "wss://api.openai.com/v1/responses"
+        assert [{"authorization", "Bearer " <> _}] = opts[:headers]
+        {:ok, spawn(fn -> Process.sleep(:infinity) end)}
+      end)
+
+      model =
+        ChatOpenAIResponses.new!(%{model: @test_model})
+        |> ChatOpenAIResponses.connect_websocket!()
+
+      assert is_pid(model.websocket)
+      on_exit(fn -> Process.exit(model.websocket, :kill) end)
+      verify!()
+    end
+
+    test "disconnect_websocket! clears websocket and is safe on nil" do
+      model = ChatOpenAIResponses.new!(%{model: @test_model})
+      assert %{websocket: nil} = ChatOpenAIResponses.disconnect_websocket!(model)
+
+      fake_pid = spawn(fn -> Process.sleep(:infinity) end)
+      on_exit(fn -> Process.exit(fake_pid, :kill) end)
+      model = %{model | websocket: fake_pid}
+
+      LangChain.WebSocket
+      |> expect(:close, fn ^fake_pid -> :ok end)
+
+      assert %{websocket: nil} = ChatOpenAIResponses.disconnect_websocket!(model)
+      verify!()
+    end
+
+    test "do_api_request with websocket returns error on WebSocket failure" do
+      fake_pid = spawn(fn -> Process.sleep(:infinity) end)
+      on_exit(fn -> Process.exit(fake_pid, :kill) end)
+
+      LangChain.WebSocket
+      |> expect(:send_and_collect, fn ^fake_pid, _payload, _done_fn, _opts ->
+        {:error, :not_connected}
+      end)
+
+      model =
+        ChatOpenAIResponses.new!(%{
+          model: @test_model,
+          stream: false,
+          websocket: fake_pid
+        })
+
+      assert {:error, %LangChain.LangChainError{type: "websocket_error"}} =
+               ChatOpenAIResponses.do_api_request(model, [Message.new_user!("Hi")], [])
+
       verify!()
     end
   end

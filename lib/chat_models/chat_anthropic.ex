@@ -104,7 +104,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       alias LangChain.ChatModels.ChatAnthropic
 
       ChatAnthropic.new!(%{
-        model: "anthropic.claude-3-5-sonnet-20241022-v2:0",
+        model: "anthropic.claude-sonnet-4-6",
         bedrock: BedrockConfig.from_application_env!()
       })
 
@@ -135,13 +135,93 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
   As of the documentation for Claude 3.7 Sonnet, the minimum budget for thinking is 1024 tokens.
 
+  ## Structured Outputs (JSON Response)
+
+  Anthropic supports [structured outputs](https://docs.anthropic.com/en/docs/build-with-claude/structured-outputs)
+  to constrain Claude's response to follow a specific JSON schema. This is supported on
+  Claude Opus 4.6, Sonnet 4.6, Sonnet 4.5, Opus 4.5, and Haiku 4.5.
+
+  Set `json_response: true` and provide a `json_schema` map to enable structured outputs.
+
+  **Example:**
+
+      model = ChatAnthropic.new!(%{
+        model: "claude-sonnet-4-5-20250514",
+        json_response: true,
+        json_schema: %{
+          "type" => "object",
+          "properties" => %{
+            "name" => %{"type" => "string"},
+            "age" => %{"type" => "integer"},
+            "email" => %{"type" => "string"}
+          },
+          "required" => ["name", "age", "email"],
+          "additionalProperties" => false
+        }
+      })
+
+  The response will be returned as a regular text `ContentPart` containing a valid JSON string
+  matching the provided schema.
+
+  **Note:** Structured outputs are incompatible with citations and message prefilling.
+
   ## Prompt Caching
 
   Anthropic supports [prompt caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching) to
   reduce costs and latency for frequently repeated content. Prompt caching works by caching large blocks of
   content that are likely to be reused across multiple requests.
 
-  Prompt caching is configured through the `cache_control` option in `ContentPart` options. It can be applied
+  ### Automatic Caching (Recommended for Multi-Turn Conversations)
+
+  The simplest way to enable prompt caching is with the top-level `:cache_control` option. Instead of placing
+  `cache_control` on individual content blocks, set it once on the model and Anthropic automatically applies
+  the cache breakpoint to the last cacheable block in each request.
+
+  See [Automatic caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching#automatic-caching)
+  in the Anthropic docs for full details.
+
+  **Basic usage (5-minute TTL, the default):**
+
+      model = ChatAnthropic.new!(%{
+        model: "claude-sonnet-4-6",
+        cache_control: %{"type" => "ephemeral"}
+      })
+
+  **With a 1-hour TTL (2x base input token price):**
+
+      model = ChatAnthropic.new!(%{
+        model: "claude-sonnet-4-6",
+        cache_control: %{"type" => "ephemeral", "ttl" => "1h"}
+      })
+
+  #### How It Works in Multi-Turn Conversations
+
+  With automatic caching the cache breakpoint moves forward automatically as conversations grow.
+  Each new request caches everything up to the last cacheable block, and previous content is read
+  from cache:
+
+  - **Request 1**: System + messages written to cache
+  - **Request 2**: Previous content read from cache; new messages written to cache
+  - **Request 3+**: Pattern continues -- old content from cache, new content written
+
+  You do not need to update any cache markers as the conversation grows.
+
+  #### Replaces Manual Message Caching
+
+  Automatic caching supersedes the `:cache_messages` setting. The `:cache_messages` option was a
+  client-side behavior coded into this module that applied `cache_control` blocks to the last N user
+  messages, approximating the automatic breakpoint behavior that Anthropic now offers natively through
+  the API. It remains available for backward compatibility, but you should use one or the other, not both:
+
+  - **`:cache_control`** (recommended) -- API-managed, automatic breakpoint placement
+  - **`:cache_messages`** (legacy) -- client-managed, adds `cache_control` to the last N user messages
+
+  For fine-grained control over exactly which content blocks are cached, use the `cache_control` option
+  directly on `ContentPart`, `ToolResult`, and `Function` structs (see "Per-Block Cache Control" below).
+
+  ### Per-Block Cache Control
+
+  For fine-grained control, prompt caching can also be configured through the `cache_control` option in `ContentPart` options. It can be applied
   to both system messages, regular user messages, tool results, and tool definitions.
 
   Anthropic limits a conversation to max of 4 cache_control blocks and will refuse to service requests with more.
@@ -242,7 +322,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   Enable with defaults (3 breakpoints, 5m TTL):
 
       model = ChatAnthropic.new!(%{
-        model: "claude-3-5-sonnet-20241022",
+        model: "claude-sonnet-4-6",
         cache_messages: %{enabled: true}
       })
 
@@ -252,25 +332,25 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
       # Conservative: single breakpoint (original behavior)
       model = ChatAnthropic.new!(%{
-        model: "claude-3-5-sonnet-20241022",
+        model: "claude-sonnet-4-6",
         cache_messages: %{enabled: true, count: 1}
       })
 
       # Balanced: 2 breakpoints for moderate conversations
       model = ChatAnthropic.new!(%{
-        model: "claude-3-5-sonnet-20241022",
+        model: "claude-sonnet-4-6",
         cache_messages: %{enabled: true, count: 2}
       })
 
       # Optimal for tool-heavy: 3 breakpoints (default)
       model = ChatAnthropic.new!(%{
-        model: "claude-3-5-sonnet-20241022",
+        model: "claude-sonnet-4-6",
         cache_messages: %{enabled: true, count: 3}
       })
 
       # Maximum: 4 breakpoints (assuming no system prompt caching)
       model = ChatAnthropic.new!(%{
-        model: "claude-3-5-sonnet-20241022",
+        model: "claude-sonnet-4-6",
         cache_messages: %{enabled: true, count: 4}
       })
 
@@ -279,7 +359,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   Specify a custom TTL (time-to-live):
 
       model = ChatAnthropic.new!(%{
-        model: "claude-3-5-sonnet-20241022",
+        model: "claude-sonnet-4-6",
         cache_messages: %{enabled: true, count: 2, ttl: "1h"}
       })
 
@@ -370,6 +450,31 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   - **Haiku considerations**: Haiku has a high minimum (4096 tokens) which can mean low initial utilization. However, enabling `:cache_messages` has minimal cost impact, so it's safe to enable.
   - **TTL tradeoff**: Default TTL is 5m (1.25x write cost). Setting TTL to 1h increases write cost to 3x but may improve utilization for longer sessions.
 
+  ## Connection Retry Behavior
+
+  The `retry_count` option controls how many times a request is retried when
+  a pooled HTTP connection turns out to be stale (server closed it between
+  requests). This is a transport-level issue where retrying with a fresh
+  connection is the correct response.
+
+  **Only closed-connection errors are retried.** Timeouts, rate limits (429),
+  overloaded (529), authentication errors, and invalid requests all return
+  immediately -- they are not problems that a simple retry will fix.
+
+  | `retry_count` | Total HTTP requests |
+  |---|---|
+  | `0` | 1 (no retries) |
+  | `1` | 2 (1 initial + 1 retry) |
+  | `2` (default) | 3 (1 initial + 2 retries) |
+
+  Req's built-in HTTP retry is disabled to prevent the two retry layers from
+  compounding. See [GitHub issue #503](https://github.com/brainlid/langchain/issues/503).
+
+  When running LLM calls from a background job queue (e.g., Oban) that has its
+  own retry logic, set `retry_count: 0` so there are no hidden retries:
+
+      ChatAnthropic.new!(%{model: "...", retry_count: 0})
+
   """
   use Ecto.Schema
   require Logger
@@ -427,8 +532,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     # goes on too long by itself, it tends to hallucinate more.
     field :receive_timeout, :integer, default: @receive_timeout
 
-    # field :model, :string, default: "claude-3-haiku-20240307"
-    field :model, :string, default: "claude-3-haiku-20240307"
+    field :model, :string, default: "claude-haiku-4-5"
 
     # The maximum tokens allowed for generating a response. This field is
     # required to be present in the API request. The default is a max of 4096
@@ -474,12 +578,35 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     # Additional level of raw api request and response data
     field :verbose_api, :boolean, default: false
 
+    # Number of retries on closed-connection errors (stale pool). The initial
+    # request always runs; this controls additional attempts only.
+    field :retry_count, :integer, default: 2
+
     # Automatically cache messages in multi-turn conversations.
     # Set to %{enabled: true} to add cache_control to the last N user messages (default: 3).
     # Can include count: %{enabled: true, count: 2} (max: 4, default: 3)
     # Can include TTL: %{enabled: true, ttl: "1h"} or %{enabled: true, ttl: "5m"}
     # Set to %{enabled: false} or nil to disable automatic message caching.
     field :cache_messages, :map
+
+    # Top-level automatic cache control. When set, Anthropic auto-applies the
+    # cache breakpoint to the last cacheable block in the request.
+    # Example: %{"type" => "ephemeral"} or %{"type" => "ephemeral", "ttl" => "1h"}
+    # See: https://platform.claude.com/docs/en/build-with-claude/prompt-caching#automatic-caching
+    field :cache_control, :map
+
+    # Whether to request a JSON-formatted response with a specific schema.
+    # Only supported on Claude Opus 4.6, Sonnet 4.6, Sonnet 4.5, Opus 4.5, Haiku 4.5.
+    # When set to true, json_schema is required.
+    field :json_response, :boolean, default: false
+
+    # JSON Schema for the structured output response. Required when json_response is true.
+    # The schema follows standard JSON Schema format.
+    field :json_schema, :map, default: nil
+
+    # Output configuration for controlling model behavior.
+    # e.g., %{"effort" => "medium"} for adaptive thinking effort control.
+    field :output_config, :map
 
     # Req options to merge into the request.
     # https://hexdocs.pm/req/Req.html#new/1-options
@@ -503,7 +630,12 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     :tool_choice,
     :beta_headers,
     :verbose_api,
+    :retry_count,
     :cache_messages,
+    :cache_control,
+    :json_response,
+    :json_schema,
+    :output_config,
     :req_opts
   ]
   @required_fields [:endpoint, :model]
@@ -539,6 +671,17 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     |> validate_required(@required_fields)
     |> validate_number(:temperature, greater_than_or_equal_to: 0, less_than_or_equal_to: 1)
     |> validate_number(:receive_timeout, greater_than_or_equal_to: 0)
+    |> validate_json_schema_required()
+  end
+
+  defp validate_json_schema_required(changeset) do
+    json_response = Ecto.Changeset.get_field(changeset, :json_response)
+    json_schema = Ecto.Changeset.get_field(changeset, :json_schema)
+
+    case {json_response, json_schema} do
+      {true, nil} -> add_error(changeset, :json_schema, "is required when json_response is true")
+      _ -> changeset
+    end
   end
 
   def get_system_text(nil) do
@@ -587,6 +730,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     |> Utils.conditionally_add_to_map(:top_p, anthropic.top_p)
     |> Utils.conditionally_add_to_map(:top_k, anthropic.top_k)
     |> Utils.conditionally_add_to_map(:thinking, anthropic.thinking)
+    |> Utils.conditionally_add_to_map(:output_config, set_output_config(anthropic))
+    |> Utils.conditionally_add_to_map(:cache_control, anthropic.cache_control)
     |> maybe_transform_for_bedrock(anthropic.bedrock)
   end
 
@@ -619,6 +764,19 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   end
 
   defp get_tool_choice(%ChatAnthropic{}), do: nil
+
+  defp set_output_config(%ChatAnthropic{json_response: true, json_schema: schema})
+       when not is_nil(schema) do
+    %{
+      "format" => %{
+        "type" => "json_schema",
+        "schema" => schema
+      }
+    }
+  end
+
+  defp set_output_config(%ChatAnthropic{output_config: config}) when is_map(config), do: config
+  defp set_output_config(%ChatAnthropic{}), do: nil
 
   defp get_tools_for_api(nil), do: []
 
@@ -714,6 +872,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   def retry_on_fallback?(%LangChainError{type: "rate_limited"}), do: true
   def retry_on_fallback?(%LangChainError{type: "rate_limit_exceeded"}), do: true
   def retry_on_fallback?(%LangChainError{type: "overloaded"}), do: true
+  def retry_on_fallback?(%LangChainError{type: "overloaded_error"}), do: true
   def retry_on_fallback?(%LangChainError{type: "timeout"}), do: true
   def retry_on_fallback?(%LangChainError{type: "invalid_request_error"}), do: false
   def retry_on_fallback?(_), do: false
@@ -729,9 +888,9 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   #
   # Retries the request up to 3 times on transient errors with a 1 second delay
   @doc false
-  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), non_neg_integer()) ::
+  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), non_neg_integer() | nil) ::
           list() | struct() | {:error, LangChainError.t()} | no_return()
-  def do_api_request(anthropic, messages, tools, retry_count \\ 3)
+  def do_api_request(anthropic, messages, tools, retry_count \\ nil)
 
   def do_api_request(_anthropic, _messages, _functions, 0) do
     raise LangChainError,
@@ -745,6 +904,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         tools,
         retry_count
       ) do
+    retry_count = retry_count || anthropic.retry_count + 1
     raw_data = for_api(anthropic, messages, tools)
 
     if anthropic.verbose_api do
@@ -757,9 +917,9 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         json: raw_data,
         headers: headers(anthropic),
         receive_timeout: anthropic.receive_timeout,
-        retry: :transient,
-        max_retries: 3,
-        retry_delay: fn attempt -> 300 * attempt end,
+        # Disable Req-level retry to prevent compounding with LangChain's own
+        # :closed retry. See https://github.com/brainlid/langchain/issues/503
+        retry: false,
         aws_sigv4: aws_sigv4_opts(anthropic.bedrock)
       )
       |> Req.merge(anthropic.req_opts)
@@ -831,7 +991,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         error
 
       {:error, err} ->
-        Logger.error("Unhandled error non-streamed post call. #{inspect(err)}")
+        Logger.warning(fn -> "Unhandled error non-streamed post call. #{inspect(err)}" end)
 
         {:error,
          LangChainError.exception(
@@ -841,7 +1001,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
          )}
 
       other ->
-        Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
+        Logger.warning(fn -> "Unexpected and unhandled API response! #{inspect(other)}" end)
 
         {:error,
          LangChainError.exception(
@@ -858,6 +1018,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         tools,
         retry_count
       ) do
+    retry_count = retry_count || anthropic.retry_count + 1
     raw_data = for_api(anthropic, messages, tools)
 
     if anthropic.verbose_api do
@@ -876,7 +1037,9 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       headers: headers(anthropic),
       receive_timeout: anthropic.receive_timeout,
       aws_sigv4: aws_sigv4_opts(anthropic.bedrock),
-      retry: :transient
+      # Disable Req-level retry to prevent compounding with LangChain's own
+      # :closed retry. See https://github.com/brainlid/langchain/issues/503
+      retry: false
     )
     |> Req.merge(anthropic.req_opts)
     |> Req.post(
@@ -902,7 +1065,15 @@ defmodule LangChain.ChatModels.ChatAnthropic do
           %{model: anthropic.model}
         )
 
-        data
+        # Check for error tuples embedded in the accumulated streaming data.
+        # When an API error event (e.g., overloaded_error) arrives mid-stream
+        # on a 200 connection, do_process_response returns
+        # {:error, %LangChainError{}} which gets accumulated in the response
+        # body list instead of short-circuiting the stream.
+        case extract_streaming_error(data) do
+          {:error, _} = error -> error
+          nil -> data
+        end
 
       # The error tuple was successfully received from the API. Unwrap it and
       # return it as an error.
@@ -923,7 +1094,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         error
 
       {:error, err} ->
-        Logger.error("Unhandled error streamed post call. #{inspect(err)}")
+        Logger.warning(fn -> "Unhandled error streamed post call. #{inspect(err)}" end)
 
         {:error,
          LangChainError.exception(
@@ -933,9 +1104,9 @@ defmodule LangChain.ChatModels.ChatAnthropic do
          )}
 
       other ->
-        Logger.error(
+        Logger.warning(fn ->
           "Unhandled and unexpected response from streamed post call. #{inspect(other)}"
-        )
+        end)
 
         {:error,
          LangChainError.exception(
@@ -945,6 +1116,21 @@ defmodule LangChain.ChatModels.ChatAnthropic do
          )}
     end
   end
+
+  # Scan the accumulated streaming response body for error tuples. During
+  # streaming on a 200 connection, API error events (like overloaded_error)
+  # get accumulated into the body list as {:error, %LangChainError{}} tuples
+  # instead of being returned directly. This extracts the first such error.
+  defp extract_streaming_error(data) when is_list(data) do
+    data
+    |> List.flatten()
+    |> Enum.find_value(fn
+      {:error, %LangChainError{}} = error -> error
+      _ -> nil
+    end)
+  end
+
+  defp extract_streaming_error(_data), do: nil
 
   defp aws_sigv4_opts(nil), do: nil
   defp aws_sigv4_opts(%BedrockConfig{} = bedrock), do: BedrockConfig.aws_sigv4_opts(bedrock)
@@ -1219,18 +1405,15 @@ defmodule LangChain.ChatModels.ChatAnthropic do
           "error" => %{"type" => type, "message" => reason}
         } = response
       ) do
-    Logger.error("Received error from API: #{inspect(response)}")
     {:error, LangChainError.exception(type: type, message: reason, original: response)}
   end
 
   def do_process_response(_model, %{"error" => %{"message" => reason} = error} = response) do
-    Logger.error("Received error from API: #{inspect(response)}")
     {:error, LangChainError.exception(type: error["type"], message: reason, original: response)}
   end
 
   def do_process_response(_model, {:error, %Jason.DecodeError{} = response}) do
     error_message = "Received invalid JSON: #{inspect(response)}"
-    Logger.error(error_message)
 
     {:error,
      LangChainError.exception(type: "invalid_json", message: error_message, original: response)}
@@ -1269,8 +1452,6 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   end
 
   def do_process_response(_model, other) do
-    Logger.error("Failed to process an unexpected response. #{inspect(other)}")
-
     {:error,
      LangChainError.exception(
        type: "unexpected_response",
@@ -1467,7 +1648,10 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   def relevant_event?(%{"type" => "message_stop"}), do: false
   # catch-all for when we miss something
   def relevant_event?(event) do
-    Logger.error("Unsupported event received when parsing Anthropic response: #{inspect(event)}")
+    Logger.warning(fn ->
+      "Unsupported event received when parsing Anthropic response: #{inspect(event)}"
+    end)
+
     false
   end
 
@@ -1486,7 +1670,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   @doc """
   Convert a LangChain structure to the expected map of data for the Anthropic API.
   """
-  @spec for_api(Message.t() | ContentPart.t() | Function.t()) ::
+  @spec for_api(ToolCall.t() | ToolResult.t()) ::
           %{String.t() => any()} | no_return()
   # def for_api(%Message{role: :assistant, tool_calls: calls} = msg)
   #     when is_list(calls) and calls != [] do
@@ -1650,7 +1834,9 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   def content_parts_for_api(nil), do: []
 
   def content_parts_for_api(contents) when is_list(contents) do
-    Enum.map(contents, &content_part_for_api/1)
+    contents
+    |> Enum.map(&content_part_for_api/1)
+    |> Enum.reject(&is_nil/1)
   end
 
   def content_parts_for_api(content) when is_binary(content) do
@@ -1697,7 +1883,9 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   - `:text` - Converts to a text content part, optionally with cache control settings
   - `:thinking` - Converts to a thinking content part with required signature
   - `:unsupported` - Handles custom content types specified in options
-  - `:image` - Converts to an image content part with base64 data and media type
+  - `:image` - Converts to an image content part with base64 data or file_id reference
+  - `:file` - Converts to a document content part with base64 data, plain text, or file_id reference
+  - `:file_url` - Converts to a document content part with a URL source
   - `:image_url` - Raises an error as Anthropic doesn't support image URLs
 
   ## Options
@@ -1712,7 +1900,22 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   - `:type` - Required string specifying the custom content type
 
   For `:image` type:
-  - `:media` - Required media type (`:png`, `:jpg`, `:jpeg`, `:gif`, `:webp`, or a string)
+  - `:type` - Source type. `:file_id` to reference an uploaded file, `:base64` (default) for inline data
+  - `:media` - Required when `:type` is `:base64`. Media type (`:png`, `:jpg`, `:jpeg`, `:gif`, `:webp`, or a string)
+
+  For `:file` type:
+  - `:type` - Source type. `:file_id` to reference an uploaded file, `:base64` (default) for inline data
+  - `:media` - Required when `:type` is `:base64`. Media type (`:pdf`, `:text`, or a string like `"application/pdf"`)
+  - `:title` - Optional document title
+  - `:citations` - Set to `true` to enable citations
+  - `:cache_control` - When provided, adds cache control settings
+
+  Note: Using `:file_id` requires the `"files-api-2025-04-14"` beta header:
+
+      ChatAnthropic.new!(%{
+        model: "claude-sonnet-4-5-20250514",
+        beta_headers: ["structured-outputs-2025-11-13", "files-api-2025-04-14"]
+      })
 
   Returns `nil` for unsupported content without required options.
   """
@@ -1764,81 +1967,118 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   end
 
   def content_part_for_api(%ContentPart{type: :image} = part) do
-    media =
-      case Keyword.fetch!(part.options || [], :media) do
-        :png ->
-          "image/png"
+    opts = part.options || []
 
-        :gif ->
-          "image/gif"
+    case Keyword.get(opts, :type, :base64) do
+      :file_id ->
+        %{
+          "type" => "image",
+          "source" => %{
+            "type" => "file",
+            "file_id" => part.content
+          }
+        }
 
-        :jpg ->
-          "image/jpeg"
+      :base64 ->
+        media =
+          case Keyword.get(opts, :media) do
+            nil ->
+              raise LangChainError,
+                    "Required :media option missing for base64-encoded image ContentPart"
 
-        :jpeg ->
-          "image/jpeg"
+            :png ->
+              "image/png"
 
-        :webp ->
-          "image/webp"
+            :gif ->
+              "image/gif"
 
-        value when is_binary(value) ->
-          value
+            :jpg ->
+              "image/jpeg"
 
-        other ->
-          message = "Received unsupported media type for ContentPart: #{inspect(other)}"
-          Logger.error(message)
-          raise LangChainError, message
-      end
+            :jpeg ->
+              "image/jpeg"
 
-    %{
-      "type" => "image",
-      "source" => %{
-        "type" => "base64",
-        "data" => part.content,
-        "media_type" => media
-      }
-    }
+            :webp ->
+              "image/webp"
+
+            value when is_binary(value) ->
+              value
+
+            other ->
+              raise LangChainError,
+                    "Received unsupported media type for ContentPart: #{inspect(other)}"
+          end
+
+        %{
+          "type" => "image",
+          "source" => %{
+            "type" => "base64",
+            "data" => part.content,
+            "media_type" => media
+          }
+        }
+    end
   end
 
   def content_part_for_api(%ContentPart{type: :file} = part) do
     opts = part.options || []
-    media = Keyword.fetch!(opts, :media)
 
     base =
-      case media do
-        :text ->
+      case Keyword.get(opts, :type, :base64) do
+        :file_id ->
           %{
             "type" => "document",
             "source" => %{
-              "type" => "text",
-              "media_type" => "text/plain",
-              "data" => part.content
+              "type" => "file",
+              "file_id" => part.content
             }
           }
 
-        _ ->
-          media_type =
-            case media do
-              :pdf ->
-                "application/pdf"
+        :base64 ->
+          media =
+            case Keyword.get(opts, :media) do
+              nil ->
+                raise LangChainError,
+                      "Required :media option missing for base64-encoded document ContentPart"
 
-              value when is_binary(value) ->
+              value ->
                 value
-
-              other ->
-                message = "Received unsupported media type for ContentPart: #{inspect(other)}"
-                Logger.error(message)
-                raise LangChainError, message
             end
 
-          %{
-            "type" => "document",
-            "source" => %{
-              "type" => "base64",
-              "data" => part.content,
-              "media_type" => media_type
-            }
-          }
+          case media do
+            :text ->
+              %{
+                "type" => "document",
+                "source" => %{
+                  "type" => "text",
+                  "media_type" => "text/plain",
+                  "data" => part.content
+                }
+              }
+
+            _ ->
+              media_type =
+                case media do
+                  :pdf ->
+                    "application/pdf"
+
+                  value when is_binary(value) ->
+                    value
+
+                  other ->
+                    raise LangChainError,
+                          "Received unsupported media type for ContentPart: #{inspect(other)}"
+                end
+
+              %{
+                "type" => "document",
+                "source" => %{
+                  "type" => "base64",
+                  "data" => part.content,
+                  "media_type" => media_type
+                }
+              }
+          end
       end
 
     base
@@ -1864,13 +2104,14 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   defp get_parameters(%Function{parameters: [], parameters_schema: nil} = _fun) do
     %{
       "type" => "object",
-      "properties" => %{}
+      "properties" => %{},
+      "additionalProperties" => false
     }
   end
 
   defp get_parameters(%Function{parameters: [], parameters_schema: schema} = _fun)
        when is_map(schema) do
-    schema
+    Map.put_new(schema, "additionalProperties", false)
   end
 
   defp get_parameters(%Function{parameters: params} = _fun) do
@@ -2166,7 +2407,9 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         :top_p,
         :top_k,
         :stream,
-        :beta_headers
+        :beta_headers,
+        :json_response,
+        :json_schema
       ],
       @current_config_version
     )

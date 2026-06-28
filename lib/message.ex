@@ -90,7 +90,6 @@ defmodule LangChain.Message do
   """
   use Ecto.Schema
   import Ecto.Changeset
-  require Logger
   alias __MODULE__
   alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
@@ -222,15 +221,8 @@ defmodule LangChain.Message do
           end
         else
           # only a user message can have ContentParts (except for ChatAnthropic system messages)
-          Logger.error(
-            "Invalid message content #{inspect(get_field(changeset, :content))} for role #{role}"
-          )
-
           add_error(changeset, :content, "is invalid for role #{role}")
         end
-
-      {:ok, []} ->
-        put_change(changeset, :content, nil)
 
       # any other value is not valid
       {:ok, _value} ->
@@ -527,6 +519,44 @@ defmodule LangChain.Message do
   end
 
   def tool_had_errors?(%Message{} = _message), do: false
+
+  @doc """
+  Replace a tool result in a list of messages by `tool_call_id`.
+
+  Finds the `:tool` message containing a `ToolResult` with the given
+  `tool_call_id` and replaces it with `new_result`. Updates `tool_results`
+  on the message.
+
+  Returns the message list unchanged if no matching `tool_call_id` is found.
+
+  ## Examples
+
+      messages = [assistant_msg, tool_msg]
+      new_result = ToolResult.new!(%{tool_call_id: "call-1", content: "done"})
+      updated = Message.replace_tool_result(messages, "call-1", new_result)
+  """
+  @spec replace_tool_result([t()], String.t(), ToolResult.t()) :: [t()]
+  def replace_tool_result(messages, tool_call_id, %ToolResult{} = new_result)
+      when is_list(messages) and is_binary(tool_call_id) do
+    Enum.map(messages, fn message ->
+      case message do
+        %Message{role: :tool, tool_results: results} when is_list(results) ->
+          if Enum.any?(results, &(&1.tool_call_id == tool_call_id)) do
+            updated_results =
+              Enum.map(results, fn tr ->
+                if tr.tool_call_id == tool_call_id, do: new_result, else: tr
+              end)
+
+            %{message | tool_results: updated_results}
+          else
+            message
+          end
+
+        _ ->
+          message
+      end
+    end)
+  end
 
   @doc """
   Determines if a message is considered "empty" and likely indicates a failure.

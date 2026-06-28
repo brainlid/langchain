@@ -233,9 +233,9 @@ defmodule LangChain.Chains.SummarizeConversationChain do
           splice_messages_with_summary(summarizer, to_summarize, summary)
 
         {:error, _summarizer_chain, reason} ->
-          Logger.error(
+          Logger.warning(fn ->
             "SummarizeConversationChain failed. Reason: #{inspect(reason)}. Returning original chain"
-          )
+          end)
 
           to_summarize
       end

@@ -100,6 +100,7 @@ defmodule LangChain.Chains.LLMChain.Mode do
           {:ok, LLMChain.t()}
           | {:ok, LLMChain.t(), term()}
           | {:pause, LLMChain.t()}
+          | {:interrupt, LLMChain.t(), term()}
           | {:error, LLMChain.t(), LangChainError.t()}
 
   @doc """

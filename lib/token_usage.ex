@@ -20,7 +20,6 @@ defmodule LangChain.TokenUsage do
   """
   use Ecto.Schema
   import Ecto.Changeset
-  require Logger
   alias __MODULE__
   alias LangChain.LangChainError
 
@@ -138,7 +137,7 @@ defmodule LangChain.TokenUsage do
       nil
 
   """
-  @spec get(%{metadata: %{usage: t()}} | %{metadata: map() | nil}) :: t() | nil
+  @spec get(any()) :: t() | nil
   def get(%{metadata: %{usage: %TokenUsage{} = usage}}), do: usage
   def get(_), do: nil
 
@@ -171,8 +170,8 @@ defmodule LangChain.TokenUsage do
   Sets the token usage information on a `LangChain.Message` or
   `LangChain.MessageDelta` struct when wrapped in an :ok,:error tuple in the `metadata` under the `:usage` key.
   """
-  @spec set_wrapped({:ok, %{metadata: nil | map()}}, nil | t()) ::
-          {:ok, %{metadata: %{usage: t()}} | {:error, any()}}
+  @spec set_wrapped({:ok, %{metadata: nil | map()}} | {:error, any()} | any(), nil | t()) ::
+          {:ok, %{metadata: %{usage: t()}}} | {:error, any()} | any()
   def set_wrapped({:ok, message}, usage) do
     {:ok, set(message, usage)}
   end

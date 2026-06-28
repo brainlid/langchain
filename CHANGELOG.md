@@ -1,5 +1,333 @@
 # Changelog
 
+## v0.8.14
+
+A streaming-compatibility fix for OpenAI-compatible providers that emit SSE comment lines (notably OpenRouter's `: OPENROUTER PROCESSING` keep-alives). No breaking changes.
+
+### Fixed
+
+- **`ChatOpenAI.decode_stream/2` now ignores SSE comment lines**: A line beginning with `:` is an ignorable SSE comment per spec, but it previously failed JSON decoding and got stuck in the incomplete-buffer, poisoning every subsequent chunk and collapsing the whole stream to an empty response. Comment lines are now skipped. Fixes #259. https://github.com/brainlid/langchain/pull/569
+
+### Changed
+
+- **CI**: Bumped `actions/checkout` from 6.0.2 to 7.0.0. https://github.com/brainlid/langchain/pull/570
+
+## v0.8.13
+
+A trajectory eval helper plus a Google AI streaming fix. `Trajectory` gains a `called_before?/4` predicate (and `assert_called_before`/`refute_called_before` macros) for asserting the relative order of two tool calls, and a `ChatGoogleAI` crash on empty streaming responses is fixed. No breaking changes.
+
+### Added
+
+- **`Trajectory.called_before?/4`**: Assert that tool A was called before tool B, independent of intervening calls — the middle ground between `:superset` (containment) and `:strict` (exact sequence). Uses "any A before any B" (`min(index A) < max(index B)`) semantics, accepts a `Trajectory`/`LLMChain`/tool-call list, and supports `require_both: true` to raise on a missing tool. Adds companion `assert_called_before/4` and `refute_called_before/4` macros. https://github.com/brainlid/langchain/pull/565
+
+### Fixed
+
+- **`ChatGoogleAI` crash on an empty streaming response**: A streaming request that returns `200 OK` with zero delta chunks left the response body as `""`, crashing with a `FunctionClauseError` in `:lists.flatten/1`. It now returns a structured `%LangChainError{type: "empty_stream"}` that the chain surfaces cleanly. https://github.com/brainlid/langchain/pull/563
+
+## v0.8.12
+
+A reliability and reach release. A Google AI streaming crash on malformed/empty candidates is fixed, latent bugs surfaced by Elixir 1.20-rc.6's new warnings are corrected (including a `MessageDelta` clause that silently dropped already-merged content), `Trajectory` gains a constructor for bare message lists, Google file uploads can target a specific `:origin`, and Cloudflare Workers AI (e.g. Moonshot Kimi K2.6) is verified and documented via `ChatOpenAI`. No breaking changes.
+
+### Added
+
+- **`Trajectory.from_messages/2`**: Build a trajectory from a bare `[Message.t()]` (with optional `llm`) instead of requiring a live `%LLMChain{}`; `from_chain/1` now delegates to it. https://github.com/brainlid/langchain/pull/560
+- **`FileGoogle.request_upload_url/*` `:origin` option**: Set the request origin when generating a Google file upload URL. https://github.com/brainlid/langchain/pull/556
+- **Cloudflare Workers AI support**: Verified and documented using Workers AI models (e.g. `@cf/moonshotai/kimi-k2.6`) through `ChatOpenAI`, including streaming and tool calling. https://github.com/brainlid/langchain/pull/558
+
+### Changed
+
+- **Elixir 1.20-rc.6 compiler-warning cleanup**: Removed dead code and unreachable clauses to compile cleanly under Elixir 1.20-rc.6's stricter warnings. https://github.com/brainlid/langchain/pull/561
+
+### Fixed
+
+- **`ChatGoogleAI` streaming crash on malformed/empty candidates**: An error candidate (e.g. `MALFORMED_FUNCTION_CALL`) in the stream is now surfaced before delta-reindexing instead of crashing with a `KeyError`. https://github.com/brainlid/langchain/pull/548
+- **Latent bugs exposed by Elixir 1.20-rc.6 warnings**: Reordered a `MessageDelta` clause that was silently dropping already-merged content, plus smaller `ContentPart` and `FunctionParam` fixes. https://github.com/brainlid/langchain/pull/561
+
+## v0.8.11
+
+A small correctness and supply-chain release. `LLMChain.run_until_tool_used/3` no longer discards a successful tool call when the success happens on the same LLM call that hits the `max_runs` ceiling, and `mix_audit` is wired into `mix precommit` so dependency advisories are caught before merge. The `:jsv` and `:decimal` deps are also refreshed.
+
+### Changed
+
+- **Dependency refresh and `mix_audit` in `precommit`**: Bumped `:jsv` and `:decimal` via `mix.lock`, added `:mix_audit` (`~> 2.1`, dev/test only) as a dep, and inserted `deps.audit` into the `precommit` alias so known vulnerable dependencies fail the pre-commit gate. https://github.com/brainlid/langchain/pull/554
+
+### Fixed
+
+- **`LLMChain.run_until_tool_used/3` no longer discards a successful tool call that lands on the `max_runs` boundary**: A first-call success with `max_runs: 1` previously surfaced as `"Exceeded maximum number of runs (1/1)"` because the ceiling check ran before the tool-used check. The pipeline now evaluates success first. https://github.com/brainlid/langchain/pull/553
+
+## v0.8.10
+
+A focused fix for `ChatReqLLM` streaming tool calls against the default OpenAI decoder shape (direct OpenAI, LiteLLM proxy, and any other ReqLLM provider that emits the OpenAI tool-call pattern).
+
+### Fixed
+
+- **`ChatReqLLM` correctly assembles OpenAI-style streamed tool calls**: handles ReqLLM's default OpenAI tool-call chunk shape (direct OpenAI, LiteLLM proxy, etc.), which previously produced an orphan `ToolCall` and a `"delta_conversion_failed"` error. https://github.com/brainlid/langchain/pull/551
+
+## v0.8.9
+
+A streaming-helpers release. `LangChain.MessageDelta` gains four small, well-documented functions that codify the merge rules every streaming consumer (Phoenix LiveView, Sagents, etc.) was reimplementing locally: append-vs-merge of tool calls by `call_id`, one-way status promotion, no-regression `display_text` updates, and a terminal-status gate for UI cleanup. All additions are pure data transforms; no existing `MessageDelta` behavior changes.
+
+### Added
+
+- **`LangChain.MessageDelta` streaming tool-call status helpers**: Four new functions codify the merge logic that streaming consumers previously reimplemented by hand.
+  - `upsert_tool_call/2` appends a new `ToolCall` or merges non-nil fields onto an existing one with the same `call_id`. `status` is promoted one-way (`:incomplete` to `:complete`, never back), and `metadata` is shallow-merged with incoming keys winning per-key.
+  - `set_tool_execution_status/3` drives the `metadata["execution_status"]` lifecycle for a specific `call_id`, delegating to `ToolCall.set_execution_status/2`.
+  - `set_tool_display_text/3` refines `display_text` as more is learned (e.g. `"Reading file"` to `"Reading \"outline.md\" (lines 60-100)"`). A `nil` incoming value is an explicit no-op so the UI never regresses from showing something to showing nothing.
+  - `all_tools_terminal?/1` gates UI cleanup on every tool call reaching a terminal status. Returns `false` for `nil` or empty `tool_calls`, so empty deltas don't trigger premature clears.
+
+  All helpers tolerate `nil`/empty `tool_calls`, so callers don't need to guard. https://github.com/brainlid/langchain/pull/549
+
+## v0.8.8
+
+A dependency-hygiene release that unblocks downstream apps from upgrading `:langchain` when they already use `:zoi`.
+
+### Changed
+
+- **Removed `:zoi` from `mix.exs`**: v0.8.7 declared `:zoi` as an optional dep so the `:parse_args` integration test could exercise a real schema library. That declaration propagated a version constraint to downstream apps and conflicted with projects pinning a different `:zoi` version. The dep is now gone from `mix.exs` entirely; the test suite picks up `:zoi` transitively through the optional `:req_llm` -> `:llm_db` chain. Downstream apps that want to use Zoi with `:parse_args` continue to list `:zoi` in their own deps (the recommended pattern from the start) and are no longer constrained by `:langchain`.
+
+## v0.8.7
+
+A streaming-resilience and tooling release. Three production crashes in the streaming path are fixed (OpenAI Responses SSE chunking, post-complete tool-call fragments, and unexpected `do_run/1` shapes), Gemini gets unstuck when a `ToolResult` is built from an error case, and `LangChain.Function` gains an opt-in `:parse_args` callback that lets tools "parse, don't validate" the LLM's arguments at the centralized execution point. `ChatAnthropic` also picks up `:output_config` so callers can drive Anthropic's adaptive thinking-effort knob.
+
+### Added
+
+- **`LangChain.Function` `:parse_args` callback**: New 1-arity hook that runs after the required-key check and before the tool body, receiving the raw string-keyed arguments map and returning `:ok`, `{:ok, parsed_map}`, or `{:error, reason_string}`. On rejection the body is skipped and `reason` flows through as the tool result so the model can self-correct on the next turn; the call still produces a `ToolResult{is_error: true}`, fires `:on_tool_response_created`, and emits the `[:langchain, :tool, :call]` telemetry span, so trajectory and token-usage consumers see the attempted call rather than a silent drop. Designed to plug in Zoi, NimbleOptions, Ecto changesets, JSV, or plain Elixir without LangChain taking a new hard dependency; `zoi` is added as an optional dep purely so the integration test can exercise an end-to-end adapter. https://github.com/brainlid/langchain/pull/544
+- **`ChatAnthropic` `:output_config` field**: New top-level `:map` field on the chat-model schema that is forwarded to Anthropic as the `output_config` request parameter, enabling adaptive thinking-effort control alongside the existing `:thinking` settings. https://github.com/brainlid/langchain/pull/541
+
+### Fixed
+
+- **`ChatOpenAIResponses` streaming parser handled split SSE event boundaries**: `decode_stream/2` previously split the buffer on `"event: "`, which silently assumed each event and its `data:` line arrived in the same TCP chunk. After a change in OpenAI's chunking behavior that assumption broke: typically only the first delta arrived, the buffer poisoned itself with an "invalid JSON" fragment, no further callbacks fired, and the chain hung. The parser now splits on the actual SSE event boundary (`\n\n`) and extracts the `data:` line from each complete event block, correctly handling split events, multiple events per chunk, and incomplete JSON across chunks. https://github.com/brainlid/langchain/pull/540
+- **`ToolCall.merge/2` no longer crashes on trailing binary fragments after a complete tool call**: During streaming, some providers emit overlapping or trailing argument deltas after a tool call has already been marked `:complete` with a decoded map. The previous code path tried to concatenate a binary JSON fragment onto a map via `<>` and raised `ArgumentError`. A new guard detects the map-plus-binary case and returns the primary unchanged, safely discarding the unmergeable fragment. https://github.com/brainlid/langchain/pull/543
+- **`LLMChain.do_run/1` handles unexpected response shapes instead of crashing**: Added catch-all clauses for two shapes seen in production: `{:ok, [[error: %LangChainError{}] | _]}` (for example, an Anthropic `overloaded_error` surfacing through the streaming path inside an `:ok` tuple) and `{:error, reason}` where `reason` is neither a string nor a `LangChainError`. Both are now converted into structured `{:error, chain, reason}` tuples with appropriate type and message. https://github.com/brainlid/langchain/pull/542
+- **`ToolResult` always carries the tool name, including on error paths**: Several internal construction sites built a `ToolResult` without populating `:name`, which Gemini rejected with `GenerateContentRequest.contents[*].parts[0].function_response.name: Name cannot be empty`. The name is now propagated through the error branches as well, so Gemini-routed conversations no longer fail with `INVALID_ARGUMENT` after a tool error. https://github.com/brainlid/langchain/pull/539
+
+## v0.8.6
+
+A reliability and tooling release: `ChatOllamaAI` gains native thinking/reasoning support, Dialyzer is wired into the project and CI, and two crash-resistance fixes harden `DataExtractionChain` and the step-mode interrupt path.
+
+### Added
+
+- **`ChatOllamaAI` thinking support via `:think`**: New boolean field enables Ollama's native reasoning output for models like `gpt-oss`, `deepseek-r1`, `qwen3`, and `gemma3`. Surfaced as a `:thinking` `ContentPart` matching the Anthropic / Google convention. https://github.com/brainlid/langchain/pull/532
+- **Dialyzer added to the project and CI**: `dialyxir` dependency, PLT caching, GitHub PR annotations, and a sweep of pre-existing type-spec issues across the codebase. https://github.com/brainlid/langchain/pull/535
+- **`LLMChain.run/2` typespec includes `{:interrupt, t(), term()}`**: The interrupt return variant is now declared, fixing a Dialyzer false positive for callers pattern-matching on `:interrupt`. https://github.com/brainlid/langchain/pull/536
+
+### Fixed
+
+- **`DataExtractionChain` normalises single-object `info` tool payloads**: A lone map returned for a single-row extraction is now wrapped in a list instead of failing the `run/4` pattern match. https://github.com/brainlid/langchain/pull/533
+- **`Steps.extract_interrupt_data/1` tolerates `nil` interrupt data**: A tool result with `interrupt_data: nil` no longer crashes step-mode with `BadMapError`. https://github.com/brainlid/langchain/pull/534
+
+## v0.8.5
+
+A small reliability and observability release. Streaming runs now recover from delta-conversion errors instead of failing the chain outright, and a new tool callback fires inside the per-tool process so per-process context (tenancy, OTel, Sentry) can be re-applied across the async Task boundary.
+
+### Added
+
+- **`:on_tool_pre_execution` chain callback**: New callback that fires inside the process that will actually run the tool, immediately before the tool function is invoked. For `async: true` tools it fires inside the spawned `Task.async/1`; for `async: false` tools and tools run through `execute_tool_calls_with_decisions/3` it fires in the chain's own process. Use this hook (instead of `:on_tool_execution_started`, which always fires in the parent chain process) when you need to re-apply per-process state — tenant context, OpenTelemetry spans, Sentry scope, etc. — that does not propagate across the async boundary on its own. https://github.com/brainlid/langchain/pull/530
+
+### Fixed
+
+- **Streaming delta-conversion errors are now retried like transport errors**: When `delta_to_message_when_complete/1` returned `{:error, chain, reason}` (for example, `"delta_conversion_failed"` from invalid streamed JSON), `LLMChain` previously surfaced the error immediately and abandoned the run. The chain now routes that failure through the same path as other LLM errors: it fires `:on_llm_error`, increments `current_failure_count`, and recurses into `do_run/1` if retries remain. On final exhaustion the original reason is preserved (rather than being rewritten to `"exceeded_failure_count"`), so downstream apps that pattern-match on the reason to render user-facing copy continue to work. https://github.com/brainlid/langchain/pull/528
+
+## v0.8.4
+
+A security-focused release. Fixes an API-key leak in `ChatGrok` verbose logging, hardens an atom-table exposure in `ChatReqLLM`, documents `PromptTemplate`'s EEx trust boundary, and wires `mix sobelow` into `mix precommit`.
+
+### Added
+
+- **`PromptTemplate` EEx security documentation**: Added a security admonition to `PromptTemplate` and the raw-text constructors warning that `text` is evaluated as EEx. Developer-controlled templates are safe; user- or LLM-controlled strings are not. https://github.com/brainlid/langchain/pull/526
+- **`mix sobelow` in `mix precommit`**: Sobelow runs between `format` and `test` with a committed `.sobelow-conf`. Reviewed call sites carry inline `# sobelow_skip` annotations. https://github.com/brainlid/langchain/pull/526
+
+### Changed
+
+- **`ChatReqLLM.merge_provider_opts/2` uses `String.to_existing_atom/1`**: Unknown provider-opt keys now raise `ArgumentError` instead of growing the atom table. https://github.com/brainlid/langchain/pull/526
+
+### Fixed
+
+- **`ChatGrok` verbose logging leaked the API key**: An unconditional `IO.inspect/1` ran before the redaction branch, so `verbose_api: true` printed the raw `Bearer` token to stdout. Rotate any Grok keys that may have been captured in logs. https://github.com/brainlid/langchain/pull/526
+
+## v0.8.3
+
+### Added
+
+- **`ChatOllamaAI`: native `:format` (structured outputs) and image support**: Two gaps in the Ollama chat model are now closed.
+  - `:format` accepts either `"json"` (plain JSON mode) or a JSON Schema map, and is forwarded as the request's top-level `format` field. Schema-enforced generation is handled server-side by Ollama, mirroring what `/api/generate` has always supported.
+  - User messages containing `:image` `ContentPart`s now have their base64 payloads split out of the message content and re-attached as Ollama's native top-level `images` array on the message. Multiple image parts are preserved in order. `:image_url` parts raise a clear error because Ollama has no server-side URL fetcher — callers must fetch bytes themselves and pass them as `:image` parts.
+  - Prior behavior dropped image parts silently via `ContentPart.parts_to_string/1` and had no way to request structured output, forcing users to route through `ChatOpenAI` against Ollama's `/v1/chat/completions` endpoint — which doesn't reliably enforce schemas. https://github.com/brainlid/langchain/pull/520
+
+### Fixed
+
+- **Cross-model message serialization for `:thinking` and `:unsupported` content parts**: When conversation history crosses model providers (e.g. a Claude response with extended thinking is replayed to an OpenAI-compatible endpoint, or vice versa), the receiving model's serializer could encounter `ContentPart` types it doesn't recognize.
+  - `ChatAnthropic.content_parts_for_api/1` now filters out `nil` entries after mapping, preventing Anthropic from rejecting requests with unsigned or unrecognised `:thinking` parts.
+  - `ChatAwsMantle.strip_thinking_parts/1` now also strips `:unsupported` parts (in addition to `:thinking`), so Anthropic `redacted_thinking` blocks don't crash the Mantle serializer when forwarded as conversation history. https://github.com/brainlid/langchain/pull/523
+
+## v0.8.2
+
+This release introduces **experimental** support for AWS Bedrock's Mantle endpoint via a new `ChatAwsMantle` chat model. Mantle is AWS's OpenAI-compatible gateway for third-party Bedrock models, so one new module unlocks a whole family of providers at once: Moonshot's Kimi K2 line, OpenAI's gpt-oss series, and any models AWS adds in the future.
+
+### Added
+
+- **`ChatAwsMantle` chat model (experimental)**: New module for AWS Bedrock's Mantle endpoint. Supports both Bearer auth (Bedrock API key) and AWS SigV4 (IAM credentials via a zero-arity `:credentials` function). Region-aware URL building derives `https://bedrock-mantle.{region}.api.aws/v1/chat/completions` from `:region`. Reasoning extraction surfaces Mantle's `message.reasoning` / `delta.reasoning` field as `:thinking` `ContentPart`s on the assistant message (including streaming), so reasoning-model output renders the same way as Anthropic extended thinking. Streaming (with separate reasoning and content deltas), tool calling, K2.5 multimodal input, and the OpenAI-standard `:reasoning_effort` field all work. Defaults to `receive_timeout: 120_000` and `max_tokens: 4096` to bound Mantle's intermittent slow-starts and Kimi's occasional token-repetition loops. Verified against `moonshotai.kimi-k2-thinking`, `moonshotai.kimi-k2.5`, and `openai.gpt-oss-120b` https://github.com/brainlid/langchain/pull/521
+
+### Changed
+
+- **`MessageDelta` merges batched tool-call fragments**: The tool-call merge path now folds over every fragment in a chunk's `tool_calls` array rather than assuming one fragment per chunk. Most providers emit one fragment per chunk (no behavior change); gpt-oss-120b on AWS Mantle batches multiple argument fragments per SSE event, and this generalization handles either batching style correctly https://github.com/brainlid/langchain/pull/521
+- **`LLMChain` `max_runs` error includes the configured value**: When the chain halts because the `max_runs` ceiling was reached, the returned error now reports the configured limit so callers can log or surface the exact threshold that was hit. Additional test coverage was also added around this mode's termination paths https://github.com/brainlid/langchain/pull/519
+
+### Fixed
+
+- **`ContentPart.parts_to_string/2` tolerates `nil` entries**: When `MessageDelta.merge_content_part_at_index/3` pads `merged_content` with `nil` (common mid-stream when reasoning lands at index 0 and visible content at index 1), the string-serializer now filters those nils instead of raising `BadMapError` on the first mid-stream read https://github.com/brainlid/langchain/pull/521
+
+## v0.8.1
+
+A small follow-up to v0.8.0. The headline change is improved sub-agent cancellation: tools that spawn sub-agents (or any other long-running side-effect) now receive the originating `tool_call_id` in their execution context, making it possible to correlate the spawned work back to the tool call and update its status when the user cancels.
+
+### Added
+
+- **`tool_call_id` available in tool execution context**: When `LLMChain` executes a tool, the call's `tool_call_id` is now injected into the tool's `context` map under the `:tool_call_id` key. Tools that spawn sub-agents or other asynchronous side-effects can use this to correlate the spawned work back to the originating tool call, enabling a cleaner cancellation UX where a cancelled sub-agent can mark its tool call as cancelled instead of leaving it dangling https://github.com/brainlid/langchain/pull/514
+
+### Changed
+
+- **Relaxed `req_llm` dependency constraint**: The optional `req_llm` dependency now uses `>= 1.6.0` instead of `~> 1.6`, allowing host applications to pull in newer major versions of `req_llm` (such as 2.x) without waiting on a LangChain release. Because `req_llm` is `optional: true`, applications that use `ChatReqLLM` should pin the version they want in their own `mix.exs` https://github.com/brainlid/langchain/pull/513
+- **Hardened GitHub Actions CI configuration**: Applied [zizmor](https://github.com/woodruffw/zizmor) security recommendations to the Elixir workflow and added a `dependabot.yml` for automated workflow updates. No effect on library users; relevant for contributors running CI https://github.com/brainlid/langchain/pull/515
+
+## v0.8.0
+
+**Breaking changes** in this release. Delta-related functions in `LLMChain` now return `{:ok, chain}` / `{:error, chain, reason}` tuples instead of bare chain structs. See upgrade guide below.
+
+This release greatly improves the stability of the library. There were long-standing issues where errors were difficult to detect or handle, and this release is focused on improving error detection, insight, and the general stability of longer running multi-turn agents.
+
+In particular, a validation was introduced some time back when trying to deal with older Mistral models that was causing problems for modern LLMs. It is valid for an LLM to return an empty `MessageDelta` (no content and no tool calls) when closing out an exchange where it has nothing else to say. This commonly happened when the final action was a tool call and result with nothing left to add. The overly strict validation was rejecting these as errors, causing difficult to diagnose, intermittent failures.
+
+That long-standing issue has finally been resolved! If you've had stability issues with the library in the past when building agents or working with multi-turn LLM conversations, this release is worth evaluating. With the empty delta issue resolved, improved error detection and handling within the streaming pipeline, and the new error-focused callbacks (`on_error` and `on_llm_error`), it's a great time to try it out.
+
+### Upgrading from v0.7.0 - v0.8.0
+
+#### Breaking: Delta functions return `:ok`/`:error` tuples
+
+The following `LLMChain` functions now return `{:ok, chain}` or `{:error, chain, reason}` instead of a bare `%LLMChain{}` struct:
+
+- `apply_deltas/2`
+- `merge_deltas/2` (returns `%LLMChain{}` on success, `{:error, chain, reason}` on failure)
+- `delta_to_message_when_complete/1`
+
+If you call these functions directly, update your pattern matches:
+
+```elixir
+# Before (v0.7.0)
+chain = LLMChain.apply_deltas(chain, deltas)
+chain = LLMChain.delta_to_message_when_complete(chain)
+
+# After (v0.8.0)
+{:ok, chain} = LLMChain.apply_deltas(chain, deltas)
+{:ok, chain} = LLMChain.delta_to_message_when_complete(chain)
+```
+
+These changes allow errors during streaming delta processing (e.g., failed delta-to-message conversion) to propagate as structured errors rather than being silently swallowed.
+
+### Added
+
+- **`on_error` and `on_llm_error` callbacks**: Two new chain callbacks for error observability. `on_llm_error` fires on every individual LLM call failure (including transient ones that may be retried or recovered via fallbacks). `on_error` fires exactly once when the chain has exhausted all recovery options and is returning a terminal error to the caller https://github.com/brainlid/langchain/pull/511
+- **Top-level `cache_control` for `ChatAnthropic`**: New `cache_control` field on the `ChatAnthropic` struct enables Anthropic's automatic caching feature, which applies cache breakpoints to the last cacheable block in each request. This is the simplest way to enable prompt caching for multi-turn conversations without manual breakpoint management. Existing `cache_messages` option is clarified as legacy client-side behavior https://github.com/brainlid/langchain/pull/509
+
+### Changed
+
+- **Delta functions return `:ok`/`:error` tuples** (breaking): `apply_deltas/2`, `delta_to_message_when_complete/1`, and `merge_deltas/2` now return structured result tuples, enabling proper error propagation through the streaming pipeline. Failed delta-to-message conversions now return `{:error, chain, %LangChainError{type: "delta_conversion_failed"}}` instead of silently resetting streaming state https://github.com/brainlid/langchain/pull/511
+- **Removed `validate_not_empty` from `MessageDelta.to_message/1`**: Empty assistant deltas (no content, no tool calls) are no longer rejected during delta-to-message conversion. This validation was overly strict and could mask legitimate responses https://github.com/brainlid/langchain/pull/511
+
+### Fixed
+
+- **Compiler warnings with optional `mint_web_socket` dependency**: Fixed warnings in `ChatOpenAIResponses` and `WebSocket` modules when the optional `mint_web_socket` library is not included as a dependency https://github.com/brainlid/langchain/pull/510
+
+## v0.7.0
+
+### Changed
+
+- **Req-level HTTP retry disabled by default**: All chat model and image generator modules now set `retry: false` on Req HTTP requests. Previously, Req's `retry: :transient` (up to 3 retries) compounded with LangChain's own connection retry, potentially causing up to 12 HTTP requests per call. Server errors (503/429) now bubble up immediately to the caller, which is the correct behavior for applications using job queues like Oban with proper backoff strategies. The `req_config` option can still be used to re-enable Req retry if needed https://github.com/brainlid/langchain/pull/504
+
+### Added
+
+- **Configurable `retry_count` on chat models**: All chat model and image generator structs now expose a `retry_count` field (default: `2`) controlling how many times LangChain retries on connection errors. Set `retry_count: 0` to disable retries entirely and let your application's job queue handle retry strategy. Default behavior is unchanged (1 initial attempt + 2 retries = 3 total requests) https://github.com/brainlid/langchain/pull/505
+- **WebSocket transport for `ChatOpenAIResponses`**: New optional WebSocket transport allows requests over a persistent connection instead of HTTP. Includes a generic `LangChain.WebSocket` client GenServer built on `mint_web_socket`. Use `connect_websocket!/1` and `disconnect_websocket!/1` to manage the lifecycle. Best suited for short-lived, synchronous sessions -- not for long-lived agents or HITL workflows https://github.com/brainlid/langchain/pull/497
+- **Streaming tool calls for `ChatOllamaAI`**: Tool calls in streaming responses are now correctly handled instead of being silently dropped. Supports both complete and incomplete tool call responses https://github.com/brainlid/langchain/pull/498
+- **Regression tests for DeepSeek streaming token usage**: Added test coverage for the DeepSeek streaming format where usage data arrives bundled in the final chunk alongside non-empty choices, verifying existing code handles both DeepSeek and OpenAI formats correctly https://github.com/brainlid/langchain/pull/499
+
+### Fixed
+
+- **`{:interrupt, ...}` and `{:pause, ...}` with fallback LLMs**: These valid execution results from HITL middleware now pass through `try_chain_with_llm/4` correctly instead of causing a `CaseClauseError` or being incorrectly retried on fallback models. Fallback models and HITL interrupts are no longer mutually exclusive https://github.com/brainlid/langchain/pull/502
+- **Streaming `overloaded_error` from Anthropic API**: When Anthropic sends an `overloaded_error` as an SSE event during streaming on a 200 connection, it is now extracted and returned as a proper `{:error, %LangChainError{}}` instead of causing a crash. The `"overloaded_error"` type is also now recognized by `retry_on_fallback?/1` for fallback model retry https://github.com/brainlid/langchain/pull/500
+
+## v0.6.3
+
+### Added
+
+- **ChatOpenAI Logprobs**: Added `logprobs` and `top_logprobs` parameters to `ChatOpenAI`, allowing users to request log probability information from the OpenAI API. When present, logprobs data is surfaced in message/delta metadata under the `"logprobs"` key. Supports both streaming and non-streaming modes https://github.com/brainlid/langchain/pull/494
+- **LangChain.Trajectory**: New `LangChain.Trajectory` module for easier evaluation of agents, providing a structured way to assess agent execution paths https://github.com/brainlid/langchain/pull/481
+- **ChatVertexAI Multimodal Tool Results**: Tool results in `ChatVertexAI` now support multimodal content including images, files (base64-encoded PDFs, etc.), JSON responses, and display names https://github.com/brainlid/langchain/pull/491
+
+### Changed
+
+- **Reduced Logger.error usage**: Replaced excessive `Logger.error` calls across the library with a more nuanced approach — errors already captured in return values no longer log redundantly, and catch-all/rescue clauses now use `Logger.warning` with lazy evaluation. This gives library consumers control over their logging levels https://github.com/brainlid/langchain/pull/492
+
+### Fixed
+
+- **Mistral responses without tool_calls**: Fixed crash when Mistral (or Azure-hosted Mistral) returns a complete message without a `"tool_calls"` key. The response previously fell through to the catch-all error handler https://github.com/brainlid/langchain/pull/495
+- **Tool schema compatibility**: Added `additionalProperties: false` to tool parameter schemas for Anthropic API compatibility, which strictly requires this field on all object-type schemas https://github.com/brainlid/langchain/pull/490
+- **Azure streaming keepalive**: Fixed crash caused by Azure OpenAI keepalive SSE events during long-running streaming responses, which were not matched by any `do_process_response/2` clause https://github.com/brainlid/langchain/pull/485
+- **Empty/unexpected LLM streaming responses**: Added catch-all clauses in `do_run/1` for `{:ok, []}` and other unrecognized response formats (e.g., from thinking/reasoning models like Qwen3 and DeepSeek-R1 that emit `<think>` tokens), returning typed `LangChainError` instead of crashing with `CaseClauseError` https://github.com/brainlid/langchain/pull/484
+- **Malformed tool call JSON loop**: Added regression tests verifying that truncated/malformed JSON in `tool_call.arguments` during streaming is properly cleared, preventing infinite loops https://github.com/brainlid/langchain/pull/493
+
+## v0.6.2
+
+### Upgrading from v0.6.1 - v0.6.2
+
+#### Developer Environment: `.envrc` → `.env`
+
+The library now uses [dotenvy](https://hex.pm/packages/dotenvy) to automatically load API keys from a `.env` file when running `mix test` or starting `iex -S mix`. This replaces the previous `direnv`/`.envrc` workflow.
+
+**Who is affected**: Developers running live tests locally.
+
+**How to migrate**:
+
+```bash
+# From the my_langchain/ directory:
+cp .envrc .env
+```
+
+That's it. The `.env` file is gitignored and will be loaded automatically — no shell tool or `source .envrc` step required. AI coding assistants running `mix test` will also pick up the keys without any additional configuration.
+
+The untracked `.envrc` file remains for anyone who prefers to continue using `direnv`. The new `.env.example` is the canonical starting point:
+
+```bash
+cp .env.example .env
+# Populate .env with your API keys
+```
+
+### Added
+
+- **ChatReqLLM**: New experimental `LangChain.ChatModels.ChatReqLLM` adapter that delegates HTTP, authentication, and provider encoding to the [`req_llm`](https://hex.pm/packages/req_llm) library. A single `"provider:model_id"` string (e.g. `"anthropic:claude-haiku-4-5"`, `"openai:gpt-4o"`, `"ollama:llama3"`) unlocks 20+ providers without requiring per-provider adapter code. Supports streaming, tool use, multi-modal content, token usage, `serialize_config/1`, and `restore_from_map/1` https://github.com/brainlid/langchain/pull/486
+- **dotenvy dependency**: Added `dotenvy ~> 1.1` for automatic `.env` file loading in dev/test. The test suite now calls `Dotenvy.source!/1` before reading API keys, so no shell setup is needed to run live tests
+- **`.env.example`**: New template file (dotenv format, no `export` prefix) for setting up local API keys
+
+## v0.6.1
+
+### Added
+
+- **ModelsLabImage Provider**: New `LangChain.Images.ModelsLabImage` module for text-to-image generation via the ModelsLab REST API, supporting Flux, SDXL, and community models https://github.com/brainlid/langchain/pull/468
+- **ChatAnthropic Structured Output**: Native structured output support via `json_response` and `json_schema` fields, using Anthropic's `output_config.format` API https://github.com/brainlid/langchain/pull/474
+- **ChatAnthropic file_id Support**: `ContentPart` `:file` and `:image` types can now reference files uploaded via Anthropic's Files API using `type: :file_id` option https://github.com/brainlid/langchain/pull/475
+- **Gemini Inline Data for PDF/CSV**: Added `inline_data` support for PDF and CSV content parts in `ChatGoogleAI` and `ChatVertexAI` https://github.com/brainlid/langchain/pull/478
+- **ChatOpenAIResponses Verbosity**: Added `verbosity` parameter to control response length via the OpenAI Responses API `text` configuration https://github.com/brainlid/langchain/pull/470
+- **Tool Result Interrupt/Resume**: `ToolResult` gains `is_interrupt` and `interrupt_data` fields, allowing tools to return `{:interrupt, message, data}` to pause execution for external input (e.g., Human-in-the-Loop approval). Includes `Message.replace_tool_result/3` and `LLMChain.replace_tool_result/3` for resuming with completed results, and a new `on_tool_interrupted` callback https://github.com/brainlid/langchain/pull/479
+
+### Changed
+
+- **Streaming Error Handling**: `LLMChain.merge_delta/2` now gracefully handles any `LangChainError` received during streaming (content moderation, etc.) instead of only `"overloaded"` errors. Cancelled messages store the error in `metadata[:streaming_error]` for higher layers to detect. `MessageDelta.merge_delta/2` absorbs `{:error, _}` tuples mid-stream without crashing https://github.com/brainlid/langchain/pull/480
+
+### Fixed
+
+- **ChatOpenAIResponses**: Fixed verbosity parameter to be passed inside the `text` parameter as required by the API, and improved error handling for malformed API responses https://github.com/brainlid/langchain/pull/476
+- **Message Processors**: Fixed `FunctionClauseError` in `run_message_processors` when assistant messages have nil content (e.g., Groq tool-call-only responses) by using `content_to_string` which handles nil, string, and list content types https://github.com/brainlid/langchain/pull/473
+
 ## v0.6.0
 
 ### Breaking Changes

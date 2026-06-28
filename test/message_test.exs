@@ -499,6 +499,91 @@ defmodule LangChain.MessageTest do
     end
   end
 
+  describe "replace_tool_result/3" do
+    test "replaces the correct result in a multi-result tool message" do
+      result1 =
+        ToolResult.new!(%{tool_call_id: "call_1", name: "search", content: "found"})
+
+      result2 =
+        ToolResult.new!(%{
+          tool_call_id: "call_2",
+          name: "task",
+          content: "interrupted",
+          is_interrupt: true,
+          interrupt_data: %{type: :subagent_hitl}
+        })
+
+      tool_msg = Message.new_tool_result!(%{content: nil, tool_results: [result1, result2]})
+      messages = [Message.new_user!("hi"), tool_msg]
+
+      new_result =
+        ToolResult.new!(%{tool_call_id: "call_2", name: "task", content: "completed!"})
+
+      updated = Message.replace_tool_result(messages, "call_2", new_result)
+
+      assert [_user_msg, updated_tool_msg] = updated
+      assert length(updated_tool_msg.tool_results) == 2
+
+      # First result unchanged
+      assert Enum.at(updated_tool_msg.tool_results, 0).tool_call_id == "call_1"
+      assert Enum.at(updated_tool_msg.tool_results, 0).is_interrupt == false
+
+      # Second result replaced
+      replaced = Enum.at(updated_tool_msg.tool_results, 1)
+      assert replaced.tool_call_id == "call_2"
+      assert replaced.is_interrupt == false
+      assert replaced.content == [LangChain.Message.ContentPart.text!("completed!")]
+    end
+
+    test "no-op when tool_call_id doesn't match" do
+      result =
+        ToolResult.new!(%{tool_call_id: "call_1", name: "search", content: "found"})
+
+      tool_msg = Message.new_tool_result!(%{content: nil, tool_results: [result]})
+      messages = [tool_msg]
+
+      new_result =
+        ToolResult.new!(%{tool_call_id: "call_999", name: "task", content: "new"})
+
+      updated = Message.replace_tool_result(messages, "call_999", new_result)
+
+      assert updated == messages
+    end
+
+    test "non-tool messages are passed through unchanged" do
+      user_msg = Message.new_user!("hi")
+      assistant_msg = Message.new_assistant!("hello")
+      messages = [user_msg, assistant_msg]
+
+      new_result =
+        ToolResult.new!(%{tool_call_id: "call_1", name: "task", content: "done"})
+
+      updated = Message.replace_tool_result(messages, "call_1", new_result)
+      assert updated == messages
+    end
+
+    test "handles single-result tool messages" do
+      result =
+        ToolResult.new!(%{
+          tool_call_id: "call_1",
+          name: "task",
+          content: "placeholder",
+          is_interrupt: true
+        })
+
+      tool_msg = Message.new_tool_result!(%{content: nil, tool_results: [result]})
+
+      new_result =
+        ToolResult.new!(%{tool_call_id: "call_1", name: "task", content: "real result"})
+
+      [updated_msg] = Message.replace_tool_result([tool_msg], "call_1", new_result)
+      assert length(updated_msg.tool_results) == 1
+      replaced = hd(updated_msg.tool_results)
+      assert replaced.is_interrupt == false
+      assert replaced.content == [LangChain.Message.ContentPart.text!("real result")]
+    end
+  end
+
   describe "is_empty?/1" do
     test "returns true for assistant message with empty content list and no tool calls" do
       message = %Message{

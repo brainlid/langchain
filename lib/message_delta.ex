@@ -51,7 +51,7 @@ defmodule LangChain.MessageDelta do
   """
   use Ecto.Schema
   import Ecto.Changeset
-  require Logger
+
   alias __MODULE__
   alias LangChain.LangChainError
   alias LangChain.Message
@@ -154,9 +154,15 @@ defmodule LangChain.MessageDelta do
         MessageDelta.merge_deltas(list_of_delta_messages)
 
   """
-  @spec merge_delta(nil | t(), t()) :: t()
+  @spec merge_delta(nil | t(), t() | {:error, any()}) :: t()
   def merge_delta(nil, %MessageDelta{} = delta_part) do
     merge_delta(%MessageDelta{role: :assistant}, delta_part)
+  end
+
+  # Skip error tuples that may arrive mid-stream (e.g. content filtering).
+  # Return the accumulated delta unchanged so callers like LiveView don't crash.
+  def merge_delta(primary, {:error, _reason}) do
+    primary || %MessageDelta{role: :assistant}
   end
 
   def merge_delta(%MessageDelta{role: :assistant} = primary, %MessageDelta{} = delta_part) do
@@ -239,6 +245,17 @@ defmodule LangChain.MessageDelta do
     %MessageDelta{delta | content: nil}
   end
 
+  # ContentPart from merged_content (already processed delta). Must precede the
+  # "empty content" clause below: such a delta has `content: nil` but still
+  # carries a part to merge, so the broad `content in [nil, []]` guard would
+  # otherwise shadow this and silently drop the merged_content.
+  defp append_to_merged_content(
+         %MessageDelta{} = primary,
+         %MessageDelta{content: nil, merged_content: %ContentPart{} = part}
+       ) do
+    merge_content_part_into(primary, part)
+  end
+
   # Empty content - nothing to merge
   defp append_to_merged_content(%MessageDelta{} = primary, %MessageDelta{content: content})
        when content in [nil, []],
@@ -248,14 +265,6 @@ defmodule LangChain.MessageDelta do
   defp append_to_merged_content(%MessageDelta{} = primary, %MessageDelta{content: content})
        when is_binary(content) do
     append_to_merged_content(primary, %MessageDelta{content: ContentPart.text!(content)})
-  end
-
-  # ContentPart from merged_content (already processed delta)
-  defp append_to_merged_content(
-         %MessageDelta{} = primary,
-         %MessageDelta{content: nil, merged_content: %ContentPart{} = part}
-       ) do
-    merge_content_part_into(primary, part)
   end
 
   # Single ContentPart content
@@ -357,19 +366,30 @@ defmodule LangChain.MessageDelta do
     %MessageDelta{primary | merged_content: updated_list}
   end
 
-  # Merge tool call delta by matching on index value (not list position).
-  # Anthropic's index differentiates calls but doesn't correspond to list offset.
+  # Merge tool call deltas by matching on each fragment's index value (not
+  # list position). The incoming delta may carry any number of tool_call
+  # fragments per chunk — OpenAI's spec allows an SSE event's `tool_calls`
+  # array to hold multiple argument fragments bound for the same `index`.
+  # gpt-oss-120b on AWS Mantle batches fragments this way; most providers
+  # emit one per chunk. Fold each fragment in turn so the accumulation is
+  # correct regardless of batching style.
   @spec merge_tool_calls(t(), t()) :: t()
-  defp merge_tool_calls(%MessageDelta{tool_calls: primary_calls} = primary, %MessageDelta{
-         tool_calls: [delta_call]
-       }) do
-    calls = primary_calls || []
-    initial = Enum.find(calls, &(&1.index == delta_call.index))
-    merged_call = ToolCall.merge(initial, delta_call)
-    %MessageDelta{primary | tool_calls: upsert_by_index(calls, merged_call)}
+  defp merge_tool_calls(%MessageDelta{} = primary, %MessageDelta{tool_calls: new_calls})
+       when is_list(new_calls) and new_calls != [] do
+    Enum.reduce(new_calls, primary, &merge_one_tool_call/2)
   end
 
   defp merge_tool_calls(%MessageDelta{} = primary, %MessageDelta{}), do: primary
+
+  defp merge_one_tool_call(
+         %ToolCall{} = delta_call,
+         %MessageDelta{tool_calls: primary_calls} = acc
+       ) do
+    calls = primary_calls || []
+    initial = Enum.find(calls, &(&1.index == delta_call.index))
+    merged_call = ToolCall.merge(initial, delta_call)
+    %MessageDelta{acc | tool_calls: upsert_by_index(calls, merged_call)}
+  end
 
   @spec update_index(t(), t()) :: t()
   defp update_index(%MessageDelta{} = primary, %MessageDelta{index: idx}) when is_number(idx) do
@@ -432,34 +452,14 @@ defmodule LangChain.MessageDelta do
       |> Map.from_struct()
       |> Map.put(:content, content)
 
-    with :ok <- validate_not_empty(delta),
-         {:ok, message} <- Message.new(attrs) do
-      {:ok, message}
-    else
+    case Message.new(attrs) do
+      {:ok, message} ->
+        {:ok, message}
+
       {:error, %Ecto.Changeset{} = changeset} ->
         {:error, Utils.changeset_error_to_string(changeset)}
-
-      {:error, _reason} = error ->
-        error
     end
   end
-
-  # Validate that assistant message is not empty (no content and no tool_calls).
-  # Empty assistant messages violate conversation flow rules in most LLM APIs.
-  defp validate_not_empty(%MessageDelta{
-         role: :assistant,
-         merged_content: merged_content,
-         tool_calls: tool_calls,
-         status: :complete
-       })
-       when (merged_content == [] or merged_content == nil) and
-              (tool_calls == [] or tool_calls == nil) do
-    Logger.warning("Received empty assistant message with no content and no tool_calls")
-
-    {:error, "Empty assistant message: no content and no tool_calls"}
-  end
-
-  defp validate_not_empty(_delta), do: :ok
 
   # Filter nil values from list (from index padding during delta merging)
   @spec reject_nil(list() | any()) :: list() | any()
@@ -531,4 +531,188 @@ defmodule LangChain.MessageDelta do
   def migrate_to_content_parts(%MessageDelta{} = delta) do
     delta
   end
+
+  @doc """
+  Insert a `ToolCall` into the delta's `tool_calls` list, or merge its
+  non-nil fields onto an existing `ToolCall` with the same `call_id`.
+
+  Intended for streaming pipelines that learn about a tool call across
+  several events: the first event creates the call, later events fill in
+  fields like `display_text` or update `metadata`.
+
+  Merge rules when a `ToolCall` with the same `call_id` already exists:
+
+  - Non-nil scalar fields on the incoming call overwrite the existing value
+    (`name`, `arguments`, `display_text`).
+  - `status` is only promoted forward — an incoming `:complete` overwrites
+    an existing `:incomplete`, but never the other way around.
+  - `metadata` is shallow-merged, with incoming keys winning per-key.
+
+  A call with `call_id: nil` is ignored and the delta is returned unchanged
+  (there is no key to upsert against).
+
+  ## Examples
+
+      iex> alias LangChain.Message.ToolCall
+      iex> delta = %LangChain.MessageDelta{role: :assistant, tool_calls: []}
+      iex> tc = %ToolCall{call_id: "abc", name: "search"}
+      iex> updated = LangChain.MessageDelta.upsert_tool_call(delta, tc)
+      iex> updated.tool_calls
+      [%ToolCall{call_id: "abc", name: "search"}]
+
+  """
+  @spec upsert_tool_call(t(), ToolCall.t()) :: t()
+  def upsert_tool_call(%MessageDelta{} = delta, %ToolCall{call_id: nil}), do: delta
+
+  def upsert_tool_call(%MessageDelta{tool_calls: tool_calls} = delta, %ToolCall{} = new_call) do
+    calls = tool_calls || []
+
+    updated_calls =
+      case Enum.find_index(calls, &(&1.call_id == new_call.call_id)) do
+        nil -> calls ++ [new_call]
+        pos -> List.update_at(calls, pos, &merge_tool_call_fields(&1, new_call))
+      end
+
+    %MessageDelta{delta | tool_calls: updated_calls}
+  end
+
+  @doc """
+  Find the `ToolCall` with the matching `call_id` and update its
+  `"execution_status"` metadata. Delegates to
+  `LangChain.Message.ToolCall.set_execution_status/2`.
+
+  Intended for callers like Phoenix LiveView and Sagents that track the
+  lifecycle of a streaming tool call (identified → executing →
+  completed/failed) and need to drive the UI as the agent progresses.
+
+  Returns the delta unchanged if no tool call matches the given `call_id`.
+
+  ## Examples
+
+      iex> alias LangChain.Message.ToolCall
+      iex> delta = %LangChain.MessageDelta{
+      ...>   role: :assistant,
+      ...>   tool_calls: [%ToolCall{call_id: "abc", name: "search"}]
+      ...> }
+      iex> updated = LangChain.MessageDelta.set_tool_execution_status(delta, "abc", "executing")
+      iex> hd(updated.tool_calls).metadata
+      %{"execution_status" => "executing"}
+
+  """
+  @spec set_tool_execution_status(t(), String.t(), String.t()) :: t()
+  def set_tool_execution_status(%MessageDelta{} = delta, call_id, status)
+      when is_binary(call_id) and is_binary(status) do
+    update_matching_tool_call(delta, call_id, &ToolCall.set_execution_status(&1, status))
+  end
+
+  @doc """
+  Set the `display_text` on the `ToolCall` with the matching `call_id`.
+
+  A non-nil incoming value overwrites the existing one. As a tool executes
+  and the caller learns more, it is reasonable to refine the display from
+  `"Reading file"` to `"Reading \"outline.md\" (lines 60–100)"`, and this
+  helper supports that flow.
+
+  A `nil` incoming value is a no-op and leaves the existing `display_text`
+  alone, so the UI never goes from showing something to showing nothing.
+
+  Returns the delta unchanged if no tool call matches the given `call_id`.
+
+  ## Examples
+
+      iex> alias LangChain.Message.ToolCall
+      iex> delta = %LangChain.MessageDelta{
+      ...>   role: :assistant,
+      ...>   tool_calls: [%ToolCall{call_id: "abc", name: "search"}]
+      ...> }
+      iex> updated = LangChain.MessageDelta.set_tool_display_text(delta, "abc", "Searching")
+      iex> hd(updated.tool_calls).display_text
+      "Searching"
+
+  """
+  @spec set_tool_display_text(t(), String.t(), String.t() | nil) :: t()
+  def set_tool_display_text(%MessageDelta{} = delta, _call_id, nil), do: delta
+
+  def set_tool_display_text(%MessageDelta{} = delta, call_id, display_text)
+      when is_binary(call_id) and is_binary(display_text) do
+    update_matching_tool_call(delta, call_id, &%{&1 | display_text: display_text})
+  end
+
+  @doc """
+  Check whether every `ToolCall` in the delta has reached a terminal
+  execution status. Returns `true` only when there is at least one tool
+  call AND every call has `metadata["execution_status"]` set to
+  `"completed"` or `"failed"`.
+
+  Returns `false` for `nil` or empty `tool_calls` — there is nothing to
+  gate on yet.
+
+  Intended for UI flows that keep a streaming delta visible while any
+  tool is still mid-execution and only clear it once all tools have
+  terminated, so sibling tool calls don't lose their UI state when one
+  finishes before another.
+
+  ## Examples
+
+      iex> alias LangChain.Message.ToolCall
+      iex> done = %ToolCall{call_id: "a", metadata: %{"execution_status" => "completed"}}
+      iex> running = %ToolCall{call_id: "b", metadata: %{"execution_status" => "executing"}}
+      iex> LangChain.MessageDelta.all_tools_terminal?(%LangChain.MessageDelta{tool_calls: [done]})
+      true
+      iex> LangChain.MessageDelta.all_tools_terminal?(%LangChain.MessageDelta{tool_calls: [done, running]})
+      false
+
+  """
+  @spec all_tools_terminal?(t()) :: boolean()
+  def all_tools_terminal?(%MessageDelta{tool_calls: tool_calls})
+      when is_list(tool_calls) and tool_calls != [] do
+    Enum.all?(tool_calls, fn
+      %ToolCall{metadata: %{"execution_status" => status}}
+      when status in ["completed", "failed"] ->
+        true
+
+      _other ->
+        false
+    end)
+  end
+
+  def all_tools_terminal?(%MessageDelta{}), do: false
+
+  # Shared updater for set_tool_execution_status/3 and set_tool_display_text/3.
+  defp update_matching_tool_call(%MessageDelta{tool_calls: nil} = delta, _call_id, _fun),
+    do: delta
+
+  defp update_matching_tool_call(%MessageDelta{tool_calls: []} = delta, _call_id, _fun),
+    do: delta
+
+  defp update_matching_tool_call(%MessageDelta{tool_calls: tool_calls} = delta, call_id, fun) do
+    updated =
+      Enum.map(tool_calls, fn
+        %ToolCall{call_id: ^call_id} = tc -> fun.(tc)
+        other -> other
+      end)
+
+    %MessageDelta{delta | tool_calls: updated}
+  end
+
+  defp merge_tool_call_fields(%ToolCall{} = existing, %ToolCall{} = incoming) do
+    %ToolCall{
+      existing
+      | name: incoming.name || existing.name,
+        arguments: incoming.arguments || existing.arguments,
+        display_text: incoming.display_text || existing.display_text,
+        status: promote_status(existing.status, incoming.status),
+        metadata: merge_metadata(existing.metadata, incoming.metadata)
+    }
+  end
+
+  defp promote_status(_existing, :complete), do: :complete
+  defp promote_status(existing, _other), do: existing
+
+  defp merge_metadata(nil, nil), do: nil
+  defp merge_metadata(existing, nil), do: existing
+  defp merge_metadata(nil, incoming), do: incoming
+
+  defp merge_metadata(existing, incoming) when is_map(existing) and is_map(incoming),
+    do: Map.merge(existing, incoming)
 end

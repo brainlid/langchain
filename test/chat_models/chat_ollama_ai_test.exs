@@ -206,6 +206,101 @@ defmodule ChatModels.ChatOllamaAITest do
       assert user_msg["content"] == "What color is the sky?"
     end
 
+    test "omits :format when not set", %{ollama_ai: ollama_ai} do
+      data = ChatOllamaAI.for_api(ollama_ai, [Message.new_user!("hi")], [])
+      refute Map.has_key?(data, :format)
+    end
+
+    test "passes :format through as a string (json mode)" do
+      ollama = ChatOllamaAI.new!(%{model: "llama3.1:latest", format: "json"})
+      data = ChatOllamaAI.for_api(ollama, [Message.new_user!("hi")], [])
+      assert data.format == "json"
+    end
+
+    test "passes :format through as a JSON Schema map" do
+      schema = %{
+        "type" => "object",
+        "required" => ["name"],
+        "properties" => %{"name" => %{"type" => "string"}}
+      }
+
+      ollama = ChatOllamaAI.new!(%{model: "llama3.1:latest", format: schema})
+      data = ChatOllamaAI.for_api(ollama, [Message.new_user!("hi")], [])
+      assert data.format == schema
+    end
+
+    test "omits :think when not set", %{ollama_ai: ollama_ai} do
+      data = ChatOllamaAI.for_api(ollama_ai, [Message.new_user!("hi")], [])
+      refute Map.has_key?(data, :think)
+    end
+
+    test "passes :think through when set to true" do
+      ollama = ChatOllamaAI.new!(%{model: "gpt-oss:20b", think: true})
+      data = ChatOllamaAI.for_api(ollama, [Message.new_user!("hi")], [])
+      assert data.think == true
+    end
+
+    test "passes :think through when set to false" do
+      ollama = ChatOllamaAI.new!(%{model: "gpt-oss:20b", think: false})
+      data = ChatOllamaAI.for_api(ollama, [Message.new_user!("hi")], [])
+      assert data.think == false
+    end
+
+    test "user message with no images has no :images key", %{ollama_ai: ollama_ai} do
+      msg = Message.new_user!([ContentPart.text!("describe the sky")])
+      data = ChatOllamaAI.for_api(ollama_ai, [msg], [])
+
+      assert [user_msg] = data.messages
+      assert user_msg["content"] == "describe the sky"
+      refute Map.has_key?(user_msg, "images")
+    end
+
+    test "user message with an :image ContentPart puts base64 in top-level :images", %{
+      ollama_ai: ollama_ai
+    } do
+      b64 = "iVBORw0KGgoBASE64="
+
+      msg =
+        Message.new_user!([
+          ContentPart.text!("what's in this image?"),
+          ContentPart.image!(b64, media: :png)
+        ])
+
+      data = ChatOllamaAI.for_api(ollama_ai, [msg], [])
+
+      assert [user_msg] = data.messages
+      assert user_msg["role"] == :user
+      assert user_msg["content"] == "what's in this image?"
+      assert user_msg["images"] == [b64]
+    end
+
+    test "user message with multiple :image parts collects them in order", %{
+      ollama_ai: ollama_ai
+    } do
+      msg =
+        Message.new_user!([
+          ContentPart.text!("compare"),
+          ContentPart.image!("AAA=", media: :png),
+          ContentPart.image!("BBB=", media: :jpg)
+        ])
+
+      data = ChatOllamaAI.for_api(ollama_ai, [msg], [])
+
+      assert [%{"images" => ["AAA=", "BBB="]}] = data.messages
+    end
+
+    test "user message with :image_url raises a clear error", %{ollama_ai: ollama_ai} do
+      msg =
+        Message.new_user!([
+          ContentPart.text!("describe"),
+          ContentPart.image_url!("https://example.com/img.png")
+        ])
+
+      assert_raise LangChain.LangChainError, ~r/does not support :image_url/, fn ->
+        ChatOllamaAI.for_api(ollama_ai, [msg], [])
+      end
+    end
+
     test "generates a map for an API call with a tool", %{ollama_ai: ollama_ai} do
       fun =
         Function.new!(%{
@@ -267,7 +362,8 @@ defmodule ChatModels.ChatOllamaAITest do
             "parameters" => %{
               "properties" => %{"name" => %{"type" => "string"}},
               "required" => ["name"],
-              "type" => "object"
+              "type" => "object",
+              "additionalProperties" => false
             }
           },
           "type" => "function"
@@ -388,7 +484,8 @@ defmodule ChatModels.ChatOllamaAITest do
             "name" => %{"type" => "string"}
           },
           "required" => ["name"],
-          "type" => "object"
+          "type" => "object",
+          "additionalProperties" => false
         }
       }
 
@@ -679,6 +776,51 @@ defmodule ChatModels.ChatOllamaAITest do
       assert struct.index == nil
     end
 
+    test "promotes a non-streamed `thinking` field into a :thinking ContentPart", %{model: model} do
+      response = %{
+        "model" => "gpt-oss:20b",
+        "message" => %{
+          "role" => "assistant",
+          "thinking" => "The user said hi, so I'll greet them.",
+          "content" => "Hello!"
+        },
+        "done" => true
+      }
+
+      assert %Message{} = msg = ChatOllamaAI.do_process_response(model, response)
+
+      assert [
+               %ContentPart{type: :thinking, content: "The user said hi, so I'll greet them."},
+               %ContentPart{type: :text, content: "Hello!"}
+             ] = msg.content
+    end
+
+    test "promotes a thinking-only non-streamed message (empty content)", %{model: model} do
+      response = %{
+        "model" => "gpt-oss:20b",
+        "message" => %{
+          "role" => "assistant",
+          "thinking" => "Reasoning...",
+          "content" => ""
+        },
+        "done" => true
+      }
+
+      assert %Message{} = msg = ChatOllamaAI.do_process_response(model, response)
+      assert [%ContentPart{type: :thinking, content: "Reasoning..."}] = msg.content
+    end
+
+    test "leaves content untouched when `thinking` is absent or empty", %{model: model} do
+      empty_thinking = %{
+        "model" => "llama2",
+        "message" => %{"role" => "assistant", "thinking" => "", "content" => "Hi"},
+        "done" => true
+      }
+
+      assert %Message{content: [%ContentPart{type: :text, content: "Hi"}]} =
+               ChatOllamaAI.do_process_response(model, empty_thinking)
+    end
+
     test "handles receiving a streamed message result", %{model: model} do
       response = %{
         "model" => "llama2",
@@ -694,6 +836,23 @@ defmodule ChatModels.ChatOllamaAITest do
       assert struct.role == :assistant
       assert struct.content == "Gre"
       assert struct.status == :incomplete
+    end
+
+    test "promotes a streamed `thinking` chunk into a single :thinking ContentPart delta", %{
+      model: model
+    } do
+      # Matches the shape used by `chat_anthropic.ex` for thinking deltas:
+      # a single ContentPart, not a list.
+      response = %{
+        "model" => "gpt-oss:20b",
+        "message" => %{"role" => "assistant", "thinking" => "step ", "content" => ""},
+        "done" => false
+      }
+
+      assert %MessageDelta{} = delta = ChatOllamaAI.do_process_response(model, response)
+      assert delta.role == :assistant
+      assert delta.status == :incomplete
+      assert %ContentPart{type: :thinking, content: "step "} = delta.content
     end
 
     test "handles receiving a tool call request response", %{model: model} do
@@ -737,6 +896,111 @@ defmodule ChatModels.ChatOllamaAITest do
                }
              ] = msg.tool_calls
     end
+
+    test "handles receiving a streamed complete tool call response" do
+      model = ChatOllamaAI.new!(%{model: "llama3.1:latest", stream: true})
+
+      response = %{
+        "created_at" => "2024-08-05T09:13:24.222066Z",
+        "done" => true,
+        "done_reason" => "stop",
+        "message" => %{
+          "content" => "",
+          "role" => "assistant",
+          "tool_calls" => [
+            %{
+              "function" => %{
+                "arguments" => %{"thing" => "hairbrush"},
+                "name" => "locator"
+              }
+            }
+          ]
+        },
+        "model" => "llama3.1"
+      }
+
+      assert %MessageDelta{} = delta = ChatOllamaAI.do_process_response(model, response)
+      assert delta.role == :assistant
+      assert delta.status == :complete
+
+      assert [
+               %LangChain.Message.ToolCall{
+                 type: :function,
+                 name: "locator",
+                 arguments: %{"thing" => "hairbrush"}
+               }
+             ] = delta.tool_calls
+    end
+
+    test "handles receiving a streamed incomplete tool call response" do
+      model = ChatOllamaAI.new!(%{model: "llama3.1:latest", stream: true})
+
+      response = %{
+        "created_at" => "2024-08-05T09:13:24.222066Z",
+        "done" => false,
+        "message" => %{
+          "content" => "",
+          "role" => "assistant",
+          "tool_calls" => [
+            %{
+              "function" => %{
+                "arguments" => %{"thing" => "hairbrush"},
+                "name" => "locator"
+              }
+            }
+          ]
+        },
+        "model" => "llama3.1"
+      }
+
+      assert %MessageDelta{} = delta = ChatOllamaAI.do_process_response(model, response)
+      assert delta.role == :assistant
+      assert delta.status == :incomplete
+
+      assert [
+               %LangChain.Message.ToolCall{
+                 type: :function,
+                 name: "locator",
+                 arguments: %{"thing" => "hairbrush"}
+               }
+             ] = delta.tool_calls
+    end
+
+    test "handles receiving a streamed response with multiple tool calls" do
+      model = ChatOllamaAI.new!(%{model: "llama3.1:latest", stream: true})
+
+      response = %{
+        "done" => true,
+        "done_reason" => "stop",
+        "message" => %{
+          "content" => "",
+          "role" => "assistant",
+          "tool_calls" => [
+            %{
+              "function" => %{
+                "arguments" => %{"thing" => "hairbrush"},
+                "name" => "locator"
+              }
+            },
+            %{
+              "function" => %{
+                "arguments" => %{"thing" => "keys"},
+                "name" => "locator"
+              }
+            }
+          ]
+        },
+        "model" => "llama3.1"
+      }
+
+      assert %MessageDelta{} = delta = ChatOllamaAI.do_process_response(model, response)
+      assert delta.status == :complete
+
+      assert [
+               %LangChain.Message.ToolCall{name: "locator", arguments: %{"thing" => "hairbrush"}},
+               %LangChain.Message.ToolCall{name: "locator", arguments: %{"thing" => "keys"}}
+             ] = delta.tool_calls
+    end
   end
 
   describe "serialize_config/2" do
@@ -768,6 +1032,7 @@ defmodule ChatModels.ChatOllamaAITest do
 
       assert result == %{
                "endpoint" => "http://localhost:11434/api/chat",
+               "format" => nil,
                "keep_alive" => "5m",
                "mirostat" => 0,
                "mirostat_eta" => 0.1,
@@ -787,6 +1052,7 @@ defmodule ChatModels.ChatOllamaAITest do
                "stream" => true,
                "temperature" => 0.0,
                "tfs_z" => 1.0,
+               "think" => nil,
                "top_k" => 40,
                "top_p" => 0.9,
                "verbose_api" => false,

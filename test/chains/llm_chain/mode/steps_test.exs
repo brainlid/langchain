@@ -149,6 +149,18 @@ defmodule LangChain.Chains.LLMChain.Mode.StepsTest do
       ok = {:ok, chain}
       assert ^ok = Steps.check_max_runs(ok, max_runs: 25)
     end
+
+    test "includes count and limit in error message", %{chain: chain} do
+      chain =
+        chain
+        |> Steps.ensure_mode_state()
+        |> LLMChain.update_custom_context(%{mode_state: %{run_count: 50}})
+
+      assert {:error, _chain, %LangChainError{message: message}} =
+               Steps.check_max_runs({:continue, chain}, max_runs: 50)
+
+      assert message == "Exceeded maximum number of runs (50/50)"
+    end
   end
 
   describe "check_pause/2" do
@@ -261,6 +273,143 @@ defmodule LangChain.Chains.LLMChain.Mode.StepsTest do
 
       updated = Steps.ensure_mode_state(chain)
       assert updated.custom_context.mode_state == %{run_count: 5}
+    end
+  end
+
+  describe "check_tool_interrupts/2" do
+    test "returns continue when no tool messages", %{chain: chain} do
+      assert {:continue, ^chain} = Steps.check_tool_interrupts({:continue, chain}, [])
+    end
+
+    test "returns continue when tool message has no interrupts", %{chain: chain} do
+      tool_result =
+        ToolResult.new!(%{tool_call_id: "call_1", name: "search", content: "found it"})
+
+      tool_message = Message.new_tool_result!(%{content: nil, tool_results: [tool_result]})
+      chain = LLMChain.add_message(chain, tool_message)
+
+      assert {:continue, ^chain} = Steps.check_tool_interrupts({:continue, chain}, [])
+    end
+
+    test "returns interrupt when single tool result is interrupted", %{chain: chain} do
+      interrupt_data = %{type: :subagent_hitl, sub_agent_id: "agent-1"}
+
+      tool_result =
+        ToolResult.new!(%{
+          tool_call_id: "call_1",
+          name: "task",
+          content: "SubAgent requires approval.",
+          is_interrupt: true,
+          interrupt_data: interrupt_data
+        })
+
+      tool_message = Message.new_tool_result!(%{content: nil, tool_results: [tool_result]})
+      chain = LLMChain.add_message(chain, tool_message)
+
+      assert {:interrupt, ^chain, returned_data} =
+               Steps.check_tool_interrupts({:continue, chain}, [])
+
+      # For single interrupt, data is the interrupt_data with tool_call_id merged in
+      assert returned_data.type == :subagent_hitl
+      assert returned_data.sub_agent_id == "agent-1"
+      assert returned_data.tool_call_id == "call_1"
+    end
+
+    test "returns multiple_interrupts when multiple results interrupted", %{chain: chain} do
+      result1 =
+        ToolResult.new!(%{
+          tool_call_id: "call_1",
+          name: "task",
+          content: "Agent 1 interrupted",
+          is_interrupt: true,
+          interrupt_data: %{type: :subagent_hitl, sub_agent_id: "agent-1"}
+        })
+
+      result2 =
+        ToolResult.new!(%{
+          tool_call_id: "call_2",
+          name: "task",
+          content: "Agent 2 interrupted",
+          is_interrupt: true,
+          interrupt_data: %{type: :subagent_hitl, sub_agent_id: "agent-2"}
+        })
+
+      tool_message =
+        Message.new_tool_result!(%{content: nil, tool_results: [result1, result2]})
+
+      chain = LLMChain.add_message(chain, tool_message)
+
+      assert {:interrupt, ^chain, data} =
+               Steps.check_tool_interrupts({:continue, chain}, [])
+
+      assert data.type == :multiple_interrupts
+      assert length(data.interrupts) == 2
+      assert Enum.at(data.interrupts, 0).tool_call_id == "call_1"
+      assert Enum.at(data.interrupts, 1).tool_call_id == "call_2"
+    end
+
+    test "passes through terminal results", %{chain: chain} do
+      ok = {:ok, chain}
+      assert ^ok = Steps.check_tool_interrupts(ok, [])
+
+      pause = {:pause, chain}
+      assert ^pause = Steps.check_tool_interrupts(pause, [])
+    end
+
+    test "does not crash when single interrupted result has nil interrupt_data", %{chain: chain} do
+      # Simulates a ToolResult restored from persistence: `interrupt_data` is a
+      # virtual field, so it always comes back as nil. Without the guard,
+      # extract_interrupt_data/1 would raise BadMapError on Map.put(nil, ...).
+      tool_result =
+        ToolResult.new!(%{
+          tool_call_id: "call_1",
+          name: "ask_user",
+          content: "Waiting for user response...",
+          is_interrupt: true,
+          interrupt_data: nil
+        })
+
+      tool_message = Message.new_tool_result!(%{content: nil, tool_results: [tool_result]})
+      chain = LLMChain.add_message(chain, tool_message)
+
+      assert {:interrupt, ^chain, returned_data} =
+               Steps.check_tool_interrupts({:continue, chain}, [])
+
+      assert returned_data == %{tool_call_id: "call_1"}
+    end
+
+    test "does not crash when multiple interrupted results have nil interrupt_data", %{
+      chain: chain
+    } do
+      result1 =
+        ToolResult.new!(%{
+          tool_call_id: "call_1",
+          name: "ask_user",
+          content: "Interrupted",
+          is_interrupt: true,
+          interrupt_data: nil
+        })
+
+      result2 =
+        ToolResult.new!(%{
+          tool_call_id: "call_2",
+          name: "ask_user",
+          content: "Interrupted",
+          is_interrupt: true,
+          interrupt_data: nil
+        })
+
+      tool_message =
+        Message.new_tool_result!(%{content: nil, tool_results: [result1, result2]})
+
+      chain = LLMChain.add_message(chain, tool_message)
+
+      assert {:interrupt, ^chain, data} =
+               Steps.check_tool_interrupts({:continue, chain}, [])
+
+      assert data.type == :multiple_interrupts
+      assert Enum.at(data.interrupts, 0) == %{tool_call_id: "call_1"}
+      assert Enum.at(data.interrupts, 1) == %{tool_call_id: "call_2"}
     end
   end
 

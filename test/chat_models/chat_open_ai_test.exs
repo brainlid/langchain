@@ -135,6 +135,52 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       %ChatOpenAI{} = openai = ChatOpenAI.new!(%{"parallel_tool_calls" => false})
       assert openai.parallel_tool_calls == false
     end
+
+    test "supports setting logprobs and top_logprobs" do
+      {:ok, openai} =
+        ChatOpenAI.new(%{
+          "model" => @test_model,
+          "logprobs" => true,
+          "top_logprobs" => 5
+        })
+
+      assert openai.logprobs == true
+      assert openai.top_logprobs == 5
+    end
+
+    test "validates top_logprobs requires logprobs to be enabled" do
+      assert {:error, changeset} =
+               ChatOpenAI.new(%{
+                 "model" => @test_model,
+                 "top_logprobs" => 5
+               })
+
+      refute changeset.valid?
+      assert {"requires logprobs to be enabled", _} = changeset.errors[:top_logprobs]
+    end
+
+    test "validates top_logprobs range 0-20" do
+      assert {:error, changeset} =
+               ChatOpenAI.new(%{
+                 "model" => @test_model,
+                 "logprobs" => true,
+                 "top_logprobs" => 21
+               })
+
+      refute changeset.valid?
+      assert {_msg, _} = changeset.errors[:top_logprobs]
+    end
+
+    test "allows logprobs without top_logprobs" do
+      {:ok, openai} =
+        ChatOpenAI.new(%{
+          "model" => @test_model,
+          "logprobs" => true
+        })
+
+      assert openai.logprobs == true
+      assert openai.top_logprobs == nil
+    end
   end
 
   describe "for_api/3" do
@@ -270,6 +316,26 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert data.model == @test_model
       assert data.parallel_tool_calls == false
     end
+
+    test "includes logprobs and top_logprobs when set" do
+      {:ok, openai} =
+        ChatOpenAI.new(%{
+          model: @test_model,
+          logprobs: true,
+          top_logprobs: 3
+        })
+
+      data = ChatOpenAI.for_api(openai, [], [])
+      assert data.logprobs == true
+      assert data.top_logprobs == 3
+    end
+
+    test "omits logprobs when not set" do
+      {:ok, openai} = ChatOpenAI.new(%{model: @test_model})
+      data = ChatOpenAI.for_api(openai, [], [])
+      assert data[:logprobs] == nil
+      assert data[:top_logprobs] == nil
+    end
   end
 
   describe "for_api/1" do
@@ -404,7 +470,8 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
             "type" => "string"
           }
         },
-        "required" => ["p1"]
+        "required" => ["p1"],
+        "additionalProperties" => false
       }
 
       {:ok, fun} =
@@ -950,6 +1017,62 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     end
 
     @tag live_call: true, live_open_ai: true
+    test "non-streamed response returns logprobs when enabled" do
+      {:ok, chat} =
+        ChatOpenAI.new(%{
+          temperature: 1,
+          seed: 0,
+          stream: false,
+          logprobs: true,
+          top_logprobs: 3
+        })
+
+      {:ok, [result]} =
+        ChatOpenAI.call(chat, [
+          Message.new_user!("Return the response 'Colorful Threads'.")
+        ])
+
+      assert %{"logprobs" => logprobs} = result.metadata
+      assert %{"content" => [first_token | _rest]} = logprobs
+      assert is_binary(first_token["token"])
+      assert is_float(first_token["logprob"])
+      assert [_ | _] = first_token["top_logprobs"]
+      assert length(first_token["top_logprobs"]) <= 3
+    end
+
+    @tag live_call: true, live_open_ai: true
+    test "streamed response returns logprobs on each delta" do
+      {:ok, chat} =
+        ChatOpenAI.new(%{
+          temperature: 1,
+          seed: 0,
+          stream: true,
+          logprobs: true,
+          top_logprobs: 2
+        })
+
+      {:ok, result} =
+        ChatOpenAI.call(chat, [
+          Message.new_user!("Return the response 'Colorful Threads'.")
+        ])
+
+      deltas = List.flatten(result)
+
+      # Content-bearing deltas should have logprobs in metadata
+      content_deltas = Enum.filter(deltas, &(&1.content != nil and &1.content != ""))
+
+      for delta <- content_deltas do
+        assert %{"logprobs" => %{"content" => [token_info]}} = delta.metadata
+        assert is_binary(token_info["token"])
+        assert is_float(token_info["logprob"])
+        assert is_list(token_info["top_logprobs"])
+        assert length(token_info["top_logprobs"]) <= 2
+      end
+
+      assert length(content_deltas) > 0
+    end
+
+    @tag live_call: true, live_open_ai: true
     test "executing a function with arguments", %{weather: weather} do
       {:ok, chat} = ChatOpenAI.new(%{seed: 0, stream: false, model: @gpt4})
 
@@ -1125,6 +1248,105 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert message.role == :assistant
       assert message.index == 0
     end
+
+    @tag live_call: true, live_cloudflare: true
+    test "supports Cloudflare Workers AI (OpenAI-compatible) with Kimi K2.6" do
+      # https://developers.cloudflare.com/workers-ai/configuration/open-ai-compatibility/
+      account_id = System.fetch_env!("CLOUDFLARE_ACCOUNT_ID")
+      api_key = System.fetch_env!("CLOUDFLARE_API_TOKEN")
+
+      endpoint =
+        "https://api.cloudflare.com/client/v4/accounts/#{account_id}" <>
+          "/ai/v1/chat/completions"
+
+      {:ok, chat} =
+        ChatOpenAI.new(%{
+          endpoint: endpoint,
+          api_key: api_key,
+          model: "@cf/moonshotai/kimi-k2.6",
+          temperature: 0,
+          seed: 0,
+          stream: false
+        })
+
+      {:ok, [message]} =
+        ChatOpenAI.call(
+          chat,
+          [
+            Message.new_system!("You answer with a single word."),
+            Message.new_user!("Reply with the single word: PONG")
+          ],
+          []
+        )
+
+      assert message.role == :assistant
+      assert ContentPart.parts_to_string(message.content) =~ ~r/PONG/i
+    end
+
+    @tag live_call: true, live_cloudflare: true
+    test "Cloudflare Kimi K2.6 streamed tool call assembles into a complete ToolCall",
+         %{weather: weather} do
+      account_id = System.fetch_env!("CLOUDFLARE_ACCOUNT_ID")
+      api_key = System.fetch_env!("CLOUDFLARE_API_TOKEN")
+
+      endpoint =
+        "https://api.cloudflare.com/client/v4/accounts/#{account_id}" <>
+          "/ai/v1/chat/completions"
+
+      handler = %{
+        on_llm_new_delta: fn %LLMChain{} = _chain, deltas ->
+          send(self(), deltas)
+        end,
+        on_message_processed: fn _chain, message ->
+          send(self(), {:test_message_processed, message})
+        end
+      }
+
+      model =
+        ChatOpenAI.new!(%{
+          endpoint: endpoint,
+          api_key: api_key,
+          model: "@cf/moonshotai/kimi-k2.6",
+          temperature: 0,
+          seed: 0,
+          stream: true
+        })
+
+      original_chain =
+        %{llm: model}
+        |> LLMChain.new!()
+        |> LLMChain.add_callback(handler)
+        |> LLMChain.add_tools([weather])
+        |> LLMChain.add_messages([
+          Message.new_user!("What is the weather like in Moab, Utah? Use the tool.")
+        ])
+
+      {:ok, updated_chain} = LLMChain.run(original_chain)
+
+      # The model should have streamed back an assistant message containing
+      # the get_weather tool call with both required arguments parsed.
+      assert %Message{role: :assistant} = updated_chain.last_message
+      assert [%ToolCall{} = call] = updated_chain.last_message.tool_calls
+      assert call.name == "get_weather"
+      assert call.type == :function
+      assert call.status == :complete
+      assert is_map(call.arguments)
+      assert call.arguments["city"] =~ ~r/moab/i
+      assert call.arguments["state"] =~ ~r/ut/i
+
+      assert_received {:test_message_processed, %Message{} = processed}
+      assert processed == updated_chain.last_message
+
+      # Collect every delta the streaming callback sent us and confirm that
+      # merging them produces the same final message LLMChain assembled.
+      # This is the real streaming-pipeline test: SSE frame decoding +
+      # incremental tool_call argument accumulation + merge.
+      deltas = collect_messages() |> List.flatten()
+      assert length(deltas) > 0, "expected at least one streamed delta, got none"
+
+      {:ok, delta_merged_chain} = LLMChain.apply_deltas(original_chain, deltas)
+      assert delta_merged_chain.last_message == updated_chain.last_message
+    end
   end
 
   describe "use in LLMChain" do
@@ -1204,7 +1426,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       deltas = collect_messages() |> List.flatten()
 
       # apply the deltas to the original chain
-      delta_merged_chain = LLMChain.apply_deltas(original_chain, deltas)
+      {:ok, delta_merged_chain} = LLMChain.apply_deltas(original_chain, deltas)
 
       # the received merged deltas should match the ones assembled by the chain.
       # This is also verifying that we're receiving the token usage via sent
@@ -1673,6 +1895,73 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert msg1.content == [ContentPart.text!("Greetings!")]
       assert msg2.content == [ContentPart.text!("Howdy!")]
     end
+
+    test "includes logprobs in message metadata when present", %{model: model} do
+      logprobs_data = %{
+        "content" => [
+          %{
+            "token" => "Hello",
+            "logprob" => -0.0002,
+            "bytes" => [72, 101, 108, 108, 111],
+            "top_logprobs" => [
+              %{"token" => "Hello", "logprob" => -0.0002, "bytes" => [72, 101, 108, 108, 111]}
+            ]
+          }
+        ]
+      }
+
+      response = %{
+        "message" => %{"role" => "assistant", "content" => "Hello"},
+        "finish_reason" => "stop",
+        "index" => 0,
+        "logprobs" => logprobs_data
+      }
+
+      assert %Message{} = msg = ChatOpenAI.do_process_response(model, response)
+      assert msg.metadata == %{"logprobs" => logprobs_data}
+    end
+
+    test "does not set logprobs metadata when logprobs is nil", %{model: model} do
+      response = %{
+        "message" => %{"role" => "assistant", "content" => "Hello"},
+        "finish_reason" => "stop",
+        "index" => 0,
+        "logprobs" => nil
+      }
+
+      assert %Message{} = msg = ChatOpenAI.do_process_response(model, response)
+      assert msg.metadata == nil
+    end
+
+    test "includes logprobs in metadata for tool call messages", %{model: model} do
+      logprobs_data = %{
+        "content" => nil,
+        "refusal" => nil
+      }
+
+      response = %{
+        "finish_reason" => "tool_calls",
+        "message" => %{
+          "role" => "assistant",
+          "content" => nil,
+          "tool_calls" => [
+            %{
+              "id" => "call_123",
+              "type" => "function",
+              "function" => %{
+                "name" => "hello_world",
+                "arguments" => "{}"
+              }
+            }
+          ]
+        },
+        "index" => 0,
+        "logprobs" => logprobs_data
+      }
+
+      assert %Message{} = msg = ChatOpenAI.do_process_response(model, response)
+      assert msg.metadata == %{"logprobs" => logprobs_data}
+    end
   end
 
   describe "streaming examples" do
@@ -1789,6 +2078,29 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       # nothing incomplete. Parsed 2 objects.
       assert incomplete == ""
       assert parsed == [json_1, json_2]
+    end
+
+    test "ignores SSE comment lines (e.g. OpenRouter keep-alives)" do
+      # OpenRouter sends SSE comments (lines starting with ":") to keep the
+      # connection alive. They are ignorable per the SSE spec and must not be
+      # buffered as incomplete JSON, which would poison all following chunks.
+      data = ": OPENROUTER PROCESSING\n\n"
+
+      {parsed, incomplete} = ChatOpenAI.decode_stream({data, ""})
+
+      assert incomplete == ""
+      assert parsed == []
+    end
+
+    test "parses a data chunk that follows an SSE comment", %{json_1: json_1} do
+      data =
+        ": OPENROUTER PROCESSING\n\n" <>
+          "data: {\"id\":\"chatcmpl-7e8yp1xBhriNXiqqZ0xJkgNrmMuGS\",\"object\":\"chat.completion.chunk\",\"created\":1689801995,\"model\":\"gpt-4-0613\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":null,\"function_call\":{\"name\":\"calculator\",\"arguments\":\"\"}},\"finish_reason\":null}]}\n\n"
+
+      {parsed, incomplete} = ChatOpenAI.decode_stream({data, ""})
+
+      assert incomplete == ""
+      assert parsed == [json_1]
     end
 
     test "correctly parses when data content contains spaces such as python code with indentation" do
@@ -1981,6 +2293,30 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert call.arguments == nil
     end
 
+    test "includes logprobs in delta metadata when present", %{model: model} do
+      logprobs_data = %{
+        "content" => [
+          %{
+            "token" => "Hi",
+            "logprob" => -0.001,
+            "bytes" => [72, 105],
+            "top_logprobs" => []
+          }
+        ]
+      }
+
+      raw_delta = %{
+        "delta" => %{"content" => "Hi", "role" => "assistant"},
+        "finish_reason" => nil,
+        "index" => 0,
+        "logprobs" => logprobs_data
+      }
+
+      %MessageDelta{} = delta = ChatOpenAI.do_process_response(model, raw_delta)
+      assert delta.content == "Hi"
+      assert delta.metadata == %{"logprobs" => logprobs_data}
+    end
+
     test "parses individual tool_calls in a delta message", %{model: model} do
       # chunk 1
       tool_call_response = %{
@@ -2158,6 +2494,40 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert delta4.content == nil
       assert delta4.index == 0
       assert delta4.tool_calls == nil
+    end
+
+    test "handles streaming chunk with both choices and usage data", %{model: model} do
+      # Some OpenAI-compatible providers (e.g. DeepSeek) send token usage in
+      # the final streaming chunk alongside a choice with a delta, rather
+      # than in a separate chunk with empty choices.
+      {:ok, model} = model
+
+      response = %{
+        "choices" => [
+          %{
+            "index" => 0,
+            "delta" => %{
+              "content" => ""
+            },
+            "logprobs" => nil,
+            "finish_reason" => "stop"
+          }
+        ],
+        "usage" => %{
+          "prompt_tokens" => 11,
+          "completion_tokens" => 12,
+          "total_tokens" => 23,
+          "prompt_tokens_details" => %{
+            "cached_tokens" => 0
+          }
+        }
+      }
+
+      assert [%MessageDelta{} = delta] = ChatOpenAI.do_process_response(model, response)
+      assert delta.status == :complete
+
+      # Token usage is extracted and attached to the delta
+      assert %TokenUsage{input: 11, output: 12} = delta.metadata.usage
     end
   end
 

@@ -589,6 +589,7 @@ defmodule LangChain.Chains.LLMChain do
           {:ok, t()}
           | {:ok, t(), term()}
           | {:pause, t()}
+          | {:interrupt, t(), term()}
           | {:error, t(), LangChainError.t()}
   def run(chain, opts \\ [])
 
@@ -636,26 +637,37 @@ defmodule LangChain.Chains.LLMChain do
         custom_context: chain.custom_context
       }
 
-      LangChain.Telemetry.span(
-        [:langchain, :chain, :execute],
-        metadata,
-        fn ->
-          # Run the chain and return the success or error results. NOTE: We do not add
-          # the current LLM to the list and process everything through a single
-          # codepath because failing after attempted fallbacks returns a different
-          # error.
-          if Keyword.has_key?(opts, :with_fallbacks) do
-            # run function and using fallbacks as needed.
-            with_fallbacks(chain, opts, function_to_run)
-          else
-            # run it directly right now and return the success or error
-            function_to_run.(chain)
-          end
-        end,
-        enrich_stop: &chain_stop_metadata/1
-      )
+      result =
+        LangChain.Telemetry.span(
+          [:langchain, :chain, :execute],
+          metadata,
+          fn ->
+            # Run the chain and return the success or error results. NOTE: We do not add
+            # the current LLM to the list and process everything through a single
+            # codepath because failing after attempted fallbacks returns a different
+            # error.
+            if Keyword.has_key?(opts, :with_fallbacks) do
+              # run function and using fallbacks as needed.
+              with_fallbacks(chain, opts, function_to_run)
+            else
+              # run it directly right now and return the success or error
+              function_to_run.(chain)
+            end
+          end,
+          enrich_stop: &chain_stop_metadata/1
+        )
+
+      case result do
+        {:error, error_chain, reason} ->
+          Callbacks.fire(error_chain.callbacks, :on_error, [error_chain, reason])
+          result
+
+        _other ->
+          result
+      end
     rescue
       err in LangChainError ->
+        Callbacks.fire(chain.callbacks, :on_error, [chain, err])
         {:error, chain, err}
     end
   end
@@ -684,13 +696,9 @@ defmodule LangChain.Chains.LLMChain do
   defp initial_run_logging(%LLMChain{verbose: false} = _chain), do: :ok
 
   defp initial_run_logging(%LLMChain{verbose: true} = chain) do
-    # set the callback function on the chain
-    if chain.verbose, do: IO.inspect(chain.llm, label: "LLM")
-
-    if chain.verbose, do: IO.inspect(chain.messages, label: "MESSAGES")
-
-    if chain.verbose, do: IO.inspect(chain.tools, label: "TOOLS")
-
+    IO.inspect(chain.llm, label: "LLM")
+    IO.inspect(chain.messages, label: "MESSAGES")
+    IO.inspect(chain.tools, label: "TOOLS")
     :ok
   end
 
@@ -732,8 +740,21 @@ defmodule LangChain.Chains.LLMChain do
 
     try do
       case run_fn.(use_chain) do
-        {:ok, result} ->
-          {:ok, result}
+        {:ok, _chain} = ok ->
+          ok
+
+        {:ok, _chain, _extra} = ok ->
+          ok
+
+        {:interrupt, _chain, _data} = interrupt ->
+          # Interrupt is a deliberate pause for human-in-the-loop or similar
+          # workflows. It is not an error and should not be retried.
+          interrupt
+
+        {:pause, _chain} = pause ->
+          # Pause is a clean checkpoint that can be resumed later.
+          # It is not an error and should not be retried.
+          pause
 
         {:error, _error_chain, reason} = error ->
           # Check with the chat model if this error should be retried on a
@@ -751,9 +772,9 @@ defmodule LangChain.Chains.LLMChain do
     rescue
       err ->
         # Log the error and stack trace, then try again.
-        Logger.error(
+        Logger.warning(fn ->
           "Rescued from exception during with_fallback processing. Error: #{inspect(err)}\nStack trace:\n#{Exception.format(:error, err, __STACKTRACE__)}"
-        )
+        end)
 
         try_chain_with_llm(use_chain, tail, before_fallback_fn, run_fn)
     end
@@ -831,16 +852,27 @@ defmodule LangChain.Chains.LLMChain do
         custom_context: chain.custom_context
       }
 
-      LangChain.Telemetry.span(
-        [:langchain, :chain, :execute],
-        metadata,
-        fn ->
-          Modes.UntilToolUsed.run(chain, mode_opts)
-        end,
-        enrich_stop: &chain_stop_metadata/1
-      )
+      result =
+        LangChain.Telemetry.span(
+          [:langchain, :chain, :execute],
+          metadata,
+          fn ->
+            Modes.UntilToolUsed.run(chain, mode_opts)
+          end,
+          enrich_stop: &chain_stop_metadata/1
+        )
+
+      case result do
+        {:error, error_chain, reason} ->
+          Callbacks.fire(error_chain.callbacks, :on_error, [error_chain, reason])
+          result
+
+        _other ->
+          result
+      end
     rescue
       err in LangChainError ->
+        Callbacks.fire(chain.callbacks, :on_error, [chain, err])
         {:error, chain, err}
     end
   end
@@ -896,31 +928,79 @@ defmodule LangChain.Chains.LLMChain do
 
       {:ok, [%MessageDelta{} | _] = deltas} ->
         if chain.verbose_deltas, do: IO.inspect(deltas, label: "DELTA MESSAGE LIST RESPONSE")
-        updated_chain = apply_deltas(chain, deltas)
 
-        if chain.verbose,
-          do: IO.inspect(updated_chain.last_message, label: "COMBINED DELTA MESSAGE RESPONSE")
+        case apply_deltas(chain, deltas) do
+          {:ok, updated_chain} ->
+            if chain.verbose,
+              do: IO.inspect(updated_chain.last_message, label: "COMBINED DELTA MESSAGE RESPONSE")
 
-        {:ok, updated_chain}
+            {:ok, updated_chain}
+
+          {:error, _chain, _reason} = error ->
+            handle_delta_error(error)
+        end
 
       {:ok, [[%MessageDelta{} | _] | _] = deltas} ->
         if chain.verbose_deltas, do: IO.inspect(deltas, label: "DELTA MESSAGE LIST RESPONSE")
-        updated_chain = apply_deltas(chain, deltas)
 
-        if chain.verbose,
-          do: IO.inspect(updated_chain.last_message, label: "COMBINED DELTA MESSAGE RESPONSE")
+        case apply_deltas(chain, deltas) do
+          {:ok, updated_chain} ->
+            if chain.verbose,
+              do: IO.inspect(updated_chain.last_message, label: "COMBINED DELTA MESSAGE RESPONSE")
 
-        {:ok, updated_chain}
+            {:ok, updated_chain}
+
+          {:error, _chain, _reason} = error ->
+            handle_delta_error(error)
+        end
 
       {:error, %LangChainError{} = reason} ->
         if chain.verbose, do: IO.inspect(reason, label: "ERROR")
-        Logger.error("Error during chat call. Reason: #{inspect(reason)}")
+        Callbacks.fire(chain.callbacks, :on_llm_error, [chain, reason])
         {:error, chain, reason}
 
       {:error, string_reason} when is_binary(string_reason) ->
         if chain.verbose, do: IO.inspect(string_reason, label: "ERROR")
-        Logger.error("Error during chat call. Reason: #{inspect(string_reason)}")
-        {:error, chain, LangChainError.exception(message: string_reason)}
+        reason = LangChainError.exception(message: string_reason)
+        Callbacks.fire(chain.callbacks, :on_llm_error, [chain, reason])
+        {:error, chain, reason}
+
+      {:ok, []} ->
+        # Empty response — all choices were filtered out (e.g., thinking model
+        # streaming where all chunks produce empty parsed results). Treat as
+        # an error rather than crashing with CaseClauseError.
+        Logger.warning("LLM returned an empty response (no messages or deltas)")
+
+        {:error, chain,
+         LangChainError.exception(
+           type: "empty_response",
+           message:
+             "LLM returned an empty response with no messages. " <>
+               "This can happen with thinking/reasoning models during streaming."
+         )}
+
+      {:ok, [[error: %LangChainError{} = reason] | _]} ->
+        if chain.verbose, do: IO.inspect(reason, label: "ERROR")
+        Logger.error("Error during chat call. Reason: #{inspect(reason)}")
+        {:error, chain, reason}
+
+      {:ok, unexpected} ->
+        Logger.warning("Unexpected LLM response format: #{inspect(unexpected)}")
+
+        {:error, chain,
+         LangChainError.exception(
+           type: "unexpected_response",
+           message: "Unexpected response format from LLM: #{inspect(unexpected)}"
+         )}
+
+      {:error, reason} ->
+        Logger.error("Error during chat call. Reason: #{inspect(reason)}")
+
+        {:error, chain,
+         LangChainError.exception(
+           type: "unknown_error",
+           message: "LLM error: #{inspect(reason)}"
+         )}
     end
   end
 
@@ -972,21 +1052,28 @@ defmodule LangChain.Chains.LLMChain do
   `last_message` and list of messages are updated. The message is processed and
   fires any registered callbacks.
   """
-  @spec apply_deltas(t(), list()) :: t()
+  @spec apply_deltas(t(), list()) :: {:ok, t()} | {:error, t(), LangChainError.t()}
   def apply_deltas(%LLMChain{} = chain, deltas) when is_list(deltas) do
-    chain
-    |> merge_deltas(deltas)
-    |> delta_to_message_when_complete()
+    case merge_deltas(chain, deltas) do
+      {:error, _chain, _reason} = error ->
+        error
+
+      %LLMChain{} = merged_chain ->
+        delta_to_message_when_complete(merged_chain)
+    end
   end
 
   @doc """
   Merge a list of deltas into the chain.
   """
-  @spec merge_deltas(t(), list()) :: t()
+  @spec merge_deltas(t(), list()) :: t() | {:error, t(), LangChainError.t()}
   def merge_deltas(%LLMChain{} = chain, deltas) do
     deltas
     |> List.flatten()
-    |> Enum.reduce(chain, fn d, acc -> merge_delta(acc, d) end)
+    |> Enum.reduce(chain, fn
+      _d, {:error, _chain, _reason} = error -> error
+      d, %LLMChain{} = acc -> merge_delta(acc, d)
+    end)
   end
 
   @doc """
@@ -1014,8 +1101,14 @@ defmodule LangChain.Chains.LLMChain do
   end
 
   # Handle when the server is overloaded and cancelled the stream on the server side.
-  def merge_delta(%LLMChain{} = chain, {:error, %LangChainError{type: "overloaded"}}) do
-    cancel_delta(chain, :cancelled)
+  def merge_delta(%LLMChain{} = chain, {:error, %LangChainError{type: "overloaded"} = error}) do
+    cancel_delta(chain, :cancelled, error)
+  end
+
+  # Handle any other error received during streaming (e.g. content filtering, invalid_request_error).
+  def merge_delta(%LLMChain{} = chain, {:error, %LangChainError{} = error}) do
+    Logger.warning("Received error during streaming: #{error.message}")
+    cancel_delta(chain, :cancelled, error)
   end
 
   # Unified function to augment tool calls with display_text and optionally
@@ -1092,6 +1185,28 @@ defmodule LangChain.Chains.LLMChain do
     %LLMChain{chain | delta: nil}
   end
 
+  # Handle a delta-conversion error like a retryable LLM error: fire
+  # :on_llm_error, increment the failure count, and recurse into do_run/1 if
+  # retries remain. Streaming state is already cleared by
+  # delta_to_message_when_complete/1 before this is called, so the retry starts
+  # from a clean chain. On final failure we propagate the original `reason`
+  # (e.g. "delta_conversion_failed") rather than letting do_run/1's guard
+  # convert it to a generic "exceeded_failure_count" — downstream apps
+  # pattern-match on the original type for user-facing copy.
+  @spec handle_delta_error({:error, t(), LangChainError.t()}) ::
+          {:ok, t()} | {:error, t(), LangChainError.t()}
+  defp handle_delta_error({:error, error_chain, reason}) do
+    Callbacks.fire(error_chain.callbacks, :on_llm_error, [error_chain, reason])
+    bumped = increment_current_failure_count(error_chain)
+
+    if bumped.current_failure_count >= bumped.max_retry_count do
+      Callbacks.fire(bumped.callbacks, :on_retries_exceeded, [bumped])
+      {:error, bumped, reason}
+    else
+      do_run(bumped)
+    end
+  end
+
   # Resolve display text for a tool call by looking up the Function definition.
   # Falls back to a humanized version of the tool name.
   @spec resolve_display_text(map(), String.t()) :: String.t()
@@ -1107,7 +1222,8 @@ defmodule LangChain.Chains.LLMChain do
 
   If the delta is `nil`, the chain is returned unmodified.
   """
-  @spec delta_to_message_when_complete(t()) :: t()
+  @spec delta_to_message_when_complete(t()) ::
+          {:ok, t()} | {:error, t(), LangChainError.t()}
   def delta_to_message_when_complete(
         %LLMChain{delta: %MessageDelta{status: status} = delta} = chain
       )
@@ -1115,19 +1231,24 @@ defmodule LangChain.Chains.LLMChain do
     # it's complete. Attempt to convert delta to a message
     case MessageDelta.to_message(delta) do
       {:ok, %Message{} = message} ->
-        process_message(reset_streaming_state(chain), message)
+        {:ok, process_message(reset_streaming_state(chain), message)}
 
       {:error, reason} ->
         # Delta conversion failed. Log the error and clear the delta to prevent
         # it from interfering with subsequent API calls.
         Logger.warning("Error applying delta message. Reason: #{inspect(reason)}")
-        reset_streaming_state(chain)
+
+        {:error, reset_streaming_state(chain),
+         LangChainError.exception(
+           type: "delta_conversion_failed",
+           message: "Error applying delta message: #{inspect(reason)}"
+         )}
     end
   end
 
   def delta_to_message_when_complete(%LLMChain{} = chain) do
     # either no delta or incomplete
-    chain
+    {:ok, chain}
   end
 
   # Process an assistant message sequentially through each message processor.
@@ -1140,7 +1261,10 @@ defmodule LangChain.Chains.LLMChain do
       )
       when is_list(processors) and processors != [] do
     # start `processed_content` with the message's content as a string
-    message = %Message{message | processed_content: ContentPart.parts_to_string(message.content)}
+    message = %Message{
+      message
+      | processed_content: ContentPart.content_to_string(message.content) || ""
+    }
 
     processors
     |> Enum.reduce_while(message, fn proc, m = _acc ->
@@ -1158,7 +1282,7 @@ defmodule LangChain.Chains.LLMChain do
         end
       rescue
         err ->
-          Logger.error("Exception raised in processor #{inspect(proc)}")
+          Logger.warning(fn -> "Exception raised in processor #{inspect(proc)}" end)
 
           {:halt,
            {:halted, m,
@@ -1339,6 +1463,9 @@ defmodule LangChain.Chains.LLMChain do
         grouped[:async]
         |> Enum.map(fn {call, func} ->
           Task.async(fn ->
+            # Fires inside the spawned Task so handlers (e.g. tenancy/OTel
+            # propagation) can re-apply per-process state before the tool runs.
+            Callbacks.fire(chain.callbacks, :on_tool_pre_execution, [chain, call, func])
             result = execute_tool_call(call, func, verbose: verbose, context: use_context)
             {call, func, result}
           end)
@@ -1348,14 +1475,19 @@ defmodule LangChain.Chains.LLMChain do
       # Fire completed/failed callbacks for async tools and extract results
       async_tool_results =
         Enum.map(async_results, fn {call, _func, result} ->
-          if result.is_error do
-            Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
-              chain,
-              call,
-              result.content
-            ])
-          else
-            Callbacks.fire(chain.callbacks, :on_tool_execution_completed, [chain, call, result])
+          cond do
+            result.is_interrupt ->
+              :ok
+
+            result.is_error ->
+              Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
+                chain,
+                call,
+                result.content
+              ])
+
+            true ->
+              Callbacks.fire(chain.callbacks, :on_tool_execution_completed, [chain, call, result])
           end
 
           result
@@ -1364,17 +1496,23 @@ defmodule LangChain.Chains.LLMChain do
       # Execute sync tools with immediate callbacks
       sync_tool_results =
         Enum.map(grouped[:sync], fn {call, func} ->
+          Callbacks.fire(chain.callbacks, :on_tool_pre_execution, [chain, call, func])
           result = execute_tool_call(call, func, verbose: verbose, context: use_context)
 
           # Fire completed/failed callback immediately after execution
-          if result.is_error do
-            Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
-              chain,
-              call,
-              result.content
-            ])
-          else
-            Callbacks.fire(chain.callbacks, :on_tool_execution_completed, [chain, call, result])
+          cond do
+            result.is_interrupt ->
+              :ok
+
+            result.is_error ->
+              Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
+                chain,
+                call,
+                result.content
+              ])
+
+            true ->
+              Callbacks.fire(chain.callbacks, :on_tool_execution_completed, [chain, call, result])
           end
 
           result
@@ -1389,10 +1527,23 @@ defmodule LangChain.Chains.LLMChain do
           # Fire failed callback for invalid tools
           Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [chain, call, text])
 
-          ToolResult.new!(%{tool_call_id: call.call_id, content: text, is_error: true})
+          ToolResult.new!(%{
+            tool_call_id: call.call_id,
+            name: call.name,
+            content: text,
+            is_error: true
+          })
         end)
 
       combined_results = async_tool_results ++ sync_tool_results ++ invalid_calls
+
+      # Fire interrupt callback if any tools interrupted
+      interrupted_results = Enum.filter(combined_results, & &1.is_interrupt)
+
+      if interrupted_results != [] do
+        Callbacks.fire(chain.callbacks, :on_tool_interrupted, [chain, interrupted_results])
+      end
+
       # create a single tool message that contains all the tool results
       result_message =
         Message.new_tool_result!(%{content: nil, tool_results: combined_results})
@@ -1475,22 +1626,33 @@ defmodule LangChain.Chains.LLMChain do
                   func
                 ])
 
+                Callbacks.fire(chain.callbacks, :on_tool_pre_execution, [
+                  chain,
+                  tool_call,
+                  func
+                ])
+
                 result =
                   execute_tool_call(tool_call, func, verbose: verbose, context: use_context)
 
-                # Fire completed/failed callback after execution
-                if result.is_error do
-                  Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
-                    chain,
-                    tool_call,
-                    result.content
-                  ])
-                else
-                  Callbacks.fire(chain.callbacks, :on_tool_execution_completed, [
-                    chain,
-                    tool_call,
-                    result
-                  ])
+                # Fire completed/failed callback after execution (skip interrupts)
+                cond do
+                  result.is_interrupt ->
+                    :ok
+
+                  result.is_error ->
+                    Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
+                      chain,
+                      tool_call,
+                      result.content
+                    ])
+
+                  true ->
+                    Callbacks.fire(chain.callbacks, :on_tool_execution_completed, [
+                      chain,
+                      tool_call,
+                      result
+                    ])
                 end
 
                 result
@@ -1527,22 +1689,33 @@ defmodule LangChain.Chains.LLMChain do
                   func
                 ])
 
+                Callbacks.fire(chain.callbacks, :on_tool_pre_execution, [
+                  chain,
+                  edited_call,
+                  func
+                ])
+
                 result =
                   execute_tool_call(edited_call, func, verbose: verbose, context: use_context)
 
-                # Fire completed/failed callback after execution
-                if result.is_error do
-                  Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
-                    chain,
-                    edited_call,
-                    result.content
-                  ])
-                else
-                  Callbacks.fire(chain.callbacks, :on_tool_execution_completed, [
-                    chain,
-                    edited_call,
-                    result
-                  ])
+                # Fire completed/failed callback after execution (skip interrupts)
+                cond do
+                  result.is_interrupt ->
+                    :ok
+
+                  result.is_error ->
+                    Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
+                      chain,
+                      edited_call,
+                      result.content
+                    ])
+
+                  true ->
+                    Callbacks.fire(chain.callbacks, :on_tool_execution_completed, [
+                      chain,
+                      edited_call,
+                      result
+                    ])
                 end
 
                 result
@@ -1584,6 +1757,13 @@ defmodule LangChain.Chains.LLMChain do
         end
       end)
 
+    # Fire interrupt callback if any tools interrupted
+    interrupted_results = Enum.filter(results, & &1.is_interrupt)
+
+    if interrupted_results != [] do
+      Callbacks.fire(chain.callbacks, :on_tool_interrupted, [chain, interrupted_results])
+    end
+
     # Create tool result message
     result_message = Message.new_tool_result!(%{content: nil, tool_results: results})
 
@@ -1607,6 +1787,17 @@ defmodule LangChain.Chains.LLMChain do
   end
 
   @doc """
+  Replace a tool result in the chain's messages by `tool_call_id`.
+
+  Delegates to `Message.replace_tool_result/3`.
+  """
+  @spec replace_tool_result(t(), String.t(), ToolResult.t()) :: t()
+  def replace_tool_result(%LLMChain{} = chain, tool_call_id, %ToolResult{} = new_result) do
+    updated_messages = Message.replace_tool_result(chain.messages, tool_call_id, new_result)
+    %{chain | messages: updated_messages}
+  end
+
+  @doc """
   Execute the tool call with the tool. Returns the tool's message response.
   """
   @spec execute_tool_call(ToolCall.t(), Function.t(), Keyword.t()) :: ToolResult.t()
@@ -1626,6 +1817,16 @@ defmodule LangChain.Chains.LLMChain do
       %{tool_result: result}
     end
 
+    # Enrich the context with the current call's tool_call_id so tool
+    # implementations can correlate side-effects (e.g. spawned sub-processes)
+    # back to the originating tool call without threading it through arguments.
+    enriched_context =
+      case context do
+        nil -> %{tool_call_id: call.call_id}
+        ctx when is_map(ctx) -> Map.put(ctx, :tool_call_id, call.call_id)
+        other -> other
+      end
+
     LangChain.Telemetry.span(
       [:langchain, :tool, :call],
       metadata,
@@ -1633,7 +1834,7 @@ defmodule LangChain.Chains.LLMChain do
         try do
           if verbose, do: IO.inspect(function.name, label: "EXECUTING FUNCTION")
 
-          case Function.execute(function, call.arguments, context) do
+          case Function.execute(function, call.arguments, enriched_context) do
             {:ok, %ToolResult{} = result} ->
               # allow the tool execution to return a ToolResult. Just set the
               # tool_call_id and fallback settings for name and display_text. This
@@ -1666,6 +1867,18 @@ defmodule LangChain.Chains.LLMChain do
                 display_text: function.display_text
               })
 
+            {:interrupt, display_message, interrupt_data} ->
+              if verbose, do: IO.inspect(display_message, label: "FUNCTION INTERRUPTED")
+
+              ToolResult.new!(%{
+                tool_call_id: call.call_id,
+                content: display_message,
+                name: function.name,
+                display_text: function.display_text,
+                is_interrupt: true,
+                interrupt_data: interrupt_data
+              })
+
             {:error, reason} when is_binary(reason) ->
               if verbose, do: IO.inspect(reason, label: "FUNCTION ERROR")
 
@@ -1679,12 +1892,13 @@ defmodule LangChain.Chains.LLMChain do
           end
         rescue
           err ->
-            Logger.error(
+            Logger.warning(fn ->
               "Function #{function.name} failed in execution. Exception: #{LangChainError.format_exception(err, __STACKTRACE__)}"
-            )
+            end)
 
             ToolResult.new!(%{
               tool_call_id: call.call_id,
+              name: function.name,
               content: "ERROR executing tool: #{inspect(err)}",
               is_error: true
             })
@@ -1700,18 +1914,47 @@ defmodule LangChain.Chains.LLMChain do
   """
   def cancel_delta(%LLMChain{delta: nil} = chain, _message_status), do: chain
 
-  def cancel_delta(%LLMChain{delta: %MessageDelta{} = delta} = chain, message_status) do
+  def cancel_delta(%LLMChain{} = chain, message_status) do
+    cancel_delta(chain, message_status, nil)
+  end
+
+  @doc """
+  Same as `cancel_delta/2` but stores an optional error in the message's
+  metadata under `:streaming_error`. This preserves the error reason through the
+  chain so higher layers (like the Sagents Agent and AgentServer) can detect and
+  surface it.
+  """
+  def cancel_delta(%LLMChain{delta: nil} = chain, _message_status, _error), do: chain
+
+  def cancel_delta(%LLMChain{delta: %MessageDelta{} = delta} = chain, message_status, error) do
     # remove the in-progress delta and reset streaming state
     updated_chain = reset_streaming_state(chain)
 
     case MessageDelta.to_message(%MessageDelta{delta | status: :complete}) do
       {:ok, %Message{} = message} ->
         message = %Message{message | status: message_status}
+
+        message =
+          if error do
+            metadata = (message.metadata || %{}) |> Map.put(:streaming_error, error)
+            %Message{message | metadata: metadata}
+          else
+            message
+          end
+
         add_message(updated_chain, message)
 
       {:error, reason} ->
-        Logger.error("Error attempting to cancel_delta. Reason: #{inspect(reason)}")
-        chain
+        Logger.warning(
+          "Failed to convert delta to message during cancel_delta. Reason: #{inspect(reason)}"
+        )
+
+        {:error, updated_chain,
+         LangChainError.exception(
+           type: "delta_conversion_failed",
+           message:
+             "Failed to convert streaming delta to message during cancellation: #{inspect(reason)}"
+         )}
     end
   end
 

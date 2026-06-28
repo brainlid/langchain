@@ -311,15 +311,6 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     }
   end
 
-  def for_api(%Message{content: content} = message) when is_list(content) do
-    %{
-      "role" => map_role(message.role),
-      "parts" =>
-        Enum.map(content, &for_api/1)
-        |> List.flatten()
-    }
-  end
-
   def for_api(%ContentPart{type: :text} = part) do
     %{"text" => part.content}
   end
@@ -364,7 +355,30 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
 
         other ->
           message = "Received unsupported media type for ContentPart: #{inspect(other)}"
-          Logger.error(message)
+          raise LangChainError, message
+      end
+
+    %{
+      "inline_data" => %{
+        "mime_type" => mime_type,
+        "data" => part.content
+      }
+    }
+  end
+
+  # Supported document types: pdf: https://ai.google.dev/gemini-api/docs/document-processing#inline_data
+  # Supported document types: csv: https://ai.google.dev/gemini-api/docs/file-input-methods#text
+  def for_api(%ContentPart{type: :file} = part) do
+    mime_type =
+      case Keyword.get(part.options || [], :media, nil) do
+        :pdf ->
+          "application/pdf"
+
+        :csv ->
+          "text/csv"
+
+        other ->
+          message = "Received unsupported media type for ContentPart: #{inspect(other)}"
           raise LangChainError, message
       end
 
@@ -536,9 +550,9 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
         url: build_url(google_ai),
         json: for_api(google_ai, messages, tools),
         receive_timeout: google_ai.receive_timeout,
-        retry: :transient,
-        max_retries: 3,
-        retry_delay: fn attempt -> 300 * attempt end
+        # Disable Req-level retry to prevent compounding with LangChain's own
+        # :closed retry. See https://github.com/brainlid/langchain/issues/503
+        retry: false
       )
       |> Req.merge(google_ai.req_config |> Keyword.new())
 
@@ -569,7 +583,6 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
 
       {:ok, %Req.Response{body: %{"error" => %{"message" => message} = error}} = response} ->
         error_type = google_error_type(error)
-        Logger.error("Received error from API: #{inspect(message)}")
 
         {:error,
          LangChainError.exception(
@@ -590,12 +603,12 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
          LangChainError.exception(type: "timeout", message: "Request timed out", original: err)}
 
       other ->
-        Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
+        Logger.warning(fn -> "Unexpected and unhandled API response! #{inspect(other)}" end)
         other
     end
   end
 
-  def do_api_request(%ChatGoogleAI{stream: true} = google_ai, messages, tools) do
+  def do_api_request(%ChatGoogleAI{stream: true, model: model} = google_ai, messages, tools) do
     Req.new(
       url: build_url(google_ai),
       json: for_api(google_ai, messages, tools),
@@ -612,36 +625,44 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
         )
     )
     |> case do
-      {:ok, %Req.Response{status: 200, body: data} = response} ->
-        Callbacks.fire(google_ai.callbacks, :on_llm_response_headers, [response.headers])
-
-        # Separate message deltas by their content type
-        {data, _last_index} =
-          data
-          |> List.flatten()
-          |> Enum.reduce({[], nil}, fn
-            message_delta, {[], nil} ->
-              {[message_delta], message_delta.index}
-
-            message_delta, {acc, last_index} ->
-              [last_message_delta | _] = acc
-              last_content_type = get_in(last_message_delta.content.type)
-              content_type = get_in(message_delta.content.type)
-
-              new_index =
-                case not is_nil(content_type) && content_type != last_content_type do
-                  true -> last_index + 1
-                  false -> last_index
-                end
-
-              {[%{message_delta | index: new_index} | acc], new_index}
-          end)
-
-        data
-        |> Enum.reverse()
-
       {:ok, %Req.Response{body: {:error, %LangChainError{} = error}}} ->
         {:error, error}
+
+      {:ok, %Req.Response{status: 200, body: data} = response} when is_list(data) ->
+        Callbacks.fire(google_ai.callbacks, :on_llm_response_headers, [response.headers])
+
+        flattened = List.flatten(data)
+
+        # Some candidates can come back as `{:error, %LangChainError{}}` from
+        # `do_process_response/3` (e.g. `MALFORMED_FUNCTION_CALL`, candidates
+        # without a "content" key, or unknown shapes). The reindexing logic below
+        # assumes every item is a `%MessageDelta{}` with an `:index`, so any error
+        # tuple in the list must be surfaced before the reduce — otherwise it
+        # crashes with `KeyError` on `message_delta.index`.
+        case Enum.find(flattened, &match?({:error, _}, &1)) do
+          {:error, %LangChainError{} = error} ->
+            {:error, error}
+
+          nil ->
+            flattened
+            |> reindex_deltas()
+            |> Enum.reverse()
+        end
+
+      {:ok, %Req.Response{status: 200} = response} ->
+        # Stream ended with zero delta chunks — `Utils.handle_stream_fn/3`
+        # converts the default binary body `""` to `[]` only on the first
+        # `{:data, ...}` callback. If LLM returns 200 with no streamed
+        # chunks (e.g. immediate finish without content, or all chunks
+        # filtered by the SSE decoder), the body stays `""` and crashes
+        # `List.flatten/1`. Surface as a structured error so the chain can
+        # propagate it cleanly instead of taking down the Task.
+        {:error,
+         LangChainError.exception(
+           type: "empty_stream",
+           message: "Empty streaming response from #{model} (no delta chunks received)",
+           original: response
+         )}
 
       {:ok, %Req.Response{status: status} = response} when status != 200 ->
         # Try to extract error from the buffered error data
@@ -672,9 +693,9 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
          LangChainError.exception(type: "timeout", message: "Request timed out", original: err)}
 
       other ->
-        Logger.error(
+        Logger.warning(fn ->
           "Unhandled and unexpected response from streamed post call. #{inspect(other)}"
-        )
+        end)
 
         {:error,
          LangChainError.exception(
@@ -683,6 +704,30 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
            original: other
          )}
     end
+  end
+
+  # Separate message deltas by their content type by reindexing them.
+  defp reindex_deltas(deltas) do
+    {data, _last_index} =
+      Enum.reduce(deltas, {[], nil}, fn
+        message_delta, {[], nil} ->
+          {[message_delta], message_delta.index}
+
+        message_delta, {acc, last_index} ->
+          [last_message_delta | _] = acc
+          last_content_type = get_in(last_message_delta.content.type)
+          content_type = get_in(message_delta.content.type)
+
+          new_index =
+            case not is_nil(content_type) && content_type != last_content_type do
+              true -> last_index + 1
+              false -> last_index
+            end
+
+          {[%{message_delta | index: new_index} | acc], new_index}
+      end)
+
+    data
   end
 
   # Convert Google AI error status to a LangChainError type string.
@@ -873,21 +918,17 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
 
   def do_process_response(_model, %{"error" => %{"message" => reason} = error} = response, _) do
     error_type = google_error_type(error)
-    Logger.error("Received error from API: #{inspect(reason)}")
     {:error, LangChainError.exception(type: error_type, message: reason, original: response)}
   end
 
   def do_process_response(_model, {:error, %Jason.DecodeError{} = response}, _) do
     error_message = "Received invalid JSON: #{inspect(response)}"
-    Logger.error(error_message)
 
     {:error,
      LangChainError.exception(type: "invalid_json", message: error_message, original: response)}
   end
 
   def do_process_response(_model, other, _) do
-    Logger.error("Trying to process an unexpected response. #{inspect(other)}")
-
     {:error,
      LangChainError.exception(
        type: "unexpected_response",
@@ -916,7 +957,8 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   @doc """
   Return the content parts for the message.
   """
-  @spec get_message_contents(MessageDelta.t() | Message.t()) :: [%{String.t() => any()}]
+  @spec get_message_contents(MessageDelta.t() | Message.t()) ::
+          [%{String.t() => any()}] | nil
   def get_message_contents(%{content: content} = _message) when is_binary(content) do
     [%{"text" => content}]
   end

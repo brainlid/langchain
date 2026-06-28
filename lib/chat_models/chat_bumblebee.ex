@@ -96,7 +96,6 @@ defmodule LangChain.ChatModels.ChatBumblebee do
         recompile; MyApp.BumblebeeChat.run_chat
   """
   use Ecto.Schema
-  require Logger
   import Ecto.Changeset
   alias __MODULE__
   alias LangChain.ChatModels.ChatModel
@@ -365,10 +364,8 @@ defmodule LangChain.ChatModels.ChatBumblebee do
             # return a list of the complete message. As a list for compatibility.
             [message]
 
-          {:error, changeset} ->
-            reason = Utils.changeset_error_to_string(changeset)
-            Logger.error("Failed to create non-streamed full message: #{inspect(reason)}")
-            {:error, reason}
+          {:error, _changeset} ->
+            {:error, "Failed to create non-streamed full message"}
         end
 
       {:error, _} ->
@@ -379,10 +376,8 @@ defmodule LangChain.ChatModels.ChatBumblebee do
             # return a list of the complete message. As a list for compatibility.
             [message]
 
-          {:error, changeset} ->
-            reason = Utils.changeset_error_to_string(changeset)
-            Logger.error("Failed to create non-streamed full message: #{inspect(reason)}")
-            {:error, reason}
+          {:error, _changeset} ->
+            {:error, "Failed to create non-streamed full message"}
         end
     end
   end
@@ -416,10 +411,8 @@ defmodule LangChain.ChatModels.ChatBumblebee do
             # return a list of the complete message. As a list for compatibility.
             [message]
 
-          {:error, changeset} ->
-            reason = Utils.changeset_error_to_string(changeset)
-            Logger.error("Failed to create non-streamed full message: #{inspect(reason)}")
-            {:error, reason}
+          {:error, _changeset} ->
+            {:error, "Failed to create non-streamed full message"}
         end
 
       {:error, _} ->
@@ -430,10 +423,8 @@ defmodule LangChain.ChatModels.ChatBumblebee do
             # return a list of the complete message. As a list for compatibility.
             [message]
 
-          {:error, changeset} ->
-            reason = Utils.changeset_error_to_string(changeset)
-            Logger.error("Failed to create non-streamed full message: #{inspect(reason)}")
-            {:error, reason}
+          {:error, _changeset} ->
+            {:error, "Failed to create non-streamed full message"}
         end
     end
   end
@@ -464,10 +455,8 @@ defmodule LangChain.ChatModels.ChatBumblebee do
             # return a list of the complete message. As a list for compatibility.
             [message]
 
-          {:error, changeset} ->
-            reason = Utils.changeset_error_to_string(changeset)
-            Logger.error("Failed to create non-streamed full message: #{inspect(reason)}")
-            {:error, reason}
+          {:error, _changeset} ->
+            {:error, "Failed to create non-streamed full message"}
         end
 
       {:error, _} ->
@@ -478,10 +467,8 @@ defmodule LangChain.ChatModels.ChatBumblebee do
             # return a list of the complete message. As a list for compatibility.
             [message]
 
-          {:error, changeset} ->
-            reason = Utils.changeset_error_to_string(changeset)
-            Logger.error("Failed to create non-streamed full message: #{inspect(reason)}")
-            {:error, reason}
+          {:error, _changeset} ->
+            {:error, "Failed to create non-streamed full message"}
         end
     end
   end
@@ -511,8 +498,6 @@ defmodule LangChain.ChatModels.ChatBumblebee do
         [message]
 
       {:error, %Ecto.Changeset{} = changeset} ->
-        reason = Utils.changeset_error_to_string(changeset)
-        Logger.error("Failed to create non-streamed full message: #{inspect(reason)}")
         {:error, LangChainError.exception(changeset)}
     end
   end
@@ -555,12 +540,6 @@ defmodule LangChain.ChatModels.ChatBumblebee do
             delta
 
           {:error, %Ecto.Changeset{} = changeset} ->
-            reason = Utils.changeset_error_to_string(changeset)
-
-            Logger.error(
-              "Failed to process received model's MessageDelta data: #{inspect(reason)}"
-            )
-
             raise LangChainError.exception(changeset)
         end
     end

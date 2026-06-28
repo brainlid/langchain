@@ -135,6 +135,57 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         tool_choice: %{"type" => "function", "function" => %{"name" => "get_weather"}}
       })
 
+  ## Log Probabilities
+
+  OpenAI can return log probability information for output tokens, which is
+  useful for evaluating model confidence, building classifiers, or debugging
+  token selection.
+
+  Enable with the `logprobs` option. Optionally set `top_logprobs` to receive
+  the N most likely tokens (0-20) at each position:
+
+      chat = ChatOpenAI.new!(%{
+        model: "gpt-4o",
+        logprobs: true,
+        top_logprobs: 3
+      })
+
+  When enabled, the logprobs data from the API response is placed in the
+  `metadata` field under the `"logprobs"` key. This works for both
+  non-streaming (`LangChain.Message`) and streaming (`LangChain.MessageDelta`)
+  responses:
+
+      # Non-streaming
+      {:ok, [%Message{metadata: %{"logprobs" => logprobs}}]} =
+        ChatOpenAI.call(chat, [message], [])
+
+      # Streaming - logprobs appear on each delta chunk
+      chat = ChatOpenAI.new!(%{model: "gpt-4o", stream: true, logprobs: true})
+      # Each MessageDelta will have metadata: %{"logprobs" => ...}
+
+      # logprobs contains the raw OpenAI response structure:
+      # %{
+      #   "content" => [
+      #     %{
+      #       "token" => "Hello",
+      #       "logprob" => -0.0002,
+      #       "bytes" => [72, 101, 108, 108, 111],
+      #       "top_logprobs" => [
+      #         %{"token" => "Hello", "logprob" => -0.0002, ...},
+      #         %{"token" => "Hi", "logprob" => -8.53, ...},
+      #         ...
+      #       ]
+      #     },
+      #     ...
+      #   ]
+      # }
+
+  When `logprobs` is not enabled or the response contains no logprobs data,
+  `metadata` will be `nil`.
+
+  See the [OpenAI documentation](https://developers.openai.com/api/reference/resources/completions/methods/create)
+  for full details on the response structure.
+
   ## Azure OpenAI Support
 
   To use `ChatOpenAI` with Microsoft's Azure hosted OpenAI models, the
@@ -190,6 +241,32 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     documentation. This instructs the LLM on how much time, and tokens, should
     be spent on thinking through and reasoning about the request and the
     response.
+
+  ## Connection Retry Behavior
+
+  The `retry_count` option controls how many times a request is retried when
+  a pooled HTTP connection turns out to be stale (server closed it between
+  requests). This is a transport-level issue where retrying with a fresh
+  connection is the correct response.
+
+  **Only closed-connection errors are retried.** Timeouts, rate limits (429),
+  overloaded (529), authentication errors, and invalid requests all return
+  immediately -- they are not problems that a simple retry will fix.
+
+  | `retry_count` | Total HTTP requests |
+  |---|---|
+  | `0` | 1 (no retries) |
+  | `1` | 2 (1 initial + 1 retry) |
+  | `2` (default) | 3 (1 initial + 2 retries) |
+
+  Req's built-in HTTP retry is disabled to prevent the two retry layers from
+  compounding. See [GitHub issue #503](https://github.com/brainlid/langchain/issues/503).
+
+  When running LLM calls from a background job queue (e.g., Oban) that has its
+  own retry logic, set `retry_count: 0` so there are no hidden retries:
+
+      ChatOpenAI.new!(%{model: "...", retry_count: 0})
+
   """
   use Ecto.Schema
   require Logger
@@ -284,6 +361,15 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
     field :parallel_tool_calls, :boolean
 
+    # When true, the API returns log probability information for each output
+    # token. Ref: https://platform.openai.com/docs/api-reference/chat/create#chat-create-logprobs
+    field :logprobs, :boolean
+
+    # An integer between 0 and 20 specifying the number of most likely tokens
+    # to return at each position. Requires `logprobs` to be set to `true`.
+    # Ref: https://platform.openai.com/docs/api-reference/chat/create#chat-create-top_logprobs
+    field :top_logprobs, :integer
+
     # A list of maps for callback handlers (treated as internal)
     field :callbacks, {:array, :map}, default: []
 
@@ -295,6 +381,10 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     # For help with debugging. It outputs the RAW Req response received and the
     # RAW Elixir map being submitted to the API.
     field :verbose_api, :boolean, default: false
+
+    # Number of retries on closed-connection errors (stale pool). The initial
+    # request always runs; this controls additional attempts only.
+    field :retry_count, :integer, default: 2
 
     # Req options to merge into the request.
     # Refer to `https://hexdocs.pm/req/Req.html#new/1-options` for
@@ -325,7 +415,10 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     :user,
     :tool_choice,
     :parallel_tool_calls,
+    :logprobs,
+    :top_logprobs,
     :verbose_api,
+    :retry_count,
     :req_config
   ]
   @required_fields [:endpoint, :model]
@@ -377,6 +470,19 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     |> validate_number(:frequency_penalty, greater_than_or_equal_to: -2, less_than_or_equal_to: 2)
     |> validate_number(:n, greater_than_or_equal_to: 1)
     |> validate_number(:receive_timeout, greater_than_or_equal_to: 0)
+    |> validate_number(:top_logprobs, greater_than_or_equal_to: 0, less_than_or_equal_to: 20)
+    |> validate_top_logprobs_requires_logprobs()
+  end
+
+  defp validate_top_logprobs_requires_logprobs(changeset) do
+    top_logprobs = get_field(changeset, :top_logprobs)
+    logprobs = get_field(changeset, :logprobs)
+
+    if top_logprobs && !logprobs do
+      add_error(changeset, :top_logprobs, "requires logprobs to be enabled")
+    else
+      changeset
+    end
   end
 
   @doc """
@@ -422,6 +528,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(openai, tools))
     |> Utils.conditionally_add_to_map(:tool_choice, get_tool_choice(openai))
     |> Utils.conditionally_add_to_map(:parallel_tool_calls, openai.parallel_tool_calls)
+    |> Utils.conditionally_add_to_map(:logprobs, openai.logprobs)
+    |> Utils.conditionally_add_to_map(:top_logprobs, openai.top_logprobs)
   end
 
   defp get_tools_for_api(%_{} = _model, nil), do: []
@@ -633,7 +741,6 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
         other ->
           message = "Received unsupported media type for ContentPart: #{inspect(other)}"
-          Logger.error(message)
           raise LangChainError, message
       end
 
@@ -764,9 +871,9 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   # structures.
   # Retries the request up to 3 times on transient errors with a 1 second delay
   @doc false
-  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), integer()) ::
+  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), integer() | nil) ::
           list() | struct() | {:error, LangChainError.t()}
-  def do_api_request(openai, messages, tools, retry_count \\ 3)
+  def do_api_request(openai, messages, tools, retry_count \\ nil)
 
   def do_api_request(_openai, _messages, _tools, 0) do
     raise LangChainError, "Retries exceeded. Connection failed."
@@ -778,6 +885,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         tools,
         retry_count
       ) do
+    retry_count = retry_count || openai.retry_count + 1
     raw_data = for_api(openai, messages, tools)
 
     if openai.verbose_api do
@@ -795,9 +903,9 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           {"api-key", get_api_key(openai)}
         ],
         receive_timeout: openai.receive_timeout,
-        retry: :transient,
-        max_retries: 3,
-        retry_delay: fn attempt -> 300 * attempt end
+        # Disable Req-level retry to prevent compounding with LangChain's own
+        # :closed retry. See https://github.com/brainlid/langchain/issues/503
+        retry: false
       )
 
     req
@@ -848,7 +956,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         do_api_request(openai, messages, tools, retry_count - 1)
 
       other ->
-        Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
+        Logger.warning(fn -> "Unexpected and unhandled API response! #{inspect(other)}" end)
         other
     end
   end
@@ -859,6 +967,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         tools,
         retry_count
       ) do
+    retry_count = retry_count || openai.retry_count + 1
     raw_data = for_api(openai, messages, tools)
 
     if openai.verbose_api do
@@ -910,9 +1019,9 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         do_api_request(openai, messages, tools, retry_count - 1)
 
       other ->
-        Logger.error(
+        Logger.warning(fn ->
           "Unhandled and unexpected response from streamed post call. #{inspect(other)}"
-        )
+        end)
 
         {:error,
          LangChainError.exception(
@@ -933,7 +1042,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   buffer data from a previous call, and assembling it to parse.
   """
   @spec decode_stream({String.t(), String.t()}, list()) ::
-          {%{String.t() => any()}}
+          {[%{String.t() => any()}], String.t()}
   def decode_stream({raw_data, buffer}, done \\ []) do
     # Data comes back like this:
     #
@@ -952,6 +1061,13 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       str
       |> String.trim()
       |> case do
+        ":" <> _sse_comment ->
+          # A line starting with a colon is an SSE comment and can be ignored per
+          # https://html.spec.whatwg.org/multipage/server-sent-events.html#event-stream-interpretation
+          # OpenRouter sends ": OPENROUTER PROCESSING" keep-alive comments which
+          # otherwise poison the incomplete-JSON buffer and break the whole stream.
+          acc
+
         "" ->
           acc
 
@@ -988,16 +1104,14 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
   # Parse a new message response
   @doc false
-  @spec do_process_response(
-          %{:callbacks => [map()]},
-          data :: %{String.t() => any()} | {:error, any()}
-        ) ::
+  @spec do_process_response(map(), data :: any()) ::
           :skip
+          | TokenUsage.t()
           | Message.t()
-          | [Message.t()]
+          | [Message.t() | MessageDelta.t() | TokenUsage.t() | {:error, LangChainError.t()}]
           | MessageDelta.t()
           | [MessageDelta.t()]
-          | {:error, String.t()}
+          | {:error, LangChainError.t()}
   def do_process_response(model, %{"choices" => _choices} = data) do
     token_usage = get_token_usage(data)
 
@@ -1027,13 +1141,16 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           data
       )
       when finish_reason in ["tool_calls", "stop"] do
-    case Message.new(%{
-           "role" => "assistant",
-           "content" => message["content"],
-           "complete" => true,
-           "index" => data["index"],
-           "tool_calls" => Enum.map(calls || [], &do_process_response(model, &1))
-         }) do
+    %{
+      "role" => "assistant",
+      "content" => message["content"],
+      "complete" => true,
+      "index" => data["index"],
+      "tool_calls" => Enum.map(calls || [], &do_process_response(model, &1))
+    }
+    |> Map.merge(logprobs_metadata(data))
+    |> Message.new()
+    |> case do
       {:ok, message} ->
         message
 
@@ -1075,6 +1192,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       |> Map.put("index", index)
       |> Map.put("status", status)
       |> Map.put("tool_calls", tool_calls)
+      |> Map.merge(logprobs_metadata(msg))
 
     case MessageDelta.new(data) do
       {:ok, message} ->
@@ -1100,8 +1218,6 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         call
 
       {:error, %Ecto.Changeset{} = changeset} ->
-        reason = Utils.changeset_error_to_string(changeset)
-        Logger.error("Failed to process ToolCall for a function. Reason: #{reason}")
         {:error, LangChainError.exception(changeset)}
     end
   end
@@ -1127,20 +1243,26 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         call
 
       {:error, %Ecto.Changeset{} = changeset} ->
-        reason = Utils.changeset_error_to_string(changeset)
-        Logger.error("Failed to process ToolCall for a function. Reason: #{reason}")
         {:error, LangChainError.exception(changeset)}
     end
   end
 
-  def do_process_response(_model, %{
-        "finish_reason" => finish_reason,
-        "message" => message,
-        "index" => index
-      }) do
+  def do_process_response(
+        _model,
+        %{
+          "finish_reason" => finish_reason,
+          "message" => message,
+          "index" => index
+        } = data
+      ) do
     status = finish_reason_to_status(finish_reason)
 
-    case Message.new(Map.merge(message, %{"status" => status, "index" => index})) do
+    merged =
+      message
+      |> Map.merge(%{"status" => status, "index" => index})
+      |> Map.merge(logprobs_metadata(data))
+
+    case Message.new(merged) do
       {:ok, message} ->
         message
 
@@ -1165,10 +1287,6 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
         "unsupported_value" ->
           if String.contains?(reason, "does not support 'system' with this model") do
-            Logger.error(
-              "This model requires 'reasoning_mode' to be enabled. Reason: #{inspect(reason)}"
-            )
-
             # return the API error type as the exception type information
             error_data["type"]
           end
@@ -1177,26 +1295,21 @@ defmodule LangChain.ChatModels.ChatOpenAI do
           nil
       end
 
-    Logger.error("Received error from API: #{inspect(reason)}")
     {:error, LangChainError.exception(type: type, message: reason, original: response)}
   end
 
   def do_process_response(_model, %{"error" => %{"message" => reason}} = response) do
-    Logger.error("Received error from API: #{inspect(reason)}")
     {:error, LangChainError.exception(message: reason, original: response)}
   end
 
   def do_process_response(_model, {:error, %Jason.DecodeError{} = response}) do
     error_message = "Received invalid JSON: #{inspect(response)}"
-    Logger.error(error_message)
 
     {:error,
      LangChainError.exception(type: "invalid_json", message: error_message, original: response)}
   end
 
   def do_process_response(_model, other) do
-    Logger.error("Trying to process an unexpected response. #{inspect(other)}")
-
     {:error,
      LangChainError.exception(
        type: "unexpected_response",
@@ -1204,6 +1317,13 @@ defmodule LangChain.ChatModels.ChatOpenAI do
        original: other
      )}
   end
+
+  # Extract logprobs from a choice-level response map and return a metadata map.
+  # Returns an empty map when logprobs is nil or absent, so it can be safely merged.
+  defp logprobs_metadata(%{"logprobs" => logprobs}) when not is_nil(logprobs),
+    do: %{"metadata" => %{"logprobs" => logprobs}}
+
+  defp logprobs_metadata(_data), do: %{}
 
   defp finish_reason_to_status(nil), do: :incomplete
   defp finish_reason_to_status("stop"), do: :complete

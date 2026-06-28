@@ -36,6 +36,32 @@ defmodule LangChain.ChatModels.ChatPerplexity do
   - keywords: An array of SEO keywords
   - meta_description: The SEO meta description
   ```
+
+  ## Connection Retry Behavior
+
+  The `retry_count` option controls how many times a request is retried when
+  a pooled HTTP connection turns out to be stale (server closed it between
+  requests). This is a transport-level issue where retrying with a fresh
+  connection is the correct response.
+
+  **Only closed-connection errors are retried.** Timeouts, rate limits (429),
+  overloaded (529), authentication errors, and invalid requests all return
+  immediately -- they are not problems that a simple retry will fix.
+
+  | `retry_count` | Total HTTP requests |
+  |---|---|
+  | `0` | 1 (no retries) |
+  | `1` | 2 (1 initial + 1 retry) |
+  | `2` (default) | 3 (1 initial + 2 retries) |
+
+  Req's built-in HTTP retry is disabled to prevent the two retry layers from
+  compounding. See [GitHub issue #503](https://github.com/brainlid/langchain/issues/503).
+
+  When running LLM calls from a background job queue (e.g., Oban) that has its
+  own retry logic, set `retry_count: 0` so there are no hidden retries:
+
+      ChatPerplexity.new!(%{model: "...", retry_count: 0})
+
   """
   use Ecto.Schema
   require Logger
@@ -116,6 +142,10 @@ defmodule LangChain.ChatModels.ChatPerplexity do
     # For help with debugging. It outputs the RAW Req response received and the
     # RAW Elixir map being submitted to the API.
     field :verbose_api, :boolean, default: false
+
+    # Number of retries on closed-connection errors (stale pool). The initial
+    # request always runs; this controls additional attempts only.
+    field :retry_count, :integer, default: 2
   end
 
   @type t :: %ChatPerplexity{}
@@ -137,7 +167,8 @@ defmodule LangChain.ChatModels.ChatPerplexity do
     :search_recency_filter,
     :response_format,
     :receive_timeout,
-    :verbose_api
+    :verbose_api,
+    :retry_count
   ]
 
   @required_fields [:model]
@@ -366,9 +397,12 @@ defmodule LangChain.ChatModels.ChatPerplexity do
   end
 
   @doc false
-  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), integer()) ::
-          list() | struct() | {:error, LangChainError.t()}
-  def do_api_request(perplexity, messages, tools, retry_count \\ 3)
+  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), integer() | nil) ::
+          list()
+          | struct()
+          | {:ok, Req.Response.t()}
+          | {:error, term()}
+  def do_api_request(perplexity, messages, tools, retry_count \\ nil)
 
   def do_api_request(_perplexity, _messages, _tools, 0) do
     raise LangChainError, "Retries exceeded. Connection failed."
@@ -380,6 +414,8 @@ defmodule LangChain.ChatModels.ChatPerplexity do
         tools,
         retry_count
       ) do
+    retry_count = retry_count || perplexity.retry_count + 1
+
     req =
       Req.new(
         url: perplexity.endpoint,
@@ -400,7 +436,6 @@ defmodule LangChain.ChatModels.ChatPerplexity do
 
         case do_process_response(perplexity, data, tools) do
           {:error, %LangChainError{} = reason} ->
-            Logger.error("Error processing response: #{inspect(reason)}")
             {:error, reason}
 
           result ->
@@ -428,7 +463,7 @@ defmodule LangChain.ChatModels.ChatPerplexity do
         do_api_request(perplexity, messages, tools, retry_count - 1)
 
       other ->
-        Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
+        Logger.warning(fn -> "Unexpected and unhandled API response! #{inspect(other)}" end)
         other
     end
   end
@@ -439,6 +474,8 @@ defmodule LangChain.ChatModels.ChatPerplexity do
         tools,
         retry_count
       ) do
+    retry_count = retry_count || perplexity.retry_count + 1
+
     Req.new(
       url: perplexity.endpoint,
       json: for_api(perplexity, messages, tools),
@@ -468,7 +505,7 @@ defmodule LangChain.ChatModels.ChatPerplexity do
         do_api_request(perplexity, messages, tools, retry_count - 1)
 
       other ->
-        Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
+        Logger.warning(fn -> "Unexpected and unhandled API response! #{inspect(other)}" end)
         other
     end
   end
@@ -476,7 +513,8 @@ defmodule LangChain.ChatModels.ChatPerplexity do
   @doc """
   Decode a streamed response from the Perplexity API.
   """
-  @spec decode_stream({String.t(), String.t()}) :: {%{String.t() => any()}}
+  @spec decode_stream({String.t(), String.t()}, list()) ::
+          {[%{String.t() => any()}], String.t()}
   def decode_stream({raw_data, buffer}, done \\ []) do
     raw_data
     |> String.split("data: ")
@@ -629,12 +667,10 @@ defmodule LangChain.ChatModels.ChatPerplexity do
   end
 
   def do_process_response(_model, %{"error" => %{"message" => reason, "type" => type}}) do
-    Logger.error("Received error from API: #{inspect(reason)}")
     {:error, LangChainError.exception(type: type, message: reason)}
   end
 
   def do_process_response(_model, %{"error" => %{"message" => reason}}) do
-    Logger.error("Received error from API: #{inspect(reason)}")
     {:error, LangChainError.exception(message: reason)}
   end
 
@@ -781,15 +817,12 @@ defmodule LangChain.ChatModels.ChatPerplexity do
 
   def do_process_response(_model, {:error, %Jason.DecodeError{} = response}) do
     error_message = "Received invalid JSON: #{inspect(response)}"
-    Logger.error(error_message)
 
     {:error,
      LangChainError.exception(type: "invalid_json", message: error_message, original: response)}
   end
 
   def do_process_response(_model, other) do
-    Logger.error("Trying to process an unexpected response. #{inspect(other)}")
-
     {:error,
      LangChainError.exception(
        type: "unexpected_response",

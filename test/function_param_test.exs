@@ -251,7 +251,8 @@ defmodule LangChain.FunctionParamTest do
               "description" => "Unique code"
             }
           },
-          "required" => ["code"]
+          "required" => ["code"],
+          "additionalProperties" => false
         }
       }
 
@@ -281,7 +282,8 @@ defmodule LangChain.FunctionParamTest do
                      "age" => %{"type" => "number"},
                      "name" => %{"type" => "string"}
                    },
-                   "required" => []
+                   "required" => [],
+                   "additionalProperties" => false
                  }
                }
              }
@@ -301,7 +303,8 @@ defmodule LangChain.FunctionParamTest do
             "type" => "string"
           }
         },
-        "required" => ["code"]
+        "required" => ["code"],
+        "additionalProperties" => false
       }
 
       params = [
@@ -350,14 +353,17 @@ defmodule LangChain.FunctionParamTest do
                   "completed" => %{"type" => "boolean"},
                   "institution_name" => %{"type" => "string"}
                 },
-                "required" => ["institution_name"]
+                "required" => ["institution_name"],
+                "additionalProperties" => false
               },
               "name" => %{"type" => "string"}
             },
-            "required" => ["name"]
+            "required" => ["name"],
+            "additionalProperties" => false
           }
         },
-        "required" => []
+        "required" => [],
+        "additionalProperties" => false
       }
 
       assert schema == expected
@@ -388,6 +394,39 @@ defmodule LangChain.FunctionParamTest do
 
       result = FunctionParam.to_parameters_schema(params)
       assert result["required"] == []
+    end
+
+    test "includes additionalProperties false for Anthropic API compatibility" do
+      params = [
+        FunctionParam.new!(%{name: "location", type: :string, required: true}),
+        FunctionParam.new!(%{name: "unit", type: :string, enum: ["celsius", "fahrenheit"]})
+      ]
+
+      result = FunctionParam.to_parameters_schema(params)
+      assert result["additionalProperties"] == false
+    end
+
+    test "includes additionalProperties false at all nested object levels" do
+      address_props = [
+        FunctionParam.new!(%{name: "street", type: :string, required: true}),
+        FunctionParam.new!(%{name: "city", type: :string, required: true})
+      ]
+
+      params = [
+        FunctionParam.new!(%{name: "name", type: :string, required: true}),
+        FunctionParam.new!(%{
+          name: "address",
+          type: :object,
+          object_properties: address_props
+        })
+      ]
+
+      result = FunctionParam.to_parameters_schema(params)
+
+      # Top-level object
+      assert result["additionalProperties"] == false
+      # Nested object
+      assert result["properties"]["address"]["additionalProperties"] == false
     end
   end
 

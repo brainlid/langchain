@@ -252,6 +252,17 @@ defmodule LangChain.Message.ContentPartTest do
       assert ContentPart.parts_to_string(parts) == "Hello\n\nworld\n\nhow are you"
     end
 
+    test "tolerates nil entries (as produced by MessageDelta index-padded merges)" do
+      # MessageDelta.merge_content_part_at_index/3 pads positions with nil when
+      # a ContentPart is merged at an index beyond the current list length.
+      # parts_to_string must not crash on those nils.
+      parts = [nil, ContentPart.text!("Hello"), nil, ContentPart.text!("world")]
+      assert ContentPart.parts_to_string(parts) == "Hello\n\nworld"
+
+      assert ContentPart.parts_to_string([nil]) == nil
+      assert ContentPart.parts_to_string([nil, nil]) == nil
+    end
+
     test "matches on content type and can return thinking blocks" do
       parts = [
         ContentPart.new!(%{type: :thinking, content: "Let's think about this..."}),

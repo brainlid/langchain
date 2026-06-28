@@ -530,6 +530,23 @@ defmodule LangChain.ChatModels.ResponseOpenAIAzureLiveApiTest do
            "Expected error about invalid schema, got: #{error_message}"
   end
 
+  test "verbosity parameter affects response", %{llm: llm} do
+    llm_with_verbosity = %{llm | verbosity: "low"}
+
+    {:ok, message} =
+      ChatOpenAIResponses.call(
+        llm_with_verbosity,
+        [Message.new_user!("Explain what the number 42 is.")],
+        []
+      )
+
+    assert message.role == :assistant
+    assert is_list(message.content)
+
+    content_str = ContentPart.parts_to_string(message.content)
+    assert String.length(content_str) > 0
+  end
+
   # # Not supported yet
   # test "native web_search_preview tool", %{llm: llm} do
   #   # Create native web_search_preview tool

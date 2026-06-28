@@ -71,6 +71,10 @@ defmodule LangChain.ChatModels.ChatMistralAI do
     # For help with debugging. It outputs the RAW Req response received and the
     # RAW Elixir map being submitted to the API.
     field :verbose_api, :boolean, default: false
+
+    # Number of retries on closed-connection errors (stale pool). The initial
+    # request always runs; this controls additional attempts only.
+    field :retry_count, :integer, default: 2
   end
 
   @type t :: %ChatMistralAI{}
@@ -90,7 +94,8 @@ defmodule LangChain.ChatModels.ChatMistralAI do
     :json_schema,
     :json_response,
     :parallel_tool_calls,
-    :verbose_api
+    :verbose_api,
+    :retry_count
   ]
   @required_fields [
     :model
@@ -399,9 +404,9 @@ defmodule LangChain.ChatModels.ChatMistralAI do
   # Make the API request. If `stream: true`, we handle partial chunk deltas;
   # otherwise, we parse a single complete body.
   @doc false
-  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), integer()) ::
+  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), integer() | nil) ::
           list() | struct() | {:error, LangChainError.t()}
-  def do_api_request(openai, messages, tools, retry_count \\ 3)
+  def do_api_request(openai, messages, tools, retry_count \\ nil)
 
   def do_api_request(_mistralai, _messages, _tools, 0) do
     raise LangChainError, "Retries exceeded. Connection failed."
@@ -413,6 +418,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
         tools,
         retry_count
       ) do
+    retry_count = retry_count || mistralai.retry_count + 1
     raw_data = for_api(mistralai, messages, tools)
 
     req =
@@ -424,9 +430,9 @@ defmodule LangChain.ChatModels.ChatMistralAI do
           {"api-key", get_api_key(mistralai)}
         ],
         receive_timeout: mistralai.receive_timeout,
-        retry: :transient,
-        max_retries: 3,
-        retry_delay: fn attempt -> 300 * attempt end
+        # Disable Req-level retry to prevent compounding with LangChain's own
+        # :closed retry. See https://github.com/brainlid/langchain/issues/503
+        retry: false
       )
 
     req
@@ -467,7 +473,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
         do_api_request(mistralai, messages, tools, retry_count - 1)
 
       other ->
-        Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
+        Logger.warning(fn -> "Unexpected and unhandled API response! #{inspect(other)}" end)
         other
     end
   end
@@ -478,6 +484,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
         tools,
         retry_count
       ) do
+    retry_count = retry_count || mistralai.retry_count + 1
     raw_data = for_api(mistralai, messages, tools)
 
     req =
@@ -517,7 +524,9 @@ defmodule LangChain.ChatModels.ChatMistralAI do
         do_api_request(mistralai, messages, tools, retry_count - 1)
 
       other ->
-        Logger.error("Unhandled and unexpected response from streamed call. #{inspect(other)}")
+        Logger.warning(fn ->
+          "Unhandled and unexpected response from streamed call. #{inspect(other)}"
+        end)
 
         {:error,
          LangChainError.exception(
@@ -530,16 +539,15 @@ defmodule LangChain.ChatModels.ChatMistralAI do
 
   # Parse final or partial responses to produce the appropriate LangChain structure.
   @doc false
-  @spec do_process_response(
-          %{:callbacks => [map()]},
-          data :: %{String.t() => any()} | {:error, any()}
-        ) ::
+  @spec do_process_response(t(), data :: any()) ::
           :skip
+          | :ok
+          | TokenUsage.t()
           | Message.t()
-          | [Message.t()]
+          | [Message.t() | MessageDelta.t() | TokenUsage.t() | {:error, LangChainError.t()}]
           | MessageDelta.t()
           | [MessageDelta.t()]
-          | {:error, String.t()}
+          | {:error, LangChainError.t()}
   # The last chunk of the response contains both the final delta in the "choices" key,
   # and the token usage in the "usage" key
   def do_process_response(model, %{"choices" => choices, "usage" => %{} = _usage} = data) do
@@ -711,6 +719,33 @@ defmodule LangChain.ChatModels.ChatMistralAI do
     end
   end
 
+  # Complete message without tool calls (e.g., Azure Foundry responses that omit the "tool_calls" key)
+  def do_process_response(
+        _model,
+        %{"finish_reason" => finish_reason, "message" => message} = data
+      )
+      when finish_reason in ["stop", "length", "model_length"] do
+    status =
+      case finish_reason do
+        "stop" -> :complete
+        "length" -> :length
+        "model_length" -> :length
+      end
+
+    case Message.new(%{
+           "role" => message["role"] || "assistant",
+           "content" => message["content"],
+           "status" => status,
+           "index" => data["index"]
+         }) do
+      {:ok, msg} ->
+        msg
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:error, LangChainError.exception(changeset)}
+    end
+  end
+
   # Tool call from a complete message
   def do_process_response(
         _model,
@@ -731,8 +766,6 @@ defmodule LangChain.ChatModels.ChatMistralAI do
         call
 
       {:error, %Ecto.Changeset{} = changeset} ->
-        reason = Utils.changeset_error_to_string(changeset)
-        Logger.error("Failed to process ToolCall. Reason: #{reason}")
         {:error, LangChainError.exception(changeset)}
     end
   end
@@ -753,14 +786,11 @@ defmodule LangChain.ChatModels.ChatMistralAI do
         call
 
       {:error, %Ecto.Changeset{} = changeset} ->
-        reason = Utils.changeset_error_to_string(changeset)
-        Logger.error("Failed to process ToolCall. Reason: #{reason}")
         {:error, LangChainError.exception(changeset)}
     end
   end
 
   def do_process_response(_model, %{"error" => %{"message" => reason}} = response) do
-    Logger.error("Received error from Mistral API: #{inspect(reason)}")
     {:error, LangChainError.exception(message: reason, original: response)}
   end
 
@@ -769,21 +799,17 @@ defmodule LangChain.ChatModels.ChatMistralAI do
         _model,
         %{"object" => "error", "message" => reason, "type" => type} = response
       ) do
-    Logger.error("Received error from Mistral API: #{inspect(reason)}")
     {:error, LangChainError.exception(type: type, message: reason, original: response)}
   end
 
   def do_process_response(_model, {:error, %Jason.DecodeError{} = response}) do
     error_message = "Received invalid JSON: #{inspect(response)}"
-    Logger.error(error_message)
 
     {:error,
      LangChainError.exception(type: "invalid_json", message: error_message, original: response)}
   end
 
   def do_process_response(_model, other) do
-    Logger.error("Trying to process an unexpected response from Mistral: #{inspect(other)}")
-
     {:error,
      LangChainError.exception(
        type: "unexpected_response",

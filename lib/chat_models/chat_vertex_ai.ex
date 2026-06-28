@@ -328,26 +328,16 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   end
 
   defp for_api(%ToolResult{} = result) do
-    content =
-      result.content
-      |> ContentPart.parts_to_string()
-      |> Jason.decode()
-      |> case do
-        {:ok, data} ->
-          # content was converted through JSON
-          data
-
-        {:error, %Jason.DecodeError{}} ->
-          # assume the result is intended to be a string and return it as-is
-          %{"result" => result.content}
-      end
+    response = tool_result_response_for_api(result.content)
+    response_parts = tool_result_parts_for_api(result.content)
 
     %{
       "functionResponse" => %{
         "name" => result.name,
-        "response" => content
+        "response" => response
       }
     }
+    |> maybe_add_function_response_parts(response_parts)
   end
 
   defp for_api(%NativeTool{name: name, configuration: %{} = config}) do
@@ -359,6 +349,112 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   end
 
   defp for_api(nil), do: nil
+
+  defp maybe_add_function_response_parts(
+         %{"functionResponse" => function_response} = data,
+         [_ | _] = response_parts
+       ) do
+    put_in(data, ["functionResponse"], Map.put(function_response, "parts", response_parts))
+  end
+
+  defp maybe_add_function_response_parts(data, _response_parts), do: data
+
+  defp tool_result_response_for_api(nil), do: %{}
+
+  defp tool_result_response_for_api(content) when is_binary(content) do
+    case Jason.decode(content) do
+      {:ok, data} ->
+        data
+
+      {:error, %Jason.DecodeError{}} ->
+        %{"result" => content}
+    end
+  end
+
+  defp tool_result_response_for_api(content_parts) when is_list(content_parts) do
+    text_parts = Enum.filter(content_parts, &(&1.type == :text))
+
+    case ContentPart.parts_to_string(text_parts) do
+      nil ->
+        %{}
+
+      text_content ->
+        case Jason.decode(text_content) do
+          {:ok, data} ->
+            data
+
+          {:error, %Jason.DecodeError{}} ->
+            %{"result" => text_content}
+        end
+    end
+  end
+
+  defp tool_result_parts_for_api(nil), do: []
+
+  defp tool_result_parts_for_api(content) when is_binary(content), do: []
+
+  defp tool_result_parts_for_api(content_parts) when is_list(content_parts) do
+    content_parts
+    |> Enum.filter(&tool_result_media_part?/1)
+    |> Enum.map(&tool_result_media_part_for_api/1)
+  end
+
+  defp tool_result_media_part_for_api(%ContentPart{type: :image} = part) do
+    %{
+      "inlineData" =>
+        %{
+          "mimeType" => Keyword.fetch!(part.options, :media),
+          "data" => part.content
+        }
+        |> maybe_add_display_name(part.options)
+    }
+  end
+
+  defp tool_result_media_part_for_api(%ContentPart{type: :file} = part) do
+    %{
+      "inlineData" =>
+        %{
+          "mimeType" => Keyword.fetch!(part.options, :media),
+          "data" => part.content
+        }
+        |> maybe_add_display_name(part.options)
+    }
+  end
+
+  defp tool_result_media_part_for_api(%ContentPart{type: :image_url} = part) do
+    %{
+      "fileData" =>
+        %{
+          "mimeType" => Keyword.fetch!(part.options, :media),
+          "fileUri" => part.content
+        }
+        |> maybe_add_display_name(part.options)
+    }
+  end
+
+  defp tool_result_media_part_for_api(%ContentPart{type: :file_url} = part) do
+    %{
+      "fileData" =>
+        %{
+          "mimeType" => Keyword.fetch!(part.options, :media),
+          "fileUri" => part.content
+        }
+        |> maybe_add_display_name(part.options)
+    }
+  end
+
+  defp maybe_add_display_name(data, options) do
+    case Keyword.get(options || [], :display_name) do
+      nil -> data
+      display_name -> Map.put(data, "displayName", display_name)
+    end
+  end
+
+  defp tool_result_media_part?(%ContentPart{type: type})
+       when type in [:image, :file, :image_url, :file_url],
+       do: true
+
+  defp tool_result_media_part?(%ContentPart{}), do: false
 
   @doc """
   Calls the Google AI API passing the ChatVertexAI struct with configuration,
@@ -441,10 +537,10 @@ defmodule LangChain.ChatModels.ChatVertexAI do
         url: build_url(vertex_ai),
         json: for_api(vertex_ai, messages, tools),
         receive_timeout: vertex_ai.receive_timeout,
-        retry: :transient,
-        max_retries: 3,
-        auth: {:bearer, get_api_key(vertex_ai)},
-        retry_delay: fn attempt -> 300 * attempt end
+        # Disable Req-level retry to prevent compounding with LangChain's own
+        # :closed retry. See https://github.com/brainlid/langchain/issues/503
+        retry: false,
+        auth: {:bearer, get_api_key(vertex_ai)}
       )
       |> Req.merge(vertex_ai.req_config |> Keyword.new())
 
@@ -479,7 +575,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
          LangChainError.exception(type: "timeout", message: "Request timed out", original: err)}
 
       other ->
-        Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
+        Logger.warning(fn -> "Unexpected and unhandled API response! #{inspect(other)}" end)
         other
     end
   end
@@ -518,9 +614,9 @@ defmodule LangChain.ChatModels.ChatVertexAI do
          LangChainError.exception(type: "timeout", message: "Request timed out", original: err)}
 
       other ->
-        Logger.error(
+        Logger.warning(fn ->
           "Unhandled and unexpected response from streamed post call. #{inspect(other)}"
-        )
+        end)
 
         {:error,
          LangChainError.exception(
@@ -737,21 +833,17 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   end
 
   def do_process_response(_model, %{"error" => %{"message" => reason}} = response, _) do
-    Logger.error("Received error from API: #{inspect(reason)}")
     {:error, LangChainError.exception(message: reason, original: response)}
   end
 
   def do_process_response(_model, {:error, %Jason.DecodeError{} = response}, _) do
     error_message = "Received invalid JSON: #{inspect(response)}"
-    Logger.error(error_message)
 
     {:error,
      LangChainError.exception(type: "invalid_json", message: error_message, original: response)}
   end
 
   def do_process_response(_model, other, _) do
-    Logger.error("Trying to process an unexpected response. #{inspect(other)}")
-
     {:error,
      LangChainError.exception(
        type: "unexpected_response",
@@ -780,7 +872,8 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   @doc """
   Return the content parts for the message.
   """
-  @spec get_message_contents(MessageDelta.t() | Message.t()) :: [%{String.t() => any()}]
+  @spec get_message_contents(MessageDelta.t() | Message.t()) ::
+          [%{String.t() => any()}] | nil
   def get_message_contents(%{content: content} = _message) when is_binary(content) do
     [%{"text" => content}]
   end

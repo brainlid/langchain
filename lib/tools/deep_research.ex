@@ -176,17 +176,14 @@ defmodule LangChain.Tools.DeepResearch do
               {:ok, format_research_result(result)}
 
             {:error, reason} ->
-              Logger.error("Deep research failed: #{inspect(reason)}")
               {:error, "Deep research failed: #{reason}"}
           end
 
         {:error, reason} ->
-          Logger.error("Failed to create deep research request: #{inspect(reason)}")
           {:error, "Failed to start research: #{reason}"}
       end
     rescue
       err ->
-        Logger.error("Deep research tool encountered an exception: #{inspect(err)}")
         {:error, "Deep research tool error: #{Exception.message(err)}"}
     end
   end
@@ -259,14 +256,6 @@ defmodule LangChain.Tools.DeepResearch do
     """
   end
 
-  defp format_research_result(%{output_text: text}) do
-    text
-  end
-
-  defp format_research_result(result) do
-    "Research completed. Result: #{inspect(result)}"
-  end
-
   @spec format_sources(list()) :: String.t()
   defp format_sources(sources) when is_list(sources) do
     sources
@@ -278,6 +267,4 @@ defmodule LangChain.Tools.DeepResearch do
     end)
     |> Enum.join("\n")
   end
-
-  defp format_sources(_), do: "No source information available."
 end

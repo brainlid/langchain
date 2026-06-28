@@ -13,8 +13,8 @@ defmodule LangChain.Tools.DeepResearch.ResearchResult do
   alias LangChain.Message.Citation
 
   @type t() :: %__MODULE__{
-          id: String.t(),
-          output_text: String.t(),
+          id: String.t() | nil,
+          output_text: String.t() | nil,
           model: String.t() | nil,
           created_at: integer() | nil,
           completion_time: integer() | nil,
@@ -51,6 +51,7 @@ defmodule LangChain.Tools.DeepResearch.ResearchResult do
   @doc """
   Creates a changeset for research result.
   """
+  @spec changeset(map()) :: Ecto.Changeset.t()
   @spec changeset(__MODULE__.t(), map()) :: Ecto.Changeset.t()
   def changeset(result \\ %__MODULE__{}, attrs) do
     result

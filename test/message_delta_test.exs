@@ -200,6 +200,74 @@ defmodule LangChain.MessageDeltaTest do
       assert merged == expected
     end
 
+    test "merges multiple tool_call fragments carried in a single delta" do
+      # OpenAI's streaming spec allows an SSE event's `tool_calls` array to
+      # carry any number of argument fragments bound for the same `index`.
+      # Most providers emit one per chunk, but gpt-oss-120b on AWS Mantle
+      # batches fragments more aggressively and can send 3+ in one delta.
+      # Each fragment must accumulate into the same ToolCall.
+      initial =
+        %MessageDelta{
+          role: :assistant,
+          index: 0,
+          status: :incomplete,
+          tool_calls: [
+            %ToolCall{
+              status: :incomplete,
+              type: :function,
+              call_id: "call_abc",
+              name: "read_file",
+              arguments: "{\n",
+              index: 0
+            }
+          ]
+        }
+
+      multi_fragment_delta =
+        %MessageDelta{
+          role: :unknown,
+          index: 0,
+          status: :incomplete,
+          tool_calls: [
+            %ToolCall{
+              status: :incomplete,
+              type: :function,
+              call_id: nil,
+              name: nil,
+              arguments: " \"",
+              index: 0
+            },
+            %ToolCall{
+              status: :incomplete,
+              type: :function,
+              call_id: nil,
+              name: nil,
+              arguments: "file_path\":",
+              index: 0
+            },
+            %ToolCall{
+              status: :incomplete,
+              type: :function,
+              call_id: nil,
+              name: nil,
+              arguments: " \"/Memories/dad_jokes.txt\"}",
+              index: 0
+            }
+          ]
+        }
+
+      merged = MessageDelta.merge_delta(initial, multi_fragment_delta)
+
+      assert [
+               %ToolCall{
+                 call_id: "call_abc",
+                 name: "read_file",
+                 arguments: "{\n \"file_path\": \"/Memories/dad_jokes.txt\"}",
+                 index: 0
+               }
+             ] = merged.tool_calls
+    end
+
     test "correctly merges assistant content with a tool_call" do
       merged = delta_content_with_function_call() |> List.flatten() |> MessageDelta.merge_deltas()
 
@@ -1058,6 +1126,45 @@ defmodule LangChain.MessageDeltaTest do
       # Should preserve existing content and skip unknown types
       assert merged.merged_content == [ContentPart.text!("existing")]
     end
+
+    test "returns accumulated delta unchanged when receiving an error tuple" do
+      accumulated =
+        MessageDelta.merge_delta(nil, %MessageDelta{content: "Hello", role: :assistant})
+
+      result =
+        MessageDelta.merge_delta(
+          accumulated,
+          {:error, LangChainError.exception(type: "content_filter", message: "Content blocked")}
+        )
+
+      # The accumulated delta should be returned unchanged
+      assert result == accumulated
+    end
+
+    test "returns a fresh assistant delta when nil receives an error tuple" do
+      result = MessageDelta.merge_delta(nil, {:error, "some error"})
+
+      assert %MessageDelta{role: :assistant} = result
+    end
+
+    test "preserves accumulated content when error arrives mid-stream" do
+      accumulated =
+        [
+          %MessageDelta{content: "Greetings", role: :assistant},
+          %MessageDelta{content: " from"},
+          %MessageDelta{content: " your assistant"}
+        ]
+        |> Enum.reduce(nil, fn delta, acc -> MessageDelta.merge_delta(acc, delta) end)
+
+      result =
+        MessageDelta.merge_delta(
+          accumulated,
+          {:error, LangChainError.exception(message: "Server error")}
+        )
+
+      assert result.merged_content == [ContentPart.text!("Greetings from your assistant")]
+      assert result.status == :incomplete
+    end
   end
 
   describe "merge_deltas/2" do
@@ -1463,9 +1570,10 @@ defmodule LangChain.MessageDeltaTest do
       assert length(msg.tool_calls) == 1
     end
 
-    test "rejects empty assistant message with no content and no tool_calls" do
-      # Mistral sometimes returns completely empty assistant messages
-      # which violate conversation flow rules
+    test "converts empty assistant message with no content and no tool_calls" do
+      # LLMs can return empty assistant messages (e.g., after processing tool
+      # results with nothing more to say). This is valid -- downstream code
+      # can use Message.is_empty?/1 to detect this case if needed.
       delta = %LangChain.MessageDelta{
         role: :assistant,
         merged_content: [],
@@ -1473,11 +1581,14 @@ defmodule LangChain.MessageDeltaTest do
         status: :complete
       }
 
-      {:error, reason} = MessageDelta.to_message(delta)
-      assert reason =~ "Empty assistant message"
+      assert {:ok, %Message{} = msg} = MessageDelta.to_message(delta)
+      assert msg.role == :assistant
+      assert msg.content == []
+      assert msg.tool_calls == []
+      assert msg.status == :complete
     end
 
-    test "rejects empty assistant message with nil content and nil tool_calls" do
+    test "converts empty assistant message with nil content and nil tool_calls" do
       delta = %LangChain.MessageDelta{
         role: :assistant,
         merged_content: nil,
@@ -1485,8 +1596,9 @@ defmodule LangChain.MessageDeltaTest do
         status: :complete
       }
 
-      {:error, reason} = MessageDelta.to_message(delta)
-      assert reason =~ "Empty assistant message"
+      assert {:ok, %Message{} = msg} = MessageDelta.to_message(delta)
+      assert msg.role == :assistant
+      assert msg.status == :complete
     end
 
     test "handles merged_content with nil values from index padding" do
@@ -1569,6 +1681,210 @@ defmodule LangChain.MessageDeltaTest do
                role: :assistant,
                status: :incomplete
              }
+    end
+  end
+
+  describe "upsert_tool_call/2" do
+    test "appends a new tool call when no matching call_id exists" do
+      delta = %MessageDelta{role: :assistant, tool_calls: []}
+      tc = %ToolCall{call_id: "abc", name: "search"}
+
+      assert %MessageDelta{tool_calls: [%ToolCall{call_id: "abc", name: "search"}]} =
+               MessageDelta.upsert_tool_call(delta, tc)
+    end
+
+    test "treats nil tool_calls list as empty" do
+      delta = %MessageDelta{role: :assistant, tool_calls: nil}
+      tc = %ToolCall{call_id: "abc", name: "search"}
+
+      assert %MessageDelta{tool_calls: [%ToolCall{call_id: "abc"}]} =
+               MessageDelta.upsert_tool_call(delta, tc)
+    end
+
+    test "merges non-nil incoming fields onto existing call with the same call_id" do
+      existing = %ToolCall{call_id: "abc", name: "search", display_text: "Searching"}
+      delta = %MessageDelta{role: :assistant, tool_calls: [existing]}
+
+      incoming = %ToolCall{call_id: "abc", arguments: %{"q" => "elixir"}}
+
+      assert %MessageDelta{tool_calls: [merged]} = MessageDelta.upsert_tool_call(delta, incoming)
+      assert merged.call_id == "abc"
+      assert merged.name == "search"
+      assert merged.display_text == "Searching"
+      assert merged.arguments == %{"q" => "elixir"}
+    end
+
+    test "shallow-merges metadata, with incoming keys winning per-key" do
+      existing = %ToolCall{call_id: "abc", metadata: %{"a" => 1, "b" => 2}}
+      delta = %MessageDelta{role: :assistant, tool_calls: [existing]}
+      incoming = %ToolCall{call_id: "abc", metadata: %{"b" => 99, "c" => 3}}
+
+      assert %MessageDelta{tool_calls: [%ToolCall{metadata: metadata}]} =
+               MessageDelta.upsert_tool_call(delta, incoming)
+
+      assert metadata == %{"a" => 1, "b" => 99, "c" => 3}
+    end
+
+    test "promotes status from :incomplete to :complete but never the other way" do
+      complete = %ToolCall{call_id: "abc", status: :complete}
+      delta = %MessageDelta{role: :assistant, tool_calls: [complete]}
+
+      assert %MessageDelta{tool_calls: [%ToolCall{status: :complete}]} =
+               MessageDelta.upsert_tool_call(delta, %ToolCall{call_id: "abc", status: :incomplete})
+
+      incomplete = %ToolCall{call_id: "abc", status: :incomplete}
+      delta = %MessageDelta{role: :assistant, tool_calls: [incomplete]}
+
+      assert %MessageDelta{tool_calls: [%ToolCall{status: :complete}]} =
+               MessageDelta.upsert_tool_call(delta, %ToolCall{call_id: "abc", status: :complete})
+    end
+
+    test "ignores incoming calls with nil call_id" do
+      existing = %ToolCall{call_id: "abc", name: "search"}
+      delta = %MessageDelta{role: :assistant, tool_calls: [existing]}
+
+      assert ^delta = MessageDelta.upsert_tool_call(delta, %ToolCall{call_id: nil, name: "x"})
+    end
+  end
+
+  describe "set_tool_execution_status/3" do
+    test "writes execution_status metadata on the matching tool_call" do
+      delta = %MessageDelta{
+        role: :assistant,
+        tool_calls: [%ToolCall{call_id: "abc", name: "search"}]
+      }
+
+      assert %MessageDelta{
+               tool_calls: [%ToolCall{metadata: %{"execution_status" => "executing"}}]
+             } =
+               MessageDelta.set_tool_execution_status(delta, "abc", "executing")
+    end
+
+    test "leaves non-matching calls untouched and merges metadata on a match" do
+      delta = %MessageDelta{
+        role: :assistant,
+        tool_calls: [
+          %ToolCall{call_id: "a", metadata: %{"keep" => true}},
+          %ToolCall{call_id: "b"}
+        ]
+      }
+
+      assert %MessageDelta{tool_calls: [a, b]} =
+               MessageDelta.set_tool_execution_status(delta, "a", "completed")
+
+      assert a.metadata == %{"keep" => true, "execution_status" => "completed"}
+      assert b.metadata == nil
+    end
+
+    test "returns delta unchanged when no call_id matches" do
+      delta = %MessageDelta{
+        role: :assistant,
+        tool_calls: [%ToolCall{call_id: "abc"}]
+      }
+
+      assert ^delta = MessageDelta.set_tool_execution_status(delta, "nope", "executing")
+    end
+
+    test "is a no-op for nil and empty tool_calls" do
+      assert %MessageDelta{tool_calls: nil} =
+               MessageDelta.set_tool_execution_status(
+                 %MessageDelta{role: :assistant, tool_calls: nil},
+                 "abc",
+                 "executing"
+               )
+
+      assert %MessageDelta{tool_calls: []} =
+               MessageDelta.set_tool_execution_status(
+                 %MessageDelta{role: :assistant, tool_calls: []},
+                 "abc",
+                 "executing"
+               )
+    end
+  end
+
+  describe "set_tool_display_text/3" do
+    test "sets display_text when currently nil" do
+      delta = %MessageDelta{
+        role: :assistant,
+        tool_calls: [%ToolCall{call_id: "abc"}]
+      }
+
+      assert %MessageDelta{tool_calls: [%ToolCall{display_text: "Searching"}]} =
+               MessageDelta.set_tool_display_text(delta, "abc", "Searching")
+    end
+
+    test "overwrites an existing display_text so callers can refine it as more info arrives" do
+      delta = %MessageDelta{
+        role: :assistant,
+        tool_calls: [%ToolCall{call_id: "abc", display_text: "Reading file"}]
+      }
+
+      assert %MessageDelta{
+               tool_calls: [%ToolCall{display_text: "Reading outline.md (lines 60-100)"}]
+             } =
+               MessageDelta.set_tool_display_text(
+                 delta,
+                 "abc",
+                 "Reading outline.md (lines 60-100)"
+               )
+    end
+
+    test "is a no-op when display_text is nil so the UI never loses a value" do
+      delta = %MessageDelta{
+        role: :assistant,
+        tool_calls: [%ToolCall{call_id: "abc", display_text: "Reading file"}]
+      }
+
+      assert ^delta = MessageDelta.set_tool_display_text(delta, "abc", nil)
+    end
+
+    test "returns delta unchanged when no call_id matches" do
+      delta = %MessageDelta{
+        role: :assistant,
+        tool_calls: [%ToolCall{call_id: "abc"}]
+      }
+
+      assert ^delta = MessageDelta.set_tool_display_text(delta, "nope", "Searching")
+    end
+  end
+
+  describe "all_tools_terminal?/1" do
+    test "returns true when every tool call has a terminal execution status" do
+      delta = %MessageDelta{
+        role: :assistant,
+        tool_calls: [
+          %ToolCall{call_id: "a", metadata: %{"execution_status" => "completed"}},
+          %ToolCall{call_id: "b", metadata: %{"execution_status" => "failed"}}
+        ]
+      }
+
+      assert MessageDelta.all_tools_terminal?(delta)
+    end
+
+    test "returns false when any tool call is still in flight" do
+      delta = %MessageDelta{
+        role: :assistant,
+        tool_calls: [
+          %ToolCall{call_id: "a", metadata: %{"execution_status" => "completed"}},
+          %ToolCall{call_id: "b", metadata: %{"execution_status" => "executing"}}
+        ]
+      }
+
+      refute MessageDelta.all_tools_terminal?(delta)
+    end
+
+    test "returns false when a tool call has no execution_status set" do
+      delta = %MessageDelta{
+        role: :assistant,
+        tool_calls: [%ToolCall{call_id: "a"}]
+      }
+
+      refute MessageDelta.all_tools_terminal?(delta)
+    end
+
+    test "returns false for nil and empty tool_calls" do
+      refute MessageDelta.all_tools_terminal?(%MessageDelta{role: :assistant, tool_calls: nil})
+      refute MessageDelta.all_tools_terminal?(%MessageDelta{role: :assistant, tool_calls: []})
     end
   end
 end

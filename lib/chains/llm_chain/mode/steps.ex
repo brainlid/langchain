@@ -81,7 +81,7 @@ defmodule LangChain.Chains.LLMChain.Mode.Steps do
       {:error, chain,
        LangChain.LangChainError.exception(
          type: "exceeded_max_runs",
-         message: "Exceeded maximum number of runs"
+         message: "Exceeded maximum number of runs (#{count}/#{max})"
        )}
     else
       {:continue, chain}
@@ -108,6 +108,60 @@ defmodule LangChain.Chains.LLMChain.Mode.Steps do
   end
 
   def check_pause(terminal, _opts), do: terminal
+
+  # ── Tool Interrupts ────────────────────────────────────────────
+
+  @doc """
+  Check if any tool results in the most recent tool message are interrupts.
+
+  Returns `{:interrupt, chain, interrupt_data}` if any tool results have
+  `is_interrupt: true`. The `interrupt_data` is extracted from the first
+  interrupted result (for single interrupts) or aggregated (for multiple).
+
+  This step is generic — it doesn't know *why* a tool interrupted. The
+  consumer (e.g., Sagents) interprets the interrupt data.
+  """
+  def check_tool_interrupts({:continue, chain}, _opts) do
+    case find_interrupted_results(chain) do
+      [] ->
+        {:continue, chain}
+
+      interrupted_results ->
+        interrupt_data = extract_interrupt_data(interrupted_results)
+        {:interrupt, chain, interrupt_data}
+    end
+  end
+
+  def check_tool_interrupts(terminal, _opts), do: terminal
+
+  defp find_interrupted_results(chain) do
+    case Enum.find(Enum.reverse(chain.messages), &(&1.role == :tool)) do
+      nil ->
+        []
+
+      %{tool_results: tool_results} when is_list(tool_results) ->
+        Enum.filter(tool_results, & &1.is_interrupt)
+
+      _ ->
+        []
+    end
+  end
+
+  defp extract_interrupt_data([single]) do
+    data = single.interrupt_data || %{}
+    Map.put(data, :tool_call_id, single.tool_call_id)
+  end
+
+  defp extract_interrupt_data(multiple) do
+    %{
+      type: :multiple_interrupts,
+      interrupts:
+        Enum.map(multiple, fn result ->
+          data = result.interrupt_data || %{}
+          Map.merge(data, %{tool_call_id: result.tool_call_id})
+        end)
+    }
+  end
 
   # ── Until-Tool Termination ──────────────────────────────────────
 

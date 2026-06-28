@@ -9,8 +9,8 @@ defmodule LangChain.Tools.DeepResearch.ResearchStatus do
   import Ecto.Changeset
 
   @type t() :: %__MODULE__{
-          id: String.t(),
-          status: String.t(),
+          id: String.t() | nil,
+          status: String.t() | nil,
           created_at: integer() | nil,
           error_message: String.t() | nil,
           error_code: String.t() | nil,
@@ -32,6 +32,7 @@ defmodule LangChain.Tools.DeepResearch.ResearchStatus do
   @doc """
   Creates a changeset for research status.
   """
+  @spec changeset(map()) :: Ecto.Changeset.t()
   @spec changeset(__MODULE__.t(), map()) :: Ecto.Changeset.t()
   def changeset(status \\ %__MODULE__{}, attrs) do
     status

@@ -29,8 +29,14 @@ langchain-*.tar
 /tmp/
 
 .envrc
+.env
 
 DEV_NOTES.md
 PERSONAL.md
+my_docs/
+
 # macOS system files
 .DS_Store
+
+# Dialyzer PLT files
+/priv/plts/

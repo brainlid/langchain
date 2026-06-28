@@ -65,8 +65,7 @@ defmodule LangChain.Tools.DeepResearchClient do
       {:ok, %{"id" => request_id}} ->
         {:ok, request_id}
 
-      {:ok, response} ->
-        Logger.error("Unexpected response format: #{inspect(response)}")
+      {:ok, _response} ->
         {:error, "Unexpected response format from OpenAI API"}
 
       {:error, reason} ->
@@ -308,7 +307,8 @@ defmodule LangChain.Tools.DeepResearchClient do
       headers: headers,
       # 30 seconds for API calls
       receive_timeout: 30_000,
-      retry: :transient
+      # Disable Req-level retry. See https://github.com/brainlid/langchain/issues/503
+      retry: false
     ]
 
     request_options =
@@ -325,16 +325,12 @@ defmodule LangChain.Tools.DeepResearchClient do
         {:ok, response_body}
 
       {:ok, %Req.Response{status: status, body: error_body}} ->
-        error_message = extract_error_message(error_body, status)
-        Logger.error("API request failed with status #{status}: #{error_message}")
-        {:error, error_message}
+        {:error, extract_error_message(error_body, status)}
 
       {:error, %Req.TransportError{reason: reason}} ->
-        Logger.error("Transport error in API request: #{inspect(reason)}")
         {:error, "Network error: #{inspect(reason)}"}
 
       {:error, reason} ->
-        Logger.error("Unexpected error in API request: #{inspect(reason)}")
         {:error, "Request failed: #{inspect(reason)}"}
     end
   end

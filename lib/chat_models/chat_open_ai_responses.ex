@@ -194,6 +194,86 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
 
       ChatOpenAIResponses.new!(%{model: "gpt-5", verbosity: "low"})
 
+  ## WebSocket Transport
+
+  Instead of HTTP, requests can be sent over a persistent WebSocket connection
+  for lower latency. Use `connect_websocket!/1` to open a connection and
+  `disconnect_websocket!/1` to close it:
+
+      model =
+        ChatOpenAIResponses.new!(%{model: "gpt-4o"})
+        |> ChatOpenAIResponses.connect_websocket!()
+
+      {:ok, chain} =
+        %{llm: model}
+        |> LLMChain.new!()
+        |> LLMChain.add_message(Message.new_user!("Hello"))
+        |> LLMChain.run()
+
+      ChatOpenAIResponses.disconnect_websocket!(model)
+
+  The WebSocket connection is reused across multiple LLM calls within the same
+  chain run (e.g. multi-turn tool calling with `:while_needs_response`).
+
+  ### Lifecycle Management
+
+  **The application is responsible for managing the WebSocket lifecycle.**
+  `connect_websocket!/1` starts a `LangChain.WebSocket` GenServer via
+  `start_link/1`, linking it to the calling process. The PID is stored in
+  the model struct's `:websocket` field. There is no supervisor, automatic
+  reconnection, or health monitoring built in.
+
+  This means:
+
+  - If the calling process exits, the WebSocket is terminated (process link).
+  - The WebSocket PID cannot be serialized. If the model struct is persisted
+    to a database and restored later, the `:websocket` field will be stale.
+  - The server may close idle connections at any time. There is no automatic
+    reconnection.
+  - There is no retry logic for WebSocket failures (unlike the HTTP transport).
+
+  **The WebSocket transport is best suited for short-lived, synchronous
+  sessions** where you control the full lifecycle. It is not currently safe
+  for long-lived agent processes, human-in-the-loop workflows with
+  interruptions, or any scenario where the model struct is serialized and
+  restored across process boundaries.
+
+  For long-running or interruptible workloads, use the default HTTP transport.
+
+  ### Known Limitation: temperature and top_p
+
+  The `:temperature` and `:top_p` parameters are currently excluded from
+  WebSocket payloads due to an
+  [OpenAI bug](https://community.openai.com/t/1375536) that silently closes
+  the connection when these are sent as decimals. A `Logger.warning` is
+  emitted when these values are dropped. This workaround will be removed
+  once OpenAI resolves the issue.
+
+  ## Connection Retry Behavior
+
+  The `retry_count` option controls how many times a request is retried when
+  a pooled HTTP connection turns out to be stale (server closed it between
+  requests). This is a transport-level issue where retrying with a fresh
+  connection is the correct response.
+
+  **Only closed-connection errors are retried.** Timeouts, rate limits (429),
+  overloaded (529), authentication errors, and invalid requests all return
+  immediately -- they are not problems that a simple retry will fix.
+
+  | `retry_count` | Total HTTP requests |
+  |---|---|
+  | `0` | 1 (no retries) |
+  | `1` | 2 (1 initial + 1 retry) |
+  | `2` (default) | 3 (1 initial + 2 retries) |
+
+  Req's built-in HTTP retry is disabled to prevent the two retry layers from
+  compounding. See [GitHub issue #503](https://github.com/brainlid/langchain/issues/503).
+
+  When running LLM calls from a background job queue (e.g., Oban) that has its
+  own retry logic, set `retry_count: 0` so there are no hidden retries:
+
+      ChatOpenAIResponses.new!(%{model: "...", retry_count: 0})
+
   """
   use Ecto.Schema
   require Logger
@@ -259,10 +339,19 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     field :callbacks, {:array, :map}, default: []
     field :verbose_api, :boolean, default: false
 
+    # Number of retries on closed-connection errors (stale pool). The initial
+    # request always runs; this controls additional attempts only.
+    field :retry_count, :integer, default: 2
+
     # Req options to merge into the request.
     # Refer to `https://hexdocs.pm/req/Req.html#new/1-options` for
     # `Req.new` supported set of options.
     field :req_config, :map, default: %{}
+
+    # Optional WebSocket transport. When set to a PID of a
+    # `LangChain.WebSocket` process, requests will be sent over the
+    # persistent WebSocket connection instead of HTTP.
+    field :websocket, :any, virtual: true, default: nil
   end
 
   @type t :: %ChatOpenAIResponses{}
@@ -288,7 +377,9 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     :verbosity,
     :user,
     :verbose_api,
-    :req_config
+    :retry_count,
+    :req_config,
+    :websocket
   ]
   @required_fields [:endpoint, :model]
 
@@ -334,6 +425,99 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     end
   end
 
+  @doc """
+  Open a `LangChain.WebSocket` connection using the model's endpoint and API key.
+
+  Returns `{:ok, model}` with the `:websocket` field set to the WebSocket PID,
+  or `{:error, reason}` on failure.
+
+  Requires the optional `mint_web_socket` dependency.
+
+  ## Example
+
+      {:ok, model} = ChatOpenAIResponses.connect_websocket(model)
+
+  """
+  @spec connect_websocket(t()) :: {:ok, t()} | {:error, String.t()}
+  if Code.ensure_loaded?(Mint.WebSocket) do
+    def connect_websocket(%ChatOpenAIResponses{} = model) do
+      api_key = model.api_key || Config.resolve(:openai_key, nil)
+
+      if api_key do
+        ws_url =
+          model.endpoint
+          |> String.replace_leading("https://", "wss://")
+          |> String.replace_leading("http://", "ws://")
+
+        case LangChain.WebSocket.start_link(
+               url: ws_url,
+               headers: [{"authorization", "Bearer #{api_key}"}],
+               receive_timeout: model.receive_timeout
+             ) do
+          {:ok, pid} ->
+            {:ok, %{model | websocket: pid}}
+
+          {:error, reason} ->
+            {:error, "Failed to connect WebSocket: #{inspect(reason)}"}
+        end
+      else
+        {:error, "API key is required to open a WebSocket connection"}
+      end
+    end
+  else
+    def connect_websocket(%ChatOpenAIResponses{}) do
+      {:error, "WebSocket support requires the :mint_web_socket dependency"}
+    end
+  end
+
+  @doc """
+  Like `connect_websocket/1` but raises on failure.
+
+  ## Example
+
+      model =
+        ChatOpenAIResponses.new!(%{model: "gpt-4o"})
+        |> ChatOpenAIResponses.connect_websocket!()
+
+      # ... use model in chains ...
+
+      ChatOpenAIResponses.disconnect_websocket!(model)
+
+  """
+  @spec connect_websocket!(t()) :: t() | no_return()
+  if Code.ensure_loaded?(Mint.WebSocket) do
+    def connect_websocket!(%ChatOpenAIResponses{} = model) do
+      case connect_websocket(model) do
+        {:ok, model} -> model
+        {:error, reason} -> raise LangChainError, reason
+      end
+    end
+  else
+    def connect_websocket!(%ChatOpenAIResponses{}) do
+      raise LangChainError, "WebSocket support requires the :mint_web_socket dependency"
+    end
+  end
+
+  @doc """
+  Close the WebSocket connection associated with this model.
+
+  Returns the model with `:websocket` set to `nil`.
+  Safe to call even if the WebSocket is already closed.
+  """
+  @spec disconnect_websocket!(t()) :: t()
+  if Code.ensure_loaded?(Mint.WebSocket) do
+    def disconnect_websocket!(%ChatOpenAIResponses{websocket: pid} = model) when is_pid(pid) do
+      if Process.alive?(pid), do: LangChain.WebSocket.close(pid)
+      %{model | websocket: nil}
+    end
+  else
+    def disconnect_websocket!(%ChatOpenAIResponses{websocket: pid} = model) when is_pid(pid) do
+      %{model | websocket: nil}
+    end
+  end
+
+  def disconnect_websocket!(%ChatOpenAIResponses{} = model), do: model
+
   defp common_validation(changeset) do
     changeset
     |> validate_required(@required_fields)
@@ -372,13 +556,40 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     |> Utils.conditionally_add_to_map(:previous_response_id, openai.previous_response_id)
     |> Utils.conditionally_add_to_map(:reasoning, ReasoningOptions.to_api_map(openai.reasoning))
     |> Utils.conditionally_add_to_map(:text, set_text_format(openai))
-    |> Utils.conditionally_add_to_map(:verbosity, openai.verbosity)
     |> Utils.conditionally_add_to_map(:tool_choice, get_tool_choice(openai))
     |> Utils.conditionally_add_to_map(:truncation, openai.truncation)
     |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(openai, tools))
     |> Utils.conditionally_add_to_map(:user, openai.user)
     |> Utils.conditionally_add_to_map(:temperature, openai.temperature)
     |> maybe_add_top_p(openai)
+  end
+
+  # Build the payload for WebSocket mode. Wraps the standard API payload
+  # in a response.create envelope and removes transport-specific fields.
+  #
+  # NOTE: :temperature and :top_p are dropped because the WebSocket endpoint
+  # silently closes the connection (code 1000) when these are sent as decimals.
+  # This is an OpenAI bug — see:
+  # https://community.openai.com/t/responses-websocket-v1-responses-closes-with-code-1000-and-no-events-when-temperature-is-a-decimal-e-g-1-2/1375536
+  if Code.ensure_loaded?(Mint.WebSocket) do
+    defp for_api_websocket(%ChatOpenAIResponses{} = openai, messages, tools) do
+      payload = for_api(openai, messages, tools)
+
+      dropped = [:stream, :background, :temperature, :top_p]
+
+      if payload[:temperature] || payload[:top_p] do
+        Logger.warning(
+          "WebSocket transport: dropping :temperature and :top_p from payload " <>
+            "due to an OpenAI bug that silently closes the connection when these " <>
+            "are sent as decimals. See: https://community.openai.com/t/1375536"
+        )
+      end
+
+      payload
+      |> Map.drop(dropped)
+      |> Map.put(:type, "response.create")
+      |> Jason.encode!()
+    end
   end
 
   # gpt-5.2 and newer do not support the top_p parameter.
@@ -415,10 +626,12 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     end)
   end
 
+  # JSON schema + optional verbosity
   defp set_text_format(%ChatOpenAIResponses{
          json_response: true,
          json_schema: json_schema,
-         json_schema_name: json_schema_name
+         json_schema_name: json_schema_name,
+         verbosity: verbosity
        })
        when not is_nil(json_schema) and not is_nil(json_schema_name) do
     %{
@@ -429,17 +642,32 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         "strict" => true
       }
     }
+    |> maybe_add_verbosity(verbosity)
   end
 
-  defp set_text_format(%ChatOpenAIResponses{json_response: true}) do
+  # JSON object + optional verbosity
+  defp set_text_format(%ChatOpenAIResponses{json_response: true, verbosity: verbosity}) do
     %{"format" => %{"type" => "json_object"}}
+    |> maybe_add_verbosity(verbosity)
   end
 
+  # Plain text with verbosity
+  defp set_text_format(%ChatOpenAIResponses{json_response: false, verbosity: verbosity})
+       when is_binary(verbosity) do
+    %{"verbosity" => verbosity}
+  end
+
+  # Plain text, no verbosity (default)
   defp set_text_format(%ChatOpenAIResponses{json_response: false}) do
     # NOTE: The default handling when unspecified is `%{"type" => "text"}`
     # This returns a `nil` which has the same effect.
     nil
   end
+
+  defp maybe_add_verbosity(map, nil), do: map
+
+  defp maybe_add_verbosity(map, verbosity) when is_binary(verbosity),
+    do: Map.put(map, "verbosity", verbosity)
 
   defp get_tool_choice(%ChatOpenAIResponses{tool_choice: choice})
        when choice in ["none", "auto", "required"],
@@ -633,7 +861,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         %{"type" => "input_image", "file_id" => part.content}
       else
         media_prefix =
-          case Keyword.get(part.options || [], :media, nil) do
+          case Keyword.get(part.options, :media, nil) do
             nil ->
               ""
 
@@ -653,9 +881,8 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
               "data:image/webp;base64,"
 
             other ->
-              message = "Received unsupported media type for ContentPart: #{inspect(other)}"
-              Logger.error(message)
-              raise LangChainError, message
+              raise LangChainError,
+                    "Received unsupported media type for ContentPart: #{inspect(other)}"
           end
 
         %{
@@ -748,12 +975,106 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     )
   end
 
-  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), integer()) ::
+  @spec do_api_request(t(), [Message.t()], ChatModel.tools(), integer() | nil) ::
           list() | struct() | {:error, LangChainError.t()}
-  def do_api_request(openai, messages, tools, retry_count \\ 3)
+  def do_api_request(openai, messages, tools, retry_count \\ nil)
 
   def do_api_request(_openai, _messages, _tools, 0) do
     raise LangChainError, "Retries exceeded. Connection failed."
+  end
+
+  if Code.ensure_loaded?(Mint.WebSocket) do
+    def do_api_request(
+          %ChatOpenAIResponses{websocket: ws_pid} = openai,
+          messages,
+          tools,
+          _retry_count
+        )
+        when is_pid(ws_pid) do
+      payload = for_api_websocket(openai, messages, tools)
+
+      done_fn = fn event ->
+        event["type"] in ["response.completed", "response.failed"]
+      end
+
+      case openai.stream do
+        false ->
+          case LangChain.WebSocket.send_and_collect(ws_pid, payload, done_fn,
+                 timeout: openai.receive_timeout
+               ) do
+            {:ok, events} ->
+              # Find the completed/failed event and process its response
+              events
+              |> Enum.find(&match?(%{"type" => "response.completed"}, &1))
+              |> case do
+                %{"response" => response} ->
+                  case do_process_response(openai, response) do
+                    {:error, %LangChainError{} = reason} ->
+                      {:error, reason}
+
+                    result ->
+                      Callbacks.fire(openai.callbacks, :on_llm_new_message, [result])
+                      result
+                  end
+
+                nil ->
+                  # Check for failed response
+                  events
+                  |> Enum.find(&match?(%{"type" => "response.failed"}, &1))
+                  |> case do
+                    %{"type" => "response.failed"} = failed_event ->
+                      do_process_response(openai, failed_event)
+
+                    nil ->
+                      {:error,
+                       LangChainError.exception(
+                         type: "unexpected_response",
+                         message: "No completed or failed event received via WebSocket"
+                       )}
+                  end
+              end
+
+            {:error, reason} ->
+              {:error,
+               LangChainError.exception(
+                 type: "websocket_error",
+                 message: "WebSocket request failed: #{inspect(reason)}"
+               )}
+          end
+
+        true ->
+          callback_fn = fn event ->
+            case do_process_response(openai, event) do
+              :skip ->
+                :skip
+
+              result ->
+                Utils.fire_streamed_callback(openai, List.wrap(result))
+                result
+            end
+          end
+
+          case LangChain.WebSocket.send_and_stream(ws_pid, payload, callback_fn, done_fn,
+                 timeout: openai.receive_timeout
+               ) do
+            {:ok, results} ->
+              results = results |> Enum.reject(&(&1 == :skip)) |> List.flatten()
+
+              # Check if any result is an error and return the first one found
+              case Enum.find(results, &match?({:error, %LangChainError{}}, &1)) do
+                {:error, _} = error -> error
+                nil -> results
+              end
+
+            {:error, reason} ->
+              {:error,
+               LangChainError.exception(
+                 type: "websocket_error",
+                 message: "WebSocket streaming request failed: #{inspect(reason)}"
+               )}
+          end
+      end
+    end
   end
 
   def do_api_request(
@@ -762,6 +1083,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         tools,
         retry_count
       ) do
+    retry_count = retry_count || openai.retry_count + 1
     raw_data = for_api(openai, messages, tools)
 
     if openai.verbose_api do
@@ -779,9 +1101,9 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
           {"api-key", get_api_key(openai)}
         ],
         receive_timeout: openai.receive_timeout,
-        retry: :transient,
-        max_retries: 3,
-        retry_delay: fn attempt -> 300 * attempt end
+        # Disable Req-level retry to prevent compounding with LangChain's own
+        # :closed retry. See https://github.com/brainlid/langchain/issues/503
+        retry: false
       )
 
     req
@@ -830,7 +1152,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         do_api_request(openai, messages, tools, retry_count - 1)
 
       other ->
-        Logger.error("Unexpected and unhandled API response! #{inspect(other)}")
+        Logger.warning(fn -> "Unexpected and unhandled API response! #{inspect(other)}" end)
         other
     end
   end
@@ -841,6 +1163,8 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         tools,
         retry_count
       ) do
+    retry_count = retry_count || openai.retry_count + 1
+
     Req.new(
       url: openai.endpoint,
       json: for_api(openai, messages, tools),
@@ -859,6 +1183,9 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
       into: Utils.handle_stream_fn(openai, &decode_stream/1, &do_process_response(openai, &1))
     )
     |> case do
+      {:ok, %Req.Response{body: {:error, %LangChainError{} = error}}} ->
+        {:error, error}
+
       {:ok, %Req.Response{body: data} = response} ->
         Callbacks.fire(openai.callbacks, :on_llm_ratelimit_info, [
           get_ratelimit_info(response.headers)
@@ -879,9 +1206,9 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         do_api_request(openai, messages, tools, retry_count - 1)
 
       other ->
-        Logger.error(
+        Logger.warning(fn ->
           "Unhandled and unexpected response from streamed post call. #{inspect(other)}"
-        )
+        end)
 
         {:error,
          LangChainError.exception(
@@ -900,68 +1227,49 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
 
   # Unlike the Chat Completions API, we do not get a [DONE] token at the end of the stream.
 
-  @spec decode_stream({String.t(), String.t()}) :: {%{String.t() => any()}}
-  def decode_stream({raw_data, buffer}, done \\ []) do
-    raw_data
-    |> String.split(~r/event: /)
-    |> Enum.map(fn
-      <<"event: ", rest::binary>> -> rest
-      other -> other
-    end)
-    |> Enum.flat_map(fn chunk ->
-      case String.split(chunk, ~r/\ndata: /, parts: 2) do
-        [_event, json] -> [json]
-        [json_only] -> [json_only]
-        _ -> []
-      end
-    end)
-    |> Enum.reduce({done, buffer}, fn str, {done, incomplete} = acc ->
-      str
-      |> String.trim()
-      |> case do
-        "" ->
-          acc
+  @spec decode_stream({String.t(), String.t()}) :: {[map()], String.t()}
+  def decode_stream({raw_data, buffer}) do
+    combined = buffer <> raw_data
 
-        json ->
-          parse_combined_data(incomplete, json, done)
-      end
-    end)
-  end
+    segments = String.split(combined, "\n\n")
 
-  defp parse_combined_data("", json, done) do
-    json
-    |> Jason.decode()
-    |> case do
-      {:ok, parsed} ->
-        {done ++ [parsed], ""}
+    {complete_segments, [maybe_incomplete]} = Enum.split(segments, -1)
 
-      {:error, _reason} ->
-        {done, json}
-    end
-  end
+    parsed =
+      complete_segments
+      |> Enum.flat_map(fn segment ->
+        segment
+        |> String.split("\n")
+        |> Enum.find_value(fn
+          "data: " <> json -> json
+          "data:" <> json -> String.trim_leading(json)
+          _ -> nil
+        end)
+        |> case do
+          nil ->
+            []
 
-  defp parse_combined_data(incomplete, json, done) do
-    # combine with any previous incomplete data
-    starting_json = incomplete <> json
+          json ->
+            case Jason.decode(json) do
+              {:ok, parsed} -> [parsed]
+              {:error, _} -> []
+            end
+        end
+      end)
 
-    # recursively call decode_stream so that the combined message data is split on "data: " again.
-    # the combined data may need re-splitting if the last message ended in the middle of the "data: " key.
-    # i.e. incomplete ends with "dat" and the new message starts with "a: {".
-    decode_stream({starting_json, ""}, done)
+    {parsed, maybe_incomplete}
   end
 
   # Parse a new message response
   @doc false
-  @spec do_process_response(
-          %{:callbacks => [map()]},
-          data :: %{String.t() => any()} | {:error, any()}
-        ) ::
+  @spec do_process_response(t(), data :: any()) ::
           :skip
+          | TokenUsage.t()
           | Message.t()
-          | [Message.t()]
+          | [Message.t() | MessageDelta.t() | TokenUsage.t() | {:error, LangChainError.t()}]
           | MessageDelta.t()
           | [MessageDelta.t()]
-          | {:error, String.t()}
+          | {:error, LangChainError.t()}
 
   # Complete Response with output lists
   def do_process_response(
@@ -1299,6 +1607,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   ]
 
   @skippable_streaming_events [
+    "keepalive",
     "response.created",
     "response.in_progress",
     "response.incomplete",
@@ -1372,7 +1681,6 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   end
 
   def do_process_response(_model, %{"error" => %{"message" => reason}}) do
-    Logger.error("Received error from API: #{inspect(reason)}")
     {:error, LangChainError.exception(message: reason)}
   end
 
@@ -1391,15 +1699,12 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
 
   def do_process_response(_model, {:error, %Jason.DecodeError{} = response}) do
     error_message = "Received invalid JSON: #{inspect(response)}"
-    Logger.error(error_message)
 
     {:error,
      LangChainError.exception(type: "invalid_json", message: error_message, original: response)}
   end
 
   def do_process_response(_model, other) do
-    Logger.error("Trying to process an unexpected response. #{inspect(other)}")
-
     {:error,
      LangChainError.exception(
        type: "unexpected_response",
@@ -1416,8 +1721,6 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   @spec build_failed_response_error(map()) :: {:error, LangChainError.t()}
   defp build_failed_response_error(response) do
     {error_type, error_message} = extract_error_details(response)
-
-    Logger.error("OpenAI Responses API request failed: #{error_message}")
 
     {:error,
      LangChainError.exception(
@@ -1510,8 +1813,6 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         call
 
       {:error, %Ecto.Changeset{} = changeset} ->
-        reason = Utils.changeset_error_to_string(changeset)
-        Logger.error("Failed to process ToolCall for a function. Reason: #{reason}")
         {:error, LangChainError.exception(changeset)}
     end
   end
@@ -1545,8 +1846,6 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         call
 
       {:error, %Ecto.Changeset{} = changeset} ->
-        reason = Utils.changeset_error_to_string(changeset)
-        Logger.error("Failed to process web_search_call. Reason: #{reason}")
         {:error, LangChainError.exception(changeset)}
     end
   end

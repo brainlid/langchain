@@ -37,12 +37,41 @@ defmodule LangChain.Chains.DataExtractionChainTest do
                        "person_hair_color" => %{"type" => "string"},
                        "person_name" => %{"type" => "string"}
                      },
-                     "required" => []
+                     "required" => [],
+                     "additionalProperties" => false
                    }
                  }
                },
                required: ["info"]
              }
+    end
+  end
+
+  describe "normalize_extraction_info/1" do
+    test "wraps a single map as one row (models sometimes omit the JSON array)" do
+      single_map = %{
+        "person_name" => "Alex",
+        "person_age" => nil,
+        "person_hair_color" => "blonde",
+        "pet_dog_name" => "Frosty",
+        "pet_dog_breed" => "labrador"
+      }
+
+      assert {:ok, [^single_map]} = DataExtractionChain.normalize_extraction_info(single_map)
+    end
+
+    test "leaves a list of maps unchanged" do
+      rows = [
+        %{"person_name" => "Alex"},
+        %{"person_name" => "Claudia"}
+      ]
+
+      assert {:ok, ^rows} = DataExtractionChain.normalize_extraction_info(rows)
+    end
+
+    test "returns error for non-list non-map info" do
+      assert {:error, %LangChain.LangChainError{}} =
+               DataExtractionChain.normalize_extraction_info("not a row")
     end
   end
 

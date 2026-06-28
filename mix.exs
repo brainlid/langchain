@@ -2,7 +2,7 @@ defmodule LangChain.MixProject do
   use Mix.Project
 
   @source_url "https://github.com/brainlid/langchain"
-  @version "0.6.0"
+  @version "0.8.14"
 
   def project do
     [
@@ -14,6 +14,11 @@ defmodule LangChain.MixProject do
       start_permanent: Mix.env() == :prod,
       aliases: aliases(),
       deps: deps(),
+      dialyzer: [
+        ignore_warnings: ".dialyzer_ignore.exs",
+        plt_file: {:no_warn, "priv/plts/project.plt"},
+        plt_core_path: "priv/plts"
+      ],
       package: package(),
       docs: &docs/0,
       name: "LangChain",
@@ -45,7 +50,8 @@ defmodule LangChain.MixProject do
     [
       {:ecto, "~> 3.10 or ~> 3.11"},
       {:gettext, "~> 0.26.2 or ~> 1.0.0"},
-      {:req, ">= 0.5.2"},
+      {:req, ">= 0.5.3"},
+      {:mint_web_socket, "~> 1.0", optional: true},
       {:nimble_parsec, "~> 1.4", optional: true},
       {:abacus, "~> 2.1.0", optional: true},
       {:nx, ">= 0.7.0", optional: true},
@@ -53,7 +59,12 @@ defmodule LangChain.MixProject do
       {:opentelemetry, "~> 1.5", only: :test},
       {:opentelemetry_exporter, "~> 1.8", only: :test},
       {:ex_doc, "~> 0.40", only: :dev, runtime: false},
-      {:mimic, "~> 1.8", only: :test}
+      {:mimic, "~> 1.8", only: :test},
+      {:dotenvy, "~> 1.1"},
+      {:req_llm, ">= 1.6.0", optional: true},
+      {:sobelow, "~> 0.14", only: [:dev, :test], runtime: false, warn_if_outdated: true},
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
+      {:mix_audit, "~> 2.1", only: [:dev, :test], runtime: false}
     ]
   end
 
@@ -65,7 +76,14 @@ defmodule LangChain.MixProject do
   # See the documentation for `Mix` for more info on aliases.
   defp aliases do
     [
-      precommit: ["compile --warning-as-errors", "deps.unlock --unused", "format", "test"]
+      precommit: [
+        "compile --warning-as-errors",
+        "deps.unlock --unused",
+        "format",
+        "sobelow",
+        "deps.audit",
+        "test"
+      ]
     ]
   end
 
@@ -80,13 +98,16 @@ defmodule LangChain.MixProject do
       extra_section: "Guides",
       extras: extras(),
       groups_for_extras: [
+        Guides: ["guides/evaluation.md"],
         Notebooks: Path.wildcard("notebooks/*.livemd")
       ],
       groups_for_modules: [
         "Chat Models": [
+          LangChain.ChatModels.ChatModel,
           LangChain.ChatModels.ChatOpenAI,
           LangChain.ChatModels.ChatOpenAIResponses,
           LangChain.ChatModels.ChatAnthropic,
+          LangChain.ChatModels.ChatAwsMantle,
           LangChain.ChatModels.ChatBumblebee,
           LangChain.ChatModels.ChatGoogleAI,
           LangChain.ChatModels.ChatVertexAI,
@@ -95,7 +116,7 @@ defmodule LangChain.MixProject do
           LangChain.ChatModels.ChatPerplexity,
           LangChain.ChatModels.ChatGrok,
           LangChain.ChatModels.ChatDeepSeek,
-          LangChain.ChatModels.ChatModel
+          LangChain.ChatModels.ChatReqLLM
         ],
         Chains: [
           LangChain.Chains.LLMChain,
@@ -134,6 +155,13 @@ defmodule LangChain.MixProject do
           LangChain.Chains.RoutingChain,
           LangChain.Routing.PromptRoute
         ],
+        "File Uploaders": [
+          LangChain.FileUploader,
+          LangChain.FileUploader.FileOpenAI,
+          LangChain.FileUploader.FileAnthropic,
+          LangChain.FileUploader.FileGoogle,
+          LangChain.FileUploader.FileResult
+        ],
         Images: [
           LangChain.Images,
           LangChain.Images.OpenAIImage,
@@ -161,6 +189,13 @@ defmodule LangChain.MixProject do
           LangChain.OpenTelemetry.Attributes,
           LangChain.OpenTelemetry.ProviderMapping
         ],
+        WebSocket: [
+          LangChain.WebSocket
+        ],
+        Evaluation: [
+          LangChain.Trajectory,
+          LangChain.Trajectory.Assertions
+        ],
         Utils: [
           LangChain.Utils,
           LangChain.Utils.BedrockConfig,
@@ -179,6 +214,7 @@ defmodule LangChain.MixProject do
     [
       "README.md",
       "CHANGELOG.md",
+      "guides/evaluation.md",
       "notebooks/getting_started.livemd",
       "notebooks/custom_functions.livemd",
       "notebooks/context-specific-image-descriptions.livemd"

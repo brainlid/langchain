@@ -270,6 +270,430 @@ defmodule ChatModels.ChatVertexAITest do
              } = tool_result
     end
 
+    test "preserves media as nested functionResponse parts", %{vertex_ai: vertex_ai} do
+      data =
+        ChatVertexAI.for_api(
+          vertex_ai,
+          [
+            Message.new_tool_result!(%{
+              tool_results: [
+                ToolResult.new!(%{
+                  tool_call_id: "call_123",
+                  name: "render_chart",
+                  content: [
+                    ContentPart.text!(Jason.encode!(%{"summary" => "See attached chart"})),
+                    ContentPart.image!("base64-image-data", media: "image/png")
+                  ]
+                })
+              ]
+            })
+          ],
+          []
+        )
+
+      assert %{
+               "contents" => [
+                 %{
+                   "parts" => [
+                     %{
+                       "functionResponse" => %{
+                         "name" => "render_chart",
+                         "response" => %{"summary" => "See attached chart"},
+                         "parts" => [
+                           %{
+                             "inlineData" => %{
+                               "mimeType" => "image/png",
+                               "data" => "base64-image-data"
+                             }
+                           }
+                         ]
+                       }
+                     }
+                   ],
+                   "role" => :function
+                 }
+               ]
+             } = data
+    end
+
+    test "preserves inline file parts as inlineData in functionResponse", %{
+      vertex_ai: vertex_ai
+    } do
+      data =
+        ChatVertexAI.for_api(
+          vertex_ai,
+          [
+            Message.new_tool_result!(%{
+              tool_results: [
+                ToolResult.new!(%{
+                  tool_call_id: "call_123",
+                  name: "read_document",
+                  content: [
+                    ContentPart.text!(Jason.encode!(%{"summary" => "See attached document"})),
+                    ContentPart.file!("base64-pdf-data",
+                      media: "application/pdf",
+                      display_name: "report.pdf"
+                    )
+                  ]
+                })
+              ]
+            })
+          ],
+          []
+        )
+
+      assert %{
+               "contents" => [
+                 %{
+                   "parts" => [
+                     %{
+                       "functionResponse" => %{
+                         "name" => "read_document",
+                         "response" => %{"summary" => "See attached document"},
+                         "parts" => [
+                           %{
+                             "inlineData" => %{
+                               "mimeType" => "application/pdf",
+                               "data" => "base64-pdf-data",
+                               "displayName" => "report.pdf"
+                             }
+                           }
+                         ]
+                       }
+                     }
+                   ]
+                 }
+               ]
+             } = data
+    end
+
+    test "preserves display names for inline image tool results", %{vertex_ai: vertex_ai} do
+      data =
+        ChatVertexAI.for_api(
+          vertex_ai,
+          [
+            Message.new_tool_result!(%{
+              tool_results: [
+                ToolResult.new!(%{
+                  tool_call_id: "call_123",
+                  name: "list_assets",
+                  content: [
+                    ContentPart.text!(
+                      Jason.encode!(%{
+                        "assets" => [
+                          %{
+                            "label" => "preview",
+                            "image" => %{"$ref" => "asset_preview.png"}
+                          }
+                        ]
+                      })
+                    ),
+                    ContentPart.image!("base64-image-data",
+                      media: "image/png",
+                      display_name: "asset_preview.png"
+                    )
+                  ]
+                })
+              ]
+            })
+          ],
+          []
+        )
+
+      assert %{
+               "contents" => [
+                 %{
+                   "parts" => [
+                     %{
+                       "functionResponse" => %{
+                         "name" => "list_assets",
+                         "response" => %{
+                           "assets" => [
+                             %{
+                               "label" => "preview",
+                               "image" => %{"$ref" => "asset_preview.png"}
+                             }
+                           ]
+                         },
+                         "parts" => [
+                           %{
+                             "inlineData" => %{
+                               "mimeType" => "image/png",
+                               "data" => "base64-image-data",
+                               "displayName" => "asset_preview.png"
+                             }
+                           }
+                         ]
+                       }
+                     }
+                   ]
+                 }
+               ]
+             } = data
+    end
+
+    test "preserves image URLs as nested functionResponse parts", %{vertex_ai: vertex_ai} do
+      data =
+        ChatVertexAI.for_api(
+          vertex_ai,
+          [
+            Message.new_tool_result!(%{
+              tool_results: [
+                ToolResult.new!(%{
+                  tool_call_id: "call_123",
+                  name: "render_chart",
+                  content: [
+                    ContentPart.text!(Jason.encode!(%{"summary" => "See attached chart"})),
+                    ContentPart.image_url!("https://example.com/chart.png", media: "image/png")
+                  ]
+                })
+              ]
+            })
+          ],
+          []
+        )
+
+      assert %{
+               "contents" => [
+                 %{
+                   "parts" => [
+                     %{
+                       "functionResponse" => %{
+                         "parts" => [
+                           %{
+                             "fileData" => %{
+                               "mimeType" => "image/png",
+                               "fileUri" => "https://example.com/chart.png"
+                             }
+                           }
+                         ]
+                       }
+                     }
+                   ]
+                 }
+               ]
+             } = data
+    end
+
+    test "preserves display names for image URLs as nested functionResponse parts", %{
+      vertex_ai: vertex_ai
+    } do
+      data =
+        ChatVertexAI.for_api(
+          vertex_ai,
+          [
+            Message.new_tool_result!(%{
+              tool_results: [
+                ToolResult.new!(%{
+                  tool_call_id: "call_123",
+                  name: "render_chart",
+                  content: [
+                    ContentPart.text!(Jason.encode!(%{"summary" => "See attached chart"})),
+                    ContentPart.image_url!("https://example.com/chart.png",
+                      media: "image/png",
+                      display_name: "frame_1712345678901.png"
+                    )
+                  ]
+                })
+              ]
+            })
+          ],
+          []
+        )
+
+      assert %{
+               "contents" => [
+                 %{
+                   "parts" => [
+                     %{
+                       "functionResponse" => %{
+                         "parts" => [
+                           %{
+                             "fileData" => %{
+                               "mimeType" => "image/png",
+                               "fileUri" => "https://example.com/chart.png",
+                               "displayName" => "frame_1712345678901.png"
+                             }
+                           }
+                         ]
+                       }
+                     }
+                   ]
+                 }
+               ]
+             } = data
+    end
+
+    test "preserves display names for file URLs as nested functionResponse parts", %{
+      vertex_ai: vertex_ai
+    } do
+      data =
+        ChatVertexAI.for_api(
+          vertex_ai,
+          [
+            Message.new_tool_result!(%{
+              tool_results: [
+                ToolResult.new!(%{
+                  tool_call_id: "call_123",
+                  name: "render_chart",
+                  content: [
+                    ContentPart.text!(Jason.encode!(%{"summary" => "See attached chart"})),
+                    ContentPart.file_url!("https://example.com/chart.png",
+                      media: "image/png",
+                      display_name: "frame_1712345678901.png"
+                    )
+                  ]
+                })
+              ]
+            })
+          ],
+          []
+        )
+
+      assert %{
+               "contents" => [
+                 %{
+                   "parts" => [
+                     %{
+                       "functionResponse" => %{
+                         "parts" => [
+                           %{
+                             "fileData" => %{
+                               "mimeType" => "image/png",
+                               "fileUri" => "https://example.com/chart.png",
+                               "displayName" => "frame_1712345678901.png"
+                             }
+                           }
+                         ]
+                       }
+                     }
+                   ]
+                 }
+               ]
+             } = data
+    end
+
+    test "uses an empty response object when tool result only contains media", %{
+      vertex_ai: vertex_ai
+    } do
+      data =
+        ChatVertexAI.for_api(
+          vertex_ai,
+          [
+            Message.new_tool_result!(%{
+              tool_results: [
+                ToolResult.new!(%{
+                  tool_call_id: "call_123",
+                  name: "render_chart",
+                  content: [
+                    ContentPart.image!("base64-image-data", media: "image/png")
+                  ]
+                })
+              ]
+            })
+          ],
+          []
+        )
+
+      assert %{
+               "contents" => [
+                 %{
+                   "parts" => [
+                     %{
+                       "functionResponse" => %{
+                         "name" => "render_chart",
+                         "response" => %{},
+                         "parts" => [
+                           %{
+                             "inlineData" => %{
+                               "mimeType" => "image/png",
+                               "data" => "base64-image-data"
+                             }
+                           }
+                         ]
+                       }
+                     }
+                   ]
+                 }
+               ]
+             } = data
+    end
+
+    test "keeps plain text tool results unchanged", %{vertex_ai: vertex_ai} do
+      data =
+        ChatVertexAI.for_api(
+          vertex_ai,
+          [
+            Message.new_tool_result!(%{
+              tool_results: [
+                ToolResult.new!(%{
+                  tool_call_id: "call_123",
+                  name: "render_chart",
+                  content: "plain text result"
+                })
+              ]
+            })
+          ],
+          []
+        )
+
+      assert %{
+               "contents" => [
+                 %{
+                   "parts" => [
+                     %{
+                       "functionResponse" => %{
+                         "name" => "render_chart",
+                         "response" => %{"result" => "plain text result"}
+                       }
+                     }
+                   ]
+                 }
+               ]
+             } = data
+    end
+
+    test "decodes JSON string tool results into function responses", %{vertex_ai: vertex_ai} do
+      data =
+        ChatVertexAI.for_api(
+          vertex_ai,
+          [
+            Message.new_tool_result!(%{
+              tool_results: [
+                ToolResult.new!(%{
+                  tool_call_id: "call_123",
+                  name: "resize_plan",
+                  content:
+                    Jason.encode!(%{
+                      "error" => "Unknown element alias: 05ba59c1-1234",
+                      "status" => "validation_error"
+                    })
+                })
+              ]
+            })
+          ],
+          []
+        )
+
+      assert %{
+               "contents" => [
+                 %{
+                   "parts" => [
+                     %{
+                       "functionResponse" => %{
+                         "name" => "resize_plan",
+                         "response" => %{
+                           "error" => "Unknown element alias: 05ba59c1-1234",
+                           "status" => "validation_error"
+                         }
+                       }
+                     }
+                   ]
+                 }
+               ]
+             } = data
+    end
+
     test "generates a map containing a system message", %{vertex_ai: vertex_ai} do
       message = "These are some instructions."
 
@@ -697,6 +1121,104 @@ defmodule ChatModels.ChatVertexAITest do
       assert %Message{} = updated_chain.last_message
       assert updated_chain.last_message.role == :assistant
       assert Map.has_key?(updated_chain.last_message.metadata, "groundingChunks")
+    end
+  end
+
+  describe "multimodal function response preview" do
+    @tag live_call: true, live_vertex_ai: true
+    test "supports a tool result that includes text and an image" do
+      alias LangChain.Chains.LLMChain
+
+      test_pid = self()
+
+      image_data =
+        File.read!("test/support/images/barn_owl.jpg")
+        |> Base.encode64()
+
+      describe_image =
+        Function.new!(%{
+          name: "describe_image",
+          description: "Return a short structured summary and the barn owl image.",
+          parameters_schema: %{type: "object", properties: %{}},
+          function: fn _args, _context ->
+            {:ok,
+             [
+               ContentPart.text!(
+                 Jason.encode!(%{
+                   "summary" => "The attached image shows a barn owl perched on a branch."
+                 })
+               ),
+               ContentPart.image!(image_data, media: "image/jpeg")
+             ]}
+          end
+        })
+
+      callbacks = %{
+        on_llm_new_message: fn _chain, message ->
+          send(test_pid, {:callback_msg, message})
+        end,
+        on_tool_response_created: fn _chain, tool_message ->
+          send(test_pid, {:callback_tool_msg, tool_message})
+        end
+      }
+
+      chat =
+        ChatVertexAI.new!(%{
+          model: "gemini-3-flash-preview",
+          temperature: 0,
+          endpoint: System.fetch_env!("VERTEX_API_ENDPOINT"),
+          stream: false
+        })
+
+      {:ok, updated_chain} =
+        %{llm: chat, verbose: false, stream: false}
+        |> LLMChain.new!()
+        |> LLMChain.add_message(
+          Message.new_user!(
+            "Call the describe_image tool exactly once. After receiving its tool result, answer in one short sentence."
+          )
+        )
+        |> LLMChain.add_tools(describe_image)
+        |> LLMChain.add_callback(callbacks)
+        |> LLMChain.run(mode: :while_needs_response)
+
+      assert [
+               %Message{role: :user},
+               %Message{
+                 role: :assistant,
+                 tool_calls: [%ToolCall{name: "describe_image"}]
+               },
+               %Message{
+                 role: :tool,
+                 tool_results: [%ToolResult{name: "describe_image"} = tool_result]
+               },
+               %Message{role: :assistant} = response
+             ] = updated_chain.messages
+
+      assert [
+               %ContentPart{
+                 type: :text,
+                 content:
+                   "{\"summary\":\"The attached image shows a barn owl perched on a branch.\"}"
+               },
+               %ContentPart{type: :image, options: [media: "image/jpeg"]}
+             ] = tool_result.content
+
+      assert_received {:callback_msg,
+                       %Message{
+                         role: :assistant,
+                         tool_calls: [%ToolCall{name: "describe_image"}]
+                       }}
+
+      assert_received {:callback_tool_msg,
+                       %Message{
+                         role: :tool,
+                         tool_results: [%ToolResult{name: "describe_image"}]
+                       }}
+
+      assert %Message{role: :assistant} = updated_chain.last_message
+      response_text = ContentPart.parts_to_string(response.content) |> String.downcase()
+      assert response_text =~ "owl"
     end
   end
 

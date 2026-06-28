@@ -71,7 +71,6 @@ defmodule LangChain.FunctionParam do
   """
   use Ecto.Schema
   import Ecto.Changeset
-  require Logger
   alias __MODULE__
   alias LangChain.LangChainError
 
@@ -188,8 +187,10 @@ defmodule LangChain.FunctionParam do
       type == :array and item == "object" and Enum.empty?(props) ->
         add_error(changeset, :object_properties, "required when array type of object is used")
 
-      # has object_properties but not one of the allowed cases
-      !Enum.empty?(props) and (!(type == :array and item == "object") and !(type == :object)) ->
+      # has object_properties but not one of the allowed cases.
+      # `type` is provably not `:object` here (handled by the clauses above),
+      # so only the array-of-object case needs to be excluded.
+      !Enum.empty?(props) and !(type == :array and item == "object") ->
         add_error(changeset, :object_properties, "not allowed for type #{inspect(type)}")
 
       # not an object and didn't give object_properties
@@ -223,7 +224,8 @@ defmodule LangChain.FunctionParam do
     %{
       "type" => "object",
       "properties" => Enum.reduce(params, %{}, &to_json_schema(&2, &1)),
-      "required" => required_properties(params)
+      "required" => required_properties(params),
+      "additionalProperties" => false
     }
   end
 
