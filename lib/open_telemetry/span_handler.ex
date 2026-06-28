@@ -101,10 +101,13 @@ if Code.ensure_loaded?(:opentelemetry) do
           %Config{} = config
         ) do
       if config.capture_input_messages do
-        case metadata[:messages] do
-          [_ | _] = messages ->
-            span_ctx = OpenTelemetry.Tracer.current_span_ctx()
+        case {OpenTelemetry.Tracer.current_span_ctx(), metadata[:messages]} do
+          # No active span to attach to (e.g. the `:prompt` event fired outside
+          # an LLM call span). Nothing to record.
+          {:undefined, _} ->
+            :ok
 
+          {span_ctx, [_ | _] = messages} ->
             OpenTelemetry.Span.set_attributes(span_ctx, [
               {"gen_ai.input.messages", MessageSerializer.serialize_input(messages)}
             ])

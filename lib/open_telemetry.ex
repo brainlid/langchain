@@ -33,7 +33,18 @@ if Code.ensure_loaded?(:opentelemetry) do
         Serializes tool call arguments into `gen_ai.tool.call.arguments`.
       * `:capture_tool_results` - Record tool call results. Default: `false`.
         Captures tool return values into `gen_ai.tool.call.result`.
-      * `:enable_metrics` - Record OTel histogram metrics. Default: `true`.
+      * `:enable_metrics` - Re-emit operation-duration and token-usage metric
+        events. Default: `true`. See the note below.
+
+    > #### Metrics require a consumer {: .warning}
+    >
+    > `:enable_metrics` does **not** record OpenTelemetry histograms or counters
+    > on its own. It re-emits LangChain telemetry as the intermediary events
+    > `[:langchain, :otel, :operation, :duration]` and `[:langchain, :otel, :token, :usage]`.
+    > To turn these into real metrics, attach a consumer such as `Telemetry.Metrics`
+    > (with an OpenTelemetry reporter), `PromEx`, or equivalent. Without a consumer,
+    > `enable_metrics: true` has no observable effect. See
+    > `LangChain.OpenTelemetry.MetricsHandler` for the emitted event shapes.
 
     ## Span Mapping
 
