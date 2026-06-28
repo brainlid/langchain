@@ -139,6 +139,73 @@ defmodule LangChain.OpenTelemetry.MetricsHandlerTest do
     end
   end
 
+  describe "failure (exception) emission" do
+    test "emits a duration metric tagged with error.type for a failed LLM call" do
+      MetricsHandler.handle_event(
+        [:langchain, :llm, :call, :exception],
+        %{duration: native(3)},
+        %{provider: "openai", model: "gpt-4o", error: %RuntimeError{message: "boom"}},
+        nil
+      )
+
+      assert_received {:metric, [:langchain, :otel, :operation, :duration], %{duration_s: 3.0},
+                       attrs}
+
+      assert attrs["gen_ai.operation.name"] == "chat"
+      assert attrs["gen_ai.provider.name"] == "openai"
+      assert attrs["error.type"] == "RuntimeError"
+    end
+
+    test "uses invoke_agent operation name for a failed chain execution" do
+      MetricsHandler.handle_event(
+        [:langchain, :chain, :execute, :exception],
+        %{duration: native(1)},
+        %{error: %ArgumentError{}},
+        nil
+      )
+
+      assert_received {:metric, [:langchain, :otel, :operation, :duration], _, attrs}
+      assert attrs["gen_ai.operation.name"] == "invoke_agent"
+      assert attrs["error.type"] == "ArgumentError"
+    end
+
+    test "uses execute_tool operation name for a failed tool call" do
+      MetricsHandler.handle_event(
+        [:langchain, :tool, :call, :exception],
+        %{duration: native(1)},
+        %{error: %RuntimeError{}},
+        nil
+      )
+
+      assert_received {:metric, [:langchain, :otel, :operation, :duration], _, attrs}
+      assert attrs["gen_ai.operation.name"] == "execute_tool"
+      assert attrs["error.type"] == "RuntimeError"
+    end
+
+    test "falls back to a generic error.type when no exception struct is present" do
+      MetricsHandler.handle_event(
+        [:langchain, :llm, :call, :exception],
+        %{duration: native(1)},
+        %{provider: "openai", model: "gpt-4o"},
+        nil
+      )
+
+      assert_received {:metric, [:langchain, :otel, :operation, :duration], _, attrs}
+      assert attrs["error.type"] == "error"
+    end
+
+    test "does not emit token usage on failure" do
+      MetricsHandler.handle_event(
+        [:langchain, :llm, :call, :exception],
+        %{duration: native(1)},
+        %{error: %RuntimeError{}},
+        nil
+      )
+
+      refute_received {:metric, [:langchain, :otel, :token, :usage], _, _}
+    end
+  end
+
   describe "attributes" do
     test "omits provider/model attributes when not provided" do
       MetricsHandler.handle_event(

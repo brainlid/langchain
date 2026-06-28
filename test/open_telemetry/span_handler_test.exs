@@ -468,5 +468,77 @@ defmodule LangChain.OpenTelemetry.SpanHandlerTest do
       # Status should indicate error
       assert error_span.status != nil
     end
+
+    test "sets error.type attribute to the exception module", %{tid: tid} do
+      call_id = Ecto.UUID.generate()
+
+      :telemetry.execute(
+        [:langchain, :llm, :call, :start],
+        %{system_time: System.system_time()},
+        %{call_id: call_id, model: "gpt-4o", provider: "openai"}
+      )
+
+      :telemetry.execute(
+        [:langchain, :llm, :call, :exception],
+        %{system_time: System.system_time()},
+        %{
+          call_id: call_id,
+          kind: :error,
+          error: %RuntimeError{message: "connection timeout"},
+          stacktrace: []
+        }
+      )
+
+      assert [error_span] = flush_spans(tid)
+      assert error_span.attributes["error.type"] == "RuntimeError"
+    end
+  end
+
+  describe "handler resilience" do
+    # `:telemetry` permanently detaches any handler that raises. A serialization
+    # failure on one bad payload must not disable tracing for the whole VM, so the
+    # handler traps its own exceptions.
+    test "a failing event is skipped without detaching the handler", %{tid: tid} do
+      # A capture-enabled config plus a message whose content cannot be JSON
+      # encoded forces the serializer to raise inside the prompt handler.
+      OpenTelemetry.teardown()
+      OpenTelemetry.setup(enable_metrics: false, capture_input_messages: true)
+
+      call_id = Ecto.UUID.generate()
+
+      :telemetry.execute(
+        [:langchain, :llm, :call, :start],
+        %{system_time: System.system_time()},
+        %{call_id: call_id, model: "gpt-4o", provider: "openai"}
+      )
+
+      unencodable = %LangChain.Message{
+        role: :user,
+        content: [%LangChain.Message.ContentPart{type: :text, content: <<0xFFFF::16>>}]
+      }
+
+      # This would raise inside the handler (invalid UTF-8 → Jason.encode! error).
+      # The handler must swallow it and stay attached.
+      :telemetry.execute(
+        [:langchain, :llm, :prompt],
+        %{system_time: System.system_time()},
+        %{model: "gpt-4o", messages: [unencodable]}
+      )
+
+      # Handler is still attached: a subsequent normal stop still produces a span.
+      :telemetry.execute(
+        [:langchain, :llm, :call, :stop],
+        %{duration: 1_000_000, system_time: System.system_time()},
+        %{call_id: call_id, model: "gpt-4o", provider: "openai"}
+      )
+
+      assert [llm_span] = flush_spans(tid)
+      assert llm_span.name == "chat gpt-4o"
+
+      # The handler must still be registered after the failure.
+      assert Enum.any?(:telemetry.list_handlers([:langchain, :llm, :prompt]), fn h ->
+               h.id == OpenTelemetry.SpanHandler.handler_id()
+             end)
+    end
   end
 end

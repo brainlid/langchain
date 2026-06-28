@@ -15,7 +15,9 @@ if Code.ensure_loaded?(:opentelemetry) do
     ## Emitted events
 
     * `[:langchain, :otel, :operation, :duration]` — with `%{duration_s: float()}`
-      measurement and GenAI attributes as metadata
+      measurement and GenAI attributes as metadata. Emitted for both successful
+      (`:stop`) and failed (`:exception`) operations; failures additionally carry
+      an `error.type` attribute so error rate is observable alongside latency.
     * `[:langchain, :otel, :token, :usage]` — with `%{tokens: integer()}` measurement
       and GenAI attributes (including `gen_ai.token.type`) as metadata
 
@@ -37,8 +39,11 @@ if Code.ensure_loaded?(:opentelemetry) do
     def events do
       [
         [:langchain, :llm, :call, :stop],
+        [:langchain, :llm, :call, :exception],
         [:langchain, :chain, :execute, :stop],
-        [:langchain, :tool, :call, :stop]
+        [:langchain, :chain, :execute, :exception],
+        [:langchain, :tool, :call, :stop],
+        [:langchain, :tool, :call, :exception]
       ]
     end
 
@@ -87,6 +92,33 @@ if Code.ensure_loaded?(:opentelemetry) do
       emit_duration(measurements, common_attrs)
       :ok
     end
+
+    # Failed operations: emit a duration metric tagged with `error.type` so error
+    # rate and error latency are observable alongside successes. No token usage is
+    # available on a failure.
+    def handle_event(
+          [:langchain, component, operation, :exception],
+          measurements,
+          metadata,
+          _config
+        ) do
+      operation_name = operation_name_for(component, operation)
+
+      attrs =
+        operation_name
+        |> common_attributes(metadata)
+        |> Map.put("error.type", error_type(metadata[:error]))
+
+      emit_duration(measurements, attrs)
+      :ok
+    end
+
+    defp operation_name_for(:llm, :call), do: "chat"
+    defp operation_name_for(:chain, :execute), do: "invoke_agent"
+    defp operation_name_for(:tool, :call), do: "execute_tool"
+
+    defp error_type(%module{}), do: inspect(module)
+    defp error_type(_), do: "error"
 
     defp emit_duration(measurements, attrs) do
       case measurements[:duration] do

@@ -193,6 +193,11 @@ defmodule LangChain.Telemetry do
     # start_event/2 also calls put_new, but since we set it first, the same ID is reused.
     metadata = Map.put_new(metadata, :call_id, Ecto.UUID.generate())
 
+    # Capture the start time here too so the `:exception` event can report a
+    # duration. Failed operations otherwise carry no duration, which would make
+    # them invisible to duration-based metrics (and hide error latency).
+    exception_start_time = System.monotonic_time()
+
     stop = start_event(event_prefix, metadata)
 
     try do
@@ -219,7 +224,10 @@ defmodule LangChain.Telemetry do
 
         emit_event(
           event_prefix ++ [:exception],
-          %{system_time: System.system_time()},
+          %{
+            duration: System.monotonic_time() - exception_start_time,
+            system_time: System.system_time()
+          },
           Map.merge(metadata, %{
             kind: :error,
             error: exception,

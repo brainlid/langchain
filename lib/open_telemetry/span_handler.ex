@@ -11,8 +11,20 @@ if Code.ensure_loaded?(:opentelemetry) do
     | `[:langchain, :llm, :call, ...]`      | `chat {model}`              | `:client`  | `chat`                 |
     | `[:langchain, :tool, :call, ...]`     | `execute_tool {tool_name}`  | `:internal` | `execute_tool`          |
 
-    Span hierarchy is automatic: chain → LLM call → tool call. All run synchronously
-    in the same process, so parent context propagation works via the process dictionary.
+    Span hierarchy is automatic for synchronous work: chain → LLM call → tool call
+    run in the same process, so parent context propagation works via the process
+    dictionary.
+
+    > #### Async tools {: .warning}
+    >
+    > Tools declared with `async: true` execute in a separate `Task` process. The
+    > OpenTelemetry context lives in the parent process's dictionary and is **not**
+    > inherited by the spawned process, so an async tool's span would otherwise be
+    > orphaned (it becomes its own root span rather than a child of the chain span).
+    > To keep async tool spans attached, propagate the parent context into the Task
+    > via the `:on_tool_pre_execution` callback (which fires inside the spawned
+    > process) — capture `OpenTelemetry.Ctx.get_current/0` before execution and
+    > `OpenTelemetry.Ctx.attach/1` inside the callback.
 
     ## Usage
 
@@ -25,6 +37,7 @@ if Code.ensure_loaded?(:opentelemetry) do
     alias LangChain.OpenTelemetry.MessageSerializer
 
     require OpenTelemetry.Tracer, as: Tracer
+    require Logger
 
     @handler_prefix "langchain-otel-span"
 
@@ -57,49 +70,66 @@ if Code.ensure_loaded?(:opentelemetry) do
     Telemetry handler callback. Dispatches to the appropriate handler based on the event.
     """
     @spec handle_event(list(atom()), map(), map(), Config.t()) :: :ok
-    def handle_event(event, measurements, metadata, config)
+    def handle_event(event, measurements, metadata, config) do
+      # `:telemetry` permanently detaches a handler that raises (VM-wide, for the
+      # rest of the run). A single bad payload — e.g. a non-JSON-encodable message
+      # reaching the serializer — must never silently disable tracing for every
+      # subsequent request, so we trap and log instead.
+      do_handle_event(event, measurements, metadata, config)
+    rescue
+      exception ->
+        Logger.warning(fn ->
+          "[LangChain.OpenTelemetry] span handler failed for #{inspect(event)} and was " <>
+            "skipped (tracing remains attached): " <>
+            Exception.format(:error, exception, __STACKTRACE__)
+        end)
+
+        :ok
+    end
+
+    defp do_handle_event(event, measurements, metadata, config)
 
     # --- LLM call events ---
 
-    def handle_event(
-          [:langchain, :llm, :call, :start],
-          _measurements,
-          metadata,
-          %Config{} = config
-        ) do
+    defp do_handle_event(
+           [:langchain, :llm, :call, :start],
+           _measurements,
+           metadata,
+           %Config{} = config
+         ) do
       span_name = "chat #{metadata[:model] || "unknown"}"
       attrs = Attributes.llm_call_start(metadata, config)
 
       start_span(metadata, span_name, attrs, :client)
     end
 
-    def handle_event(
-          [:langchain, :llm, :call, :stop],
-          _measurements,
-          metadata,
-          %Config{} = config
-        ) do
+    defp do_handle_event(
+           [:langchain, :llm, :call, :stop],
+           _measurements,
+           metadata,
+           %Config{} = config
+         ) do
       stop_attrs = Attributes.llm_call_stop(metadata, config)
       end_span(metadata, stop_attrs)
     end
 
-    def handle_event(
-          [:langchain, :llm, :call, :exception],
-          _measurements,
-          metadata,
-          %Config{}
-        ) do
+    defp do_handle_event(
+           [:langchain, :llm, :call, :exception],
+           _measurements,
+           metadata,
+           %Config{}
+         ) do
       end_span_on_exception(metadata)
     end
 
     # --- LLM prompt event (opt-in message capture) ---
 
-    def handle_event(
-          [:langchain, :llm, :prompt],
-          _measurements,
-          metadata,
-          %Config{} = config
-        ) do
+    defp do_handle_event(
+           [:langchain, :llm, :prompt],
+           _measurements,
+           metadata,
+           %Config{} = config
+         ) do
       if config.capture_input_messages do
         case {OpenTelemetry.Tracer.current_span_ctx(), metadata[:messages]} do
           # No active span to attach to (e.g. the `:prompt` event fired outside
@@ -122,12 +152,12 @@ if Code.ensure_loaded?(:opentelemetry) do
 
     # --- Chain execute events ---
 
-    def handle_event(
-          [:langchain, :chain, :execute, :start],
-          _measurements,
-          metadata,
-          %Config{}
-        ) do
+    defp do_handle_event(
+           [:langchain, :chain, :execute, :start],
+           _measurements,
+           metadata,
+           %Config{}
+         ) do
       chain_type = metadata[:chain_type] || "unknown"
       span_name = "invoke_agent #{chain_type}"
       attrs = Attributes.chain_start(metadata)
@@ -135,33 +165,33 @@ if Code.ensure_loaded?(:opentelemetry) do
       start_span(metadata, span_name, attrs, :internal)
     end
 
-    def handle_event(
-          [:langchain, :chain, :execute, :stop],
-          _measurements,
-          metadata,
-          %Config{} = config
-        ) do
+    defp do_handle_event(
+           [:langchain, :chain, :execute, :stop],
+           _measurements,
+           metadata,
+           %Config{} = config
+         ) do
       stop_attrs = Attributes.chain_stop(metadata, config)
       end_span(metadata, stop_attrs)
     end
 
-    def handle_event(
-          [:langchain, :chain, :execute, :exception],
-          _measurements,
-          metadata,
-          %Config{}
-        ) do
+    defp do_handle_event(
+           [:langchain, :chain, :execute, :exception],
+           _measurements,
+           metadata,
+           %Config{}
+         ) do
       end_span_on_exception(metadata)
     end
 
     # --- Tool call events ---
 
-    def handle_event(
-          [:langchain, :tool, :call, :start],
-          _measurements,
-          metadata,
-          %Config{} = config
-        ) do
+    defp do_handle_event(
+           [:langchain, :tool, :call, :start],
+           _measurements,
+           metadata,
+           %Config{} = config
+         ) do
       tool_name = metadata[:tool_name] || "unknown"
       span_name = "execute_tool #{tool_name}"
       attrs = Attributes.tool_call(metadata, config)
@@ -169,22 +199,22 @@ if Code.ensure_loaded?(:opentelemetry) do
       start_span(metadata, span_name, attrs, :internal)
     end
 
-    def handle_event(
-          [:langchain, :tool, :call, :stop],
-          _measurements,
-          metadata,
-          %Config{} = config
-        ) do
+    defp do_handle_event(
+           [:langchain, :tool, :call, :stop],
+           _measurements,
+           metadata,
+           %Config{} = config
+         ) do
       stop_attrs = Attributes.tool_call_stop(metadata, config)
       end_span(metadata, stop_attrs)
     end
 
-    def handle_event(
-          [:langchain, :tool, :call, :exception],
-          _measurements,
-          metadata,
-          %Config{}
-        ) do
+    defp do_handle_event(
+           [:langchain, :tool, :call, :exception],
+           _measurements,
+           metadata,
+           %Config{}
+         ) do
       end_span_on_exception(metadata)
     end
 
@@ -241,6 +271,10 @@ if Code.ensure_loaded?(:opentelemetry) do
 
           OpenTelemetry.Span.set_status(span_ctx, OpenTelemetry.status(:error, status_message))
 
+          # `error.type` lets GenAI-semconv backends (Langfuse, etc.) group and
+          # filter errors by kind. Use the exception's module name when available.
+          OpenTelemetry.Span.set_attributes(span_ctx, [{"error.type", error_type(error)}])
+
           if error do
             OpenTelemetry.Span.record_exception(
               span_ctx,
@@ -257,6 +291,9 @@ if Code.ensure_loaded?(:opentelemetry) do
           :ok
       end
     end
+
+    defp error_type(%module{}), do: inspect(module)
+    defp error_type(_), do: "error"
 
     defp pop_span(nil), do: nil
 
