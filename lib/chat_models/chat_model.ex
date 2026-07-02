@@ -67,10 +67,19 @@ defmodule LangChain.ChatModels.ChatModel do
     %{token_usage: get_in(msg.metadata, [:usage])}
   end
 
-  def token_usage_from_result({:ok, [%Message{} | _] = messages}) do
+  def token_usage_from_result({:ok, %MessageDelta{} = delta}) do
+    %{token_usage: get_in(delta.metadata, [:usage])}
+  end
+
+  def token_usage_from_result({:ok, [_ | _] = items}) do
+    # Streaming calls return a list of `%MessageDelta{}` structs; the accumulated
+    # `%TokenUsage{}` rides on the final delta's metadata. Non-streaming calls
+    # that return a list of `%Message{}` structs carry it the same way. Scan the
+    # list for the first item whose metadata holds a `%TokenUsage{}`.
     usage =
-      Enum.find_value(messages, fn
+      Enum.find_value(items, fn
         %Message{metadata: %{usage: %TokenUsage{} = usage}} -> usage
+        %MessageDelta{metadata: %{usage: %TokenUsage{} = usage}} -> usage
         _ -> nil
       end)
 

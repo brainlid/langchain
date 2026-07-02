@@ -3,6 +3,47 @@ defmodule LangChain.ChatModels.ChatModelTest do
   doctest LangChain.ChatModels.ChatModel
   alias LangChain.ChatModels.ChatModel
   alias LangChain.ChatModels.ChatOpenAI
+  alias LangChain.Message
+  alias LangChain.MessageDelta
+  alias LangChain.TokenUsage
+
+  describe "token_usage_from_result/1" do
+    setup do
+      %{usage: TokenUsage.new!(%{input: 11, output: 47})}
+    end
+
+    test "extracts usage from a single message", %{usage: usage} do
+      msg = %Message{role: :assistant, content: "hi", metadata: %{usage: usage}}
+      assert %{token_usage: ^usage} = ChatModel.token_usage_from_result({:ok, msg})
+    end
+
+    test "extracts usage from a single message delta", %{usage: usage} do
+      delta = %MessageDelta{role: :assistant, content: "hi", metadata: %{usage: usage}}
+      assert %{token_usage: ^usage} = ChatModel.token_usage_from_result({:ok, delta})
+    end
+
+    test "extracts usage from a streaming list of message deltas", %{usage: usage} do
+      # Streaming responses return a list of deltas; usage rides on the final one.
+      deltas = [
+        %MessageDelta{role: :assistant, content: "hi", metadata: nil},
+        %MessageDelta{role: :assistant, content: " there", metadata: nil},
+        %MessageDelta{role: :assistant, content: nil, metadata: %{usage: usage}}
+      ]
+
+      assert %{token_usage: ^usage} = ChatModel.token_usage_from_result({:ok, deltas})
+    end
+
+    test "extracts usage from a list of messages", %{usage: usage} do
+      messages = [%Message{role: :assistant, content: "hi", metadata: %{usage: usage}}]
+      assert %{token_usage: ^usage} = ChatModel.token_usage_from_result({:ok, messages})
+    end
+
+    test "returns nil usage when none is present" do
+      deltas = [%MessageDelta{role: :assistant, content: "hi", metadata: nil}]
+      assert %{token_usage: nil} = ChatModel.token_usage_from_result({:ok, deltas})
+      assert %{token_usage: nil} = ChatModel.token_usage_from_result({:error, :boom})
+    end
+  end
 
   describe "serialize_config/1" do
     test "creates a map from a chat model" do
