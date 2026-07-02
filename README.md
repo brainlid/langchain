@@ -498,3 +498,21 @@ trajectory.metadata
 ```
 
 See `LangChain.Trajectory` and `LangChain.Trajectory.Assertions` module docs for the full API reference.
+
+## Observability
+
+LangChain emits [`:telemetry`](https://hexdocs.pm/telemetry) events for every LLM call, chain execution, and tool call — with provider, model, duration, and token usage — so you can plug them into `Telemetry.Metrics`, PromEx, `Logger`, or your own handlers with no extra dependencies.
+
+For distributed tracing, an optional built-in [OpenTelemetry](https://opentelemetry.io/) integration turns those events into GenAI-semantic-convention spans and metrics, ready to export to [Langfuse](https://langfuse.com/), Honeycomb, Grafana Tempo, Jaeger, or any OTLP collector. Add the optional OTel dependencies and call `setup/1` once at startup:
+
+```elixir
+# mix.exs — optional, only needed for the OpenTelemetry integration
+{:opentelemetry_api, "~> 1.4"},
+{:opentelemetry, "~> 1.5"},
+{:opentelemetry_exporter, "~> 1.8"}
+
+# application startup
+LangChain.OpenTelemetry.setup()
+```
+
+Message and tool-content capture is off by default (to avoid exposing PII) and enabled per-flag when you need it. See the [Observability guide](guides/observability.md) for span mappings, metrics wiring, Langfuse setup, and configuration, plus the `LangChain.Telemetry` and `LangChain.OpenTelemetry` module docs.

@@ -140,3 +140,39 @@ Streaming deltas flow through two separate paths that process the same data at d
 These paths operate on separate copies of the deltas and don't interfere. Both use `display_text != nil` as an idempotent "already processed" guard.
 
 Without callback-level enrichment, the UI would show blank tool labels during the entire streaming phase. By the time the post-streaming path runs, the tool may already be executing or finished.
+
+## Observability: Telemetry & OpenTelemetry
+
+LangChain emits `:telemetry` events for LLM calls, chain runs, and tool calls. This is separate from the callbacks above: callbacks drive application behavior (UI, persistence), while telemetry is for monitoring and tracing. There are two layers.
+
+### Layer 1 — `LangChain.Telemetry` (`:telemetry` events, no extra deps)
+
+Events follow `[:langchain, component, operation, stage]`. The lifecycle triples are:
+
+- `[:langchain, :llm, :call, :start | :stop | :exception]`
+- `[:langchain, :chain, :execute, :start | :stop | :exception]`
+- `[:langchain, :tool, :call, :start | :stop | :exception]`
+
+Plus content-bearing events `[:langchain, :llm, :prompt]` and `[:langchain, :llm, :response]`.
+
+Rules when consuming these events:
+
+- **Correlate with `:call_id`.** Every `:start`/`:stop`/`:exception` triple shares a `:call_id` UUID in its metadata.
+- **Read duration from `:stop` and `:exception`.** Both carry a `duration` measurement (native time units) — failed operations are visible to latency metrics, not just successes.
+- **`:token_usage`** is a `%LangChain.TokenUsage{}` on LLM `:stop` events (when the model reports it) and on chain `:stop` events, where it is **aggregated across all assistant messages** in the run (multi-turn/tool-calling safe). It can be `nil`.
+- **`:provider`** (`"openai"`, `"anthropic"`, `"xai"`, …) is on LLM call events, sourced from the `ChatModel.provider/0` callback. Custom chat models that don't implement the optional callback get a provider derived from the module name via `ChatModel.provider/1`.
+- **The chain metadata key is `:tools_count`** (plural, matching `:message_count`) — not `:tool_count`.
+- **`:custom_context`** (your `LLMChain.custom_context`) is on chain and tool events, but intentionally **not** on LLM-level events — correlate via `:call_id` instead.
+- **Privacy:** lifecycle events never carry message content. Content is only on the opt-in `[:langchain, :llm, :prompt]` / `[:langchain, :llm, :response]` events.
+
+### Layer 2 — `LangChain.OpenTelemetry` (opt-in)
+
+An optional integration that turns the above events into OpenTelemetry spans/metrics using the GenAI Semantic Conventions. Add `:opentelemetry_api` (+ `:opentelemetry`, `:opentelemetry_exporter`) to your deps, then call `LangChain.OpenTelemetry.setup/1` once at startup.
+
+- Spans nest automatically for synchronous work: `invoke_agent {chain}` → `chat {model}` → `execute_tool {name}`.
+- **Message/argument/result capture is off by default** (PII). Enable per-flag via `setup/1`: `capture_input_messages`, `capture_output_messages`, `capture_tool_arguments`, `capture_tool_results`.
+- **`enable_metrics: true` (default) does not record histograms directly** — it re-emits `[:langchain, :otel, :operation, :duration]` and `[:langchain, :otel, :token, :usage]` events. You must attach a consumer (`Telemetry.Metrics` + reporter, PromEx) to record them.
+- **Async tools** (`async: true`) run in a separate `Task`; the OTel context does not cross the process boundary. Re-attach it inside the `:on_tool_pre_execution` callback to keep async tool spans parented.
+- Use `LangChain.OpenTelemetry.without_tracing/1` to suppress spans for utility sub-chains.
+
+See the [Observability guide](guides/observability.md) for full details and Langfuse integration.

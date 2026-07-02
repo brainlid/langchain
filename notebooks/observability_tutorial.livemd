@@ -1,0 +1,242 @@
+# Observability in Practice
+
+```elixir
+Mix.install([
+  {:langchain, "~> 0.8"},
+  # Optional — only needed for the OpenTelemetry integration in the later sections
+  {:opentelemetry_api, "~> 1.4"},
+  {:opentelemetry, "~> 1.5"},
+  {:kino, "~> 0.12.0"}
+])
+```
+
+## Section
+
+This notebook is interactively available as a Livebook named [`notebooks/observability_tutorial.livemd`](https://github.com/brainlid/langchain/tree/main/notebooks/observability_tutorial.livemd). It's the hands-on companion to the [Observability guide](https://hexdocs.pm/langchain/observability.html).
+
+LangChain gives you two layers of observability:
+
+1. **`LangChain.Telemetry`** — vendor-neutral `:telemetry` events for every LLM call, chain run, and tool call. No extra dependencies.
+2. **`LangChain.OpenTelemetry`** — an optional integration that turns those events into OpenTelemetry spans and metrics following the [GenAI Semantic Conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/).
+
+We'll start with the raw telemetry layer (which needs nothing but LangChain), then attach the OpenTelemetry integration.
+
+For a conceptual reference, see the [Observability guide](https://hexdocs.pm/langchain/observability.html).
+
+**NOTE:** This assumes your `OPENAI_API_KEY` is available as a Livebook secret.
+
+```elixir
+Application.put_env(:langchain, :openai_key, System.fetch_env!("LB_OPENAI_API_KEY"))
+```
+
+## Part 1 — Watching the raw telemetry events
+
+Every LLM call emits a `[:langchain, :llm, :call, :stop]` event when it completes. Let's attach a handler that prints the provider, model, duration, and token usage. Notice the metadata carries a `:provider` and a `%TokenUsage{}` — no content, by design.
+
+```elixir
+:telemetry.attach(
+  "demo-llm-stop",
+  [:langchain, :llm, :call, :stop],
+  fn _event, measurements, metadata, _config ->
+    ms = System.convert_time_unit(measurements.duration, :native, :millisecond)
+
+    IO.puts("""
+    ── LLM call finished ─────────────────────────────
+      provider:  #{metadata.provider}
+      model:     #{metadata.model}
+      duration:  #{ms} ms
+      tokens:    #{inspect(metadata[:token_usage])}
+    ──────────────────────────────────────────────────
+    """)
+  end,
+  nil
+)
+```
+
+Now run a simple chain. When the call completes, the handler above fires.
+
+```elixir
+alias LangChain.Chains.LLMChain
+alias LangChain.ChatModels.ChatOpenAI
+alias LangChain.Message
+alias LangChain.Message.ContentPart
+
+{:ok, updated_chain} =
+  %{llm: ChatOpenAI.new!(%{model: "gpt-4o"})}
+  |> LLMChain.new!()
+  |> LLMChain.add_message(Message.new_user!("In one sentence, what is Elixir?"))
+  |> LLMChain.run()
+
+ContentPart.content_to_string(updated_chain.last_message.content)
+```
+
+Chain-level events aggregate token usage across **all** assistant messages in the run — important for multi-turn or tool-calling chains where a single "last message" would undercount. Let's watch the `[:langchain, :chain, :execute, :stop]` event too.
+
+```elixir
+:telemetry.attach(
+  "demo-chain-stop",
+  [:langchain, :chain, :execute, :stop],
+  fn _event, measurements, metadata, _config ->
+    ms = System.convert_time_unit(measurements.duration, :native, :millisecond)
+
+    IO.puts(
+      "Chain '#{metadata.chain_type}' finished in #{ms} ms " <>
+        "(#{metadata.tools_count} tools) — total usage: #{inspect(metadata[:token_usage])}"
+    )
+  end,
+  nil
+)
+```
+
+> **Migration note:** the chain metadata key is `:tools_count` (matching `:message_count`). Earlier versions used `:tool_count` (singular).
+
+When you're done experimenting, detach the demo handlers:
+
+```elixir
+:telemetry.detach("demo-llm-stop")
+:telemetry.detach("demo-chain-stop")
+```
+
+## Part 2 — Turning events into OpenTelemetry spans
+
+The OpenTelemetry integration is opt-in. Its dependencies are optional; we included `:opentelemetry_api` and `:opentelemetry` in the `Mix.install/1` cell above.
+
+For this notebook we'll configure the SDK to log spans to the console so you can see them inline. In a real app you'd point `:opentelemetry_exporter` at an OTLP collector or Langfuse instead (shown in Part 3).
+
+```elixir
+# Register a simple exporter that prints finished spans. In production you would
+# instead configure :opentelemetry_exporter with an OTLP endpoint.
+:otel_batch_processor.set_exporter(:otel_exporter_stdout, [])
+:ok
+```
+
+Attach LangChain's OpenTelemetry handlers. `setup/1` wires the span and metrics handlers to the telemetry events. Message content capture is **off by default** — we leave it off here.
+
+```elixir
+LangChain.OpenTelemetry.setup()
+```
+
+Now run a chain. Behind the scenes you'll get a `chat gpt-4o` span (kind `:client`) nested under an `invoke_agent llm_chain` span (kind `:internal`), each carrying `gen_ai.*` attributes like `gen_ai.request.model`, `gen_ai.provider.name`, and token counts.
+
+```elixir
+{:ok, otel_chain} =
+  %{llm: ChatOpenAI.new!(%{model: "gpt-4o"})}
+  |> LLMChain.new!()
+  |> LLMChain.add_message(Message.new_user!("Name three functional programming languages."))
+  |> LLMChain.run()
+
+ContentPart.content_to_string(otel_chain.last_message.content)
+```
+
+### Opting into content capture (contains PII)
+
+If your tracing backend and data policy allow it, you can record the actual messages. These flags are **off by default** because they can carry sensitive data. Re-run `setup/1` with them enabled:
+
+```elixir
+# Detach first so we don't double-attach handlers, then re-attach with capture on.
+LangChain.OpenTelemetry.teardown()
+
+LangChain.OpenTelemetry.setup(
+  capture_input_messages: true,
+  capture_output_messages: true
+)
+```
+
+Now spans will include `gen_ai.input.messages` / `gen_ai.output.messages` as JSON attributes.
+
+### Suppressing traces for utility chains
+
+Some sub-chains — a title generator, a translation pass — are noise in your traces. Wrap them in `without_tracing/1` and nothing inside is exported:
+
+```elixir
+LangChain.OpenTelemetry.without_tracing(fn ->
+  {:ok, quiet_chain} =
+    %{llm: ChatOpenAI.new!(%{model: "gpt-4o-mini"})}
+    |> LLMChain.new!()
+    |> LLMChain.add_message(Message.new_user!("Say hi."))
+    |> LLMChain.run()
+
+  ContentPart.content_to_string(quiet_chain.last_message.content)
+end)
+```
+
+## Part 3 — Exporting to Langfuse (or any OTLP backend)
+
+In a real application you don't print spans — you export them. [Langfuse](https://langfuse.com/) ingests OpenTelemetry traces via an OTLP endpoint. In `config/runtime.exs`:
+
+```elixir
+config :opentelemetry_exporter,
+  otlp_protocol: :http_protobuf,
+  otlp_endpoint: "https://your-langfuse-host/api/public/otel",
+  otlp_headers: [
+    {"Authorization", "Basic " <> Base.encode64("pk-lf-...:sk-lf-...")}
+  ]
+```
+
+You can enrich the root chain span with Langfuse trace attributes (user, session, tags, metadata) via the chain's `custom_context`. The `langfuse_*` keys are recognized by the tracing layer and mapped onto the span:
+
+```elixir
+langfuse_chain =
+  %{llm: ChatOpenAI.new!(%{model: "gpt-4o"})}
+  |> LLMChain.new!()
+  |> Map.put(:custom_context, %{
+    langfuse_user_id: "user-123",
+    langfuse_session_id: "session-abc",
+    langfuse_tags: ["notebook", "demo"],
+    langfuse_metadata: %{env: "dev", feature: "observability-demo"}
+  })
+  |> LLMChain.add_message(Message.new_user!("What's a trace in observability?"))
+
+# Running this exports a trace tagged with the Langfuse attributes above.
+# (Requires the exporter configured against a real Langfuse instance.)
+langfuse_chain
+```
+
+`custom_context` is your own data map — it's also passed to your tool functions and surfaced on tool/chain telemetry events. The `langfuse_*` names are simply reserved keys the tracing layer looks for; mix them with your application's own context freely.
+
+## Part 4 — Metrics
+
+`setup/1` enables metrics by default, but there's an important nuance: LangChain **re-emits** intermediary `:telemetry` events rather than recording OTel histograms directly. You attach a metrics library to turn them into real metrics.
+
+The two events are:
+
+* `[:langchain, :otel, :operation, :duration]` — `%{duration_s: float()}`
+* `[:langchain, :otel, :token, :usage]` — `%{tokens: integer()}`, tagged with `gen_ai.token.type`
+
+Here's a quick handler that observes them directly (in production you'd wire these into `Telemetry.Metrics` + an OTel/Prometheus reporter):
+
+```elixir
+:telemetry.attach_many(
+  "demo-otel-metrics",
+  [
+    [:langchain, :otel, :operation, :duration],
+    [:langchain, :otel, :token, :usage]
+  ],
+  fn event, measurements, metadata, _ ->
+    IO.puts("metric #{inspect(event)} → #{inspect(measurements)} #{inspect(metadata)}")
+  end,
+  nil
+)
+
+{:ok, metrics_chain} =
+  %{llm: ChatOpenAI.new!(%{model: "gpt-4o-mini"})}
+  |> LLMChain.new!()
+  |> LLMChain.add_message(Message.new_user!("Count to three."))
+  |> LLMChain.run()
+
+ContentPart.content_to_string(metrics_chain.last_message.content)
+```
+
+Clean up when you're finished:
+
+```elixir
+:telemetry.detach("demo-otel-metrics")
+LangChain.OpenTelemetry.teardown()
+```
+
+## Where to go next
+
+* [`LangChain.Telemetry`](https://hexdocs.pm/langchain/LangChain.Telemetry.html) — the full event catalog and metadata shapes
+* [`LangChain.OpenTelemetry`](https://hexdocs.pm/langchain/LangChain.OpenTelemetry.html) — `setup/1`, `teardown/0`, `without_tracing/1`
+* [`LangChain.OpenTelemetry.Config`](https://hexdocs.pm/langchain/LangChain.OpenTelemetry.Config.html) — every capture flag
+* [Observability guide](https://hexdocs.pm/langchain/observability.html) — the conceptual reference behind this notebook
