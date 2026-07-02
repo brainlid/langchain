@@ -102,6 +102,29 @@ defmodule ChatModels.ChatVertexAITest do
       assert %{"temperature" => 1.0, "topK" => 1.0, "topP" => 1.0} = config
     end
 
+    test "adds safety settings to the request if present" do
+      settings = [
+        %{"category" => "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold" => "BLOCK_ONLY_HIGH"}
+      ]
+
+      vertex_ai =
+        ChatVertexAI.new!(%{
+          model: @test_model,
+          endpoint: "http://localhost:1234/",
+          safety_settings: settings
+        })
+
+      data = ChatVertexAI.for_api(vertex_ai, [], [])
+      assert %{"safetySettings" => ^settings} = data
+    end
+
+    test "does not add safety settings to the request when the list is empty", %{
+      vertex_ai: vertex_ai
+    } do
+      data = ChatVertexAI.for_api(vertex_ai, [], [])
+      refute Map.has_key?(data, "safetySettings")
+    end
+
     test "generate a map containing a text, inline image, and image url parts", %{
       vertex_ai: google_ai
     } do
