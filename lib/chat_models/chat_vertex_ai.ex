@@ -116,6 +116,14 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     # Refer to `https://hexdocs.pm/req/Req.html#new/1-options` for
     # `Req.new` supported set of options.
     field :req_config, :map, default: %{}
+
+    # The safety settings for the model, specified as a list of maps. Each map
+    # should contain a `category` and a `threshold` for that category.
+    # e.g. [%{"category" => "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold" => "BLOCK_ONLY_HIGH"}]
+    # see https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/configure-safety-filters
+    # for the list of categories and thresholds. Defaults to `[]` (the
+    # provider's own defaults apply).
+    field :safety_settings, {:array, :map}, default: []
   end
 
   @type t :: %ChatVertexAI{}
@@ -132,7 +140,8 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     :json_response,
     :json_schema,
     :stream,
-    :req_config
+    :req_config,
+    :safety_settings
   ]
   @required_fields [
     :endpoint,
@@ -209,6 +218,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
         "generationConfig" => generation_config_params
       }
       |> Utils.conditionally_add_to_map("system_instruction", for_api(sys_instructions))
+      |> Utils.conditionally_add_to_map("safetySettings", vertex_ai.safety_settings)
 
     if functions && not Enum.empty?(functions) do
       req
