@@ -492,6 +492,55 @@ defmodule LangChain.OpenTelemetry.SpanHandlerTest do
       assert [error_span] = flush_spans(tid)
       assert error_span.attributes["error.type"] == "RuntimeError"
     end
+
+    test "ends the span (no leak) when the wrapped function throws", %{tid: tid} do
+      call_id = Ecto.UUID.generate()
+      dict_key = {LangChain.OpenTelemetry.SpanHandler, call_id}
+
+      caught =
+        try do
+          LangChain.Telemetry.span(
+            [:langchain, :llm, :call],
+            %{call_id: call_id, model: "gpt-4o", provider: "openai"},
+            fn -> throw(:boom) end
+          )
+        catch
+          :throw, reason -> reason
+        end
+
+      assert caught == :boom
+      # The span was opened on :start; the :exception emitted on the throw must
+      # have popped and ended it. A lingering process-dict entry would mean the
+      # span (and its attached context) leaked.
+      assert Process.get(dict_key) == nil
+
+      assert [error_span] = flush_spans(tid)
+      assert error_span.name == "chat gpt-4o"
+      assert error_span.status != nil
+    end
+
+    test "ends the span (no leak) when the wrapped function exits", %{tid: tid} do
+      call_id = Ecto.UUID.generate()
+      dict_key = {LangChain.OpenTelemetry.SpanHandler, call_id}
+
+      caught =
+        try do
+          LangChain.Telemetry.span(
+            [:langchain, :llm, :call],
+            %{call_id: call_id, model: "gpt-4o", provider: "openai"},
+            fn -> exit(:down) end
+          )
+        catch
+          :exit, reason -> reason
+        end
+
+      assert caught == :down
+      assert Process.get(dict_key) == nil
+
+      assert [error_span] = flush_spans(tid)
+      assert error_span.name == "chat gpt-4o"
+      assert error_span.status != nil
+    end
   end
 
   describe "handler resilience" do

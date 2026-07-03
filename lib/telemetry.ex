@@ -236,6 +236,34 @@ defmodule LangChain.Telemetry do
         )
 
         reraise exception, stacktrace
+    catch
+      # `rescue` above only traps raised exceptions. A function that `exit`s (a
+      # linked crash, a `Task.await` timeout) or `throw`s would otherwise emit
+      # neither `:stop` nor `:exception` — and a span-based consumer that opened a
+      # span on `:start` would never end it, leaking the span and its attached
+      # context for the rest of a long-lived process. Emit `:exception` here too so
+      # the span is closed, then re-propagate the exit/throw unchanged.
+      kind, reason ->
+        stacktrace = __STACKTRACE__
+
+        emit_event(
+          event_prefix ++ [:exception],
+          %{
+            duration: System.monotonic_time() - exception_start_time,
+            system_time: System.system_time()
+          },
+          Map.merge(metadata, %{
+            kind: kind,
+            # No exception struct exists for a throw/exit; consumers key off
+            # `:kind`/`:reason`. A `nil` `:error` tells them to skip
+            # exception-only rendering while still ending their span.
+            error: nil,
+            reason: reason,
+            stacktrace: stacktrace
+          })
+        )
+
+        :erlang.raise(kind, reason, stacktrace)
     end
   end
 
