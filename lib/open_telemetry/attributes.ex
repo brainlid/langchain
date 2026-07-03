@@ -1,10 +1,29 @@
 defmodule LangChain.OpenTelemetry.Attributes do
   @moduledoc """
   Builds OpenTelemetry span attribute maps from LangChain telemetry metadata,
-  following the GenAI Semantic Conventions (v1.40+).
+  following a subset of the GenAI Semantic Conventions (v1.40+).
 
   Attribute key constants are defined as string literals because the Hex
   `opentelemetry_semantic_conventions` package lags behind the latest spec.
+
+  ## Coverage
+
+  This integration emits the following semantic-convention attributes:
+
+    * `gen_ai.operation.name`, `gen_ai.provider.name`
+    * `gen_ai.request.model`, `gen_ai.response.model`
+    * `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`
+    * `gen_ai.input.messages`, `gen_ai.output.messages` (opt-in — see `Config`)
+    * `gen_ai.tool.name`, `gen_ai.tool.call.id`, `gen_ai.tool.type`,
+      `gen_ai.tool.call.arguments` / `gen_ai.tool.call.result` (opt-in)
+    * `gen_ai.agent.name`
+    * `error.type` (on failed operations)
+
+  It does **not** currently emit some attributes the spec recommends, notably the
+  request parameters `gen_ai.request.temperature` / `gen_ai.request.max_tokens` /
+  `gen_ai.request.top_p` and the response fields `gen_ai.response.id` /
+  `gen_ai.response.finish_reasons`. Treat the output as a useful subset rather
+  than full conformance.
 
   See: https://opentelemetry.io/docs/specs/semconv/gen-ai/
   """

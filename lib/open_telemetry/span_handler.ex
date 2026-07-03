@@ -3,7 +3,8 @@ if Code.ensure_loaded?(:opentelemetry) do
     @moduledoc """
     Telemetry handler that creates OpenTelemetry spans from LangChain telemetry events.
 
-    Spans follow the GenAI Semantic Conventions (v1.40+):
+    Spans follow a subset of the GenAI Semantic Conventions (v1.40+) — see
+    `LangChain.OpenTelemetry.Attributes` for the attributes that are emitted:
 
     | Telemetry Event                       | OTel Span Name              | Kind       | `gen_ai.operation.name` |
     |---------------------------------------|-----------------------------|------------|------------------------|

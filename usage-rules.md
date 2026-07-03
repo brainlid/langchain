@@ -167,7 +167,7 @@ Rules when consuming these events:
 
 ### Layer 2 — `LangChain.OpenTelemetry` (opt-in)
 
-An optional integration that turns the above events into OpenTelemetry spans/metrics using the GenAI Semantic Conventions. Add `:opentelemetry_api` (+ `:opentelemetry`, `:opentelemetry_exporter`) to your deps, then call `LangChain.OpenTelemetry.setup/1` once at startup.
+An optional integration that turns the above events into OpenTelemetry spans/metrics using a subset of the GenAI Semantic Conventions. Add `:opentelemetry_api` (+ `:opentelemetry`, `:opentelemetry_exporter`) to your deps, then call `LangChain.OpenTelemetry.setup/1` once at startup.
 
 - Spans nest automatically for synchronous work: `invoke_agent {chain}` → `chat {model}` → `execute_tool {name}`.
 - **Message/argument/result capture is off by default** (PII). Enable per-flag via `setup/1`: `capture_input_messages`, `capture_output_messages`, `capture_tool_arguments`, `capture_tool_results`.

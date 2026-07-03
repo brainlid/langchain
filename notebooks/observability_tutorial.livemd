@@ -17,7 +17,7 @@ This notebook is interactively available as a Livebook named [`notebooks/observa
 LangChain gives you two layers of observability:
 
 1. **`LangChain.Telemetry`** — vendor-neutral `:telemetry` events for every LLM call, chain run, and tool call. No extra dependencies.
-2. **`LangChain.OpenTelemetry`** — an optional integration that turns those events into OpenTelemetry spans and metrics following the [GenAI Semantic Conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/).
+2. **`LangChain.OpenTelemetry`** — an optional integration that turns those events into OpenTelemetry spans and metrics following a subset of the [GenAI Semantic Conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/).
 
 We'll start with the raw telemetry layer (which needs nothing but LangChain), then attach the OpenTelemetry integration.
 

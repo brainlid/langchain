@@ -11,7 +11,7 @@ through two layers you can adopt independently:
    else. No extra dependencies.
 2. **`LangChain.OpenTelemetry`** — an optional, opt-in integration that translates
    those events into [OpenTelemetry](https://opentelemetry.io/) spans and metrics
-   following the [GenAI Semantic Conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/)
+   following a subset of the [GenAI Semantic Conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/)
    (v1.40+). This is what you want for distributed tracing backends like
    [Langfuse](https://langfuse.com/), Honeycomb, Grafana Tempo, Jaeger, or any
    OTLP collector.
@@ -127,8 +127,9 @@ automatically. To detach later, call `LangChain.OpenTelemetry.teardown/0`.
 
 ### What spans you get
 
-Spans follow the GenAI Semantic Conventions and nest automatically for
-synchronous work (they share the process dictionary):
+Spans follow a subset of the GenAI Semantic Conventions (see
+`LangChain.OpenTelemetry.Attributes` for the attributes emitted) and nest
+automatically for synchronous work (they share the process dictionary):
 
 ```
 invoke_agent llm_chain              (:internal)   gen_ai.operation.name = invoke_agent

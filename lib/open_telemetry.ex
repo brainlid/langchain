@@ -4,8 +4,9 @@ if Code.ensure_loaded?(:opentelemetry) do
     OpenTelemetry integration for LangChain.
 
     Attaches to LangChain's `:telemetry` events and translates them into
-    OpenTelemetry spans and metrics following the
+    OpenTelemetry spans and metrics following a subset of the
     [GenAI Semantic Conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/) (v1.40+).
+    See `LangChain.OpenTelemetry.Attributes` for exactly which attributes are (and are not) emitted.
 
     ## Setup
 
