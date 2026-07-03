@@ -190,7 +190,6 @@ defmodule LangChain.ChatModels.ChatModel do
   @spec endpoint(struct() | nil) :: String.t() | nil
   defp endpoint(nil), do: nil
   defp endpoint(%_module{} = model), do: Map.get(model, :endpoint)
-  defp endpoint(_), do: nil
 
   @doc """
   Best-effort extraction of standard request parameters from a chat model struct
