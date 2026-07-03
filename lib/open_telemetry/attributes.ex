@@ -10,8 +10,15 @@ defmodule LangChain.OpenTelemetry.Attributes do
 
   This integration emits the following semantic-convention attributes:
 
-    * `gen_ai.operation.name`, `gen_ai.provider.name`
+    * `gen_ai.operation.name`, `gen_ai.provider.name`, `gen_ai.output.type`
     * `gen_ai.request.model`, `gen_ai.response.model`
+    * Request parameters (when the model sets them):
+      `gen_ai.request.temperature`, `gen_ai.request.max_tokens`,
+      `gen_ai.request.top_p`, `gen_ai.request.top_k`,
+      `gen_ai.request.frequency_penalty`, `gen_ai.request.presence_penalty`,
+      `gen_ai.request.seed`, `gen_ai.request.choice.count`,
+      `gen_ai.request.stream`, `gen_ai.request.stop_sequences`,
+      `gen_ai.request.reasoning.level`
     * `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`
     * `gen_ai.input.messages`, `gen_ai.output.messages` (opt-in — see `Config`)
     * `gen_ai.tool.name`, `gen_ai.tool.call.id`, `gen_ai.tool.type`,
@@ -19,11 +26,12 @@ defmodule LangChain.OpenTelemetry.Attributes do
     * `gen_ai.agent.name`
     * `error.type` (on failed operations)
 
-  It does **not** currently emit some attributes the spec recommends, notably the
-  request parameters `gen_ai.request.temperature` / `gen_ai.request.max_tokens` /
-  `gen_ai.request.top_p` and the response fields `gen_ai.response.id` /
-  `gen_ai.response.finish_reasons`. Treat the output as a useful subset rather
-  than full conformance.
+  It does **not** currently emit the response fields `gen_ai.response.id` /
+  `gen_ai.response.finish_reasons` (LangChain normalizes a provider's raw finish
+  reason into `Message.status` and keeps no response id), the cache/reasoning
+  token counts or cost (`LangChain.TokenUsage` tracks only input/output), or
+  streaming timing (`gen_ai.response.time_to_first_chunk`). Treat the output as a
+  useful subset rather than full conformance.
 
   See: https://opentelemetry.io/docs/specs/semconv/gen-ai/
   """
@@ -35,7 +43,19 @@ defmodule LangChain.OpenTelemetry.Attributes do
   # Attribute key constants
   @operation_name "gen_ai.operation.name"
   @provider_name "gen_ai.provider.name"
+  @output_type "gen_ai.output.type"
   @request_model "gen_ai.request.model"
+  @request_temperature "gen_ai.request.temperature"
+  @request_max_tokens "gen_ai.request.max_tokens"
+  @request_top_p "gen_ai.request.top_p"
+  @request_top_k "gen_ai.request.top_k"
+  @request_frequency_penalty "gen_ai.request.frequency_penalty"
+  @request_presence_penalty "gen_ai.request.presence_penalty"
+  @request_seed "gen_ai.request.seed"
+  @request_choice_count "gen_ai.request.choice.count"
+  @request_stream "gen_ai.request.stream"
+  @request_stop_sequences "gen_ai.request.stop_sequences"
+  @request_reasoning_level "gen_ai.request.reasoning.level"
   @response_model "gen_ai.response.model"
   @usage_input_tokens "gen_ai.usage.input_tokens"
   @usage_output_tokens "gen_ai.usage.output_tokens"
@@ -56,22 +76,72 @@ defmodule LangChain.OpenTelemetry.Attributes do
   @doc """
   Builds attributes for an LLM call start event.
 
-  Returns operation name, model, and provider attributes. Input message capture
-  is handled separately by the prompt event handler in `SpanHandler`.
+  Returns operation name, output type, model, provider, and request-parameter
+  attributes (`gen_ai.request.*`, sourced from `metadata[:request_options]`).
+  Input message capture is handled separately by the prompt event handler in
+  `SpanHandler`.
   """
   @spec llm_call_start(map()) :: [{String.t(), term()}]
   @spec llm_call_start(map(), Config.t()) :: [{String.t(), term()}]
   def llm_call_start(metadata, %Config{} = _config \\ %Config{}) do
+    # All LangChain chat models are chat-completion style, so the output is text.
     attrs = [
       {@operation_name, "chat"},
+      {@output_type, "text"},
       {@request_model, metadata[:model]}
     ]
 
-    case metadata[:provider] do
-      nil -> attrs
-      provider -> [{@provider_name, ProviderMapping.to_otel(provider)} | attrs]
+    attrs =
+      case metadata[:provider] do
+        nil -> attrs
+        provider -> [{@provider_name, ProviderMapping.to_otel(provider)} | attrs]
+      end
+
+    request_option_attributes(metadata[:request_options]) ++ attrs
+  end
+
+  # Maps the provider-neutral `:request_options` map (built by
+  # `LangChain.ChatModels.ChatModel.request_options/1`) to `gen_ai.request.*`
+  # semantic-convention attributes, dropping any parameter the model didn't set.
+  @spec request_option_attributes(map() | nil) :: [{String.t(), term()}]
+  defp request_option_attributes(opts) when is_map(opts) do
+    [
+      {@request_temperature, opts[:temperature]},
+      {@request_max_tokens, opts[:max_tokens]},
+      {@request_top_p, opts[:top_p]},
+      {@request_top_k, opts[:top_k]},
+      {@request_frequency_penalty, opts[:frequency_penalty]},
+      {@request_presence_penalty, opts[:presence_penalty]},
+      {@request_seed, opts[:seed]},
+      {@request_choice_count, opts[:choice_count]},
+      {@request_stream, opts[:stream]},
+      {@request_stop_sequences, stop_sequences(opts[:stop_sequences])},
+      {@request_reasoning_level, reasoning_level(opts[:reasoning_level])}
+    ]
+    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+  end
+
+  defp request_option_attributes(_), do: []
+
+  # `gen_ai.request.stop_sequences` is a string array. LangChain models carry the
+  # stop value as either a single string or a list, so normalize to a list of
+  # strings (dropping non-strings). Returns nil when nothing usable remains.
+  defp stop_sequences(nil), do: nil
+  defp stop_sequences(seq) when is_binary(seq), do: [seq]
+
+  defp stop_sequences(seq) when is_list(seq) do
+    case Enum.filter(seq, &is_binary/1) do
+      [] -> nil
+      list -> list
     end
   end
+
+  defp stop_sequences(_), do: nil
+
+  defp reasoning_level(nil), do: nil
+  defp reasoning_level(level) when is_binary(level), do: level
+  defp reasoning_level(level) when is_atom(level), do: Atom.to_string(level)
+  defp reasoning_level(_), do: nil
 
   @doc """
   Builds attributes for an LLM call stop event (token usage and response model).

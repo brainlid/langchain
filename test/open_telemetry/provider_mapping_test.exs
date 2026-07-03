@@ -77,6 +77,15 @@ defmodule LangChain.OpenTelemetry.ProviderMappingTest do
       assert ProviderMapping.to_otel("custom_provider") == "custom_provider"
       assert ProviderMapping.to_otel("my_llm") == "my_llm"
     end
+
+    test "google maps to the specific gcp.gemini, not the generic gcp.gen_ai" do
+      # Reconciliation decision: the spec defines both `gcp.gemini` (the Gemini
+      # API, which ChatGoogleAI targets) and `gcp.gen_ai` (a generic Google
+      # fallback). We deliberately emit the specific value. Do not "align" this to
+      # the generic `gcp.gen_ai` — see ProviderMapping's moduledoc.
+      assert ProviderMapping.to_otel("google") == "gcp.gemini"
+      refute ProviderMapping.to_otel("google") == "gcp.gen_ai"
+    end
   end
 
   describe "coverage of built-in chat models" do

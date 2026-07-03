@@ -101,7 +101,8 @@ defmodule LangChain.ChatModels.ChatModel do
 
   @doc """
   Wraps an LLM `call/3` body in the standard `[:langchain, :llm, :call]`
-  telemetry span with token-usage enrichment already wired.
+  telemetry span with token-usage enrichment and request-parameter capture
+  already wired.
 
   Every chat model must open its LLM-call span through this helper. Building the
   `LangChain.Telemetry.span/4` call by hand in each model made it easy to forget
@@ -111,12 +112,20 @@ defmodule LangChain.ChatModels.ChatModel do
   event name and `:enrich_stop` here removes that footgun: a new provider only
   has to build its metadata and call this function.
 
-  `metadata` is the LLM-call metadata map (`:model`, `:provider`,
-  `:message_count`, `:tools_count`, ...). `fun` is the zero-arity function that
-  performs the request and returns the `call_response()`.
+  `model` is the chat model struct (or `nil`). Its standard request parameters
+  are extracted via `request_options/1` and merged into the metadata under
+  `:request_options`, so the OTEL layer can emit `gen_ai.request.*` without every
+  provider re-plumbing them by hand. `metadata` is the LLM-call metadata map
+  (`:model`, `:provider`, `:message_count`, `:tools_count`, ...). `fun` is the
+  zero-arity function that performs the request and returns the `call_response()`.
   """
-  @spec llm_telemetry_span(map(), (-> result)) :: result when result: any()
-  def llm_telemetry_span(metadata, fun) when is_map(metadata) and is_function(fun, 0) do
+  @spec llm_telemetry_span(struct() | nil, map(), (-> result)) :: result when result: any()
+  def llm_telemetry_span(model, metadata, fun)
+      when is_map(metadata) and is_function(fun, 0) do
+    # `put_new` so a provider that builds its own richer `:request_options` (e.g.
+    # a proxy that knows parameters not on its struct) keeps precedence.
+    metadata = Map.put_new(metadata, :request_options, request_options(model))
+
     LangChain.Telemetry.span(
       [:langchain, :llm, :call],
       metadata,
@@ -124,6 +133,45 @@ defmodule LangChain.ChatModels.ChatModel do
       enrich_stop: &token_usage_from_result/1
     )
   end
+
+  @doc """
+  Best-effort extraction of standard request parameters from a chat model struct
+  for telemetry, using the conventional public schema field names.
+
+  Reads the well-known fields (`:temperature`, `:max_tokens`, `:top_p`,
+  `:top_k`, `:frequency_penalty`, `:presence_penalty`, `:seed`, `:n`, `:stream`,
+  `:stop`/`:stop_sequences`, `:reasoning_effort`) when the struct defines them,
+  dropping any that are absent or `nil`. This mirrors the heuristic used by
+  `provider/1`: models expose these parameters as public schema fields under
+  conventional names, so one generic reader avoids per-provider duplication. A
+  model that names a parameter differently simply won't have it captured — the
+  result is a useful subset, not a guarantee.
+
+  The returned map uses provider-neutral keys; `LangChain.OpenTelemetry.Attributes`
+  maps them to their `gen_ai.request.*` semantic-convention attribute names.
+  """
+  @spec request_options(struct() | nil) :: map()
+  def request_options(nil), do: %{}
+
+  def request_options(%_module{} = model) do
+    %{
+      temperature: Map.get(model, :temperature),
+      max_tokens: Map.get(model, :max_tokens),
+      top_p: Map.get(model, :top_p),
+      top_k: Map.get(model, :top_k),
+      frequency_penalty: Map.get(model, :frequency_penalty),
+      presence_penalty: Map.get(model, :presence_penalty),
+      seed: Map.get(model, :seed),
+      choice_count: Map.get(model, :n),
+      stream: Map.get(model, :stream),
+      stop_sequences: Map.get(model, :stop) || Map.get(model, :stop_sequences),
+      reasoning_level: Map.get(model, :reasoning_effort)
+    }
+    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+    |> Map.new()
+  end
+
+  def request_options(_), do: %{}
 
   @doc """
   Create a serializable map from a ChatModel's current configuration that can

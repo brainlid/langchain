@@ -45,7 +45,7 @@ defmodule LangChain.ChatModels.ChatModelTest do
     end
   end
 
-  describe "llm_telemetry_span/2" do
+  describe "llm_telemetry_span/3" do
     # This is the single wiring point every chat model must route its LLM span
     # through. It guarantees `:enrich_stop` is attached so token usage reaches the
     # `[:langchain, :llm, :call, :stop]` event. If a provider bypasses it (as
@@ -54,11 +54,11 @@ defmodule LangChain.ChatModels.ChatModelTest do
       test_pid = self()
       handler_id = "test-llm-telemetry-span-#{System.unique_integer([:positive])}"
 
-      :telemetry.attach(
+      :telemetry.attach_many(
         handler_id,
-        [:langchain, :llm, :call, :stop],
-        fn _event, _measurements, metadata, _config ->
-          send(test_pid, {:stop, metadata})
+        [[:langchain, :llm, :call, :start], [:langchain, :llm, :call, :stop]],
+        fn [_, _, _, stage], _measurements, metadata, _config ->
+          send(test_pid, {stage, metadata})
         end,
         nil
       )
@@ -72,7 +72,7 @@ defmodule LangChain.ChatModels.ChatModelTest do
       metadata = %{model: "test-model", provider: "test"}
 
       result =
-        ChatModel.llm_telemetry_span(metadata, fn ->
+        ChatModel.llm_telemetry_span(nil, metadata, fn ->
           {:ok, %Message{role: :assistant, content: "hi", metadata: %{usage: usage}}}
         end)
 
@@ -85,7 +85,7 @@ defmodule LangChain.ChatModels.ChatModelTest do
       usage = TokenUsage.new!(%{input: 4, output: 6})
       metadata = %{model: "test-model", provider: "test"}
 
-      ChatModel.llm_telemetry_span(metadata, fn ->
+      ChatModel.llm_telemetry_span(nil, metadata, fn ->
         {:ok,
          [
            %MessageDelta{role: :assistant, content: "hi", metadata: nil},
@@ -100,13 +100,71 @@ defmodule LangChain.ChatModels.ChatModelTest do
     test "sets token_usage to nil (never omits the key) when the result has no usage" do
       metadata = %{model: "test-model", provider: "test"}
 
-      ChatModel.llm_telemetry_span(metadata, fn -> {:error, :boom} end)
+      ChatModel.llm_telemetry_span(nil, metadata, fn -> {:error, :boom} end)
 
       assert_received {:stop, stop_metadata}
       # The key must be present even without usage — its presence is what proves
       # enrich_stop ran. A model that forgot enrich_stop would omit it entirely.
       assert Map.has_key?(stop_metadata, :token_usage)
       assert stop_metadata.token_usage == nil
+    end
+
+    test "injects the model's :request_options into the :start metadata" do
+      model = ChatOpenAI.new!(%{model: "gpt-4o", temperature: 0.7, seed: 42})
+      metadata = %{model: "gpt-4o", provider: "openai"}
+
+      ChatModel.llm_telemetry_span(model, metadata, fn -> {:error, :boom} end)
+
+      assert_received {:start, start_metadata}
+      assert %{temperature: 0.7, seed: 42} = start_metadata.request_options
+    end
+
+    test "a nil model yields empty :request_options rather than omitting the key" do
+      ChatModel.llm_telemetry_span(nil, %{model: "m", provider: "p"}, fn -> :ok end)
+
+      assert_received {:start, start_metadata}
+      assert start_metadata.request_options == %{}
+    end
+
+    test "a caller-provided :request_options is not overwritten" do
+      model = ChatOpenAI.new!(%{model: "gpt-4o", temperature: 0.7})
+      metadata = %{model: "gpt-4o", provider: "openai", request_options: %{temperature: 0.1}}
+
+      ChatModel.llm_telemetry_span(model, metadata, fn -> :ok end)
+
+      assert_received {:start, start_metadata}
+      assert start_metadata.request_options == %{temperature: 0.1}
+    end
+  end
+
+  describe "request_options/1" do
+    test "extracts the standard request parameters a model sets, dropping nils" do
+      model =
+        ChatOpenAI.new!(%{
+          model: "gpt-4o",
+          temperature: 0.7,
+          frequency_penalty: 0.2,
+          seed: 7,
+          stream: true
+        })
+
+      opts = ChatModel.request_options(model)
+
+      assert %{temperature: 0.7, frequency_penalty: 0.2, seed: 7, stream: true} = opts
+      # `n` defaults to 1 on ChatOpenAI, so choice_count is present.
+      assert opts.choice_count == 1
+      # Fields the struct doesn't define are absent, not nil.
+      refute Map.has_key?(opts, :top_k)
+      refute Map.has_key?(opts, :presence_penalty)
+    end
+
+    test "maps :reasoning_effort to :reasoning_level" do
+      model = ChatOpenAI.new!(%{model: "gpt-4o", reasoning_effort: "medium"})
+      assert %{reasoning_level: "medium"} = ChatModel.request_options(model)
+    end
+
+    test "returns an empty map for nil" do
+      assert ChatModel.request_options(nil) == %{}
     end
   end
 

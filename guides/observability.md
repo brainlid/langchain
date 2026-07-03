@@ -146,11 +146,24 @@ invoke_agent llm_chain              (:internal)   gen_ai.operation.name = invoke
 Attributes recorded on the spans include (a subset, always present when
 available):
 
-- `gen_ai.operation.name`, `gen_ai.provider.name`
+- `gen_ai.operation.name`, `gen_ai.provider.name`, `gen_ai.output.type`
 - `gen_ai.request.model`, `gen_ai.response.model`
+- Request parameters, when the model sets them: `gen_ai.request.temperature`,
+  `gen_ai.request.max_tokens`, `gen_ai.request.top_p`, `gen_ai.request.top_k`,
+  `gen_ai.request.frequency_penalty`, `gen_ai.request.presence_penalty`,
+  `gen_ai.request.seed`, `gen_ai.request.choice.count`, `gen_ai.request.stream`,
+  `gen_ai.request.stop_sequences`, `gen_ai.request.reasoning.level`
 - `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`
 - `gen_ai.tool.name`, `gen_ai.tool.call.id`, `gen_ai.tool.type`
 - `gen_ai.agent.name` (the chain type)
+
+> #### How request parameters are captured {: .info}
+>
+> Each chat model's standard parameters (temperature, max tokens, top-p, seed, …)
+> are read from the model struct by conventional field name and carried on the
+> telemetry event as `:request_options`, then mapped to `gen_ai.request.*`. A
+> parameter the model doesn't set — or exposes under a non-standard field name —
+> is simply omitted, so treat the set as a best-effort subset.
 
 > #### `gen_ai.response.model` reflects the requested model {: .info}
 >

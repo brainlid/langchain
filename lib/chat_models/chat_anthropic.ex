@@ -824,7 +824,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       tools_count: length(functions)
     }
 
-    ChatModel.llm_telemetry_span(metadata, fn ->
+    ChatModel.llm_telemetry_span(anthropic, metadata, fn ->
       try do
         # Track the prompt being sent
         LangChain.Telemetry.llm_prompt(

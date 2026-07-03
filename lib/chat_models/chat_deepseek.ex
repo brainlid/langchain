@@ -518,7 +518,7 @@ defmodule LangChain.ChatModels.ChatDeepSeek do
       tools_count: length(tools)
     }
 
-    ChatModel.llm_telemetry_span(metadata, fn ->
+    ChatModel.llm_telemetry_span(deepseek, metadata, fn ->
       try do
         # Track the prompt being sent
         LangChain.Telemetry.llm_prompt(

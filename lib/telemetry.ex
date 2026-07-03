@@ -49,6 +49,12 @@ defmodule LangChain.Telemetry do
     in LLM call `:stop` events and chain execution `:stop` events when available (via
     the `:enrich_stop` callback). `nil` when the model does not report usage.
 
+  * `:request_options` - A map of the standard request parameters the chat model set
+    (`:temperature`, `:max_tokens`, `:top_p`, `:seed`, ...), extracted from the model
+    struct by `LangChain.ChatModels.ChatModel.request_options/1` and injected on LLM
+    call events. Absent parameters are omitted; an empty map means none were captured.
+    The OpenTelemetry layer maps these to `gen_ai.request.*` span attributes.
+
   * `:last_message` - The final assembled `%Message{}` from the LLM response. Included
     in chain execution `:stop` events. For streaming responses this is the fully
     assembled message (not individual deltas).
@@ -63,10 +69,10 @@ defmodule LangChain.Telemetry do
   ## Expected Metadata Shape by Event
 
   * **LLM call `:start`**:
-    `%{model: String.t(), provider: String.t(), message_count: integer(), tools_count: integer(), call_id: String.t()}`
+    `%{model: String.t(), provider: String.t(), message_count: integer(), tools_count: integer(), request_options: map(), call_id: String.t()}`
 
   * **LLM call `:stop`** (includes enriched fields):
-    `%{model: String.t(), provider: String.t(), message_count: integer(), tools_count: integer(), call_id: String.t(), token_usage: TokenUsage.t() | nil, result: term()}`
+    `%{model: String.t(), provider: String.t(), message_count: integer(), tools_count: integer(), request_options: map(), call_id: String.t(), token_usage: TokenUsage.t() | nil, result: term()}`
 
   * **Chain execution `:start`**:
     `%{chain_type: String.t(), mode: term(), message_count: integer(), tools_count: integer(), custom_context: term(), call_id: String.t()}`

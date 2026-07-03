@@ -39,6 +39,89 @@ defmodule LangChain.OpenTelemetry.AttributesTest do
 
       refute Enum.any?(attrs, fn {k, _v} -> k == "gen_ai.input.messages" end)
     end
+
+    test "always records gen_ai.output.type of text for chat models" do
+      attrs = Attributes.llm_call_start(%{model: "gpt-4o", provider: "openai"})
+
+      assert {"gen_ai.output.type", "text"} in attrs
+    end
+
+    test "maps request_options to gen_ai.request.* attributes" do
+      metadata = %{
+        model: "gpt-4o",
+        provider: "openai",
+        request_options: %{
+          temperature: 0.7,
+          max_tokens: 512,
+          top_p: 0.9,
+          top_k: 40,
+          frequency_penalty: 0.1,
+          presence_penalty: 0.2,
+          seed: 42,
+          choice_count: 2,
+          stream: true,
+          reasoning_level: "medium"
+        }
+      }
+
+      attrs = Attributes.llm_call_start(metadata)
+
+      assert {"gen_ai.request.temperature", 0.7} in attrs
+      assert {"gen_ai.request.max_tokens", 512} in attrs
+      assert {"gen_ai.request.top_p", 0.9} in attrs
+      assert {"gen_ai.request.top_k", 40} in attrs
+      assert {"gen_ai.request.frequency_penalty", 0.1} in attrs
+      assert {"gen_ai.request.presence_penalty", 0.2} in attrs
+      assert {"gen_ai.request.seed", 42} in attrs
+      assert {"gen_ai.request.choice.count", 2} in attrs
+      assert {"gen_ai.request.stream", true} in attrs
+      assert {"gen_ai.request.reasoning.level", "medium"} in attrs
+    end
+
+    test "coerces a single stop string into gen_ai.request.stop_sequences array" do
+      metadata = %{model: "m", provider: "openai", request_options: %{stop_sequences: "STOP"}}
+
+      attrs = Attributes.llm_call_start(metadata)
+
+      assert {"gen_ai.request.stop_sequences", ["STOP"]} in attrs
+    end
+
+    test "keeps a stop sequence list, dropping non-string entries" do
+      metadata = %{
+        model: "m",
+        provider: "openai",
+        request_options: %{stop_sequences: ["A", "B", 3]}
+      }
+
+      attrs = Attributes.llm_call_start(metadata)
+
+      assert {"gen_ai.request.stop_sequences", ["A", "B"]} in attrs
+    end
+
+    test "emits no gen_ai.request.* parameter attributes when request_options is empty/absent" do
+      for metadata <- [
+            %{model: "m", provider: "openai"},
+            %{model: "m", provider: "openai", request_options: %{}}
+          ] do
+        attrs = Attributes.llm_call_start(metadata)
+        params = Enum.filter(attrs, fn {k, _v} -> String.starts_with?(k, "gen_ai.request.") end)
+        # Only gen_ai.request.model remains; no parameter attributes.
+        assert params == [{"gen_ai.request.model", "m"}]
+      end
+    end
+
+    test "drops request-option keys whose value is nil" do
+      metadata = %{
+        model: "m",
+        provider: "openai",
+        request_options: %{temperature: nil, seed: 7}
+      }
+
+      attrs = Attributes.llm_call_start(metadata)
+
+      assert {"gen_ai.request.seed", 7} in attrs
+      refute Enum.any?(attrs, fn {k, _v} -> k == "gen_ai.request.temperature" end)
+    end
   end
 
   describe "llm_call_stop/2" do

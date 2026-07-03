@@ -583,7 +583,7 @@ defmodule LangChain.ChatModels.ChatOrq do
       tools_count: length(tools)
     }
 
-    ChatModel.llm_telemetry_span(metadata, fn ->
+    ChatModel.llm_telemetry_span(orq, metadata, fn ->
       try do
         # Track the prompt being sent
         LangChain.Telemetry.llm_prompt(

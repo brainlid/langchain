@@ -354,7 +354,7 @@ defmodule LangChain.ChatModels.ChatPerplexity do
       tools_count: length(tools)
     }
 
-    ChatModel.llm_telemetry_span(metadata, fn ->
+    ChatModel.llm_telemetry_span(perplexity, metadata, fn ->
       try do
         # Track the prompt being sent
         Telemetry.llm_prompt(
