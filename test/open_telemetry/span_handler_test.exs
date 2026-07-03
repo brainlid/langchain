@@ -317,6 +317,41 @@ defmodule LangChain.OpenTelemetry.SpanHandlerTest do
       assert llm_span.name == "chat gpt-4o"
       refute Map.has_key?(llm_span.attributes, "gen_ai.output.messages")
     end
+
+    test "ends the span and detaches context even when recording the error raises",
+         %{tid: tid} do
+      call_id = Ecto.UUID.generate()
+      dict_key = {LangChain.OpenTelemetry.SpanHandler, call_id}
+
+      :telemetry.execute(
+        [:langchain, :llm, :call, :start],
+        %{system_time: System.system_time()},
+        %{call_id: call_id, model: "gpt-4o", provider: "openai"}
+      )
+
+      # A non-exception `:error` payload makes `Exception.message/1` raise while the
+      # exception handler builds the span's error status. The span must still be
+      # ended and its context detached — otherwise it leaks and every later span in
+      # this process nests under the never-closed one. Guards the `try/after` in
+      # `end_span_on_exception/1`.
+      :telemetry.execute(
+        [:langchain, :llm, :call, :exception],
+        %{duration: 1_000_000, system_time: System.system_time()},
+        %{call_id: call_id, kind: :error, error: %{not: :a_real_exception}, stacktrace: []}
+      )
+
+      # The stored span/token was popped, `end_span` ran, and the context was
+      # detached despite the raise — so the process context is clean again.
+      # (`:otel_tracer` directly, since `OpenTelemetry` is aliased to LangChain's.)
+      refute Process.get(dict_key)
+      assert :otel_tracer.current_span_ctx() == :undefined
+
+      # The span was still ended and exported (before the fix it leaked, never
+      # reaching `end_span`, so nothing was exported).
+      spans = flush_spans(tid)
+      assert [llm_span] = spans
+      assert llm_span.name == "chat gpt-4o"
+    end
   end
 
   describe "chain execute spans" do

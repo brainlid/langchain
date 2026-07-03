@@ -256,6 +256,24 @@ defmodule LangChain.OpenTelemetry.AttributesTest do
       assert {"gen_ai.usage.reasoning.output_tokens", 15} in attrs
     end
 
+    test "extracts Responses-API cached tokens nested under input_tokens_details" do
+      # The OpenAI Responses API nests cached tokens under `input_tokens_details`
+      # rather than `prompt_tokens_details` (Chat Completions). Regression: reading
+      # only `prompt_tokens_details` dropped cache-read tokens for every
+      # Responses-API call that hit the prompt cache.
+      metadata = %{
+        token_usage: %{
+          input: 100,
+          output: 50,
+          raw: %{"input_tokens_details" => %{"cached_tokens" => 80}}
+        }
+      }
+
+      attrs = Attributes.llm_call_stop(metadata)
+
+      assert {"gen_ai.usage.cache_read.input_tokens", 80} in attrs
+    end
+
     test "drops zero and absent cache/reasoning counts" do
       metadata = %{
         token_usage: %{
@@ -364,6 +382,20 @@ defmodule LangChain.OpenTelemetry.AttributesTest do
       refute Enum.any?(attrs, fn {k, _v} -> k == "gen_ai.response.finish_reasons" end)
     end
 
+    test "derives finish_reasons from batched (list-of-lists) streamed deltas" do
+      # Some providers (e.g. Mistral) return streamed deltas *batched* as a list of
+      # lists. Regression: the head-typed clause saw a list (not a delta struct) at
+      # the head and dropped `finish_reasons` for the whole streaming call.
+      batched = [
+        [MessageDelta.new!(%{role: :assistant, content: "Hel", status: :incomplete})],
+        [MessageDelta.new!(%{content: "lo", status: :complete})]
+      ]
+
+      attrs = Attributes.llm_call_stop(%{result: {:ok, batched}})
+
+      assert {"gen_ai.response.finish_reasons", ["stop"]} in attrs
+    end
+
     test "includes output messages when capture_output_messages is true" do
       config = %Config{capture_output_messages: true}
       msg = Message.new_assistant!(%{content: "Hello there!"})
@@ -401,6 +433,26 @@ defmodule LangChain.OpenTelemetry.AttributesTest do
       ]
 
       attrs = Attributes.llm_call_stop(%{result: {:ok, deltas}}, config)
+
+      assert {_key, json} =
+               Enum.find(attrs, fn {k, _v} -> k == "gen_ai.output.messages" end)
+
+      assert [%{"role" => "assistant", "content" => "Hello!"}] = Jason.decode!(json)
+    end
+
+    test "captures streamed output from batched (list-of-lists) deltas" do
+      # Batched streaming (e.g. Mistral) nests deltas one level deeper. Regression:
+      # the head-typed clause missed the list-at-head shape and dropped
+      # `gen_ai.output.messages` for the whole streamed call.
+      config = %Config{capture_output_messages: true}
+
+      batched = [
+        [MessageDelta.new!(%{role: :assistant, content: "Hel", status: :incomplete})],
+        [MessageDelta.new!(%{content: "lo", status: :incomplete})],
+        [MessageDelta.new!(%{content: "!", status: :complete})]
+      ]
+
+      attrs = Attributes.llm_call_stop(%{result: {:ok, batched}}, config)
 
       assert {_key, json} =
                Enum.find(attrs, fn {k, _v} -> k == "gen_ai.output.messages" end)

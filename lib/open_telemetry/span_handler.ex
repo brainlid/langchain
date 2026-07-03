@@ -348,27 +348,36 @@ if Code.ensure_loaded?(:opentelemetry) do
 
       case pop_span(call_id) do
         {span_ctx, token} ->
-          error = metadata[:error]
+          # Ending the span and detaching its context MUST happen even if setting
+          # the error status/attributes raises (e.g. a custom exception whose
+          # `Exception.message/1` blows up) — otherwise the span leaks and every
+          # later span in this (often long-lived) process nests under the
+          # never-closed one. Recording the error is best-effort; closing is not.
+          # Mirrors `end_span/2`.
+          try do
+            error = metadata[:error]
 
-          status_message =
-            if error, do: Exception.message(error), else: "exception"
+            status_message =
+              if error, do: Exception.message(error), else: "exception"
 
-          OpenTelemetry.Span.set_status(span_ctx, OpenTelemetry.status(:error, status_message))
+            OpenTelemetry.Span.set_status(span_ctx, OpenTelemetry.status(:error, status_message))
 
-          # `error.type` lets GenAI-semconv backends (Langfuse, etc.) group and
-          # filter errors by kind. Use the exception's module name when available.
-          OpenTelemetry.Span.set_attributes(span_ctx, [{"error.type", error_type(error)}])
+            # `error.type` lets GenAI-semconv backends (Langfuse, etc.) group and
+            # filter errors by kind. Use the exception's module name when available.
+            OpenTelemetry.Span.set_attributes(span_ctx, [{"error.type", error_type(error)}])
 
-          if error do
-            OpenTelemetry.Span.record_exception(
-              span_ctx,
-              error,
-              metadata[:stacktrace] || []
-            )
+            if error do
+              OpenTelemetry.Span.record_exception(
+                span_ctx,
+                error,
+                metadata[:stacktrace] || []
+              )
+            end
+          after
+            OpenTelemetry.Span.end_span(span_ctx)
+            OpenTelemetry.Ctx.detach(token)
           end
 
-          OpenTelemetry.Span.end_span(span_ctx)
-          OpenTelemetry.Ctx.detach(token)
           :ok
 
         nil ->

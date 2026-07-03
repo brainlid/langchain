@@ -221,11 +221,12 @@ defmodule LangChain.OpenTelemetry.Attributes do
 
   # Best-effort cache/reasoning token counts from the provider-specific
   # `TokenUsage.raw` map. Anthropic reports `cache_creation_input_tokens` /
-  # `cache_read_input_tokens` at the top level; OpenAI nests `cached_tokens` under
-  # `prompt_tokens_details` and `reasoning_tokens` under `completion_tokens_details`
-  # (or `output_tokens_details` on the Responses API). Only positive counts are
-  # emitted — providers report 0 for unused cache/reasoning on every call, which is
-  # pure noise on the span.
+  # `cache_read_input_tokens` at the top level; OpenAI Chat Completions nests
+  # `cached_tokens` under `prompt_tokens_details` and `reasoning_tokens` under
+  # `completion_tokens_details`, while the Responses API nests them under
+  # `input_tokens_details` / `output_tokens_details` respectively. Only positive
+  # counts are emitted — providers report 0 for unused cache/reasoning on every
+  # call, which is pure noise on the span.
   @spec usage_extra_attributes(map()) :: [{String.t(), term()}]
   defp usage_extra_attributes(%{raw: raw}) when is_map(raw) do
     [
@@ -240,7 +241,8 @@ defmodule LangChain.OpenTelemetry.Attributes do
 
   defp cache_read_tokens(raw) do
     positive_int(Map.get(raw, "cache_read_input_tokens")) ||
-      positive_int(nested(raw, "prompt_tokens_details", "cached_tokens"))
+      positive_int(nested(raw, "prompt_tokens_details", "cached_tokens")) ||
+      positive_int(nested(raw, "input_tokens_details", "cached_tokens"))
   end
 
   defp reasoning_output_tokens(raw) do
@@ -274,13 +276,18 @@ defmodule LangChain.OpenTelemetry.Attributes do
 
   defp finish_reason({:ok, %LangChain.Message{} = msg}), do: message_finish_reason(msg)
 
-  defp finish_reason({:ok, [%LangChain.Message{} | _] = msgs}),
-    do: msgs |> List.last() |> message_finish_reason()
-
   defp finish_reason({:ok, %LangChain.MessageDelta{} = delta}), do: delta_finish_reason([delta])
 
-  defp finish_reason({:ok, [%LangChain.MessageDelta{} | _] = deltas}),
-    do: delta_finish_reason(deltas)
+  # `List.flatten/1` first: some providers (e.g. Mistral) return streamed deltas
+  # *batched* as a list of lists, whose head is a list rather than a struct — the
+  # head-typed clauses below would otherwise miss it and drop `finish_reasons`.
+  defp finish_reason({:ok, [_ | _] = items}) do
+    case List.flatten(items) do
+      [%LangChain.Message{} | _] = msgs -> msgs |> List.last() |> message_finish_reason()
+      [%LangChain.MessageDelta{} | _] = deltas -> delta_finish_reason(deltas)
+      _ -> nil
+    end
+  end
 
   defp finish_reason(_), do: nil
 
@@ -305,14 +312,19 @@ defmodule LangChain.OpenTelemetry.Attributes do
   defp output_messages_from_result({:ok, %LangChain.Message{} = msg}),
     do: MessageSerializer.serialize_output(msg)
 
-  defp output_messages_from_result({:ok, [%LangChain.Message{} | _] = msgs}),
-    do: MessageSerializer.serialize_output(msgs)
-
   defp output_messages_from_result({:ok, %LangChain.MessageDelta{} = delta}),
     do: serialize_delta_output([delta])
 
-  defp output_messages_from_result({:ok, [%LangChain.MessageDelta{} | _] = deltas}),
-    do: serialize_delta_output(deltas)
+  # `List.flatten/1` first: batched (list-of-lists) streaming shapes (e.g. Mistral)
+  # have a list — not a struct — at the head, which the head-typed clauses would
+  # miss, dropping `output.messages`.
+  defp output_messages_from_result({:ok, [_ | _] = items}) do
+    case List.flatten(items) do
+      [%LangChain.Message{} | _] = msgs -> MessageSerializer.serialize_output(msgs)
+      [%LangChain.MessageDelta{} | _] = deltas -> serialize_delta_output(deltas)
+      _ -> nil
+    end
+  end
 
   defp output_messages_from_result(_), do: nil
 

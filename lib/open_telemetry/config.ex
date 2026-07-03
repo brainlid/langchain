@@ -16,8 +16,10 @@ defmodule LangChain.OpenTelemetry.Config do
     * `:capture_tool_results` - When `true`, records `gen_ai.tool.call.result` as a
       span attribute. Defaults to `false`.
 
-    * `:enable_metrics` - When `true`, records OTel histogram metrics for operation
-      duration and token usage. Defaults to `true`.
+    * `:enable_metrics` - When `true`, attaches the metrics handler, which re-emits
+      LangChain telemetry as intermediary `[:langchain, :otel, …]` metric events for a
+      consumer (`Telemetry.Metrics`, PromEx, …) to record. It does **not** record OTel
+      histograms directly. Defaults to `true`. See `LangChain.OpenTelemetry.MetricsHandler`.
   """
 
   @type t :: %__MODULE__{

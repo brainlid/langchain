@@ -83,28 +83,56 @@ defmodule LangChain.ChatModels.ChatModel do
   end
 
   def token_usage_from_result({:ok, [_ | _] = items}) do
-    # Streaming calls return `%MessageDelta{}` structs; the accumulated
-    # `%TokenUsage{}` rides on the final delta's metadata. Non-streaming calls
-    # that return `%Message{}` structs carry it the same way. Some providers
-    # (e.g. Mistral) return the deltas *batched* as a list of lists, so flatten
-    # first — otherwise the usage-bearing delta is nested one level deeper than
-    # the scan looks, silently dropping token usage from the
+    # Some providers (e.g. Mistral) return the deltas *batched* as a list of
+    # lists, so flatten first — otherwise the usage-bearing item is nested one
+    # level deeper than the scan looks, silently dropping token usage from the
     # `[:langchain, :llm, :call, :stop]` event and the OTEL span. `List.flatten/1`
     # is a no-op on an already-flat list of structs, so this is safe for every
     # provider's result shape.
-    usage =
-      items
-      |> List.flatten()
-      |> Enum.find_value(fn
-        %Message{metadata: %{usage: %TokenUsage{} = usage}} -> usage
-        %MessageDelta{metadata: %{usage: %TokenUsage{} = usage}} -> usage
-        _ -> nil
-      end)
+    flat = List.flatten(items)
+
+    # Non-streaming vs. streaming carry usage differently, so they must be
+    # combined differently:
+    #
+    #   * Non-streaming returns `%Message{}` structs. The provider reports usage
+    #     once for the whole response but attaches the *same* struct to every
+    #     choice (OpenAI duplicates it across `n > 1` choices), so take a single
+    #     message's usage — summing would multiply it by the choice count.
+    #
+    #   * Streaming returns `%MessageDelta{}` structs and spreads usage across the
+    #     list, which must be accumulated with `TokenUsage.add/2` (mirroring
+    #     `MessageDelta.merge_deltas/2`). A plain "first delta with usage" scan is
+    #     wrong whenever more than the final delta reports usage:
+    #       - Google/Vertex tag *every* delta with a `cumulative: true` running
+    #         total; `add/2` keeps the latest (the final total). Taking the first
+    #         would report an early partial total.
+    #       - Anthropic splits input tokens (`message_start`) from final output
+    #         tokens (`message_delta`) across two deltas; `add/2` combines them.
+    usage = message_usage(flat) || accumulate_delta_usage(flat)
 
     %{token_usage: usage}
   end
 
   def token_usage_from_result(_result), do: %{token_usage: nil}
+
+  # Usage from a non-streaming result: a single message's `%TokenUsage{}` (the
+  # value is identical across `n > 1` choices, so the first is representative).
+  defp message_usage(items) do
+    Enum.find_value(items, fn
+      %Message{metadata: %{usage: %TokenUsage{} = usage}} -> usage
+      _ -> nil
+    end)
+  end
+
+  # Usage from a streamed result: fold every delta's `%TokenUsage{}` with
+  # `TokenUsage.add/2`, which is cumulative-aware (replaces on `cumulative: true`,
+  # sums otherwise) — the same accumulation `MessageDelta.merge_deltas/2` performs.
+  defp accumulate_delta_usage(items) do
+    Enum.reduce(items, nil, fn
+      %MessageDelta{metadata: %{usage: %TokenUsage{} = usage}}, acc -> TokenUsage.add(acc, usage)
+      _, acc -> acc
+    end)
+  end
 
   @doc """
   Wraps an LLM `call/3` body in the standard `[:langchain, :llm, :call]`
