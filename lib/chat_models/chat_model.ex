@@ -83,12 +83,19 @@ defmodule LangChain.ChatModels.ChatModel do
   end
 
   def token_usage_from_result({:ok, [_ | _] = items}) do
-    # Streaming calls return a list of `%MessageDelta{}` structs; the accumulated
+    # Streaming calls return `%MessageDelta{}` structs; the accumulated
     # `%TokenUsage{}` rides on the final delta's metadata. Non-streaming calls
-    # that return a list of `%Message{}` structs carry it the same way. Scan the
-    # list for the first item whose metadata holds a `%TokenUsage{}`.
+    # that return `%Message{}` structs carry it the same way. Some providers
+    # (e.g. Mistral) return the deltas *batched* as a list of lists, so flatten
+    # first — otherwise the usage-bearing delta is nested one level deeper than
+    # the scan looks, silently dropping token usage from the
+    # `[:langchain, :llm, :call, :stop]` event and the OTEL span. `List.flatten/1`
+    # is a no-op on an already-flat list of structs, so this is safe for every
+    # provider's result shape.
     usage =
-      Enum.find_value(items, fn
+      items
+      |> List.flatten()
+      |> Enum.find_value(fn
         %Message{metadata: %{usage: %TokenUsage{} = usage}} -> usage
         %MessageDelta{metadata: %{usage: %TokenUsage{} = usage}} -> usage
         _ -> nil

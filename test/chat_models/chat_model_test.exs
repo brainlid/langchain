@@ -34,6 +34,23 @@ defmodule LangChain.ChatModels.ChatModelTest do
       assert %{token_usage: ^usage} = ChatModel.token_usage_from_result({:ok, deltas})
     end
 
+    test "extracts usage from batched streaming deltas (list of lists)", %{usage: usage} do
+      # Some providers (e.g. Mistral) return streamed deltas *batched* as a list
+      # of lists rather than a flat list. The accumulated usage still rides on the
+      # final delta's metadata, nested one level deep. Regression: without
+      # flattening, the scan never reaches it and token usage is silently dropped
+      # from the `[:langchain, :llm, :call, :stop]` event and the OTEL span.
+      batched = [
+        [%MessageDelta{role: :assistant, content: "hi", metadata: nil}],
+        [%MessageDelta{role: :assistant, content: " there", metadata: nil}],
+        [],
+        [%MessageDelta{role: :assistant, content: nil, metadata: %{usage: usage}}],
+        []
+      ]
+
+      assert %{token_usage: ^usage} = ChatModel.token_usage_from_result({:ok, batched})
+    end
+
     test "extracts usage from a list of messages", %{usage: usage} do
       messages = [%Message{role: :assistant, content: "hi", metadata: %{usage: usage}}]
       assert %{token_usage: ^usage} = ChatModel.token_usage_from_result({:ok, messages})
