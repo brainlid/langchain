@@ -151,6 +151,14 @@ available):
 - `gen_ai.tool.name`, `gen_ai.tool.call.id`, `gen_ai.tool.type`
 - `gen_ai.agent.name` (the chain type)
 
+> #### `gen_ai.response.model` reflects the requested model {: .info}
+>
+> LangChain's telemetry carries the model you requested, not the exact model id
+> the provider returns. `gen_ai.response.model` is therefore set to the request
+> model — when a provider echoes a more specific id (e.g. `gpt-4o` →
+> `gpt-4o-2024-08-06`), that specific id is not currently captured. Use
+> `gen_ai.request.model` as the source of truth for the model.
+
 Provider names are normalized to the OTel registry — e.g. `"google"` becomes
 `gcp.gemini`, `"vertex_ai"` becomes `gcp.vertex_ai`, `"xai"` becomes `x_ai`, and
 `"mistralai"` becomes `mistral_ai`. Unknown providers pass through unchanged. See
