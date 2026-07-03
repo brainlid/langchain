@@ -152,7 +152,11 @@ defmodule LangChain.TokenUsage do
       iex> LangChain.TokenUsage.set(message, token_usage)
       %LangChain.Message{metadata: %{usage: %LangChain.TokenUsage{input: 10, output: 20}}}
   """
-  @spec set(t() | %{metadata: %{usage: t()}}, nil | t()) :: t() | %{metadata: %{usage: t()}}
+  # The first argument is typed as `any()` because `set/2` is intentionally
+  # total: the catch-all clause below returns non-message values unchanged, so
+  # callers can safely pipe any `do_process_response/2` shape (e.g. `:skip`,
+  # `{:error, _}`, a message, or a list) through it.
+  @spec set(any(), nil | t()) :: any()
   def set(%{metadata: metadata} = message, %TokenUsage{} = usage) do
     new_metadata =
       if metadata == nil do

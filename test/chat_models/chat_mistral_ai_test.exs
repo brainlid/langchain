@@ -1,5 +1,6 @@
 defmodule LangChain.ChatModels.ChatMistralAITest do
   use LangChain.BaseCase
+  use Mimic
 
   alias LangChain.ChatModels.ChatMistralAI
   alias LangChain.Message
@@ -634,6 +635,66 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
 
       assert [%Message{role: :assistant, status: :complete} = message] = result
       assert message.content == [ContentPart.text!("Hello from Mistral!")]
+    end
+  end
+
+  describe "call/3 token usage persistence (regression)" do
+    setup :verify_on_exit!
+
+    # Regression for the Mistral-specific fix: Mistral fires the
+    # `:on_llm_token_usage` callback but historically did NOT persist usage onto
+    # the returned message metadata. As a result token usage never reached the
+    # `[:langchain, :llm, :call, :stop]` telemetry (via the
+    # `enrich_stop`/`token_usage_from_result` path) or the OTEL span. The
+    # `attach_token_usage/2` step in `do_api_request` fixes it.
+    test "non-streaming call persists token usage onto the message and stop event" do
+      test_pid = self()
+
+      model = ChatMistralAI.new!(%{model: "mistral-tiny", api_key: "test-key"})
+
+      response_body = %{
+        "choices" => [
+          %{
+            "message" => %{
+              "role" => "assistant",
+              "content" => "Hello from Mistral!",
+              "tool_calls" => []
+            },
+            "finish_reason" => "stop",
+            "index" => 0
+          }
+        ],
+        "usage" => %{
+          "prompt_tokens" => 7,
+          "completion_tokens" => 10,
+          "total_tokens" => 17
+        }
+      }
+
+      expect(Req, :post, fn _req ->
+        {:ok, %Req.Response{status: 200, body: response_body}}
+      end)
+
+      :telemetry.attach(
+        "test-mistral-token-usage-stop",
+        [:langchain, :llm, :call, :stop],
+        fn _name, _measurements, metadata, _config ->
+          send(test_pid, {:stop, metadata})
+        end,
+        nil
+      )
+
+      assert {:ok, [%Message{} = message]} =
+               ChatMistralAI.call(model, [Message.new_user!("Hi")], [])
+
+      # Usage is now on the returned message metadata...
+      assert %TokenUsage{input: 7, output: 10} = TokenUsage.get(message)
+
+      # ...and therefore reaches the LLM call :stop telemetry event.
+      assert_received {:stop, stop_metadata}
+      assert %TokenUsage{input: 7, output: 10} = stop_metadata.token_usage
+
+      :telemetry.detach("test-mistral-token-usage-stop")
     end
   end
 

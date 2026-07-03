@@ -13,6 +13,7 @@ defmodule LangChain.ChatModels.TelemetryTest do
   alias LangChain.Chains.LLMChain
   alias LangChain.Function
   alias LangChain.Message
+  alias LangChain.MessageDelta
   alias LangChain.Message.ToolCall
   alias LangChain.TokenUsage
 
@@ -66,6 +67,69 @@ defmodule LangChain.ChatModels.TelemetryTest do
         enrich_stop: &ChatModel.token_usage_from_result/1
       )
     end)
+  end
+
+  # Helper mirroring a streaming `call/3`: the result is a list of `%MessageDelta{}`
+  # structs where the accumulated `%TokenUsage{}` rides on the final delta's
+  # metadata — the shape `ChatModel.token_usage_from_result/1` must scan so that
+  # streaming token usage still reaches the `[:langchain, :llm, :call, :stop]` event.
+  defp make_streaming_llm_stub(module, provider, usage) do
+    module
+    |> stub(:call, fn model, messages, tools ->
+      metadata = %{
+        model: Map.get(model, :model),
+        provider: provider,
+        message_count: length(messages),
+        tools_count: length(tools)
+      }
+
+      LangChain.Telemetry.span(
+        [:langchain, :llm, :call],
+        metadata,
+        fn ->
+          deltas = [
+            MessageDelta.new!(%{role: :assistant, content: "Hel", status: :incomplete}),
+            MessageDelta.new!(%{content: "lo", status: :incomplete}),
+            MessageDelta.new!(%{content: "", status: :complete, metadata: %{usage: usage}})
+          ]
+
+          {:ok, deltas}
+        end,
+        enrich_stop: &ChatModel.token_usage_from_result/1
+      )
+    end)
+  end
+
+  describe "streaming token usage" do
+    setup :verify_on_exit!
+
+    test "streamed delta result surfaces token_usage on the stop event" do
+      test_pid = self()
+      usage = TokenUsage.new!(%{input: 12, output: 8})
+      make_streaming_llm_stub(ChatOpenAI, "openai", usage)
+
+      openai = ChatOpenAI.new!(%{model: "gpt-4o-mini", api_key: "test-key", stream: true})
+
+      :telemetry.attach(
+        "test-streaming-token-usage",
+        [:langchain, :llm, :call, :stop],
+        fn _name, _measurements, metadata, _config ->
+          send(test_pid, {:stop, metadata})
+        end,
+        nil
+      )
+
+      assert {:ok, [%MessageDelta{} | _]} =
+               ChatOpenAI.call(openai, [Message.new_user!("Hi")], [])
+
+      # The bug this guards against: streaming usage lives on the final delta, not
+      # a single message — token_usage_from_result must find it so the :stop event
+      # (and OTEL span) still report token counts for streamed calls.
+      assert_received {:stop, stop_metadata}
+      assert %TokenUsage{input: 12, output: 8} = stop_metadata.token_usage
+
+      :telemetry.detach("test-streaming-token-usage")
+    end
   end
 
   describe "telemetry instrumentation" do
