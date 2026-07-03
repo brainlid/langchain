@@ -200,6 +200,64 @@ defmodule LangChain.OpenTelemetry.AttributesTest do
     end
   end
 
+  describe "chain_stop/2" do
+    test "extracts the first user message as input for a standard {:ok, chain} result" do
+      config = %Config{capture_input_messages: true}
+
+      messages = [
+        Message.new_system!("Be helpful"),
+        Message.new_user!("first question"),
+        Message.new_user!("second question")
+      ]
+
+      metadata = %{result: {:ok, %{messages: messages}}}
+
+      attrs = Attributes.chain_stop(metadata, config)
+
+      assert {"gen_ai.input.messages", json} =
+               Enum.find(attrs, fn {k, _v} -> k == "gen_ai.input.messages" end)
+
+      assert json =~ "first question"
+      refute json =~ "second question"
+    end
+
+    test "extracts input from an :until_tool_used {:ok, chain, tool_result} 3-tuple result" do
+      config = %Config{capture_input_messages: true}
+      messages = [Message.new_user!("call the tool please")]
+      # The `:until_tool_used` success path returns a 3-tuple; input capture must
+      # still find the chain's messages instead of silently dropping them.
+      metadata = %{result: {:ok, %{messages: messages}, :some_tool_result}}
+
+      attrs = Attributes.chain_stop(metadata, config)
+
+      assert {"gen_ai.input.messages", json} =
+               Enum.find(attrs, fn {k, _v} -> k == "gen_ai.input.messages" end)
+
+      assert json =~ "call the tool please"
+    end
+
+    test "captures the assistant last_message as output" do
+      config = %Config{capture_output_messages: true}
+      metadata = %{last_message: Message.new_assistant!("the answer is 42")}
+
+      attrs = Attributes.chain_stop(metadata, config)
+
+      assert {"gen_ai.output.messages", json} =
+               Enum.find(attrs, fn {k, _v} -> k == "gen_ai.output.messages" end)
+
+      assert json =~ "the answer is 42"
+    end
+
+    test "captures nothing when both capture flags are off (default)" do
+      metadata = %{
+        result: {:ok, %{messages: [Message.new_user!("hi")]}, :tool_result},
+        last_message: Message.new_assistant!("hello")
+      }
+
+      assert Attributes.chain_stop(metadata, %Config{}) == []
+    end
+  end
+
   describe "custom_context_attributes/1" do
     test "returns empty list for nil" do
       assert Attributes.custom_context_attributes(nil) == []

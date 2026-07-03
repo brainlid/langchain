@@ -525,6 +525,54 @@ defmodule LangChain.ChatModels.TelemetryTest do
     end
   end
 
+  describe "run_until_tool_used chain telemetry" do
+    setup :verify_on_exit!
+
+    test ":until_tool_used success path enriches stop with last_message and token_usage" do
+      test_pid = self()
+      usage = TokenUsage.new!(%{input: 30, output: 12})
+
+      # LLM immediately calls the target tool; the assistant message carries usage.
+      ChatOpenAI
+      |> expect(:call, fn _model, _messages, _tools ->
+        {:ok,
+         Message.new_assistant!(%{
+           tool_calls: [ToolCall.new!(%{call_id: "call_1", name: "do_thing", arguments: %{}})],
+           metadata: %{usage: usage}
+         })}
+      end)
+
+      {:ok, fun} =
+        Function.new(%{name: "do_thing", function: fn _args, _ctx -> {:ok, "done"} end})
+
+      :telemetry.attach(
+        "test-until-tool-stop",
+        [:langchain, :chain, :execute, :stop],
+        fn _name, _measurements, metadata, _config ->
+          send(test_pid, {:chain_stop, metadata})
+        end,
+        nil
+      )
+
+      assert {:ok, updated_chain, _tool_result} =
+               %{llm: ChatOpenAI.new!(%{stream: false}), verbose: false}
+               |> LLMChain.new!()
+               |> LLMChain.add_tools([fun])
+               |> LLMChain.add_message(Message.new_user!("call do_thing"))
+               |> LLMChain.run_until_tool_used("do_thing")
+
+      assert updated_chain.last_message.role == :tool
+
+      # Regression: the 3-tuple {:ok, chain, tool_result} previously fell through
+      # to the nil clause, dropping both of these from the chain :stop telemetry.
+      assert_received {:chain_stop, stop_metadata}
+      assert %Message{} = stop_metadata.last_message
+      assert %TokenUsage{input: 30, output: 12} = stop_metadata.token_usage
+
+      :telemetry.detach("test-until-tool-stop")
+    end
+  end
+
   describe "tool call telemetry with custom_context" do
     setup :verify_on_exit!
 

@@ -224,23 +224,30 @@ defmodule LangChain.OpenTelemetry.Attributes do
   defp extract_user_input(metadata) do
     # The chain stop metadata inherits from start, which includes the chain's messages
     # via the result tuple. Try to get the first user message.
+    #
+    # A standard run terminates with `{:ok, chain}`; `:until_tool_used` terminates
+    # with `{:ok, chain, tool_result}` when the target tool is found. Both carry the
+    # chain's messages, so handle either shape.
     case metadata[:result] do
-      {:ok, %{messages: [_ | _] = messages}} ->
-        user_messages =
-          Enum.filter(messages, fn
-            %LangChain.Message{role: :user} -> true
-            _ -> false
-          end)
-
-        case user_messages do
-          [first_user | _] -> MessageSerializer.serialize_input([first_user])
-          [] -> nil
-        end
-
-      _ ->
-        nil
+      {:ok, %{messages: messages}} -> first_user_input(messages)
+      {:ok, %{messages: messages}, _extra} -> first_user_input(messages)
+      _ -> nil
     end
   end
+
+  defp first_user_input([_ | _] = messages) do
+    messages
+    |> Enum.find(fn
+      %LangChain.Message{role: :user} -> true
+      _ -> false
+    end)
+    |> case do
+      nil -> nil
+      first_user -> MessageSerializer.serialize_input([first_user])
+    end
+  end
+
+  defp first_user_input(_), do: nil
 
   @doc """
   Extracts Langfuse-specific attributes from a `custom_context` map.

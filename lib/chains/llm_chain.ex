@@ -672,7 +672,16 @@ defmodule LangChain.Chains.LLMChain do
     end
   end
 
-  defp chain_stop_metadata({:ok, %LLMChain{last_message: %Message{} = msg} = chain}) do
+  defp chain_stop_metadata({:ok, %LLMChain{} = chain}), do: chain_stop_from_chain(chain)
+
+  # `:until_tool_used` terminates with a 3-tuple `{:ok, chain, tool_result}` when
+  # the target tool is found (the common success path). Enrich from the chain the
+  # same way so this path doesn't lose `last_message`/aggregated token usage.
+  defp chain_stop_metadata({:ok, %LLMChain{} = chain, _extra}), do: chain_stop_from_chain(chain)
+
+  defp chain_stop_metadata(_result), do: %{last_message: nil, token_usage: nil}
+
+  defp chain_stop_from_chain(%LLMChain{last_message: %Message{} = msg} = chain) do
     # Aggregate token usage across all assistant messages in the chain,
     # not just the last message. In multi-turn chains (e.g., with tool calls),
     # earlier LLM calls contribute token usage that would otherwise be lost.
@@ -680,7 +689,7 @@ defmodule LangChain.Chains.LLMChain do
     %{last_message: msg, token_usage: token_usage}
   end
 
-  defp chain_stop_metadata(_result), do: %{last_message: nil, token_usage: nil}
+  defp chain_stop_from_chain(_chain), do: %{last_message: nil, token_usage: nil}
 
   defp aggregate_token_usage(messages) do
     messages
