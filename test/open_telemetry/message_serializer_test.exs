@@ -61,6 +61,25 @@ defmodule LangChain.OpenTelemetry.MessageSerializerTest do
     test "serializes empty list" do
       assert MessageSerializer.serialize_input([]) == "[]"
     end
+
+    test "serializes an :image content part with its data and media type" do
+      b64 = Base.encode64(<<1, 2, 3>>)
+
+      messages = [
+        Message.new_user!([
+          ContentPart.text!("look:"),
+          ContentPart.image!(b64, media: :png)
+        ])
+      ]
+
+      json = MessageSerializer.serialize_input(messages)
+      decoded = Jason.decode!(json)
+
+      assert [%{"role" => "user", "content" => parts}] = decoded
+
+      assert %{"type" => "image", "data" => ^b64, "media" => "png"} =
+               Enum.find(parts, &(&1["type"] == "image"))
+    end
   end
 
   describe "serialize_output/1" do
@@ -102,6 +121,32 @@ defmodule LangChain.OpenTelemetry.MessageSerializerTest do
       decoded = Jason.decode!(json)
 
       assert [%{"role" => "assistant", "content" => nil, "tool_calls" => [_]}] = decoded
+    end
+
+    test "passes already-serialized (binary) tool-call arguments through verbatim" do
+      # Some providers hand back tool arguments as a raw JSON string rather than a
+      # decoded map; those must be emitted as-is, not re-encoded.
+      msg = %Message{
+        role: :assistant,
+        content: nil,
+        tool_calls: [%ToolCall{call_id: "c1", name: "lookup", arguments: ~s({"q":"raw"})}]
+      }
+
+      json = MessageSerializer.serialize_output(msg)
+      assert [%{"tool_calls" => [tc]}] = Jason.decode!(json)
+      assert tc["function"]["arguments"] == ~s({"q":"raw"})
+    end
+
+    test "serializes nil tool-call arguments as an empty JSON object string" do
+      msg = %Message{
+        role: :assistant,
+        content: nil,
+        tool_calls: [%ToolCall{call_id: "c1", name: "noop", arguments: nil}]
+      }
+
+      json = MessageSerializer.serialize_output(msg)
+      assert [%{"tool_calls" => [tc]}] = Jason.decode!(json)
+      assert tc["function"]["arguments"] == "{}"
     end
   end
 

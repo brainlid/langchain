@@ -509,6 +509,173 @@ defmodule LangChain.OpenTelemetry.SpanHandlerTest do
     end
   end
 
+  describe "async tool span propagation" do
+    # Async tools (`async: true`) run in a spawned `Task`. The OpenTelemetry
+    # context lives in the parent process's dictionary and is NOT inherited by the
+    # spawned process. The documented remedy is to capture the parent context
+    # before the run and re-attach it inside the `:on_tool_pre_execution` callback
+    # (which fires inside the Task, before the tool span opens). These tests
+    # exercise that contract at the span level — the propagated case parents the
+    # tool span to the chain; the un-propagated case reproduces the orphan symptom
+    # the docs warn about (a new root span in a separate trace).
+
+    test "an async tool span parents to the chain when the parent ctx is propagated",
+         %{tid: tid} do
+      chain_call_id = Ecto.UUID.generate()
+      tool_call_id = Ecto.UUID.generate()
+
+      :telemetry.execute(
+        [:langchain, :chain, :execute, :start],
+        %{system_time: System.system_time()},
+        %{call_id: chain_call_id, chain_type: "llm_chain"}
+      )
+
+      # Captured in the parent process before spawning — exactly what a caller does
+      # before `LLMChain.run`, then re-applies inside `:on_tool_pre_execution`.
+      # `:otel_ctx` is what `OpenTelemetry.Ctx` delegates to; used directly here
+      # because `alias LangChain.OpenTelemetry` shadows the `OpenTelemetry` prefix.
+      parent_ctx = :otel_ctx.get_current()
+
+      task =
+        Task.async(fn ->
+          # Mirrors the `:on_tool_pre_execution` callback re-attaching the captured
+          # context inside the spawned Task.
+          :otel_ctx.attach(parent_ctx)
+
+          :telemetry.execute(
+            [:langchain, :tool, :call, :start],
+            %{system_time: System.system_time()},
+            %{call_id: tool_call_id, tool_name: "get_weather", tool_call_id: "tc_1"}
+          )
+
+          :telemetry.execute(
+            [:langchain, :tool, :call, :stop],
+            %{duration: 500_000, system_time: System.system_time()},
+            %{call_id: tool_call_id}
+          )
+        end)
+
+      Task.await(task)
+
+      :telemetry.execute(
+        [:langchain, :chain, :execute, :stop],
+        %{duration: 2_000_000, system_time: System.system_time()},
+        %{call_id: chain_call_id}
+      )
+
+      spans = flush_spans(tid)
+      chain_span = Enum.find(spans, &(&1.name == "invoke_agent llm_chain"))
+      tool_span = Enum.find(spans, &(&1.name == "execute_tool get_weather"))
+
+      assert chain_span != nil
+      assert tool_span != nil
+      # Same trace, and the tool span hangs off the chain despite running in a
+      # different process.
+      assert tool_span.trace_id == chain_span.trace_id
+      assert tool_span.parent_span_id == chain_span.span_id
+    end
+
+    test "an async tool span is orphaned into its own trace without ctx propagation",
+         %{tid: tid} do
+      chain_call_id = Ecto.UUID.generate()
+      tool_call_id = Ecto.UUID.generate()
+
+      :telemetry.execute(
+        [:langchain, :chain, :execute, :start],
+        %{system_time: System.system_time()},
+        %{call_id: chain_call_id, chain_type: "llm_chain"}
+      )
+
+      # No context propagation: the spawned Task begins with an empty OTel context
+      # (process dictionaries are not inherited across `Task.async`).
+      task =
+        Task.async(fn ->
+          :telemetry.execute(
+            [:langchain, :tool, :call, :start],
+            %{system_time: System.system_time()},
+            %{call_id: tool_call_id, tool_name: "get_weather", tool_call_id: "tc_1"}
+          )
+
+          :telemetry.execute(
+            [:langchain, :tool, :call, :stop],
+            %{duration: 500_000, system_time: System.system_time()},
+            %{call_id: tool_call_id}
+          )
+        end)
+
+      Task.await(task)
+
+      :telemetry.execute(
+        [:langchain, :chain, :execute, :stop],
+        %{duration: 2_000_000, system_time: System.system_time()},
+        %{call_id: chain_call_id}
+      )
+
+      spans = flush_spans(tid)
+      chain_span = Enum.find(spans, &(&1.name == "invoke_agent llm_chain"))
+      tool_span = Enum.find(spans, &(&1.name == "execute_tool get_weather"))
+
+      assert chain_span != nil
+      assert tool_span != nil
+      # The orphan symptom: the tool span is a root of its own trace, not a child
+      # of the chain.
+      assert tool_span.trace_id != chain_span.trace_id
+      refute tool_span.parent_span_id == chain_span.span_id
+    end
+  end
+
+  describe "request parameters on the exported span" do
+    test "gen_ai.request.*, output.type, server.*, and finish_reasons land on the span",
+         %{tid: tid} do
+      # Unit tests in AttributesTest prove these are built correctly; this asserts
+      # they survive the SpanHandler and OTel SDK onto the actually-exported span.
+      call_id = Ecto.UUID.generate()
+
+      :telemetry.execute(
+        [:langchain, :llm, :call, :start],
+        %{system_time: System.system_time()},
+        %{
+          call_id: call_id,
+          model: "gpt-4o",
+          provider: "openai",
+          output_type: "json",
+          endpoint: "https://api.openai.com/v1/chat/completions",
+          request_options: %{
+            temperature: 0.7,
+            max_tokens: 512,
+            top_p: 0.9,
+            seed: 42,
+            stream: false
+          }
+        }
+      )
+
+      :telemetry.execute(
+        [:langchain, :llm, :call, :stop],
+        %{duration: 1_000_000, system_time: System.system_time()},
+        %{
+          call_id: call_id,
+          model: "gpt-4o",
+          token_usage: %{input: 10, output: 5},
+          result: {:ok, LangChain.Message.new_assistant!(%{content: "done"})}
+        }
+      )
+
+      assert [span] = flush_spans(tid)
+      attrs = span.attributes
+
+      assert attrs["gen_ai.request.temperature"] == 0.7
+      assert attrs["gen_ai.request.max_tokens"] == 512
+      assert attrs["gen_ai.request.top_p"] == 0.9
+      assert attrs["gen_ai.request.seed"] == 42
+      assert attrs["gen_ai.request.stream"] == false
+      assert attrs["gen_ai.output.type"] == "json"
+      assert attrs["server.address"] == "api.openai.com"
+      assert attrs["server.port"] == 443
+      assert attrs["gen_ai.response.finish_reasons"] == ["stop"]
+    end
+  end
+
   describe "events with no started span" do
     test "a :stop for an unknown call_id is a no-op (no crash, no span)", %{tid: tid} do
       :telemetry.execute(
@@ -636,6 +803,85 @@ defmodule LangChain.OpenTelemetry.SpanHandlerTest do
       assert [error_span] = flush_spans(tid)
       assert error_span.name == "chat gpt-4o"
       assert error_span.status != nil
+    end
+
+    test "closes a chain execute span with error status and error.type on :exception",
+         %{tid: tid} do
+      call_id = Ecto.UUID.generate()
+
+      :telemetry.execute(
+        [:langchain, :chain, :execute, :start],
+        %{system_time: System.system_time()},
+        %{call_id: call_id, chain_type: "llm_chain"}
+      )
+
+      :telemetry.execute(
+        [:langchain, :chain, :execute, :exception],
+        %{system_time: System.system_time()},
+        %{
+          call_id: call_id,
+          kind: :error,
+          error: %RuntimeError{message: "chain blew up"},
+          stacktrace: []
+        }
+      )
+
+      assert [error_span] = flush_spans(tid)
+      assert error_span.name == "invoke_agent llm_chain"
+      assert error_span.status != nil
+      assert error_span.attributes["error.type"] == "RuntimeError"
+    end
+
+    test "closes a tool call span with error status and error.type on :exception",
+         %{tid: tid} do
+      call_id = Ecto.UUID.generate()
+
+      :telemetry.execute(
+        [:langchain, :tool, :call, :start],
+        %{system_time: System.system_time()},
+        %{call_id: call_id, tool_name: "calculator", tool_call_id: "tc-1"}
+      )
+
+      :telemetry.execute(
+        [:langchain, :tool, :call, :exception],
+        %{system_time: System.system_time()},
+        %{
+          call_id: call_id,
+          kind: :error,
+          error: %ArgumentError{message: "bad tool arg"},
+          stacktrace: []
+        }
+      )
+
+      assert [error_span] = flush_spans(tid)
+      assert error_span.name == "execute_tool calculator"
+      assert error_span.status != nil
+      assert error_span.attributes["error.type"] == "ArgumentError"
+    end
+
+    test "sets a generic error.type and status when no exception struct is present",
+         %{tid: tid} do
+      # A `throw`/`exit` carries `error: nil` (there is no exception struct). The
+      # span must still close with an error status and a generic `error.type`, and
+      # must not attempt to record an exception from `nil`.
+      call_id = Ecto.UUID.generate()
+
+      :telemetry.execute(
+        [:langchain, :llm, :call, :start],
+        %{system_time: System.system_time()},
+        %{call_id: call_id, model: "gpt-4o", provider: "openai"}
+      )
+
+      :telemetry.execute(
+        [:langchain, :llm, :call, :exception],
+        %{system_time: System.system_time()},
+        %{call_id: call_id, kind: :exit, error: nil, reason: :down, stacktrace: []}
+      )
+
+      assert [error_span] = flush_spans(tid)
+      assert error_span.name == "chat gpt-4o"
+      assert error_span.status != nil
+      assert error_span.attributes["error.type"] == "error"
     end
   end
 

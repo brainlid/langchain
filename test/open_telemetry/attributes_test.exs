@@ -240,6 +240,22 @@ defmodule LangChain.OpenTelemetry.AttributesTest do
       assert {"gen_ai.usage.reasoning.output_tokens", 20} in attrs
     end
 
+    test "extracts Responses-API reasoning tokens nested under output_tokens_details" do
+      # The OpenAI Responses API nests reasoning tokens under
+      # `output_tokens_details` rather than `completion_tokens_details`.
+      metadata = %{
+        token_usage: %{
+          input: 100,
+          output: 50,
+          raw: %{"output_tokens_details" => %{"reasoning_tokens" => 15}}
+        }
+      }
+
+      attrs = Attributes.llm_call_stop(metadata)
+
+      assert {"gen_ai.usage.reasoning.output_tokens", 15} in attrs
+    end
+
     test "drops zero and absent cache/reasoning counts" do
       metadata = %{
         token_usage: %{
@@ -290,6 +306,60 @@ defmodule LangChain.OpenTelemetry.AttributesTest do
 
     test "omits finish_reasons when the result is not a message" do
       attrs = Attributes.llm_call_stop(%{result: {:error, "boom"}})
+
+      refute Enum.any?(attrs, fn {k, _v} -> k == "gen_ai.response.finish_reasons" end)
+    end
+
+    test "derives finish_reasons cancelled from a cancelled message" do
+      metadata = %{
+        result: {:ok, Message.new_assistant!(%{content: "stopped", status: :cancelled})}
+      }
+
+      attrs = Attributes.llm_call_stop(metadata)
+
+      assert {"gen_ai.response.finish_reasons", ["cancelled"]} in attrs
+    end
+
+    test "derives finish_reasons from the last message of a list result" do
+      # A non-streaming call can return a list of messages; the finish reason is
+      # taken from the last one (here a plain completed message -> "stop").
+      msgs = [
+        Message.new_assistant!(%{content: "first", status: :length}),
+        Message.new_assistant!(%{content: "second"})
+      ]
+
+      attrs = Attributes.llm_call_stop(%{result: {:ok, msgs}})
+
+      assert {"gen_ai.response.finish_reasons", ["stop"]} in attrs
+    end
+
+    test "derives finish_reasons from a merged streamed delta list" do
+      # Streaming returns deltas, not a message; they must be merged before the
+      # finish reason can be read from the resulting status.
+      deltas = [
+        MessageDelta.new!(%{role: :assistant, content: "Hel", status: :incomplete}),
+        MessageDelta.new!(%{content: "lo", status: :complete})
+      ]
+
+      attrs = Attributes.llm_call_stop(%{result: {:ok, deltas}})
+
+      assert {"gen_ai.response.finish_reasons", ["stop"]} in attrs
+    end
+
+    test "derives finish_reasons from a single (non-list) streamed delta" do
+      delta = MessageDelta.new!(%{role: :assistant, content: "Hi", status: :complete})
+
+      attrs = Attributes.llm_call_stop(%{result: {:ok, delta}})
+
+      assert {"gen_ai.response.finish_reasons", ["stop"]} in attrs
+    end
+
+    test "omits finish_reasons when a streamed delta list is incomplete" do
+      # An interrupted stream can't merge into a message, so no finish reason is
+      # derivable — the attribute is omitted rather than guessed.
+      deltas = [MessageDelta.new!(%{role: :assistant, content: "Hel", status: :incomplete})]
+
+      attrs = Attributes.llm_call_stop(%{result: {:ok, deltas}})
 
       refute Enum.any?(attrs, fn {k, _v} -> k == "gen_ai.response.finish_reasons" end)
     end
@@ -623,6 +693,22 @@ defmodule LangChain.OpenTelemetry.AttributesTest do
       assert {"langfuse.trace.metadata.list", ~s(["x","y"])} in attrs
       assert {"langfuse.trace.metadata.count", "3"} in attrs
       assert {"langfuse.trace.metadata.flag", "true"} in attrs
+    end
+
+    test "falls back to inspect when a metadata value cannot be JSON-encoded" do
+      # A map value containing invalid UTF-8 makes `Jason.encode/1` return
+      # `{:error, _}`. `stringify_metadata_value` must fall back to `inspect/1`
+      # rather than raise — a raise, trapped by the span handler, would silently
+      # drop the whole chain span.
+      bad = %{inner: <<0xFF, 0xFF>>}
+
+      attrs =
+        Attributes.custom_context_attributes(%{langfuse_metadata: %{bad: bad}})
+
+      assert {"langfuse.trace.metadata.bad", val} =
+               Enum.find(attrs, fn {k, _v} -> k == "langfuse.trace.metadata.bad" end)
+
+      assert val == inspect(bad)
     end
 
     test "handles empty custom_context" do

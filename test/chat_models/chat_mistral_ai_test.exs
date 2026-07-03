@@ -340,6 +340,34 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
       assert delta.status == :incomplete
     end
 
+    test "streaming: attaches token usage to the final delta so it reaches telemetry",
+         %{model: model} do
+      # Mistral's terminal streaming chunk carries the final delta in "choices" AND
+      # the token totals in "usage". The usage must be attached to the delta
+      # metadata so `token_usage_from_result` (the LLM-call `:stop` enrich_stop) can
+      # surface it for streamed calls — the streaming counterpart to the
+      # non-streaming `attach_token_usage/2` fix. Without it, streamed Mistral calls
+      # fired the `:on_llm_token_usage` callback but reported no tokens to telemetry.
+      response = %{
+        "choices" => [
+          %{
+            "delta" => %{"role" => "assistant", "content" => "done"},
+            "finish_reason" => "stop",
+            "index" => 0
+          }
+        ],
+        "usage" => %{"prompt_tokens" => 12, "completion_tokens" => 8, "total_tokens" => 20}
+      }
+
+      assert [%MessageDelta{} = delta] = ChatMistralAI.do_process_response(model, response)
+      assert %TokenUsage{input: 12, output: 8} = TokenUsage.get(delta)
+
+      # ...and therefore the enrich_stop path that feeds the :stop telemetry event
+      # and OTEL span finds it.
+      assert %{token_usage: %TokenUsage{input: 12, output: 8}} =
+               LangChain.ChatModels.ChatModel.token_usage_from_result({:ok, [delta]})
+    end
+
     test "handles receiving MessageDeltas with thinking content", %{model: model} do
       response = %{
         "choices" => [

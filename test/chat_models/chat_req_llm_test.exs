@@ -716,6 +716,44 @@ if Code.ensure_loaded?(ReqLLM) do
         :telemetry.detach("test-reqllm-provider")
       end
 
+      test "derives the provider from a variety of model spec prefixes" do
+        # The provider is parsed from the `"provider:model_id"` prefix, so each
+        # spec surfaces its own provider on the telemetry metadata. The derived
+        # strings also round-trip through ProviderMapping to canonical OTel names.
+        test_pid = self()
+
+        stub(ReqLLM, :generate_text, fn _model_spec, _context, _opts ->
+          {:ok, req_llm_text_response("hi")}
+        end)
+
+        :telemetry.attach(
+          "test-reqllm-provider-prefixes",
+          [:langchain, :llm, :call, :start],
+          fn _event, _measurements, metadata, _config ->
+            send(test_pid, {:start, metadata})
+          end,
+          nil
+        )
+
+        cases = [
+          {"anthropic:claude-haiku-4-5", "anthropic", "anthropic"},
+          {"google:gemini-1.5-pro", "google", "gcp.gemini"},
+          {"groq:llama-3.3-70b-versatile", "groq", "groq"}
+        ]
+
+        for {spec, expected_provider, expected_otel} <- cases do
+          model = ChatReqLLM.new!(%{model: spec})
+          assert {:ok, %Message{}} = ChatReqLLM.call(model, [Message.new_user!("Hi")], [])
+
+          assert_received {:start, %{provider: ^expected_provider}}
+
+          assert LangChain.OpenTelemetry.ProviderMapping.to_otel(expected_provider) ==
+                   expected_otel
+        end
+
+        :telemetry.detach("test-reqllm-provider-prefixes")
+      end
+
       test "passes tools as ReqLLM tools in opts", %{model: model} do
         fun =
           Function.new!(%{
