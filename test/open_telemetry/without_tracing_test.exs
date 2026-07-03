@@ -109,4 +109,54 @@ defmodule LangChain.OpenTelemetry.WithoutTracingTest do
                )
     end
   end
+
+  describe "metrics suppression inside without_tracing/1" do
+    setup do
+      test_pid = self()
+      handler_id = "wt-metrics-#{System.unique_integer([:positive])}"
+
+      :telemetry.attach_many(
+        handler_id,
+        [
+          [:langchain, :otel, :operation, :duration],
+          [:langchain, :otel, :token, :usage]
+        ],
+        fn event, measurements, metadata, _ ->
+          send(test_pid, {:metric, event, measurements, metadata})
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+      :ok
+    end
+
+    defp emit_llm_metric do
+      LangChain.OpenTelemetry.MetricsHandler.handle_event(
+        [:langchain, :llm, :call, :stop],
+        %{duration: System.convert_time_unit(1, :second, :native)},
+        %{provider: "openai", model: "gpt-4o", token_usage: %{input: 1, output: 1}},
+        nil
+      )
+    end
+
+    test "emits metric events outside the block (baseline)" do
+      emit_llm_metric()
+      assert_received {:metric, [:langchain, :otel, :operation, :duration], _, _}
+    end
+
+    test "does NOT emit metric events for operations inside the block" do
+      OpenTelemetry.without_tracing(fn -> emit_llm_metric() end)
+
+      refute_received {:metric, [:langchain, :otel, :operation, :duration], _, _}
+      refute_received {:metric, [:langchain, :otel, :token, :usage], _, _}
+    end
+
+    test "metrics resume after the block returns" do
+      OpenTelemetry.without_tracing(fn -> emit_llm_metric() end)
+      emit_llm_metric()
+
+      assert_received {:metric, [:langchain, :otel, :operation, :duration], _, _}
+    end
+  end
 end

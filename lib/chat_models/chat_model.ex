@@ -142,6 +142,16 @@ defmodule LangChain.ChatModels.ChatModel do
         url -> Map.put_new(metadata, :endpoint, url)
       end
 
+    # Prime time-to-first-token tracking. Streaming decode runs in THIS process
+    # (Req's `into` collector is synchronous), so the shared
+    # `LangChain.Utils.fire_streamed_callback/2` can read this start time from the
+    # process dictionary when the first delta lands and emit the
+    # `[:langchain, :llm, :stream, :first_token]` event. Reset the "seen" flag so a
+    # reused process measures each call afresh; a non-streaming call simply never
+    # fires the streamed callback, so nothing is emitted.
+    Process.put(:langchain_llm_call_start, System.monotonic_time())
+    Process.delete(:langchain_stream_first_token_seen)
+
     LangChain.Telemetry.span(
       [:langchain, :llm, :call],
       metadata,

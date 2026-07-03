@@ -1,3 +1,11 @@
+# NOTE: `:opentelemetry` here is the Erlang module shipped by the
+# `opentelemetry_api` package — our declared `optional: true` dependency — NOT
+# the heavier `opentelemetry` SDK app (which we only pull in `only: :test`). The
+# API is what provides the `OpenTelemetry.*` / `:otel_*` compile-time macros this
+# module needs, and declaring it optional gives the consumer's build a compile
+# edge so it's available here whenever the app pulls OTel in. Guard on the API,
+# not the SDK: an instrumentation library compiles against the API and lets the
+# host app choose (and start) the SDK at runtime.
 if Code.ensure_loaded?(:opentelemetry) do
   defmodule LangChain.OpenTelemetry do
     @moduledoc """
@@ -129,12 +137,24 @@ if Code.ensure_loaded?(:opentelemetry) do
       :ok
     end
 
+    # Process-dictionary flag read by `MetricsHandler` to skip re-emitting metric
+    # events for operations inside a `without_tracing/1` block. Spans are dropped
+    # by the SDK via the non-recording context, but the metrics handler is a plain
+    # telemetry consumer with no span context, so it needs this out-of-band signal
+    # to stay consistent with "no observability for utility chains".
+    @suppression_key {__MODULE__, :suppress_telemetry}
+
     @doc """
     Executes a function with OpenTelemetry tracing suppressed.
 
-    Any LangChain operations inside the function will NOT create OTEL spans or traces.
-    Useful for lightweight utility chains (translation, topic generation) that should
-    not appear as separate traces.
+    Any LangChain operations inside the function will NOT create OTEL spans or
+    traces, and — when metrics are enabled — will NOT emit duration/token metric
+    events either. Useful for lightweight utility chains (translation, topic
+    generation) that should not appear in your traces or skew your metrics.
+
+    Suppression is scoped to the calling process. Work that runs in a separate
+    process spawned inside the block (e.g. an `async: true` tool) does not inherit
+    it, the same way OTel span context does not cross the process boundary.
 
     ## Example
 
@@ -155,12 +175,25 @@ if Code.ensure_loaded?(:opentelemetry) do
       new_ctx = OpenTelemetry.Tracer.set_current_span(ctx, span_ctx)
       token = OpenTelemetry.Ctx.attach(new_ctx)
 
+      # Remember the prior flag so nested `without_tracing/1` calls restore it
+      # rather than clearing suppression when the inner block exits.
+      previous = Process.put(@suppression_key, true)
+
       try do
         fun.()
       after
         OpenTelemetry.Ctx.detach(token)
+
+        case previous do
+          nil -> Process.delete(@suppression_key)
+          prev -> Process.put(@suppression_key, prev)
+        end
       end
     end
+
+    @doc false
+    @spec telemetry_suppressed?() :: boolean()
+    def telemetry_suppressed?, do: Process.get(@suppression_key, false) == true
 
     @doc """
     Detaches all OpenTelemetry handlers from LangChain telemetry events.

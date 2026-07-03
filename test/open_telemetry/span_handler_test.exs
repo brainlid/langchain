@@ -136,6 +136,48 @@ defmodule LangChain.OpenTelemetry.SpanHandlerTest do
       assert [llm_span] = spans
       assert llm_span.attributes["gen_ai.response.model"] == "gpt-4o-2024-05-13"
     end
+
+    test "records time-to-first-token on the active LLM span", %{tid: tid} do
+      call_id = Ecto.UUID.generate()
+
+      :telemetry.execute(
+        [:langchain, :llm, :call, :start],
+        %{system_time: System.system_time()},
+        %{call_id: call_id, model: "gpt-4o", provider: "openai"}
+      )
+
+      # Fired from the streaming decode (same process as the LLM span), carrying
+      # the elapsed native time from call start to the first chunk.
+      :telemetry.execute(
+        [:langchain, :llm, :stream, :first_token],
+        %{
+          duration: System.convert_time_unit(1, :second, :native),
+          system_time: System.system_time()
+        },
+        %{model: "gpt-4o", provider: "openai"}
+      )
+
+      :telemetry.execute(
+        [:langchain, :llm, :call, :stop],
+        %{duration: 2_000_000, system_time: System.system_time()},
+        %{call_id: call_id, model: "gpt-4o", token_usage: %{input: 1, output: 1}}
+      )
+
+      spans = flush_spans(tid)
+      assert [llm_span] = spans
+      assert llm_span.attributes["gen_ai.response.time_to_first_token"] == 1.0
+    end
+
+    test "ignores a first_token event with no active span", %{tid: tid} do
+      # No LLM span open — the event must not raise or create a stray span.
+      :telemetry.execute(
+        [:langchain, :llm, :stream, :first_token],
+        %{duration: System.convert_time_unit(1, :second, :native)},
+        %{model: "gpt-4o"}
+      )
+
+      assert [] = flush_spans(tid)
+    end
   end
 
   describe "LLM call spans with capture options" do

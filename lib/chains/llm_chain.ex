@@ -1486,7 +1486,19 @@ defmodule LangChain.Chains.LLMChain do
       async_results =
         grouped[:async]
         |> Enum.map(fn {call, func} ->
+          # Capture the current OpenTelemetry context in THIS (parent) process. It
+          # lives in the process dictionary and is NOT inherited by a spawned Task,
+          # so without this the async tool's span would orphan into its own root
+          # trace instead of nesting under the chain span. Re-attached inside the
+          # Task below. No-op (returns nil) when OTel isn't loaded or set up.
+          otel_ctx = capture_otel_context()
+
           Task.async(fn ->
+            # Re-attach the parent OTel context before anything telemetry-bearing
+            # runs, so the tool-call span (opened inside execute_tool_call) and any
+            # callback work parent correctly.
+            attach_otel_context(otel_ctx)
+
             # Fires inside the spawned Task so handlers (e.g. tenancy/OTel
             # propagation) can re-apply per-process state before the tool runs.
             Callbacks.fire(chain.callbacks, :on_tool_pre_execution, [chain, call, func])
@@ -1819,6 +1831,27 @@ defmodule LangChain.Chains.LLMChain do
   def replace_tool_result(%LLMChain{} = chain, tool_call_id, %ToolResult{} = new_result) do
     updated_messages = Message.replace_tool_result(chain.messages, tool_call_id, new_result)
     %{chain | messages: updated_messages}
+  end
+
+  # Best-effort OpenTelemetry context propagation for async tools. LangChain does
+  # not depend on OpenTelemetry, so these dispatch at runtime only when the
+  # `opentelemetry_api` module is actually loaded (i.e. the host app opted into
+  # OTel). Otherwise they are no-ops and cost only a cached `ensure_loaded?` check.
+  # `apply/3` keeps `OpenTelemetry.Ctx` from being a compile-time dependency.
+  defp capture_otel_context do
+    if Code.ensure_loaded?(OpenTelemetry.Ctx) do
+      apply(OpenTelemetry.Ctx, :get_current, [])
+    end
+  end
+
+  defp attach_otel_context(nil), do: :ok
+
+  defp attach_otel_context(ctx) do
+    if Code.ensure_loaded?(OpenTelemetry.Ctx) do
+      apply(OpenTelemetry.Ctx, :attach, [ctx])
+    end
+
+    :ok
   end
 
   @doc """

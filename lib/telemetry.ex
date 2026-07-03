@@ -22,12 +22,27 @@ defmodule LangChain.Telemetry do
   * `[:langchain, :chain, :execute, :start]` - Emitted when a chain execution starts
   * `[:langchain, :chain, :execute, :stop]` - Emitted when a chain execution completes
   * `[:langchain, :chain, :execute, :exception]` - Emitted when a chain execution raises an exception
-  * `[:langchain, :message, :process, :start]` - Emitted when message processing starts
-  * `[:langchain, :message, :process, :stop]` - Emitted when message processing completes
-  * `[:langchain, :message, :process, :exception]` - Emitted when message processing raises an exception
   * `[:langchain, :tool, :call, :start]` - Emitted when a tool call starts
   * `[:langchain, :tool, :call, :stop]` - Emitted when a tool call completes
   * `[:langchain, :tool, :call, :exception]` - Emitted when a tool call raises an exception
+  * `[:langchain, :llm, :stream, :first_token]` - Emitted once per streaming LLM
+    call when the first delta is received. Carries a `duration` measurement (time
+    from the call's start to the first streamed chunk, in native units) — the
+    basis for a time-to-first-token metric.
+
+  ## Reserved events (not currently emitted)
+
+  The following event names — and the `*_start` helper functions that would emit
+  them (`message_process_start/1`, `memory_read_start/1`, `memory_write_start/1`,
+  `retriever_get_relevant_documents_start/1`) — are **reserved for future use and
+  are not emitted by LangChain today.** They are kept so the naming convention is
+  stable if/when those subsystems are instrumented. Do not attach handlers
+  expecting them to fire yet:
+
+  * `[:langchain, :message, :process, :start | :stop | :exception]`
+  * `[:langchain, :memory, :read, :start | :stop | :exception]`
+  * `[:langchain, :memory, :write, :start | :stop | :exception]`
+  * `[:langchain, :retriever, :get_relevant_documents, :start | :stop | :exception]`
 
   ## Metadata Fields
 
@@ -320,6 +335,12 @@ defmodule LangChain.Telemetry do
 
   @doc """
   Emits a message processing start event.
+
+  > #### Reserved {: .info}
+  >
+  > LangChain does not call this today — the `[:langchain, :message, :process, …]`
+  > events are reserved for future instrumentation. See "Reserved events" in the
+  > module doc.
   """
   @spec message_process_start(map()) :: (map() -> :ok)
   def message_process_start(metadata) do
@@ -344,10 +365,14 @@ defmodule LangChain.Telemetry do
     emit_event([:langchain, :tool, :call], measurements, metadata)
   end
 
-  # Memory Events
+  # Memory Events (reserved — not currently emitted by LangChain)
 
   @doc """
   Emits a memory read start event.
+
+  > #### Reserved {: .info}
+  >
+  > LangChain does not call this today. See "Reserved events" in the module doc.
   """
   @spec memory_read_start(map()) :: (map() -> :ok)
   def memory_read_start(metadata) do
@@ -356,16 +381,24 @@ defmodule LangChain.Telemetry do
 
   @doc """
   Emits a memory write start event.
+
+  > #### Reserved {: .info}
+  >
+  > LangChain does not call this today. See "Reserved events" in the module doc.
   """
   @spec memory_write_start(map()) :: (map() -> :ok)
   def memory_write_start(metadata) do
     start_event([:langchain, :memory, :write], metadata)
   end
 
-  # Retriever Events
+  # Retriever Events (reserved — not currently emitted by LangChain)
 
   @doc """
   Emits a retriever get relevant documents start event.
+
+  > #### Reserved {: .info}
+  >
+  > LangChain does not call this today. See "Reserved events" in the module doc.
   """
   @spec retriever_get_relevant_documents_start(map()) :: (map() -> :ok)
   def retriever_get_relevant_documents_start(metadata) do

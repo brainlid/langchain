@@ -34,9 +34,14 @@ defmodule LangChain.OpenTelemetry.Attributes do
 
   It does **not** currently emit `gen_ai.response.id` or a distinct
   `gen_ai.response.model` (LangChain keeps no response id and normalizes the
-  response model to the requested one), nor streaming timing
-  (`gen_ai.response.time_to_first_chunk`). Treat the output as a useful subset
+  response model to the requested one). Treat the output as a useful subset
   rather than full conformance.
+
+  Streaming time-to-first-token *is* captured, but by
+  `LangChain.OpenTelemetry.SpanHandler` (as a `gen_ai.response.time_to_first_token`
+  attribute and a `gen_ai.first_token` span event) rather than here, because it is
+  derived from a streaming lifecycle event rather than the call metadata this
+  module maps.
 
   See: https://opentelemetry.io/docs/specs/semconv/gen-ai/
   """

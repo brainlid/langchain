@@ -1,3 +1,5 @@
+# Guarded on the `:opentelemetry` module from the `opentelemetry_api` optional
+# dep (see `LangChain.OpenTelemetry` for the full rationale) — not the SDK app.
 if Code.ensure_loaded?(:opentelemetry) do
   defmodule LangChain.OpenTelemetry.MetricsHandler do
     @moduledoc """
@@ -20,6 +22,11 @@ if Code.ensure_loaded?(:opentelemetry) do
       an `error.type` attribute so error rate is observable alongside latency.
     * `[:langchain, :otel, :token, :usage]` — with `%{tokens: integer()}` measurement
       and GenAI attributes (including `gen_ai.token.type`) as metadata
+    * `[:langchain, :otel, :operation, :time_to_first_token]` — with
+      `%{duration_s: float()}` measurement and GenAI attributes as metadata.
+      Emitted once per streaming LLM call, measuring the time from request start to
+      the first streamed chunk (aligns with the semantic-convention
+      `gen_ai.server.time_to_first_token` metric).
 
     ## Usage
 
@@ -42,6 +49,7 @@ if Code.ensure_loaded?(:opentelemetry) do
       [
         [:langchain, :llm, :call, :stop],
         [:langchain, :llm, :call, :exception],
+        [:langchain, :llm, :stream, :first_token],
         [:langchain, :chain, :execute, :stop],
         [:langchain, :chain, :execute, :exception],
         [:langchain, :tool, :call, :stop],
@@ -63,7 +71,16 @@ if Code.ensure_loaded?(:opentelemetry) do
       # Like `SpanHandler`: `:telemetry` permanently detaches a handler that
       # raises (VM-wide, for the rest of the run). A single bad payload must never
       # silently disable metrics for every subsequent request, so we trap and log.
-      do_handle_event(event, measurements, metadata, config)
+      #
+      # Skip operations running inside `without_tracing/1`: spans are dropped by
+      # the SDK's non-recording context, but this handler has no span context, so
+      # it needs the explicit flag to stay consistent (no metrics for utility
+      # chains either).
+      if LangChain.OpenTelemetry.telemetry_suppressed?() do
+        :ok
+      else
+        do_handle_event(event, measurements, metadata, config)
+      end
     rescue
       exception ->
         Logger.warning(fn ->
@@ -108,6 +125,30 @@ if Code.ensure_loaded?(:opentelemetry) do
          ) do
       common_attrs = common_attributes("execute_tool", metadata)
       emit_duration(measurements, common_attrs)
+      :ok
+    end
+
+    defp do_handle_event(
+           [:langchain, :llm, :stream, :first_token],
+           measurements,
+           metadata,
+           _config
+         ) do
+      case measurements[:duration] do
+        nil ->
+          :ok
+
+        duration_native ->
+          seconds =
+            System.convert_time_unit(duration_native, :native, :microsecond) / 1_000_000
+
+          :telemetry.execute(
+            [:langchain, :otel, :operation, :time_to_first_token],
+            %{duration_s: seconds},
+            common_attributes("chat", metadata)
+          )
+      end
+
       :ok
     end
 

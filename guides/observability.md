@@ -161,6 +161,9 @@ available):
   `gen_ai.usage.cache_creation.input_tokens`, `gen_ai.usage.reasoning.output_tokens`
 - `gen_ai.response.finish_reasons` — best-effort (`"stop"` / `"length"` /
   `"tool_calls"`), reconstructed from the normalized message status
+- `gen_ai.response.time_to_first_token` — for streaming calls, seconds from the
+  request start to the first streamed chunk. A `gen_ai.first_token` span event is
+  also recorded at that moment so backends can place it on the trace timeline.
 - `gen_ai.tool.name`, `gen_ai.tool.call.id`, `gen_ai.tool.type`, `gen_ai.tool.description`
 - `gen_ai.agent.name` (the chain type), `gen_ai.conversation.id` (see below)
 
@@ -243,6 +246,9 @@ your tracing backend and data-retention policy allow it.
 > - `[:langchain, :otel, :operation, :duration]` — `%{duration_s: float()}`
 > - `[:langchain, :otel, :token, :usage]` — `%{tokens: integer()}`, tagged with
 >   `gen_ai.token.type` of `"input"` or `"output"`
+> - `[:langchain, :otel, :operation, :time_to_first_token]` — `%{duration_s: float()}`,
+>   emitted once per streaming LLM call (aligns with the semantic-convention
+>   `gen_ai.server.time_to_first_token` metric)
 >
 > To turn these into real metrics, attach a consumer such as `Telemetry.Metrics`
 > (with an OpenTelemetry reporter), `PromEx`, or equivalent. Without a consumer,
@@ -296,7 +302,8 @@ See `LangChain.OpenTelemetry.MetricsHandler` for the exact event shapes.
 
 Some chains — a translation pass, a title generator, a routing decision — are
 implementation details you may not want cluttering your traces. Wrap them in
-`without_tracing/1` and no spans are exported for anything inside:
+`without_tracing/1` and no spans are exported — and, when metrics are enabled, no
+duration/token metric events are emitted — for anything inside:
 
 ```elixir
 LangChain.OpenTelemetry.without_tracing(fn ->
@@ -305,17 +312,29 @@ LangChain.OpenTelemetry.without_tracing(fn ->
 end)
 ```
 
+Suppression is scoped to the calling process. Work that runs in a separate
+process spawned inside the block (e.g. an `async: true` tool) does not inherit
+it, the same way OTel span context does not cross a process boundary.
+
 ### Async tools
 
 Tools declared with `async: true` execute in a separate `Task` process. The
 OpenTelemetry context lives in the parent process's dictionary and is **not**
-inherited by the spawned process, so an async tool's span would otherwise become
+inherited by a spawned process, so an async tool's span would otherwise become
 its own root span instead of a child of the chain span.
 
-To keep async tool spans attached, propagate the parent context into the `Task`
-using the `:on_tool_pre_execution` callback (which fires inside the spawned
-process): capture `OpenTelemetry.Ctx.get_current/0` before execution and
-`OpenTelemetry.Ctx.attach/1` inside the callback.
+For tools run by `LLMChain`'s built-in tool executor this is now handled
+**automatically**: the chain captures the current OpenTelemetry context before
+spawning each async tool `Task` and re-attaches it inside, so async tool spans
+nest under the chain span with no extra work. (The propagation is a no-op unless
+you have the OpenTelemetry dependencies installed.)
+
+If you spawn your own processes that run LangChain operations, the same rule
+applies to you — the context doesn't cross the process boundary by itself.
+Capture `OpenTelemetry.Ctx.get_current/0` before spawning and
+`OpenTelemetry.Ctx.attach/1` inside the spawned process. The
+`:on_tool_pre_execution` callback (which fires inside the spawned process) is one
+convenient place to do this.
 
 ## Langfuse integration
 

@@ -826,4 +826,57 @@ defmodule LangChain.ChatModels.TelemetryTest do
       assert %{token_usage: nil} = ChatModel.token_usage_from_result({:ok, msg})
     end
   end
+
+  describe "time-to-first-token streaming event" do
+    setup do
+      test_pid = self()
+      handler_id = "ttft-emit-#{System.unique_integer([:positive])}"
+
+      :telemetry.attach(
+        handler_id,
+        [:langchain, :llm, :stream, :first_token],
+        fn _event, measurements, metadata, _ ->
+          send(test_pid, {:first_token, measurements, metadata})
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+      %{model: ChatOpenAI.new!(%{model: "gpt-4o", stream: true})}
+    end
+
+    test "emits exactly one first_token event on the first delta of a streaming call", %{
+      model: model
+    } do
+      # `llm_telemetry_span/3` primes the per-call timer; the shared streamed
+      # callback fires the event when the first `%MessageDelta{}` arrives.
+      ChatModel.llm_telemetry_span(model, %{model: model.model, provider: "openai"}, fn ->
+        LangChain.Utils.fire_streamed_callback(model, [
+          MessageDelta.new!(%{role: :assistant, content: "Hel", status: :incomplete})
+        ])
+
+        LangChain.Utils.fire_streamed_callback(model, [
+          MessageDelta.new!(%{content: "lo", status: :incomplete})
+        ])
+
+        {:ok, Message.new_assistant!(%{content: "Hello"})}
+      end)
+
+      assert_received {:first_token, %{duration: duration}, metadata}
+      assert is_integer(duration) and duration >= 0
+      assert metadata.model == "gpt-4o"
+      assert metadata.provider == "openai"
+
+      # Only the FIRST delta emits — the second must not.
+      refute_received {:first_token, _, _}
+    end
+
+    test "does not emit when a call streams no deltas", %{model: model} do
+      ChatModel.llm_telemetry_span(model, %{model: model.model, provider: "openai"}, fn ->
+        {:ok, Message.new_assistant!(%{content: "non-streaming style"})}
+      end)
+
+      refute_received {:first_token, _, _}
+    end
+  end
 end

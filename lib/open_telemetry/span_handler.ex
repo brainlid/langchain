@@ -1,3 +1,5 @@
+# Guarded on the `:opentelemetry` module from the `opentelemetry_api` optional
+# dep (see `LangChain.OpenTelemetry` for the full rationale) — not the SDK app.
 if Code.ensure_loaded?(:opentelemetry) do
   defmodule LangChain.OpenTelemetry.SpanHandler do
     @moduledoc """
@@ -16,16 +18,17 @@ if Code.ensure_loaded?(:opentelemetry) do
     run in the same process, so parent context propagation works via the process
     dictionary.
 
-    > #### Async tools {: .warning}
+    > #### Async tools {: .info}
     >
-    > Tools declared with `async: true` execute in a separate `Task` process. The
-    > OpenTelemetry context lives in the parent process's dictionary and is **not**
-    > inherited by the spawned process, so an async tool's span would otherwise be
-    > orphaned (it becomes its own root span rather than a child of the chain span).
-    > To keep async tool spans attached, propagate the parent context into the Task
-    > via the `:on_tool_pre_execution` callback (which fires inside the spawned
-    > process) — capture `OpenTelemetry.Ctx.get_current/0` before execution and
-    > `OpenTelemetry.Ctx.attach/1` inside the callback.
+    > Tools declared with `async: true` execute in a separate `Task` process, and
+    > the OpenTelemetry context is **not** inherited across a process boundary. For
+    > tools run by `LLMChain`'s built-in executor this is handled automatically —
+    > the chain captures the current context before spawning each async tool and
+    > re-attaches it inside the `Task`, so async tool spans nest under the chain
+    > span. If you spawn your own processes running LangChain operations, do the
+    > same yourself: capture `OpenTelemetry.Ctx.get_current/0` before spawning and
+    > `OpenTelemetry.Ctx.attach/1` inside the process (e.g. via the
+    > `:on_tool_pre_execution` callback).
 
     ## Usage
 
@@ -52,6 +55,7 @@ if Code.ensure_loaded?(:opentelemetry) do
         [:langchain, :llm, :call, :stop],
         [:langchain, :llm, :call, :exception],
         [:langchain, :llm, :prompt],
+        [:langchain, :llm, :stream, :first_token],
         [:langchain, :chain, :execute, :start],
         [:langchain, :chain, :execute, :stop],
         [:langchain, :chain, :execute, :exception],
@@ -155,6 +159,17 @@ if Code.ensure_loaded?(:opentelemetry) do
       :ok
     end
 
+    # --- LLM streaming: time-to-first-token ---
+
+    defp do_handle_event(
+           [:langchain, :llm, :stream, :first_token],
+           measurements,
+           _metadata,
+           %Config{}
+         ) do
+      record_first_token(measurements[:duration])
+    end
+
     # --- Chain execute events ---
 
     defp do_handle_event(
@@ -232,6 +247,33 @@ if Code.ensure_loaded?(:opentelemetry) do
     end
 
     # --- Private helpers ---
+
+    # Records time-to-first-token on the active LLM span. Streaming decode runs in
+    # the same process as the `chat` span, so the current span context IS that
+    # span. Adds a timestamped span event (backends can place it on the trace
+    # timeline) plus a numeric `gen_ai.response.time_to_first_token` attribute in
+    # seconds. A non-recording current span (e.g. inside `without_tracing/1`) makes
+    # both calls no-ops at the SDK level, so this stays correct there too.
+    defp record_first_token(nil), do: :ok
+
+    defp record_first_token(duration_native) do
+      case OpenTelemetry.Tracer.current_span_ctx() do
+        :undefined ->
+          :ok
+
+        span_ctx ->
+          seconds =
+            System.convert_time_unit(duration_native, :native, :microsecond) / 1_000_000
+
+          OpenTelemetry.Span.add_event(span_ctx, "gen_ai.first_token", %{})
+
+          OpenTelemetry.Span.set_attributes(span_ctx, [
+            {"gen_ai.response.time_to_first_token", seconds}
+          ])
+
+          :ok
+      end
+    end
 
     defp start_span(metadata, span_name, attributes, kind) do
       call_id = metadata[:call_id]

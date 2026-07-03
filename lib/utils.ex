@@ -150,6 +150,8 @@ defmodule LangChain.Utils do
         ) :: :ok | no_return()
 
   def fire_streamed_callback(model, deltas) when is_list(deltas) do
+    maybe_emit_first_token(model, deltas)
+
     #
     # Wrap in a another list for being sent as "args" in an MFA call
     Callbacks.fire(model.callbacks, :on_llm_new_delta, [deltas])
@@ -159,6 +161,32 @@ defmodule LangChain.Utils do
   def fire_streamed_callback(_model, other) do
     Logger.warning("Received unexpected data in the streamed callback: #{inspect(other)}")
     :ok
+  end
+
+  # Emits the time-to-first-token telemetry event once per streaming LLM call, on
+  # the first streamed chunk that carries a `%MessageDelta{}`. The call's start
+  # time is stashed in the process dictionary by
+  # `LangChain.ChatModels.ChatModel.llm_telemetry_span/3` (streaming decode runs in
+  # the same process). Degrades to a no-op when there is no start time (streaming
+  # outside a telemetry span) or when it has already fired for this call. The
+  # event is inert unless an OpenTelemetry (or other) handler is attached.
+  defp maybe_emit_first_token(model, deltas) do
+    with nil <- Process.get(:langchain_stream_first_token_seen),
+         true <- Enum.any?(deltas, &match?(%MessageDelta{}, &1)),
+         start when is_integer(start) <- Process.get(:langchain_llm_call_start) do
+      Process.put(:langchain_stream_first_token_seen, true)
+
+      LangChain.Telemetry.emit_event(
+        [:langchain, :llm, :stream, :first_token],
+        %{duration: System.monotonic_time() - start, system_time: System.system_time()},
+        %{
+          model: Map.get(model, :model),
+          provider: LangChain.ChatModels.ChatModel.provider(model)
+        }
+      )
+    else
+      _ -> :ok
+    end
   end
 
   @doc """

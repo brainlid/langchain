@@ -11,7 +11,8 @@ defmodule LangChain.OpenTelemetry.MetricsHandlerTest do
 
     events = [
       [:langchain, :otel, :operation, :duration],
-      [:langchain, :otel, :token, :usage]
+      [:langchain, :otel, :token, :usage],
+      [:langchain, :otel, :operation, :time_to_first_token]
     ]
 
     :telemetry.attach_many(
@@ -81,6 +82,35 @@ defmodule LangChain.OpenTelemetry.MetricsHandlerTest do
       )
 
       refute_received {:metric, [:langchain, :otel, :operation, :duration], _, _}
+    end
+  end
+
+  describe "time-to-first-token emission" do
+    test "emits time_to_first_token in seconds with chat/provider/model attrs" do
+      MetricsHandler.handle_event(
+        [:langchain, :llm, :stream, :first_token],
+        %{duration: native(1)},
+        %{provider: "openai", model: "gpt-4o"},
+        nil
+      )
+
+      assert_received {:metric, [:langchain, :otel, :operation, :time_to_first_token],
+                       %{duration_s: 1.0}, attrs}
+
+      assert attrs["gen_ai.operation.name"] == "chat"
+      assert attrs["gen_ai.provider.name"] == "openai"
+      assert attrs["gen_ai.request.model"] == "gpt-4o"
+    end
+
+    test "skips time_to_first_token when no duration measurement is present" do
+      MetricsHandler.handle_event(
+        [:langchain, :llm, :stream, :first_token],
+        %{},
+        %{provider: "openai", model: "gpt-4o"},
+        nil
+      )
+
+      refute_received {:metric, [:langchain, :otel, :operation, :time_to_first_token], _, _}
     end
   end
 
