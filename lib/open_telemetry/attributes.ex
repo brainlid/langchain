@@ -81,18 +81,39 @@ defmodule LangChain.OpenTelemetry.Attributes do
       end
 
     if config.capture_output_messages do
-      case metadata[:result] do
-        {:ok, %LangChain.Message{} = msg} ->
-          [{@output_messages, MessageSerializer.serialize_output(msg)} | attrs]
-
-        {:ok, [%LangChain.Message{} | _] = msgs} ->
-          [{@output_messages, MessageSerializer.serialize_output(msgs)} | attrs]
-
-        _ ->
-          attrs
+      case output_messages_from_result(metadata[:result]) do
+        nil -> attrs
+        serialized -> [{@output_messages, serialized} | attrs]
       end
     else
       attrs
+    end
+  end
+
+  # Serializes the LLM output for `gen_ai.output.messages`. Streaming calls return
+  # a list of `%MessageDelta{}` structs (or a single delta) rather than a
+  # `%Message{}`; these are merged and converted to a message first so streamed
+  # responses are captured the same as non-streaming ones. Returns `nil` when
+  # there is nothing to capture.
+  defp output_messages_from_result({:ok, %LangChain.Message{} = msg}),
+    do: MessageSerializer.serialize_output(msg)
+
+  defp output_messages_from_result({:ok, [%LangChain.Message{} | _] = msgs}),
+    do: MessageSerializer.serialize_output(msgs)
+
+  defp output_messages_from_result({:ok, %LangChain.MessageDelta{} = delta}),
+    do: serialize_delta_output([delta])
+
+  defp output_messages_from_result({:ok, [%LangChain.MessageDelta{} | _] = deltas}),
+    do: serialize_delta_output(deltas)
+
+  defp output_messages_from_result(_), do: nil
+
+  defp serialize_delta_output(deltas) do
+    case deltas |> LangChain.MessageDelta.merge_deltas() |> LangChain.MessageDelta.to_message() do
+      {:ok, %LangChain.Message{} = msg} -> MessageSerializer.serialize_output(msg)
+      # An incomplete stream can't convert to a message — nothing to capture.
+      {:error, _reason} -> nil
     end
   end
 

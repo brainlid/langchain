@@ -2,6 +2,7 @@ defmodule LangChain.OpenTelemetry.AttributesTest do
   use ExUnit.Case, async: true
 
   alias LangChain.Message
+  alias LangChain.MessageDelta
   alias LangChain.OpenTelemetry.Attributes
   alias LangChain.OpenTelemetry.Config
 
@@ -96,6 +97,37 @@ defmodule LangChain.OpenTelemetry.AttributesTest do
       metadata = %{result: {:ok, msg}}
 
       attrs = Attributes.llm_call_stop(metadata, config)
+
+      refute Enum.any?(attrs, fn {k, _v} -> k == "gen_ai.output.messages" end)
+    end
+
+    test "captures streamed output by merging a delta list into a message" do
+      # A streaming call returns `{:ok, [%MessageDelta{} | _]}`, not a `%Message{}`.
+      # Without merging, `gen_ai.output.messages` would be empty for streamed calls
+      # even though input capture works — this guards that asymmetry.
+      config = %Config{capture_output_messages: true}
+
+      deltas = [
+        MessageDelta.new!(%{role: :assistant, content: "Hel", status: :incomplete}),
+        MessageDelta.new!(%{content: "lo", status: :incomplete}),
+        MessageDelta.new!(%{content: "!", status: :complete})
+      ]
+
+      attrs = Attributes.llm_call_stop(%{result: {:ok, deltas}}, config)
+
+      assert {_key, json} =
+               Enum.find(attrs, fn {k, _v} -> k == "gen_ai.output.messages" end)
+
+      assert [%{"role" => "assistant", "content" => "Hello!"}] = Jason.decode!(json)
+    end
+
+    test "skips output capture when a streamed delta list is incomplete" do
+      # An interrupted stream can't be converted to a message; capture nothing
+      # rather than raising or emitting a partial artifact.
+      config = %Config{capture_output_messages: true}
+      deltas = [MessageDelta.new!(%{role: :assistant, content: "Hel", status: :incomplete})]
+
+      attrs = Attributes.llm_call_stop(%{result: {:ok, deltas}}, config)
 
       refute Enum.any?(attrs, fn {k, _v} -> k == "gen_ai.output.messages" end)
     end
