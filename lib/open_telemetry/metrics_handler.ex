@@ -30,6 +30,8 @@ if Code.ensure_loaded?(:opentelemetry) do
 
     alias LangChain.OpenTelemetry.ProviderMapping
 
+    require Logger
+
     @handler_prefix "langchain-otel-metrics"
 
     @doc """
@@ -57,37 +59,53 @@ if Code.ensure_loaded?(:opentelemetry) do
     Telemetry handler callback. Re-emits duration and token usage metric events.
     """
     @spec handle_event(list(atom()), map(), map(), term()) :: :ok
-    def handle_event(event, measurements, metadata, _config)
+    def handle_event(event, measurements, metadata, config) do
+      # Like `SpanHandler`: `:telemetry` permanently detaches a handler that
+      # raises (VM-wide, for the rest of the run). A single bad payload must never
+      # silently disable metrics for every subsequent request, so we trap and log.
+      do_handle_event(event, measurements, metadata, config)
+    rescue
+      exception ->
+        Logger.warning(fn ->
+          "[LangChain.OpenTelemetry] metrics handler failed for #{inspect(event)} and was " <>
+            "skipped (metrics remain attached): " <>
+            Exception.format(:error, exception, __STACKTRACE__)
+        end)
 
-    def handle_event(
-          [:langchain, :llm, :call, :stop],
-          measurements,
-          metadata,
-          _config
-        ) do
+        :ok
+    end
+
+    defp do_handle_event(event, measurements, metadata, config)
+
+    defp do_handle_event(
+           [:langchain, :llm, :call, :stop],
+           measurements,
+           metadata,
+           _config
+         ) do
       common_attrs = common_attributes("chat", metadata)
       emit_duration(measurements, common_attrs)
       emit_token_usage(metadata, common_attrs)
       :ok
     end
 
-    def handle_event(
-          [:langchain, :chain, :execute, :stop],
-          measurements,
-          metadata,
-          _config
-        ) do
+    defp do_handle_event(
+           [:langchain, :chain, :execute, :stop],
+           measurements,
+           metadata,
+           _config
+         ) do
       common_attrs = common_attributes("invoke_agent", metadata)
       emit_duration(measurements, common_attrs)
       :ok
     end
 
-    def handle_event(
-          [:langchain, :tool, :call, :stop],
-          measurements,
-          metadata,
-          _config
-        ) do
+    defp do_handle_event(
+           [:langchain, :tool, :call, :stop],
+           measurements,
+           metadata,
+           _config
+         ) do
       common_attrs = common_attributes("execute_tool", metadata)
       emit_duration(measurements, common_attrs)
       :ok
@@ -96,12 +114,12 @@ if Code.ensure_loaded?(:opentelemetry) do
     # Failed operations: emit a duration metric tagged with `error.type` so error
     # rate and error latency are observable alongside successes. No token usage is
     # available on a failure.
-    def handle_event(
-          [:langchain, component, operation, :exception],
-          measurements,
-          metadata,
-          _config
-        ) do
+    defp do_handle_event(
+           [:langchain, component, operation, :exception],
+           measurements,
+           metadata,
+           _config
+         ) do
       operation_name = operation_name_for(component, operation)
 
       attrs =

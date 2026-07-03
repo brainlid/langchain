@@ -220,4 +220,39 @@ defmodule LangChain.OpenTelemetry.MetricsHandlerTest do
       refute Map.has_key?(attrs, "gen_ai.request.model")
     end
   end
+
+  describe "resilience" do
+    # Mirrors the SpanHandler resilience guarantee: `:telemetry` permanently
+    # detaches a handler that raises, so a single bad payload must not disable
+    # metrics VM-wide. The handler must trap, log, and stay attached.
+    test "traps a raising payload, logs, and stays attached" do
+      event = [:langchain, :llm, :call, :stop]
+
+      handler_id =
+        MetricsHandler.handler_id() <> "-resilience-#{System.unique_integer([:positive])}"
+
+      :telemetry.attach(handler_id, event, &MetricsHandler.handle_event/4, nil)
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      # A non-integer duration makes System.convert_time_unit/3 raise inside the
+      # handler. Without the trap, :telemetry would detach it after this event.
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          :telemetry.execute(event, %{duration: :not_a_number}, %{provider: "openai"})
+        end)
+
+      assert log =~ "metrics handler failed"
+
+      # Still registered after the failure...
+      assert Enum.any?(:telemetry.list_handlers(event), fn h -> h.id == handler_id end)
+
+      # ...and still functioning: a subsequent valid event re-emits normally.
+      :telemetry.execute(event, %{duration: native(1)}, %{provider: "openai", model: "gpt-4o"})
+
+      assert_received {:metric, [:langchain, :otel, :operation, :duration], %{duration_s: 1.0},
+                       _attrs}
+
+      :telemetry.detach(handler_id)
+    end
+  end
 end
