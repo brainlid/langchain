@@ -89,6 +89,32 @@ defmodule LangChain.ChatModels.ChatModel do
   def token_usage_from_result(_result), do: %{token_usage: nil}
 
   @doc """
+  Wraps an LLM `call/3` body in the standard `[:langchain, :llm, :call]`
+  telemetry span with token-usage enrichment already wired.
+
+  Every chat model must open its LLM-call span through this helper. Building the
+  `LangChain.Telemetry.span/4` call by hand in each model made it easy to forget
+  the `:enrich_stop` callback — and a model that forgets it silently drops token
+  usage from the `[:langchain, :llm, :call, :stop]` event (and the OTEL span) for
+  that provider, with nothing failing to signal the mistake. Centralizing the
+  event name and `:enrich_stop` here removes that footgun: a new provider only
+  has to build its metadata and call this function.
+
+  `metadata` is the LLM-call metadata map (`:model`, `:provider`,
+  `:message_count`, `:tools_count`, ...). `fun` is the zero-arity function that
+  performs the request and returns the `call_response()`.
+  """
+  @spec llm_telemetry_span(map(), (-> result)) :: result when result: any()
+  def llm_telemetry_span(metadata, fun) when is_map(metadata) and is_function(fun, 0) do
+    LangChain.Telemetry.span(
+      [:langchain, :llm, :call],
+      metadata,
+      fun,
+      enrich_stop: &token_usage_from_result/1
+    )
+  end
+
+  @doc """
   Create a serializable map from a ChatModel's current configuration that can
   later be restored.
   """

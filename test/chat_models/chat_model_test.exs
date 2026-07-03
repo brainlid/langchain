@@ -45,6 +45,71 @@ defmodule LangChain.ChatModels.ChatModelTest do
     end
   end
 
+  describe "llm_telemetry_span/2" do
+    # This is the single wiring point every chat model must route its LLM span
+    # through. It guarantees `:enrich_stop` is attached so token usage reaches the
+    # `[:langchain, :llm, :call, :stop]` event. If a provider bypasses it (as
+    # ChatAwsMantle/ChatReqLLM historically did), token usage silently vanishes.
+    setup do
+      test_pid = self()
+      handler_id = "test-llm-telemetry-span-#{System.unique_integer([:positive])}"
+
+      :telemetry.attach(
+        handler_id,
+        [:langchain, :llm, :call, :stop],
+        fn _event, _measurements, metadata, _config ->
+          send(test_pid, {:stop, metadata})
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+      :ok
+    end
+
+    test "surfaces token usage from the returned message onto the :stop event" do
+      usage = TokenUsage.new!(%{input: 9, output: 13})
+      metadata = %{model: "test-model", provider: "test"}
+
+      result =
+        ChatModel.llm_telemetry_span(metadata, fn ->
+          {:ok, %Message{role: :assistant, content: "hi", metadata: %{usage: usage}}}
+        end)
+
+      assert {:ok, %Message{}} = result
+      assert_received {:stop, stop_metadata}
+      assert %TokenUsage{input: 9, output: 13} = stop_metadata.token_usage
+    end
+
+    test "surfaces token usage from a streaming delta list onto the :stop event" do
+      usage = TokenUsage.new!(%{input: 4, output: 6})
+      metadata = %{model: "test-model", provider: "test"}
+
+      ChatModel.llm_telemetry_span(metadata, fn ->
+        {:ok,
+         [
+           %MessageDelta{role: :assistant, content: "hi", metadata: nil},
+           %MessageDelta{role: :assistant, content: nil, metadata: %{usage: usage}}
+         ]}
+      end)
+
+      assert_received {:stop, stop_metadata}
+      assert %TokenUsage{input: 4, output: 6} = stop_metadata.token_usage
+    end
+
+    test "sets token_usage to nil (never omits the key) when the result has no usage" do
+      metadata = %{model: "test-model", provider: "test"}
+
+      ChatModel.llm_telemetry_span(metadata, fn -> {:error, :boom} end)
+
+      assert_received {:stop, stop_metadata}
+      # The key must be present even without usage — its presence is what proves
+      # enrich_stop ran. A model that forgot enrich_stop would omit it entirely.
+      assert Map.has_key?(stop_metadata, :token_usage)
+      assert stop_metadata.token_usage == nil
+    end
+  end
+
   describe "serialize_config/1" do
     test "creates a map from a chat model" do
       model = ChatOpenAI.new!(%{model: "gpt-4o"})

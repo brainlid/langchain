@@ -213,7 +213,7 @@ if Code.ensure_loaded?(ReqLLM) do
         tools_count: length(functions)
       }
 
-      LangChain.Telemetry.span([:langchain, :llm, :call], metadata, fn ->
+      ChatModel.llm_telemetry_span(metadata, fn ->
         try do
           LangChain.Telemetry.llm_prompt(
             %{system_time: System.system_time()},

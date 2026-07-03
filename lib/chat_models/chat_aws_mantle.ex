@@ -463,7 +463,7 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
       tools_count: length(tools)
     }
 
-    LangChain.Telemetry.span([:langchain, :llm, :call], metadata, fn ->
+    ChatModel.llm_telemetry_span(metadata, fn ->
       try do
         LangChain.Telemetry.llm_prompt(
           %{system_time: System.system_time()},

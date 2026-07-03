@@ -495,37 +495,32 @@ defmodule LangChain.ChatModels.ChatVertexAI do
       tools_count: length(tools)
     }
 
-    LangChain.Telemetry.span(
-      [:langchain, :llm, :call],
-      metadata,
-      fn ->
-        try do
-          # Track the prompt being sent
-          LangChain.Telemetry.llm_prompt(
-            %{system_time: System.system_time()},
-            %{model: vertex_ai.model, messages: messages}
-          )
+    ChatModel.llm_telemetry_span(metadata, fn ->
+      try do
+        # Track the prompt being sent
+        LangChain.Telemetry.llm_prompt(
+          %{system_time: System.system_time()},
+          %{model: vertex_ai.model, messages: messages}
+        )
 
-          case do_api_request(vertex_ai, messages, tools) do
-            {:error, reason} ->
-              {:error, reason}
+        case do_api_request(vertex_ai, messages, tools) do
+          {:error, reason} ->
+            {:error, reason}
 
-            parsed_data ->
-              # Track the response being received
-              LangChain.Telemetry.llm_response(
-                %{system_time: System.system_time()},
-                %{model: vertex_ai.model, response: parsed_data}
-              )
+          parsed_data ->
+            # Track the response being received
+            LangChain.Telemetry.llm_response(
+              %{system_time: System.system_time()},
+              %{model: vertex_ai.model, response: parsed_data}
+            )
 
-              {:ok, parsed_data}
-          end
-        rescue
-          err in LangChainError ->
-            {:error, err}
+            {:ok, parsed_data}
         end
-      end,
-      enrich_stop: &ChatModel.token_usage_from_result/1
-    )
+      rescue
+        err in LangChainError ->
+          {:error, err}
+      end
+    end)
   end
 
   @doc false
