@@ -407,7 +407,7 @@ defmodule LangChain.OpenTelemetry.Attributes do
       meta when is_map(meta) ->
         flat =
           Enum.map(meta, fn {k, v} ->
-            {"langfuse.trace.metadata.#{k}", to_string(v)}
+            {"langfuse.trace.metadata.#{k}", stringify_metadata_value(v)}
           end)
 
         flat ++ attrs
@@ -418,4 +418,21 @@ defmodule LangChain.OpenTelemetry.Attributes do
   end
 
   def custom_context_attributes(_), do: []
+
+  # Langfuse metadata values become flat span attributes, which must be strings.
+  # Primitives stringify directly. Collections (maps/lists) are JSON-encoded to
+  # preserve their structure: a nested map has no `String.Chars` implementation
+  # and would make `to_string/1` raise — which, trapped by the span handler,
+  # silently drops the entire chain span — while a list would be lossily flattened
+  # as an iolist (`["x", "y"]` -> `"xy"`). JSON keeps both faithful and safe.
+  defp stringify_metadata_value(value) when is_binary(value), do: value
+  defp stringify_metadata_value(value) when is_number(value), do: to_string(value)
+  defp stringify_metadata_value(value) when is_atom(value), do: to_string(value)
+
+  defp stringify_metadata_value(value) do
+    case Jason.encode(value) do
+      {:ok, json} -> json
+      {:error, _} -> inspect(value)
+    end
+  end
 end

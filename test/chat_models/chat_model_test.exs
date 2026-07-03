@@ -3,6 +3,7 @@ defmodule LangChain.ChatModels.ChatModelTest do
   doctest LangChain.ChatModels.ChatModel
   alias LangChain.ChatModels.ChatModel
   alias LangChain.ChatModels.ChatOpenAI
+  alias LangChain.ChatModels.ChatAnthropic
   alias LangChain.Message
   alias LangChain.MessageDelta
   alias LangChain.TokenUsage
@@ -163,8 +164,40 @@ defmodule LangChain.ChatModels.ChatModelTest do
       assert %{reasoning_level: "medium"} = ChatModel.request_options(model)
     end
 
+    test "extracts max_tokens, top_p, and top_k from a model that sets them" do
+      # ChatOpenAI has none of these three; ChatAnthropic exposes all of them, so
+      # it exercises the field readers the ChatOpenAI-based test above cannot.
+      model =
+        ChatAnthropic.new!(%{
+          model: "claude-3-5-sonnet-latest",
+          max_tokens: 1024,
+          top_p: 0.9,
+          top_k: 40
+        })
+
+      assert %{max_tokens: 1024, top_p: 0.9, top_k: 40} = ChatModel.request_options(model)
+    end
+
+    test "retains falsy-but-set values (stream: false, seed: 0, temperature: 0.0)" do
+      # Only `nil` should be dropped. A regression to a truthiness check would
+      # silently omit a disabled stream or a zero seed/temperature.
+      model = ChatOpenAI.new!(%{model: "gpt-4o", temperature: 0.0, seed: 0, stream: false})
+
+      opts = ChatModel.request_options(model)
+
+      assert Map.fetch(opts, :temperature) == {:ok, 0.0}
+      assert Map.fetch(opts, :seed) == {:ok, 0}
+      assert Map.fetch(opts, :stream) == {:ok, false}
+    end
+
     test "returns an empty map for nil" do
       assert ChatModel.request_options(nil) == %{}
+    end
+
+    test "returns an empty map for a non-struct map argument" do
+      # A plain map has no `__struct__`, so it hits the catch-all clause rather
+      # than the `%_module{}` reader.
+      assert ChatModel.request_options(%{temperature: 0.7, stream: true}) == %{}
     end
   end
 

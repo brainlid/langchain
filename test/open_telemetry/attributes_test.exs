@@ -98,6 +98,15 @@ defmodule LangChain.OpenTelemetry.AttributesTest do
       assert {"gen_ai.request.stop_sequences", ["A", "B"]} in attrs
     end
 
+    test "stringifies an atom reasoning level" do
+      # Some models carry :reasoning_effort as an atom rather than a string.
+      metadata = %{model: "m", provider: "openai", request_options: %{reasoning_level: :high}}
+
+      attrs = Attributes.llm_call_start(metadata)
+
+      assert {"gen_ai.request.reasoning.level", "high"} in attrs
+    end
+
     test "emits no gen_ai.request.* parameter attributes when request_options is empty/absent" do
       for metadata <- [
             %{model: "m", provider: "openai"},
@@ -213,6 +222,18 @@ defmodule LangChain.OpenTelemetry.AttributesTest do
       attrs = Attributes.llm_call_stop(%{result: {:ok, deltas}}, config)
 
       refute Enum.any?(attrs, fn {k, _v} -> k == "gen_ai.output.messages" end)
+    end
+
+    test "captures a single (non-list) streamed delta as output" do
+      # A streaming call can surface a lone `%MessageDelta{}` rather than a list;
+      # it should be captured the same as a delta list, not silently dropped.
+      config = %Config{capture_output_messages: true}
+      delta = MessageDelta.new!(%{role: :assistant, content: "Hi", status: :complete})
+
+      attrs = Attributes.llm_call_stop(%{result: {:ok, delta}}, config)
+
+      assert {_key, json} = Enum.find(attrs, fn {k, _v} -> k == "gen_ai.output.messages" end)
+      assert [%{"role" => "assistant", "content" => "Hi"}] = Jason.decode!(json)
     end
   end
 
@@ -406,6 +427,26 @@ defmodule LangChain.OpenTelemetry.AttributesTest do
 
       assert {"langfuse.trace.metadata.env", "production"} in attrs
       assert {"langfuse.trace.metadata.version", "1.0"} in attrs
+    end
+
+    test "stringifies non-primitive metadata values without raising" do
+      # A nested map/list value has no String.Chars implementation. If left to
+      # `to_string/1` it raises, and — trapped by the span handler — silently drops
+      # the whole chain span. It must be JSON-encoded instead, keeping the trace.
+      attrs =
+        Attributes.custom_context_attributes(%{
+          langfuse_metadata: %{
+            nested: %{a: 1},
+            list: ["x", "y"],
+            count: 3,
+            flag: true
+          }
+        })
+
+      assert {"langfuse.trace.metadata.nested", ~s({"a":1})} in attrs
+      assert {"langfuse.trace.metadata.list", ~s(["x","y"])} in attrs
+      assert {"langfuse.trace.metadata.count", "3"} in attrs
+      assert {"langfuse.trace.metadata.flag", "true"} in attrs
     end
 
     test "handles empty custom_context" do

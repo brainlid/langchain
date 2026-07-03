@@ -637,6 +637,60 @@ defmodule LangChain.ChatModels.TelemetryTest do
     end
   end
 
+  describe "chain token usage aggregation across turns" do
+    setup :verify_on_exit!
+
+    test "sums usage across all assistant messages, even when flagged cumulative (streaming)" do
+      test_pid = self()
+
+      # Two LLM turns, each reporting usage flagged `cumulative: true` — exactly what
+      # a streaming provider (e.g. Google AI) produces once its deltas are assembled
+      # into a message. The cumulative flag is a *delta-merge* signal for a single
+      # message; it must NOT cause an earlier turn to be discarded when the chain
+      # aggregates per-turn totals across the run.
+      turn1_usage = TokenUsage.new!(%{input: 100, output: 20, cumulative: true})
+      turn2_usage = TokenUsage.new!(%{input: 130, output: 15, cumulative: true})
+
+      ChatOpenAI
+      |> expect(:call, fn _model, _messages, _tools ->
+        {:ok,
+         Message.new_assistant!(%{
+           tool_calls: [ToolCall.new!(%{call_id: "call_1", name: "do_thing", arguments: %{}})],
+           metadata: %{usage: turn1_usage}
+         })}
+      end)
+      |> expect(:call, fn _model, _messages, _tools ->
+        {:ok, Message.new_assistant!(%{content: "All done", metadata: %{usage: turn2_usage}})}
+      end)
+
+      {:ok, fun} =
+        Function.new(%{name: "do_thing", function: fn _args, _ctx -> {:ok, "done"} end})
+
+      :telemetry.attach(
+        "test-chain-usage-aggregation",
+        [:langchain, :chain, :execute, :stop],
+        fn _name, _measurements, metadata, _config ->
+          send(test_pid, {:chain_stop, metadata})
+        end,
+        nil
+      )
+
+      {:ok, _chain} =
+        %{llm: ChatOpenAI.new!(%{stream: false}), verbose: false}
+        |> LLMChain.new!()
+        |> LLMChain.add_tools([fun])
+        |> LLMChain.add_message(Message.new_user!("please call do_thing"))
+        |> LLMChain.run(mode: :while_needs_response)
+
+      # 100 + 130 input and 20 + 15 output: the first turn is NOT lost despite both
+      # turns being flagged cumulative. (Before the fix this reported {130, 15}.)
+      assert_received {:chain_stop, stop_metadata}
+      assert %TokenUsage{input: 230, output: 35} = stop_metadata.token_usage
+
+      :telemetry.detach("test-chain-usage-aggregation")
+    end
+  end
+
   describe "tool call telemetry with custom_context" do
     setup :verify_on_exit!
 

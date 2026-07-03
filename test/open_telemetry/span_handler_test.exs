@@ -438,6 +438,102 @@ defmodule LangChain.OpenTelemetry.SpanHandlerTest do
       # LLM span is a child of chain span
       assert llm_span.parent_span_id == chain_span.span_id
     end
+
+    test "sibling LLM and tool spans both parent to the chain and leave no leaked context",
+         %{tid: tid} do
+      chain_call_id = Ecto.UUID.generate()
+      llm_call_id = Ecto.UUID.generate()
+      tool_call_id = Ecto.UUID.generate()
+      chain_dict_key = {LangChain.OpenTelemetry.SpanHandler, chain_call_id}
+
+      # Chain opens, then an LLM call fully opens and closes inside it...
+      :telemetry.execute(
+        [:langchain, :chain, :execute, :start],
+        %{system_time: System.system_time()},
+        %{call_id: chain_call_id, chain_type: "llm_chain"}
+      )
+
+      :telemetry.execute(
+        [:langchain, :llm, :call, :start],
+        %{system_time: System.system_time()},
+        %{call_id: llm_call_id, model: "gpt-4o", provider: "openai"}
+      )
+
+      :telemetry.execute(
+        [:langchain, :llm, :call, :stop],
+        %{duration: 1_000_000, system_time: System.system_time()},
+        %{call_id: llm_call_id}
+      )
+
+      # ...then a tool call opens. If the LLM span's context wasn't detached in LIFO
+      # order on its :stop, this tool span would mis-parent to the (closed) LLM span
+      # instead of the chain.
+      :telemetry.execute(
+        [:langchain, :tool, :call, :start],
+        %{system_time: System.system_time()},
+        %{call_id: tool_call_id, tool_name: "get_weather", tool_call_id: "tc_1"}
+      )
+
+      :telemetry.execute(
+        [:langchain, :tool, :call, :stop],
+        %{duration: 500_000, system_time: System.system_time()},
+        %{call_id: tool_call_id}
+      )
+
+      :telemetry.execute(
+        [:langchain, :chain, :execute, :stop],
+        %{duration: 3_000_000, system_time: System.system_time()},
+        %{call_id: chain_call_id}
+      )
+
+      # The chain's stored span/token was popped on :stop — nothing leaked.
+      refute Process.get(chain_dict_key)
+
+      spans = flush_spans(tid)
+      assert length(spans) == 3
+
+      chain_span = Enum.find(spans, &(&1.name == "invoke_agent llm_chain"))
+      llm_span = Enum.find(spans, &(&1.name == "chat gpt-4o"))
+      tool_span = Enum.find(spans, &(&1.name == "execute_tool get_weather"))
+
+      assert chain_span != nil
+      assert llm_span != nil
+      assert tool_span != nil
+
+      # One trace; both children hang directly off the chain (siblings), proving the
+      # LLM span's context was correctly detached before the tool span opened.
+      assert llm_span.trace_id == chain_span.trace_id
+      assert tool_span.trace_id == chain_span.trace_id
+      assert llm_span.parent_span_id == chain_span.span_id
+      assert tool_span.parent_span_id == chain_span.span_id
+    end
+  end
+
+  describe "events with no started span" do
+    test "a :stop for an unknown call_id is a no-op (no crash, no span)", %{tid: tid} do
+      :telemetry.execute(
+        [:langchain, :llm, :call, :stop],
+        %{duration: 1_000_000, system_time: System.system_time()},
+        %{call_id: Ecto.UUID.generate(), model: "gpt-4o"}
+      )
+
+      assert flush_spans(tid) == []
+    end
+
+    test "an :exception for an unknown call_id is a no-op (no crash, no span)", %{tid: tid} do
+      :telemetry.execute(
+        [:langchain, :llm, :call, :exception],
+        %{system_time: System.system_time()},
+        %{
+          call_id: Ecto.UUID.generate(),
+          kind: :error,
+          error: %RuntimeError{message: "orphan"},
+          stacktrace: []
+        }
+      )
+
+      assert flush_spans(tid) == []
+    end
   end
 
   describe "exception handling" do

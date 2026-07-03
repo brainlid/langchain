@@ -695,12 +695,22 @@ defmodule LangChain.Chains.LLMChain do
     messages
     |> Enum.reduce(nil, fn
       %Message{role: :assistant} = msg, acc ->
-        LangChain.TokenUsage.add(acc, LangChain.TokenUsage.get(msg))
+        # Each assembled assistant message's usage is already the final total for
+        # that message. The `:cumulative` flag is a *delta-merge* signal — it tells
+        # `TokenUsage.add/2` that a streaming delta already includes the prior
+        # deltas of the *same* message. Carried across messages it makes `add/2`
+        # discard the accumulator and keep only the latest turn, so strip it before
+        # summing per-turn totals. (Streaming providers such as Google AI set it.)
+        usage = msg |> LangChain.TokenUsage.get() |> clear_cumulative()
+        LangChain.TokenUsage.add(acc, usage)
 
       _, acc ->
         acc
     end)
   end
+
+  defp clear_cumulative(%LangChain.TokenUsage{} = usage), do: %{usage | cumulative: false}
+  defp clear_cumulative(other), do: other
 
   defp initial_run_logging(%LLMChain{verbose: false} = _chain), do: :ok
 
