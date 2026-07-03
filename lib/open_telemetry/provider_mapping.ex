@@ -18,7 +18,8 @@ defmodule LangChain.OpenTelemetry.ProviderMapping do
     "xai" => "x_ai",
     "ollama" => "ollama",
     "orq" => "orq",
-    "bumblebee" => "bumblebee"
+    "bumblebee" => "bumblebee",
+    "aws_mantle" => "aws.bedrock"
   }
 
   @doc """

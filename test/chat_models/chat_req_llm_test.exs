@@ -689,6 +689,33 @@ if Code.ensure_loaded?(ReqLLM) do
         assert {:ok, %Message{}} = ChatReqLLM.call(model, "Hi there", [])
       end
 
+      test "derives the per-call provider from the model spec for telemetry" do
+        # ReqLLM wraps many providers behind one module, so provider can't be a
+        # static provider/0 — it's parsed from the `"provider:model_id"` spec and
+        # placed on the LLM telemetry metadata per call.
+        test_pid = self()
+        openai_model = ChatReqLLM.new!(%{model: "openai:gpt-4o"})
+
+        stub(ReqLLM, :generate_text, fn _model_spec, _context, _opts ->
+          {:ok, req_llm_text_response("hi")}
+        end)
+
+        :telemetry.attach(
+          "test-reqllm-provider",
+          [:langchain, :llm, :call, :start],
+          fn _event, _measurements, metadata, _config ->
+            send(test_pid, {:start, metadata})
+          end,
+          nil
+        )
+
+        assert {:ok, %Message{}} = ChatReqLLM.call(openai_model, [Message.new_user!("Hi")], [])
+
+        assert_received {:start, %{provider: "openai"}}
+
+        :telemetry.detach("test-reqllm-provider")
+      end
+
       test "passes tools as ReqLLM tools in opts", %{model: model} do
         fun =
           Function.new!(%{

@@ -459,6 +459,7 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
   def call(%ChatAwsMantle{} = model, messages, tools) when is_list(messages) do
     metadata = %{
       model: model.model,
+      provider: provider(),
       message_count: length(messages),
       tools_count: length(tools)
     }
@@ -488,6 +489,9 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
       end
     end)
   end
+
+  @impl ChatModel
+  def provider, do: "aws_mantle"
 
   @impl ChatModel
   def retry_on_fallback?(%LangChainError{type: type}) when type in ["timeout", "connection"],

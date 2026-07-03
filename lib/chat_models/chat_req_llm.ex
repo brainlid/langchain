@@ -209,6 +209,7 @@ if Code.ensure_loaded?(ReqLLM) do
     def call(%ChatReqLLM{} = model, messages, functions) when is_list(messages) do
       metadata = %{
         model: model.model,
+        provider: provider_from_model_spec(model.model),
         message_count: length(messages),
         tools_count: length(functions)
       }
@@ -1082,5 +1083,20 @@ if Code.ensure_loaded?(ReqLLM) do
         _ -> nil
       end
     end
+
+    # ReqLLM model specs are `"provider:model_id"` (e.g. `"anthropic:claude-..."`),
+    # so the provider varies per call and can't be a static `provider/0`. Derive it
+    # from the spec prefix for telemetry (`"anthropic"`, `"openai"`, `"ollama"`, ...
+    # already map correctly through `ProviderMapping`). Returns `nil` when the spec
+    # carries no recognizable provider prefix.
+    @spec provider_from_model_spec(String.t() | nil) :: String.t() | nil
+    defp provider_from_model_spec(model) when is_binary(model) do
+      case String.split(model, ":", parts: 2) do
+        [provider, _model_id] when provider != "" -> provider
+        _ -> nil
+      end
+    end
+
+    defp provider_from_model_spec(_), do: nil
   end
 end

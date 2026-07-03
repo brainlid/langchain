@@ -4,6 +4,7 @@ defmodule LangChain.OpenTelemetry.ProviderMappingTest do
   alias LangChain.OpenTelemetry.ProviderMapping
 
   alias LangChain.ChatModels.ChatAnthropic
+  alias LangChain.ChatModels.ChatAwsMantle
   alias LangChain.ChatModels.ChatBumblebee
   alias LangChain.ChatModels.ChatDeepSeek
   alias LangChain.ChatModels.ChatGoogleAI
@@ -32,10 +33,13 @@ defmodule LangChain.OpenTelemetry.ProviderMappingTest do
     "xai" => "x_ai",
     "ollama" => "ollama",
     "orq" => "orq",
-    "bumblebee" => "bumblebee"
+    "bumblebee" => "bumblebee",
+    "aws_mantle" => "aws.bedrock"
   }
 
   # Every chat model that participates in telemetry via the `provider/0` callback.
+  # (ChatReqLLM is intentionally absent: it's a multi-provider adapter that derives
+  # `:provider` per call from its model spec rather than via `provider/0`.)
   @provider_chat_models [
     ChatOpenAI,
     ChatOpenAIResponses,
@@ -48,7 +52,8 @@ defmodule LangChain.OpenTelemetry.ProviderMappingTest do
     ChatGrok,
     ChatOllamaAI,
     ChatOrq,
-    ChatBumblebee
+    ChatBumblebee,
+    ChatAwsMantle
   ]
 
   describe "to_otel/1" do
@@ -65,6 +70,7 @@ defmodule LangChain.OpenTelemetry.ProviderMappingTest do
       assert ProviderMapping.to_otel("ollama") == "ollama"
       assert ProviderMapping.to_otel("orq") == "orq"
       assert ProviderMapping.to_otel("bumblebee") == "bumblebee"
+      assert ProviderMapping.to_otel("aws_mantle") == "aws.bedrock"
     end
 
     test "passes through unknown providers unchanged" do

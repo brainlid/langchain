@@ -40,8 +40,19 @@ defmodule LangChain.ChatModels.ChatModel do
   @doc """
   Returns the provider name for a given chat model struct.
 
-  Dispatches to the model module's `provider/0` callback if implemented,
-  otherwise derives the provider from the module name.
+  Dispatches to the model module's `provider/0` callback when implemented.
+  Otherwise it falls back to a **best-effort** guess derived from the module
+  name (drop a leading `Chat`, then `Macro.underscore/1`), e.g.
+  `LangChain.ChatModels.ChatAnthropic` -> `"anthropic"`.
+
+  The fallback is only a heuristic and cannot recover canonical names for
+  multi-word or acronym module names — `ChatOpenAIResponses` derives to
+  `"open_ai_responses"`, not `"openai_responses"`, so it won't round-trip through
+  `LangChain.OpenTelemetry.ProviderMapping`. **Every model should implement
+  `provider/0`** to get a stable, canonical provider string; all in-tree models
+  do. (A multi-provider adapter like `ChatReqLLM`, whose provider varies per
+  call, instead sets `:provider` directly in its telemetry metadata rather than
+  via `provider/0`.)
   """
   @spec provider(t()) :: String.t()
   def provider(%module{}) do
