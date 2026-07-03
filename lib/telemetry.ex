@@ -55,6 +55,13 @@ defmodule LangChain.Telemetry do
     call events. Absent parameters are omitted; an empty map means none were captured.
     The OpenTelemetry layer maps these to `gen_ai.request.*` span attributes.
 
+  * `:output_type` - `"text"` or `"json"`, from `ChatModel.output_type/1`, injected on
+    LLM call events. Maps to `gen_ai.output.type`.
+
+  * `:endpoint` - The request URL, injected on LLM call events when the chat model
+    exposes an `:endpoint`. The OpenTelemetry layer derives `server.address` /
+    `server.port` from it.
+
   * `:last_message` - The final assembled `%Message{}` from the LLM response. Included
     in chain execution `:stop` events. For streaming responses this is the fully
     assembled message (not individual deltas).
@@ -69,10 +76,10 @@ defmodule LangChain.Telemetry do
   ## Expected Metadata Shape by Event
 
   * **LLM call `:start`**:
-    `%{model: String.t(), provider: String.t(), message_count: integer(), tools_count: integer(), request_options: map(), call_id: String.t()}`
+    `%{model: String.t(), provider: String.t(), message_count: integer(), tools_count: integer(), request_options: map(), output_type: String.t(), endpoint: String.t() | nil, call_id: String.t()}`
 
   * **LLM call `:stop`** (includes enriched fields):
-    `%{model: String.t(), provider: String.t(), message_count: integer(), tools_count: integer(), request_options: map(), call_id: String.t(), token_usage: TokenUsage.t() | nil, result: term()}`
+    `%{model: String.t(), provider: String.t(), message_count: integer(), tools_count: integer(), request_options: map(), output_type: String.t(), endpoint: String.t() | nil, call_id: String.t(), token_usage: TokenUsage.t() | nil, result: term()}`
 
   * **Chain execution `:start`**:
     `%{chain_type: String.t(), mode: term(), message_count: integer(), tools_count: integer(), custom_context: term(), call_id: String.t()}`
@@ -81,7 +88,7 @@ defmodule LangChain.Telemetry do
     `%{chain_type: String.t(), mode: term(), message_count: integer(), tools_count: integer(), custom_context: term(), call_id: String.t(), last_message: Message.t() | nil, token_usage: TokenUsage.t() | nil, result: term()}`
 
   * **Tool call** (`:start` / `:stop` / `:exception`):
-    `%{tool_name: String.t(), tool_call_id: String.t(), async: boolean(), custom_context: term(), call_id: String.t()}`
+    `%{tool_name: String.t(), tool_call_id: String.t(), tool_description: String.t() | nil, async: boolean(), custom_context: term(), call_id: String.t()}`
 
   ## Usage
 

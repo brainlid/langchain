@@ -146,16 +146,23 @@ invoke_agent llm_chain              (:internal)   gen_ai.operation.name = invoke
 Attributes recorded on the spans include (a subset, always present when
 available):
 
-- `gen_ai.operation.name`, `gen_ai.provider.name`, `gen_ai.output.type`
+- `gen_ai.operation.name`, `gen_ai.provider.name`
+- `gen_ai.output.type` — `"json"` when the model requests structured output
+  (`json_response` / `json_schema` / a JSON `response_format`), otherwise `"text"`
 - `gen_ai.request.model`, `gen_ai.response.model`
+- `server.address`, `server.port` — derived from the model's request endpoint
 - Request parameters, when the model sets them: `gen_ai.request.temperature`,
   `gen_ai.request.max_tokens`, `gen_ai.request.top_p`, `gen_ai.request.top_k`,
   `gen_ai.request.frequency_penalty`, `gen_ai.request.presence_penalty`,
   `gen_ai.request.seed`, `gen_ai.request.choice.count`, `gen_ai.request.stream`,
   `gen_ai.request.stop_sequences`, `gen_ai.request.reasoning.level`
-- `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`
-- `gen_ai.tool.name`, `gen_ai.tool.call.id`, `gen_ai.tool.type`
-- `gen_ai.agent.name` (the chain type)
+- `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, and — best-effort,
+  for providers that report them — `gen_ai.usage.cache_read.input_tokens`,
+  `gen_ai.usage.cache_creation.input_tokens`, `gen_ai.usage.reasoning.output_tokens`
+- `gen_ai.response.finish_reasons` — best-effort (`"stop"` / `"length"` /
+  `"tool_calls"`), reconstructed from the normalized message status
+- `gen_ai.tool.name`, `gen_ai.tool.call.id`, `gen_ai.tool.type`, `gen_ai.tool.description`
+- `gen_ai.agent.name` (the chain type), `gen_ai.conversation.id` (see below)
 
 > #### How request parameters are captured {: .info}
 >
@@ -177,6 +184,18 @@ Provider names are normalized to the OTel registry — e.g. `"google"` becomes
 `gcp.gemini`, `"vertex_ai"` becomes `gcp.vertex_ai`, `"xai"` becomes `x_ai`, and
 `"mistralai"` becomes `mistral_ai`. Unknown providers pass through unchanged. See
 `LangChain.OpenTelemetry.ProviderMapping`.
+
+### Grouping traces into conversations
+
+LangChain has no first-class conversation id, so `gen_ai.conversation.id` (which
+backends use to group a multi-turn session's traces) is read from your chain's
+`custom_context`. Set a `:conversation_id` key — or reuse the
+`:langfuse_session_id` you may already set — and it lands on the root chain span:
+
+```elixir
+chain
+|> Map.put(:custom_context, %{conversation_id: session_id})
+```
 
 ### Errors
 
@@ -229,29 +248,47 @@ your tracing backend and data-retention policy allow it.
 > (with an OpenTelemetry reporter), `PromEx`, or equivalent. Without a consumer,
 > `enable_metrics: true` has no observable effect.
 
-Example wiring with `Telemetry.Metrics`:
+Example wiring with `Telemetry.Metrics`. Name the metrics with the canonical
+GenAI semantic-convention names (`gen_ai.client.operation.duration` and
+`gen_ai.client.token.usage`) so they line up with other OTel GenAI
+instrumentation, and configure the spec's recommended histogram buckets:
 
 ```elixir
 defmodule MyApp.Telemetry do
   import Telemetry.Metrics
 
+  # Recommended explicit bucket boundaries from the GenAI semantic conventions.
+  @duration_buckets [0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.28, 2.56, 5.12,
+                     10.24, 20.48, 40.96, 81.92]
+  @token_buckets [1, 4, 16, 64, 256, 1024, 4096, 16_384, 65_536, 262_144,
+                  1_048_576, 4_194_304, 16_777_216, 67_108_864]
+
   def metrics do
     [
-      distribution("langchain.otel.operation.duration",
+      distribution("gen_ai.client.operation.duration",
         event_name: [:langchain, :otel, :operation, :duration],
         measurement: :duration_s,
         unit: :second,
+        reporter_options: [buckets: @duration_buckets],
         tags: [:"gen_ai.operation.name", :"gen_ai.provider.name", :"gen_ai.request.model"]
       ),
-      sum("langchain.otel.token.usage",
+      distribution("gen_ai.client.token.usage",
         event_name: [:langchain, :otel, :token, :usage],
         measurement: :tokens,
+        reporter_options: [buckets: @token_buckets],
         tags: [:"gen_ai.operation.name", :"gen_ai.provider.name", :"gen_ai.token.type"]
       )
     ]
   end
 end
 ```
+
+> #### Bucket configuration is reporter-specific {: .info}
+>
+> `:reporter_options` is honored by some reporters directly; for the
+> OpenTelemetry reporter, explicit histogram buckets are typically set through an
+> OTel **View** on the instrument name. Either way, use the boundaries above so
+> LangChain's histograms match the semantic-convention recommendation.
 
 See `LangChain.OpenTelemetry.MetricsHandler` for the exact event shapes.
 

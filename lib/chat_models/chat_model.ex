@@ -112,19 +112,35 @@ defmodule LangChain.ChatModels.ChatModel do
   event name and `:enrich_stop` here removes that footgun: a new provider only
   has to build its metadata and call this function.
 
-  `model` is the chat model struct (or `nil`). Its standard request parameters
-  are extracted via `request_options/1` and merged into the metadata under
-  `:request_options`, so the OTEL layer can emit `gen_ai.request.*` without every
-  provider re-plumbing them by hand. `metadata` is the LLM-call metadata map
-  (`:model`, `:provider`, `:message_count`, `:tools_count`, ...). `fun` is the
-  zero-arity function that performs the request and returns the `call_response()`.
+  `model` is the chat model struct (or `nil`). It is read for three pieces of
+  telemetry metadata (each via `put_new`, so a provider that builds its own richer
+  value keeps precedence):
+
+    * `:request_options` — standard `gen_ai.request.*` parameters, via `request_options/1`.
+    * `:output_type` — `"text"` or `"json"`, via `output_type/1`.
+    * `:endpoint` — the request URL (when the model exposes `:endpoint`), which the
+      OTEL layer turns into `server.address` / `server.port`.
+
+  This lets the OTEL layer emit those attributes without every provider re-plumbing
+  them by hand. `metadata` is the LLM-call metadata map (`:model`, `:provider`,
+  `:message_count`, `:tools_count`, ...). `fun` is the zero-arity function that
+  performs the request and returns the `call_response()`.
   """
   @spec llm_telemetry_span(struct() | nil, map(), (-> result)) :: result when result: any()
   def llm_telemetry_span(model, metadata, fun)
       when is_map(metadata) and is_function(fun, 0) do
-    # `put_new` so a provider that builds its own richer `:request_options` (e.g.
-    # a proxy that knows parameters not on its struct) keeps precedence.
-    metadata = Map.put_new(metadata, :request_options, request_options(model))
+    metadata =
+      metadata
+      |> Map.put_new(:request_options, request_options(model))
+      |> Map.put_new(:output_type, output_type(model))
+
+    # Only carry the endpoint when the model actually exposes one, to avoid a
+    # `nil` key on every LLM telemetry event for models with no default endpoint.
+    metadata =
+      case endpoint(model) do
+        nil -> metadata
+        url -> Map.put_new(metadata, :endpoint, url)
+      end
 
     LangChain.Telemetry.span(
       [:langchain, :llm, :call],
@@ -133,6 +149,48 @@ defmodule LangChain.ChatModels.ChatModel do
       enrich_stop: &token_usage_from_result/1
     )
   end
+
+  @doc """
+  Best-effort `gen_ai.output.type` for a chat model.
+
+  Returns `"json"` when the model is configured to request structured/JSON output
+  (`:json_response` set to `true`, a non-nil `:json_schema`, or a JSON-typed
+  `:response_format`), otherwise `"text"`. All LangChain chat models are
+  chat-completion style, so only `"text"` and `"json"` are distinguished. Mirrors
+  the conventional-field heuristic used by `request_options/1`.
+  """
+  @spec output_type(struct() | nil) :: String.t()
+  def output_type(nil), do: "text"
+
+  def output_type(%_module{} = model) do
+    cond do
+      Map.get(model, :json_response) == true -> "json"
+      not is_nil(Map.get(model, :json_schema)) -> "json"
+      json_response_format?(Map.get(model, :response_format)) -> "json"
+      true -> "text"
+    end
+  end
+
+  def output_type(_), do: "text"
+
+  # `:response_format` (Grok/Perplexity) is a raw map; treat it as JSON output only
+  # when its `type` explicitly names json (e.g. "json_object", "json_schema").
+  # Anything else — including `%{"type" => "text"}` or an indeterminate map — stays
+  # "text" so we never mislabel a plain-text response.
+  defp json_response_format?(%{"type" => type}) when is_binary(type),
+    do: String.contains?(type, "json")
+
+  defp json_response_format?(%{type: type}) when is_binary(type),
+    do: String.contains?(type, "json")
+
+  defp json_response_format?(_), do: false
+
+  # Request endpoint URL for `server.address`/`server.port`, when the model exposes
+  # one under the conventional `:endpoint` field.
+  @spec endpoint(struct() | nil) :: String.t() | nil
+  defp endpoint(nil), do: nil
+  defp endpoint(%_module{} = model), do: Map.get(model, :endpoint)
+  defp endpoint(_), do: nil
 
   @doc """
   Best-effort extraction of standard request parameters from a chat model struct

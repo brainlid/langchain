@@ -136,6 +136,64 @@ defmodule LangChain.ChatModels.ChatModelTest do
       assert_received {:start, start_metadata}
       assert start_metadata.request_options == %{temperature: 0.1}
     end
+
+    test "injects the model's :output_type and :endpoint into the :start metadata" do
+      model = ChatOpenAI.new!(%{model: "gpt-4o", json_response: true})
+
+      ChatModel.llm_telemetry_span(model, %{model: "gpt-4o", provider: "openai"}, fn -> :ok end)
+
+      assert_received {:start, start_metadata}
+      assert start_metadata.output_type == "json"
+      assert start_metadata.endpoint == "https://api.openai.com/v1/chat/completions"
+    end
+
+    test "defaults :output_type to text and omits :endpoint for a nil model" do
+      ChatModel.llm_telemetry_span(nil, %{model: "m", provider: "p"}, fn -> :ok end)
+
+      assert_received {:start, start_metadata}
+      assert start_metadata.output_type == "text"
+      refute Map.has_key?(start_metadata, :endpoint)
+    end
+  end
+
+  describe "output_type/1" do
+    test "returns json when the model requests structured output" do
+      assert ChatModel.output_type(ChatOpenAI.new!(%{model: "gpt-4o", json_response: true})) ==
+               "json"
+
+      assert ChatModel.output_type(
+               ChatOpenAI.new!(%{model: "gpt-4o", json_schema: %{"type" => "object"}})
+             ) == "json"
+    end
+
+    test "returns text for a plain chat request" do
+      assert ChatModel.output_type(ChatOpenAI.new!(%{model: "gpt-4o"})) == "text"
+    end
+
+    test "reads a JSON-typed :response_format map (Grok/Perplexity style)" do
+      model =
+        LangChain.ChatModels.ChatGrok.new!(%{
+          model: "grok-2",
+          response_format: %{"type" => "json_object"}
+        })
+
+      assert ChatModel.output_type(model) == "json"
+    end
+
+    test "treats a text-typed :response_format as text" do
+      model =
+        LangChain.ChatModels.ChatGrok.new!(%{
+          model: "grok-2",
+          response_format: %{"type" => "text"}
+        })
+
+      assert ChatModel.output_type(model) == "text"
+    end
+
+    test "returns text for nil and non-struct arguments" do
+      assert ChatModel.output_type(nil) == "text"
+      assert ChatModel.output_type(%{json_response: true}) == "text"
+    end
   end
 
   describe "request_options/1" do

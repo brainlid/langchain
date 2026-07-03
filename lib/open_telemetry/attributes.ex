@@ -11,7 +11,9 @@ defmodule LangChain.OpenTelemetry.Attributes do
   This integration emits the following semantic-convention attributes:
 
     * `gen_ai.operation.name`, `gen_ai.provider.name`, `gen_ai.output.type`
+      (`"json"` when the model requests structured output, else `"text"`)
     * `gen_ai.request.model`, `gen_ai.response.model`
+    * `server.address`, `server.port` (derived from the model's request endpoint)
     * Request parameters (when the model sets them):
       `gen_ai.request.temperature`, `gen_ai.request.max_tokens`,
       `gen_ai.request.top_p`, `gen_ai.request.top_k`,
@@ -19,19 +21,22 @@ defmodule LangChain.OpenTelemetry.Attributes do
       `gen_ai.request.seed`, `gen_ai.request.choice.count`,
       `gen_ai.request.stream`, `gen_ai.request.stop_sequences`,
       `gen_ai.request.reasoning.level`
-    * `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`
+    * `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, and — best-effort
+      from the provider-specific `TokenUsage.raw` — `gen_ai.usage.cache_read.input_tokens`,
+      `gen_ai.usage.cache_creation.input_tokens`, `gen_ai.usage.reasoning.output_tokens`
+    * `gen_ai.response.finish_reasons` (best-effort from `Message.status`)
     * `gen_ai.input.messages`, `gen_ai.output.messages` (opt-in — see `Config`)
     * `gen_ai.tool.name`, `gen_ai.tool.call.id`, `gen_ai.tool.type`,
+      `gen_ai.tool.description`,
       `gen_ai.tool.call.arguments` / `gen_ai.tool.call.result` (opt-in)
-    * `gen_ai.agent.name`
+    * `gen_ai.agent.name`, `gen_ai.conversation.id` (from `custom_context`)
     * `error.type` (on failed operations)
 
-  It does **not** currently emit the response fields `gen_ai.response.id` /
-  `gen_ai.response.finish_reasons` (LangChain normalizes a provider's raw finish
-  reason into `Message.status` and keeps no response id), the cache/reasoning
-  token counts or cost (`LangChain.TokenUsage` tracks only input/output), or
-  streaming timing (`gen_ai.response.time_to_first_chunk`). Treat the output as a
-  useful subset rather than full conformance.
+  It does **not** currently emit `gen_ai.response.id` or a distinct
+  `gen_ai.response.model` (LangChain keeps no response id and normalizes the
+  response model to the requested one), nor streaming timing
+  (`gen_ai.response.time_to_first_chunk`). Treat the output as a useful subset
+  rather than full conformance.
 
   See: https://opentelemetry.io/docs/specs/semconv/gen-ai/
   """
@@ -57,16 +62,24 @@ defmodule LangChain.OpenTelemetry.Attributes do
   @request_stop_sequences "gen_ai.request.stop_sequences"
   @request_reasoning_level "gen_ai.request.reasoning.level"
   @response_model "gen_ai.response.model"
+  @response_finish_reasons "gen_ai.response.finish_reasons"
   @usage_input_tokens "gen_ai.usage.input_tokens"
   @usage_output_tokens "gen_ai.usage.output_tokens"
+  @usage_cache_read_tokens "gen_ai.usage.cache_read.input_tokens"
+  @usage_cache_creation_tokens "gen_ai.usage.cache_creation.input_tokens"
+  @usage_reasoning_tokens "gen_ai.usage.reasoning.output_tokens"
   @input_messages "gen_ai.input.messages"
   @output_messages "gen_ai.output.messages"
   @tool_name "gen_ai.tool.name"
   @tool_call_id "gen_ai.tool.call.id"
   @tool_type "gen_ai.tool.type"
+  @tool_description "gen_ai.tool.description"
   @tool_call_arguments "gen_ai.tool.call.arguments"
   @tool_call_result "gen_ai.tool.call.result"
   @agent_name "gen_ai.agent.name"
+  @conversation_id "gen_ai.conversation.id"
+  @server_address "server.address"
+  @server_port "server.port"
 
   @doc """
   Returns the `gen_ai.operation.name` attribute key.
@@ -84,10 +97,12 @@ defmodule LangChain.OpenTelemetry.Attributes do
   @spec llm_call_start(map()) :: [{String.t(), term()}]
   @spec llm_call_start(map(), Config.t()) :: [{String.t(), term()}]
   def llm_call_start(metadata, %Config{} = _config \\ %Config{}) do
-    # All LangChain chat models are chat-completion style, so the output is text.
+    # All LangChain chat models are chat-completion style, so output is text unless
+    # the model requested structured output. `ChatModel.output_type/1` resolves
+    # that; default to "text" when the model didn't set it.
     attrs = [
       {@operation_name, "chat"},
-      {@output_type, "text"},
+      {@output_type, metadata[:output_type] || "text"},
       {@request_model, metadata[:model]}
     ]
 
@@ -97,8 +112,26 @@ defmodule LangChain.OpenTelemetry.Attributes do
         provider -> [{@provider_name, ProviderMapping.to_otel(provider)} | attrs]
       end
 
-    request_option_attributes(metadata[:request_options]) ++ attrs
+    request_option_attributes(metadata[:request_options]) ++
+      server_attributes(metadata[:endpoint]) ++ attrs
   end
+
+  # Derives `server.address` / `server.port` from the request endpoint URL. `URI`
+  # supplies the default port for known schemes (443 for https), which is accurate
+  # per the semantic convention. Returns [] when there's no usable host.
+  @spec server_attributes(String.t() | nil) :: [{String.t(), term()}]
+  defp server_attributes(endpoint) when is_binary(endpoint) do
+    case URI.parse(endpoint) do
+      %URI{host: host, port: port} when is_binary(host) and host != "" ->
+        attrs = [{@server_address, host}]
+        if port, do: [{@server_port, port} | attrs], else: attrs
+
+      _ ->
+        []
+    end
+  end
+
+  defp server_attributes(_), do: []
 
   # Maps the provider-neutral `:request_options` map (built by
   # `LangChain.ChatModels.ChatModel.request_options/1`) to `gen_ai.request.*`
@@ -154,8 +187,8 @@ defmodule LangChain.OpenTelemetry.Attributes do
   def llm_call_stop(metadata, %Config{} = config \\ %Config{}) do
     attrs =
       case metadata[:token_usage] do
-        %{input: input, output: output} ->
-          attrs = []
+        %{input: input, output: output} = usage ->
+          attrs = usage_extra_attributes(usage)
           attrs = if output, do: [{@usage_output_tokens, output} | attrs], else: attrs
           if input, do: [{@usage_input_tokens, input} | attrs], else: attrs
 
@@ -169,6 +202,8 @@ defmodule LangChain.OpenTelemetry.Attributes do
         model -> [{@response_model, model} | attrs]
       end
 
+    attrs = finish_reason_attributes(metadata[:result]) ++ attrs
+
     if config.capture_output_messages do
       case output_messages_from_result(metadata[:result]) do
         nil -> attrs
@@ -178,6 +213,84 @@ defmodule LangChain.OpenTelemetry.Attributes do
       attrs
     end
   end
+
+  # Best-effort cache/reasoning token counts from the provider-specific
+  # `TokenUsage.raw` map. Anthropic reports `cache_creation_input_tokens` /
+  # `cache_read_input_tokens` at the top level; OpenAI nests `cached_tokens` under
+  # `prompt_tokens_details` and `reasoning_tokens` under `completion_tokens_details`
+  # (or `output_tokens_details` on the Responses API). Only positive counts are
+  # emitted — providers report 0 for unused cache/reasoning on every call, which is
+  # pure noise on the span.
+  @spec usage_extra_attributes(map()) :: [{String.t(), term()}]
+  defp usage_extra_attributes(%{raw: raw}) when is_map(raw) do
+    [
+      {@usage_cache_read_tokens, cache_read_tokens(raw)},
+      {@usage_cache_creation_tokens, positive_int(Map.get(raw, "cache_creation_input_tokens"))},
+      {@usage_reasoning_tokens, reasoning_output_tokens(raw)}
+    ]
+    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+  end
+
+  defp usage_extra_attributes(_), do: []
+
+  defp cache_read_tokens(raw) do
+    positive_int(Map.get(raw, "cache_read_input_tokens")) ||
+      positive_int(nested(raw, "prompt_tokens_details", "cached_tokens"))
+  end
+
+  defp reasoning_output_tokens(raw) do
+    positive_int(nested(raw, "completion_tokens_details", "reasoning_tokens")) ||
+      positive_int(nested(raw, "output_tokens_details", "reasoning_tokens"))
+  end
+
+  defp nested(map, key1, key2) do
+    case Map.get(map, key1) do
+      inner when is_map(inner) -> Map.get(inner, key2)
+      _ -> nil
+    end
+  end
+
+  defp positive_int(n) when is_integer(n) and n > 0, do: n
+  defp positive_int(_), do: nil
+
+  # Best-effort `gen_ai.response.finish_reasons` reconstructed from the assembled
+  # message's normalized `:status`. LangChain collapses a provider's raw finish
+  # reason into `Message.status` (`:complete | :length | :cancelled`), so this is
+  # lossy: a `:complete` message that carries tool calls maps to `"tool_calls"`,
+  # otherwise `:complete` -> `"stop"`. Streaming results (a delta or list of
+  # deltas) are merged to a message first. Returns [] when nothing is derivable.
+  @spec finish_reason_attributes(term()) :: [{String.t(), term()}]
+  defp finish_reason_attributes(result) do
+    case finish_reason(result) do
+      nil -> []
+      reason -> [{@response_finish_reasons, [reason]}]
+    end
+  end
+
+  defp finish_reason({:ok, %LangChain.Message{} = msg}), do: message_finish_reason(msg)
+
+  defp finish_reason({:ok, [%LangChain.Message{} | _] = msgs}),
+    do: msgs |> List.last() |> message_finish_reason()
+
+  defp finish_reason({:ok, %LangChain.MessageDelta{} = delta}), do: delta_finish_reason([delta])
+
+  defp finish_reason({:ok, [%LangChain.MessageDelta{} | _] = deltas}),
+    do: delta_finish_reason(deltas)
+
+  defp finish_reason(_), do: nil
+
+  defp delta_finish_reason(deltas) do
+    case deltas |> LangChain.MessageDelta.merge_deltas() |> LangChain.MessageDelta.to_message() do
+      {:ok, %LangChain.Message{} = msg} -> message_finish_reason(msg)
+      _ -> nil
+    end
+  end
+
+  defp message_finish_reason(%LangChain.Message{tool_calls: [_ | _]}), do: "tool_calls"
+  defp message_finish_reason(%LangChain.Message{status: :complete}), do: "stop"
+  defp message_finish_reason(%LangChain.Message{status: :length}), do: "length"
+  defp message_finish_reason(%LangChain.Message{status: :cancelled}), do: "cancelled"
+  defp message_finish_reason(_), do: nil
 
   # Serializes the LLM output for `gen_ai.output.messages`. Streaming calls return
   # a list of `%MessageDelta{}` structs (or a single delta) rather than a
@@ -232,6 +345,12 @@ defmodule LangChain.OpenTelemetry.Attributes do
         name -> [{@tool_name, name} | attrs]
       end
 
+    attrs =
+      case metadata[:tool_description] do
+        desc when is_binary(desc) and desc != "" -> [{@tool_description, desc} | attrs]
+        _ -> attrs
+      end
+
     if config.capture_tool_arguments do
       case metadata[:arguments] do
         nil ->
@@ -278,7 +397,9 @@ defmodule LangChain.OpenTelemetry.Attributes do
   @doc """
   Builds attributes for a chain execution event.
 
-  Also extracts Langfuse-specific attributes from `custom_context` when present.
+  Sets `gen_ai.conversation.id` from `custom_context` (a `:conversation_id` key,
+  falling back to `:langfuse_session_id` — the same session concept) and also
+  extracts Langfuse-specific attributes from `custom_context` when present.
   """
   @spec chain_start(map()) :: [{String.t(), term()}]
   def chain_start(metadata) do
@@ -290,11 +411,24 @@ defmodule LangChain.OpenTelemetry.Attributes do
         chain_type -> [{@agent_name, chain_type} | attrs]
       end
 
+    attrs =
+      case conversation_id(metadata[:custom_context]) do
+        nil -> attrs
+        id -> [{@conversation_id, id} | attrs]
+      end
+
     case metadata[:custom_context] do
       nil -> attrs
       context -> custom_context_attributes(context) ++ attrs
     end
   end
+
+  # `gen_ai.conversation.id` groups traces into a session/thread. LangChain has no
+  # first-class conversation id, so it's read from `custom_context`: an explicit
+  # `:conversation_id`, else the `:langfuse_session_id` a user may already set.
+  defp conversation_id(%{conversation_id: id}) when not is_nil(id), do: id
+  defp conversation_id(%{langfuse_session_id: id}) when not is_nil(id), do: id
+  defp conversation_id(_), do: nil
 
   @doc """
   Builds attributes for a chain execution stop event.

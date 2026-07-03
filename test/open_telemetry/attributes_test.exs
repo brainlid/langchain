@@ -40,10 +40,48 @@ defmodule LangChain.OpenTelemetry.AttributesTest do
       refute Enum.any?(attrs, fn {k, _v} -> k == "gen_ai.input.messages" end)
     end
 
-    test "always records gen_ai.output.type of text for chat models" do
+    test "defaults gen_ai.output.type to text when metadata omits it" do
       attrs = Attributes.llm_call_start(%{model: "gpt-4o", provider: "openai"})
 
       assert {"gen_ai.output.type", "text"} in attrs
+    end
+
+    test "records gen_ai.output.type from metadata (json for structured output)" do
+      attrs =
+        Attributes.llm_call_start(%{model: "gpt-4o", provider: "openai", output_type: "json"})
+
+      assert {"gen_ai.output.type", "json"} in attrs
+      refute {"gen_ai.output.type", "text"} in attrs
+    end
+
+    test "derives server.address and server.port from the endpoint" do
+      metadata = %{
+        model: "gpt-4o",
+        provider: "openai",
+        endpoint: "https://api.openai.com/v1/chat/completions"
+      }
+
+      attrs = Attributes.llm_call_start(metadata)
+
+      assert {"server.address", "api.openai.com"} in attrs
+      # URI supplies the scheme default port; https -> 443.
+      assert {"server.port", 443} in attrs
+    end
+
+    test "captures an explicit non-default endpoint port" do
+      metadata = %{model: "llama", endpoint: "http://localhost:11434/api/chat"}
+
+      attrs = Attributes.llm_call_start(metadata)
+
+      assert {"server.address", "localhost"} in attrs
+      assert {"server.port", 11434} in attrs
+    end
+
+    test "omits server.* attributes when no endpoint is present" do
+      attrs = Attributes.llm_call_start(%{model: "gpt-4o", provider: "openai"})
+
+      refute Enum.any?(attrs, fn {k, _v} -> k == "server.address" end)
+      refute Enum.any?(attrs, fn {k, _v} -> k == "server.port" end)
     end
 
     test "maps request_options to gen_ai.request.* attributes" do
@@ -169,6 +207,93 @@ defmodule LangChain.OpenTelemetry.AttributesTest do
       refute Enum.any?(attrs, fn {k, _v} -> k == "gen_ai.response.model" end)
     end
 
+    test "extracts Anthropic-style cache tokens from token_usage.raw" do
+      metadata = %{
+        token_usage: %{
+          input: 100,
+          output: 50,
+          raw: %{"cache_creation_input_tokens" => 292, "cache_read_input_tokens" => 3604}
+        }
+      }
+
+      attrs = Attributes.llm_call_stop(metadata)
+
+      assert {"gen_ai.usage.cache_creation.input_tokens", 292} in attrs
+      assert {"gen_ai.usage.cache_read.input_tokens", 3604} in attrs
+    end
+
+    test "extracts OpenAI-style nested cached and reasoning tokens from token_usage.raw" do
+      metadata = %{
+        token_usage: %{
+          input: 100,
+          output: 50,
+          raw: %{
+            "prompt_tokens_details" => %{"cached_tokens" => 64},
+            "completion_tokens_details" => %{"reasoning_tokens" => 20}
+          }
+        }
+      }
+
+      attrs = Attributes.llm_call_stop(metadata)
+
+      assert {"gen_ai.usage.cache_read.input_tokens", 64} in attrs
+      assert {"gen_ai.usage.reasoning.output_tokens", 20} in attrs
+    end
+
+    test "drops zero and absent cache/reasoning counts" do
+      metadata = %{
+        token_usage: %{
+          input: 100,
+          output: 50,
+          raw: %{"cache_creation_input_tokens" => 0, "cache_read_input_tokens" => 0}
+        }
+      }
+
+      attrs = Attributes.llm_call_stop(metadata)
+
+      refute Enum.any?(attrs, fn {k, _v} -> k == "gen_ai.usage.cache_creation.input_tokens" end)
+      refute Enum.any?(attrs, fn {k, _v} -> k == "gen_ai.usage.cache_read.input_tokens" end)
+      refute Enum.any?(attrs, fn {k, _v} -> k == "gen_ai.usage.reasoning.output_tokens" end)
+    end
+
+    test "derives gen_ai.response.finish_reasons stop from a completed message" do
+      metadata = %{result: {:ok, Message.new_assistant!(%{content: "done"})}}
+
+      attrs = Attributes.llm_call_stop(metadata)
+
+      assert {"gen_ai.response.finish_reasons", ["stop"]} in attrs
+    end
+
+    test "derives finish_reasons length from a length-truncated message" do
+      metadata = %{result: {:ok, Message.new_assistant!(%{content: "trunc", status: :length})}}
+
+      attrs = Attributes.llm_call_stop(metadata)
+
+      assert {"gen_ai.response.finish_reasons", ["length"]} in attrs
+    end
+
+    test "derives finish_reasons tool_calls when the message carries tool calls" do
+      tool_call =
+        LangChain.Message.ToolCall.new!(%{
+          call_id: "call_1",
+          name: "get_weather",
+          arguments: %{}
+        })
+
+      msg = Message.new_assistant!(%{tool_calls: [tool_call]})
+      metadata = %{result: {:ok, msg}}
+
+      attrs = Attributes.llm_call_stop(metadata)
+
+      assert {"gen_ai.response.finish_reasons", ["tool_calls"]} in attrs
+    end
+
+    test "omits finish_reasons when the result is not a message" do
+      attrs = Attributes.llm_call_stop(%{result: {:error, "boom"}})
+
+      refute Enum.any?(attrs, fn {k, _v} -> k == "gen_ai.response.finish_reasons" end)
+    end
+
     test "includes output messages when capture_output_messages is true" do
       config = %Config{capture_output_messages: true}
       msg = Message.new_assistant!(%{content: "Hello there!"})
@@ -257,6 +382,24 @@ defmodule LangChain.OpenTelemetry.AttributesTest do
       refute Enum.any?(attrs, fn {k, _v} -> k == "gen_ai.tool.call.id" end)
     end
 
+    test "includes gen_ai.tool.description when present" do
+      metadata = %{tool_name: "get_weather", tool_description: "Look up the weather"}
+      attrs = Attributes.tool_call(metadata)
+
+      assert {"gen_ai.tool.description", "Look up the weather"} in attrs
+    end
+
+    test "omits gen_ai.tool.description when absent or blank" do
+      for metadata <- [
+            %{tool_name: "t"},
+            %{tool_name: "t", tool_description: nil},
+            %{tool_name: "t", tool_description: ""}
+          ] do
+        attrs = Attributes.tool_call(metadata)
+        refute Enum.any?(attrs, fn {k, _v} -> k == "gen_ai.tool.description" end)
+      end
+    end
+
     test "includes arguments when capture_tool_arguments is true" do
       config = %Config{capture_tool_arguments: true}
       args = %{"x" => 1, "y" => 2}
@@ -333,6 +476,39 @@ defmodule LangChain.OpenTelemetry.AttributesTest do
 
       assert {"langfuse.user.id", "user-123"} in attrs
       assert {"langfuse.session.id", "sess-456"} in attrs
+    end
+
+    test "sets gen_ai.conversation.id from an explicit custom_context conversation_id" do
+      metadata = %{chain_type: "llm_chain", custom_context: %{conversation_id: "conv-1"}}
+
+      attrs = Attributes.chain_start(metadata)
+
+      assert {"gen_ai.conversation.id", "conv-1"} in attrs
+    end
+
+    test "falls back to langfuse_session_id for gen_ai.conversation.id" do
+      metadata = %{chain_type: "llm_chain", custom_context: %{langfuse_session_id: "sess-456"}}
+
+      attrs = Attributes.chain_start(metadata)
+
+      assert {"gen_ai.conversation.id", "sess-456"} in attrs
+    end
+
+    test "prefers an explicit conversation_id over langfuse_session_id" do
+      metadata = %{
+        chain_type: "llm_chain",
+        custom_context: %{conversation_id: "conv-1", langfuse_session_id: "sess-456"}
+      }
+
+      attrs = Attributes.chain_start(metadata)
+
+      assert {"gen_ai.conversation.id", "conv-1"} in attrs
+    end
+
+    test "omits gen_ai.conversation.id when no session key is present" do
+      attrs = Attributes.chain_start(%{chain_type: "llm_chain", custom_context: %{foo: "bar"}})
+
+      refute Enum.any?(attrs, fn {k, _v} -> k == "gen_ai.conversation.id" end)
     end
   end
 

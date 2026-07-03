@@ -1827,6 +1827,7 @@ defmodule LangChain.Chains.LLMChain do
     metadata = %{
       tool_name: function.name,
       tool_call_id: call.call_id,
+      tool_description: function.description,
       async: function.async,
       custom_context: context,
       arguments: call.arguments
