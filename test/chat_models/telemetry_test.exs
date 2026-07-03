@@ -689,6 +689,53 @@ defmodule LangChain.ChatModels.TelemetryTest do
 
       :telemetry.detach("test-chain-usage-aggregation")
     end
+
+    test "reused chain reports only the current run's usage on :stop (no cross-run over-count)" do
+      test_pid = self()
+      run1_usage = TokenUsage.new!(%{input: 100, output: 20})
+      run2_usage = TokenUsage.new!(%{input: 40, output: 8})
+
+      ChatOpenAI
+      |> expect(:call, fn _model, _messages, _tools ->
+        {:ok, Message.new_assistant!(%{content: "First", metadata: %{usage: run1_usage}})}
+      end)
+      |> expect(:call, fn _model, _messages, _tools ->
+        {:ok, Message.new_assistant!(%{content: "Second", metadata: %{usage: run2_usage}})}
+      end)
+
+      :telemetry.attach(
+        "test-chain-reuse-usage",
+        [:langchain, :chain, :execute, :stop],
+        fn _name, _measurements, metadata, _config ->
+          send(test_pid, {:chain_stop, metadata})
+        end,
+        nil
+      )
+
+      {:ok, chain} =
+        %{llm: ChatOpenAI.new!(%{stream: false}), verbose: false}
+        |> LLMChain.new!()
+        |> LLMChain.add_message(Message.new_user!("Hi"))
+        |> LLMChain.run()
+
+      # First run reports its own usage.
+      assert_received {:chain_stop, run1_metadata}
+      assert %TokenUsage{input: 100, output: 20} = run1_metadata.token_usage
+
+      # Reuse the SAME chain (the normal add_message |> run agent loop) for a
+      # second run. Its :stop event must report ONLY this run's usage — not run
+      # 1's as well. Before the fix (which aggregated `chain.messages`, the whole
+      # history) this reported {140, 28}, re-counting the earlier turn.
+      {:ok, _chain} =
+        chain
+        |> LLMChain.add_message(Message.new_user!("Again"))
+        |> LLMChain.run()
+
+      assert_received {:chain_stop, run2_metadata}
+      assert %TokenUsage{input: 40, output: 8} = run2_metadata.token_usage
+
+      :telemetry.detach("test-chain-reuse-usage")
+    end
   end
 
   describe "tool call telemetry with custom_context" do

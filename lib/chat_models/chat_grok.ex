@@ -80,6 +80,7 @@ defmodule LangChain.ChatModels.ChatGrok do
   alias LangChain.Message
   alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
+  alias LangChain.TokenUsage
   alias LangChain.Function
   alias LangChain.MessageDelta
   alias LangChain.Utils
@@ -647,8 +648,10 @@ defmodule LangChain.ChatModels.ChatGrok do
         grok
         |> maybe_execute_callback(:on_llm_token_usage, [response_data])
 
-        # Extract usage information from response and add to metadata
-        updated_metadata = Map.put(metadata, :usage, response_data["usage"])
+        # Extract usage as a `%TokenUsage{}` struct (not the raw API map) so it
+        # rides on the message metadata in the shape `ChatModel.token_usage_from_result/1`
+        # reads — otherwise the LLM-call telemetry span reports `token_usage: nil`.
+        updated_metadata = Map.put(metadata, :usage, get_token_usage(response_data))
         messages = Enum.map(choices, &(&1 |> choice_to_message(updated_metadata)))
 
         # Track non-streaming response completion
@@ -731,6 +734,19 @@ defmodule LangChain.ChatModels.ChatGrok do
        original: %{status: status, body: body, headers: Map.new(headers)}
      )}
   end
+
+  # xAI is OpenAI-compatible, so the usage object uses `prompt_tokens` /
+  # `completion_tokens`. Build a `%TokenUsage{}` so downstream consumers (and the
+  # telemetry `:enrich_stop` callback) receive the standard struct.
+  defp get_token_usage(%{"usage" => usage}) when is_map(usage) do
+    TokenUsage.new!(%{
+      input: Map.get(usage, "prompt_tokens"),
+      output: Map.get(usage, "completion_tokens"),
+      raw: usage
+    })
+  end
+
+  defp get_token_usage(_response_body), do: nil
 
   defp choice_to_message(%{"message" => message_data}, metadata) do
     usage = metadata[:usage]

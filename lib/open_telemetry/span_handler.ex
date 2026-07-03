@@ -110,7 +110,11 @@ if Code.ensure_loaded?(:opentelemetry) do
            metadata,
            %Config{} = config
          ) do
-      stop_attrs = Attributes.llm_call_stop(metadata, config)
+      stop_attrs =
+        safe_stop_attributes([:langchain, :llm, :call, :stop], fn ->
+          Attributes.llm_call_stop(metadata, config)
+        end)
+
       end_span(metadata, stop_attrs)
     end
 
@@ -172,7 +176,11 @@ if Code.ensure_loaded?(:opentelemetry) do
            metadata,
            %Config{} = config
          ) do
-      stop_attrs = Attributes.chain_stop(metadata, config)
+      stop_attrs =
+        safe_stop_attributes([:langchain, :chain, :execute, :stop], fn ->
+          Attributes.chain_stop(metadata, config)
+        end)
+
       end_span(metadata, stop_attrs)
     end
 
@@ -206,7 +214,11 @@ if Code.ensure_loaded?(:opentelemetry) do
            metadata,
            %Config{} = config
          ) do
-      stop_attrs = Attributes.tool_call_stop(metadata, config)
+      stop_attrs =
+        safe_stop_attributes([:langchain, :tool, :call, :stop], fn ->
+          Attributes.tool_call_stop(metadata, config)
+        end)
+
       end_span(metadata, stop_attrs)
     end
 
@@ -247,17 +259,46 @@ if Code.ensure_loaded?(:opentelemetry) do
 
       case pop_span(call_id) do
         {span_ctx, token} ->
-          if extra_attributes != [] do
-            OpenTelemetry.Span.set_attributes(span_ctx, extra_attributes)
+          # Ending the span and detaching its context MUST happen even if
+          # `set_attributes` raises — otherwise the span leaks and every later
+          # span in this process nests under the never-closed one. Setting the
+          # attributes is best-effort; closing the span is not.
+          try do
+            if extra_attributes != [] do
+              OpenTelemetry.Span.set_attributes(span_ctx, extra_attributes)
+            end
+          after
+            OpenTelemetry.Span.end_span(span_ctx)
+            OpenTelemetry.Ctx.detach(token)
           end
 
-          OpenTelemetry.Span.end_span(span_ctx)
-          OpenTelemetry.Ctx.detach(token)
           :ok
 
         nil ->
           :ok
       end
+    end
+
+    # Build a stop event's attributes without letting a failure abort the span's
+    # lifecycle. Attribute construction serializes message content (when the
+    # `capture_*_messages` flags are on), and serialization can raise on a
+    # non-JSON-encodable payload — e.g. an invalid-UTF-8 binary in a model or
+    # tool response. If that happened before `end_span/2`, the span would never
+    # be ended and its context never detached, silently corrupting the parent
+    # hierarchy of every subsequent trace in this (often long-lived) process. So
+    # trap here and fall back to no extra attributes: the span still closes and
+    # at most the enrichment attributes are dropped for this one event.
+    defp safe_stop_attributes(event, fun) do
+      fun.()
+    rescue
+      exception ->
+        Logger.warning(fn ->
+          "[LangChain.OpenTelemetry] failed to build stop attributes for #{inspect(event)}; " <>
+            "ending the span without them: " <>
+            Exception.format(:error, exception, __STACKTRACE__)
+        end)
+
+        []
     end
 
     defp end_span_on_exception(metadata) do

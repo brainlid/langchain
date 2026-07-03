@@ -682,10 +682,15 @@ defmodule LangChain.Chains.LLMChain do
   defp chain_stop_metadata(_result), do: %{last_message: nil, token_usage: nil}
 
   defp chain_stop_from_chain(%LLMChain{last_message: %Message{} = msg} = chain) do
-    # Aggregate token usage across all assistant messages in the chain,
-    # not just the last message. In multi-turn chains (e.g., with tool calls),
-    # earlier LLM calls contribute token usage that would otherwise be lost.
-    token_usage = aggregate_token_usage(chain.messages)
+    # Aggregate token usage across the assistant messages produced by *this run*
+    # — not the whole conversation history. A single run can make several LLM
+    # calls (e.g. a tool-call loop), and each contributes usage that would be
+    # lost if we only read the last message. But summing `chain.messages` would
+    # re-count every earlier turn each time a persisted chain is run again (the
+    # normal `add_message |> run` agent loop), inflating the per-run `:stop`
+    # event. `exchanged_messages` is reset at the start of every run and holds
+    # only the messages exchanged during it, which is exactly this run's scope.
+    token_usage = aggregate_token_usage(chain.exchanged_messages)
     %{last_message: msg, token_usage: token_usage}
   end
 

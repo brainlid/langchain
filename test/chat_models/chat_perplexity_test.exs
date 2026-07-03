@@ -1,6 +1,7 @@
 defmodule LangChain.ChatModels.ChatPerplexityTest do
   alias LangChain.FunctionParam
   use LangChain.BaseCase
+  use Mimic
 
   doctest LangChain.ChatModels.ChatPerplexity
   alias LangChain.ChatModels.ChatPerplexity
@@ -1115,6 +1116,61 @@ defmodule LangChain.ChatModels.ChatPerplexityTest do
       # "[10]" is 4 chars
       assert hd(citations).start_index == 5
       assert hd(citations).end_index == 9
+    end
+  end
+
+  describe "call/3 token usage persistence (regression)" do
+    setup :verify_on_exit!
+
+    # Regression: Perplexity fired the `:on_llm_token_usage` callback but never
+    # persisted usage onto the returned message metadata, so the
+    # `[:langchain, :llm, :call, :stop]` telemetry event (and the OTEL span)
+    # reported `token_usage: nil`. This exercises the real `call/3` (mocking only
+    # the HTTP layer) so the wiring — not a hand-fed stub — is asserted.
+    test "non-streaming call persists token usage onto the message and stop event" do
+      test_pid = self()
+
+      perplexity = ChatPerplexity.new!(%{model: @test_model, api_key: "test-key"})
+
+      response_body = %{
+        "choices" => [
+          %{
+            "finish_reason" => "stop",
+            "index" => 0,
+            "message" => %{"role" => "assistant", "content" => "Hello from Perplexity!"}
+          }
+        ],
+        "usage" => %{
+          "prompt_tokens" => 5,
+          "completion_tokens" => 8,
+          "total_tokens" => 13
+        }
+      }
+
+      expect(Req, :post, fn _req ->
+        {:ok, %Req.Response{status: 200, body: response_body}}
+      end)
+
+      :telemetry.attach(
+        "test-perplexity-token-usage-stop",
+        [:langchain, :llm, :call, :stop],
+        fn _name, _measurements, metadata, _config ->
+          send(test_pid, {:stop, metadata})
+        end,
+        nil
+      )
+
+      assert {:ok, [%Message{} = message]} =
+               ChatPerplexity.call(perplexity, [Message.new_user!("Hi")], [])
+
+      # Usage is on the returned message metadata as a struct...
+      assert %TokenUsage{input: 5, output: 8} = TokenUsage.get(message)
+
+      # ...and therefore reaches the LLM call :stop telemetry event.
+      assert_received {:stop, stop_metadata}
+      assert %TokenUsage{input: 5, output: 8} = stop_metadata.token_usage
+
+      :telemetry.detach("test-perplexity-token-usage-stop")
     end
   end
 end

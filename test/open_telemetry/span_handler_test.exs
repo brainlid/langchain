@@ -237,6 +237,44 @@ defmodule LangChain.OpenTelemetry.SpanHandlerTest do
       assert json != nil
       assert [%{"role" => "assistant", "content" => "Hi there!"}] = Jason.decode!(json)
     end
+
+    test "ends the span and detaches context even when output serialization raises",
+         %{tid: tid} do
+      call_id = Ecto.UUID.generate()
+      dict_key = {LangChain.OpenTelemetry.SpanHandler, call_id}
+
+      # Invalid UTF-8 content: `Jason.encode!` raises on it, so building the
+      # `gen_ai.output.messages` attribute fails inside the :stop handler. The
+      # span must still be ended and its context detached — otherwise it leaks
+      # and every later span in this process nests under the never-closed one.
+      bad_msg =
+        LangChain.Message.new_assistant!(%{
+          content: [LangChain.Message.ContentPart.text!(<<0xFF, 0xFE, 0xFD>>)]
+        })
+
+      :telemetry.execute(
+        [:langchain, :llm, :call, :start],
+        %{system_time: System.system_time()},
+        %{call_id: call_id, model: "gpt-4o", provider: "openai"}
+      )
+
+      # Must not crash even though attribute construction raises.
+      :telemetry.execute(
+        [:langchain, :llm, :call, :stop],
+        %{duration: 1_000_000, system_time: System.system_time()},
+        %{call_id: call_id, result: {:ok, bad_msg}}
+      )
+
+      # The stored span/token was popped on :stop (end_span ran, context detached).
+      # Before the fix this entry leaked because end_span was never reached.
+      refute Process.get(dict_key)
+
+      # The span was still ended and exported — just without the output attribute.
+      spans = flush_spans(tid)
+      assert [llm_span] = spans
+      assert llm_span.name == "chat gpt-4o"
+      refute Map.has_key?(llm_span.attributes, "gen_ai.output.messages")
+    end
   end
 
   describe "chain execute spans" do

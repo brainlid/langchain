@@ -425,15 +425,18 @@ defmodule LangChain.ChatModels.ChatPerplexity do
       {:ok, %Req.Response{body: data} = response} ->
         Callbacks.fire(perplexity.callbacks, :on_llm_response_headers, [response.headers])
 
-        Callbacks.fire(perplexity.callbacks, :on_llm_token_usage, [
-          get_token_usage(data)
-        ])
+        token_usage = get_token_usage(data)
+        Callbacks.fire(perplexity.callbacks, :on_llm_token_usage, [token_usage])
 
         case do_process_response(perplexity, data, tools) do
           {:error, %LangChainError{} = reason} ->
             {:error, reason}
 
           result ->
+            # Attach usage to the message so it rides on the returned result in
+            # the `%TokenUsage{}` shape `ChatModel.token_usage_from_result/1`
+            # reads; otherwise the LLM-call span reports `token_usage: nil`.
+            result = TokenUsage.set(result, token_usage)
             Callbacks.fire(perplexity.callbacks, :on_llm_new_message, [result])
 
             # Track non-streaming response completion
