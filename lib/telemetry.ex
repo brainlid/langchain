@@ -25,6 +25,10 @@ defmodule LangChain.Telemetry do
   * `[:langchain, :tool, :call, :start]` - Emitted when a tool call starts
   * `[:langchain, :tool, :call, :stop]` - Emitted when a tool call completes
   * `[:langchain, :tool, :call, :exception]` - Emitted when a tool call raises an exception
+  * `[:langchain, :message, :process, :start]` - Emitted when a message processor
+    (e.g. `LangChain.MessageProcessors.JsonProcessor`) starts processing a received message
+  * `[:langchain, :message, :process, :stop]` - Emitted when message processing completes
+  * `[:langchain, :message, :process, :exception]` - Emitted when message processing raises an exception
   * `[:langchain, :llm, :stream, :first_token]` - Emitted once per streaming LLM
     call when the first delta is received. Carries a `duration` measurement (time
     from the call's start to the first streamed chunk, in native units) — the
@@ -33,13 +37,12 @@ defmodule LangChain.Telemetry do
   ## Reserved events (not currently emitted)
 
   The following event names — and the `*_start` helper functions that would emit
-  them (`message_process_start/1`, `memory_read_start/1`, `memory_write_start/1`,
+  them (`memory_read_start/1`, `memory_write_start/1`,
   `retriever_get_relevant_documents_start/1`) — are **reserved for future use and
   are not emitted by LangChain today.** They are kept so the naming convention is
   stable if/when those subsystems are instrumented. Do not attach handlers
   expecting them to fire yet:
 
-  * `[:langchain, :message, :process, :start | :stop | :exception]`
   * `[:langchain, :memory, :read, :start | :stop | :exception]`
   * `[:langchain, :memory, :write, :start | :stop | :exception]`
   * `[:langchain, :retriever, :get_relevant_documents, :start | :stop | :exception]`
@@ -336,11 +339,13 @@ defmodule LangChain.Telemetry do
   @doc """
   Emits a message processing start event.
 
-  > #### Reserved {: .info}
+  > #### Unused convenience helper {: .info}
   >
-  > LangChain does not call this today — the `[:langchain, :message, :process, …]`
-  > events are reserved for future instrumentation. See "Reserved events" in the
-  > module doc.
+  > This helper is not called internally. The `[:langchain, :message, :process, …]`
+  > events themselves **are** emitted — `LangChain.MessageProcessors.JsonProcessor`
+  > emits the full span directly via `span/4` when it runs in a chain's
+  > `message_processors`. The helper is kept for callers who want to emit the same
+  > event from their own message processors.
   """
   @spec message_process_start(map()) :: (map() -> :ok)
   def message_process_start(metadata) do
