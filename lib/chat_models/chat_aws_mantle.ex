@@ -459,11 +459,12 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
   def call(%ChatAwsMantle{} = model, messages, tools) when is_list(messages) do
     metadata = %{
       model: model.model,
+      provider: provider(),
       message_count: length(messages),
       tools_count: length(tools)
     }
 
-    LangChain.Telemetry.span([:langchain, :llm, :call], metadata, fn ->
+    ChatModel.llm_telemetry_span(model, metadata, fn ->
       try do
         LangChain.Telemetry.llm_prompt(
           %{system_time: System.system_time()},
@@ -488,6 +489,9 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
       end
     end)
   end
+
+  @impl ChatModel
+  def provider, do: "aws_mantle"
 
   @impl ChatModel
   def retry_on_fallback?(%LangChainError{type: type}) when type in ["timeout", "connection"],

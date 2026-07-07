@@ -237,12 +237,13 @@ defmodule LangChain.ChatModels.ChatBumblebee do
   def call(%ChatBumblebee{} = model, messages, functions) when is_list(messages) do
     metadata = %{
       model: inspect(model.serving),
+      provider: provider(),
       template_format: model.template_format,
       message_count: length(messages),
       tools_count: length(functions)
     }
 
-    LangChain.Telemetry.span([:langchain, :llm, :call], metadata, fn ->
+    ChatModel.llm_telemetry_span(model, metadata, fn ->
       try do
         # Track the prompt being sent
         LangChain.Telemetry.llm_prompt(
@@ -518,7 +519,7 @@ defmodule LangChain.ChatModels.ChatBumblebee do
 
         # Track stream completion
         LangChain.Telemetry.emit_event(
-          [:langchain, :llm, :response, streaming: true],
+          [:langchain, :llm, :response, :streaming],
           %{system_time: System.system_time()},
           %{model: inspect(model.serving)}
         )
@@ -554,6 +555,9 @@ defmodule LangChain.ChatModels.ChatBumblebee do
   end
 
   defp fire_token_usage_callback(_model, _token_summary), do: :ok
+
+  @impl ChatModel
+  def provider, do: "bumblebee"
 
   @doc """
   Determine if an error should be retried. If `true`, a fallback LLM may be

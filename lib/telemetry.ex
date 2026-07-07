@@ -22,12 +22,91 @@ defmodule LangChain.Telemetry do
   * `[:langchain, :chain, :execute, :start]` - Emitted when a chain execution starts
   * `[:langchain, :chain, :execute, :stop]` - Emitted when a chain execution completes
   * `[:langchain, :chain, :execute, :exception]` - Emitted when a chain execution raises an exception
-  * `[:langchain, :message, :process, :start]` - Emitted when message processing starts
-  * `[:langchain, :message, :process, :stop]` - Emitted when message processing completes
-  * `[:langchain, :message, :process, :exception]` - Emitted when message processing raises an exception
   * `[:langchain, :tool, :call, :start]` - Emitted when a tool call starts
   * `[:langchain, :tool, :call, :stop]` - Emitted when a tool call completes
   * `[:langchain, :tool, :call, :exception]` - Emitted when a tool call raises an exception
+  * `[:langchain, :message, :process, :start]` - Emitted when a message processor
+    (e.g. `LangChain.MessageProcessors.JsonProcessor`) starts processing a received message
+  * `[:langchain, :message, :process, :stop]` - Emitted when message processing completes
+  * `[:langchain, :message, :process, :exception]` - Emitted when message processing raises an exception
+  * `[:langchain, :llm, :stream, :first_token]` - Emitted once per streaming LLM
+    call when the first delta is received. Carries a `duration` measurement (time
+    from the call's start to the first streamed chunk, in native units) — the
+    basis for a time-to-first-token metric.
+
+  ## Reserved events (not currently emitted)
+
+  The following event names — and the `*_start` helper functions that would emit
+  them (`memory_read_start/1`, `memory_write_start/1`,
+  `retriever_get_relevant_documents_start/1`) — are **reserved for future use and
+  are not emitted by LangChain today.** They are kept so the naming convention is
+  stable if/when those subsystems are instrumented. Do not attach handlers
+  expecting them to fire yet:
+
+  * `[:langchain, :memory, :read, :start | :stop | :exception]`
+  * `[:langchain, :memory, :write, :start | :stop | :exception]`
+  * `[:langchain, :retriever, :get_relevant_documents, :start | :stop | :exception]`
+
+  ## Metadata Fields
+
+  The following metadata fields are automatically injected or available in events:
+
+  * `:call_id` - A UUID (via `Ecto.UUID.generate/0`) that correlates start, stop, and
+    exception events within a single `span/3` or `start_event/2` call. Automatically
+    injected via `Map.put_new/3`, so callers can supply their own ID to override.
+
+  * `:provider` - The LLM provider name (e.g. `"openai"`, `"anthropic"`, `"google"`).
+    Included in LLM call metadata by each chat model implementation via the
+    `ChatModel.provider/0` callback.
+
+  * `:custom_context` - User-supplied context data from `LLMChain.custom_context`.
+    Included in chain execution and tool call metadata. Not included in LLM-level
+    telemetry (correlate via `call_id` instead).
+
+  * `:token_usage` - A `%TokenUsage{}` struct with input/output token counts. Included
+    in LLM call `:stop` events and chain execution `:stop` events when available (via
+    the `:enrich_stop` callback). `nil` when the model does not report usage.
+
+  * `:request_options` - A map of the standard request parameters the chat model set
+    (`:temperature`, `:max_tokens`, `:top_p`, `:seed`, ...), extracted from the model
+    struct by `LangChain.ChatModels.ChatModel.request_options/1` and injected on LLM
+    call events. Absent parameters are omitted; an empty map means none were captured.
+    The OpenTelemetry layer maps these to `gen_ai.request.*` span attributes.
+
+  * `:output_type` - `"text"` or `"json"`, from `ChatModel.output_type/1`, injected on
+    LLM call events. Maps to `gen_ai.output.type`.
+
+  * `:endpoint` - The request URL, injected on LLM call events when the chat model
+    exposes an `:endpoint`. The OpenTelemetry layer derives `server.address` /
+    `server.port` from it.
+
+  * `:last_message` - The final assembled `%Message{}` from the LLM response. Included
+    in chain execution `:stop` events. For streaming responses this is the fully
+    assembled message (not individual deltas).
+
+  ## Privacy Note
+
+  Message content is intentionally excluded from the lifecycle events (`:start` / `:stop` /
+  `:exception`) to avoid unconditional exposure of user/PII data. Message content is only
+  available through the purpose-specific `[:langchain, :llm, :prompt]` and
+  `[:langchain, :llm, :response]` events — subscribing to these is an explicit opt-in.
+
+  ## Expected Metadata Shape by Event
+
+  * **LLM call `:start`**:
+    `%{model: String.t(), provider: String.t(), message_count: integer(), tools_count: integer(), request_options: map(), output_type: String.t(), endpoint: String.t() | nil, call_id: String.t()}`
+
+  * **LLM call `:stop`** (includes enriched fields):
+    `%{model: String.t(), provider: String.t(), message_count: integer(), tools_count: integer(), request_options: map(), output_type: String.t(), endpoint: String.t() | nil, call_id: String.t(), token_usage: TokenUsage.t() | nil, result: term()}`
+
+  * **Chain execution `:start`**:
+    `%{chain_type: String.t(), mode: term(), message_count: integer(), tools_count: integer(), custom_context: term(), call_id: String.t()}`
+
+  * **Chain execution `:stop`** (includes enriched fields):
+    `%{chain_type: String.t(), mode: term(), message_count: integer(), tools_count: integer(), custom_context: term(), call_id: String.t(), last_message: Message.t() | nil, token_usage: TokenUsage.t() | nil, result: term()}`
+
+  * **Tool call** (`:start` / `:stop` / `:exception`):
+    `%{tool_name: String.t(), tool_call_id: String.t(), tool_description: String.t() | nil, async: boolean(), custom_context: term(), call_id: String.t()}`
 
   ## Usage
 
@@ -93,6 +172,9 @@ defmodule LangChain.Telemetry do
     start_time = System.monotonic_time()
     start_system_time = System.system_time()
 
+    # Inject a call_id if not already present, so start and stop events share the same ID
+    metadata = Map.put_new(metadata, :call_id, Ecto.UUID.generate())
+
     emit_event(event_prefix ++ [:start], %{system_time: start_system_time}, metadata)
 
     fn additional_metadata ->
@@ -115,6 +197,10 @@ defmodule LangChain.Telemetry do
     * `event_prefix` - The prefix for the event name as a list of atoms
     * `metadata` - A map of metadata for the event
     * `fun` - The function to execute
+    * `opts` - Optional keyword list:
+      * `:enrich_stop` - A 1-arity function that receives the result and returns
+        a map of additional metadata to merge into the stop event. Useful for
+        extracting data (e.g. token usage) from the result into top-level metadata.
 
   ## Returns
 
@@ -126,14 +212,42 @@ defmodule LangChain.Telemetry do
       ...>   # Call the LLM
       ...>   {:ok, "response"}
       ...> end)
+
+      # With enrich_stop to surface token usage:
+      iex> LangChain.Telemetry.span([:langchain, :llm, :call], %{model: "gpt-4"}, fn ->
+      ...>   {:ok, response}
+      ...> end, enrich_stop: fn {:ok, msg} -> %{token_usage: msg.metadata[:usage]} end)
   """
-  @spec span(list(atom()), map(), (-> result)) :: result when result: any()
-  def span(event_prefix, metadata, fun) do
+  @spec span(list(atom()), map(), (-> result), keyword()) :: result when result: any()
+  def span(event_prefix, metadata, fun, opts \\ []) do
+    # Inject call_id once here so it's shared across start, stop, and exception events.
+    # start_event/2 also calls put_new, but since we set it first, the same ID is reused.
+    metadata = Map.put_new(metadata, :call_id, Ecto.UUID.generate())
+
+    # Capture the start time here too so the `:exception` event can report a
+    # duration. Failed operations otherwise carry no duration, which would make
+    # them invisible to duration-based metrics (and hide error latency).
+    exception_start_time = System.monotonic_time()
+
     stop = start_event(event_prefix, metadata)
 
     try do
       result = fun.()
-      stop.(%{result: result})
+
+      additional_metadata =
+        case Keyword.get(opts, :enrich_stop) do
+          nil ->
+            %{result: result}
+
+          enrich_fn when is_function(enrich_fn, 1) ->
+            try do
+              Map.merge(%{result: result}, enrich_fn.(result))
+            rescue
+              _ -> %{result: result}
+            end
+        end
+
+      stop.(additional_metadata)
       result
     rescue
       exception ->
@@ -141,7 +255,10 @@ defmodule LangChain.Telemetry do
 
         emit_event(
           event_prefix ++ [:exception],
-          %{system_time: System.system_time()},
+          %{
+            duration: System.monotonic_time() - exception_start_time,
+            system_time: System.system_time()
+          },
           Map.merge(metadata, %{
             kind: :error,
             error: exception,
@@ -150,6 +267,34 @@ defmodule LangChain.Telemetry do
         )
 
         reraise exception, stacktrace
+    catch
+      # `rescue` above only traps raised exceptions. A function that `exit`s (a
+      # linked crash, a `Task.await` timeout) or `throw`s would otherwise emit
+      # neither `:stop` nor `:exception` — and a span-based consumer that opened a
+      # span on `:start` would never end it, leaking the span and its attached
+      # context for the rest of a long-lived process. Emit `:exception` here too so
+      # the span is closed, then re-propagate the exit/throw unchanged.
+      kind, reason ->
+        stacktrace = __STACKTRACE__
+
+        emit_event(
+          event_prefix ++ [:exception],
+          %{
+            duration: System.monotonic_time() - exception_start_time,
+            system_time: System.system_time()
+          },
+          Map.merge(metadata, %{
+            kind: kind,
+            # No exception struct exists for a throw/exit; consumers key off
+            # `:kind`/`:reason`. A `nil` `:error` tells them to skip
+            # exception-only rendering while still ending their span.
+            error: nil,
+            reason: reason,
+            stacktrace: stacktrace
+          })
+        )
+
+        :erlang.raise(kind, reason, stacktrace)
     end
   end
 
@@ -193,6 +338,14 @@ defmodule LangChain.Telemetry do
 
   @doc """
   Emits a message processing start event.
+
+  > #### Unused convenience helper {: .info}
+  >
+  > This helper is not called internally. The `[:langchain, :message, :process, …]`
+  > events themselves **are** emitted — `LangChain.MessageProcessors.JsonProcessor`
+  > emits the full span directly via `span/4` when it runs in a chain's
+  > `message_processors`. The helper is kept for callers who want to emit the same
+  > event from their own message processors.
   """
   @spec message_process_start(map()) :: (map() -> :ok)
   def message_process_start(metadata) do
@@ -217,10 +370,14 @@ defmodule LangChain.Telemetry do
     emit_event([:langchain, :tool, :call], measurements, metadata)
   end
 
-  # Memory Events
+  # Memory Events (reserved — not currently emitted by LangChain)
 
   @doc """
   Emits a memory read start event.
+
+  > #### Reserved {: .info}
+  >
+  > LangChain does not call this today. See "Reserved events" in the module doc.
   """
   @spec memory_read_start(map()) :: (map() -> :ok)
   def memory_read_start(metadata) do
@@ -229,16 +386,24 @@ defmodule LangChain.Telemetry do
 
   @doc """
   Emits a memory write start event.
+
+  > #### Reserved {: .info}
+  >
+  > LangChain does not call this today. See "Reserved events" in the module doc.
   """
   @spec memory_write_start(map()) :: (map() -> :ok)
   def memory_write_start(metadata) do
     start_event([:langchain, :memory, :write], metadata)
   end
 
-  # Retriever Events
+  # Retriever Events (reserved — not currently emitted by LangChain)
 
   @doc """
   Emits a retriever get relevant documents start event.
+
+  > #### Reserved {: .info}
+  >
+  > LangChain does not call this today. See "Reserved events" in the module doc.
   """
   @spec retriever_get_relevant_documents_start(map()) :: (map() -> :ok)
   def retriever_get_relevant_documents_start(metadata) do

@@ -363,11 +363,12 @@ defmodule LangChain.ChatModels.ChatMistralAI do
       when is_list(messages) and is_list(tools) do
     metadata = %{
       model: mistralai.model,
+      provider: provider(),
       message_count: length(messages),
       tools_count: length(tools)
     }
 
-    LangChain.Telemetry.span([:langchain, :llm, :call], metadata, fn ->
+    ChatModel.llm_telemetry_span(mistralai, metadata, fn ->
       try do
         # Track the prompt being sent
         LangChain.Telemetry.llm_prompt(
@@ -435,15 +436,22 @@ defmodule LangChain.ChatModels.ChatMistralAI do
       {:ok, %Req.Response{body: data} = response} ->
         Callbacks.fire(mistralai.callbacks, :on_llm_response_headers, [response.headers])
 
-        Callbacks.fire(mistralai.callbacks, :on_llm_token_usage, [
-          get_token_usage(data)
-        ])
+        token_usage = get_token_usage(data)
+
+        Callbacks.fire(mistralai.callbacks, :on_llm_token_usage, [token_usage])
 
         case do_process_response(mistralai, data) do
           {:error, %LangChainError{} = reason} ->
             {:error, reason}
 
           result ->
+            # Attach token usage to the returned message(s). Mistral fires the
+            # `:on_llm_token_usage` callback but, unlike the other chat models,
+            # did not persist usage onto the message metadata — so it never
+            # reached the `[:langchain, :llm, :call, :stop]` telemetry (via the
+            # `enrich_stop`/`token_usage_from_result` path) or OTEL spans.
+            result = attach_token_usage(result, token_usage)
+
             # Track non-streaming response completion
             LangChain.Telemetry.emit_event(
               [:langchain, :llm, :response, :non_streaming],
@@ -545,16 +553,22 @@ defmodule LangChain.ChatModels.ChatMistralAI do
   # The last chunk of the response contains both the final delta in the "choices" key,
   # and the token usage in the "usage" key
   def do_process_response(model, %{"choices" => choices, "usage" => %{} = _usage} = data) do
-    case get_token_usage(data) do
-      %TokenUsage{} = token_usage ->
-        Callbacks.fire(model.callbacks, :on_llm_token_usage, [token_usage])
-        :ok
+    token_usage = get_token_usage(data)
 
-      nil ->
-        :ok
+    if token_usage do
+      Callbacks.fire(model.callbacks, :on_llm_token_usage, [token_usage])
     end
 
-    Enum.map(choices, &do_process_response(model, &1))
+    # Attach usage to each streamed delta (mirroring ChatOpenAI) so streaming token
+    # usage reaches the message metadata — and therefore the
+    # `[:langchain, :llm, :call, :stop]` telemetry event and OTEL span — the same
+    # way the non-streaming path does via `attach_token_usage/2`. Without this,
+    # streamed Mistral calls fired the `:on_llm_token_usage` callback but reported
+    # no tokens to telemetry. `TokenUsage.set/2` is a no-op for non-message shapes
+    # and for a `nil` usage, so this is safe for every item shape returned here.
+    choices
+    |> Enum.map(&do_process_response(model, &1))
+    |> Enum.map(&TokenUsage.set(&1, token_usage))
   end
 
   def do_process_response(_model, %{"choices" => []}), do: :skip
@@ -851,6 +865,20 @@ defmodule LangChain.ChatModels.ChatMistralAI do
   end
 
   defp get_token_usage(_response_body), do: nil
+
+  # Persist `%TokenUsage{}` onto the returned message(s) metadata. `TokenUsage.set/2`
+  # is a no-op for non-message values and for a `nil` usage, so this is safe for
+  # every shape `do_process_response/2` can return.
+  defp attach_token_usage(result, %TokenUsage{} = usage) when is_list(result),
+    do: Enum.map(result, &TokenUsage.set(&1, usage))
+
+  defp attach_token_usage(result, %TokenUsage{} = usage),
+    do: TokenUsage.set(result, usage)
+
+  defp attach_token_usage(result, _usage), do: result
+
+  @impl ChatModel
+  def provider, do: "mistralai"
 
   @doc """
   Determine if an error should be retried. If `true`, a fallback LLM may be

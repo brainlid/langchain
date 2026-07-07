@@ -349,11 +349,12 @@ defmodule LangChain.ChatModels.ChatPerplexity do
   def call(%ChatPerplexity{} = perplexity, messages, tools) when is_list(messages) do
     metadata = %{
       model: perplexity.model,
+      provider: provider(),
       message_count: length(messages),
       tools_count: length(tools)
     }
 
-    Telemetry.span([:langchain, :llm, :call], metadata, fn ->
+    ChatModel.llm_telemetry_span(perplexity, metadata, fn ->
       try do
         # Track the prompt being sent
         Telemetry.llm_prompt(
@@ -424,15 +425,18 @@ defmodule LangChain.ChatModels.ChatPerplexity do
       {:ok, %Req.Response{body: data} = response} ->
         Callbacks.fire(perplexity.callbacks, :on_llm_response_headers, [response.headers])
 
-        Callbacks.fire(perplexity.callbacks, :on_llm_token_usage, [
-          get_token_usage(data)
-        ])
+        token_usage = get_token_usage(data)
+        Callbacks.fire(perplexity.callbacks, :on_llm_token_usage, [token_usage])
 
         case do_process_response(perplexity, data, tools) do
           {:error, %LangChainError{} = reason} ->
             {:error, reason}
 
           result ->
+            # Attach usage to the message so it rides on the returned result in
+            # the `%TokenUsage{}` shape `ChatModel.token_usage_from_result/1`
+            # reads; otherwise the LLM-call span reports `token_usage: nil`.
+            result = TokenUsage.set(result, token_usage)
             Callbacks.fire(perplexity.callbacks, :on_llm_new_message, [result])
 
             # Track non-streaming response completion
@@ -843,6 +847,9 @@ defmodule LangChain.ChatModels.ChatPerplexity do
   end
 
   defp get_token_usage(_response_body), do: nil
+
+  @impl ChatModel
+  def provider, do: "perplexity"
 
   @doc """
   Determine if an error should be retried. If `true`, a fallback LLM may be

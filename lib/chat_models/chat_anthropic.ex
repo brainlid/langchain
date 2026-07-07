@@ -819,11 +819,12 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   def call(%ChatAnthropic{} = anthropic, messages, functions) when is_list(messages) do
     metadata = %{
       model: anthropic.model,
+      provider: provider(),
       message_count: length(messages),
       tools_count: length(functions)
     }
 
-    LangChain.Telemetry.span([:langchain, :llm, :call], metadata, fn ->
+    ChatModel.llm_telemetry_span(anthropic, metadata, fn ->
       try do
         # Track the prompt being sent
         LangChain.Telemetry.llm_prompt(
@@ -851,6 +852,9 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       end
     end)
   end
+
+  @impl ChatModel
+  def provider, do: "anthropic"
 
   @doc """
   Determine if an error should be retried. If `true`, a fallback LLM may be
@@ -1051,7 +1055,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
         # Track the stream completion
         LangChain.Telemetry.emit_event(
-          [:langchain, :llm, :response, streaming: true],
+          [:langchain, :llm, :response, :streaming],
           %{system_time: System.system_time()},
           %{model: anthropic.model}
         )

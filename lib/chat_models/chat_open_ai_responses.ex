@@ -936,11 +936,12 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   def call(%ChatOpenAIResponses{} = openai, messages, tools) when is_list(messages) do
     metadata = %{
       model: openai.model,
+      provider: provider(),
       message_count: length(messages),
       tools_count: length(tools)
     }
 
-    LangChain.Telemetry.span([:langchain, :llm, :call], metadata, fn ->
+    ChatModel.llm_telemetry_span(openai, metadata, fn ->
       try do
         # Track the prompt being sent
         LangChain.Telemetry.llm_prompt(
@@ -2022,6 +2023,9 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   def restore_from_map(%{"version" => 1} = data) do
     ChatOpenAIResponses.new(data)
   end
+
+  @impl ChatModel
+  def provider, do: "openai_responses"
 
   @doc """
   Determine if an error should be retried with a fallback model.

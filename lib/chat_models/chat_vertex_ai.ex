@@ -490,11 +490,12 @@ defmodule LangChain.ChatModels.ChatVertexAI do
       when is_list(messages) do
     metadata = %{
       model: vertex_ai.model,
+      provider: provider(),
       message_count: length(messages),
       tools_count: length(tools)
     }
 
-    LangChain.Telemetry.span([:langchain, :llm, :call], metadata, fn ->
+    ChatModel.llm_telemetry_span(vertex_ai, metadata, fn ->
       try do
         # Track the prompt being sent
         LangChain.Telemetry.llm_prompt(
@@ -904,6 +905,9 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   defp unmap_role("model"), do: "assistant"
   defp unmap_role("function"), do: "tool"
   defp unmap_role(role), do: role
+
+  @impl ChatModel
+  def provider, do: "vertex_ai"
 
   @doc """
   Determine if an error should be retried. If `true`, a fallback LLM may be

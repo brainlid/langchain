@@ -1,5 +1,6 @@
 defmodule LangChain.ChatModels.ChatGrokTest do
   use LangChain.BaseCase
+  use Mimic
 
   doctest LangChain.ChatModels.ChatGrok
   alias LangChain.ChatModels.ChatGrok
@@ -9,6 +10,7 @@ defmodule LangChain.ChatModels.ChatGrokTest do
   alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult
+  alias LangChain.TokenUsage
 
   @test_model "grok-4"
 
@@ -443,6 +445,63 @@ defmodule LangChain.ChatModels.ChatGrokTest do
       assert %Message{role: :assistant} = message
       assert is_binary(message.content)
       assert String.length(message.content) > 0
+    end
+  end
+
+  describe "call/3 token usage persistence (regression)" do
+    setup :verify_on_exit!
+
+    # Regression: Grok stored the raw, string-keyed API `usage` map on the message
+    # metadata instead of a `%TokenUsage{}` struct. Because
+    # `ChatModel.token_usage_from_result/1` only reads a `%TokenUsage{}`, the
+    # `[:langchain, :llm, :call, :stop]` telemetry event (and the OTEL span) always
+    # reported `token_usage: nil` for Grok even though xAI returned usage. This
+    # test exercises the real `call/3` (mocking only the HTTP layer) so the wiring,
+    # not a hand-fed stub, is what's asserted.
+    test "non-streaming call persists token usage onto the message and stop event" do
+      test_pid = self()
+
+      grok = ChatGrok.new!(%{model: "grok-4", api_key: "test-xai-key"})
+
+      response_body = %{
+        "choices" => [
+          %{
+            "message" => %{"role" => "assistant", "content" => "Hello from Grok!"},
+            "finish_reason" => "stop",
+            "index" => 0
+          }
+        ],
+        "usage" => %{
+          "prompt_tokens" => 11,
+          "completion_tokens" => 22,
+          "total_tokens" => 33
+        }
+      }
+
+      expect(Req, :post, fn _opts ->
+        {:ok, %Req.Response{status: 200, body: response_body}}
+      end)
+
+      :telemetry.attach(
+        "test-grok-token-usage-stop",
+        [:langchain, :llm, :call, :stop],
+        fn _name, _measurements, metadata, _config ->
+          send(test_pid, {:stop, metadata})
+        end,
+        nil
+      )
+
+      assert {:ok, [%Message{} = message]} =
+               ChatGrok.call(grok, [Message.new_user!("Hi")], [])
+
+      # Usage is on the returned message metadata as a struct...
+      assert %TokenUsage{input: 11, output: 22} = TokenUsage.get(message)
+
+      # ...and therefore reaches the LLM call :stop telemetry event.
+      assert_received {:stop, stop_metadata}
+      assert %TokenUsage{input: 11, output: 22} = stop_metadata.token_usage
+
+      :telemetry.detach("test-grok-token-usage-stop")
     end
   end
 end

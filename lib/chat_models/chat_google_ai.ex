@@ -503,11 +503,12 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
       when is_list(messages) do
     metadata = %{
       model: google_ai.model,
+      provider: provider(),
       message_count: length(messages),
       tools_count: length(tools)
     }
 
-    LangChain.Telemetry.span([:langchain, :llm, :call], metadata, fn ->
+    ChatModel.llm_telemetry_span(google_ai, metadata, fn ->
       try do
         # Track the prompt being sent
         LangChain.Telemetry.llm_prompt(
@@ -563,7 +564,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
           result ->
             # Track non-streaming response completion
             LangChain.Telemetry.emit_event(
-              [:langchain, :llm, :response, streaming: false],
+              [:langchain, :llm, :response, :non_streaming],
               %{system_time: System.system_time()},
               %{
                 model: google_ai.model,
@@ -976,6 +977,9 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   defp unmap_role("model"), do: "assistant"
   defp unmap_role("user"), do: "user"
   defp unmap_role(invalid_role), do: invalid_role
+
+  @impl ChatModel
+  def provider, do: "google"
 
   @doc """
   Determine if an error should be retried. If `true`, a fallback LLM may be

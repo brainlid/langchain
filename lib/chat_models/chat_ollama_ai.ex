@@ -568,11 +568,12 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   def call(%ChatOllamaAI{} = ollama_ai, messages, tools) when is_list(messages) do
     metadata = %{
       model: ollama_ai.model,
+      provider: provider(),
       message_count: length(messages),
       tools_count: length(tools)
     }
 
-    LangChain.Telemetry.span([:langchain, :llm, :call], metadata, fn ->
+    ChatModel.llm_telemetry_span(ollama_ai, metadata, fn ->
       try do
         # Track the prompt being sent
         LangChain.Telemetry.llm_prompt(
@@ -831,6 +832,9 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
         {:error, LangChainError.exception(changeset)}
     end
   end
+
+  @impl ChatModel
+  def provider, do: "ollama"
 
   # Ollama returns reasoning output in a `thinking` field alongside `content`
   # when `think: true` is set on the request. Convert it into a `:thinking`

@@ -1,5 +1,6 @@
 defmodule LangChain.ChatModels.ChatMistralAITest do
   use LangChain.BaseCase
+  use Mimic
 
   alias LangChain.ChatModels.ChatMistralAI
   alias LangChain.Message
@@ -339,6 +340,34 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
       assert delta.status == :incomplete
     end
 
+    test "streaming: attaches token usage to the final delta so it reaches telemetry",
+         %{model: model} do
+      # Mistral's terminal streaming chunk carries the final delta in "choices" AND
+      # the token totals in "usage". The usage must be attached to the delta
+      # metadata so `token_usage_from_result` (the LLM-call `:stop` enrich_stop) can
+      # surface it for streamed calls — the streaming counterpart to the
+      # non-streaming `attach_token_usage/2` fix. Without it, streamed Mistral calls
+      # fired the `:on_llm_token_usage` callback but reported no tokens to telemetry.
+      response = %{
+        "choices" => [
+          %{
+            "delta" => %{"role" => "assistant", "content" => "done"},
+            "finish_reason" => "stop",
+            "index" => 0
+          }
+        ],
+        "usage" => %{"prompt_tokens" => 12, "completion_tokens" => 8, "total_tokens" => 20}
+      }
+
+      assert [%MessageDelta{} = delta] = ChatMistralAI.do_process_response(model, response)
+      assert %TokenUsage{input: 12, output: 8} = TokenUsage.get(delta)
+
+      # ...and therefore the enrich_stop path that feeds the :stop telemetry event
+      # and OTEL span finds it.
+      assert %{token_usage: %TokenUsage{input: 12, output: 8}} =
+               LangChain.ChatModels.ChatModel.token_usage_from_result({:ok, [delta]})
+    end
+
     test "handles receiving MessageDeltas with thinking content", %{model: model} do
       response = %{
         "choices" => [
@@ -634,6 +663,66 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
 
       assert [%Message{role: :assistant, status: :complete} = message] = result
       assert message.content == [ContentPart.text!("Hello from Mistral!")]
+    end
+  end
+
+  describe "call/3 token usage persistence (regression)" do
+    setup :verify_on_exit!
+
+    # Regression for the Mistral-specific fix: Mistral fires the
+    # `:on_llm_token_usage` callback but historically did NOT persist usage onto
+    # the returned message metadata. As a result token usage never reached the
+    # `[:langchain, :llm, :call, :stop]` telemetry (via the
+    # `enrich_stop`/`token_usage_from_result` path) or the OTEL span. The
+    # `attach_token_usage/2` step in `do_api_request` fixes it.
+    test "non-streaming call persists token usage onto the message and stop event" do
+      test_pid = self()
+
+      model = ChatMistralAI.new!(%{model: "mistral-tiny", api_key: "test-key"})
+
+      response_body = %{
+        "choices" => [
+          %{
+            "message" => %{
+              "role" => "assistant",
+              "content" => "Hello from Mistral!",
+              "tool_calls" => []
+            },
+            "finish_reason" => "stop",
+            "index" => 0
+          }
+        ],
+        "usage" => %{
+          "prompt_tokens" => 7,
+          "completion_tokens" => 10,
+          "total_tokens" => 17
+        }
+      }
+
+      expect(Req, :post, fn _req ->
+        {:ok, %Req.Response{status: 200, body: response_body}}
+      end)
+
+      :telemetry.attach(
+        "test-mistral-token-usage-stop",
+        [:langchain, :llm, :call, :stop],
+        fn _name, _measurements, metadata, _config ->
+          send(test_pid, {:stop, metadata})
+        end,
+        nil
+      )
+
+      assert {:ok, [%Message{} = message]} =
+               ChatMistralAI.call(model, [Message.new_user!("Hi")], [])
+
+      # Usage is now on the returned message metadata...
+      assert %TokenUsage{input: 7, output: 10} = TokenUsage.get(message)
+
+      # ...and therefore reaches the LLM call :stop telemetry event.
+      assert_received {:stop, stop_metadata}
+      assert %TokenUsage{input: 7, output: 10} = stop_metadata.token_usage
+
+      :telemetry.detach("test-mistral-token-usage-stop")
     end
   end
 

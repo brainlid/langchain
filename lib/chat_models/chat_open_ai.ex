@@ -813,11 +813,12 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   def call(%ChatOpenAI{} = openai, messages, tools) when is_list(messages) do
     metadata = %{
       model: openai.model,
+      provider: provider(),
       message_count: length(messages),
       tools_count: length(tools)
     }
 
-    LangChain.Telemetry.span([:langchain, :llm, :call], metadata, fn ->
+    ChatModel.llm_telemetry_span(openai, metadata, fn ->
       try do
         # Track the prompt being sent
         LangChain.Telemetry.llm_prompt(
@@ -1381,6 +1382,9 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   end
 
   defp get_token_usage(_response_body), do: nil
+
+  @impl ChatModel
+  def provider, do: "openai"
 
   @doc """
   Determine if an error should be retried. If `true`, a fallback LLM may be

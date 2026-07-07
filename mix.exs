@@ -55,6 +55,9 @@ defmodule LangChain.MixProject do
       {:nimble_parsec, "~> 1.4", optional: true},
       {:abacus, "~> 2.1.0", optional: true},
       {:nx, ">= 0.7.0", optional: true},
+      {:opentelemetry_api, "~> 1.4", optional: true},
+      {:opentelemetry, "~> 1.5", only: :test},
+      {:opentelemetry_exporter, "~> 1.8", only: :test},
       {:ex_doc, "~> 0.40", only: :dev, runtime: false},
       {:mimic, "~> 1.8", only: :test},
       {:dotenvy, "~> 1.1"},
@@ -95,7 +98,7 @@ defmodule LangChain.MixProject do
       extra_section: "Guides",
       extras: extras(),
       groups_for_extras: [
-        Guides: ["guides/evaluation.md"],
+        Guides: ["guides/evaluation.md", "guides/observability.md"],
         Notebooks: Path.wildcard("notebooks/*.livemd")
       ],
       groups_for_modules: [
@@ -177,6 +180,15 @@ defmodule LangChain.MixProject do
           LangChain.Tools.DeepResearch.ResearchStatus,
           LangChain.Tools.DeepResearch.ResearchResult
         ],
+        Observability: [
+          LangChain.Telemetry,
+          LangChain.OpenTelemetry,
+          LangChain.OpenTelemetry.Config,
+          LangChain.OpenTelemetry.SpanHandler,
+          LangChain.OpenTelemetry.MetricsHandler,
+          LangChain.OpenTelemetry.Attributes,
+          LangChain.OpenTelemetry.ProviderMapping
+        ],
         WebSocket: [
           LangChain.WebSocket
         ],
@@ -203,9 +215,11 @@ defmodule LangChain.MixProject do
       "README.md",
       "CHANGELOG.md",
       "guides/evaluation.md",
+      "guides/observability.md",
       "notebooks/getting_started.livemd",
       "notebooks/custom_functions.livemd",
-      "notebooks/context-specific-image-descriptions.livemd"
+      "notebooks/context-specific-image-descriptions.livemd",
+      "notebooks/observability_tutorial.livemd"
     ]
   end
 

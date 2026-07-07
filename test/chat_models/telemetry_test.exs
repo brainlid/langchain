@@ -2,20 +2,138 @@ defmodule LangChain.ChatModels.TelemetryTest do
   use ExUnit.Case
   use Mimic
 
+  alias LangChain.ChatModels.ChatModel
   alias LangChain.ChatModels.ChatOpenAI
   alias LangChain.ChatModels.ChatMistralAI
   alias LangChain.ChatModels.ChatAnthropic
   alias LangChain.ChatModels.ChatGoogleAI
   alias LangChain.ChatModels.ChatPerplexity
   alias LangChain.ChatModels.ChatVertexAI
+  alias LangChain.ChatModels.ChatGrok
+  alias LangChain.Chains.LLMChain
+  alias LangChain.Function
   alias LangChain.Message
+  alias LangChain.MessageDelta
+  alias LangChain.Message.ToolCall
+  alias LangChain.TokenUsage
 
   # Setup for test
   setup :verify_on_exit!
 
+  # Helper to create a standard LLM call stub with provider in metadata
+  defp make_llm_stub(module, provider) do
+    module
+    |> stub(:call, fn model, messages, tools ->
+      model_name =
+        case Map.get(model, :model) do
+          nil -> inspect(Map.get(model, :serving, "unknown"))
+          name -> name
+        end
+
+      metadata = %{
+        model: model_name,
+        provider: provider,
+        message_count: length(messages),
+        tools_count: length(tools)
+      }
+
+      usage = TokenUsage.new!(%{input: 10, output: 20})
+
+      LangChain.Telemetry.span(
+        [:langchain, :llm, :call],
+        metadata,
+        fn ->
+          LangChain.Telemetry.llm_prompt(
+            %{system_time: System.system_time()},
+            %{model: model_name, messages: messages}
+          )
+
+          response =
+            Message.new_assistant!(%{content: "Test response", metadata: %{usage: usage}})
+
+          LangChain.Telemetry.llm_response(
+            %{system_time: System.system_time()},
+            %{model: model_name, response: response}
+          )
+
+          LangChain.Telemetry.emit_event(
+            [:langchain, :llm, :response, :non_streaming],
+            %{system_time: System.system_time()},
+            %{model: model_name, response_size: byte_size(inspect(response))}
+          )
+
+          {:ok, response}
+        end,
+        enrich_stop: &ChatModel.token_usage_from_result/1
+      )
+    end)
+  end
+
+  # Helper mirroring a streaming `call/3`: the result is a list of `%MessageDelta{}`
+  # structs where the accumulated `%TokenUsage{}` rides on the final delta's
+  # metadata — the shape `ChatModel.token_usage_from_result/1` must scan so that
+  # streaming token usage still reaches the `[:langchain, :llm, :call, :stop]` event.
+  defp make_streaming_llm_stub(module, provider, usage) do
+    module
+    |> stub(:call, fn model, messages, tools ->
+      metadata = %{
+        model: Map.get(model, :model),
+        provider: provider,
+        message_count: length(messages),
+        tools_count: length(tools)
+      }
+
+      LangChain.Telemetry.span(
+        [:langchain, :llm, :call],
+        metadata,
+        fn ->
+          deltas = [
+            MessageDelta.new!(%{role: :assistant, content: "Hel", status: :incomplete}),
+            MessageDelta.new!(%{content: "lo", status: :incomplete}),
+            MessageDelta.new!(%{content: "", status: :complete, metadata: %{usage: usage}})
+          ]
+
+          {:ok, deltas}
+        end,
+        enrich_stop: &ChatModel.token_usage_from_result/1
+      )
+    end)
+  end
+
+  describe "streaming token usage" do
+    setup :verify_on_exit!
+
+    test "streamed delta result surfaces token_usage on the stop event" do
+      test_pid = self()
+      usage = TokenUsage.new!(%{input: 12, output: 8})
+      make_streaming_llm_stub(ChatOpenAI, "openai", usage)
+
+      openai = ChatOpenAI.new!(%{model: "gpt-4o-mini", api_key: "test-key", stream: true})
+
+      :telemetry.attach(
+        "test-streaming-token-usage",
+        [:langchain, :llm, :call, :stop],
+        fn _name, _measurements, metadata, _config ->
+          send(test_pid, {:stop, metadata})
+        end,
+        nil
+      )
+
+      assert {:ok, [%MessageDelta{} | _]} =
+               ChatOpenAI.call(openai, [Message.new_user!("Hi")], [])
+
+      # The bug this guards against: streaming usage lives on the final delta, not
+      # a single message — token_usage_from_result must find it so the :stop event
+      # (and OTEL span) still report token counts for streamed calls.
+      assert_received {:stop, stop_metadata}
+      assert %TokenUsage{input: 12, output: 8} = stop_metadata.token_usage
+
+      :telemetry.detach("test-streaming-token-usage")
+    end
+  end
+
   describe "telemetry instrumentation" do
     setup do
-      # Set up test models with explicit API keys to avoid env var issues
       openai = ChatOpenAI.new!(%{model: "gpt-4o-mini", api_key: "test-openai-key"})
       mistral_ai = ChatMistralAI.new!(%{model: "mistral-tiny", api_key: "test-mistral-key"})
 
@@ -37,201 +155,23 @@ defmodule LangChain.ChatModels.TelemetryTest do
           endpoint: "https://generativelanguage.googleapis.com/v1"
         })
 
-      # Create test messages
-      test_message = "Hello, how are you?"
+      grok = ChatGrok.new!(%{model: "grok-3-mini", api_key: "test-xai-key"})
 
       test_messages = [
         Message.new_system!("You are a helpful assistant."),
-        Message.new_user!(test_message)
+        Message.new_user!("Hello, how are you?")
       ]
 
-      # Mock the ChatModel implementations directly
-      ChatOpenAI
-      |> stub(:call, fn model, messages, tools ->
-        metadata = %{
-          model: model.model,
-          message_count: length(messages),
-          tools_count: length(tools)
-        }
+      # Create stubs for all models
+      make_llm_stub(ChatOpenAI, "openai")
+      make_llm_stub(ChatMistralAI, "mistralai")
+      make_llm_stub(ChatVertexAI, "vertex_ai")
+      make_llm_stub(ChatPerplexity, "perplexity")
+      make_llm_stub(ChatGoogleAI, "google")
+      make_llm_stub(ChatAnthropic, "anthropic")
+      make_llm_stub(ChatGrok, "xai")
 
-        LangChain.Telemetry.span([:langchain, :llm, :call], metadata, fn ->
-          # Track the prompt being sent
-          LangChain.Telemetry.llm_prompt(
-            %{system_time: System.system_time()},
-            %{model: model.model, messages: messages}
-          )
-
-          response = Message.new_assistant!("Test response")
-
-          # Track the response being received
-          LangChain.Telemetry.llm_response(
-            %{system_time: System.system_time()},
-            %{model: model.model, response: response}
-          )
-
-          # Track non-streaming response
-          LangChain.Telemetry.emit_event(
-            [:langchain, :llm, :response, :non_streaming],
-            %{system_time: System.system_time()},
-            %{
-              model: model.model,
-              response_size: byte_size(inspect(response))
-            }
-          )
-
-          {:ok, response}
-        end)
-      end)
-
-      ChatMistralAI
-      |> stub(:call, fn model, messages, tools ->
-        metadata = %{
-          model: model.model,
-          message_count: length(messages),
-          tools_count: length(tools)
-        }
-
-        LangChain.Telemetry.span([:langchain, :llm, :call], metadata, fn ->
-          # Track the prompt being sent
-          LangChain.Telemetry.llm_prompt(
-            %{system_time: System.system_time()},
-            %{model: model.model, messages: messages}
-          )
-
-          response = Message.new_assistant!("Test response")
-
-          # Track the response being received
-          LangChain.Telemetry.llm_response(
-            %{system_time: System.system_time()},
-            %{model: model.model, response: response}
-          )
-
-          # Track non-streaming response
-          LangChain.Telemetry.emit_event(
-            [:langchain, :llm, :response, :non_streaming],
-            %{system_time: System.system_time()},
-            %{
-              model: model.model,
-              response_size: byte_size(inspect(response))
-            }
-          )
-
-          {:ok, response}
-        end)
-      end)
-
-      ChatVertexAI
-      |> stub(:call, fn model, messages, tools ->
-        metadata = %{
-          model: model.model,
-          message_count: length(messages),
-          tools_count: length(tools)
-        }
-
-        LangChain.Telemetry.span([:langchain, :llm, :call], metadata, fn ->
-          # Track the prompt being sent
-          LangChain.Telemetry.llm_prompt(
-            %{system_time: System.system_time()},
-            %{model: model.model, messages: messages}
-          )
-
-          response = Message.new_assistant!("Test response")
-
-          # Track the response being received
-          LangChain.Telemetry.llm_response(
-            %{system_time: System.system_time()},
-            %{model: model.model, response: response}
-          )
-
-          # Track non-streaming response
-          LangChain.Telemetry.emit_event(
-            [:langchain, :llm, :response, :non_streaming],
-            %{system_time: System.system_time()},
-            %{
-              model: model.model,
-              response_size: byte_size(inspect(response))
-            }
-          )
-
-          {:ok, response}
-        end)
-      end)
-
-      ChatPerplexity
-      |> stub(:call, fn model, messages, tools ->
-        metadata = %{
-          model: model.model,
-          message_count: length(messages),
-          tools_count: length(tools)
-        }
-
-        LangChain.Telemetry.span([:langchain, :llm, :call], metadata, fn ->
-          # Track the prompt being sent
-          LangChain.Telemetry.llm_prompt(
-            %{system_time: System.system_time()},
-            %{model: model.model, messages: messages}
-          )
-
-          response = Message.new_assistant!("Test response")
-
-          # Track the response being received
-          LangChain.Telemetry.llm_response(
-            %{system_time: System.system_time()},
-            %{model: model.model, response: response}
-          )
-
-          # Track non-streaming response
-          LangChain.Telemetry.emit_event(
-            [:langchain, :llm, :response, :non_streaming],
-            %{system_time: System.system_time()},
-            %{
-              model: model.model,
-              response_size: byte_size(inspect(response))
-            }
-          )
-
-          {:ok, response}
-        end)
-      end)
-
-      ChatGoogleAI
-      |> stub(:call, fn model, messages, tools ->
-        metadata = %{
-          model: model.model,
-          message_count: length(messages),
-          tools_count: length(tools)
-        }
-
-        LangChain.Telemetry.span([:langchain, :llm, :call], metadata, fn ->
-          # Track the prompt being sent
-          LangChain.Telemetry.llm_prompt(
-            %{system_time: System.system_time()},
-            %{model: model.model, messages: messages}
-          )
-
-          response = Message.new_assistant!("Test response")
-
-          # Track the response being received
-          LangChain.Telemetry.llm_response(
-            %{system_time: System.system_time()},
-            %{model: model.model, response: response}
-          )
-
-          # Track non-streaming response
-          LangChain.Telemetry.emit_event(
-            [:langchain, :llm, :response, :non_streaming],
-            %{system_time: System.system_time()},
-            %{
-              model: model.model,
-              response_size: byte_size(inspect(response))
-            }
-          )
-
-          {:ok, response}
-        end)
-      end)
-
-      # Mock Req.request for any remaining API calls
+      # Mock Req for any remaining API calls
       Req
       |> stub(:request, fn _req ->
         {:ok,
@@ -264,13 +204,15 @@ defmodule LangChain.ChatModels.TelemetryTest do
         google_ai: google_ai,
         perplexity: perplexity,
         vertex_ai: vertex_ai,
-        test_message: test_message,
+        grok: grok,
         test_messages: test_messages
       }
     end
 
-    test "emits telemetry events for ChatOpenAI", %{openai: openai, test_messages: messages} do
-      # Attach telemetry handlers
+    test "emits telemetry events for ChatOpenAI with provider", %{
+      openai: openai,
+      test_messages: messages
+    } do
       test_pid = self()
 
       :telemetry.attach_many(
@@ -287,18 +229,16 @@ defmodule LangChain.ChatModels.TelemetryTest do
         nil
       )
 
-      # Call the model
       {:ok, _response} = ChatOpenAI.call(openai, messages, [])
 
-      # Assert that all telemetry events were emitted
       assert_received {:telemetry_event, [:langchain, :llm, :call, :start], _, metadata}
       assert metadata.model == openai.model
+      assert metadata.provider == "openai"
       assert metadata.message_count == length(messages)
       assert metadata.tools_count == 0
 
       assert_received {:telemetry_event, [:langchain, :llm, :prompt], _, metadata}
       assert metadata.model == openai.model
-      assert is_list(metadata.messages)
 
       assert_received {:telemetry_event, [:langchain, :llm, :response], _, metadata}
       assert metadata.model == openai.model
@@ -307,115 +247,114 @@ defmodule LangChain.ChatModels.TelemetryTest do
                        metadata}
 
       assert metadata.model == openai.model
-      assert is_integer(metadata.response_size)
 
-      # Clean up telemetry handlers
       :telemetry.detach("test-openai-telemetry-events")
     end
 
-    test "emits telemetry events for ChatVertexAI", %{
+    test "emits telemetry events for ChatVertexAI with provider", %{
       vertex_ai: vertex_ai,
       test_messages: messages
     } do
-      # Attach telemetry handlers
       test_pid = self()
 
       :telemetry.attach_many(
         "test-vertex-telemetry-events",
-        [
-          [:langchain, :llm, :call, :start],
-          [:langchain, :llm, :prompt],
-          [:langchain, :llm, :response],
-          [:langchain, :llm, :response, :non_streaming]
-        ],
+        [[:langchain, :llm, :call, :start]],
         fn name, measurements, metadata, _config ->
           send(test_pid, {:telemetry_event, name, measurements, metadata})
         end,
         nil
       )
 
-      # Call the model
       {:ok, _response} = ChatVertexAI.call(vertex_ai, messages, [])
 
-      # Assert that all telemetry events were emitted
       assert_received {:telemetry_event, [:langchain, :llm, :call, :start], _, metadata}
       assert metadata.model == vertex_ai.model
-      assert metadata.message_count == length(messages)
-      assert metadata.tools_count == 0
+      assert metadata.provider == "vertex_ai"
 
-      assert_received {:telemetry_event, [:langchain, :llm, :prompt], _, metadata}
-      assert metadata.model == vertex_ai.model
-      assert is_list(metadata.messages)
-
-      assert_received {:telemetry_event, [:langchain, :llm, :response], _, metadata}
-      assert metadata.model == vertex_ai.model
-
-      assert_received {:telemetry_event, [:langchain, :llm, :response, :non_streaming], _,
-                       metadata}
-
-      assert metadata.model == vertex_ai.model
-      assert is_integer(metadata.response_size)
-
-      # Clean up telemetry handlers
       :telemetry.detach("test-vertex-telemetry-events")
     end
 
-    test "emits telemetry events for ChatMistralAI", %{
+    test "emits telemetry events for ChatMistralAI with provider", %{
       mistral_ai: mistral_ai,
       test_messages: messages
     } do
-      # Attach telemetry handlers
       test_pid = self()
 
       :telemetry.attach_many(
         "test-mistral-telemetry-events",
-        [
-          [:langchain, :llm, :call, :start],
-          [:langchain, :llm, :prompt],
-          [:langchain, :llm, :response],
-          [:langchain, :llm, :response, :non_streaming]
-        ],
+        [[:langchain, :llm, :call, :start]],
         fn name, measurements, metadata, _config ->
           send(test_pid, {:telemetry_event, name, measurements, metadata})
         end,
         nil
       )
 
-      # Call the model
       {:ok, _response} = ChatMistralAI.call(mistral_ai, messages, [])
 
-      # Assert that all telemetry events were emitted
       assert_received {:telemetry_event, [:langchain, :llm, :call, :start], _, metadata}
       assert metadata.model == mistral_ai.model
-      assert metadata.message_count == length(messages)
-      assert metadata.tools_count == 0
+      assert metadata.provider == "mistralai"
 
-      assert_received {:telemetry_event, [:langchain, :llm, :prompt], _, metadata}
-      assert metadata.model == mistral_ai.model
-      assert is_list(metadata.messages)
-
-      assert_received {:telemetry_event, [:langchain, :llm, :response], _, metadata}
-      assert metadata.model == mistral_ai.model
-
-      assert_received {:telemetry_event, [:langchain, :llm, :response, :non_streaming], _,
-                       metadata}
-
-      assert metadata.model == mistral_ai.model
-      assert is_integer(metadata.response_size)
-
-      # Clean up telemetry handlers
       :telemetry.detach("test-mistral-telemetry-events")
     end
 
-    test "emits telemetry events for ChatPerplexity", %{
+    test "emits telemetry events for ChatPerplexity with provider", %{
       perplexity: perplexity,
       test_messages: messages
     } do
-      # Attach telemetry handlers
       test_pid = self()
 
       :telemetry.attach_many(
         "test-perplexity-telemetry-events",
+        [[:langchain, :llm, :call, :start]],
+        fn name, measurements, metadata, _config ->
+          send(test_pid, {:telemetry_event, name, measurements, metadata})
+        end,
+        nil
+      )
+
+      {:ok, _response} = ChatPerplexity.call(perplexity, messages, [])
+
+      assert_received {:telemetry_event, [:langchain, :llm, :call, :start], _, metadata}
+      assert metadata.model == perplexity.model
+      assert metadata.provider == "perplexity"
+
+      :telemetry.detach("test-perplexity-telemetry-events")
+    end
+
+    test "emits telemetry events for ChatAnthropic with provider", %{
+      anthropic: anthropic,
+      test_messages: messages
+    } do
+      test_pid = self()
+
+      :telemetry.attach_many(
+        "test-anthropic-telemetry-events",
+        [[:langchain, :llm, :call, :start]],
+        fn name, measurements, metadata, _config ->
+          send(test_pid, {:telemetry_event, name, measurements, metadata})
+        end,
+        nil
+      )
+
+      {:ok, _response} = ChatAnthropic.call(anthropic, messages, [])
+
+      assert_received {:telemetry_event, [:langchain, :llm, :call, :start], _, metadata}
+      assert metadata.model == anthropic.model
+      assert metadata.provider == "anthropic"
+
+      :telemetry.detach("test-anthropic-telemetry-events")
+    end
+
+    test "emits telemetry events for ChatGrok with provider", %{
+      grok: grok,
+      test_messages: messages
+    } do
+      test_pid = self()
+
+      :telemetry.attach_many(
+        "test-grok-telemetry-events",
         [
           [:langchain, :llm, :call, :start],
           [:langchain, :llm, :prompt],
@@ -428,34 +367,102 @@ defmodule LangChain.ChatModels.TelemetryTest do
         nil
       )
 
-      # Call the model
-      {:ok, _response} = ChatPerplexity.call(perplexity, messages, [])
+      {:ok, _response} = ChatGrok.call(grok, messages, [])
 
-      # Assert that all telemetry events were emitted
       assert_received {:telemetry_event, [:langchain, :llm, :call, :start], _, metadata}
-      assert metadata.model == perplexity.model
+      assert metadata.model == grok.model
+      assert metadata.provider == "xai"
       assert metadata.message_count == length(messages)
       assert metadata.tools_count == 0
 
-      assert_received {:telemetry_event, [:langchain, :llm, :prompt], _, metadata}
-      assert metadata.model == perplexity.model
-      assert is_list(metadata.messages)
-
-      assert_received {:telemetry_event, [:langchain, :llm, :response], _, metadata}
-      assert metadata.model == perplexity.model
+      assert_received {:telemetry_event, [:langchain, :llm, :prompt], _, _metadata}
+      assert_received {:telemetry_event, [:langchain, :llm, :response], _, _metadata}
 
       assert_received {:telemetry_event, [:langchain, :llm, :response, :non_streaming], _,
-                       metadata}
+                       _metadata}
 
-      assert metadata.model == perplexity.model
-      assert is_integer(metadata.response_size)
+      :telemetry.detach("test-grok-telemetry-events")
+    end
 
-      # Clean up telemetry handlers
-      :telemetry.detach("test-perplexity-telemetry-events")
+    test "LLM call start metadata does not contain messages (privacy)", %{
+      openai: openai,
+      test_messages: messages
+    } do
+      test_pid = self()
+
+      :telemetry.attach(
+        "test-no-messages-in-start",
+        [:langchain, :llm, :call, :start],
+        fn _name, _measurements, metadata, _config ->
+          send(test_pid, {:start_metadata, metadata})
+        end,
+        nil
+      )
+
+      {:ok, _response} = ChatOpenAI.call(openai, messages, [])
+
+      assert_received {:start_metadata, metadata}
+      refute Map.has_key?(metadata, :messages)
+      assert Map.has_key?(metadata, :message_count)
+
+      :telemetry.detach("test-no-messages-in-start")
+    end
+
+    test "call_id is present in start and stop events and is the same UUID", %{
+      openai: openai,
+      test_messages: messages
+    } do
+      test_pid = self()
+
+      :telemetry.attach_many(
+        "test-call-id-events",
+        [
+          [:langchain, :llm, :call, :start],
+          [:langchain, :llm, :call, :stop]
+        ],
+        fn name, _measurements, metadata, _config ->
+          send(test_pid, {:telemetry_event, name, metadata})
+        end,
+        nil
+      )
+
+      {:ok, _response} = ChatOpenAI.call(openai, messages, [])
+
+      assert_received {:telemetry_event, [:langchain, :llm, :call, :start], start_metadata}
+      assert_received {:telemetry_event, [:langchain, :llm, :call, :stop], stop_metadata}
+
+      # call_id is a valid UUID present in both events
+      assert is_binary(start_metadata.call_id)
+      assert byte_size(start_metadata.call_id) == 36
+      assert start_metadata.call_id == stop_metadata.call_id
+
+      :telemetry.detach("test-call-id-events")
+    end
+
+    test "LLM call stop event includes token_usage from enrich_stop", %{
+      openai: openai,
+      test_messages: messages
+    } do
+      test_pid = self()
+
+      :telemetry.attach_many(
+        "test-token-usage-stop",
+        [[:langchain, :llm, :call, :stop]],
+        fn name, _measurements, metadata, _config ->
+          send(test_pid, {:telemetry_event, name, metadata})
+        end,
+        nil
+      )
+
+      {:ok, _response} = ChatOpenAI.call(openai, messages, [])
+
+      assert_received {:telemetry_event, [:langchain, :llm, :call, :stop], stop_metadata}
+      assert %TokenUsage{input: 10, output: 20} = stop_metadata.token_usage
+
+      :telemetry.detach("test-token-usage-stop")
     end
 
     test "telemetry includes correct measurements", %{openai: openai, test_messages: messages} do
-      # Attach telemetry handlers
       test_pid = self()
 
       :telemetry.attach_many(
@@ -473,36 +480,403 @@ defmodule LangChain.ChatModels.TelemetryTest do
         nil
       )
 
-      # Call the model
       {:ok, _response} = ChatOpenAI.call(openai, messages, [])
 
-      # Verify measurements in events
       assert_received {:telemetry_measurements, [:langchain, :llm, :call, :start], measurements}
-      assert is_map(measurements)
       assert Map.has_key?(measurements, :system_time)
 
       assert_received {:telemetry_measurements, [:langchain, :llm, :prompt], measurements}
-      assert is_map(measurements)
       assert Map.has_key?(measurements, :system_time)
 
       assert_received {:telemetry_measurements, [:langchain, :llm, :response], measurements}
-      assert is_map(measurements)
       assert Map.has_key?(measurements, :system_time)
 
       assert_received {:telemetry_measurements, [:langchain, :llm, :response, :non_streaming],
                        measurements}
 
-      assert is_map(measurements)
       assert Map.has_key?(measurements, :system_time)
 
       assert_received {:telemetry_measurements, [:langchain, :llm, :call, :stop], measurements}
-      assert is_map(measurements)
       assert Map.has_key?(measurements, :system_time)
       assert Map.has_key?(measurements, :duration)
       assert is_integer(measurements.duration)
 
-      # Clean up telemetry handlers
       :telemetry.detach("test-measurement-telemetry-events")
+    end
+  end
+
+  describe "chain telemetry with custom_context" do
+    setup :verify_on_exit!
+
+    test "chain execution telemetry includes custom_context" do
+      test_pid = self()
+
+      ChatOpenAI
+      |> stub(:call, fn _model, _messages, _tools ->
+        {:ok, Message.new_assistant!("Test response")}
+      end)
+
+      Req
+      |> stub(:request, fn _req ->
+        {:ok, %Req.Response{status: 200, body: %{}}}
+      end)
+
+      :telemetry.attach_many(
+        "test-chain-custom-context",
+        [
+          [:langchain, :chain, :execute, :start],
+          [:langchain, :chain, :execute, :stop]
+        ],
+        fn name, _measurements, metadata, _config ->
+          send(test_pid, {:telemetry_event, name, metadata})
+        end,
+        nil
+      )
+
+      custom_ctx = %{user_id: "user-123", session_id: "sess-456"}
+
+      {:ok, _chain} =
+        LLMChain.new!(%{
+          llm: ChatOpenAI.new!(%{model: "gpt-4o-mini", api_key: "test-key"}),
+          custom_context: custom_ctx
+        })
+        |> LLMChain.add_message(Message.new_system!("You are helpful."))
+        |> LLMChain.add_message(Message.new_user!("Hello"))
+        |> LLMChain.run()
+
+      assert_received {:telemetry_event, [:langchain, :chain, :execute, :start], start_metadata}
+      assert start_metadata.custom_context == custom_ctx
+      assert start_metadata.chain_type == "llm_chain"
+
+      # call_id is shared between start and stop
+      assert_received {:telemetry_event, [:langchain, :chain, :execute, :stop], stop_metadata}
+      assert is_binary(start_metadata.call_id)
+      assert start_metadata.call_id == stop_metadata.call_id
+
+      :telemetry.detach("test-chain-custom-context")
+    end
+
+    test "chain stop event includes last_message and token_usage" do
+      test_pid = self()
+      usage = TokenUsage.new!(%{input: 15, output: 25})
+
+      ChatOpenAI
+      |> stub(:call, fn _model, _messages, _tools ->
+        {:ok, Message.new_assistant!(%{content: "Hello!", metadata: %{usage: usage}})}
+      end)
+
+      :telemetry.attach(
+        "test-chain-stop-enrichment",
+        [:langchain, :chain, :execute, :stop],
+        fn _name, _measurements, metadata, _config ->
+          send(test_pid, {:chain_stop, metadata})
+        end,
+        nil
+      )
+
+      {:ok, _chain} =
+        LLMChain.new!(%{
+          llm: ChatOpenAI.new!(%{model: "gpt-4o-mini", api_key: "test-key"})
+        })
+        |> LLMChain.add_message(Message.new_user!("Hi"))
+        |> LLMChain.run()
+
+      assert_received {:chain_stop, stop_metadata}
+      assert %Message{role: :assistant} = stop_metadata.last_message
+      assert %TokenUsage{input: 15, output: 25} = stop_metadata.token_usage
+
+      :telemetry.detach("test-chain-stop-enrichment")
+    end
+  end
+
+  describe "run_until_tool_used chain telemetry" do
+    setup :verify_on_exit!
+
+    test ":until_tool_used success path enriches stop with last_message and token_usage" do
+      test_pid = self()
+      usage = TokenUsage.new!(%{input: 30, output: 12})
+
+      # LLM immediately calls the target tool; the assistant message carries usage.
+      ChatOpenAI
+      |> expect(:call, fn _model, _messages, _tools ->
+        {:ok,
+         Message.new_assistant!(%{
+           tool_calls: [ToolCall.new!(%{call_id: "call_1", name: "do_thing", arguments: %{}})],
+           metadata: %{usage: usage}
+         })}
+      end)
+
+      {:ok, fun} =
+        Function.new(%{name: "do_thing", function: fn _args, _ctx -> {:ok, "done"} end})
+
+      :telemetry.attach(
+        "test-until-tool-stop",
+        [:langchain, :chain, :execute, :stop],
+        fn _name, _measurements, metadata, _config ->
+          send(test_pid, {:chain_stop, metadata})
+        end,
+        nil
+      )
+
+      assert {:ok, updated_chain, _tool_result} =
+               %{llm: ChatOpenAI.new!(%{stream: false}), verbose: false}
+               |> LLMChain.new!()
+               |> LLMChain.add_tools([fun])
+               |> LLMChain.add_message(Message.new_user!("call do_thing"))
+               |> LLMChain.run_until_tool_used("do_thing")
+
+      assert updated_chain.last_message.role == :tool
+
+      # Regression: the 3-tuple {:ok, chain, tool_result} previously fell through
+      # to the nil clause, dropping both of these from the chain :stop telemetry.
+      assert_received {:chain_stop, stop_metadata}
+      assert %Message{} = stop_metadata.last_message
+      assert %TokenUsage{input: 30, output: 12} = stop_metadata.token_usage
+
+      :telemetry.detach("test-until-tool-stop")
+    end
+  end
+
+  describe "chain token usage aggregation across turns" do
+    setup :verify_on_exit!
+
+    test "sums usage across all assistant messages, even when flagged cumulative (streaming)" do
+      test_pid = self()
+
+      # Two LLM turns, each reporting usage flagged `cumulative: true` — exactly what
+      # a streaming provider (e.g. Google AI) produces once its deltas are assembled
+      # into a message. The cumulative flag is a *delta-merge* signal for a single
+      # message; it must NOT cause an earlier turn to be discarded when the chain
+      # aggregates per-turn totals across the run.
+      turn1_usage = TokenUsage.new!(%{input: 100, output: 20, cumulative: true})
+      turn2_usage = TokenUsage.new!(%{input: 130, output: 15, cumulative: true})
+
+      ChatOpenAI
+      |> expect(:call, fn _model, _messages, _tools ->
+        {:ok,
+         Message.new_assistant!(%{
+           tool_calls: [ToolCall.new!(%{call_id: "call_1", name: "do_thing", arguments: %{}})],
+           metadata: %{usage: turn1_usage}
+         })}
+      end)
+      |> expect(:call, fn _model, _messages, _tools ->
+        {:ok, Message.new_assistant!(%{content: "All done", metadata: %{usage: turn2_usage}})}
+      end)
+
+      {:ok, fun} =
+        Function.new(%{name: "do_thing", function: fn _args, _ctx -> {:ok, "done"} end})
+
+      :telemetry.attach(
+        "test-chain-usage-aggregation",
+        [:langchain, :chain, :execute, :stop],
+        fn _name, _measurements, metadata, _config ->
+          send(test_pid, {:chain_stop, metadata})
+        end,
+        nil
+      )
+
+      {:ok, _chain} =
+        %{llm: ChatOpenAI.new!(%{stream: false}), verbose: false}
+        |> LLMChain.new!()
+        |> LLMChain.add_tools([fun])
+        |> LLMChain.add_message(Message.new_user!("please call do_thing"))
+        |> LLMChain.run(mode: :while_needs_response)
+
+      # 100 + 130 input and 20 + 15 output: the first turn is NOT lost despite both
+      # turns being flagged cumulative. (Before the fix this reported {130, 15}.)
+      assert_received {:chain_stop, stop_metadata}
+      assert %TokenUsage{input: 230, output: 35} = stop_metadata.token_usage
+
+      :telemetry.detach("test-chain-usage-aggregation")
+    end
+
+    test "reused chain reports only the current run's usage on :stop (no cross-run over-count)" do
+      test_pid = self()
+      run1_usage = TokenUsage.new!(%{input: 100, output: 20})
+      run2_usage = TokenUsage.new!(%{input: 40, output: 8})
+
+      ChatOpenAI
+      |> expect(:call, fn _model, _messages, _tools ->
+        {:ok, Message.new_assistant!(%{content: "First", metadata: %{usage: run1_usage}})}
+      end)
+      |> expect(:call, fn _model, _messages, _tools ->
+        {:ok, Message.new_assistant!(%{content: "Second", metadata: %{usage: run2_usage}})}
+      end)
+
+      :telemetry.attach(
+        "test-chain-reuse-usage",
+        [:langchain, :chain, :execute, :stop],
+        fn _name, _measurements, metadata, _config ->
+          send(test_pid, {:chain_stop, metadata})
+        end,
+        nil
+      )
+
+      {:ok, chain} =
+        %{llm: ChatOpenAI.new!(%{stream: false}), verbose: false}
+        |> LLMChain.new!()
+        |> LLMChain.add_message(Message.new_user!("Hi"))
+        |> LLMChain.run()
+
+      # First run reports its own usage.
+      assert_received {:chain_stop, run1_metadata}
+      assert %TokenUsage{input: 100, output: 20} = run1_metadata.token_usage
+
+      # Reuse the SAME chain (the normal add_message |> run agent loop) for a
+      # second run. Its :stop event must report ONLY this run's usage — not run
+      # 1's as well. Before the fix (which aggregated `chain.messages`, the whole
+      # history) this reported {140, 28}, re-counting the earlier turn.
+      {:ok, _chain} =
+        chain
+        |> LLMChain.add_message(Message.new_user!("Again"))
+        |> LLMChain.run()
+
+      assert_received {:chain_stop, run2_metadata}
+      assert %TokenUsage{input: 40, output: 8} = run2_metadata.token_usage
+
+      :telemetry.detach("test-chain-reuse-usage")
+    end
+  end
+
+  describe "tool call telemetry with custom_context" do
+    setup :verify_on_exit!
+
+    test "tool call telemetry includes custom_context" do
+      test_pid = self()
+
+      :telemetry.attach_many(
+        "test-tool-custom-context",
+        [
+          [:langchain, :tool, :call, :start],
+          [:langchain, :tool, :call, :stop]
+        ],
+        fn name, _measurements, metadata, _config ->
+          send(test_pid, {:telemetry_event, name, metadata})
+        end,
+        nil
+      )
+
+      custom_ctx = %{user_id: "user-123", trace_id: "trace-789"}
+
+      {:ok, fun} =
+        Function.new(%{name: "hello", function: fn _args, _ctx -> "world" end})
+
+      call = ToolCall.new!(%{call_id: "call-1", name: "hello", arguments: %{}})
+
+      LLMChain.execute_tool_call(call, fun, context: custom_ctx)
+
+      assert_received {:telemetry_event, [:langchain, :tool, :call, :start], start_metadata}
+      assert start_metadata.tool_name == "hello"
+      assert start_metadata.custom_context == custom_ctx
+
+      assert_received {:telemetry_event, [:langchain, :tool, :call, :stop], stop_metadata}
+      assert start_metadata.call_id == stop_metadata.call_id
+
+      :telemetry.detach("test-tool-custom-context")
+    end
+  end
+
+  describe "ChatModel.provider/1 fallback" do
+    defmodule ChatFakeProvider do
+      @moduledoc false
+      defstruct [:model]
+    end
+
+    defmodule ChatSomethingCustom do
+      @moduledoc false
+      defstruct [:model]
+    end
+
+    test "derives provider from module name when provider/0 is not implemented" do
+      assert ChatModel.provider(%ChatFakeProvider{}) == "fake_provider"
+    end
+
+    test "strips Chat prefix and underscores the remainder" do
+      assert ChatModel.provider(%ChatSomethingCustom{}) == "something_custom"
+    end
+
+    test "dispatches to provider/0 when implemented" do
+      openai = ChatOpenAI.new!(%{model: "gpt-4o-mini", api_key: "test-key"})
+      assert ChatModel.provider(openai) == "openai"
+    end
+  end
+
+  describe "ChatModel.token_usage_from_result/1" do
+    test "extracts token_usage from a single message result" do
+      usage = TokenUsage.new!(%{input: 5, output: 10})
+      msg = Message.new_assistant!(%{content: "hi", metadata: %{usage: usage}})
+
+      assert %{token_usage: ^usage} = ChatModel.token_usage_from_result({:ok, msg})
+    end
+
+    test "extracts token_usage from a list of messages" do
+      usage = TokenUsage.new!(%{input: 5, output: 10})
+      msg1 = Message.new_assistant!("no usage here")
+      msg2 = Message.new_assistant!(%{content: "hi", metadata: %{usage: usage}})
+
+      assert %{token_usage: ^usage} = ChatModel.token_usage_from_result({:ok, [msg1, msg2]})
+    end
+
+    test "returns nil token_usage for error results" do
+      assert %{token_usage: nil} = ChatModel.token_usage_from_result({:error, "something"})
+    end
+
+    test "returns nil token_usage when message has no usage metadata" do
+      msg = Message.new_assistant!("plain response")
+      assert %{token_usage: nil} = ChatModel.token_usage_from_result({:ok, msg})
+    end
+  end
+
+  describe "time-to-first-token streaming event" do
+    setup do
+      test_pid = self()
+      handler_id = "ttft-emit-#{System.unique_integer([:positive])}"
+
+      :telemetry.attach(
+        handler_id,
+        [:langchain, :llm, :stream, :first_token],
+        fn _event, measurements, metadata, _ ->
+          send(test_pid, {:first_token, measurements, metadata})
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+      %{model: ChatOpenAI.new!(%{model: "gpt-4o", stream: true})}
+    end
+
+    test "emits exactly one first_token event on the first delta of a streaming call", %{
+      model: model
+    } do
+      # `llm_telemetry_span/3` primes the per-call timer; the shared streamed
+      # callback fires the event when the first `%MessageDelta{}` arrives.
+      ChatModel.llm_telemetry_span(model, %{model: model.model, provider: "openai"}, fn ->
+        LangChain.Utils.fire_streamed_callback(model, [
+          MessageDelta.new!(%{role: :assistant, content: "Hel", status: :incomplete})
+        ])
+
+        LangChain.Utils.fire_streamed_callback(model, [
+          MessageDelta.new!(%{content: "lo", status: :incomplete})
+        ])
+
+        {:ok, Message.new_assistant!(%{content: "Hello"})}
+      end)
+
+      assert_received {:first_token, %{duration: duration}, metadata}
+      assert is_integer(duration) and duration >= 0
+      assert metadata.model == "gpt-4o"
+      assert metadata.provider == "openai"
+
+      # Only the FIRST delta emits — the second must not.
+      refute_received {:first_token, _, _}
+    end
+
+    test "does not emit when a call streams no deltas", %{model: model} do
+      ChatModel.llm_telemetry_span(model, %{model: model.model, provider: "openai"}, fn ->
+        {:ok, Message.new_assistant!(%{content: "non-streaming style"})}
+      end)
+
+      refute_received {:first_token, _, _}
     end
   end
 end

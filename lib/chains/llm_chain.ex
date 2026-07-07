@@ -633,23 +633,29 @@ defmodule LangChain.Chains.LLMChain do
         chain_type: "llm_chain",
         mode: Keyword.get(opts, :mode, "default"),
         message_count: length(chain.messages),
-        tool_count: length(chain.tools)
+        tools_count: length(chain.tools),
+        custom_context: chain.custom_context
       }
 
       result =
-        LangChain.Telemetry.span([:langchain, :chain, :execute], metadata, fn ->
-          # Run the chain and return the success or error results. NOTE: We do not add
-          # the current LLM to the list and process everything through a single
-          # codepath because failing after attempted fallbacks returns a different
-          # error.
-          if Keyword.has_key?(opts, :with_fallbacks) do
-            # run function and using fallbacks as needed.
-            with_fallbacks(chain, opts, function_to_run)
-          else
-            # run it directly right now and return the success or error
-            function_to_run.(chain)
-          end
-        end)
+        LangChain.Telemetry.span(
+          [:langchain, :chain, :execute],
+          metadata,
+          fn ->
+            # Run the chain and return the success or error results. NOTE: We do not add
+            # the current LLM to the list and process everything through a single
+            # codepath because failing after attempted fallbacks returns a different
+            # error.
+            if Keyword.has_key?(opts, :with_fallbacks) do
+              # run function and using fallbacks as needed.
+              with_fallbacks(chain, opts, function_to_run)
+            else
+              # run it directly right now and return the success or error
+              function_to_run.(chain)
+            end
+          end,
+          enrich_stop: &chain_stop_metadata/1
+        )
 
       case result do
         {:error, error_chain, reason} ->
@@ -665,6 +671,51 @@ defmodule LangChain.Chains.LLMChain do
         {:error, chain, err}
     end
   end
+
+  defp chain_stop_metadata({:ok, %LLMChain{} = chain}), do: chain_stop_from_chain(chain)
+
+  # `:until_tool_used` terminates with a 3-tuple `{:ok, chain, tool_result}` when
+  # the target tool is found (the common success path). Enrich from the chain the
+  # same way so this path doesn't lose `last_message`/aggregated token usage.
+  defp chain_stop_metadata({:ok, %LLMChain{} = chain, _extra}), do: chain_stop_from_chain(chain)
+
+  defp chain_stop_metadata(_result), do: %{last_message: nil, token_usage: nil}
+
+  defp chain_stop_from_chain(%LLMChain{last_message: %Message{} = msg} = chain) do
+    # Aggregate token usage across the assistant messages produced by *this run*
+    # — not the whole conversation history. A single run can make several LLM
+    # calls (e.g. a tool-call loop), and each contributes usage that would be
+    # lost if we only read the last message. But summing `chain.messages` would
+    # re-count every earlier turn each time a persisted chain is run again (the
+    # normal `add_message |> run` agent loop), inflating the per-run `:stop`
+    # event. `exchanged_messages` is reset at the start of every run and holds
+    # only the messages exchanged during it, which is exactly this run's scope.
+    token_usage = aggregate_token_usage(chain.exchanged_messages)
+    %{last_message: msg, token_usage: token_usage}
+  end
+
+  defp chain_stop_from_chain(_chain), do: %{last_message: nil, token_usage: nil}
+
+  defp aggregate_token_usage(messages) do
+    messages
+    |> Enum.reduce(nil, fn
+      %Message{role: :assistant} = msg, acc ->
+        # Each assembled assistant message's usage is already the final total for
+        # that message. The `:cumulative` flag is a *delta-merge* signal — it tells
+        # `TokenUsage.add/2` that a streaming delta already includes the prior
+        # deltas of the *same* message. Carried across messages it makes `add/2`
+        # discard the accumulator and keep only the latest turn, so strip it before
+        # summing per-turn totals. (Streaming providers such as Google AI set it.)
+        usage = msg |> LangChain.TokenUsage.get() |> clear_cumulative()
+        LangChain.TokenUsage.add(acc, usage)
+
+      _, acc ->
+        acc
+    end)
+  end
+
+  defp clear_cumulative(%LangChain.TokenUsage{} = usage), do: %{usage | cumulative: false}
+  defp clear_cumulative(other), do: other
 
   defp initial_run_logging(%LLMChain{verbose: false} = _chain), do: :ok
 
@@ -821,13 +872,19 @@ defmodule LangChain.Chains.LLMChain do
         chain_type: "llm_chain",
         mode: "run_until_tool_used",
         message_count: length(chain.messages),
-        tool_count: length(chain.tools)
+        tools_count: length(chain.tools),
+        custom_context: chain.custom_context
       }
 
       result =
-        LangChain.Telemetry.span([:langchain, :chain, :execute], metadata, fn ->
-          Modes.UntilToolUsed.run(chain, mode_opts)
-        end)
+        LangChain.Telemetry.span(
+          [:langchain, :chain, :execute],
+          metadata,
+          fn ->
+            Modes.UntilToolUsed.run(chain, mode_opts)
+          end,
+          enrich_stop: &chain_stop_metadata/1
+        )
 
       case result do
         {:error, error_chain, reason} ->
@@ -1429,7 +1486,19 @@ defmodule LangChain.Chains.LLMChain do
       async_results =
         grouped[:async]
         |> Enum.map(fn {call, func} ->
+          # Capture the current OpenTelemetry context in THIS (parent) process. It
+          # lives in the process dictionary and is NOT inherited by a spawned Task,
+          # so without this the async tool's span would orphan into its own root
+          # trace instead of nesting under the chain span. Re-attached inside the
+          # Task below. No-op (returns nil) when OTel isn't loaded or set up.
+          otel_ctx = capture_otel_context()
+
           Task.async(fn ->
+            # Re-attach the parent OTel context before anything telemetry-bearing
+            # runs, so the tool-call span (opened inside execute_tool_call) and any
+            # callback work parent correctly.
+            attach_otel_context(otel_ctx)
+
             # Fires inside the spawned Task so handlers (e.g. tenancy/OTel
             # propagation) can re-apply per-process state before the tool runs.
             Callbacks.fire(chain.callbacks, :on_tool_pre_execution, [chain, call, func])
@@ -1764,6 +1833,27 @@ defmodule LangChain.Chains.LLMChain do
     %{chain | messages: updated_messages}
   end
 
+  # Best-effort OpenTelemetry context propagation for async tools. LangChain does
+  # not depend on OpenTelemetry, so these dispatch at runtime only when the
+  # `opentelemetry_api` module is actually loaded (i.e. the host app opted into
+  # OTel). Otherwise they are no-ops and cost only a cached `ensure_loaded?` check.
+  # `apply/3` keeps `OpenTelemetry.Ctx` from being a compile-time dependency.
+  defp capture_otel_context do
+    if Code.ensure_loaded?(OpenTelemetry.Ctx) do
+      apply(OpenTelemetry.Ctx, :get_current, [])
+    end
+  end
+
+  defp attach_otel_context(nil), do: :ok
+
+  defp attach_otel_context(ctx) do
+    if Code.ensure_loaded?(OpenTelemetry.Ctx) do
+      apply(OpenTelemetry.Ctx, :attach, [ctx])
+    end
+
+    :ok
+  end
+
   @doc """
   Execute the tool call with the tool. Returns the tool's message response.
   """
@@ -1775,8 +1865,15 @@ defmodule LangChain.Chains.LLMChain do
     metadata = %{
       tool_name: function.name,
       tool_call_id: call.call_id,
-      async: function.async
+      tool_description: function.description,
+      async: function.async,
+      custom_context: context,
+      arguments: call.arguments
     }
+
+    enrich_stop = fn result ->
+      %{tool_result: result}
+    end
 
     # Enrich the context with the current call's tool_call_id so tool
     # implementations can correlate side-effects (e.g. spawned sub-processes)
@@ -1788,80 +1885,85 @@ defmodule LangChain.Chains.LLMChain do
         other -> other
       end
 
-    LangChain.Telemetry.span([:langchain, :tool, :call], metadata, fn ->
-      try do
-        if verbose, do: IO.inspect(function.name, label: "EXECUTING FUNCTION")
+    LangChain.Telemetry.span(
+      [:langchain, :tool, :call],
+      metadata,
+      fn ->
+        try do
+          if verbose, do: IO.inspect(function.name, label: "EXECUTING FUNCTION")
 
-        case Function.execute(function, call.arguments, enriched_context) do
-          {:ok, %ToolResult{} = result} ->
-            # allow the tool execution to return a ToolResult. Just set the
-            # tool_call_id and fallback settings for name and display_text. This
-            # allows the tool to explicitly set the options for the ToolResult.
-            %{
-              result
-              | tool_call_id: call.call_id,
-                name: result.name || function.name,
-                display_text: result.display_text || function.display_text
-            }
+          case Function.execute(function, call.arguments, enriched_context) do
+            {:ok, %ToolResult{} = result} ->
+              # allow the tool execution to return a ToolResult. Just set the
+              # tool_call_id and fallback settings for name and display_text. This
+              # allows the tool to explicitly set the options for the ToolResult.
+              %{
+                result
+                | tool_call_id: call.call_id,
+                  name: result.name || function.name,
+                  display_text: result.display_text || function.display_text
+              }
 
-          {:ok, llm_result, processed_result} ->
-            if verbose, do: IO.inspect(processed_result, label: "FUNCTION PROCESSED RESULT")
-            # successful execution and storage of processed_content.
+            {:ok, llm_result, processed_result} ->
+              if verbose, do: IO.inspect(processed_result, label: "FUNCTION PROCESSED RESULT")
+              # successful execution and storage of processed_content.
+              ToolResult.new!(%{
+                tool_call_id: call.call_id,
+                content: llm_result,
+                processed_content: processed_result,
+                name: function.name,
+                display_text: function.display_text
+              })
+
+            {:ok, result} ->
+              if verbose, do: IO.inspect(result, label: "FUNCTION RESULT")
+              # successful execution.
+              ToolResult.new!(%{
+                tool_call_id: call.call_id,
+                content: result,
+                name: function.name,
+                display_text: function.display_text
+              })
+
+            {:interrupt, display_message, interrupt_data} ->
+              if verbose, do: IO.inspect(display_message, label: "FUNCTION INTERRUPTED")
+
+              ToolResult.new!(%{
+                tool_call_id: call.call_id,
+                content: display_message,
+                name: function.name,
+                display_text: function.display_text,
+                is_interrupt: true,
+                interrupt_data: interrupt_data
+              })
+
+            {:error, reason} when is_binary(reason) ->
+              if verbose, do: IO.inspect(reason, label: "FUNCTION ERROR")
+
+              ToolResult.new!(%{
+                tool_call_id: call.call_id,
+                content: reason,
+                name: function.name,
+                display_text: function.display_text,
+                is_error: true
+              })
+          end
+        rescue
+          err ->
+            Logger.warning(fn ->
+              "Function #{function.name} failed in execution. Exception: #{LangChainError.format_exception(err, __STACKTRACE__)}"
+            end)
+
             ToolResult.new!(%{
               tool_call_id: call.call_id,
-              content: llm_result,
-              processed_content: processed_result,
               name: function.name,
-              display_text: function.display_text
-            })
-
-          {:ok, result} ->
-            if verbose, do: IO.inspect(result, label: "FUNCTION RESULT")
-            # successful execution.
-            ToolResult.new!(%{
-              tool_call_id: call.call_id,
-              content: result,
-              name: function.name,
-              display_text: function.display_text
-            })
-
-          {:interrupt, display_message, interrupt_data} ->
-            if verbose, do: IO.inspect(display_message, label: "FUNCTION INTERRUPTED")
-
-            ToolResult.new!(%{
-              tool_call_id: call.call_id,
-              content: display_message,
-              name: function.name,
-              display_text: function.display_text,
-              is_interrupt: true,
-              interrupt_data: interrupt_data
-            })
-
-          {:error, reason} when is_binary(reason) ->
-            if verbose, do: IO.inspect(reason, label: "FUNCTION ERROR")
-
-            ToolResult.new!(%{
-              tool_call_id: call.call_id,
-              content: reason,
-              name: function.name,
-              display_text: function.display_text,
+              content: "ERROR executing tool: #{inspect(err)}",
               is_error: true
             })
         end
-      rescue
-        err ->
-          Logger.warning(fn ->
-            "Function #{function.name} failed in execution. Exception: #{LangChainError.format_exception(err, __STACKTRACE__)}"
-          end)
-
-          ToolResult.new!(%{
-            tool_call_id: call.call_id,
-            name: function.name,
-            content: "ERROR executing tool: #{inspect(err)}",
-            is_error: true
-          })
-      end
-    end)
+      end,
+      enrich_stop: enrich_stop
+    )
   end
 
   @doc """

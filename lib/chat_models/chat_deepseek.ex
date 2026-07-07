@@ -513,11 +513,12 @@ defmodule LangChain.ChatModels.ChatDeepSeek do
   def call(%ChatDeepSeek{} = deepseek, messages, tools) when is_list(messages) do
     metadata = %{
       model: deepseek.model,
+      provider: provider(),
       message_count: length(messages),
       tools_count: length(tools)
     }
 
-    LangChain.Telemetry.span([:langchain, :llm, :call], metadata, fn ->
+    ChatModel.llm_telemetry_span(deepseek, metadata, fn ->
       try do
         # Track the prompt being sent
         LangChain.Telemetry.llm_prompt(
@@ -1220,6 +1221,9 @@ defmodule LangChain.ChatModels.ChatDeepSeek do
   end
 
   defp get_token_usage(_response_body), do: nil
+
+  @impl ChatModel
+  def provider, do: "deepseek"
 
   @doc """
   Determine if an error should be retried. If `true`, a fallback LLM may be
