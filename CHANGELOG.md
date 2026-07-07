@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.9.0
+
+Adds an opt-in **OpenTelemetry** integration that turns LangChain's existing `:telemetry` events into [GenAI-semantic-convention](https://opentelemetry.io/docs/specs/semconv/gen-ai/) spans and metrics — ready to export to Langfuse, Honeycomb, Grafana Tempo, Jaeger, or any OTLP collector. The work also hardens the underlying telemetry surface and fixes several token-usage bugs it uncovered along the way. See the [Observability guide](guides/observability.md) and [PR #472](https://github.com/brainlid/langchain/pull/472) for full details.
+
+**This release contains breaking changes** for code that attaches to LangChain's `:telemetry` events or implements a custom `ChatModel`. Normal chain/LLM usage is unaffected — no public function signatures changed.
+
+### Upgrading from v0.8.14 - v0.9.0
+
+These only matter if you attach telemetry handlers or implement a custom chat model:
+
+- **Chain telemetry metadata key `tool_count` → `tools_count`.** The `[:langchain, :chain, :execute, *]` events now emit `:tools_count`, aligning with the key the `[:langchain, :llm, :call, *]` events already used across every chat model. If you read `metadata.tool_count` in a chain-event handler, rename it to `tools_count`.
+- **`ChatGrok` `message.metadata.usage` is now a `%LangChain.TokenUsage{}`** (`input`/`output`/`raw`) instead of the raw provider map, matching every other provider. Code reading `msg.metadata.usage["prompt_tokens"]` off a Grok message must switch to `.input`/`.output` (or `TokenUsage.get/1`).
+- **Per-model response events renamed** from the malformed keyword form `[:langchain, :llm, :response, streaming: true | false]` to `[:langchain, :llm, :response, :streaming]` and `[:langchain, :llm, :response, :non_streaming]` (affects `ChatAnthropic`, `ChatBumblebee`, `ChatGoogleAI`). Re-attach handlers to the new names.
+- **New optional `ChatModel.provider/0` callback.** Declared with `@optional_callbacks`, so existing custom chat models continue to compile and run unchanged (their provider is derived from the module name). Implement `provider/0` to return a canonical provider string.
+
+See the PR description for the full list of additive/behavior-change notes (new `:call_id`, `custom_context`, `request_options`, `endpoint`, and time-to-first-token metadata). https://github.com/brainlid/langchain/pull/472
+
+### Added
+
+- **OpenTelemetry GenAI integration** (`LangChain.OpenTelemetry`): an opt-in, zero-overhead-when-absent layer that emits GenAI-semconv spans and metrics from LangChain's telemetry events, with privacy-safe defaults (message/tool content capture is off by default). Ships with an [Observability guide](guides/observability.md), a runnable Livebook, and expanded `LangChain.Telemetry` docs. `:opentelemetry_api` is an optional dependency; the integration compiles only when it's present. https://github.com/brainlid/langchain/pull/472
+
+### Changed
+
+- **Telemetry surface hardened**: LLM-call telemetry is funneled through a single `ChatModel.llm_telemetry_span/3` chokepoint so no provider can silently drop token usage; every event now carries a `:call_id`, and `[:langchain, *, :exception]` events fire on `throw`/`exit` (not just `raise`) and carry a `duration`. https://github.com/brainlid/langchain/pull/472
+- **CI**: Bumped `actions/cache` (and its `restore`/`save` sub-actions) from 5.0.5 to 6.1.0. https://github.com/brainlid/langchain/pull/572 https://github.com/brainlid/langchain/pull/573 https://github.com/brainlid/langchain/pull/574
+
+### Fixed
+
+- **`ChatMistralAI` and `ChatPerplexity` now persist token usage onto the returned message.** Both fired the `:on_llm_token_usage` callback but never set `msg.metadata.usage`, so `TokenUsage.get/1` returned `nil` for every non-streaming response — any caller reading usage/cost off those messages got nothing. Usage is now attached via `TokenUsage.set/2`. https://github.com/brainlid/langchain/pull/472
+- **Streaming token usage now reaches the `:stop` telemetry and OTel spans.** Usage extraction only matched `%Message{}` results and missed the `%MessageDelta{}` (and Mistral's list-of-lists batched) shapes that streaming returns, reporting `nil` usage at the call boundary. https://github.com/brainlid/langchain/pull/472
+
 ## v0.8.14
 
 A streaming-compatibility fix for OpenAI-compatible providers that emit SSE comment lines (notably OpenRouter's `: OPENROUTER PROCESSING` keep-alives). No breaking changes.
