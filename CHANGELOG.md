@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.9.1
+
+A patch release that fixes tool-call serialization when a `ToolCall`'s arguments are still an unparsed string. No breaking changes.
+
+### Fixed
+
+- **`ToolCall` arguments are normalized to a map when serializing tool calls.** A `ToolCall` whose `arguments` never reached `status: :complete` (a persisted/replayed `:incomplete` call, a truncated stream, or an empty-string zero-argument call) still held a raw JSON string. `ChatAnthropic`, `ChatGoogleAI`, and `ChatVertexAI` passed that string straight through, so Anthropic rejected the request with `tool_use.input: Input should be an object` (Google/Vertex sent `args: nil`). A shared `ToolCall.arguments_as_map/1` helper now normalizes any shape (map, JSON string, nil, empty/invalid string) to a map at the serialization boundary. Fixes #580. https://github.com/brainlid/langchain/pull/581
+
 ## v0.9.0
 
 Adds an opt-in **OpenTelemetry** integration that turns LangChain's existing `:telemetry` events into [GenAI-semantic-convention](https://opentelemetry.io/docs/specs/semconv/gen-ai/) spans and metrics — ready to export to Langfuse, Honeycomb, Grafana Tempo, Jaeger, or any OTLP collector. The work also hardens the underlying telemetry surface and fixes several token-usage bugs it uncovered along the way. See the [Observability guide](guides/observability.md) and [PR #472](https://github.com/brainlid/langchain/pull/472) for full details.
