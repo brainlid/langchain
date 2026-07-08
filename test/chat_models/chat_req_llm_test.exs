@@ -12,6 +12,7 @@ if Code.ensure_loaded?(ReqLLM) do
     alias LangChain.MessageDelta
     alias LangChain.TokenUsage
     alias LangChain.Function
+    alias LangChain.FunctionParam
     alias LangChain.LangChainError
 
     # The Anthropic-based req_llm model string for live tests
@@ -502,6 +503,89 @@ if Code.ensure_loaded?(ReqLLM) do
         assert tool.name == "get_weather"
         assert tool.description == "Get current weather"
         assert tool.parameter_schema == fun.parameters_schema
+      end
+
+      test "defaults strict to false when not set on the Function" do
+        fun =
+          Function.new!(%{
+            name: "get_weather",
+            description: "Get current weather",
+            function: fn _, _ -> {:ok, "sunny"} end
+          })
+
+        assert %ReqLLM.Tool{strict: false} = ChatReqLLM.function_to_req_llm_tool(fun)
+      end
+
+      test "passes strict: true through to the ReqLLM.Tool" do
+        fun =
+          Function.new!(%{
+            name: "get_weather",
+            description: "Get current weather",
+            strict: true,
+            parameters_schema: %{
+              "type" => "object",
+              "properties" => %{"city" => %{"type" => "string"}},
+              "required" => ["city"]
+            },
+            function: fn _, _ -> {:ok, "sunny"} end
+          })
+
+        assert %ReqLLM.Tool{strict: true} = ChatReqLLM.function_to_req_llm_tool(fun)
+      end
+
+      test "strict tool serializes with strict: true in OpenAI format" do
+        fun =
+          Function.new!(%{
+            name: "get_weather",
+            description: "Get current weather",
+            strict: true,
+            parameters_schema: %{
+              "type" => "object",
+              "properties" => %{"city" => %{"type" => "string"}},
+              "required" => ["city"]
+            },
+            function: fn _, _ -> {:ok, "sunny"} end
+          })
+
+        assert %{"function" => %{"strict" => true}} =
+                 fun
+                 |> ChatReqLLM.function_to_req_llm_tool()
+                 |> ReqLLM.Tool.to_schema(:openai)
+      end
+
+      test "maps a Function defined with FunctionParam list to a parameter schema" do
+        fun =
+          Function.new!(%{
+            name: "set_user_name",
+            description: "Sets the user name",
+            parameters: [
+              FunctionParam.new!(%{name: "user_name", type: :string, required: true})
+            ],
+            function: fn _, _ -> {:ok, "ok"} end
+          })
+
+        tool = ChatReqLLM.function_to_req_llm_tool(fun)
+
+        assert %ReqLLM.Tool{} = tool
+
+        assert %{
+                 "type" => "object",
+                 "properties" => %{"user_name" => %{"type" => "string"}},
+                 "required" => ["user_name"]
+               } = tool.parameter_schema
+      end
+
+      test "maps a Function with no parameters to an empty object schema" do
+        fun =
+          Function.new!(%{
+            name: "get_current_user_info",
+            description: "Returns current user info",
+            function: fn _, _ -> {:ok, "ok"} end
+          })
+
+        tool = ChatReqLLM.function_to_req_llm_tool(fun)
+
+        assert %{"type" => "object", "properties" => %{}} = tool.parameter_schema
       end
 
       test "stub callback returns {:ok, stub}" do

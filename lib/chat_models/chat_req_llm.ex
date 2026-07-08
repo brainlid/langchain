@@ -90,6 +90,7 @@ if Code.ensure_loaded?(ReqLLM) do
     alias LangChain.MessageDelta
     alias LangChain.TokenUsage
     alias LangChain.Function
+    alias LangChain.FunctionParam
     alias LangChain.Callbacks
     alias LangChain.Utils
 
@@ -895,17 +896,38 @@ if Code.ensure_loaded?(ReqLLM) do
 
     The stub callback is never invoked in normal LangChain operation — the tool
     definition is only used for schema generation (telling the LLM what tools exist).
+
+    The `:strict` flag is passed through so providers that support it (e.g. OpenAI
+    structured outputs) can enforce the parameter schema. Both the `:parameters`
+    (list of `LangChain.FunctionParam`) and `:parameters_schema` (raw JSONSchema
+    map) forms are supported, mirroring `LangChain.ChatModels.ChatOpenAI`.
     """
     @spec function_to_req_llm_tool(Function.t()) :: ReqLLM.Tool.t()
     def function_to_req_llm_tool(%Function{} = fun) do
-      schema = fun.parameters_schema || %{}
-
       ReqLLM.Tool.new!(
         name: fun.name,
         description: fun.description || "",
-        parameter_schema: schema,
+        parameter_schema: get_parameter_schema(fun),
+        strict: fun.strict,
         callback: fn _ -> {:ok, "stub"} end
       )
+    end
+
+    # Build the JSONSchema parameter map for a Function, supporting both the
+    # `:parameters` (FunctionParam list) and `:parameters_schema` (raw map) forms.
+    # Mirrors `LangChain.ChatModels.ChatOpenAI.get_parameters/1`.
+    @spec get_parameter_schema(Function.t()) :: map()
+    defp get_parameter_schema(%Function{parameters: [], parameters_schema: nil}) do
+      %{"type" => "object", "properties" => %{}}
+    end
+
+    defp get_parameter_schema(%Function{parameters: [], parameters_schema: schema})
+         when is_map(schema) do
+      schema
+    end
+
+    defp get_parameter_schema(%Function{parameters: params}) do
+      FunctionParam.to_parameters_schema(params)
     end
 
     defp media_to_mime(:png), do: "image/png"
