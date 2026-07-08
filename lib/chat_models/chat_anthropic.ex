@@ -1732,7 +1732,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       "type" => "tool_use",
       "id" => call.call_id,
       "name" => call.name,
-      "input" => call.arguments || %{}
+      "input" => ToolCall.arguments_as_map(call)
     }
   end
 
