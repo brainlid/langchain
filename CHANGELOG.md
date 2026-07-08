@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.9.2
+
+A patch release that brings the `ChatReqLLM` backend to parity with `ChatOpenAI` for tool definitions. No breaking changes.
+
+### Added
+
+- **`ChatReqLLM` now maps a `Function`'s `:strict` flag and `FunctionParam` syntax onto the ReqLLM tool.** Tools defined with a `:parameters` list of `LangChain.FunctionParam` structs previously produced an empty schema, and `fun.strict` was dropped entirely. Both parameter forms (`:parameters` and raw `:parameters_schema`) are now supported, and `strict:` is passed through so providers like OpenAI can enforce structured-output schemas. https://github.com/brainlid/langchain/pull/583
+
 ## v0.9.1
 
 A patch release that fixes tool-call serialization when a `ToolCall`'s arguments are still an unparsed string. No breaking changes.
