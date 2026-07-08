@@ -3485,6 +3485,35 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       assert json == expected
     end
 
+    test "normalizes string arguments to a JSON object for tool_use input" do
+      # A ToolCall whose arguments never went through completion still holds a
+      # raw JSON string. It must be serialized as an object, not a string, or
+      # Anthropic rejects the request with "Input should be an object".
+      call = %ToolCall{
+        status: :incomplete,
+        type: :function,
+        call_id: "toolu_123",
+        name: "create_task",
+        arguments: ~s({"title":"x"})
+      }
+
+      assert %{"input" => %{"title" => "x"}} = ChatAnthropic.for_api(call)
+    end
+
+    test "normalizes empty-string arguments to an empty object for tool_use input" do
+      # `"" || %{}` is `""`, so an empty-string accumulation slips through the
+      # old guard. A zero-argument tool call must send an empty object.
+      call = %ToolCall{
+        status: :incomplete,
+        type: :function,
+        call_id: "toolu_123",
+        name: "ping",
+        arguments: ""
+      }
+
+      assert %{"input" => %{}} = ChatAnthropic.for_api(call)
+    end
+
     test "turns a tool result into expected JSON format" do
       tool_success_result = ToolResult.new!(%{tool_call_id: "toolu_123", content: "tool answer"})
 

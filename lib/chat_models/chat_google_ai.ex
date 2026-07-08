@@ -394,7 +394,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
       when is_binary(signature) do
     %{
       "functionCall" => %{
-        "args" => call.arguments,
+        "args" => ToolCall.arguments_as_map(call),
         "name" => call.name
       },
       "thoughtSignature" => signature
@@ -404,7 +404,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   def for_api(%ToolCall{} = call) do
     %{
       "functionCall" => %{
-        "args" => call.arguments,
+        "args" => ToolCall.arguments_as_map(call),
         "name" => call.name
       }
     }

@@ -86,6 +86,51 @@ defmodule LangChain.Message.ToolCall do
     |> apply_action(:insert)
   end
 
+  @doc """
+  Return the tool call's `arguments` as a map, suitable for serializing to a
+  provider API that expects a JSON object.
+
+  `arguments` are only parsed from a JSON string into a map by `complete/1` (via
+  `validate_and_parse_arguments/1`), which runs when a tool call reaches
+  `status: :complete`. A tool call that is serialized without going through that
+  path (e.g. a persisted/replayed `:incomplete` call, or one accumulated from a
+  truncated stream) can still hold a raw string. Passing that string to a
+  provider results in an API error like Anthropic's "Input should be an object".
+
+  This normalizes any shape into a map:
+
+    * a map is returned unchanged
+    * a JSON-object string is decoded
+    * `nil`, an empty string, and undecodable/non-object strings become `%{}`
+
+  ## Examples
+
+      iex> LangChain.Message.ToolCall.arguments_as_map(%LangChain.Message.ToolCall{arguments: %{"a" => 1}})
+      %{"a" => 1}
+
+      iex> LangChain.Message.ToolCall.arguments_as_map(%LangChain.Message.ToolCall{arguments: ~s({"a":1})})
+      %{"a" => 1}
+
+      iex> LangChain.Message.ToolCall.arguments_as_map(%LangChain.Message.ToolCall{arguments: ""})
+      %{}
+
+      iex> LangChain.Message.ToolCall.arguments_as_map(%LangChain.Message.ToolCall{arguments: nil})
+      %{}
+  """
+  @spec arguments_as_map(t()) :: map()
+  def arguments_as_map(%ToolCall{arguments: arguments}), do: normalize_arguments(arguments)
+
+  defp normalize_arguments(arguments) when is_map(arguments), do: arguments
+
+  defp normalize_arguments(arguments) when is_binary(arguments) do
+    case Jason.decode(arguments) do
+      {:ok, map} when is_map(map) -> map
+      _ -> %{}
+    end
+  end
+
+  defp normalize_arguments(_arguments), do: %{}
+
   defp common_validations(changeset) do
     case get_field(changeset, :status) do
       nil ->

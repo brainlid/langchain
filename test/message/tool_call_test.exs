@@ -170,6 +170,25 @@ defmodule LangChain.Message.ToolCallTest do
     end
   end
 
+  describe "arguments_as_map/1" do
+    test "returns a map unchanged" do
+      call = %ToolCall{arguments: %{"a" => 1}}
+      assert ToolCall.arguments_as_map(call) == %{"a" => 1}
+    end
+
+    test "decodes a JSON-object string" do
+      call = %ToolCall{status: :incomplete, arguments: ~s({"title":"x"})}
+      assert ToolCall.arguments_as_map(call) == %{"title" => "x"}
+    end
+
+    test "returns an empty map for nil, empty, invalid, or non-object arguments" do
+      for arguments <- [nil, "", "not json", "[1, 2, 3]", "\"just a string\""] do
+        call = %ToolCall{status: :incomplete, arguments: arguments}
+        assert ToolCall.arguments_as_map(call) == %{}
+      end
+    end
+  end
+
   describe "merge/2" do
     test "takes new part when nothing existing found" do
       received = %ToolCall{
