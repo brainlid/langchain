@@ -4169,6 +4169,36 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
     end
   end
 
+  describe "api_key: false" do
+    test "new!/1 accepts api_key: false" do
+      model = ChatAnthropic.new!(%{model: @test_model, api_key: false})
+      assert model.api_key == false
+    end
+
+    test "new/1 accepts a string-keyed \"api_key\" => false" do
+      assert {:ok, model} = ChatAnthropic.new(%{"model" => @test_model, "api_key" => false})
+      assert model.api_key == false
+    end
+
+    test "omits the x-api-key header when api_key is false" do
+      expect(Req, :post, fn req_struct, _opts ->
+        refute Map.has_key?(req_struct.headers, "x-api-key")
+      end)
+
+      model = ChatAnthropic.new!(%{stream: true, model: @test_model, api_key: false})
+      ChatAnthropic.call(model, "prompt", [])
+    end
+
+    test "sends the x-api-key header when an api_key string is provided" do
+      expect(Req, :post, fn req_struct, _opts ->
+        assert req_struct.headers["x-api-key"] == ["secret-key"]
+      end)
+
+      model = ChatAnthropic.new!(%{stream: true, model: @test_model, api_key: "secret-key"})
+      ChatAnthropic.call(model, "prompt", [])
+    end
+  end
+
   describe "cache_messages for multi-turn conversations" do
     test "when cache_messages is enabled, adds cache_control to last user message's last ContentPart" do
       anthropic = ChatAnthropic.new!(%{cache_messages: %{enabled: true}})

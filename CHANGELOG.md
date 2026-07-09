@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`ChatAnthropic` accepts `api_key: false` to omit the `x-api-key` header.** When the Anthropic Messages endpoint is fronted by its own authentication — a corporate proxy, or an AWS SigV4-signed gateway such as Bedrock "Mantle" — sending `x-api-key` is rejected or ignored. Setting `api_key: false` now suppresses the header entirely so the caller's own auth (e.g. `req_opts` SigV4 signing) can take over. A `nil` or string `api_key` behaves exactly as before.
+
 ## v0.9.2
 
 A patch release that brings the `ChatReqLLM` backend to parity with `ChatOpenAI` for tool definitions. No breaking changes.
