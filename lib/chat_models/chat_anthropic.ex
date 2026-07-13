@@ -522,12 +522,14 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     # API key for Anthropic. If not set, will use global api key. Allows for usage
     # of a different API key per-call if desired. For instance, allowing a
     # customer to provide their own.
-    #
-    # Set to `false` to omit the `x-api-key` header entirely. This is useful when
-    # the endpoint is fronted by its own authentication mechanism (a corporate
-    # proxy, or an AWS SigV4-signed gateway, for example) and sending `x-api-key`
-    # would be rejected or ignored.
     field :api_key, :string, redact: true
+
+    # Omit the `x-api-key` header entirely. This is useful when the endpoint is
+    # fronted by its own authentication mechanism (a corporate proxy, or an AWS
+    # SigV4-signed gateway, for example) and sending `x-api-key` would be
+    # rejected or ignored. When true, no `x-api-key` header is sent regardless of
+    # `api_key` or the globally configured key.
+    field :suppress_api_key, :boolean, default: false
 
     # https://docs.anthropic.com/claude/reference/versions
     field :api_version, :string, default: "2023-06-01"
@@ -623,6 +625,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   @create_fields [
     :endpoint,
     :api_key,
+    :suppress_api_key,
     :api_version,
     :receive_timeout,
     :model,
@@ -650,29 +653,12 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   """
   @spec new(attrs :: map()) :: {:ok, t} | {:error, Ecto.Changeset.t()}
   def new(%{} = attrs \\ %{}) do
-    # `api_key: false` is a valid value meaning "send no x-api-key header", but
-    # Ecto's `:string` cast would reject the boolean. Pull it out before casting
-    # and set it directly with put_change (which bypasses type casting).
-    {api_key_override, attrs} = pop_api_key_false(attrs)
-
     %ChatAnthropic{}
     |> cast(attrs, @create_fields)
-    |> apply_api_key_override(api_key_override)
     |> cast_embed(:bedrock)
     |> common_validation()
     |> apply_action(:insert)
   end
-
-  defp pop_api_key_false(attrs) do
-    cond do
-      Map.get(attrs, :api_key) == false -> {false, Map.delete(attrs, :api_key)}
-      Map.get(attrs, "api_key") == false -> {false, Map.delete(attrs, "api_key")}
-      true -> {:none, attrs}
-    end
-  end
-
-  defp apply_api_key_override(changeset, false), do: put_change(changeset, :api_key, false)
-  defp apply_api_key_override(changeset, :none), do: changeset
 
   @doc """
   Setup a ChatAnthropic client configuration and return it or raise an error if invalid.
@@ -1161,6 +1147,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   defp headers(%ChatAnthropic{
          bedrock: nil,
          api_key: api_key,
+         suppress_api_key: suppress_api_key,
          api_version: api_version,
          beta_headers: beta_headers
        }) do
@@ -1168,7 +1155,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       "content-type" => "application/json",
       "anthropic-version" => api_version
     }
-    |> maybe_put_api_key(api_key)
+    |> maybe_put_api_key(api_key, suppress_api_key)
     |> Utils.conditionally_add_to_map(
       "anthropic-beta",
       if(!Enum.empty?(beta_headers), do: Enum.join(beta_headers, ","))
@@ -1182,11 +1169,12 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     }
   end
 
-  # When `api_key: false`, omit the `x-api-key` header so the caller's own
-  # authentication (a proxy or SigV4-signed gateway, for example) can take over.
-  defp maybe_put_api_key(headers, false), do: headers
+  # When `suppress_api_key: true`, omit the `x-api-key` header so the caller's
+  # own authentication (a proxy or SigV4-signed gateway, for example) can take
+  # over.
+  defp maybe_put_api_key(headers, _api_key, true), do: headers
 
-  defp maybe_put_api_key(headers, api_key),
+  defp maybe_put_api_key(headers, api_key, false),
     do: Map.put(headers, "x-api-key", get_api_key(api_key))
 
   defp url(%ChatAnthropic{bedrock: nil} = anthropic) do

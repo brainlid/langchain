@@ -4169,27 +4169,41 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
     end
   end
 
-  describe "api_key: false" do
-    test "new!/1 accepts api_key: false" do
-      model = ChatAnthropic.new!(%{model: @test_model, api_key: false})
-      assert model.api_key == false
+  describe "suppress_api_key" do
+    test "defaults to false" do
+      model = ChatAnthropic.new!(%{model: @test_model})
+      assert model.suppress_api_key == false
     end
 
-    test "new/1 accepts a string-keyed \"api_key\" => false" do
-      assert {:ok, model} = ChatAnthropic.new(%{"model" => @test_model, "api_key" => false})
-      assert model.api_key == false
+    test "new!/1 accepts suppress_api_key: true" do
+      model = ChatAnthropic.new!(%{model: @test_model, suppress_api_key: true})
+      assert model.suppress_api_key == true
     end
 
-    test "omits the x-api-key header when api_key is false" do
+    test "new/1 accepts a string-keyed \"suppress_api_key\" => true" do
+      assert {:ok, model} =
+               ChatAnthropic.new(%{"model" => @test_model, "suppress_api_key" => true})
+
+      assert model.suppress_api_key == true
+    end
+
+    test "omits the x-api-key header when suppress_api_key is true" do
       expect(Req, :post, fn req_struct, _opts ->
         refute Map.has_key?(req_struct.headers, "x-api-key")
       end)
 
-      model = ChatAnthropic.new!(%{stream: true, model: @test_model, api_key: false})
+      model =
+        ChatAnthropic.new!(%{
+          stream: true,
+          model: @test_model,
+          api_key: "secret-key",
+          suppress_api_key: true
+        })
+
       ChatAnthropic.call(model, "prompt", [])
     end
 
-    test "sends the x-api-key header when an api_key string is provided" do
+    test "sends the x-api-key header when suppress_api_key is false" do
       expect(Req, :post, fn req_struct, _opts ->
         assert req_struct.headers["x-api-key"] == ["secret-key"]
       end)
