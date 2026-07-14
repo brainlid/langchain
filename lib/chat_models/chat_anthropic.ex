@@ -524,6 +524,13 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     # customer to provide their own.
     field :api_key, :string, redact: true
 
+    # Omit the `x-api-key` header entirely. This is useful when the endpoint is
+    # fronted by its own authentication mechanism (a corporate proxy, or an AWS
+    # SigV4-signed gateway, for example) and sending `x-api-key` would be
+    # rejected or ignored. When true, no `x-api-key` header is sent regardless of
+    # `api_key` or the globally configured key.
+    field :suppress_api_key, :boolean, default: false
+
     # https://docs.anthropic.com/claude/reference/versions
     field :api_version, :string, default: "2023-06-01"
 
@@ -618,6 +625,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   @create_fields [
     :endpoint,
     :api_key,
+    :suppress_api_key,
     :api_version,
     :receive_timeout,
     :model,
@@ -1139,14 +1147,15 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   defp headers(%ChatAnthropic{
          bedrock: nil,
          api_key: api_key,
+         suppress_api_key: suppress_api_key,
          api_version: api_version,
          beta_headers: beta_headers
        }) do
     %{
-      "x-api-key" => get_api_key(api_key),
       "content-type" => "application/json",
       "anthropic-version" => api_version
     }
+    |> maybe_put_api_key(api_key, suppress_api_key)
     |> Utils.conditionally_add_to_map(
       "anthropic-beta",
       if(!Enum.empty?(beta_headers), do: Enum.join(beta_headers, ","))
@@ -1159,6 +1168,14 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       "accept" => "application/json"
     }
   end
+
+  # When `suppress_api_key: true`, omit the `x-api-key` header so the caller's
+  # own authentication (a proxy or SigV4-signed gateway, for example) can take
+  # over.
+  defp maybe_put_api_key(headers, _api_key, true), do: headers
+
+  defp maybe_put_api_key(headers, api_key, false),
+    do: Map.put(headers, "x-api-key", get_api_key(api_key))
 
   defp url(%ChatAnthropic{bedrock: nil} = anthropic) do
     anthropic.endpoint
