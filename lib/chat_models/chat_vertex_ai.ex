@@ -624,7 +624,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
 
   @spec build_url(t()) :: String.t()
   defp build_url(%ChatVertexAI{endpoint: endpoint, model: model} = vertex_ai) do
-    "#{endpoint}/models/#{model}:#{get_action(vertex_ai)}?key=#{get_api_key(vertex_ai)}"
+    "#{endpoint}/models/#{model}:#{get_action(vertex_ai)}"
     |> use_sse(vertex_ai)
   end
 
