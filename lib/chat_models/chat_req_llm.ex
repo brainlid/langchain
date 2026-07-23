@@ -526,6 +526,38 @@ if Code.ensure_loaded?(ReqLLM) do
       {[delta], state}
     end
 
+    # The provider only surfaces the accumulated thinking signature in a
+    # terminal meta chunk; there is no signature StreamChunk. Attach it to
+    # the thinking content slot so the merged assistant message can be
+    # replayed with a signed thinking block during tool loops.
+    defp process_stream_chunk(
+           %ReqLLM.StreamChunk{type: :meta, metadata: %{reasoning_details: details}},
+           state
+         )
+         when is_list(details) do
+      signature =
+        Enum.find_value(details, fn
+          %{signature: signature} when is_binary(signature) and signature != "" -> signature
+          _ -> nil
+        end)
+
+      thinking_index = Map.get(state.type_index_map, :thinking)
+
+      if is_nil(signature) or is_nil(thinking_index) do
+        {[], state}
+      else
+        delta =
+          MessageDelta.new!(%{
+            role: :assistant,
+            content: ContentPart.new!(%{type: :thinking, options: [signature: signature]}),
+            status: :incomplete,
+            index: thinking_index
+          })
+
+        {[delta], state}
+      end
+    end
+
     # Tool call arg fragment: emit incomplete ToolCall delta with the partial JSON string.
     # ToolCall.merge/2 will concatenate binary arguments strings across deltas.
     defp process_stream_chunk(
@@ -823,8 +855,22 @@ if Code.ensure_loaded?(ReqLLM) do
       ReqLLM.Message.ContentPart.text(text || "")
     end
 
-    def content_part_to_req_llm(%ContentPart{type: :thinking, content: text}) do
-      ReqLLM.Message.ContentPart.thinking(text || "")
+    # Anthropic refuses replayed thinking blocks that lack their original
+    # signature ("thinking.signature: Field required"), which kills the
+    # tool loop. Do what ChatAnthropic does: pass the signature through,
+    # and drop unsigned blocks rather than send one the API will reject.
+    def content_part_to_req_llm(%ContentPart{type: :thinking, content: text} = part) do
+      case Keyword.fetch(part.options || [], :signature) do
+        {:ok, signature} when is_binary(signature) and signature != "" ->
+          ReqLLM.Message.ContentPart.thinking(text || "", %{signature: signature})
+
+        _ ->
+          Logger.warning(
+            "Thinking ContentPart without signature will be omitted: #{inspect(part)}"
+          )
+
+          nil
+      end
     end
 
     def content_part_to_req_llm(%ContentPart{type: :image_url, content: url}) do
@@ -968,7 +1014,11 @@ if Code.ensure_loaded?(ReqLLM) do
     end
 
     def do_process_response(%ChatReqLLM{} = _model, %ReqLLM.Response{} = response) do
-      content_parts = translate_response_content(response.message.content)
+      content_parts =
+        response.message.content
+        |> translate_response_content()
+        |> attach_reasoning_signature(response.message)
+
       tool_calls = translate_response_tool_calls(response.message.tool_calls)
       status = translate_finish_reason(response.finish_reason)
       usage = translate_usage(response.usage)
@@ -989,6 +1039,36 @@ if Code.ensure_loaded?(ReqLLM) do
     defp unwrap_message({:error, %Ecto.Changeset{} = changeset}) do
       {:error, LangChainError.exception(changeset)}
     end
+
+    # In non-streaming responses the signature lives on the message's
+    # reasoning_details, not on the thinking content part. Copy it over so
+    # tool-loop replays send a signed block.
+    defp attach_reasoning_signature(parts, %ReqLLM.Message{reasoning_details: details})
+         when is_list(details) do
+      signature =
+        Enum.find_value(details, fn
+          %{signature: signature} when is_binary(signature) and signature != "" -> signature
+          _ -> nil
+        end)
+
+      if is_nil(signature) do
+        parts
+      else
+        Enum.map(parts, fn
+          %ContentPart{type: :thinking, options: opts} = part ->
+            if Keyword.has_key?(opts || [], :signature) do
+              part
+            else
+              %ContentPart{part | options: Keyword.put(opts || [], :signature, signature)}
+            end
+
+          part ->
+            part
+        end)
+      end
+    end
+
+    defp attach_reasoning_signature(parts, _message), do: parts
 
     defp translate_response_content(nil), do: []
     defp translate_response_content([]), do: []
