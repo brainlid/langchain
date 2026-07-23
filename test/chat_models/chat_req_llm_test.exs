@@ -295,10 +295,31 @@ if Code.ensure_loaded?(ReqLLM) do
         assert %ReqLLM.Message.ContentPart{type: :text, text: "Hello world"} = result
       end
 
-      test "translates :thinking ContentPart" do
-        part = ContentPart.new!(%{type: :thinking, content: "Let me think..."})
+      test "translates :thinking ContentPart with signature into metadata" do
+        part =
+          ContentPart.new!(%{
+            type: :thinking,
+            content: "Let me think...",
+            options: [signature: "SIG_DATA"]
+          })
+
         result = ChatReqLLM.content_part_to_req_llm(part)
-        assert %ReqLLM.Message.ContentPart{type: :thinking, text: "Let me think..."} = result
+
+        assert %ReqLLM.Message.ContentPart{
+                 type: :thinking,
+                 text: "Let me think...",
+                 metadata: %{signature: "SIG_DATA"}
+               } = result
+      end
+
+      test "omits :thinking ContentPart without signature" do
+        part = ContentPart.new!(%{type: :thinking, content: "Let me think..."})
+
+        {result, log} =
+          ExUnit.CaptureLog.with_log(fn -> ChatReqLLM.content_part_to_req_llm(part) end)
+
+        assert result == nil
+        assert log =~ "Thinking ContentPart without signature will be omitted"
       end
 
       test "translates :image_url ContentPart" do
@@ -648,6 +669,42 @@ if Code.ensure_loaded?(ReqLLM) do
         response = req_llm_text_response("Truncated...", :length)
         result = ChatReqLLM.do_process_response(model, response)
         assert result.status == :length
+      end
+
+      test "grafts the reasoning-details signature onto thinking content parts", %{model: model} do
+        response =
+          struct!(
+            ReqLLM.Response,
+            Map.merge(base_response_fields(), %{
+              message: %ReqLLM.Message{
+                role: :assistant,
+                content: [
+                  ReqLLM.Message.ContentPart.thinking("Let me reason..."),
+                  ReqLLM.Message.ContentPart.text("Answer")
+                ],
+                tool_calls: nil,
+                reasoning_details: [
+                  %ReqLLM.Message.ReasoningDetails{
+                    text: "Let me reason...",
+                    signature: "SIG_FROM_DETAILS",
+                    encrypted?: true,
+                    provider: :anthropic,
+                    format: "anthropic-thinking-v1",
+                    index: 0
+                  }
+                ]
+              },
+              finish_reason: :stop,
+              usage: nil
+            })
+          )
+
+        result = ChatReqLLM.do_process_response(model, response)
+
+        assert [%ContentPart{type: :thinking, options: opts}, %ContentPart{type: :text}] =
+                 result.content
+
+        assert opts[:signature] == "SIG_FROM_DETAILS"
       end
 
       test "maps token usage to message metadata", %{model: model} do
