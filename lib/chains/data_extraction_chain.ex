@@ -68,6 +68,14 @@ defmodule LangChain.Chains.DataExtractionChain do
         }
       ]
 
+  Pass `return_message: true` to get back the last `Message` returned by the
+  LLM instead of the extracted result, e.g. to inspect token usage:
+
+      {:ok, last_message} =
+        LangChain.Chains.DataExtractionChain.run(chat, schema_parameters, data_prompt,
+          return_message: true
+        )
+
   The `schema_parameters` in the previous example can also be expressed using a
   list of `LangChain.FunctionParam` structs. An equivalent version looks like
   this:
@@ -117,11 +125,23 @@ Passage:
 
   @doc """
   Run the data extraction chain.
+
+  ## Options
+
+  - `:verbose` - when `true`, enables verbose logging on the underlying
+    `LLMChain`. Defaults to `false`.
+  - `:return_message` - when `true`, returns the last `Message` returned by
+    the LLM instead of the extracted result, e.g. to inspect token usage.
+    Defaults to `false` to preserve the existing return of the extracted
+    result.
   """
   @spec run(ChatOpenAI.t(), json_schema :: map(), prompt :: [any()], opts :: Keyword.t()) ::
-          {:ok, result :: [any()]} | {:error, LangChainError.t()}
+          {:ok, result :: [any()]}
+          | {:ok, last_message :: Message.t()}
+          | {:error, LangChainError.t()}
   def run(llm, json_schema, prompt, opts \\ []) do
     verbose = Keyword.get(opts, :verbose, false)
+    return_message = Keyword.get(opts, :return_message, false)
 
     try do
       messages =
@@ -142,17 +162,22 @@ Passage:
       |> case do
         {:ok,
          %LLMChain{
-           last_message: %Message{
-             role: :assistant,
-             tool_calls: [
-               %ToolCall{
-                 name: @function_name,
-                 arguments: %{"info" => info}
-               }
-             ]
-           }
+           last_message:
+             %Message{
+               role: :assistant,
+               tool_calls: [
+                 %ToolCall{
+                   name: @function_name,
+                   arguments: %{"info" => info}
+                 }
+               ]
+             } = last_message
          }} ->
-          normalize_extraction_info(info)
+          if return_message do
+            {:ok, last_message}
+          else
+            normalize_extraction_info(info)
+          end
 
         other ->
           {:error, LangChainError.exception("Unexpected response. #{inspect(other)}")}
