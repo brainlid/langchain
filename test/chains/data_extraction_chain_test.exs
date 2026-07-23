@@ -1,5 +1,6 @@
 defmodule LangChain.Chains.DataExtractionChainTest do
   use LangChain.BaseCase
+  use Mimic
 
   doctest LangChain.Chains.DataExtractionChain
 
@@ -7,6 +8,9 @@ defmodule LangChain.Chains.DataExtractionChainTest do
   alias LangChain.FunctionParam
   alias LangChain.Chains.DataExtractionChain
   alias LangChain.ChatModels.ChatOpenAI
+  alias LangChain.Message
+  alias LangChain.Message.ToolCall
+  alias LangChain.TokenUsage
 
   describe "build_extract_function/1" do
     test "parameters_schema is set correctly" do
@@ -72,6 +76,65 @@ defmodule LangChain.Chains.DataExtractionChainTest do
     test "returns error for non-list non-map info" do
       assert {:error, %LangChain.LangChainError{}} =
                DataExtractionChain.normalize_extraction_info("not a row")
+    end
+  end
+
+  describe "run/4 :return_message option" do
+    setup do
+      schema_parameters =
+        [FunctionParam.new!(%{name: "person_name", type: :string})]
+        |> FunctionParam.to_parameters_schema()
+
+      {:ok, chat} = ChatOpenAI.new(%{model: "gpt-4o-mini-2024-07-18", stream: false})
+
+      %{schema_parameters: schema_parameters, chat: chat}
+    end
+
+    test "returns the extracted result by default (non-breaking)", %{
+      schema_parameters: schema_parameters,
+      chat: chat
+    } do
+      fake_message =
+        Message.new_assistant!(%{
+          tool_calls: [
+            ToolCall.new!(%{
+              call_id: "call_123",
+              name: "information_extraction",
+              arguments: %{"info" => [%{"person_name" => "Alex"}]}
+            })
+          ]
+        })
+
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools -> {:ok, [fake_message]} end)
+
+      assert {:ok, [%{"person_name" => "Alex"}]} =
+               DataExtractionChain.run(chat, schema_parameters, "Alex is here.")
+    end
+
+    test "returns the last Message when true, exposing token usage via metadata", %{
+      schema_parameters: schema_parameters,
+      chat: chat
+    } do
+      fake_message =
+        Message.new_assistant!(%{
+          tool_calls: [
+            ToolCall.new!(%{
+              call_id: "call_123",
+              name: "information_extraction",
+              arguments: %{"info" => [%{"person_name" => "Alex"}]}
+            })
+          ],
+          metadata: %{usage: %TokenUsage{input: 42, output: 7}}
+        })
+
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools -> {:ok, [fake_message]} end)
+
+      assert {:ok, %Message{role: :assistant} = last_message} =
+               DataExtractionChain.run(chat, schema_parameters, "Alex is here.",
+                 return_message: true
+               )
+
+      assert TokenUsage.get(last_message) == %TokenUsage{input: 42, output: 7}
     end
   end
 
