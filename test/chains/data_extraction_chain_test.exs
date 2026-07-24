@@ -1,12 +1,18 @@
 defmodule LangChain.Chains.DataExtractionChainTest do
   use LangChain.BaseCase
+  use Mimic
 
   doctest LangChain.Chains.DataExtractionChain
 
+  alias LangChain.Chains.LLMChain
   alias LangChain.Function
   alias LangChain.FunctionParam
   alias LangChain.Chains.DataExtractionChain
   alias LangChain.ChatModels.ChatOpenAI
+  alias LangChain.LangChainError
+  alias LangChain.Message
+  alias LangChain.Message.ToolCall
+  alias LangChain.TokenUsage
 
   describe "build_extract_function/1" do
     test "parameters_schema is set correctly" do
@@ -73,6 +79,124 @@ defmodule LangChain.Chains.DataExtractionChainTest do
       assert {:error, %LangChain.LangChainError{}} =
                DataExtractionChain.normalize_extraction_info("not a row")
     end
+  end
+
+  describe "extract_result/1" do
+    test "returns the extracted data from the chain's tool call" do
+      chain = chain_with_last_message(extraction_message())
+
+      assert {:ok, [%{"person_name" => "Alex"}]} = DataExtractionChain.extract_result(chain)
+    end
+
+    test "returns an error when the LLM did not make the extraction tool call" do
+      chain = chain_with_last_message(Message.new_assistant!(%{content: "I'm not sure."}))
+
+      assert {:error, %LangChainError{message: message}} =
+               DataExtractionChain.extract_result(chain)
+
+      assert message =~ "Unexpected response."
+    end
+  end
+
+  describe "run_chain/4" do
+    setup do
+      schema_parameters =
+        [FunctionParam.new!(%{name: "person_name", type: :string})]
+        |> FunctionParam.to_parameters_schema()
+
+      {:ok, chat} = ChatOpenAI.new(%{model: "gpt-4o-mini-2024-07-18", stream: false})
+
+      %{schema_parameters: schema_parameters, chat: chat}
+    end
+
+    test "returns the executed chain, exposing token usage", %{
+      schema_parameters: schema_parameters,
+      chat: chat
+    } do
+      message = extraction_message(%{usage: %TokenUsage{input: 42, output: 7}})
+
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools -> {:ok, [message]} end)
+
+      assert {:ok, %LLMChain{last_message: %Message{role: :assistant} = last_message} = chain} =
+               DataExtractionChain.run_chain(chat, schema_parameters, "Alex is here.")
+
+      assert TokenUsage.get(last_message) == %TokenUsage{input: 42, output: 7}
+      assert {:ok, [%{"person_name" => "Alex"}]} = DataExtractionChain.extract_result(chain)
+    end
+
+    test "returns the chain even when the LLM did not make the extraction tool call", %{
+      schema_parameters: schema_parameters,
+      chat: chat
+    } do
+      message =
+        Message.new_assistant!(%{
+          content: "I'm not sure.",
+          metadata: %{usage: %TokenUsage{input: 12, output: 3}}
+        })
+
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools -> {:ok, [message]} end)
+
+      assert {:ok, %LLMChain{last_message: last_message} = chain} =
+               DataExtractionChain.run_chain(chat, schema_parameters, "Alex is here.")
+
+      # the usage is still reportable even though the extraction failed
+      assert TokenUsage.get(last_message) == %TokenUsage{input: 12, output: 3}
+      assert {:error, %LangChainError{}} = DataExtractionChain.extract_result(chain)
+    end
+  end
+
+  describe "run/4" do
+    setup do
+      schema_parameters =
+        [FunctionParam.new!(%{name: "person_name", type: :string})]
+        |> FunctionParam.to_parameters_schema()
+
+      {:ok, chat} = ChatOpenAI.new(%{model: "gpt-4o-mini-2024-07-18", stream: false})
+
+      %{schema_parameters: schema_parameters, chat: chat}
+    end
+
+    test "returns the extracted result", %{schema_parameters: schema_parameters, chat: chat} do
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:ok, [extraction_message()]}
+      end)
+
+      assert {:ok, [%{"person_name" => "Alex"}]} =
+               DataExtractionChain.run(chat, schema_parameters, "Alex is here.")
+    end
+
+    test "returns an error when the LLM did not make the extraction tool call", %{
+      schema_parameters: schema_parameters,
+      chat: chat
+    } do
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:ok, [Message.new_assistant!(%{content: "I'm not sure."})]}
+      end)
+
+      assert {:error, %LangChainError{message: message}} =
+               DataExtractionChain.run(chat, schema_parameters, "Alex is here.")
+
+      assert message =~ "Unexpected response."
+    end
+  end
+
+  defp extraction_message(metadata \\ nil) do
+    Message.new_assistant!(%{
+      tool_calls: [
+        ToolCall.new!(%{
+          call_id: "call_123",
+          name: "information_extraction",
+          arguments: %{"info" => [%{"person_name" => "Alex"}]}
+        })
+      ],
+      metadata: metadata
+    })
+  end
+
+  defp chain_with_last_message(%Message{} = message) do
+    %{llm: ChatOpenAI.new!(%{model: "gpt-4o-mini-2024-07-18", stream: false})}
+    |> LLMChain.new!()
+    |> LLMChain.add_message(message)
   end
 
   # Extraction - https://js.langchain.com/docs/modules/chains/openai_functions/extraction
