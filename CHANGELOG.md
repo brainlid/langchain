@@ -8,6 +8,7 @@
 
 ### Added
 
+- **`DataExtractionChain` exposes the executed `LLMChain` through `run_chain/4` and `extract_result/1`.** `run/4` returns only the extracted data, so there was no way to reach the underlying chain to log or report the token usage of an extraction. `run_chain/4` returns `{:ok, %LLMChain{}}` — matching how `RoutingChain`, `TextToTitleChain`, and `SummarizeConversationChain` already work — and `extract_result/1` pulls the extracted data out of it. Because the chain is returned regardless of whether the model produced the expected tool call, usage is reportable even when the extraction itself fails. `run/4` is unchanged and is now implemented in terms of the two.
 - **`ChatAnthropic` accepts `suppress_api_key: true` to omit the `x-api-key` header.** When the Anthropic Messages endpoint is fronted by its own authentication — a corporate proxy, or an AWS SigV4-signed gateway such as Bedrock "Mantle" — sending `x-api-key` is rejected or ignored. Setting `suppress_api_key: true` suppresses the header entirely so the caller's own auth (e.g. `req_opts` SigV4 signing) can take over. Defaults to `false`, preserving existing behavior.
 
 ## v0.9.2
