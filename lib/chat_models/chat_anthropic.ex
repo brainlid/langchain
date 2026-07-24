@@ -644,7 +644,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     :json_response,
     :json_schema,
     :output_config,
-    :req_opts
+    :req_opts,
+    :callbacks
   ]
   @required_fields [:endpoint, :model]
 

@@ -216,7 +216,8 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
     :top_k,
     :top_p,
     :verbose_api,
-    :retry_count
+    :retry_count,
+    :callbacks
   ]
 
   @required_fields [:endpoint, :model]

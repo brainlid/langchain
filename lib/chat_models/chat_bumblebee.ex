@@ -171,7 +171,8 @@ defmodule LangChain.ChatModels.ChatBumblebee do
     # :temperature,
     :seed,
     :template_format,
-    :stream
+    :stream,
+    :callbacks
   ]
   @required_fields [:serving]
 

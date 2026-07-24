@@ -152,7 +152,8 @@ if Code.ensure_loaded?(ReqLLM) do
       :provider_opts,
       :verbose_api,
       :retry_count,
-      :req_opts
+      :req_opts,
+      :callbacks
     ]
 
     @required_fields [:model]

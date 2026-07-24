@@ -141,7 +141,8 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     :json_schema,
     :stream,
     :req_config,
-    :safety_settings
+    :safety_settings,
+    :callbacks
   ]
   @required_fields [
     :endpoint,

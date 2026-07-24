@@ -151,7 +151,8 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     :json_schema,
     :stream,
     :safety_settings,
-    :req_config
+    :req_config,
+    :callbacks
   ]
   @required_fields [
     :endpoint,

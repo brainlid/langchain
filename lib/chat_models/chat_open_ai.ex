@@ -419,7 +419,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     :top_logprobs,
     :verbose_api,
     :retry_count,
-    :req_config
+    :req_config,
+    :callbacks
   ]
   @required_fields [:endpoint, :model]
 

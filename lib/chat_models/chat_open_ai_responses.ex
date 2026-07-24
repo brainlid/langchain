@@ -74,7 +74,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         end
       }
 
-      {:ok, chat} = ChatOpenAI.new(%{callbacks: [handlers]})
+      {:ok, chat} = ChatOpenAIResponses.new(%{callbacks: [handlers]})
 
   When a request is received, something similar to the following will be output
   to the console.
@@ -379,7 +379,8 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     :verbose_api,
     :retry_count,
     :req_config,
-    :websocket
+    :websocket,
+    :callbacks
   ]
   @required_fields [:endpoint, :model]
 
