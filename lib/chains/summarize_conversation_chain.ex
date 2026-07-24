@@ -67,6 +67,23 @@ defmodule LangChain.Chains.SummarizeConversationChain do
         |> SummarizeConversationChain.new!()
         |> SummarizeConversationChain.evaluate(chain_to_summarize, with_fallbacks: [fallback_llm])
 
+  ## Callbacks
+
+  The `LLMChain` that produces the summary is built internally, so handlers
+  registered on the `llm` itself are not used. Pass `callbacks` to observe the
+  run instead:
+
+      %{
+        llm: ChatOpenAI.new!(%{model: "gpt-4o-mini", stream: false}),
+        keep_count: 2,
+        threshold_count: 6,
+        callbacks: [%{on_llm_token_usage: fn _chain, usage -> log_usage(usage) end}]
+      }
+      |> SummarizeConversationChain.new!()
+
+  Handlers are registered on the internally run `LLMChain`, so the full set of
+  `LangChain.Chains.ChainCallbacks` events is available.
+
   """
   use Ecto.Schema
   import Ecto.Changeset
@@ -91,6 +108,8 @@ defmodule LangChain.Chains.SummarizeConversationChain do
     field :override_system_prompt, :string
     field :messages, {:array, :any}, virtual: true
     field :verbose, :boolean, default: false
+    # A list of maps for callback handlers, applied to the internally run LLMChain
+    field :callbacks, {:array, :map}, default: []
   end
 
   @type t :: %SummarizeConversationChain{}
@@ -101,7 +120,8 @@ defmodule LangChain.Chains.SummarizeConversationChain do
     :threshold_count,
     :override_system_prompt,
     :messages,
-    :verbose
+    :verbose,
+    :callbacks
   ]
   @required_fields [:llm, :keep_count, :threshold_count]
 
@@ -189,7 +209,12 @@ defmodule LangChain.Chains.SummarizeConversationChain do
         conversation: text_to_summarize
       })
 
-    %{llm: summarizer.llm, stream: false, verbose: summarizer.verbose}
+    %{
+      llm: summarizer.llm,
+      stream: false,
+      verbose: summarizer.verbose,
+      callbacks: summarizer.callbacks
+    }
     |> LLMChain.new!()
     |> LLMChain.add_messages(messages)
     |> LLMChain.run(opts)

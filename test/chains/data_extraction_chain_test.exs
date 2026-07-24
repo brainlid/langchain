@@ -180,6 +180,87 @@ defmodule LangChain.Chains.DataExtractionChainTest do
     end
   end
 
+  describe "run_chain/4 :callbacks option" do
+    setup do
+      schema_parameters =
+        [FunctionParam.new!(%{name: "person_name", type: :string})]
+        |> FunctionParam.to_parameters_schema()
+
+      {:ok, chat} = ChatOpenAI.new(%{model: "gpt-4o-mini-2024-07-18", stream: false})
+
+      %{schema_parameters: schema_parameters, chat: chat}
+    end
+
+    test "registers callbacks on the internally run LLMChain", %{
+      schema_parameters: schema_parameters,
+      chat: chat
+    } do
+      test_pid = self()
+
+      handler = %{
+        on_message_processed: fn _chain, message -> send(test_pid, {:processed, message}) end,
+        on_llm_token_usage: fn _chain, usage -> send(test_pid, {:usage, usage}) end
+      }
+
+      message = extraction_message(%{usage: TokenUsage.new!(%{input: 42, output: 7})})
+
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools -> {:ok, [message]} end)
+
+      assert {:ok, %LLMChain{}} =
+               DataExtractionChain.run_chain(chat, schema_parameters, "Alex is here.",
+                 callbacks: [handler]
+               )
+
+      assert_received {:processed, %Message{}}
+      assert_received {:usage, %TokenUsage{input: 42, output: 7}}
+    end
+
+    test "are also accepted by run/4", %{schema_parameters: schema_parameters, chat: chat} do
+      test_pid = self()
+
+      handler = %{
+        on_llm_token_usage: fn _chain, usage -> send(test_pid, {:usage, usage}) end
+      }
+
+      message = extraction_message(%{usage: TokenUsage.new!(%{input: 42, output: 7})})
+
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools -> {:ok, [message]} end)
+
+      assert {:ok, [%{"person_name" => "Alex"}]} =
+               DataExtractionChain.run(chat, schema_parameters, "Alex is here.",
+                 callbacks: [handler]
+               )
+
+      assert_received {:usage, %TokenUsage{input: 42, output: 7}}
+    end
+
+    test "fire even when the extraction tool call is missing", %{
+      schema_parameters: schema_parameters,
+      chat: chat
+    } do
+      test_pid = self()
+
+      handler = %{
+        on_llm_token_usage: fn _chain, usage -> send(test_pid, {:usage, usage}) end
+      }
+
+      message =
+        Message.new_assistant!(%{
+          content: "I'm not sure.",
+          metadata: %{usage: TokenUsage.new!(%{input: 12, output: 3})}
+        })
+
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools -> {:ok, [message]} end)
+
+      assert {:error, %LangChainError{}} =
+               DataExtractionChain.run(chat, schema_parameters, "Alex is here.",
+                 callbacks: [handler]
+               )
+
+      assert_received {:usage, %TokenUsage{input: 12, output: 3}}
+    end
+  end
+
   defp extraction_message(metadata \\ nil) do
     Message.new_assistant!(%{
       tool_calls: [
