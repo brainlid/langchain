@@ -61,13 +61,20 @@ jobs:
           key: ${{ runner.os }}-mix-${{ hashFiles('**/mix.lock') }}
           restore-keys: ${{ runner.os }}-mix-
 
+      # No restore-keys here, unlike the deps cache above. The key already
+      # covers OS, OTP, Elixir, and the mix.lock hash, so it hits on every run
+      # where the lockfile is unchanged. A prefix fallback could therefore only
+      # ever fire when mix.lock *did* change, which is exactly when reusing a
+      # _build from a different lockfile is unsafe: Mix reads dependency
+      # versions from the _build manifests, so a fresh deps/ paired with a
+      # stale _build/ makes `mix deps.get` report the old version and fail with
+      # "Dependencies have diverged". `mix deps.get` reconciles a stale deps/
+      # on its own, which is why the cache above keeps its fallback.
       - name: Cache _build
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: _build
           key: ${{ runner.os }}-build-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-${{ hashFiles('**/mix.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-build-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-
 
       - run: mix deps.get
 

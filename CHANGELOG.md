@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Security
+
+- **Updated dependencies to clear outstanding advisories.** `mint` 1.7.1 to 1.9.3 resolves four advisories, including a high-severity unbounded `streams` map growth via `PUSH_PROMISE` frames without follow-up `HEADERS` ([GHSA-g586-ccqf-7x4r](https://github.com/advisories/GHSA-g586-ccqf-7x4r)), CRLF injection in the request line via unvalidated `method`/`target` ([GHSA-2pg6-44cx-c49v](https://github.com/advisories/GHSA-2pg6-44cx-c49v)), and a `Content-Length` parser accepting a non-RFC `+` prefix ([GHSA-mjqx-c6f6-7rc2](https://github.com/advisories/GHSA-mjqx-c6f6-7rc2)). `req` 0.5.17 to 0.6.3 additionally escapes multipart part headers per RFC 7578 ([GHSA-px9f-whj3-246m](https://github.com/wojtekmach/req/security/advisories/GHSA-px9f-whj3-246m)), which closes a header-injection vector in `FileOpenAI.upload/2` and `FileAnthropic.upload/2` where a caller-supplied `:filename` was interpolated into the part headers unescaped. `finch`, `hpax`, and `decimal` move with them. Lockfile only; no `mix.exs` constraint changed.
+
+  Two `req` 0.6 behavior changes are worth knowing about, neither of which affects this library: response decompression is now opt-in via `compressed: true`, and `decode_body` now decodes only JSON by default (archive and CSV formats moved behind `:decoders`). LangChain sets neither option and only decodes JSON.
+
 ### Fixed
 
 - **`ChatReqLLM` now round-trips Anthropic extended-thinking signatures.** With thinking enabled, Anthropic requires assistant thinking blocks to be replayed with their original signature on tool-result continuations. The adapter lost the signature on the way in and on the way out: streaming never picked it up from the terminal `reasoning_details` meta chunk, non-streaming responses carry it on `message.reasoning_details` rather than the content part, and `content_part_to_req_llm/1` dropped `options[:signature]` on serialization. The result was a 400 (`thinking.signature: Field required`) on every thinking + tool-use turn. Signatures now survive both response paths and are passed back as part metadata; unsigned thinking blocks are omitted with a warning, same as `ChatAnthropic`.
