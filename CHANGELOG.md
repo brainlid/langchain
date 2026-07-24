@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- **`ChatReqLLM` now round-trips Anthropic extended-thinking signatures.** With thinking enabled, Anthropic requires assistant thinking blocks to be replayed with their original signature on tool-result continuations. The adapter lost the signature on the way in and on the way out: streaming never picked it up from the terminal `reasoning_details` meta chunk, non-streaming responses carry it on `message.reasoning_details` rather than the content part, and `content_part_to_req_llm/1` dropped `options[:signature]` on serialization. The result was a 400 (`thinking.signature: Field required`) on every thinking + tool-use turn. Signatures now survive both response paths and are passed back as part metadata; unsigned thinking blocks are omitted with a warning, same as `ChatAnthropic`.
+
 ### Added
 
 - **`ChatAnthropic` accepts `suppress_api_key: true` to omit the `x-api-key` header.** When the Anthropic Messages endpoint is fronted by its own authentication — a corporate proxy, or an AWS SigV4-signed gateway such as Bedrock "Mantle" — sending `x-api-key` is rejected or ignored. Setting `suppress_api_key: true` suppresses the header entirely so the caller's own auth (e.g. `req_opts` SigV4 signing) can take over. Defaults to `false`, preserving existing behavior.
