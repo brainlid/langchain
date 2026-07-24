@@ -10,6 +10,7 @@ defmodule LangChain.Chains.TextToTitleChainTest do
   alias LangChain.Message.ContentPart
   alias LangChain.ChatModels.ChatOpenAI
   alias LangChain.LangChainError
+  alias LangChain.TokenUsage
   alias LangChain.Utils
 
   setup do
@@ -72,6 +73,38 @@ defmodule LangChain.Chains.TextToTitleChainTest do
       assert {:ok, updated_chain} = TextToTitleChain.run(title_chain)
       assert %LLMChain{} = updated_chain
       assert updated_chain.last_message == fake_message
+    end
+
+    test "registers callbacks on the internally run LLMChain", %{
+      llm: llm,
+      input_text: input_text
+    } do
+      test_pid = self()
+
+      handler = %{
+        on_message_processed: fn _chain, message -> send(test_pid, {:processed, message}) end,
+        on_llm_token_usage: fn _chain, usage -> send(test_pid, {:usage, usage}) end
+      }
+
+      fake_message =
+        Message.new_assistant!(%{
+          content: "Summarized Title",
+          metadata: %{usage: TokenUsage.new!(%{input: 30, output: 4})}
+        })
+
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools -> {:ok, [fake_message]} end)
+
+      assert {:ok, %LLMChain{}} =
+               %{llm: llm, input_text: input_text, callbacks: [handler]}
+               |> TextToTitleChain.new!()
+               |> TextToTitleChain.run()
+
+      assert_received {:processed, %Message{}}
+      assert_received {:usage, %TokenUsage{input: 30, output: 4}}
+    end
+
+    test "callbacks default to an empty list", %{title_chain: title_chain} do
+      assert [] == title_chain.callbacks
     end
 
     test "uses override_system_prompt", %{llm: llm} do

@@ -10,6 +10,7 @@ defmodule LangChain.Chains.RoutingChainTest do
   alias LangChain.Message
   alias LangChain.ChatModels.ChatOpenAI
   alias LangChain.LangChainError
+  alias LangChain.TokenUsage
 
   setup do
     llm = ChatOpenAI.new!(%{model: "gpt-3.5-turbo", stream: false, seed: 0})
@@ -136,6 +137,48 @@ defmodule LangChain.Chains.RoutingChainTest do
       assert {:ok, updated_chain} = RoutingChain.run(routing_chain)
       assert %LLMChain{} = updated_chain
       assert updated_chain.last_message == fake_message
+    end
+  end
+
+  describe "callbacks" do
+    test "are registered on the internally run LLMChain", %{
+      llm: llm,
+      input_text: input_text,
+      routes: routes,
+      default_route: default_route
+    } do
+      test_pid = self()
+
+      handler = %{
+        on_message_processed: fn _chain, message -> send(test_pid, {:processed, message}) end,
+        on_llm_token_usage: fn _chain, usage -> send(test_pid, {:usage, usage}) end
+      }
+
+      fake_message =
+        Message.new_assistant!(%{
+          content: "blog",
+          metadata: %{usage: TokenUsage.new!(%{input: 25, output: 1})}
+        })
+
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools -> {:ok, [fake_message]} end)
+
+      assert {:ok, %LLMChain{}} =
+               %{
+                 llm: llm,
+                 input_text: input_text,
+                 routes: routes,
+                 default_route: default_route,
+                 callbacks: [handler]
+               }
+               |> RoutingChain.new!()
+               |> RoutingChain.run()
+
+      assert_received {:processed, %Message{}}
+      assert_received {:usage, %TokenUsage{input: 25, output: 1}}
+    end
+
+    test "default to an empty list", %{routing_chain: routing_chain} do
+      assert [] == routing_chain.callbacks
     end
   end
 

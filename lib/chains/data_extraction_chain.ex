@@ -80,6 +80,19 @@ defmodule LangChain.Chains.DataExtractionChain do
       usage = LangChain.TokenUsage.get(chain.last_message)
       {:ok, result} = LangChain.Chains.DataExtractionChain.extract_result(chain)
 
+  ## Callbacks
+
+  The `LLMChain` used for the extraction is built internally, so handlers
+  registered on the `llm` itself are not used. Pass `:callbacks` to observe the
+  run as it happens, which is the only way to see streamed deltas:
+
+      LangChain.Chains.DataExtractionChain.run(chat, schema_parameters, data_prompt,
+        callbacks: [%{on_llm_token_usage: fn _chain, usage -> log_usage(usage) end}]
+      )
+
+  Handlers are registered on the internally run `LLMChain`, so the full set of
+  `LangChain.Chains.ChainCallbacks` events is available.
+
   The `schema_parameters` in the previous example can also be expressed using a
   list of `LangChain.FunctionParam` structs. An equivalent version looks like
   this:
@@ -143,11 +156,20 @@ Passage:
       {:ok, result} = DataExtractionChain.extract_result(chain)
 
   Follows the same return pattern as `LangChain.Chains.LLMChain.run/2`.
+
+  ## Options
+
+  - `:verbose` - when `true`, enables verbose logging on the internally run
+    `LLMChain`. Defaults to `false`.
+  - `:callbacks` - a list of callback handler maps to register on the
+    internally run `LLMChain`. See `LangChain.Chains.ChainCallbacks` for the
+    available events. Defaults to `[]`.
   """
   @spec run_chain(ChatOpenAI.t(), json_schema :: map(), prompt :: [any()], opts :: Keyword.t()) ::
           {:ok, LLMChain.t()} | {:error, LLMChain.t(), LangChainError.t()}
   def run_chain(llm, json_schema, prompt, opts \\ []) do
     verbose = Keyword.get(opts, :verbose, false)
+    callbacks = Keyword.get(opts, :callbacks, [])
 
     messages =
       [
@@ -158,7 +180,7 @@ Passage:
       ]
       |> PromptTemplate.to_messages!(%{input: prompt})
 
-    %{llm: llm, verbose: verbose}
+    %{llm: llm, verbose: verbose, callbacks: callbacks}
     |> LLMChain.new!()
     |> LLMChain.add_tools(build_extract_function(json_schema))
     |> LLMChain.add_messages(messages)
@@ -196,6 +218,8 @@ Passage:
 
   When the executed chain is needed as well, for instance to report token usage,
   use `run_chain/4` with `extract_result/1`.
+
+  Accepts the same options as `run_chain/4`.
   """
   @spec run(ChatOpenAI.t(), json_schema :: map(), prompt :: [any()], opts :: Keyword.t()) ::
           {:ok, result :: [any()]} | {:error, LangChainError.t()}

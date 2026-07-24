@@ -14,6 +14,7 @@ defmodule LangChain.Chains.SummarizeConversationChainTest do
   alias LangChain.ChatModels.ChatAnthropic
   alias LangChain.ChatModels.ChatOpenAI
   alias LangChain.LangChainError
+  alias LangChain.TokenUsage
 
   @test_anthropic_model "claude-3-5-haiku-latest"
   @test_openai_model "gpt-4o-mini"
@@ -283,6 +284,42 @@ defmodule LangChain.Chains.SummarizeConversationChainTest do
       assert summary_2.content == [ContentPart.text!("fake summary text")]
       assert user_2.content == [ContentPart.text!("Question 2")]
       assert ai_2.content == [ContentPart.text!("Answer 2")]
+    end
+  end
+
+  describe "callbacks" do
+    test "are registered on the internally run LLMChain", %{llm_anthropic: llm} do
+      test_pid = self()
+
+      handler = %{
+        on_message_processed: fn _chain, message -> send(test_pid, {:processed, message}) end,
+        on_llm_token_usage: fn _chain, usage -> send(test_pid, {:usage, usage}) end
+      }
+
+      fake_message =
+        Message.new_assistant!(%{
+          content: "- Fake summary",
+          metadata: %{usage: TokenUsage.new!(%{input: 120, output: 8})}
+        })
+
+      expect(ChatAnthropic, :call, fn _model, _messages, _tools -> {:ok, [fake_message]} end)
+
+      summarizer =
+        SummarizeConversationChain.new!(%{
+          llm: llm,
+          keep_count: 2,
+          threshold_count: 6,
+          callbacks: [handler]
+        })
+
+      assert {:ok, %LLMChain{}} = SummarizeConversationChain.run(summarizer, "text to summarize")
+
+      assert_received {:processed, %Message{}}
+      assert_received {:usage, %TokenUsage{input: 120, output: 8}}
+    end
+
+    test "default to an empty list", %{summarizer: summarizer} do
+      assert [] == summarizer.callbacks
     end
   end
 

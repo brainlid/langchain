@@ -37,6 +37,23 @@ defmodule LangChain.Chains.RoutingChain do
   The `default_route` is required and is used as a fallback if the user's prompt
   doesn't match any of the specified routes. It may also be used in some
   fallback error situations as well.
+
+  ## Callbacks
+
+  The `LLMChain` used to make the routing decision is built internally, so
+  handlers registered on the `llm` itself are not used. Pass `callbacks` to
+  observe the run instead:
+
+      RoutingChain.new!(%{
+        llm: llm,
+        input_text: user_text,
+        routes: routes,
+        default_route: default_route,
+        callbacks: [%{on_llm_token_usage: fn _chain, usage -> log_usage(usage) end}]
+      })
+
+  Handlers are registered on the internally run `LLMChain`, so the full set of
+  `LangChain.Chains.ChainCallbacks` events is available.
   """
   use Ecto.Schema
   import Ecto.Changeset
@@ -57,11 +74,13 @@ defmodule LangChain.Chains.RoutingChain do
     field :routes, {:array, :any}, virtual: true
     field :default_route, :any, virtual: true
     field :verbose, :boolean, default: false
+    # A list of maps for callback handlers, applied to the internally run LLMChain
+    field :callbacks, {:array, :map}, default: []
   end
 
   @type t :: %RoutingChain{}
 
-  @create_fields [:llm, :input_text, :routes, :default_route, :verbose]
+  @create_fields [:llm, :input_text, :routes, :default_route, :verbose, :callbacks]
   @required_fields [:llm, :input_text, :routes, :default_route]
 
   @doc """
@@ -135,7 +154,7 @@ defmodule LangChain.Chains.RoutingChain do
       ]
       |> PromptTemplate.to_messages!(%{input: chain.input_text, routes: chain.routes})
 
-    %{llm: chain.llm, verbose: chain.verbose}
+    %{llm: chain.llm, verbose: chain.verbose, callbacks: chain.callbacks}
     |> LLMChain.new!()
     |> LLMChain.add_messages(messages)
     |> LLMChain.run(opts)

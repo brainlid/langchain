@@ -67,6 +67,22 @@ defmodule LangChain.Chains.TextToTitleChain do
       |> TextToTitleChain.new!()
       |> TextToTitleChain.evaluate(with_fallbacks: [fallback_llm])
 
+  ## Callbacks
+  The `LLMChain` that generates the title is built internally, so handlers
+  registered on the `llm` itself are not used. Pass `callbacks` to observe the
+  run instead:
+
+      %{
+        llm: llm,
+        input_text: user_text,
+        callbacks: [%{on_llm_token_usage: fn _chain, usage -> log_usage(usage) end}]
+      }
+      |> TextToTitleChain.new!()
+      |> TextToTitleChain.evaluate()
+
+  Handlers are registered on the internally run `LLMChain`, so the full set of
+  `LangChain.Chains.ChainCallbacks` events is available.
+
   """
   use Ecto.Schema
   import Ecto.Changeset
@@ -86,6 +102,8 @@ defmodule LangChain.Chains.TextToTitleChain do
     field :examples, {:array, :string}, default: []
     field :override_system_prompt, :string
     field :verbose, :boolean, default: false
+    # A list of maps for callback handlers, applied to the internally run LLMChain
+    field :callbacks, {:array, :map}, default: []
   end
 
   @type t :: %TextToTitleChain{}
@@ -96,7 +114,8 @@ defmodule LangChain.Chains.TextToTitleChain do
     :fallback_title,
     :examples,
     :override_system_prompt,
-    :verbose
+    :verbose,
+    :callbacks
   ]
   @required_fields [:llm, :input_text]
 
@@ -177,7 +196,7 @@ You expertly summarize the User Text into a short title or phrase to represent a
       ]
       |> PromptTemplate.to_messages!(%{input: chain.input_text, examples: chain.examples})
 
-    %{llm: chain.llm, verbose: chain.verbose}
+    %{llm: chain.llm, verbose: chain.verbose, callbacks: chain.callbacks}
     |> LLMChain.new!()
     |> LLMChain.add_messages(messages)
     |> LLMChain.run(opts)
