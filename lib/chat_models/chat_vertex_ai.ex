@@ -951,7 +951,8 @@ defmodule LangChain.ChatModels.ChatVertexAI do
         :receive_timeout,
         :json_response,
         :json_schema,
-        :stream
+        :stream,
+        :safety_settings
       ],
       @current_config_version
     )

@@ -1005,8 +1005,29 @@ defmodule ChatModels.ChatVertexAITest do
                "top_p" => 1.0,
                "version" => 1,
                "json_response" => false,
-               "json_schema" => nil
+               "json_schema" => nil,
+               "safety_settings" => []
              }
+    end
+
+    test "survives a serialize/restore round-trip with safety settings" do
+      settings = [
+        %{"category" => "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold" => "BLOCK_ONLY_HIGH"}
+      ]
+
+      model =
+        ChatVertexAI.new!(%{
+          model: @test_model,
+          endpoint: "http://localhost:1234/",
+          safety_settings: settings
+        })
+
+      restored =
+        model
+        |> ChatVertexAI.serialize_config()
+        |> ChatVertexAI.restore_from_map()
+
+      assert {:ok, %ChatVertexAI{safety_settings: ^settings}} = restored
     end
   end
 
