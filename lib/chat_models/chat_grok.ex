@@ -48,12 +48,16 @@ defmodule LangChain.ChatModels.ChatGrok do
   accessed using the LLM callback `on_llm_ratelimit_info` like this:
 
       handlers = %{
-        on_llm_ratelimit_info: fn _model, headers ->
-          IO.inspect(headers, label: )
+        on_llm_ratelimit_info: fn headers ->
+          IO.inspect(headers)
         end
       }
 
       {:ok, grok_mini} = ChatGrok.new(%{callbacks: [handlers]})
+
+  Handlers assigned to the model are fired by the model itself and receive only
+  the event's argument. Handlers assigned to an `LangChain.Chains.LLMChain`
+  receive the chain as an additional first argument.
 
   ### Token Usage
 
