@@ -81,6 +81,40 @@ defmodule ChatModels.ChatVertexAITest do
     end
   end
 
+  describe "build_url/1" do
+    test "builds the request URL for the model and action" do
+      model =
+        ChatVertexAI.new!(%{model: @test_model, endpoint: "http://localhost:1234", stream: false})
+
+      assert ChatVertexAI.build_url(model) ==
+               "http://localhost:1234/models/#{@test_model}:generateContent"
+    end
+
+    test "uses the streaming action and a well-formed `?alt=sse` query when streaming" do
+      model =
+        ChatVertexAI.new!(%{model: @test_model, endpoint: "http://localhost:1234", stream: true})
+
+      # The full URL — with the SSE parameter introduced by `?`, not `&`, since
+      # there is no other query string (the API key is a bearer header).
+      assert ChatVertexAI.build_url(model) ==
+               "http://localhost:1234/models/#{@test_model}:streamGenerateContent?alt=sse"
+    end
+
+    test "does not put the API key in the URL (it is sent as a bearer token)" do
+      model =
+        ChatVertexAI.new!(%{
+          model: @test_model,
+          endpoint: "http://localhost:1234",
+          api_key: "secret-key"
+        })
+
+      url = ChatVertexAI.build_url(model)
+
+      refute url =~ "key="
+      refute url =~ "secret-key"
+    end
+  end
+
   describe "for_api/3" do
     setup do
       params = %{
