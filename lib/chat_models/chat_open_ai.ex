@@ -66,12 +66,26 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   accessed using the LLM callback `on_llm_ratelimit_info` like this:
 
       handlers = %{
-        on_llm_ratelimit_info: fn _model, headers ->
+        on_llm_ratelimit_info: fn headers ->
           IO.inspect(headers)
         end
       }
 
       {:ok, chat} = ChatOpenAI.new(%{callbacks: [handlers]})
+
+  Handlers assigned to the model are fired by the model itself and receive only
+  the event's argument. Handlers assigned to an `LangChain.Chains.LLMChain`
+  receive the chain as an additional first argument:
+
+      handler = %{
+        on_llm_ratelimit_info: fn _chain, headers ->
+          IO.inspect(headers)
+        end
+      }
+
+      %{llm: ChatOpenAI.new!(%{})}
+      |> LLMChain.new!()
+      |> LLMChain.add_callback(handler)
 
   When a request is received, something similar to the following will be output
   to the console.
@@ -419,7 +433,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     :top_logprobs,
     :verbose_api,
     :retry_count,
-    :req_config
+    :req_config,
+    :callbacks
   ]
   @required_fields [:endpoint, :model]
 

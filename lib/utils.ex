@@ -74,8 +74,15 @@ defmodule LangChain.Utils do
         |> Enum.into(%{})
       end)
 
-    # put those onto the model and return it
-    %{llm | callbacks: new_callbacks}
+    # Append rather than replace. Callbacks assigned directly to the model are
+    # the caller's own and must survive a chain run; overwriting them here made
+    # `ChatOpenAI.new(%{callbacks: [handler]})` silently do nothing whenever the
+    # model was run through an LLMChain.
+    #
+    # Note the two tiers take different arities. Model-tier handlers are fired
+    # by the chat model with just the event argument, while the chain-tier
+    # handlers wrapped above are curried with the chain as the first argument.
+    %{llm | callbacks: llm.callbacks ++ new_callbacks}
   end
 
   @doc """

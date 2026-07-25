@@ -168,7 +168,8 @@ defmodule LangChain.ChatModels.ChatPerplexity do
     :response_format,
     :receive_timeout,
     :verbose_api,
-    :retry_count
+    :retry_count,
+    :callbacks
   ]
 
   @required_fields [:model]

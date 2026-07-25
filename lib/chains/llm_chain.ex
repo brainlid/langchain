@@ -15,9 +15,22 @@ defmodule LangChain.Chains.LLMChain do
   The set of events are defined in `LangChain.Chains.ChainCallbacks`.
 
   To be notified of an event you care about, register a callback handler with
-  the chain. Multiple callback handlers can be assigned. The callback handler
-  assigned to the `LLMChain` is not provided to an LLM chat model. For callbacks
-  on a chat model, set them there.
+  the chain. Multiple callback handlers can be assigned.
+
+  Callbacks can be registered on the chain or directly on the chat model, and
+  both fire. The difference is the arguments they receive. A handler registered
+  on the chain is given the chain as its first argument; a handler registered on
+  the chat model is fired by the model and receives only the event's argument:
+
+      # on the chain
+      LLMChain.add_callback(chain, %{on_llm_ratelimit_info: fn _chain, headers -> ... end})
+
+      # on the model
+      ChatOpenAI.new!(%{callbacks: [%{on_llm_ratelimit_info: fn headers -> ... end}]})
+
+  For the LLM-level events, the chain forwards its own handlers down to the
+  model for the duration of a run. Handlers already assigned to the model are
+  kept, so both sets run.
 
   ### Registering a callback handler
 

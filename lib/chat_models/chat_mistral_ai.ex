@@ -95,7 +95,8 @@ defmodule LangChain.ChatModels.ChatMistralAI do
     :json_response,
     :parallel_tool_calls,
     :verbose_api,
-    :retry_count
+    :retry_count,
+    :callbacks
   ]
   @required_fields [
     :model

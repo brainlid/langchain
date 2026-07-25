@@ -8,6 +8,60 @@ defmodule LangChain.ChatModels.ChatModelTest do
   alias LangChain.MessageDelta
   alias LangChain.TokenUsage
 
+  # Every ChatModel implementation that declares a `:callbacks` field, paired
+  # with the minimum attrs its `new/1` requires.
+  @models_with_callbacks [
+    {LangChain.ChatModels.ChatAnthropic, %{}},
+    {LangChain.ChatModels.ChatAwsMantle,
+     %{model: "moonshotai.kimi-k2-instruct", region: "us-east-1", api_key: "fake-key"}},
+    {LangChain.ChatModels.ChatBumblebee, %{serving: Fake.Serving}},
+    {LangChain.ChatModels.ChatDeepSeek, %{}},
+    {LangChain.ChatModels.ChatGoogleAI, %{}},
+    {LangChain.ChatModels.ChatGrok, %{}},
+    {LangChain.ChatModels.ChatMistralAI, %{model: "mistral-small-latest"}},
+    {LangChain.ChatModels.ChatOllamaAI, %{}},
+    {LangChain.ChatModels.ChatOpenAI, %{}},
+    {LangChain.ChatModels.ChatOpenAIResponses, %{}},
+    {LangChain.ChatModels.ChatOrq, %{key: "fake-key"}},
+    {LangChain.ChatModels.ChatPerplexity, %{}},
+    {LangChain.ChatModels.ChatReqLLM, %{model: "anthropic:claude-3-5-haiku-latest"}},
+    {LangChain.ChatModels.ChatVertexAI,
+     %{endpoint: "https://us-central1-aiplatform.googleapis.com/v1/projects/x/y"}}
+  ]
+
+  describe "callbacks through new/1" do
+    test "every chat model that declares :callbacks accepts them through new/1" do
+      # Ecto silently drops params that aren't in the changeset's cast list, so
+      # a model missing `:callbacks` there returns `{:ok, model}` with
+      # `callbacks: []` and no error. A handler registered that way never fires.
+      handler = %{on_llm_new_message: fn _model, _message -> :ok end}
+
+      dropped =
+        for {module, attrs} <- @models_with_callbacks,
+            not accepts_callbacks?(module, attrs, handler),
+            do: module
+
+      assert dropped == []
+    end
+
+    test "every chat model still defaults :callbacks to an empty list" do
+      bad =
+        for {module, attrs} <- @models_with_callbacks,
+            result = module.new(attrs),
+            not match?({:ok, %{callbacks: []}}, result),
+            do: {module, result}
+
+      assert bad == []
+    end
+  end
+
+  defp accepts_callbacks?(module, attrs, handler) do
+    case module.new(Map.put(attrs, :callbacks, [handler])) do
+      {:ok, %{callbacks: [_ | _]}} -> true
+      _ -> false
+    end
+  end
+
   describe "token_usage_from_result/1" do
     setup do
       %{usage: TokenUsage.new!(%{input: 11, output: 47})}

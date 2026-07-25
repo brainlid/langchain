@@ -69,12 +69,16 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   accessed using the LLM callback `on_llm_ratelimit_info` like this:
 
       handlers = %{
-        on_llm_ratelimit_info: fn _model, headers ->
+        on_llm_ratelimit_info: fn headers ->
           IO.inspect(headers)
         end
       }
 
-      {:ok, chat} = ChatOpenAI.new(%{callbacks: [handlers]})
+      {:ok, chat} = ChatOpenAIResponses.new(%{callbacks: [handlers]})
+
+  Handlers assigned to the model are fired by the model itself and receive only
+  the event's argument. Handlers assigned to an `LangChain.Chains.LLMChain`
+  receive the chain as an additional first argument.
 
   When a request is received, something similar to the following will be output
   to the console.
@@ -379,7 +383,8 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     :verbose_api,
     :retry_count,
     :req_config,
-    :websocket
+    :websocket,
+    :callbacks
   ]
   @required_fields [:endpoint, :model]
 

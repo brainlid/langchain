@@ -241,7 +241,8 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
     :receive_timeout,
     :stream_options,
     :verbose_api,
-    :req_config
+    :req_config,
+    :callbacks
   ]
   @required_fields [:model]
 
