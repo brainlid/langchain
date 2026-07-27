@@ -36,6 +36,18 @@ defmodule LangChain.ChatModels.ChatVertexAI do
       |> LLMChain.run()
   The above call will return summary of the media content.
   ```
+
+  **Tool Schemas**
+
+  Vertex AI uses the same Gemini `Schema` type as
+  `LangChain.ChatModels.ChatGoogleAI`, which accepts a select subset of an
+  OpenAPI 3.0 schema object rather than full JSON Schema. Tool parameters and
+  the JSON response schema are passed through
+  `LangChain.Utils.GoogleSchema.sanitize/1` before being sent, which removes
+  the keywords the API has no field for. Note that dropping
+  `additionalProperties` means Vertex does not enforce closed objects, so
+  validate a tool call's arguments inside the tool's own function where that
+  matters.
   """
   use Ecto.Schema
   require Logger
@@ -51,6 +63,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   alias LangChain.Message.ToolResult
   alias LangChain.LangChainError
   alias LangChain.Utils
+  alias LangChain.Utils.GoogleSchema
   alias LangChain.Callbacks
   alias LangChain.TokenUsage
   alias LangChain.NativeTool
@@ -197,7 +210,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     {response_mime_type, response_schema} =
       case vertex_ai.json_response do
         true ->
-          {"application/json", vertex_ai.json_schema}
+          {"application/json", GoogleSchema.sanitize(vertex_ai.json_schema)}
 
         false ->
           {nil, nil}
@@ -232,12 +245,30 @@ defmodule LangChain.ChatModels.ChatVertexAI do
             functions
             |> Enum.map(&ChatOpenAI.for_api(vertex_ai, &1))
             |> Enum.map(&Map.delete(&1, "strict"))
+            |> Enum.map(&function_declaration_for_api/1)
         }
       ])
     else
       req
     end
   end
+
+  # Vertex AI reaches the same Gemini `Schema` type as `ChatGoogleAI`, so a
+  # declaration carrying a keyword outside Google's subset is rejected the same
+  # way. Sanitize the parameters, then drop them entirely when nothing is left
+  # but an empty object, which Google also errors on with
+  # "parameters.properties: should be non-empty for OBJECT type".
+  defp function_declaration_for_api(%{"parameters" => parameters} = declaration) do
+    sanitized = GoogleSchema.sanitize(parameters)
+
+    if GoogleSchema.empty_object?(sanitized) do
+      Map.delete(declaration, "parameters")
+    else
+      Map.put(declaration, "parameters", sanitized)
+    end
+  end
+
+  defp function_declaration_for_api(declaration), do: declaration
 
   defp for_api(%Message{role: :assistant} = message) do
     content_parts = get_message_contents(message) || []

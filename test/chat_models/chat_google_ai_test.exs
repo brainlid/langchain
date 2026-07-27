@@ -141,6 +141,34 @@ defmodule ChatModels.ChatGoogleAITest do
              } = data
     end
 
+    test "removes unsupported schema keywords from the response_schema", %{params: params} do
+      # The response schema is the same Gemini `Schema` type as a function
+      # declaration's parameters, so it rejects the same keywords.
+      google_ai =
+        params
+        |> Map.merge(%{
+          "json_response" => true,
+          "json_schema" => %{
+            "type" => "object",
+            "additionalProperties" => false,
+            "properties" => %{
+              "answer" => %{"type" => "string", "const" => "yes"}
+            }
+          }
+        })
+        |> ChatGoogleAI.new!()
+
+      assert %{
+               "generationConfig" => %{
+                 "response_mime_type" => "application/json",
+                 "response_schema" => %{
+                   "type" => "object",
+                   "properties" => %{"answer" => %{"type" => "string"}}
+                 }
+               }
+             } = ChatGoogleAI.for_api(google_ai, [], [])
+    end
+
     test "generates a map containing function and function call messages", %{google_ai: google_ai} do
       message = "Can you do an action for me?"
       arguments = %{"args" => "data"}
@@ -624,6 +652,33 @@ defmodule ChatModels.ChatGoogleAITest do
                      "enum" => ["low", "high"],
                      "nullable" => true
                    }
+                 }
+               }
+             } = ChatGoogleAI.for_api(function)
+    end
+
+    test "keeps properties whose name matches an unsupported keyword" do
+      # `properties` maps caller-chosen names to schemas. A parameter named
+      # `const` or `examples` is a property name, not a schema keyword, and
+      # must survive.
+      {:ok, function} =
+        Function.new(%{
+          name: "record_config",
+          description: "Record the config.",
+          parameters: [
+            FunctionParam.new!(%{name: "const", type: :string, required: true}),
+            FunctionParam.new!(%{name: "examples", type: :string})
+          ],
+          function: fn _args, _context -> {:ok, "recorded"} end
+        })
+
+      assert %{
+               "parameters" => %{
+                 "type" => "object",
+                 "required" => ["const"],
+                 "properties" => %{
+                   "const" => %{"type" => "string"},
+                   "examples" => %{"type" => "string"}
                  }
                }
              } = ChatGoogleAI.for_api(function)

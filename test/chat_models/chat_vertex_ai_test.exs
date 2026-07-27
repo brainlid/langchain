@@ -11,6 +11,7 @@ defmodule ChatModels.ChatVertexAITest do
   alias LangChain.Message.ToolResult
   alias LangChain.MessageDelta
   alias LangChain.Function
+  alias LangChain.FunctionParam
   alias LangChain.LangChainError
   alias LangChain.TokenUsage
 
@@ -769,15 +770,74 @@ defmodule ChatModels.ChatVertexAITest do
       assert %{"contents" => []} = data
       assert %{"tools" => [tool_call]} = data
 
+      # A function with no parameters omits the field entirely. Google rejects
+      # an empty OBJECT with "parameters.properties: should be non-empty for
+      # OBJECT type".
       assert %{
                "functionDeclarations" => [
                  %{
                    "name" => "hello_world",
-                   "description" => "Give a hello world greeting.",
-                   "parameters" => %{"properties" => %{}, "type" => "object"}
-                 }
+                   "description" => "Give a hello world greeting."
+                 } = declaration
                ]
              } = tool_call
+
+      refute Map.has_key?(declaration, "parameters")
+    end
+
+    test "removes schema keywords Google does not support from declarations", %{
+      vertex_ai: vertex_ai
+    } do
+      # Vertex AI reaches the same Gemini `Schema` type, so a declaration
+      # carrying `additionalProperties` fails the whole request with
+      # `Unknown name "additionalProperties" ... Cannot find field`.
+      {:ok, function} =
+        Function.new(%{
+          name: "get_weather",
+          description: "Get the weather.",
+          parameters: [
+            FunctionParam.new!(%{name: "city", type: :string, required: true})
+          ],
+          function: fn _args, _context -> {:ok, "75 degrees"} end
+        })
+
+      data = ChatVertexAI.for_api(vertex_ai, [], [function])
+
+      assert %{"tools" => [%{"functionDeclarations" => [declaration]}]} = data
+
+      assert %{
+               "name" => "get_weather",
+               "description" => "Get the weather.",
+               "parameters" => %{
+                 "type" => "object",
+                 "required" => ["city"],
+                 "properties" => %{"city" => %{"type" => "string"}}
+               }
+             } == declaration
+    end
+
+    test "removes unsupported schema keywords from the json response schema", %{
+      vertex_ai: vertex_ai
+    } do
+      vertex_ai = %{
+        vertex_ai
+        | json_response: true,
+          json_schema: %{
+            "type" => "object",
+            "additionalProperties" => false,
+            "properties" => %{"answer" => %{"type" => "string"}}
+          }
+      }
+
+      assert %{
+               "generationConfig" => %{
+                 "response_mime_type" => "application/json",
+                 "response_schema" => %{
+                   "type" => "object",
+                   "properties" => %{"answer" => %{"type" => "string"}}
+                 }
+               }
+             } = ChatVertexAI.for_api(vertex_ai, [], [])
     end
   end
 
