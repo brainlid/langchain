@@ -141,6 +141,34 @@ defmodule ChatModels.ChatGoogleAITest do
              } = data
     end
 
+    test "removes unsupported schema keywords from the response_schema", %{params: params} do
+      # The response schema is the same Gemini `Schema` type as a function
+      # declaration's parameters, so it rejects the same keywords.
+      google_ai =
+        params
+        |> Map.merge(%{
+          "json_response" => true,
+          "json_schema" => %{
+            "type" => "object",
+            "additionalProperties" => false,
+            "properties" => %{
+              "answer" => %{"type" => "string", "const" => "yes"}
+            }
+          }
+        })
+        |> ChatGoogleAI.new!()
+
+      assert %{
+               "generationConfig" => %{
+                 "response_mime_type" => "application/json",
+                 "response_schema" => %{
+                   "type" => "object",
+                   "properties" => %{"answer" => %{"type" => "string"}}
+                 }
+               }
+             } = ChatGoogleAI.for_api(google_ai, [], [])
+    end
+
     test "generates a map containing function and function call messages", %{google_ai: google_ai} do
       message = "Can you do an action for me?"
       arguments = %{"args" => "data"}
@@ -511,10 +539,149 @@ defmodule ChatModels.ChatGoogleAITest do
                    }
                  },
                  "required" => ["city", "state"],
-                 "type" => "object",
-                 "additionalProperties" => false
+                 "type" => "object"
                }
              } == ChatGoogleAI.for_api(weather)
+    end
+
+    test "removes schema keywords Google does not support" do
+      # Google rejects the whole request with `Unknown name
+      # "additionalProperties" ... Cannot find field` when a declaration
+      # carries a keyword outside its supported subset.
+      {:ok, function} =
+        Function.new(%{
+          name: "record_answer",
+          description: "Record the answer.",
+          parameters_schema: %{
+            "type" => "object",
+            "additionalProperties" => false,
+            "$schema" => "http://json-schema.org/draft-07/schema#",
+            "required" => ["answer"],
+            "properties" => %{
+              "answer" => %{"type" => "string", "const" => "yes"}
+            }
+          },
+          function: fn _args, _context -> {:ok, "recorded"} end
+        })
+
+      assert %{
+               "description" => "Record the answer.",
+               "name" => "record_answer",
+               "parameters" => %{
+                 "type" => "object",
+                 "required" => ["answer"],
+                 "properties" => %{
+                   "answer" => %{"type" => "string"}
+                 }
+               }
+             } == ChatGoogleAI.for_api(function)
+    end
+
+    test "removes unsupported schema keywords from nested schemas" do
+      {:ok, function} =
+        Function.new(%{
+          name: "record_people",
+          description: "Record the people.",
+          parameters_schema: %{
+            "type" => "object",
+            "additionalProperties" => false,
+            "properties" => %{
+              "people" => %{
+                "type" => "array",
+                "items" => %{
+                  "type" => "object",
+                  "additionalProperties" => false,
+                  "properties" => %{
+                    "name" => %{"type" => "string"}
+                  }
+                }
+              }
+            }
+          },
+          function: fn _args, _context -> {:ok, "recorded"} end
+        })
+
+      assert %{
+               "parameters" => %{
+                 "type" => "object",
+                 "properties" => %{
+                   "people" => %{
+                     "type" => "array",
+                     "items" => %{
+                       "type" => "object",
+                       "properties" => %{"name" => %{"type" => "string"}}
+                     }
+                   }
+                 }
+               }
+             } = ChatGoogleAI.for_api(function)
+    end
+
+    test "keeps schema keywords Google supports" do
+      {:ok, function} =
+        Function.new(%{
+          name: "record_score",
+          description: "Record the score.",
+          parameters_schema: %{
+            "type" => "object",
+            "properties" => %{
+              "score" => %{
+                "type" => "integer",
+                "minimum" => 0,
+                "maximum" => 10,
+                "description" => "The score."
+              },
+              "label" => %{"type" => "string", "enum" => ["low", "high"], "nullable" => true}
+            }
+          },
+          function: fn _args, _context -> {:ok, "recorded"} end
+        })
+
+      assert %{
+               "parameters" => %{
+                 "type" => "object",
+                 "properties" => %{
+                   "score" => %{
+                     "type" => "integer",
+                     "minimum" => 0,
+                     "maximum" => 10,
+                     "description" => "The score."
+                   },
+                   "label" => %{
+                     "type" => "string",
+                     "enum" => ["low", "high"],
+                     "nullable" => true
+                   }
+                 }
+               }
+             } = ChatGoogleAI.for_api(function)
+    end
+
+    test "keeps properties whose name matches an unsupported keyword" do
+      # `properties` maps caller-chosen names to schemas. A parameter named
+      # `const` or `examples` is a property name, not a schema keyword, and
+      # must survive.
+      {:ok, function} =
+        Function.new(%{
+          name: "record_config",
+          description: "Record the config.",
+          parameters: [
+            FunctionParam.new!(%{name: "const", type: :string, required: true}),
+            FunctionParam.new!(%{name: "examples", type: :string})
+          ],
+          function: fn _args, _context -> {:ok, "recorded"} end
+        })
+
+      assert %{
+               "parameters" => %{
+                 "type" => "object",
+                 "required" => ["const"],
+                 "properties" => %{
+                   "const" => %{"type" => "string"},
+                   "examples" => %{"type" => "string"}
+                 }
+               }
+             } = ChatGoogleAI.for_api(function)
     end
 
     test "handles functions without parameters" do
@@ -1686,6 +1853,93 @@ defmodule ChatModels.ChatGoogleAITest do
     end
   end
 
+  describe "tool schema compatibility with Google AI" do
+    @tag live_call: true, live_google_ai: true
+    @tag timeout: 180_000
+    test "accepts a tool declared with a FunctionParam list" do
+      # Regression test for the reported issue. `FunctionParam` generates
+      # `additionalProperties`, which Google's `Schema` type has no field for,
+      # so before sanitizing this failed the whole request with
+      # `Unknown name "additionalProperties" ... Cannot find field`.
+      #
+      # `const` is a parameter name that collides with a JSON Schema keyword,
+      # covering that property names survive sanitizing.
+      alias LangChain.Chains.LLMChain
+
+      test_pid = self()
+
+      function =
+        Function.new!(%{
+          name: "record_reading",
+          description: "Record a sensor reading.",
+          parameters: [
+            FunctionParam.new!(%{
+              name: "const",
+              type: :string,
+              description: "The sensor name.",
+              required: true
+            }),
+            FunctionParam.new!(%{
+              name: "value",
+              type: :integer,
+              description: "The reading value.",
+              required: true
+            })
+          ],
+          function: fn args, _context ->
+            send(test_pid, {:tool_called, args})
+            {:ok, "recorded"}
+          end
+        })
+
+      model = ChatGoogleAI.new!(%{temperature: 0, stream: false, model: "gemini-flash-latest"})
+
+      {:ok, updated_chain} =
+        %{llm: model, verbose: false, stream: false}
+        |> LLMChain.new!()
+        |> LLMChain.add_message(
+          Message.new_user!("Record a reading of 42 for the sensor named 'boiler'.")
+        )
+        |> LLMChain.add_tools(function)
+        |> LLMChain.run(mode: :while_needs_response)
+
+      assert %Message{role: :assistant} = updated_chain.last_message
+
+      # the parameter named `const` has to have survived the round trip
+      assert_received {:tool_called, %{"const" => "boiler", "value" => 42}}
+    end
+
+    @tag live_call: true, live_google_ai: true
+    @tag timeout: 180_000
+    test "accepts a response schema carrying unsupported keywords" do
+      model =
+        ChatGoogleAI.new!(%{
+          temperature: 0,
+          stream: false,
+          model: "gemini-flash-latest",
+          json_response: true,
+          json_schema: %{
+            "type" => "object",
+            "additionalProperties" => false,
+            "required" => ["color"],
+            "properties" => %{
+              "color" => %{"type" => "string", "description" => "A color name."}
+            }
+          }
+        })
+
+      {:ok, [%Message{} = message]} =
+        ChatGoogleAI.call(model, [
+          Message.new_user!("Respond with the color of a clear midday sky.")
+        ])
+
+      assert {:ok, %{"color" => color}} =
+               message.content |> ContentPart.content_to_string() |> Jason.decode()
+
+      assert is_binary(color)
+    end
+  end
+
   @tag live_call: true, live_google_ai: true
   test "image classification with Google AI model" do
     alias LangChain.Chains.LLMChain
@@ -2038,7 +2292,7 @@ defmodule ChatModels.ChatGoogleAITest do
       model =
         ChatGoogleAI.new!(%{
           stream: true,
-          model: "gemini-2.5-flash"
+          model: "gemini-2.0-flash"
         })
 
       expect(Req, :post, fn _req, _opts ->
@@ -2075,7 +2329,7 @@ defmodule ChatModels.ChatGoogleAITest do
         {:ok, %Req.Response{status: 200, headers: [], body: ""}}
       end)
 
-      model = ChatGoogleAI.new!(%{stream: true, model: "gemini-2.5-flash"})
+      model = ChatGoogleAI.new!(%{stream: true, model: "gemini-2.0-flash"})
 
       assert {:error, %LangChainError{} = error} =
                ChatGoogleAI.call(model, [Message.new_user!("Hello")])

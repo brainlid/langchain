@@ -39,6 +39,23 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   The above call will return the current Google stock price.
 
   When `google_search` is used, the model will also return grounding information in the metadata attribute of the assistant message.
+
+  **Tool Schemas**
+
+  Google's function declarations accept a
+  [select subset](https://ai.google.dev/api/caching#Schema) of an OpenAPI 3.0
+  schema object rather than full JSON Schema. Keywords outside that subset are
+  rejected by the API with `Unknown name "<keyword>" ... Cannot find field`,
+  which fails the entire request rather than the single tool. Tool parameters
+  and the JSON response schema are therefore passed through
+  `LangChain.Utils.GoogleSchema.sanitize/1` before being sent.
+
+  One removal changes what the API enforces: `additionalProperties` is not
+  supported, so an object schema that sets `additionalProperties: false` is
+  still sent, but without it. Gemini does not reject unexpected properties, and
+  a tool call's arguments may contain fields the schema did not declare. Where
+  that matters, validate the arguments inside the tool's own function. See
+  `LangChain.Utils.GoogleSchema` for the full list of removed keywords.
   """
   use Ecto.Schema
   require Logger
@@ -56,6 +73,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   alias LangChain.TokenUsage
   alias LangChain.LangChainError
   alias LangChain.Utils
+  alias LangChain.Utils.GoogleSchema
   alias LangChain.Callbacks
   alias LangChain.NativeTool
   alias LangChain.Message.Citation
@@ -228,7 +246,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     {response_mime_type, response_schema} =
       case google_ai.json_response do
         true ->
-          {"application/json", google_ai.json_schema}
+          {"application/json", GoogleSchema.sanitize(google_ai.json_schema)}
 
         false ->
           {nil, nil}
@@ -447,13 +465,13 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     encoded =
       %{
         "name" => function.name,
-        "parameters" => ChatOpenAI.get_parameters(function)
+        "parameters" => function |> ChatOpenAI.get_parameters() |> GoogleSchema.sanitize()
       }
       |> Utils.conditionally_add_to_map("description", function.description)
 
     # For functions with no parameters, Google AI needs the parameters field removing, otherwise it will error
     # with "* GenerateContentRequest.tools[0].function_declarations[0].parameters.properties: should be non-empty for OBJECT type\n"
-    if encoded["parameters"] == %{"properties" => %{}, "type" => "object"} do
+    if GoogleSchema.empty_object?(encoded["parameters"]) do
       Map.delete(encoded, "parameters")
     else
       encoded
