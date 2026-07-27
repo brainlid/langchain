@@ -39,6 +39,21 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   The above call will return the current Google stock price.
 
   When `google_search` is used, the model will also return grounding information in the metadata attribute of the assistant message.
+
+  **Tool Schemas**
+
+  Google's function declarations accept a
+  [select subset](https://ai.google.dev/api/caching#Schema) of an OpenAPI 3.0
+  schema object rather than full JSON Schema. Keywords outside that subset are
+  rejected by the API with `Unknown name "<keyword>" ... Cannot find field`,
+  which fails the entire request rather than the single tool. This module
+  therefore removes those keywords from a tool's parameters before sending them.
+
+  One removal changes what the API enforces: `additionalProperties` is not
+  supported, so an object schema that sets `additionalProperties: false` is
+  still sent, but without it. Gemini does not reject unexpected properties, and
+  a tool call's arguments may contain fields the schema did not declare. Where
+  that matters, validate the arguments inside the tool's own function.
   """
   use Ecto.Schema
   require Logger
@@ -447,7 +462,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     encoded =
       %{
         "name" => function.name,
-        "parameters" => ChatOpenAI.get_parameters(function)
+        "parameters" => function |> ChatOpenAI.get_parameters() |> sanitize_parameters_schema()
       }
       |> Utils.conditionally_add_to_map("description", function.description)
 
@@ -467,6 +482,49 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   def for_api(%NativeTool{name: name, configuration: nil}) do
     name
   end
+
+  # Keywords that are valid JSON Schema but are not fields of Google's `Schema`
+  # type. A function declaration carrying any of them is rejected outright with
+  # `Unknown name "<keyword>" at 'tools[0].function_declarations[0].parameters':
+  # Cannot find field.`, which fails the whole request rather than the one tool.
+  #
+  # `additionalProperties` is the one that matters most in practice, because
+  # `FunctionParam.to_parameters_schema/1` adds it to every generated schema.
+  @unsupported_schema_keywords ~w(
+    additionalProperties unevaluatedProperties patternProperties propertyNames
+    $schema $ref $defs $comment $id definitions
+    additionalItems prefixItems uniqueItems
+    dependencies dependentRequired dependentSchemas
+    const examples exclusiveMinimum exclusiveMaximum multipleOf
+    readOnly writeOnly deprecated
+    contentEncoding contentMediaType contentSchema
+  )
+
+  # Google's function declarations accept a select subset of an OpenAPI 3.0
+  # schema object, not full JSON Schema. See
+  # https://ai.google.dev/api/caching#Schema for the supported fields.
+  #
+  # Note the semantic loss: `additionalProperties: false` is dropped, so Gemini
+  # does not enforce closed objects and may return unexpected properties in a
+  # tool call's arguments. Validate in the tool itself where that matters.
+  defp sanitize_parameters_schema(%{} = schema) do
+    schema
+    |> Enum.reject(fn {key, _value} ->
+      to_string(key) in @unsupported_schema_keywords
+    end)
+    |> Map.new(fn {key, value} -> {key, sanitize_schema_value(value)} end)
+  end
+
+  defp sanitize_parameters_schema(schema), do: schema
+
+  # Recurse into the containers that hold nested schemas: `properties` maps a
+  # name to a schema, while `items` and `anyOf` hold schemas directly.
+  defp sanitize_schema_value(%{} = value), do: sanitize_parameters_schema(value)
+
+  defp sanitize_schema_value(value) when is_list(value),
+    do: Enum.map(value, &sanitize_schema_value/1)
+
+  defp sanitize_schema_value(value), do: value
 
   @doc """
   Calls the Google AI API passing the ChatGoogleAI struct with configuration, plus

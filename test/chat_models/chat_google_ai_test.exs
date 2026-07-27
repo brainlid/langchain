@@ -511,10 +511,122 @@ defmodule ChatModels.ChatGoogleAITest do
                    }
                  },
                  "required" => ["city", "state"],
-                 "type" => "object",
-                 "additionalProperties" => false
+                 "type" => "object"
                }
              } == ChatGoogleAI.for_api(weather)
+    end
+
+    test "removes schema keywords Google does not support" do
+      # Google rejects the whole request with `Unknown name
+      # "additionalProperties" ... Cannot find field` when a declaration
+      # carries a keyword outside its supported subset.
+      {:ok, function} =
+        Function.new(%{
+          name: "record_answer",
+          description: "Record the answer.",
+          parameters_schema: %{
+            "type" => "object",
+            "additionalProperties" => false,
+            "$schema" => "http://json-schema.org/draft-07/schema#",
+            "required" => ["answer"],
+            "properties" => %{
+              "answer" => %{"type" => "string", "const" => "yes"}
+            }
+          },
+          function: fn _args, _context -> {:ok, "recorded"} end
+        })
+
+      assert %{
+               "description" => "Record the answer.",
+               "name" => "record_answer",
+               "parameters" => %{
+                 "type" => "object",
+                 "required" => ["answer"],
+                 "properties" => %{
+                   "answer" => %{"type" => "string"}
+                 }
+               }
+             } == ChatGoogleAI.for_api(function)
+    end
+
+    test "removes unsupported schema keywords from nested schemas" do
+      {:ok, function} =
+        Function.new(%{
+          name: "record_people",
+          description: "Record the people.",
+          parameters_schema: %{
+            "type" => "object",
+            "additionalProperties" => false,
+            "properties" => %{
+              "people" => %{
+                "type" => "array",
+                "items" => %{
+                  "type" => "object",
+                  "additionalProperties" => false,
+                  "properties" => %{
+                    "name" => %{"type" => "string"}
+                  }
+                }
+              }
+            }
+          },
+          function: fn _args, _context -> {:ok, "recorded"} end
+        })
+
+      assert %{
+               "parameters" => %{
+                 "type" => "object",
+                 "properties" => %{
+                   "people" => %{
+                     "type" => "array",
+                     "items" => %{
+                       "type" => "object",
+                       "properties" => %{"name" => %{"type" => "string"}}
+                     }
+                   }
+                 }
+               }
+             } = ChatGoogleAI.for_api(function)
+    end
+
+    test "keeps schema keywords Google supports" do
+      {:ok, function} =
+        Function.new(%{
+          name: "record_score",
+          description: "Record the score.",
+          parameters_schema: %{
+            "type" => "object",
+            "properties" => %{
+              "score" => %{
+                "type" => "integer",
+                "minimum" => 0,
+                "maximum" => 10,
+                "description" => "The score."
+              },
+              "label" => %{"type" => "string", "enum" => ["low", "high"], "nullable" => true}
+            }
+          },
+          function: fn _args, _context -> {:ok, "recorded"} end
+        })
+
+      assert %{
+               "parameters" => %{
+                 "type" => "object",
+                 "properties" => %{
+                   "score" => %{
+                     "type" => "integer",
+                     "minimum" => 0,
+                     "maximum" => 10,
+                     "description" => "The score."
+                   },
+                   "label" => %{
+                     "type" => "string",
+                     "enum" => ["low", "high"],
+                     "nullable" => true
+                   }
+                 }
+               }
+             } = ChatGoogleAI.for_api(function)
     end
 
     test "handles functions without parameters" do
