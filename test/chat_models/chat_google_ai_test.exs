@@ -363,6 +363,73 @@ defmodule ChatModels.ChatGoogleAITest do
       assert expected == ChatGoogleAI.for_api(tool_result)
     end
 
+    test "tool result with a string content creates expected map" do
+      # `ToolResult.new!/1` migrates a string to ContentParts, but a struct
+      # built or updated directly can hold a plain string. Both are valid
+      # shapes for `content`.
+      expected = %{
+        "functionResponse" => %{
+          "name" => "find_theaters",
+          "response" => %{
+            "name" => "find_theaters",
+            "content" => %{"result" => "I don't know where the theaters are."}
+          }
+        }
+      }
+
+      tool_result = %ToolResult{
+        name: "find_theaters",
+        tool_call_id: "call-find_theaters",
+        content: "I don't know where the theaters are."
+      }
+
+      assert expected == ChatGoogleAI.for_api(tool_result)
+    end
+
+    test "tool result with no text content creates expected map" do
+      # A multi-modal tool result may carry no `:text` part at all. Reached
+      # through the normal `new!/1` constructor, so this is not limited to
+      # hand-built structs.
+      expected = %{
+        "functionResponse" => %{
+          "name" => "take_screenshot",
+          "response" => %{
+            "name" => "take_screenshot",
+            "content" => %{}
+          }
+        }
+      }
+
+      tool_result =
+        ToolResult.new!(%{
+          name: "take_screenshot",
+          tool_call_id: "call-take_screenshot",
+          content: [ContentPart.image!("base64data", media: :png)]
+        })
+
+      assert expected == ChatGoogleAI.for_api(tool_result)
+    end
+
+    test "tool result with nil content creates expected map" do
+      expected = %{
+        "functionResponse" => %{
+          "name" => "find_theaters",
+          "response" => %{
+            "name" => "find_theaters",
+            "content" => %{}
+          }
+        }
+      }
+
+      tool_result = %ToolResult{
+        name: "find_theaters",
+        tool_call_id: "call-find_theaters",
+        content: nil
+      }
+
+      assert expected == ChatGoogleAI.for_api(tool_result)
+    end
+
     test "adds safety settings to the request if present" do
       settings = [
         %{"category" => "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold" => "BLOCK_ONLY_HIGH"}

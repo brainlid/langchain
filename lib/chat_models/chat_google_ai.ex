@@ -430,22 +430,13 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   end
 
   def for_api(%ToolResult{} = result) do
-    content_string =
-      result.content
-      |> ContentPart.parts_to_string()
-
+    # `content` may be nil, a string, or a list of ContentParts.
+    # `content_to_string/1` accepts all three, where `parts_to_string/1`
+    # requires a list.
     content =
-      content_string
-      |> Jason.decode()
-      |> case do
-        {:ok, data} ->
-          # content was converted through JSON
-          data
-
-        {:error, %Jason.DecodeError{}} ->
-          # assume the result is intended to be a string and return it as-is
-          %{"result" => content_string}
-      end
+      result.content
+      |> ContentPart.content_to_string()
+      |> tool_result_response_for_api()
 
     # There is no explanation for why they want it nested like this. Odd.
     #
@@ -484,6 +475,24 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
 
   def for_api(%NativeTool{name: name, configuration: nil}) do
     name
+  end
+
+  # A tool result may carry no text at all: `content` can be nil, or a
+  # multi-modal ContentPart list holding only non-text parts. Send an empty
+  # object for those, matching ChatVertexAI, rather than handing nil to
+  # `Jason.decode/1`.
+  defp tool_result_response_for_api(nil), do: %{}
+
+  defp tool_result_response_for_api(content_string) when is_binary(content_string) do
+    case Jason.decode(content_string) do
+      {:ok, data} ->
+        # content was converted through JSON
+        data
+
+      {:error, %Jason.DecodeError{}} ->
+        # assume the result is intended to be a string and return it as-is
+        %{"result" => content_string}
+    end
   end
 
   @doc """
