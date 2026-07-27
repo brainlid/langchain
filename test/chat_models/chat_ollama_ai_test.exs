@@ -512,6 +512,21 @@ defmodule ChatModels.ChatOllamaAITest do
       assert expected == ChatOllamaAI.for_api(message)
     end
 
+    test "for a tool result holding a string, generate expected structure" do
+      # `ToolResult.new!/1` migrates a string into ContentParts, but a struct
+      # built or updated directly keeps the string. Both are supported shapes
+      # for `content`, so this must match what the equivalent list produces.
+      tool_result = %Message.ToolResult{
+        type: :function,
+        tool_call_id: "call_123",
+        name: "give_greeting",
+        content: "Hello, world!"
+      }
+
+      expected = %{"role" => :tool, "content" => "Hello, world!"}
+      assert expected == ChatOllamaAI.for_api(tool_result)
+    end
+
     test "for user message, generate expected structure" do
       message = Message.new_user!("Hello!")
       expected = %{"role" => :user, "content" => "Hello!"}
