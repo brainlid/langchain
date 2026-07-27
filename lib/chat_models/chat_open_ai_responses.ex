@@ -1315,11 +1315,31 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   #   "sequence_number" => 4,
   #   "type" => "response.output_text.delta"
   # }
+
+  # Reasoning/thinking deltas.
+  #
+  # - `response.reasoning.delta` is emitted by models that stream a reasoning
+  #   summary.
+  # - `response.reasoning_text.delta` is emitted by open-weight models that
+  #   expose their full chain-of-thought rather than a summary, notably OpenAI's
+  #   `gpt-oss` family, including when served through AWS Bedrock. The deltas are
+  #   wrapped in a `reasoning` output item and delimited by the structural
+  #   `response.reasoning_part.*` and `response.reasoning_text.done` markers,
+  #   which are skipped below.
+  #
+  # Both are emitted as `:thinking` content so consumers can display or filter
+  # reasoning consistently regardless of which model produced it.
+  @reasoning_delta_events [
+    "response.reasoning.delta",
+    "response.reasoning_text.delta"
+  ]
+
   def do_process_response(_model, %{
-        "type" => "response.reasoning.delta",
+        "type" => type,
         "output_index" => output_index,
         "delta" => delta_text
-      }) do
+      })
+      when type in @reasoning_delta_events do
     data = %{
       content: ContentPart.new!(%{type: :thinking, content: delta_text}),
       status: :incomplete,
@@ -1606,6 +1626,16 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     "response.reasoning_summary.done"
   ]
 
+  # Structural markers around raw reasoning-text streaming (gpt-oss and other
+  # open-weight models). The `response.reasoning_text.delta` content is handled
+  # above; these delimit the reasoning part and carry no incremental content we
+  # need, so they are skipped.
+  @reasoning_text_events [
+    "response.reasoning_part.added",
+    "response.reasoning_part.done",
+    "response.reasoning_text.done"
+  ]
+
   @skippable_streaming_events [
     "keepalive",
     "response.created",
@@ -1666,6 +1696,15 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
       when event in @reasoning_summary_events do
     if model.verbose_api do
       Logger.debug("[LANGCHAIN] Reasoning event: #{event}")
+    end
+
+    :skip
+  end
+
+  def do_process_response(model, %{"type" => event} = _data)
+      when event in @reasoning_text_events do
+    if model.verbose_api do
+      Logger.debug("[LANGCHAIN] Reasoning text event: #{event}")
     end
 
     :skip
