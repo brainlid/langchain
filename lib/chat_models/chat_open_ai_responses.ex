@@ -1336,6 +1336,33 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     end
   end
 
+  # Raw reasoning text streamed by open-weight models (e.g. gpt-oss) that expose
+  # their full chain-of-thought rather than a summary. Emitted as a series of
+  # `response.reasoning_text.delta` events wrapped in a `reasoning` output item.
+  # Handled the same way as `response.reasoning.delta` — as `:thinking` content —
+  # so consumers can display or filter it. The structural `reasoning_part.*` and
+  # `reasoning_text.done` markers are skipped below.
+  def do_process_response(_model, %{
+        "type" => "response.reasoning_text.delta",
+        "output_index" => output_index,
+        "delta" => delta_text
+      }) do
+    data = %{
+      content: ContentPart.new!(%{type: :thinking, content: delta_text}),
+      status: :incomplete,
+      role: :assistant,
+      index: output_index
+    }
+
+    case MessageDelta.new(data) do
+      {:ok, message} ->
+        message
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:error, LangChainError.exception(changeset)}
+    end
+  end
+
   def do_process_response(
         _model,
         %{
@@ -1606,6 +1633,16 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     "response.reasoning_summary.done"
   ]
 
+  # Structural markers around raw reasoning-text streaming (gpt-oss and other
+  # open-weight models). The `response.reasoning_text.delta` content is handled
+  # above; these delimit the reasoning part and carry no incremental content we
+  # need, so they are skipped.
+  @reasoning_text_events [
+    "response.reasoning_part.added",
+    "response.reasoning_part.done",
+    "response.reasoning_text.done"
+  ]
+
   @skippable_streaming_events [
     "keepalive",
     "response.created",
@@ -1666,6 +1703,15 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
       when event in @reasoning_summary_events do
     if model.verbose_api do
       Logger.debug("[LANGCHAIN] Reasoning event: #{event}")
+    end
+
+    :skip
+  end
+
+  def do_process_response(model, %{"type" => event} = _data)
+      when event in @reasoning_text_events do
+    if model.verbose_api do
+      Logger.debug("[LANGCHAIN] Reasoning text event: #{event}")
     end
 
     :skip

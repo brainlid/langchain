@@ -1033,6 +1033,47 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
              } = result.content
     end
 
+    test "parses response.reasoning_text.delta event", %{model: model} do
+      event = %{
+        "type" => "response.reasoning_text.delta",
+        "output_index" => 0,
+        "content_index" => 0,
+        "item_id" => "msg_9804260c7f3d65a6",
+        "sequence_number" => 4,
+        "delta" => "We need to reason about this..."
+      }
+
+      result = ChatOpenAIResponses.do_process_response(model, event)
+      assert %LangChain.MessageDelta{} = result
+      assert result.status == :incomplete
+      assert result.role == :assistant
+      assert result.index == 0
+
+      assert %LangChain.Message.ContentPart{
+               type: :thinking,
+               content: "We need to reason about this..."
+             } = result.content
+    end
+
+    test "skips raw reasoning-text structural events", %{model: model} do
+      events = [
+        %{
+          "type" => "response.reasoning_part.added",
+          "output_index" => 0,
+          "content_index" => 0,
+          "item_id" => "msg_9804260c7f3d65a6",
+          "sequence_number" => 3,
+          "part" => %{"text" => "", "type" => "reasoning_text"}
+        },
+        %{"type" => "response.reasoning_text.done", "text" => "full reasoning"},
+        %{"type" => "response.reasoning_part.done"}
+      ]
+
+      for event <- events do
+        assert :skip == ChatOpenAIResponses.do_process_response(model, event)
+      end
+    end
+
     test "parses reasoning output_item.done event", %{model: model} do
       event = %{
         "type" => "response.output_item.done",

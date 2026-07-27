@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **`ChatOpenAIResponses` no longer errors on raw reasoning-text streaming events.** Open-weight models that expose their full chain-of-thought rather than a summary — notably OpenAI's `gpt-oss` family, including when served through AWS Bedrock "Mantle" — stream their reasoning as a `reasoning` output item made of `response.reasoning_text.delta` events, delimited by `response.reasoning_part.added` / `.done` and `response.reasoning_text.done`. None of these were handled: they fell through to the catch-all and were returned as `{:error, %LangChainError{type: "unexpected_response"}}` for every reasoning chunk, which aborted the stream (and crashed any `on_llm_new_delta` handler that assumed a map). `response.reasoning_text.delta` is now processed exactly like `response.reasoning.delta` — as `:thinking` content on a `MessageDelta` — and the structural markers are skipped, mirroring the existing `response.reasoning_summary_*` handling. Thanks to Jeremy Searls (@jersearls) for the contribution.
+
 ## v0.9.3
 
 A release focused on two areas: closing credential-exposure and dependency-advisory issues, and making the callback system actually work the way it has always been documented. Callbacks assigned to a chat model were silently discarded, both by `new/1` and again by `LLMChain`, and the convenience chains offered no way to observe their internal run at all. No breaking changes.
