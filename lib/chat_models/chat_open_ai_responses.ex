@@ -1315,38 +1315,31 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   #   "sequence_number" => 4,
   #   "type" => "response.output_text.delta"
   # }
+
+  # Reasoning/thinking deltas.
+  #
+  # - `response.reasoning.delta` is emitted by models that stream a reasoning
+  #   summary.
+  # - `response.reasoning_text.delta` is emitted by open-weight models that
+  #   expose their full chain-of-thought rather than a summary, notably OpenAI's
+  #   `gpt-oss` family, including when served through AWS Bedrock. The deltas are
+  #   wrapped in a `reasoning` output item and delimited by the structural
+  #   `response.reasoning_part.*` and `response.reasoning_text.done` markers,
+  #   which are skipped below.
+  #
+  # Both are emitted as `:thinking` content so consumers can display or filter
+  # reasoning consistently regardless of which model produced it.
+  @reasoning_delta_events [
+    "response.reasoning.delta",
+    "response.reasoning_text.delta"
+  ]
+
   def do_process_response(_model, %{
-        "type" => "response.reasoning.delta",
+        "type" => type,
         "output_index" => output_index,
         "delta" => delta_text
-      }) do
-    data = %{
-      content: ContentPart.new!(%{type: :thinking, content: delta_text}),
-      status: :incomplete,
-      role: :assistant,
-      index: output_index
-    }
-
-    case MessageDelta.new(data) do
-      {:ok, message} ->
-        message
-
-      {:error, %Ecto.Changeset{} = changeset} ->
-        {:error, LangChainError.exception(changeset)}
-    end
-  end
-
-  # Raw reasoning text streamed by open-weight models (e.g. gpt-oss) that expose
-  # their full chain-of-thought rather than a summary. Emitted as a series of
-  # `response.reasoning_text.delta` events wrapped in a `reasoning` output item.
-  # Handled the same way as `response.reasoning.delta` — as `:thinking` content —
-  # so consumers can display or filter it. The structural `reasoning_part.*` and
-  # `reasoning_text.done` markers are skipped below.
-  def do_process_response(_model, %{
-        "type" => "response.reasoning_text.delta",
-        "output_index" => output_index,
-        "delta" => delta_text
-      }) do
+      })
+      when type in @reasoning_delta_events do
     data = %{
       content: ContentPart.new!(%{type: :thinking, content: delta_text}),
       status: :incomplete,
