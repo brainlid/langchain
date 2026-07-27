@@ -1853,6 +1853,93 @@ defmodule ChatModels.ChatGoogleAITest do
     end
   end
 
+  describe "tool schema compatibility with Google AI" do
+    @tag live_call: true, live_google_ai: true
+    @tag timeout: 180_000
+    test "accepts a tool declared with a FunctionParam list" do
+      # Regression test for the reported issue. `FunctionParam` generates
+      # `additionalProperties`, which Google's `Schema` type has no field for,
+      # so before sanitizing this failed the whole request with
+      # `Unknown name "additionalProperties" ... Cannot find field`.
+      #
+      # `const` is a parameter name that collides with a JSON Schema keyword,
+      # covering that property names survive sanitizing.
+      alias LangChain.Chains.LLMChain
+
+      test_pid = self()
+
+      function =
+        Function.new!(%{
+          name: "record_reading",
+          description: "Record a sensor reading.",
+          parameters: [
+            FunctionParam.new!(%{
+              name: "const",
+              type: :string,
+              description: "The sensor name.",
+              required: true
+            }),
+            FunctionParam.new!(%{
+              name: "value",
+              type: :integer,
+              description: "The reading value.",
+              required: true
+            })
+          ],
+          function: fn args, _context ->
+            send(test_pid, {:tool_called, args})
+            {:ok, "recorded"}
+          end
+        })
+
+      model = ChatGoogleAI.new!(%{temperature: 0, stream: false, model: "gemini-flash-latest"})
+
+      {:ok, updated_chain} =
+        %{llm: model, verbose: false, stream: false}
+        |> LLMChain.new!()
+        |> LLMChain.add_message(
+          Message.new_user!("Record a reading of 42 for the sensor named 'boiler'.")
+        )
+        |> LLMChain.add_tools(function)
+        |> LLMChain.run(mode: :while_needs_response)
+
+      assert %Message{role: :assistant} = updated_chain.last_message
+
+      # the parameter named `const` has to have survived the round trip
+      assert_received {:tool_called, %{"const" => "boiler", "value" => 42}}
+    end
+
+    @tag live_call: true, live_google_ai: true
+    @tag timeout: 180_000
+    test "accepts a response schema carrying unsupported keywords" do
+      model =
+        ChatGoogleAI.new!(%{
+          temperature: 0,
+          stream: false,
+          model: "gemini-flash-latest",
+          json_response: true,
+          json_schema: %{
+            "type" => "object",
+            "additionalProperties" => false,
+            "required" => ["color"],
+            "properties" => %{
+              "color" => %{"type" => "string", "description" => "A color name."}
+            }
+          }
+        })
+
+      {:ok, [%Message{} = message]} =
+        ChatGoogleAI.call(model, [
+          Message.new_user!("Respond with the color of a clear midday sky.")
+        ])
+
+      assert {:ok, %{"color" => color}} =
+               message.content |> ContentPart.content_to_string() |> Jason.decode()
+
+      assert is_binary(color)
+    end
+  end
+
   @tag live_call: true, live_google_ai: true
   test "image classification with Google AI model" do
     alias LangChain.Chains.LLMChain
@@ -2205,7 +2292,7 @@ defmodule ChatModels.ChatGoogleAITest do
       model =
         ChatGoogleAI.new!(%{
           stream: true,
-          model: "gemini-2.5-flash"
+          model: "gemini-2.0-flash"
         })
 
       expect(Req, :post, fn _req, _opts ->
@@ -2242,7 +2329,7 @@ defmodule ChatModels.ChatGoogleAITest do
         {:ok, %Req.Response{status: 200, headers: [], body: ""}}
       end)
 
-      model = ChatGoogleAI.new!(%{stream: true, model: "gemini-2.5-flash"})
+      model = ChatGoogleAI.new!(%{stream: true, model: "gemini-2.0-flash"})
 
       assert {:error, %LangChainError{} = error} =
                ChatGoogleAI.call(model, [Message.new_user!("Hello")])
