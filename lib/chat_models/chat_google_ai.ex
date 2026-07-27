@@ -412,9 +412,11 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   end
 
   def for_api(%ToolResult{} = result) do
+    # `content` may be a string or a list of ContentParts. `content_to_string/1`
+    # accepts both, where `parts_to_string/1` requires a list.
     content_string =
       result.content
-      |> ContentPart.parts_to_string()
+      |> ContentPart.content_to_string()
 
     content =
       content_string
