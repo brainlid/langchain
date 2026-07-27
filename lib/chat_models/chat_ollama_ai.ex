@@ -459,9 +459,11 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   end
 
   def for_api(%ToolResult{content: content}) do
+    # `content` may be a string or a list of ContentParts. `content_to_string/1`
+    # accepts both, where `parts_to_string/1` requires a list.
     %{
       "role" => :tool,
-      "content" => ContentPart.parts_to_string(content)
+      "content" => ContentPart.content_to_string(content)
     }
   end
 
