@@ -29,8 +29,10 @@ defmodule LangChain.OpenTelemetry.Attributes do
     * `gen_ai.tool.name`, `gen_ai.tool.call.id`, `gen_ai.tool.type`,
       `gen_ai.tool.description`,
       `gen_ai.tool.call.arguments` / `gen_ai.tool.call.result` (opt-in)
-    * `gen_ai.agent.name`, `gen_ai.conversation.id` (from `custom_context`)
+    * `gen_ai.agent.name`, `gen_ai.agent.id`, `gen_ai.conversation.id` (from `custom_context`)
     * `error.type` (on failed operations)
+    * Any attributes the caller supplies via `custom_context[:otel_attributes]` —
+      see `passthrough_attributes/1`
 
   It does **not** currently emit `gen_ai.response.id` or a distinct
   `gen_ai.response.model` (LangChain keeps no response id and normalizes the
@@ -82,6 +84,7 @@ defmodule LangChain.OpenTelemetry.Attributes do
   @tool_call_arguments "gen_ai.tool.call.arguments"
   @tool_call_result "gen_ai.tool.call.result"
   @agent_name "gen_ai.agent.name"
+  @agent_id "gen_ai.agent.id"
   @conversation_id "gen_ai.conversation.id"
   @server_address "server.address"
   @server_port "server.port"
@@ -340,7 +343,10 @@ defmodule LangChain.OpenTelemetry.Attributes do
   Builds attributes for a tool call start event.
 
   When `config.capture_tool_arguments` is true and `metadata[:arguments]` is present,
-  serializes arguments into `gen_ai.tool.call.arguments`.
+  serializes arguments into `gen_ai.tool.call.arguments`. Also applies the caller's
+  `:otel_attributes` passthrough (see `passthrough_attributes/1`), which reaches tool
+  spans because `LLMChain` includes `custom_context` in the tool-call telemetry
+  metadata.
   """
   @spec tool_call(map()) :: [{String.t(), term()}]
   @spec tool_call(map(), Config.t()) :: [{String.t(), term()}]
@@ -368,23 +374,26 @@ defmodule LangChain.OpenTelemetry.Attributes do
         _ -> attrs
       end
 
-    if config.capture_tool_arguments do
-      case metadata[:arguments] do
-        nil ->
-          attrs
+    attrs =
+      if config.capture_tool_arguments do
+        case metadata[:arguments] do
+          nil ->
+            attrs
 
-        args when is_map(args) ->
-          [{@tool_call_arguments, Jason.encode!(args)} | attrs]
+          args when is_map(args) ->
+            [{@tool_call_arguments, Jason.encode!(args)} | attrs]
 
-        args when is_binary(args) ->
-          [{@tool_call_arguments, args} | attrs]
+          args when is_binary(args) ->
+            [{@tool_call_arguments, args} | attrs]
 
-        _ ->
-          attrs
+          _ ->
+            attrs
+        end
+      else
+        attrs
       end
-    else
-      attrs
-    end
+
+    merge(attrs, passthrough_attributes(metadata[:custom_context]))
   end
 
   @doc """
@@ -414,30 +423,38 @@ defmodule LangChain.OpenTelemetry.Attributes do
   @doc """
   Builds attributes for a chain execution event.
 
-  Sets `gen_ai.conversation.id` from `custom_context` (a `:conversation_id` key,
-  falling back to `:langfuse_session_id` — the same session concept) and also
-  extracts Langfuse-specific attributes from `custom_context` when present.
+  Sets `gen_ai.conversation.id`, `gen_ai.agent.name`, and `gen_ai.agent.id` from
+  `custom_context`, extracts Langfuse-specific attributes when present, and applies
+  the caller's `:otel_attributes` passthrough (see `passthrough_attributes/1`).
   """
   @spec chain_start(map()) :: [{String.t(), term()}]
   def chain_start(metadata) do
+    context = metadata[:custom_context]
+
     attrs = [{@operation_name, "invoke_agent"}]
 
     attrs =
-      case metadata[:chain_type] do
+      case agent_name(context, metadata[:chain_type]) do
         nil -> attrs
-        chain_type -> [{@agent_name, chain_type} | attrs]
+        name -> [{@agent_name, name} | attrs]
       end
 
     attrs =
-      case conversation_id(metadata[:custom_context]) do
+      case agent_id(context) do
+        nil -> attrs
+        id -> [{@agent_id, id} | attrs]
+      end
+
+    attrs =
+      case conversation_id(context) do
         nil -> attrs
         id -> [{@conversation_id, id} | attrs]
       end
 
-    case metadata[:custom_context] do
-      nil -> attrs
-      context -> custom_context_attributes(context) ++ attrs
-    end
+    derived = custom_context_attributes(context) ++ attrs
+
+    # Passthrough wins on collision: a caller who names a key means it.
+    merge(derived, passthrough_attributes(context))
   end
 
   # `gen_ai.conversation.id` groups traces into a session/thread. LangChain has no
@@ -446,6 +463,19 @@ defmodule LangChain.OpenTelemetry.Attributes do
   defp conversation_id(%{conversation_id: id}) when not is_nil(id), do: id
   defp conversation_id(%{langfuse_session_id: id}) when not is_nil(id), do: id
   defp conversation_id(_), do: nil
+
+  # `gen_ai.agent.name` prefers an explicit `:agent_name` from `custom_context` and
+  # falls back to the chain type. The fallback alone is nearly useless — every
+  # `LLMChain` reports `"llm_chain"`, so the attribute is constant and cannot group
+  # anything — but it is what earlier versions emitted, so it stays as the default.
+  defp agent_name(%{agent_name: name}, _chain_type) when is_binary(name) and name != "", do: name
+  defp agent_name(_context, chain_type), do: chain_type
+
+  # `gen_ai.agent.id` distinguishes individual agent instances (and sub-agents)
+  # within a trace. Frameworks built on LangChain generally already track an agent
+  # id; surfacing it costs them nothing beyond putting it in `custom_context`.
+  defp agent_id(%{agent_id: id}) when is_binary(id) and id != "", do: id
+  defp agent_id(_), do: nil
 
   @doc """
   Builds attributes for a chain execution stop event.
@@ -576,6 +606,10 @@ defmodule LangChain.OpenTelemetry.Attributes do
   # and would make `to_string/1` raise — which, trapped by the span handler,
   # silently drops the entire chain span — while a list would be lossily flattened
   # as an iolist (`["x", "y"]` -> `"xy"`). JSON keeps both faithful and safe.
+  #
+  # Note this deliberately stays string-only and separate from `attribute_value/1`
+  # below. Langfuse reads `langfuse.trace.metadata.*` as strings, and widening
+  # these to native types would silently change what existing dashboards receive.
   defp stringify_metadata_value(value) when is_binary(value), do: value
   defp stringify_metadata_value(value) when is_number(value), do: to_string(value)
   defp stringify_metadata_value(value) when is_atom(value), do: to_string(value)
@@ -585,5 +619,128 @@ defmodule LangChain.OpenTelemetry.Attributes do
       {:ok, json} -> json
       {:error, _} -> inspect(value)
     end
+  end
+
+  @doc """
+  Extracts caller-supplied span attributes from `custom_context[:otel_attributes]`.
+
+  `:otel_attributes` is a **reserved key** in `LLMChain.custom_context`: a flat map
+  of attribute name to value that LangChain copies onto the spans it creates.
+
+      chain =
+        %{llm: llm, messages: messages}
+        |> LLMChain.new!()
+        |> Map.put(:custom_context, %{
+          otel_attributes: %{
+            "user.id" => user.id,
+            "organization.id" => org.id,
+            "myapp.feature" => "support_chat"
+          }
+        })
+
+  The key is reserved and explicit rather than LangChain forwarding all of
+  `custom_context`, because `custom_context` routinely holds structs, PIDs, and
+  whole conversation states. Copying it wholesale would produce enormous spans and
+  leak data the caller never intended to export.
+
+  Keys may be strings or atoms; values are coerced by `attribute_value/1`. Entries
+  with an unusable key or a `nil` value are dropped rather than exported as empty
+  attributes.
+
+  Namespace application-specific names (`myapp.*`) per the semantic conventions. A
+  `gen_ai.*` key is honoured deliberately, so a caller can fill a convention slot
+  LangChain does not populate itself.
+  """
+  @spec passthrough_attributes(map() | nil) :: [{String.t(), term()}]
+  def passthrough_attributes(%{otel_attributes: attrs}) when is_map(attrs) do
+    Enum.flat_map(attrs, fn {key, value} ->
+      case {attribute_key(key), attribute_value(value)} do
+        {nil, _} -> []
+        {_key, nil} -> []
+        {key, value} -> [{key, value}]
+      end
+    end)
+  end
+
+  def passthrough_attributes(_), do: []
+
+  # Attribute names must be strings. Accept atoms for convenience (`:"user.id"`)
+  # and drop anything else rather than letting it reach the SDK.
+  defp attribute_key(key) when is_binary(key), do: key
+  defp attribute_key(key) when is_atom(key) and not is_nil(key), do: Atom.to_string(key)
+  defp attribute_key(_), do: nil
+
+  @doc """
+  Coerces a caller-supplied value into something safe to set as a span attribute.
+
+  Values the OpenTelemetry spec supports natively — strings, integers, floats,
+  booleans, and homogeneous lists of those — pass through **unchanged**, so numeric
+  attributes stay numeric and remain filterable as numbers in the backend. Anything
+  else is JSON-encoded, falling back to `inspect/1` when it cannot be encoded.
+
+  This exists because an uncoerced value is not a loud failure. A nested map has no
+  `String.Chars` implementation, so the SDK's stringification raises; the span
+  handler traps that exception (it must, since a raising `:telemetry` handler is
+  detached VM-wide) and the result is that **the whole span silently disappears**.
+  Every caller-supplied value must pass through here.
+
+  `nil` returns `nil` so callers can drop the attribute entirely; there is no
+  meaningful "null" span attribute.
+  """
+  @spec attribute_value(term()) :: term()
+  def attribute_value(nil), do: nil
+  def attribute_value(value) when is_binary(value), do: value
+  # `is_boolean/1` must precede `is_atom/1` — booleans are atoms in Elixir, and
+  # OTel supports them natively, so stringifying them would lose the type.
+  def attribute_value(value) when is_boolean(value), do: value
+  def attribute_value(value) when is_integer(value) or is_float(value), do: value
+  def attribute_value(value) when is_atom(value), do: Atom.to_string(value)
+
+  def attribute_value(value) when is_list(value) do
+    if native_list?(value), do: value, else: encode_value(value)
+  end
+
+  def attribute_value(value), do: encode_value(value)
+
+  # OTel array attributes must be homogeneous. A mixed list (or a list of maps)
+  # is JSON-encoded instead, which keeps it faithful rather than rejected.
+  defp native_list?([]), do: true
+
+  defp native_list?([first | _] = list) do
+    cond do
+      is_binary(first) -> Enum.all?(list, &is_binary/1)
+      is_boolean(first) -> Enum.all?(list, &is_boolean/1)
+      is_integer(first) -> Enum.all?(list, &is_integer/1)
+      is_float(first) -> Enum.all?(list, &is_float/1)
+      true -> false
+    end
+  end
+
+  defp encode_value(value) do
+    case Jason.encode(value) do
+      {:ok, json} -> json
+      {:error, _} -> inspect(value)
+    end
+  end
+
+  @doc """
+  Merges two attribute lists, with `override` winning on duplicate keys.
+
+  Attribute lists are keyword-like lists of `{key, value}` tuples, and the SDK's
+  own de-duplication order is an implementation detail we should not depend on.
+  Resolving collisions here keeps precedence explicit and testable at the two
+  places it matters:
+
+    * caller-supplied `:otel_attributes` override LangChain-derived values on the
+      same span, because a caller who names a key means it;
+    * inherited attributes (see `LangChain.OpenTelemetry.SpanHandler`) **lose** to
+      the values an event derives, so an inherited `gen_ai.request.model` can never
+      overwrite the real per-call model on a `chat` span.
+  """
+  @spec merge(list(), list()) :: list()
+  def merge(base, override) do
+    override_keys = MapSet.new(override, fn {key, _value} -> key end)
+
+    Enum.reject(base, fn {key, _value} -> MapSet.member?(override_keys, key) end) ++ override
   end
 end

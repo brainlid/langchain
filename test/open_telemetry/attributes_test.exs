@@ -632,6 +632,162 @@ defmodule LangChain.OpenTelemetry.AttributesTest do
 
       refute Enum.any?(attrs, fn {k, _v} -> k == "gen_ai.conversation.id" end)
     end
+
+    test "prefers an explicit agent_name over chain_type for gen_ai.agent.name" do
+      metadata = %{chain_type: "llm_chain", custom_context: %{agent_name: "support_agent"}}
+
+      attrs = Attributes.chain_start(metadata)
+
+      assert {"gen_ai.agent.name", "support_agent"} in attrs
+      refute {"gen_ai.agent.name", "llm_chain"} in attrs
+    end
+
+    test "falls back to chain_type when agent_name is blank" do
+      attrs =
+        Attributes.chain_start(%{chain_type: "llm_chain", custom_context: %{agent_name: ""}})
+
+      assert {"gen_ai.agent.name", "llm_chain"} in attrs
+    end
+
+    test "sets gen_ai.agent.id from custom_context agent_id" do
+      metadata = %{chain_type: "llm_chain", custom_context: %{agent_id: "agent-42"}}
+
+      attrs = Attributes.chain_start(metadata)
+
+      assert {"gen_ai.agent.id", "agent-42"} in attrs
+    end
+
+    test "omits gen_ai.agent.id when absent" do
+      attrs = Attributes.chain_start(%{chain_type: "llm_chain", custom_context: %{}})
+
+      refute Enum.any?(attrs, fn {k, _v} -> k == "gen_ai.agent.id" end)
+    end
+
+    test "includes otel_attributes passthrough" do
+      metadata = %{
+        chain_type: "llm_chain",
+        custom_context: %{
+          otel_attributes: %{"user.id" => "u-1", "myapp.feature" => "chat"}
+        }
+      }
+
+      attrs = Attributes.chain_start(metadata)
+
+      assert {"user.id", "u-1"} in attrs
+      assert {"myapp.feature", "chat"} in attrs
+    end
+
+    test "otel_attributes override a LangChain-derived value for the same key" do
+      metadata = %{
+        chain_type: "llm_chain",
+        custom_context: %{
+          conversation_id: "conv-1",
+          otel_attributes: %{"gen_ai.conversation.id" => "explicit-override"}
+        }
+      }
+
+      attrs = Attributes.chain_start(metadata)
+
+      assert {"gen_ai.conversation.id", "explicit-override"} in attrs
+      refute {"gen_ai.conversation.id", "conv-1"} in attrs
+    end
+  end
+
+  describe "passthrough_attributes/1" do
+    test "returns [] when there is no context or no otel_attributes key" do
+      assert Attributes.passthrough_attributes(nil) == []
+      assert Attributes.passthrough_attributes(%{}) == []
+      assert Attributes.passthrough_attributes(%{otel_attributes: "not a map"}) == []
+    end
+
+    test "accepts atom keys and stringifies them" do
+      attrs = Attributes.passthrough_attributes(%{otel_attributes: %{:"user.id" => "u-1"}})
+
+      assert attrs == [{"user.id", "u-1"}]
+    end
+
+    test "drops entries with a nil value" do
+      attrs =
+        Attributes.passthrough_attributes(%{
+          otel_attributes: %{"present" => "yes", "absent" => nil}
+        })
+
+      assert attrs == [{"present", "yes"}]
+    end
+
+    test "drops entries whose key is not a string or atom" do
+      attrs = Attributes.passthrough_attributes(%{otel_attributes: %{123 => "nope"}})
+
+      assert attrs == []
+    end
+
+    test "preserves native attribute types rather than stringifying them" do
+      attrs =
+        Attributes.passthrough_attributes(%{
+          otel_attributes: %{"count" => 42, "ratio" => 1.5, "enabled" => true}
+        })
+
+      assert {"count", 42} in attrs
+      assert {"ratio", 1.5} in attrs
+      assert {"enabled", true} in attrs
+    end
+
+    # A nested map has no String.Chars implementation. Uncoerced it makes the SDK
+    # raise, the span handler traps the exception, and the whole span disappears from
+    # the trace with only a log line to show for it.
+    test "JSON-encodes a nested map instead of letting it reach the SDK raw" do
+      attrs = Attributes.passthrough_attributes(%{otel_attributes: %{"m" => %{"a" => 1}}})
+
+      assert attrs == [{"m", ~s({"a":1})}]
+    end
+  end
+
+  describe "attribute_value/1" do
+    test "passes native scalar types through unchanged" do
+      assert Attributes.attribute_value("text") == "text"
+      assert Attributes.attribute_value(7) == 7
+      assert Attributes.attribute_value(1.25) == 1.25
+      assert Attributes.attribute_value(true) == true
+      assert Attributes.attribute_value(false) == false
+    end
+
+    test "returns nil for nil so callers can drop the attribute" do
+      assert Attributes.attribute_value(nil) == nil
+    end
+
+    test "stringifies non-boolean atoms" do
+      assert Attributes.attribute_value(:running) == "running"
+    end
+
+    test "passes homogeneous lists through unchanged" do
+      assert Attributes.attribute_value(["a", "b"]) == ["a", "b"]
+      assert Attributes.attribute_value([1, 2]) == [1, 2]
+      assert Attributes.attribute_value([true, false]) == [true, false]
+      assert Attributes.attribute_value([]) == []
+    end
+
+    test "JSON-encodes mixed lists, which OTel cannot represent as an array" do
+      assert Attributes.attribute_value([1, "a"]) == ~s([1,"a"])
+    end
+
+    test "falls back to inspect for values JSON cannot encode" do
+      assert Attributes.attribute_value(self()) =~ "#PID"
+    end
+  end
+
+  describe "merge/2" do
+    test "override wins on duplicate keys" do
+      merged = Attributes.merge([{"a", 1}, {"b", 2}], [{"b", 99}])
+
+      assert merged == [{"a", 1}, {"b", 99}]
+    end
+
+    test "keeps non-conflicting entries from both sides" do
+      merged = Attributes.merge([{"a", 1}], [{"b", 2}])
+
+      assert {"a", 1} in merged
+      assert {"b", 2} in merged
+    end
   end
 
   describe "chain_stop/2" do

@@ -58,10 +58,14 @@ defmodule LangChain.OpenTelemetry.AsyncToolContextTest do
       %{
         name: span(record, :name),
         span_id: span(record, :span_id),
-        parent_span_id: span(record, :parent_span_id)
+        parent_span_id: span(record, :parent_span_id),
+        attributes: extract_attributes(span(record, :attributes))
       }
     end)
   end
+
+  defp extract_attributes(attrs) when is_tuple(attrs), do: :otel_attributes.map(attrs)
+  defp extract_attributes(_), do: %{}
 
   defp chain_with_async_tool do
     func =
@@ -121,5 +125,44 @@ defmodule LangChain.OpenTelemetry.AsyncToolContextTest do
     assert tool, "expected the async tool span to be exported"
     # An undefined parent is represented as 0 by the OTel SDK.
     assert tool.parent_span_id in [:undefined, 0]
+  end
+
+  # Inherited attributes ride the OpenTelemetry context, which is exactly what
+  # `LLMChain` already captures and re-attaches around an async tool. This asserts
+  # they survive that hop. The chain here deliberately carries NO `custom_context`,
+  # so the only route these attributes have into the tool span is inheritance across
+  # the process boundary.
+  test "inherited chain attributes reach an async tool running in its own process",
+       %{tid: tid} do
+    chain = chain_with_async_tool()
+    chain_call_id = Ecto.UUID.generate()
+
+    :telemetry.execute(
+      [:langchain, :chain, :execute, :start],
+      %{system_time: System.system_time()},
+      %{
+        call_id: chain_call_id,
+        chain_type: "llm_chain",
+        custom_context: %{
+          conversation_id: "conv-async",
+          otel_attributes: %{"organization.id" => "org-3"}
+        }
+      }
+    )
+
+    %LLMChain{} = LLMChain.execute_tool_calls(chain)
+
+    :telemetry.execute(
+      [:langchain, :chain, :execute, :stop],
+      %{duration: 1, system_time: System.system_time()},
+      %{call_id: chain_call_id}
+    )
+
+    spans = flush_spans(tid)
+    tool = Enum.find(spans, &String.starts_with?(&1.name, "execute_tool"))
+
+    assert tool, "expected the async tool span to be exported"
+    assert tool.attributes["organization.id"] == "org-3"
+    assert tool.attributes["gen_ai.conversation.id"] == "conv-async"
   end
 end

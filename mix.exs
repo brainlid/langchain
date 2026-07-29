@@ -184,6 +184,7 @@ defmodule LangChain.MixProject do
           LangChain.Telemetry,
           LangChain.OpenTelemetry,
           LangChain.OpenTelemetry.Config,
+          LangChain.OpenTelemetry.Enrich,
           LangChain.OpenTelemetry.SpanHandler,
           LangChain.OpenTelemetry.MetricsHandler,
           LangChain.OpenTelemetry.Attributes,
