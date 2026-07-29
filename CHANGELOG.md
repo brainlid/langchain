@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.9.5
+
+Adds your application's context to OpenTelemetry spans. Attributes you set on a chain now land on every span it produces, not just the root. No breaking changes.
+
+### Added
+
+- **Span attributes from `custom_context[:otel_attributes]`.** A flat map that lands on the `invoke_agent` span, each `chat` span, and each `execute_tool` span, so you can filter and group traces by tenant, user, or feature.
+
+  ```elixir
+  chain
+  |> LLMChain.update_custom_context(%{
+    otel_attributes: %{"user.id" => user.id, "organization.id" => org.id}
+  })
+  ```
+
+  Only this reserved key is exported, never the rest of `custom_context`. `gen_ai.conversation.id` is inherited the same way. Attributes a span derives itself always win, so an inherited value can never mask the real `gen_ai.request.model`. Pass `inherit_attributes: false` to `setup/1` to keep attributes on the chain span only. https://github.com/brainlid/langchain/pull/603
+- **`LangChain.OpenTelemetry.Enrich`** for setting attributes imperatively. `set_current_span_attributes/1` enriches the innermost open span, useful from inside a tool function or callback. `put_inherited_attributes/1` seeds attributes before any chain exists, for a Plug, a LiveView `mount/3`, or an Oban worker. Both are safe to call without the OpenTelemetry dependencies installed. https://github.com/brainlid/langchain/pull/603
+- **`gen_ai.agent.name` and `gen_ai.agent.id`** from `custom_context[:agent_name]` and `[:agent_id]`. The name still falls back to the chain type when unset. https://github.com/brainlid/langchain/pull/603
+
+See the [Observability guide](https://hexdocs.pm/langchain/observability.html) for the full details.
+
 ## v0.9.4
 
 A patch release fixing two provider-specific serialization and streaming bugs. The Google fix is the significant one: since v0.8.x, every tool declared the ordinary way with a `parameters:` list was rejected by Gemini, failing the whole request. No breaking changes.
