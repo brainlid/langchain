@@ -20,6 +20,21 @@ defmodule LangChain.OpenTelemetry.Config do
       LangChain telemetry as intermediary `[:langchain, :otel, …]` metric events for a
       consumer (`Telemetry.Metrics`, PromEx, …) to record. It does **not** record OTel
       histograms directly. Defaults to `true`. See `LangChain.OpenTelemetry.MetricsHandler`.
+
+    * `:inherit_attributes` - When `true`, attributes supplied via
+      `custom_context[:otel_attributes]` on a chain are inherited by the `chat` and
+      `execute_tool` spans nested under it, instead of landing only on the chain span.
+      Defaults to `true`.
+
+      This is what gets application context (user, tenant, feature) onto the LLM span,
+      which carries no `custom_context` of its own. Inherited values always lose to
+      attributes the span derives itself, so an inherited `gen_ai.request.model` can
+      never mask the real per-call model.
+
+      Inheritance is carried on the OpenTelemetry context, so it follows the trace
+      across process boundaries — including `async: true` tools running in their own
+      `Task` — but is never serialized onto outbound requests the way baggage is. Turn
+      it off if a very large attribute map makes the per-span copy undesirable.
   """
 
   @type t :: %__MODULE__{
@@ -27,14 +42,16 @@ defmodule LangChain.OpenTelemetry.Config do
           capture_output_messages: boolean(),
           capture_tool_arguments: boolean(),
           capture_tool_results: boolean(),
-          enable_metrics: boolean()
+          enable_metrics: boolean(),
+          inherit_attributes: boolean()
         }
 
   defstruct capture_input_messages: false,
             capture_output_messages: false,
             capture_tool_arguments: false,
             capture_tool_results: false,
-            enable_metrics: true
+            enable_metrics: true,
+            inherit_attributes: true
 
   @doc """
   Creates a new config from the given options.

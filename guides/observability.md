@@ -200,6 +200,97 @@ chain
 |> Map.put(:custom_context, %{conversation_id: session_id})
 ```
 
+### Identifying the agent
+
+Two more attributes come from `custom_context` when you set them:
+
+| `custom_context` key | Span attribute | Notes |
+|---|---|---|
+| `:agent_name` | `gen_ai.agent.name` | Falls back to the chain type (`"llm_chain"`) when unset |
+| `:agent_id` | `gen_ai.agent.id` | Omitted when unset |
+
+The `gen_ai.agent.name` fallback is the same value for every `LLMChain`, so it
+can't group anything on its own. Frameworks built on LangChain generally already
+track a name and id per agent; passing them through is what makes the attribute
+useful.
+
+### Attaching your own context to spans
+
+Traces get much more useful when spans carry *your* domain context — which
+tenant, which user, which feature. Set a flat map under the reserved
+`:otel_attributes` key in `custom_context`:
+
+```elixir
+chain
+|> LLMChain.update_custom_context(%{
+  otel_attributes: %{
+    "user.id" => current_user.id,
+    "organization.id" => org.id,
+    "myapp.feature" => "support_chat",
+    "myapp.plan" => org.plan
+  }
+})
+```
+
+Those attributes land on **every span the chain produces** — the
+`invoke_agent` span, each `chat` span, and each `execute_tool` span — so you can
+filter and group at the span level, not just the trace level.
+`gen_ai.conversation.id` is inherited the same way.
+
+Only the reserved key is exported, never the rest of `custom_context`. That map
+routinely holds structs, PIDs, and whole conversation states; copying it
+wholesale would produce enormous spans and export data you never intended to
+send.
+
+A few things worth knowing:
+
+- **Namespace your keys** (`myapp.*`) per the semantic conventions. A `gen_ai.*`
+  key is honoured deliberately, so you can fill a convention slot LangChain
+  doesn't populate itself.
+- **Types are preserved.** Strings, numbers, booleans, and homogeneous lists of
+  those stay native, so numeric attributes remain filterable as numbers. Anything
+  else is JSON-encoded. `nil` values are dropped.
+- **Your values never mask real ones.** On a span that derives an attribute
+  itself, the derived value wins — an inherited `gen_ai.request.model` can't
+  overwrite the actual model on a `chat` span. The one exception is the chain
+  span, where an `:otel_attributes` entry is taken as a deliberate override.
+- **Keep cardinality sane.** Tenant, user, and conversation ids are fine because
+  backends index on them. Free-text values (titles, queries) are not.
+
+Inheritance rides the OpenTelemetry context, so it follows the trace across
+process boundaries — including `async: true` tools running in their own `Task`
+— but is never serialized onto outbound HTTP requests the way OpenTelemetry
+baggage is. Set `inherit_attributes: false` in `setup/1` to keep attributes on
+the chain span only.
+
+#### Enriching a span mid-run
+
+For values you only learn once work is underway, `LangChain.OpenTelemetry.Enrich`
+sets attributes on whichever span is currently open:
+
+```elixir
+# inside a tool function — lands on that tool's `execute_tool` span
+LangChain.OpenTelemetry.Enrich.set_current_span_attributes(%{
+  "myapp.records_matched" => length(rows),
+  "myapp.cache" => "hit"
+})
+```
+
+To seed context before any chain exists — in a Plug, a LiveView `mount/3`, an
+Oban worker — use `put_inherited_attributes/1` instead, and every LangChain span
+opened later in that process inherits it:
+
+```elixir
+LangChain.OpenTelemetry.Enrich.put_inherited_attributes(%{
+  "organization.id" => conn.assigns.current_org.id
+})
+```
+
+Both functions are safe to call unconditionally: unlike the rest of the
+OpenTelemetry integration, `Enrich` compiles to no-ops when `:opentelemetry_api`
+isn't available, so your code doesn't need its own guards or an OpenTelemetry
+dependency.
+
 ### Errors
 
 When an operation raises, its span is closed with an error status, the exception
@@ -218,6 +309,7 @@ All options are passed to `setup/1` and default to the safest choice. See
 | `:capture_tool_arguments` | `false` | Record tool call arguments into `gen_ai.tool.call.arguments`. |
 | `:capture_tool_results` | `false` | Record tool return values into `gen_ai.tool.call.result`. |
 | `:enable_metrics` | `true` | Re-emit duration and token-usage metric events (see below). |
+| `:inherit_attributes` | `true` | Let nested `chat` and `execute_tool` spans inherit the chain's `:otel_attributes` and conversation id. |
 
 ```elixir
 # Trace latency and token usage, but never record message content (default):
@@ -374,7 +466,12 @@ chain =
 | `:langfuse_user_id` | `langfuse.user.id` |
 | `:langfuse_session_id` | `langfuse.session.id` |
 | `:langfuse_tags` | `langfuse.trace.tags` (comma-joined) |
-| `:langfuse_metadata` | `langfuse.trace.metadata.*` (flattened) |
+| `:langfuse_metadata` | `langfuse.trace.metadata.*` (flattened, values stringified) |
+
+These stay on the **root chain span** and stay strings, because that's what
+Langfuse reads. For attributes you want on every span, with types preserved, use
+`:otel_attributes` instead (see *Attaching your own context to spans* above). The
+two can be combined freely.
 
 > #### `custom_context` is shared with tools {: .info}
 >

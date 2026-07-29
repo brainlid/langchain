@@ -18,6 +18,32 @@ if Code.ensure_loaded?(:opentelemetry) do
     run in the same process, so parent context propagation works via the process
     dictionary.
 
+    ## Attribute inheritance
+
+    Attributes a caller supplies through `custom_context[:otel_attributes]` (see
+    `LangChain.OpenTelemetry.Attributes.passthrough_attributes/1`), along with
+    `gen_ai.conversation.id`, are stashed on the OpenTelemetry context when the chain
+    span opens, so the `chat` and `execute_tool` spans nested under it carry them too.
+    Without this they would land on the chain span only, and a backend could group
+    *traces* by tenant or session but not filter *spans* by them.
+
+    This matters most for the `chat` span, which is the one span that cannot reach
+    `custom_context` at all: its telemetry metadata is built inside
+    `LangChain.ChatModels.ChatModel.llm_telemetry_span/3`, called from a provider's
+    `call/3`, and that callback takes no context argument.
+
+    Two properties worth knowing:
+
+      * **Inherited attributes always lose** to attributes the span derives itself, so
+        an inherited value can never mask a real one (notably `gen_ai.request.model`).
+      * The stash rides the OpenTelemetry **context**, not baggage, so it follows the
+        trace across process boundaries — including `async: true` tools — but is never
+        serialized onto outbound requests. It is also unwound by the same
+        `OpenTelemetry.Ctx.detach/1` that ends the span, so there is no extra
+        lifecycle to leak.
+
+    Disable with `inherit_attributes: false` (see `LangChain.OpenTelemetry.Config`).
+
     > #### Async tools {: .info}
     >
     > Tools declared with `async: true` execute in a separate `Task` process, and
@@ -44,6 +70,19 @@ if Code.ensure_loaded?(:opentelemetry) do
     require Logger
 
     @handler_prefix "langchain-otel-span"
+
+    # Key under which a chain's `:otel_attributes` are stashed on the OpenTelemetry
+    # context so nested spans inherit them. See `inherited_attributes/1`.
+    @ctx_attributes_key {__MODULE__, :inherited_attributes}
+
+    @doc """
+    Returns the OpenTelemetry context key used to carry inherited span attributes.
+
+    Exposed for `LangChain.OpenTelemetry.Enrich`, which lets a host seed the same
+    attributes from outside a chain run.
+    """
+    @spec ctx_attributes_key() :: term()
+    def ctx_attributes_key, do: @ctx_attributes_key
 
     @doc """
     Returns the list of telemetry events this handler attaches to.
@@ -105,7 +144,7 @@ if Code.ensure_loaded?(:opentelemetry) do
       span_name = "chat #{metadata[:model] || "unknown"}"
       attrs = Attributes.llm_call_start(metadata, config)
 
-      start_span(metadata, span_name, attrs, :client)
+      start_span(metadata, span_name, attrs, :client, config)
     end
 
     defp do_handle_event(
@@ -176,13 +215,15 @@ if Code.ensure_loaded?(:opentelemetry) do
            [:langchain, :chain, :execute, :start],
            _measurements,
            metadata,
-           %Config{}
+           %Config{} = config
          ) do
       chain_type = metadata[:chain_type] || "unknown"
       span_name = "invoke_agent #{chain_type}"
       attrs = Attributes.chain_start(metadata)
 
-      start_span(metadata, span_name, attrs, :internal)
+      start_span(metadata, span_name, attrs, :internal, config,
+        inherit: inheritable_attributes(attrs, metadata[:custom_context], config)
+      )
     end
 
     defp do_handle_event(
@@ -220,7 +261,7 @@ if Code.ensure_loaded?(:opentelemetry) do
       span_name = "execute_tool #{tool_name}"
       attrs = Attributes.tool_call(metadata, config)
 
-      start_span(metadata, span_name, attrs, :internal)
+      start_span(metadata, span_name, attrs, :internal, config)
     end
 
     defp do_handle_event(
@@ -247,6 +288,31 @@ if Code.ensure_loaded?(:opentelemetry) do
     end
 
     # --- Private helpers ---
+
+    # The subset of a chain's attributes that nested `chat` and `execute_tool` spans
+    # should also carry: everything the caller put in `:otel_attributes`, plus the
+    # conversation id.
+    #
+    # Conversation id is included deliberately. It is the primary grouping key for a
+    # session, and having it only on the chain span means a backend can group *traces*
+    # by conversation but cannot filter *spans* by it — which is the whole reason to
+    # inherit anything. It is a single bounded, standard attribute, so it costs
+    # nothing in cardinality.
+    #
+    # Agent name/id are deliberately left off: they describe the agent invocation
+    # itself, not the LLM call or tool execution nested inside it.
+    defp inheritable_attributes(_chain_attrs, _context, %Config{inherit_attributes: false}),
+      do: []
+
+    defp inheritable_attributes(chain_attrs, context, %Config{}) do
+      conversation =
+        case List.keyfind(chain_attrs, "gen_ai.conversation.id", 0) do
+          nil -> []
+          pair -> [pair]
+        end
+
+      Attributes.merge(conversation, Attributes.passthrough_attributes(context))
+    end
 
     # Records time-to-first-token on the active LLM span. Streaming decode runs in
     # the same process as the `chat` span, so the current span context IS that
@@ -275,10 +341,16 @@ if Code.ensure_loaded?(:opentelemetry) do
       end
     end
 
-    defp start_span(metadata, span_name, attributes, kind) do
+    defp start_span(metadata, span_name, attributes, kind, config, opts \\ []) do
       call_id = metadata[:call_id]
 
       parent_ctx = OpenTelemetry.Ctx.get_current()
+
+      # Attributes inherited from an enclosing chain span LOSE to the ones this
+      # event derived. An inherited `gen_ai.request.model` must never mask the real
+      # per-call model on a `chat` span — which is exactly what would happen once a
+      # fallback model engages, at the moment the trace most needs to be accurate.
+      attributes = Attributes.merge(inherited_attributes(parent_ctx, config), attributes)
 
       span_ctx =
         Tracer.start_span(span_name, %{
@@ -286,7 +358,11 @@ if Code.ensure_loaded?(:opentelemetry) do
           attributes: attributes
         })
 
-      new_ctx = OpenTelemetry.Tracer.set_current_span(parent_ctx, span_ctx)
+      new_ctx =
+        parent_ctx
+        |> OpenTelemetry.Tracer.set_current_span(span_ctx)
+        |> put_inheritable(parent_ctx, Keyword.get(opts, :inherit, []), config)
+
       token = OpenTelemetry.Ctx.attach(new_ctx)
 
       if call_id do
@@ -294,6 +370,35 @@ if Code.ensure_loaded?(:opentelemetry) do
       end
 
       :ok
+    end
+
+    # Stash the attributes nested spans should inherit on the context this span
+    # attaches. Because it rides the same context, `end_span/2`'s existing
+    # `Ctx.detach(token)` unwinds it automatically — there is no separate lifecycle
+    # to leak — and `LLMChain`'s capture/re-attach around `async: true` tools carries
+    # it into those Task processes for free.
+    #
+    # A nested chain (a sub-agent) merges over whatever it inherited, so deeper spans
+    # see the union with the innermost chain winning.
+    defp put_inheritable(ctx, _parent_ctx, [], _config), do: ctx
+
+    defp put_inheritable(ctx, _parent_ctx, _attrs, %Config{inherit_attributes: false}), do: ctx
+
+    defp put_inheritable(ctx, parent_ctx, attrs, %Config{} = config) do
+      merged = Attributes.merge(inherited_attributes(parent_ctx, config), attrs)
+
+      OpenTelemetry.Ctx.set_value(ctx, @ctx_attributes_key, merged)
+    end
+
+    defp inherited_attributes(_ctx, %Config{inherit_attributes: false}), do: []
+
+    defp inherited_attributes(ctx, %Config{}) do
+      case OpenTelemetry.Ctx.get_value(ctx, @ctx_attributes_key, []) do
+        attrs when is_list(attrs) -> attrs
+        # Anything else means someone else wrote to our key. Ignore it rather than
+        # letting a bad shape reach the SDK and take the span down with it.
+        _other -> []
+      end
     end
 
     defp end_span(metadata, extra_attributes) do
