@@ -189,16 +189,43 @@ defmodule LangChain.Function do
 
   ## Parsing arguments before execution
 
-  LangChain's built-in `parameters: [%FunctionParam{}]` declaration only does a
-  required-key presence check at execute time. `parameters_schema:` is treated
-  as a hint sent to the LLM and is not enforced on the way back in. Provider
-  "strict mode" closes the gap somewhat, but is best-effort and varies by
-  provider.
+  Unless a `:parse_args` parser is supplied, both parameter declarations,
+  `parameters: [%FunctionParam{}]` and `parameters_schema:`, get a **top-level
+  required-key presence check** at execute time. Nothing else is enforced:
+  types, enums, formats, and nested object shapes are all passed through to the
+  tool as the LLM sent them. Provider "strict mode" closes that remaining gap
+  somewhat, but is best-effort and varies by provider.
 
-  The optional `:parse_args` callback fills this gap. It runs **after** the
-  built-in required-key check and **before** the user-supplied `function`. The
-  parser receives the raw, string-keyed arguments map from the LLM and returns
-  one of three shapes:
+  When the check fails, the returned error names the required parameters, the
+  missing ones, any unrecognized argument names that were sent, and the full
+  list of accepted parameters. This matters because a model that renames an
+  argument (sending `file_path` where the tool declared `path`) will otherwise
+  read a raw exception as a transient fault and retry the same call verbatim,
+  with each retry teaching itself the wrong calling convention.
+
+  ### `:parse_args` owns argument validation outright
+
+  The optional `:parse_args` callback replaces the built-in check rather than
+  layering on top of it. **When a parser is supplied, LangChain performs no
+  argument validation of its own**: the required-key check is skipped, and an
+  exception raised by the tool body is reported with its original formatting
+  instead of being reinterpreted as an argument-name problem.
+
+  This keeps one voice and one round trip. A parser such as `Zoi` reports
+  missing keys *and* type violations together in a single message, formatted
+  the way you wrote it, rather than having LangChain answer the missing-key
+  case in a different format and hide the rest until the next turn. It also
+  avoids second-guessing a parser that legitimately coerces keys or injects
+  defaults, since the arguments reaching the tool body no longer have to match
+  the declared schema.
+
+  The trade-off is that tools using a parser do not get LangChain's
+  "unrecognized parameter / did you mean" diagnostic. Parsers that want it can
+  build the same message from `required_param_names/1` and
+  `accepted_param_names/1`.
+
+  The parser runs **before** the user-supplied `function` and receives the raw,
+  string-keyed arguments map from the LLM. It returns one of three shapes:
 
       :ok                                # arguments are fine, hand them to `function` as-is
       {:ok, parsed_arguments :: map()}   # use these parsed/coerced arguments instead
@@ -237,6 +264,7 @@ defmodule LangChain.Function do
   import Ecto.Changeset
   require Logger
   alias __MODULE__
+  alias LangChain.FunctionParam
   alias LangChain.LangChainError
 
   @primary_key false
@@ -408,6 +436,114 @@ defmodule LangChain.Function do
     end
   end
 
+  @doc """
+  Return the names of the function's required top-level parameters.
+
+  Works for both declaration styles. For `parameters:` it reads the `required`
+  flag from each `LangChain.FunctionParam`. For `parameters_schema:` it reads
+  the schema's `required` list.
+
+  Returns `[]` when the function declares no parameters or declares none as
+  required.
+
+      iex> alias LangChain.{Function, FunctionParam}
+      iex> fun = Function.new!(%{
+      ...>   name: "demo",
+      ...>   function: fn _args, _context -> {:ok, "ok"} end,
+      ...>   parameters: [
+      ...>     FunctionParam.new!(%{name: "path", type: :string, required: true}),
+      ...>     FunctionParam.new!(%{name: "limit", type: :integer})
+      ...>   ]
+      ...> })
+      iex> Function.required_param_names(fun)
+      ["path"]
+  """
+  @spec required_param_names(t()) :: [String.t()]
+  def required_param_names(%Function{parameters: params})
+      when is_list(params) and params != [] do
+    FunctionParam.required_properties(params)
+  end
+
+  def required_param_names(%Function{parameters_schema: schema}) when is_map(schema) do
+    schema
+    |> schema_get(:required)
+    |> normalize_names()
+  end
+
+  def required_param_names(%Function{}), do: []
+
+  @doc """
+  Return the names of every top-level parameter the function accepts.
+
+  Works for both declaration styles. Returns `[]` when the function's
+  declaration doesn't enumerate its parameters, which happens for a
+  `parameters_schema:` without a `properties` map and for a function declaring
+  no parameters at all. Callers should treat `[]` as "unknown", not as "accepts
+  nothing", since an empty list carries no information about which argument
+  names are valid.
+
+      iex> alias LangChain.Function
+      iex> fun = Function.new!(%{
+      ...>   name: "demo",
+      ...>   function: fn _args, _context -> {:ok, "ok"} end,
+      ...>   parameters_schema: %{
+      ...>     type: "object",
+      ...>     properties: %{path: %{type: "string"}, limit: %{type: "integer"}},
+      ...>     required: ["path"]
+      ...>   }
+      ...> })
+      iex> fun |> Function.accepted_param_names() |> Enum.sort()
+      ["limit", "path"]
+  """
+  @spec accepted_param_names(t()) :: [String.t()]
+  def accepted_param_names(%Function{parameters: params})
+      when is_list(params) and params != [] do
+    Enum.map(params, & &1.name)
+  end
+
+  def accepted_param_names(%Function{parameters_schema: schema}) when is_map(schema) do
+    case schema_get(schema, :properties) do
+      properties when is_map(properties) ->
+        properties |> Map.keys() |> normalize_names()
+
+      _not_a_map ->
+        []
+    end
+  end
+
+  def accepted_param_names(%Function{}), do: []
+
+  # Schemas in the wild are written with atom keys as often as string keys.
+  # `LangChain.Tools.Calculator` uses atom keys for both the schema keys and the
+  # property names, while other schemas use strings throughout. Look for the
+  # atom first, then fall back to its string form.
+  @spec schema_get(map(), atom()) :: any()
+  defp schema_get(schema, key) when is_map(schema) and is_atom(key) do
+    case Map.fetch(schema, key) do
+      {:ok, value} -> value
+      :error -> Map.get(schema, Atom.to_string(key))
+    end
+  end
+
+  # Coerce a list of parameter names to strings, dropping anything that isn't
+  # name-shaped. Only converts atoms to strings, never the reverse, so nothing
+  # here can create atoms from LLM-supplied data.
+  @spec normalize_names(any()) :: [String.t()]
+  defp normalize_names(names) when is_list(names) do
+    Enum.flat_map(names, fn
+      name when is_binary(name) ->
+        [name]
+
+      name when is_atom(name) and not is_nil(name) and not is_boolean(name) ->
+        [Atom.to_string(name)]
+
+      _other ->
+        []
+    end)
+  end
+
+  defp normalize_names(_other), do: []
+
   # Validates that the function field contains a function with arity 2
   @spec validate_function_arity(Ecto.Changeset.t()) :: Ecto.Changeset.t()
   defp validate_function_arity(changeset) do
@@ -481,7 +617,117 @@ defmodule LangChain.Function do
         "Function! #{function.name} failed in execution. Exception: #{LangChainError.format_exception(err, __STACKTRACE__)}"
       end)
 
-      {:error, "ERROR: #{LangChainError.format_exception(err, __STACKTRACE__, :short)}"}
+      case argument_error_message(err, function, fun, arguments) do
+        nil -> {:error, "ERROR: #{LangChainError.format_exception(err, __STACKTRACE__, :short)}"}
+        message -> {:error, message}
+      end
+  end
+
+  # The required-parameter check can't reach a tool that reads an *optional*
+  # argument with `Map.fetch!/2` or pattern-matches one in its head, so those
+  # still blow up here. Left alone, the model sees a stack frame from the tool's
+  # source and reads it as a transient system fault rather than as "you used the
+  # wrong argument name", and retries the identical call. Recognize the two
+  # exception shapes that mean exactly that and say so plainly instead.
+  #
+  # Returns nil for every other exception, leaving the existing formatting in
+  # place.
+  @spec argument_error_message(Exception.t(), t(), function(), arguments()) :: String.t() | nil
+  defp argument_error_message(_err, %Function{parse_args: parser}, _fun, _arguments)
+       when is_function(parser, 1) do
+    # The parser owns the argument contract. Two reasons to stay out of the way
+    # here: `arguments` at this point is the *parsed* map, which may have
+    # coerced keys or injected defaults that no longer match the declared
+    # schema, so calling a key "unrecognized" would be wrong. And if a parser
+    # approved the arguments and the body still can't read them, that is a bug
+    # in the tool rather than a mistake by the model -- a stack frame is the
+    # right signal for it.
+    nil
+  end
+
+  defp argument_error_message(%KeyError{term: term, key: key}, function, _fun, arguments)
+       when is_map(term) do
+    # Only when the KeyError is about the arguments map itself, not about some
+    # unrelated map the tool touched. `arguments` here is post-`:parse_args`,
+    # which is the same map handed to the tool body.
+    if term == arguments do
+      build_argument_error_message(function, arguments, key)
+    else
+      nil
+    end
+  end
+
+  defp argument_error_message(%FunctionClauseError{} = err, function, fun, arguments) do
+    # A tool declared as `def execute(%{"path" => path}, _context)` raises here
+    # when the argument name doesn't match. Confirm the clause error came from
+    # the declared tool function itself rather than from something it called.
+    if raised_by_tool_function?(err, fun) do
+      build_argument_error_message(function, arguments, nil)
+    else
+      nil
+    end
+  end
+
+  defp argument_error_message(_err, _function, _fun, _arguments), do: nil
+
+  @spec raised_by_tool_function?(FunctionClauseError.t(), function()) :: boolean()
+  defp raised_by_tool_function?(%FunctionClauseError{} = err, fun) when is_function(fun) do
+    info = Elixir.Function.info(fun)
+
+    # Match on identity rather than on `info[:type]`. A capture written inside
+    # the module that defines it reports `type: :local` even when the target is
+    # public, so `:external` would reject most real tools. An anonymous
+    # function reports a mangled name like :"-caps/0-fun-0-", which still
+    # matches when that same anonymous function is the one that failed to match
+    # its argument, and that is precisely the case worth reporting. Anything
+    # the tool merely *called* has a different module/name/arity and falls
+    # through.
+    err.module == info[:module] and
+      err.function == info[:name] and
+      err.arity == info[:arity]
+  end
+
+  defp raised_by_tool_function?(_err, _fun), do: false
+
+  @spec build_argument_error_message(t(), arguments(), any()) :: String.t() | nil
+  defp build_argument_error_message(%Function{} = function, arguments, missing_key) do
+    args = if is_map(arguments), do: arguments, else: %{}
+
+    case accepted_param_names(function) do
+      # Without a declared parameter list there is nothing useful to say. Fall
+      # back rather than assert the argument names were wrong when we have no
+      # idea which names are right.
+      [] ->
+        nil
+
+      accepted ->
+        unrecognized = unrecognized_arg_names(args, accepted)
+
+        lead =
+          cond do
+            unrecognized != [] ->
+              "The tool was called with an argument name it does not accept."
+
+            is_binary(missing_key) or is_atom(missing_key) ->
+              "The tool needs the #{inspect(missing_key)} argument, which was not provided."
+
+            true ->
+              "The tool could not read the arguments it was given."
+          end
+
+        details =
+          [
+            {"Accepted parameters", accepted},
+            {"Unrecognized parameters", describe_unrecognized(unrecognized, args, accepted)},
+            {"Received", args |> Map.keys() |> normalize_names() |> Enum.sort()}
+          ]
+          |> Enum.reject(fn {_label, values} -> values == [] end)
+          |> Enum.map_join(" ", fn {label, values} -> "#{label}: #{Enum.join(values, ", ")}." end)
+
+        # No stack frame. The tool's source location is noise to the model and
+        # leaks the calling project's file paths into the conversation.
+        "ERROR: #{lead} #{details}"
+    end
   end
 
   # Normalizes the various return types from function execution into consistent tagged tuples
@@ -527,48 +773,139 @@ defmodule LangChain.Function do
     {:error, "An unexpected response was returned from the tool."}
   end
 
-  # Validates that all required parameters are present in the arguments
+  # Validates that all required top-level parameters are present in the
+  # arguments. Applies to both the `parameters:` and `parameters_schema:`
+  # declaration styles.
+  #
+  # Unrecognized argument names are never grounds for rejection on their own;
+  # extra arguments are passed through to the tool as they always have been.
+  # They are only *named* in the error when a required parameter is already
+  # missing, which is exactly the situation a renamed argument produces.
   @spec validate_required_params(t(), arguments()) :: :ok | {:error, String.t()}
-  defp validate_required_params(%Function{parameters: params}, arguments)
-       when is_list(params) and params != [] do
-    params
-    |> collect_required_param_names()
-    |> find_missing_params(arguments)
-    |> format_missing_params_result()
+  defp validate_required_params(%Function{parse_args: parser}, _arguments)
+       when is_function(parser, 1) do
+    # A supplied parser owns argument validation outright. Answering the
+    # missing-key case here would split one tool's errors across two formats
+    # and would keep the parser from reporting missing keys and type
+    # violations together in a single round trip.
+    :ok
   end
 
-  defp validate_required_params(_function, _arguments), do: :ok
+  defp validate_required_params(%Function{} = function, arguments) do
+    # An LLM can hand back `nil` instead of an empty map for a no-argument
+    # call. Treat that as `%{}` rather than letting `Map.has_key?/2` raise a
+    # BadMapError that surfaces to the model as an internal error.
+    args = if is_map(arguments), do: arguments, else: %{}
 
-  # Extracts names of required parameters from the parameter list
-  @spec collect_required_param_names([struct()]) :: [String.t()]
-  defp collect_required_param_names(params) do
-    Enum.reduce(params, [], fn param, acc ->
-      if param.required, do: [param.name | acc], else: acc
+    case function |> required_param_names() |> Enum.reject(&Map.has_key?(args, &1)) do
+      [] -> :ok
+      missing -> {:error, format_missing_params_error(function, args, missing)}
+    end
+  end
+
+  @missing_params_error_intro "Missing required parameters for this tool."
+  @missing_params_error_outro "Ensure you're passing the correct parameter names as defined in the tool schema."
+
+  # Builds the model-facing message. The model reads this string as the tool's
+  # response, so it has to say what was wrong *and* what to send instead.
+  @spec format_missing_params_error(t(), arguments(), [String.t()]) :: String.t()
+  defp format_missing_params_error(%Function{} = function, arguments, missing) do
+    required = required_param_names(function)
+    accepted = accepted_param_names(function)
+    unrecognized = unrecognized_arg_names(arguments, accepted)
+
+    details =
+      [
+        {"Required parameters", required},
+        {"Missing parameters", missing},
+        {"Unrecognized parameters", describe_unrecognized(unrecognized, arguments, accepted)},
+        {"Accepted parameters", accepted}
+      ]
+      |> Enum.reject(fn {_label, values} -> values == [] end)
+      |> Enum.map_join("\n", fn {label, values} -> "#{label}: #{Enum.join(values, ", ")}" end)
+
+    Enum.join([@missing_params_error_intro, details, @missing_params_error_outro], "\n\n")
+  end
+
+  # Argument names the function doesn't declare. Returns `[]` when the accepted
+  # list is unknown, since we can't call a name unrecognized without knowing
+  # which names are recognized.
+  @spec unrecognized_arg_names(arguments(), [String.t()]) :: [String.t()]
+  defp unrecognized_arg_names(_arguments, []), do: []
+
+  defp unrecognized_arg_names(arguments, accepted) do
+    arguments
+    |> Map.keys()
+    |> normalize_names()
+    |> Enum.reject(&(&1 in accepted))
+    |> Enum.sort()
+  end
+
+  # Annotates each unrecognized name with the accepted name it most likely
+  # meant, when one is close enough.
+  @spec describe_unrecognized([String.t()], arguments(), [String.t()]) :: [String.t()]
+  defp describe_unrecognized(unrecognized, arguments, accepted) do
+    # Only suggest names the caller didn't already supply. A parameter that was
+    # correctly provided is never what a misnamed argument was reaching for.
+    candidates = Enum.reject(accepted, &Map.has_key?(arguments, &1))
+
+    Enum.map(unrecognized, fn name ->
+      case suggest_param_name(name, candidates) do
+        nil -> name
+        suggestion -> "#{name} (did you mean \"#{suggestion}\"?)"
+      end
     end)
   end
 
-  # Finds parameters that are required but missing from the arguments
-  @spec find_missing_params([String.t()], arguments()) :: [String.t()]
-  defp find_missing_params([], _arguments), do: []
+  # Jaro alone is not enough here. `String.jaro_distance("file_path", "path")`
+  # is 0.0: the matching window is `max(9, 4) / 2 - 1 = 3` and every character
+  # of "path" sits 5 positions away inside "file_path", so nothing matches.
+  # Renames of that shape (a qualifier added to or dropped from the front) are
+  # the common case, so containment is checked first and scored by how much of
+  # the longer name the shorter one accounts for.
+  @jaro_threshold 0.7
+  @min_containment_length 3
 
-  defp find_missing_params(required_names, arguments) do
-    Enum.reject(required_names, &Map.has_key?(arguments, &1))
+  @spec suggest_param_name(String.t(), [String.t()]) :: String.t() | nil
+  defp suggest_param_name(unknown, candidates) do
+    candidates
+    |> Enum.map(&{&1, name_similarity(unknown, &1)})
+    |> Enum.reject(fn {_candidate, score} -> score == 0.0 end)
+    |> case do
+      [] -> nil
+      scored -> scored |> Enum.max_by(fn {_candidate, score} -> score end) |> elem(0)
+    end
   end
 
-  # Formats the result based on whether any parameters are missing
-  @spec format_missing_params_result([String.t()]) :: :ok | {:error, String.t()}
-  defp format_missing_params_result([]), do: :ok
+  @spec name_similarity(String.t(), String.t()) :: float()
+  defp name_similarity(unknown, candidate) do
+    left = String.downcase(unknown)
+    right = String.downcase(candidate)
 
-  @missing_params_error_template """
-  Missing required parameters for this tool.
+    cond do
+      left == right ->
+        1.0
 
-  Required parameters: ~s
+      contains_name?(left, right) ->
+        {shorter, longer} =
+          if String.length(left) <= String.length(right), do: {left, right}, else: {right, left}
 
-  Ensure you're passing the correct parameter names as defined in the tool schema.
-  """
+        0.7 + 0.3 * (String.length(shorter) / String.length(longer))
 
-  defp format_missing_params_result(missing_params) do
-    expected = Enum.join(missing_params, ", ")
-    {:error, :io_lib.format(@missing_params_error_template, [expected]) |> IO.iodata_to_binary()}
+      true ->
+        case String.jaro_distance(left, right) do
+          score when score > @jaro_threshold -> score
+          _too_far -> 0.0
+        end
+    end
+  end
+
+  # Containment only counts when the shorter name is substantial. Without the
+  # floor, a single-character parameter would be a substring of nearly every
+  # argument name and would win every suggestion.
+  @spec contains_name?(String.t(), String.t()) :: boolean()
+  defp contains_name?(left, right) do
+    min(String.length(left), String.length(right)) >= @min_containment_length and
+      (String.contains?(left, right) or String.contains?(right, left))
   end
 end

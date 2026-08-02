@@ -4,6 +4,7 @@ defmodule LangChain.FunctionTest do
   doctest LangChain.Function
 
   alias LangChain.Function
+  alias LangChain.FunctionParam
   alias LangChain.Message.ContentPart
 
   defp hello_world(_args, _context) do
@@ -140,7 +141,7 @@ defmodule LangChain.FunctionTest do
 
       assert result ==
                {:error,
-                "ERROR: (RuntimeError) fake exception at test/function_test.exs:14: LangChain.FunctionTest.returns_context/2"}
+                "ERROR: (RuntimeError) fake exception at test/function_test.exs:15: LangChain.FunctionTest.returns_context/2"}
 
       # returns an error when anything else is returned
       result = Function.execute(function, %{}, %{result: 123})
@@ -241,7 +242,9 @@ defmodule LangChain.FunctionTest do
       assert result == {:ok, "SUCCESS"}
     end
 
-    test "skips validation when using parameters_schema instead of parameters" do
+    test "validates required parameters declared with atom-keyed parameters_schema" do
+      # This is the shape used by LangChain.Tools.Calculator: atom keys for the
+      # schema itself AND for the property names.
       function =
         Function.new!(%{
           name: "with_schema",
@@ -253,9 +256,164 @@ defmodule LangChain.FunctionTest do
           function: &returns_context/2
         })
 
-      # parameters_schema validation is not implemented yet, so it should execute
-      result = Function.execute(function, %{}, %{result: {:ok, "SUCCESS"}})
-      assert result == {:ok, "SUCCESS"}
+      assert {:error, message} = Function.execute(function, %{}, %{result: {:ok, "SUCCESS"}})
+      assert message =~ "Missing required parameters"
+      assert message =~ "Required parameters: field"
+      assert message =~ "Accepted parameters: field"
+    end
+
+    test "validates required parameters declared with string-keyed parameters_schema" do
+      function =
+        Function.new!(%{
+          name: "with_schema",
+          parameters_schema: %{
+            "type" => "object",
+            "properties" => %{"field" => %{"type" => "string"}},
+            "required" => ["field"]
+          },
+          function: &returns_context/2
+        })
+
+      assert {:error, message} = Function.execute(function, %{}, %{result: {:ok, "SUCCESS"}})
+      assert message =~ "Required parameters: field"
+
+      assert {:ok, "SUCCESS"} =
+               Function.execute(function, %{"field" => "x"}, %{result: {:ok, "SUCCESS"}})
+    end
+
+    test "executes when parameters_schema declares no required parameters" do
+      function =
+        Function.new!(%{
+          name: "with_schema",
+          parameters_schema: %{
+            type: "object",
+            properties: %{field: %{type: "string"}}
+          },
+          function: &returns_context/2
+        })
+
+      assert {:ok, "SUCCESS"} = Function.execute(function, %{}, %{result: {:ok, "SUCCESS"}})
+    end
+
+    test "omits the accepted parameters list when the schema has no properties" do
+      function =
+        Function.new!(%{
+          name: "with_schema",
+          parameters_schema: %{type: "object", required: ["field"]},
+          function: &returns_context/2
+        })
+
+      assert {:error, message} = Function.execute(function, %{"other" => 1}, %{})
+      assert message =~ "Required parameters: field"
+      # We don't know which names are valid, so we can't call anything unrecognized.
+      refute message =~ "Accepted parameters"
+      refute message =~ "Unrecognized parameters"
+    end
+
+    test "names a renamed argument and suggests the parameter it meant" do
+      # The motivating case: jaro_distance("file_path", "path") is 0.0, so a
+      # jaro-only suggestion would silently produce no hint here.
+      function =
+        Function.new!(%{
+          name: "read_document",
+          parameters_schema: %{
+            type: "object",
+            properties: %{
+              path: %{type: "string"},
+              offset: %{type: "integer"},
+              limit: %{type: "integer"}
+            },
+            required: ["path"]
+          },
+          function: &returns_context/2
+        })
+
+      assert {:error, message} = Function.execute(function, %{"file_path" => "/a.md"}, %{})
+      assert message =~ "Missing parameters: path"
+      assert message =~ "Unrecognized parameters: file_path (did you mean \"path\"?)"
+      assert message =~ "Accepted parameters:"
+      assert message =~ "path"
+    end
+
+    test "names an unrecognized argument without a suggestion when nothing is similar" do
+      function =
+        Function.new!(%{
+          name: "read_document",
+          parameters_schema: %{
+            type: "object",
+            properties: %{path: %{type: "string"}},
+            required: ["path"]
+          },
+          function: &returns_context/2
+        })
+
+      assert {:error, message} = Function.execute(function, %{"query" => "abc"}, %{})
+      assert message =~ "Unrecognized parameters: query"
+      refute message =~ "did you mean"
+    end
+
+    test "omits the unrecognized line when every supplied argument is declared" do
+      function =
+        Function.new!(%{
+          name: "read_document",
+          parameters: [
+            FunctionParam.new!(%{name: "path", type: :string, required: true}),
+            FunctionParam.new!(%{name: "limit", type: :integer})
+          ],
+          function: &returns_context/2
+        })
+
+      assert {:error, message} = Function.execute(function, %{"limit" => 5}, %{})
+      assert message =~ "Missing parameters: path"
+      refute message =~ "Unrecognized parameters"
+    end
+
+    test "does not suggest a parameter that was already supplied" do
+      function =
+        Function.new!(%{
+          name: "search",
+          parameters: [
+            FunctionParam.new!(%{name: "pattern", type: :string, required: true}),
+            FunctionParam.new!(%{name: "file_path", type: :string, required: true})
+          ],
+          function: &returns_context/2
+        })
+
+      assert {:error, message} =
+               Function.execute(function, %{"file_path" => "/a.md", "patern" => "TODO"}, %{})
+
+      assert message =~ "Unrecognized parameters: patern (did you mean \"pattern\"?)"
+    end
+
+    test "lists required parameters in declaration order" do
+      function =
+        Function.new!(%{
+          name: "create_record",
+          parameters: [
+            FunctionParam.new!(%{name: "alpha", type: :string, required: true}),
+            FunctionParam.new!(%{name: "beta", type: :string, required: true}),
+            FunctionParam.new!(%{name: "gamma", type: :string, required: true})
+          ],
+          function: &returns_context/2
+        })
+
+      assert {:error, message} = Function.execute(function, %{}, %{})
+      assert message =~ "Required parameters: alpha, beta, gamma"
+    end
+
+    test "treats nil arguments as an empty map instead of raising BadMapError" do
+      function =
+        Function.new!(%{
+          name: "create_record",
+          parameters: [
+            FunctionParam.new!(%{name: "record_id", type: :string, required: true})
+          ],
+          function: &returns_context/2
+        })
+
+      assert {:error, message} = Function.execute(function, nil, %{})
+      assert message =~ "Missing required parameters"
+      assert message =~ "record_id"
     end
 
     test "allows execution when required params are present with extra params" do
@@ -467,16 +625,14 @@ defmodule LangChain.FunctionTest do
       assert message =~ "boom"
     end
 
-    test "the built-in required-params check fires before :parse_args" do
-      alias LangChain.FunctionParam
-
-      # If parse_args ran first we'd see :parser_ran in the mailbox; instead
-      # the required-params check should reject the call first.
+    test ":parse_args replaces the built-in required-params check" do
+      # A supplied parser owns argument validation outright, so the built-in
+      # required-key check is skipped entirely and the parser decides.
       parent = self()
 
       function =
         Function.new!(%{
-          name: "required_first",
+          name: "parser_owns_validation",
           parameters: [FunctionParam.new!(%{name: "id", type: :string, required: true})],
           function: &echo_args/2,
           parse_args: fn args ->
@@ -485,9 +641,214 @@ defmodule LangChain.FunctionTest do
           end
         })
 
-      assert {:error, message} = Function.execute(function, %{}, nil)
-      assert message =~ "Missing required parameters"
-      refute_received :parser_ran
+      # "id" is required and absent, but the parser accepted the call, so it runs.
+      assert {:ok, _llm_result, %{}} = Function.execute(function, %{}, nil)
+      assert_received :parser_ran
+    end
+
+    test ":parse_args owns the message for a missing required parameter" do
+      function =
+        Function.new!(%{
+          name: "parser_owns_validation",
+          parameters_schema: %{
+            type: "object",
+            properties: %{coolio: %{type: "string"}},
+            required: ["coolio"]
+          },
+          function: &echo_args/2,
+          parse_args: fn args ->
+            if Map.has_key?(args, "coolio"),
+              do: {:ok, args},
+              else: {:error, "PARSER: coolio is required"}
+          end
+        })
+
+      assert {:error, "PARSER: coolio is required"} =
+               Function.execute(function, %{"value" => 1}, nil)
+    end
+
+    test "an exception from the body keeps its original formatting when a parser is set" do
+      # The parser approved these arguments, so a body that still can't read
+      # them is a tool bug rather than a model mistake. Report it as such.
+      function =
+        Function.new!(%{
+          name: "parser_owns_validation",
+          parameters_schema: %{
+            type: "object",
+            properties: %{path: %{type: "string"}, limit: %{type: "integer"}},
+            required: ["path"]
+          },
+          function: fn args, _ctx -> Map.fetch!(args, "limit") end,
+          parse_args: fn args -> {:ok, args} end
+        })
+
+      assert {:error, message} = Function.execute(function, %{"path" => "/a.md"}, nil)
+      assert message =~ "KeyError"
+      refute message =~ "does not accept"
+    end
+  end
+
+  describe "required_param_names/1 and accepted_param_names/1" do
+    test "read from a list of FunctionParams" do
+      function =
+        Function.new!(%{
+          name: "demo",
+          parameters: [
+            FunctionParam.new!(%{name: "path", type: :string, required: true}),
+            FunctionParam.new!(%{name: "limit", type: :integer}),
+            FunctionParam.new!(%{name: "offset", type: :integer, required: true})
+          ],
+          function: &hello_world/2
+        })
+
+      assert Function.required_param_names(function) == ["path", "offset"]
+      assert Function.accepted_param_names(function) == ["path", "limit", "offset"]
+    end
+
+    test "read from an atom-keyed parameters_schema" do
+      function =
+        Function.new!(%{
+          name: "demo",
+          parameters_schema: %{
+            type: "object",
+            properties: %{path: %{type: "string"}, limit: %{type: "integer"}},
+            required: ["path"]
+          },
+          function: &hello_world/2
+        })
+
+      assert Function.required_param_names(function) == ["path"]
+      assert function |> Function.accepted_param_names() |> Enum.sort() == ["limit", "path"]
+    end
+
+    test "read from a string-keyed parameters_schema" do
+      function =
+        Function.new!(%{
+          name: "demo",
+          parameters_schema: %{
+            "type" => "object",
+            "properties" => %{"path" => %{"type" => "string"}},
+            "required" => ["path"]
+          },
+          function: &hello_world/2
+        })
+
+      assert Function.required_param_names(function) == ["path"]
+      assert Function.accepted_param_names(function) == ["path"]
+    end
+
+    test "return empty lists when nothing is declared" do
+      function = Function.new!(%{name: "demo", function: &hello_world/2})
+
+      assert Function.required_param_names(function) == []
+      assert Function.accepted_param_names(function) == []
+    end
+
+    test "tolerate a schema missing required or properties" do
+      function =
+        Function.new!(%{
+          name: "demo",
+          parameters_schema: %{type: "object"},
+          function: &hello_world/2
+        })
+
+      assert Function.required_param_names(function) == []
+      assert Function.accepted_param_names(function) == []
+    end
+  end
+
+  describe "execute/3 with an argument error raised by the tool" do
+    defp fetches_optional(args, _context) do
+      Map.fetch!(args, "limit")
+    end
+
+    defp fetches_unrelated_map(_args, _context) do
+      Map.fetch!(%{"a" => 1}, "totally_unrelated")
+    end
+
+    defp head_matches_path(%{"path" => path}, _context), do: {:ok, path}
+
+    test "reports a renamed optional argument instead of a stack frame" do
+      function =
+        Function.new!(%{
+          name: "read_document",
+          parameters_schema: %{
+            type: "object",
+            properties: %{path: %{type: "string"}, limit: %{type: "integer"}},
+            required: ["path"]
+          },
+          function: &fetches_optional/2
+        })
+
+      assert {:error, message} =
+               Function.execute(function, %{"path" => "/a.md", "lim" => 5}, %{})
+
+      assert message =~ "does not accept"
+      assert message =~ "Unrecognized parameters: lim (did you mean \"limit\"?)"
+      assert message =~ "Accepted parameters:"
+      # The tool's source location must not leak to the model.
+      refute message =~ "KeyError"
+      refute message =~ ".ex:"
+    end
+
+    test "reports a missing optional argument by name" do
+      function =
+        Function.new!(%{
+          name: "read_document",
+          parameters_schema: %{
+            type: "object",
+            properties: %{path: %{type: "string"}, limit: %{type: "integer"}},
+            required: ["path"]
+          },
+          function: &fetches_optional/2
+        })
+
+      assert {:error, message} = Function.execute(function, %{"path" => "/a.md"}, %{})
+      assert message =~ "needs the \"limit\" argument"
+      assert message =~ "Accepted parameters:"
+      refute message =~ "KeyError"
+    end
+
+    test "reports a FunctionClauseError raised by the declared tool function" do
+      function =
+        Function.new!(%{
+          name: "read_document",
+          parameters_schema: %{
+            type: "object",
+            properties: %{path: %{type: "string"}},
+            required: []
+          },
+          function: &head_matches_path/2
+        })
+
+      assert {:error, message} = Function.execute(function, %{"file_path" => "/a.md"}, %{})
+      assert message =~ "does not accept"
+      assert message =~ "did you mean \"path\"?"
+      refute message =~ "FunctionClauseError"
+    end
+
+    test "leaves a KeyError on an unrelated map with its original formatting" do
+      function =
+        Function.new!(%{
+          name: "read_document",
+          parameters_schema: %{
+            type: "object",
+            properties: %{path: %{type: "string"}},
+            required: ["path"]
+          },
+          function: &fetches_unrelated_map/2
+        })
+
+      assert {:error, message} = Function.execute(function, %{"path" => "/a.md"}, %{})
+      assert message =~ "KeyError"
+      assert message =~ "totally_unrelated"
+    end
+
+    test "falls back to the original formatting when no parameters are declared" do
+      function = Function.new!(%{name: "read_document", function: &fetches_optional/2})
+
+      assert {:error, message} = Function.execute(function, %{"path" => "/a.md"}, %{})
+      assert message =~ "KeyError"
     end
   end
 end

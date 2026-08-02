@@ -87,4 +87,49 @@ defmodule LangChain.FunctionParseArgsZoiTest do
       assert reason == "device_task_id: too small: must have at least 1 character(s)"
     end
   end
+
+  describe "Zoi alongside a parameters_schema declaration" do
+    # The realistic wiring: the schema is declared so the LLM sees it, and Zoi
+    # validates what comes back. LangChain must not answer any of these itself,
+    # or the tool would speak in two different error formats depending on which
+    # kind of mistake the model made.
+    defp function_with_schema do
+      Function.new!(%{
+        name: "diagnose_device_task",
+        parameters_schema: %{
+          type: "object",
+          properties: %{device_task_id: %{type: "string"}},
+          required: ["device_task_id"]
+        },
+        function: &echo_args/2,
+        parse_args: &parse_args/1
+      })
+    end
+
+    test "Zoi answers a missing required key, not the built-in check" do
+      assert {:error, reason} = Function.execute(function_with_schema(), %{}, nil)
+      assert reason == "device_task_id: is required"
+      refute reason =~ "Missing required parameters"
+    end
+
+    test "Zoi answers a renamed argument, not the built-in check" do
+      assert {:error, reason} =
+               Function.execute(function_with_schema(), %{"task_id" => "dt-42"}, nil)
+
+      assert reason == "device_task_id: is required"
+      refute reason =~ "Unrecognized parameters"
+    end
+
+    test "Zoi answers a constraint violation" do
+      assert {:error, reason} =
+               Function.execute(function_with_schema(), %{"device_task_id" => ""}, nil)
+
+      assert reason == "device_task_id: too small: must have at least 1 character(s)"
+    end
+
+    test "valid arguments still reach the body coerced" do
+      assert {:ok, _llm, %{device_task_id: "dt-42"}} =
+               Function.execute(function_with_schema(), %{"device_task_id" => "dt-42"}, nil)
+    end
+  end
 end
