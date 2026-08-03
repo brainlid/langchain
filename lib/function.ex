@@ -371,8 +371,14 @@ defmodule LangChain.Function do
   def execute(%Function{function: fun} = function, arguments, context) do
     Logger.debug("Executing function #{inspect(function.name)}")
 
-    with :ok <- validate_required_params(function, arguments),
-         {:ok, parsed_arguments} <- run_parse_args(function, arguments) do
+    # An LLM can hand back `nil` instead of an empty map for a no-argument
+    # call. Normalize once, here, so everything downstream can rely on being
+    # given a map: the required-key check, any `:parse_args` parser, and the
+    # tool body itself.
+    args = if is_map(arguments), do: arguments, else: %{}
+
+    with :ok <- validate_required_params(function, args),
+         {:ok, parsed_arguments} <- run_parse_args(function, args) do
       execute_with_error_handling(function, fun, parsed_arguments, context)
     end
   end
@@ -670,7 +676,9 @@ defmodule LangChain.Function do
 
   defp argument_error_message(_err, _function, _fun, _arguments), do: nil
 
-  @spec raised_by_tool_function?(FunctionClauseError.t(), function()) :: boolean()
+  # `defexception` doesn't generate a `t/0`, so `FunctionClauseError.t()` is an
+  # unknown type to dialyzer. The struct literal expresses the same constraint.
+  @spec raised_by_tool_function?(%FunctionClauseError{}, function()) :: boolean()
   defp raised_by_tool_function?(%FunctionClauseError{} = err, fun) when is_function(fun) do
     info = Elixir.Function.info(fun)
 
@@ -691,8 +699,6 @@ defmodule LangChain.Function do
 
   @spec build_argument_error_message(t(), arguments(), any()) :: String.t() | nil
   defp build_argument_error_message(%Function{} = function, arguments, missing_key) do
-    args = if is_map(arguments), do: arguments, else: %{}
-
     case accepted_param_names(function) do
       # Without a declared parameter list there is nothing useful to say. Fall
       # back rather than assert the argument names were wrong when we have no
@@ -701,7 +707,7 @@ defmodule LangChain.Function do
         nil
 
       accepted ->
-        unrecognized = unrecognized_arg_names(args, accepted)
+        unrecognized = unrecognized_arg_names(arguments, accepted)
 
         lead =
           cond do
@@ -718,8 +724,8 @@ defmodule LangChain.Function do
         details =
           [
             {"Accepted parameters", accepted},
-            {"Unrecognized parameters", describe_unrecognized(unrecognized, args, accepted)},
-            {"Received", args |> Map.keys() |> normalize_names() |> Enum.sort()}
+            {"Unrecognized parameters", describe_unrecognized(unrecognized, arguments, accepted)},
+            {"Received", arguments |> Map.keys() |> normalize_names() |> Enum.sort()}
           ]
           |> Enum.reject(fn {_label, values} -> values == [] end)
           |> Enum.map_join(" ", fn {label, values} -> "#{label}: #{Enum.join(values, ", ")}." end)
@@ -792,14 +798,9 @@ defmodule LangChain.Function do
   end
 
   defp validate_required_params(%Function{} = function, arguments) do
-    # An LLM can hand back `nil` instead of an empty map for a no-argument
-    # call. Treat that as `%{}` rather than letting `Map.has_key?/2` raise a
-    # BadMapError that surfaces to the model as an internal error.
-    args = if is_map(arguments), do: arguments, else: %{}
-
-    case function |> required_param_names() |> Enum.reject(&Map.has_key?(args, &1)) do
+    case function |> required_param_names() |> Enum.reject(&Map.has_key?(arguments, &1)) do
       [] -> :ok
-      missing -> {:error, format_missing_params_error(function, args, missing)}
+      missing -> {:error, format_missing_params_error(function, arguments, missing)}
     end
   end
 
