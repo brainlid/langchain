@@ -1,5 +1,38 @@
 # Changelog
 
+## v0.9.6
+
+A small release improving what a tool reports back when the model calls it with the wrong argument names, so the next attempt is more likely to succeed.
+
+Two behavior changes to note before upgrading:
+
+- `parameters_schema:` tools now get the same top-level required-key check that `parameters:` lists have always had. A call missing a key from the schema's `required` array returns an error instead of invoking the tool.
+- A `:parse_args` parser now owns argument validation outright. The built-in required-key check is skipped when a parser is supplied, so the parser can report missing keys and type violations together in its own format.
+
+### Added
+
+- **Actionable errors for missing and misnamed tool arguments.** The error returned to the model names the required, missing, unrecognized, and accepted parameters, and suggests the accepted name a misnamed argument likely meant. A `KeyError` or `FunctionClauseError` from an argument the required-key check can't reach is reported the same way rather than as a stack trace.
+
+  A `read_document` tool declaring `path` and `offset` and called with `{"file_path": "/a.md"}` now returns:
+
+  ```text
+  Missing required parameters for this tool.
+
+  Required parameters: path
+  Missing parameters: path
+  Unrecognized parameters: file_path (did you mean "path"?)
+  Accepted parameters: path, offset
+
+  Ensure you're passing the correct parameter names as defined in the tool schema.
+  ```
+
+  Previously the model saw a raw exception with a stack frame from the tool's source, read it as a transient fault, and retried the identical call. https://github.com/brainlid/langchain/pull/606
+- **`LangChain.Function.required_param_names/1` and `accepted_param_names/1`.** Read top-level parameter names from either declaration style. https://github.com/brainlid/langchain/pull/606
+
+### Fixed
+
+- **`Function.execute/3` normalizes `nil` arguments to an empty map**, which an LLM can return in place of `%{}` for a no-argument call. https://github.com/brainlid/langchain/pull/606
+
 ## v0.9.5
 
 Adds your application's context to OpenTelemetry spans. Attributes you set on a chain now land on every span it produces, not just the root. No breaking changes.
