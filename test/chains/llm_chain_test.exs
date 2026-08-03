@@ -3606,6 +3606,53 @@ defmodule LangChain.Chains.LLMChainTest do
       :telemetry.detach("parse-args-telemetry-test")
     end
 
+    test "a renamed argument produces an error ToolResult naming the parameter it meant" do
+      # The message the model actually reads is the ToolResult content. For
+      # every provider except Anthropic, `is_error` never reaches the wire, so
+      # this string is the only signal distinguishing "you used the wrong
+      # argument name" from "the system broke, retry".
+      parent = self()
+
+      tool =
+        Function.new!(%{
+          name: "read_document",
+          description: "Read a document.",
+          parameters_schema: %{
+            type: "object",
+            properties: %{
+              path: %{type: "string"},
+              offset: %{type: "integer"}
+            },
+            required: ["path"]
+          },
+          function: fn _args, _ctx ->
+            send(parent, :function_body_ran)
+            {:ok, "should not reach this"}
+          end
+        })
+
+      chain =
+        LLMChain.new!(%{llm: ChatOpenAI.new!(%{stream: false})})
+        |> LLMChain.add_tools(tool)
+        |> LLMChain.add_message(Message.new_user!("read the doc"))
+        |> LLMChain.add_message(
+          new_function_call!("call_renamed", "read_document", ~s({"file_path": "/a.md"}))
+        )
+
+      updated_chain = LLMChain.execute_tool_calls(chain)
+
+      refute_received :function_body_ran
+
+      assert %Message{role: :tool} = result_message = updated_chain.last_message
+      assert [%ToolResult{} = result] = result_message.tool_results
+      assert result.is_error == true
+
+      assert [%ContentPart{type: :text, content: content}] = result.content
+      assert content =~ "Missing parameters: path"
+      assert content =~ "Unrecognized parameters: file_path (did you mean \"path\"?)"
+      assert content =~ "Accepted parameters:"
+    end
+
     test "returns error tool result when tool_call is a hallucination" do
       chain =
         LLMChain.new!(%{
