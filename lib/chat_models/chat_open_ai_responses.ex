@@ -198,6 +198,15 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
 
       ChatOpenAIResponses.new!(%{model: "gpt-5", verbosity: "low"})
 
+  ## Context Management
+
+  The `context_management` option configures automatic context compaction. For
+  example, compact the context after it reaches 300,000 tokens:
+
+      ChatOpenAIResponses.new!(%{
+        context_management: [%{type: "compaction", compact_threshold: 300_000}]
+      })
+
   ## WebSocket Transport
 
   Instead of HTTP, requests can be sent over a persistent WebSocket connection
@@ -318,6 +327,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     field :model, :string, default: "gpt-3.5-turbo"
 
     field :include, {:array, :string}, default: []
+    field :context_management, {:array, :map}, default: nil
     # omit instructions becasue langchain assumes statelessness
     field :max_output_tokens, :integer, default: nil
     # omit metadata because chat_open_ai also omits it
@@ -367,6 +377,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     :endpoint,
     :model,
     :include,
+    :context_management,
     :max_output_tokens,
     :previous_response_id,
     :store,
@@ -525,11 +536,45 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
 
   defp common_validation(changeset) do
     changeset
+    |> normalize_context_management()
     |> validate_required(@required_fields)
     |> validate_number(:temperature, greater_than_or_equal_to: 0, less_than_or_equal_to: 2)
     |> validate_number(:top_p, greater_than_or_equal_to: 0, less_than_or_equal_to: 1)
     |> validate_number(:receive_timeout, greater_than_or_equal_to: 0)
     |> validate_inclusion(:verbosity, ~w(low medium high))
+    |> validate_context_management()
+  end
+
+  defp normalize_context_management(changeset) do
+    update_change(changeset, :context_management, fn entries ->
+      Enum.map(entries, fn entry ->
+        %{
+          "type" => Map.get(entry, :type) || Map.get(entry, "type"),
+          "compact_threshold" =>
+            Map.get(entry, :compact_threshold) || Map.get(entry, "compact_threshold")
+        }
+      end)
+    end)
+  end
+
+  defp validate_context_management(changeset) do
+    validate_change(changeset, :context_management, fn :context_management, entries ->
+      Enum.flat_map(entries, fn entry ->
+        type = entry["type"]
+        threshold = entry["compact_threshold"]
+
+        cond do
+          type != "compaction" ->
+            [context_management: "entries must have type \"compaction\""]
+
+          not is_integer(threshold) or threshold <= 0 ->
+            [context_management: "compact_threshold must be a positive integer"]
+
+          true ->
+            []
+        end
+      end)
+    end)
   end
 
   @doc """
@@ -556,6 +601,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         end)
         |> Enum.reverse()
     }
+    |> Utils.conditionally_add_to_map(:context_management, openai.context_management)
     |> Utils.conditionally_add_to_map(:include, openai.include)
     |> Utils.conditionally_add_to_map(:max_output_tokens, openai.max_output_tokens)
     |> Utils.conditionally_add_to_map(:previous_response_id, openai.previous_response_id)
@@ -2043,6 +2089,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
       [
         :endpoint,
         :model,
+        :context_management,
         :temperature,
         :frequency_penalty,
         :reasoning,

@@ -299,7 +299,83 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
       assert openai.verbosity == nil
     end
 
+    test "accepts context management with atom keys" do
+      assert {:ok,
+              %ChatOpenAIResponses{
+                context_management: [
+                  %{"type" => "compaction", "compact_threshold" => 300_000}
+                ]
+              }} =
+               ChatOpenAIResponses.new(%{
+                 context_management: [%{type: "compaction", compact_threshold: 300_000}]
+               })
+    end
+
+    test "accepts context management with string keys" do
+      context_management = [%{"type" => "compaction", "compact_threshold" => 300_000}]
+
+      assert {:ok, %ChatOpenAIResponses{context_management: ^context_management}} =
+               ChatOpenAIResponses.new(%{"context_management" => context_management})
+    end
+
+    test "rejects malformed context management" do
+      invalid_values = [
+        %{type: "compaction", compact_threshold: 300_000},
+        ["compaction"],
+        [%{type: "unknown", compact_threshold: 300_000}],
+        [%{type: "compaction"}],
+        [%{type: "compaction", compact_threshold: 0}],
+        [%{type: "compaction", compact_threshold: -1}],
+        [%{type: "compaction", compact_threshold: 1.5}],
+        [%{type: "compaction", compact_threshold: "300000"}]
+      ]
+
+      for context_management <- invalid_values do
+        assert {:error, changeset} =
+                 ChatOpenAIResponses.new(%{context_management: context_management})
+
+        refute changeset.valid?
+      end
+    end
+
     # Support
+  end
+
+  describe "for_api/3 context management" do
+    test "includes the exact context management configuration when set" do
+      model =
+        ChatOpenAIResponses.new!(%{
+          context_management: [%{type: "compaction", compact_threshold: 300_000}]
+        })
+
+      assert ChatOpenAIResponses.for_api(model, [], [])[:context_management] == [
+               %{"type" => "compaction", "compact_threshold" => 300_000}
+             ]
+    end
+
+    test "omits context management when unset" do
+      model = ChatOpenAIResponses.new!()
+
+      refute Map.has_key?(ChatOpenAIResponses.for_api(model, [], []), :context_management)
+    end
+
+    test "includes context management in the HTTP request payload" do
+      expect(Req, :post, fn request ->
+        assert request.options[:json][:context_management] == [
+                 %{"type" => "compaction", "compact_threshold" => 300_000}
+               ]
+
+        {:error, RuntimeError.exception("stop after inspecting request")}
+      end)
+
+      model =
+        ChatOpenAIResponses.new!(%{
+          context_management: [%{type: "compaction", compact_threshold: 300_000}]
+        })
+
+      assert {:error, _error} = ChatOpenAIResponses.do_api_request(model, [], [])
+      verify!()
+    end
   end
 
   describe "for_api/3 reasoning options" do
@@ -1666,6 +1742,26 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
       assert restored.endpoint == original.endpoint
       assert restored.reasoning.effort == original.reasoning.effort
     end
+
+    test "serializes and restores context management" do
+      original =
+        ChatOpenAIResponses.new!(%{
+          context_management: [%{type: "compaction", compact_threshold: 300_000}]
+        })
+
+      config = ChatOpenAIResponses.serialize_config(original)
+
+      assert config["context_management"] == [
+               %{"type" => "compaction", "compact_threshold" => 300_000}
+             ]
+
+      assert {:ok,
+              %ChatOpenAIResponses{
+                context_management: [
+                  %{"type" => "compaction", "compact_threshold" => 300_000}
+                ]
+              }} = ChatOpenAIResponses.restore_from_map(config)
+    end
   end
 
   describe "previous_response_id" do
@@ -1899,7 +1995,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
                ChatOpenAIResponses.new(%{model: @test_model})
     end
 
-    test "do_api_request with websocket wraps payload in response.create envelope (non-streaming)" do
+    test "do_api_request with websocket wraps shared payload in response.create envelope (non-streaming)" do
       fake_pid = spawn(fn -> Process.sleep(:infinity) end)
       on_exit(fn -> Process.exit(fake_pid, :kill) end)
 
@@ -1928,6 +2024,11 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
         assert decoded["type"] == "response.create"
         assert decoded["model"] == @test_model
         assert is_list(decoded["input"])
+
+        assert decoded["context_management"] == [
+                 %{"type" => "compaction", "compact_threshold" => 300_000}
+               ]
+
         # These should be stripped for WebSocket
         refute Map.has_key?(decoded, "stream")
         refute Map.has_key?(decoded, "temperature")
@@ -1944,6 +2045,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
         ChatOpenAIResponses.new!(%{
           model: @test_model,
           stream: false,
+          context_management: [%{type: "compaction", compact_threshold: 300_000}],
           websocket: fake_pid
         })
 
