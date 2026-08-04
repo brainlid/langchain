@@ -754,7 +754,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     native_tool_calls_for_api(model, content) ++
       [
         %{
-          "role" => "user",
+          "role" => "assistant",
           "type" => "message",
           "content" => content_parts_for_api(model, content)
         }

@@ -6,6 +6,9 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
   alias LangChain.ChatModels.ChatOpenAIResponses
   alias LangChain.Function
   alias LangChain.FunctionParam
+  alias LangChain.Message.ContentPart
+  alias LangChain.Message.ToolCall
+  alias LangChain.Message.ToolResult
 
   @test_model "gpt-4o-mini-2024-07-18"
 
@@ -491,6 +494,113 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
     end
   end
 
+  describe "assistant history serialization" do
+    test "preserves the role of plain assistant text" do
+      model = ChatOpenAIResponses.new!()
+
+      assert [
+               %{
+                 "type" => "message",
+                 "role" => "assistant",
+                 "content" => [%{"type" => "input_text", "text" => "Prior answer"}]
+               }
+             ] = ChatOpenAIResponses.for_api(model, Message.new_assistant!("Prior answer"))
+    end
+
+    test "preserves assistant content parts" do
+      model = ChatOpenAIResponses.new!()
+
+      message =
+        Message.new_assistant!([
+          ContentPart.text!("Look at this image"),
+          ContentPart.image_url!("https://example.com/image.png")
+        ])
+
+      assert [
+               %{
+                 "type" => "message",
+                 "role" => "assistant",
+                 "content" => [
+                   %{"type" => "input_text", "text" => "Look at this image"},
+                   %{"type" => "input_image", "image_url" => "https://example.com/image.png"}
+                 ]
+               }
+             ] = ChatOpenAIResponses.for_api(model, message)
+    end
+
+    test "preserves mixed system, user, and assistant history ordering" do
+      model = ChatOpenAIResponses.new!()
+
+      data =
+        ChatOpenAIResponses.for_api(
+          model,
+          [
+            Message.new_system!("Follow the rules"),
+            Message.new_user!("Question"),
+            Message.new_assistant!("Prior answer"),
+            Message.new_user!("Follow-up")
+          ],
+          []
+        )
+
+      assert [system, user, assistant, follow_up] = data.input
+      assert %{"role" => "system"} = system
+      assert %{"role" => "user"} = user
+      assert %{"role" => "assistant"} = assistant
+      assert %{"role" => "user"} = follow_up
+    end
+
+    test "preserves assistant history in a stateful request" do
+      model = ChatOpenAIResponses.new!(%{previous_response_id: "resp_previous"})
+
+      data =
+        ChatOpenAIResponses.for_api(
+          model,
+          [Message.new_assistant!("Prior answer"), Message.new_user!("Follow-up")],
+          []
+        )
+
+      assert data.previous_response_id == "resp_previous"
+      assert [%{"role" => "assistant"}, %{"role" => "user"}] = data.input
+    end
+
+    test "preserves structured stateless history" do
+      model = ChatOpenAIResponses.new!()
+
+      tool_call =
+        ToolCall.new!(%{
+          call_id: "call_123",
+          name: "calculator",
+          arguments: %{expression: "2 + 2"}
+        })
+
+      tool_result =
+        ToolResult.new!(%{
+          tool_call_id: "call_123",
+          content: [ContentPart.text!("4")]
+        })
+
+      messages = [
+        Message.new_user!("Calculate 2 + 2"),
+        Message.new_assistant!(%{content: "I will calculate it", tool_calls: [tool_call]}),
+        Message.new_tool_result!(%{tool_results: [tool_result]}),
+        Message.new_user!("Thanks")
+      ]
+
+      data = ChatOpenAIResponses.for_api(model, messages, [])
+
+      refute Map.has_key?(data, :previous_response_id)
+
+      assert [
+               %{"type" => "message", "role" => "user"},
+               %{"type" => "message", "role" => "assistant"},
+               %{"type" => "function_call", "call_id" => "call_123"},
+               %{"type" => "function_call_output", "call_id" => "call_123"},
+               %{"type" => "message", "role" => "user"}
+             ] = data.input
+    end
+  end
+
   describe "for_api/3 verbosity" do
     test "includes verbosity when set" do
       openai =
@@ -688,8 +798,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
 
       [message, tool_call] = result
       assert message["type"] == "message"
-      # Assistant messages become user in Responses API
-      assert message["role"] == "user"
+      assert message["role"] == "assistant"
       assert tool_call["type"] == "function_call"
     end
 
