@@ -495,21 +495,23 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
   end
 
   describe "assistant history serialization" do
-    test "preserves the role of plain assistant text" do
+    test "preserves the role of plain assistant text and uses output_text" do
       model = ChatOpenAIResponses.new!()
 
       assert [
                %{
                  "type" => "message",
                  "role" => "assistant",
-                 "content" => [%{"type" => "input_text", "text" => "Prior answer"}]
+                 "content" => [%{"type" => "output_text", "text" => "Prior answer"}]
                }
              ] = ChatOpenAIResponses.for_api(model, Message.new_assistant!("Prior answer"))
     end
 
-    test "preserves assistant content parts" do
+    test "omits assistant content parts the API cannot represent" do
       model = ChatOpenAIResponses.new!()
 
+      # Assistant "output" messages only support `output_text` and `refusal`.
+      # An image has no valid representation and is omitted.
       message =
         Message.new_assistant!([
           ContentPart.text!("Look at this image"),
@@ -520,12 +522,35 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
                %{
                  "type" => "message",
                  "role" => "assistant",
-                 "content" => [
-                   %{"type" => "input_text", "text" => "Look at this image"},
-                   %{"type" => "input_image", "image_url" => "https://example.com/image.png"}
-                 ]
+                 "content" => [%{"type" => "output_text", "text" => "Look at this image"}]
                }
              ] = ChatOpenAIResponses.for_api(model, message)
+    end
+
+    test "omits the assistant message entirely when no content survives" do
+      model = ChatOpenAIResponses.new!()
+
+      # A thinking part is output-only and dropped. Emitting a message item with
+      # an empty content list would be rejected by the API.
+      message = Message.new_assistant!([ContentPart.new!(%{type: :thinking, content: "hmm"})])
+
+      assert [] = ChatOpenAIResponses.for_api(model, message)
+    end
+
+    test "keeps native tool calls and tool calls when assistant content is dropped" do
+      model = ChatOpenAIResponses.new!()
+
+      tool_call =
+        ToolCall.new!(%{call_id: "call_abc", name: "calculator", arguments: %{expression: "1+1"}})
+
+      message =
+        Message.new_assistant!(%{
+          content: [ContentPart.new!(%{type: :thinking, content: "hmm"})],
+          tool_calls: [tool_call]
+        })
+
+      assert [%{"type" => "function_call", "call_id" => "call_abc"}] =
+               ChatOpenAIResponses.for_api(model, message)
     end
 
     test "preserves mixed system, user, and assistant history ordering" do
@@ -713,7 +738,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
 
       # Content should only include the text part, not the thinking part
       [content_part] = message_api["content"]
-      assert content_part["type"] == "input_text"
+      assert content_part["type"] == "output_text"
       assert content_part["text"] == "Here's my answer"
     end
   end

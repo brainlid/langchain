@@ -751,14 +751,26 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         %Message{role: :assistant, content: content} = msg
       )
       when is_list(content) do
+    # Assistant messages are sent back as "output" messages. They only support
+    # `output_text` and `refusal` content parts, so anything else is omitted. If
+    # nothing remains, the message item itself is omitted.
+    assistant_message =
+      case content_parts_for_api(model, content, :assistant) do
+        [] ->
+          []
+
+        parts ->
+          [
+            %{
+              "role" => "assistant",
+              "type" => "message",
+              "content" => parts
+            }
+          ]
+      end
+
     native_tool_calls_for_api(model, content) ++
-      [
-        %{
-          "role" => "assistant",
-          "type" => "message",
-          "content" => content_parts_for_api(model, content)
-        }
-      ] ++
+      assistant_message ++
       Enum.map(msg.tool_calls || [], &for_api(model, &1))
   end
 
@@ -815,23 +827,49 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
 
   @doc """
   Convert a list of ContentParts to the expected map of data for the OpenAI API.
+
+  The `role` of the message being converted determines which content part types
+  the API accepts. Input messages (`:system`, `:developer`, and `:user`) use the
+  `input_*` part types. Assistant messages are "output" messages and only
+  support `output_text`; unsupported parts are omitted.
   """
-  def content_parts_for_api(%ChatOpenAIResponses{} = model, content_parts)
+  def content_parts_for_api(%ChatOpenAIResponses{} = model, content_parts, role \\ :user)
       when is_list(content_parts) do
-    Enum.map(content_parts, &content_part_for_api(model, &1))
+    Enum.map(content_parts, &content_part_for_api(model, &1, role))
     |> Enum.reject(&is_nil/1)
   end
 
   @doc """
   Convert a ContentPart to the expected map of data for the OpenAI API.
+
+  See `content_parts_for_api/3` for how `role` affects the conversion.
   """
-  def content_part_for_api(%ChatOpenAIResponses{} = _model, %ContentPart{type: :text} = part) do
+  def content_part_for_api(model, content_part, role \\ :user)
+
+  def content_part_for_api(
+        %ChatOpenAIResponses{} = _model,
+        %ContentPart{type: :text} = part,
+        :assistant
+      ) do
+    %{"type" => "output_text", "text" => part.content, "annotations" => []}
+  end
+
+  # Assistant messages only support `output_text` and `refusal` parts. Anything
+  # else has no valid representation and is omitted.
+  def content_part_for_api(%ChatOpenAIResponses{} = _model, %ContentPart{}, :assistant), do: nil
+
+  def content_part_for_api(
+        %ChatOpenAIResponses{} = _model,
+        %ContentPart{type: :text} = part,
+        _role
+      ) do
     %{"type" => "input_text", "text" => part.content}
   end
 
   def content_part_for_api(
         %ChatOpenAIResponses{} = _model,
-        %ContentPart{type: :file_url} = part
+        %ContentPart{type: :file_url} = part,
+        _role
       ) do
     %{
       "type" => "input_file",
@@ -841,7 +879,8 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
 
   def content_part_for_api(
         %ChatOpenAIResponses{} = _model,
-        %ContentPart{type: :file, options: opts} = part
+        %ContentPart{type: :file, options: opts} = part,
+        _role
       ) do
     case Keyword.get(opts, :type, :base64) do
       :file_id ->
@@ -859,7 +898,11 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     end
   end
 
-  def content_part_for_api(%ChatOpenAIResponses{} = _model, %ContentPart{type: image} = part)
+  def content_part_for_api(
+        %ChatOpenAIResponses{} = _model,
+        %ContentPart{type: image} = part,
+        _role
+      )
       when image in [:image, :image_url] do
     output =
       if Keyword.get(part.options, :type) == :file_id do
@@ -902,12 +945,16 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   end
 
   # Thinking content parts are output-only and should be omitted when sending to the API
-  def content_part_for_api(%ChatOpenAIResponses{} = _model, %ContentPart{type: :thinking}),
+  def content_part_for_api(%ChatOpenAIResponses{} = _model, %ContentPart{type: :thinking}, _role),
     do: nil
 
   # Ignore unknown, unsupported content parts
-  def content_part_for_api(%ChatOpenAIResponses{} = _model, %ContentPart{type: :unsupported}),
-    do: nil
+  def content_part_for_api(
+        %ChatOpenAIResponses{} = _model,
+        %ContentPart{type: :unsupported},
+        _role
+      ),
+      do: nil
 
   @doc false
   def get_parameters(%Function{parameters: [], parameters_schema: nil} = _fun) do
