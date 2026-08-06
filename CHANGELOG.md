@@ -1,5 +1,34 @@
 # Changelog
 
+## v0.9.7
+
+A small release focused on the OpenAI Responses API, adding server-side context compaction and correcting how assistant history is serialized.
+
+One behavior change to note before upgrading:
+
+- Assistant messages in conversation history are now sent to the Responses API as assistant "output" messages instead of being relabeled as user messages. Their text is serialized as `output_text`, and images, files, and other parts that an assistant message cannot carry are omitted. A message left with no representable content is dropped entirely rather than sent with an empty content list.
+
+### Added
+
+- **`context_management` option on `ChatOpenAIResponses`** for server-side context compaction on long-running conversations. When the rendered token count crosses the threshold, the server compacts the context before continuing inference.
+
+  ```elixir
+  ChatOpenAIResponses.new!(%{
+    context_management: [%{type: "compaction", compact_threshold: 200_000}]
+  })
+  ```
+
+  `compact_threshold` is optional; omit it to let the server pick one. Entries accept atom or string keys, are normalized to string keys, and are passed through as given, so new types and options work without a library change. The option is included in serialization and deserialization. https://github.com/brainlid/langchain/pull/608
+- **Structured output documentation for `ChatGoogleAI` and `ChatVertexAI`.** The `json_response` and `json_schema` support mapping to `generationConfig.response_mime_type` and `generationConfig.response_schema` shipped previously but was undocumented. Each moduledoc now has a `## Structured Output` section with a worked `json_schema` example. https://github.com/brainlid/langchain/pull/610
+
+### Changed
+
+- **`content_parts_for_api/3` and `content_part_for_api/3` on `ChatOpenAIResponses` take the message role.** Both default to `:user`, so existing arity-2 callers are unaffected. https://github.com/brainlid/langchain/pull/609
+
+### Fixed
+
+- **Assistant history no longer produces a payload the Responses API rejects.** Preserving the assistant role required role-aware content serialization; without it, the API returned `Invalid value: 'input_text'. Supported values are: 'output_text' and 'refusal'.` https://github.com/brainlid/langchain/pull/609
+
 ## v0.9.6
 
 A small release improving what a tool reports back when the model calls it with the wrong argument names, so the next attempt is more likely to succeed.
