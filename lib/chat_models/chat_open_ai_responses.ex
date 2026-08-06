@@ -198,6 +198,26 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
 
       ChatOpenAIResponses.new!(%{model: "gpt-5", verbosity: "low"})
 
+  ## Context Management
+
+  The `context_management` option configures server-side context compaction for
+  long-running conversations. When the rendered token count crosses the
+  threshold, the server compacts the context before continuing inference.
+
+  For example, compact the context after it reaches 200,000 tokens:
+
+      ChatOpenAIResponses.new!(%{
+        context_management: [%{type: "compaction", compact_threshold: 200_000}]
+      })
+
+  `compact_threshold` is optional. When omitted, the server picks a threshold:
+
+      ChatOpenAIResponses.new!(%{context_management: [%{type: "compaction"}]})
+
+  Only the `"compaction"` type is supported today, but entries are passed
+  through to the API as given, so new types and options work without a library
+  change.
+
   ## WebSocket Transport
 
   Instead of HTTP, requests can be sent over a persistent WebSocket connection
@@ -318,6 +338,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     field :model, :string, default: "gpt-3.5-turbo"
 
     field :include, {:array, :string}, default: []
+    field :context_management, {:array, :map}, default: nil
     # omit instructions becasue langchain assumes statelessness
     field :max_output_tokens, :integer, default: nil
     # omit metadata because chat_open_ai also omits it
@@ -367,6 +388,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     :endpoint,
     :model,
     :include,
+    :context_management,
     :max_output_tokens,
     :previous_response_id,
     :store,
@@ -525,11 +547,53 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
 
   defp common_validation(changeset) do
     changeset
+    |> normalize_context_management()
     |> validate_required(@required_fields)
     |> validate_number(:temperature, greater_than_or_equal_to: 0, less_than_or_equal_to: 2)
     |> validate_number(:top_p, greater_than_or_equal_to: 0, less_than_or_equal_to: 1)
     |> validate_number(:receive_timeout, greater_than_or_equal_to: 0)
     |> validate_inclusion(:verbosity, ~w(low medium high))
+    |> validate_context_management()
+  end
+
+  # Accept entries with atom or string keys and normalize to string keys. Keys
+  # other than the documented ones are passed through untouched so that new
+  # options added to the API can be used without a library change.
+  defp normalize_context_management(changeset) do
+    update_change(changeset, :context_management, fn entries ->
+      Enum.map(entries, fn entry ->
+        Map.new(entry, fn
+          {key, value} when is_atom(key) -> {Atom.to_string(key), value}
+          {key, value} -> {key, value}
+        end)
+      end)
+    end)
+  end
+
+  # The API documents `type` as a string (only "compaction" is supported today,
+  # but that set is expected to grow) and `compact_threshold` as optional. Only
+  # validate what the API actually constrains.
+  defp validate_context_management(changeset) do
+    validate_change(changeset, :context_management, fn :context_management, entries ->
+      Enum.flat_map(entries, fn entry ->
+        type = entry["type"]
+        threshold = entry["compact_threshold"]
+
+        cond do
+          not is_binary(type) or type == "" ->
+            [context_management: "entries must have a string \"type\""]
+
+          is_nil(threshold) ->
+            []
+
+          not is_integer(threshold) or threshold <= 0 ->
+            [context_management: "compact_threshold must be a positive integer"]
+
+          true ->
+            []
+        end
+      end)
+    end)
   end
 
   @doc """
@@ -556,6 +620,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         end)
         |> Enum.reverse()
     }
+    |> Utils.conditionally_add_to_map(:context_management, openai.context_management)
     |> Utils.conditionally_add_to_map(:include, openai.include)
     |> Utils.conditionally_add_to_map(:max_output_tokens, openai.max_output_tokens)
     |> Utils.conditionally_add_to_map(:previous_response_id, openai.previous_response_id)
@@ -2043,6 +2108,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
       [
         :endpoint,
         :model,
+        :context_management,
         :temperature,
         :frequency_penalty,
         :reasoning,
