@@ -200,12 +200,23 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
 
   ## Context Management
 
-  The `context_management` option configures automatic context compaction. For
-  example, compact the context after it reaches 300,000 tokens:
+  The `context_management` option configures server-side context compaction for
+  long-running conversations. When the rendered token count crosses the
+  threshold, the server compacts the context before continuing inference.
+
+  For example, compact the context after it reaches 200,000 tokens:
 
       ChatOpenAIResponses.new!(%{
-        context_management: [%{type: "compaction", compact_threshold: 300_000}]
+        context_management: [%{type: "compaction", compact_threshold: 200_000}]
       })
+
+  `compact_threshold` is optional. When omitted, the server picks a threshold:
+
+      ChatOpenAIResponses.new!(%{context_management: [%{type: "compaction"}]})
+
+  Only the `"compaction"` type is supported today, but entries are passed
+  through to the API as given, so new types and options work without a library
+  change.
 
   ## WebSocket Transport
 
@@ -545,18 +556,23 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     |> validate_context_management()
   end
 
+  # Accept entries with atom or string keys and normalize to string keys. Keys
+  # other than the documented ones are passed through untouched so that new
+  # options added to the API can be used without a library change.
   defp normalize_context_management(changeset) do
     update_change(changeset, :context_management, fn entries ->
       Enum.map(entries, fn entry ->
-        %{
-          "type" => Map.get(entry, :type) || Map.get(entry, "type"),
-          "compact_threshold" =>
-            Map.get(entry, :compact_threshold) || Map.get(entry, "compact_threshold")
-        }
+        Map.new(entry, fn
+          {key, value} when is_atom(key) -> {Atom.to_string(key), value}
+          {key, value} -> {key, value}
+        end)
       end)
     end)
   end
 
+  # The API documents `type` as a string (only "compaction" is supported today,
+  # but that set is expected to grow) and `compact_threshold` as optional. Only
+  # validate what the API actually constrains.
   defp validate_context_management(changeset) do
     validate_change(changeset, :context_management, fn :context_management, entries ->
       Enum.flat_map(entries, fn entry ->
@@ -564,8 +580,11 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         threshold = entry["compact_threshold"]
 
         cond do
-          type != "compaction" ->
-            [context_management: "entries must have type \"compaction\""]
+          not is_binary(type) or type == "" ->
+            [context_management: "entries must have a string \"type\""]
+
+          is_nil(threshold) ->
+            []
 
           not is_integer(threshold) or threshold <= 0 ->
             [context_management: "compact_threshold must be a positive integer"]

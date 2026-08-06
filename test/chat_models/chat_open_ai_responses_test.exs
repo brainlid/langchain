@@ -318,12 +318,33 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
                ChatOpenAIResponses.new(%{"context_management" => context_management})
     end
 
+    test "accepts context management without a compact_threshold" do
+      assert {:ok, %ChatOpenAIResponses{context_management: [%{"type" => "compaction"}]}} =
+               ChatOpenAIResponses.new(%{context_management: [%{type: "compaction"}]})
+    end
+
+    test "accepts context management entry types the library doesn't know about" do
+      assert {:ok, %ChatOpenAIResponses{context_management: [%{"type" => "future_type"}]}} =
+               ChatOpenAIResponses.new(%{context_management: [%{type: "future_type"}]})
+    end
+
+    test "preserves context management keys the library doesn't know about" do
+      assert {:ok, %ChatOpenAIResponses{context_management: [entry]}} =
+               ChatOpenAIResponses.new(%{
+                 context_management: [%{type: "compaction", future_option: "keep me"}]
+               })
+
+      assert entry == %{"type" => "compaction", "future_option" => "keep me"}
+    end
+
     test "rejects malformed context management" do
       invalid_values = [
         %{type: "compaction", compact_threshold: 300_000},
         ["compaction"],
-        [%{type: "unknown", compact_threshold: 300_000}],
-        [%{type: "compaction"}],
+        [%{}],
+        [%{compact_threshold: 300_000}],
+        [%{type: :compaction}],
+        [%{type: ""}],
         [%{type: "compaction", compact_threshold: 0}],
         [%{type: "compaction", compact_threshold: -1}],
         [%{type: "compaction", compact_threshold: 1.5}],
@@ -357,6 +378,14 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
       model = ChatOpenAIResponses.new!()
 
       refute Map.has_key?(ChatOpenAIResponses.for_api(model, [], []), :context_management)
+    end
+
+    test "omits compact_threshold when unset rather than sending null" do
+      model = ChatOpenAIResponses.new!(%{context_management: [%{type: "compaction"}]})
+
+      assert ChatOpenAIResponses.for_api(model, [], [])[:context_management] == [
+               %{"type" => "compaction"}
+             ]
     end
 
     test "includes context management in the HTTP request payload" do
