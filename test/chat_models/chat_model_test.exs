@@ -328,6 +328,16 @@ defmodule LangChain.ChatModels.ChatModelTest do
     end
   end
 
+  describe "supports_json_output?/1" do
+    test "returns true for a module defining both :json_schema and :json_response" do
+      assert ChatModel.supports_json_output?(ChatOpenAI)
+    end
+
+    test "returns false for a module missing either field" do
+      refute ChatModel.supports_json_output?(LangChain.ChatModels.ChatGrok)
+    end
+  end
+
   describe "request_options/1" do
     test "extracts the standard request parameters a model sets, dropping nils" do
       model =
