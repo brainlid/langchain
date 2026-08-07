@@ -129,18 +129,18 @@ defmodule LangChain.Chains.DataExtractionChain do
   `information_extraction` tool built from `schema_parameters`, as shown
   above.
 
-  When `opts[:strategy]` **is given** explicitly, it is used strictly — there
-  is no fallback. Passing `strategy: :provider_strategy` for an `llm` whose
-  struct type doesn't support it raises, rather than silently using tool
-  calling instead:
+  When `opts[:strategy]` **is given** explicitly, it is used strictly — there is
+  no fallback. Passing `strategy: :provider_strategy` for an `llm` whose struct
+  type doesn't support it raises from `run_chain/4` (and `run/4` will return an
+  `{:error, %LangChainError{}}`):
 
       # Always uses tool calling, regardless of what `llm` supports
       {:ok, result} =
         DataExtractionChain.run(chat, schema_parameters, data_prompt, strategy: :tool_strategy)
 
-      # Strictly requires provider_strategy support; raises otherwise
-      {:ok, result} =
-        DataExtractionChain.run(chat, schema_parameters, data_prompt, strategy: :provider_strategy)
+      # Strictly requires provider_strategy support; raises from run_chain/4 otherwise
+      {:ok, chain} =
+        DataExtractionChain.run_chain(chat, schema_parameters, data_prompt, strategy: :provider_strategy)
 
   Note: the exact wire format for structured output still differs by provider
   (compare `:json_schema` on `LangChain.ChatModels.ChatAnthropic` vs
