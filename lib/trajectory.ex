@@ -544,7 +544,8 @@ defmodule LangChain.Trajectory do
         %{
           name: tr.name,
           content: ContentPart.content_to_string(tr.content),
-          is_error: tr.is_error
+          is_error: tr.is_error,
+          is_exception: tr.is_exception
         }
       end)
     )
