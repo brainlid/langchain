@@ -94,7 +94,7 @@ defmodule LangChain.Chains.LLMChainToolCallbacksTest do
       assert tool_result.is_error == false
     end
 
-    test "fires on_tool_execution_failed callback when tool raises error" do
+    test "fires on_tool_execution_failed callback when tool returns an error" do
       test_pid = self()
 
       # Create a failing tool
@@ -110,6 +110,9 @@ defmodule LangChain.Chains.LLMChainToolCallbacksTest do
       callbacks = %{
         on_tool_execution_failed: fn _chain, tool_call, error ->
           send(test_pid, {:failed, tool_call.name, error})
+        end,
+        on_tool_execution_exception: fn _chain, tool_call, exception, stacktrace ->
+          send(test_pid, {:exception, tool_call.name, exception, stacktrace})
         end,
         on_tool_execution_completed: fn _chain, tool_call, _tool_result ->
           send(test_pid, {:completed, tool_call.name})
@@ -132,13 +135,188 @@ defmodule LangChain.Chains.LLMChainToolCallbacksTest do
         })
 
       chain = LLMChain.add_message(chain, message)
-      _updated_chain = LLMChain.execute_tool_calls(chain)
+      updated_chain = LLMChain.execute_tool_calls(chain)
 
       # Error can be a string or list of ContentParts
       assert_received {:failed, "fail_tool", _error}
 
       # Ensure on_tool_execution_completed did NOT fire
       refute_received {:completed, "fail_tool"}
+      refute_received {:exception, "fail_tool", _, _}
+      assert [%{is_error: true, is_exception: false}] = updated_chain.last_message.tool_results
+    end
+
+    test "fires on_tool_execution_failed callback when tool raises an exception" do
+      test_pid = self()
+
+      tool =
+        Function.new!(%{
+          name: "raising_tool",
+          description: "Always raises",
+          parameters_schema: %{type: "object", properties: %{}},
+          function: fn _args, _ctx -> raise RuntimeError, "Something went wrong" end
+        })
+
+      callbacks = %{
+        on_tool_execution_exception: fn _chain, tool_call, exception, stacktrace ->
+          send(test_pid, {:exception, tool_call.name, exception, stacktrace})
+        end,
+        on_tool_execution_failed: fn _chain, tool_call, error ->
+          send(test_pid, {:failed, tool_call.name, error})
+        end
+      }
+
+      chain =
+        LLMChain.new!(%{
+          llm: ChatAnthropic.new!(%{model: "claude-sonnet-4-5-20250929"}),
+          tools: [tool],
+          callbacks: [callbacks]
+        })
+
+      message =
+        Message.new_assistant!(%{
+          content: "Test",
+          tool_calls: [
+            ToolCall.new!(%{call_id: "call_exception", name: "raising_tool", arguments: %{}})
+          ]
+        })
+
+      chain = LLMChain.add_message(chain, message)
+      updated_chain = LLMChain.execute_tool_calls(chain)
+
+      assert_received {:exception, "raising_tool", %RuntimeError{message: "Something went wrong"},
+                       stacktrace}
+
+      assert [_ | _] = stacktrace
+      assert_received {:failed, "raising_tool", error}
+      assert [%LangChain.Message.ContentPart{type: :text, content: content}] = error
+      assert content =~ "RuntimeError"
+      assert content =~ "Something went wrong"
+      assert [%{is_error: true, is_exception: true}] = updated_chain.last_message.tool_results
+    end
+
+    test "fires on_tool_execution_exception for async tool exceptions" do
+      test_pid = self()
+
+      tool =
+        Function.new!(%{
+          name: "async_raising_tool",
+          async: true,
+          function: fn _args, _ctx -> raise ArgumentError, "async failure" end
+        })
+
+      callbacks = %{
+        on_tool_execution_exception: fn _chain, tool_call, exception, stacktrace ->
+          send(test_pid, {:exception, tool_call.name, exception, stacktrace, self()})
+        end
+      }
+
+      chain =
+        LLMChain.new!(%{
+          llm: ChatAnthropic.new!(%{model: "claude-sonnet-4-5-20250929"}),
+          tools: [tool],
+          callbacks: [callbacks]
+        })
+        |> LLMChain.add_message(
+          Message.new_assistant!(%{
+            tool_calls: [
+              ToolCall.new!(%{
+                call_id: "call_async_exception",
+                name: "async_raising_tool",
+                arguments: %{}
+              })
+            ]
+          })
+        )
+
+      updated_chain = LLMChain.execute_tool_calls(chain)
+
+      assert_received {:exception, "async_raising_tool", %ArgumentError{message: "async failure"},
+                       [_ | _], callback_pid}
+
+      assert callback_pid == self()
+      assert [%{is_error: true, is_exception: true}] = updated_chain.last_message.tool_results
+    end
+
+    test "fires the failure callback before an exception callback that raises" do
+      test_pid = self()
+
+      tool =
+        Function.new!(%{
+          name: "raising_tool",
+          function: fn _args, _ctx -> raise RuntimeError, "tool failure" end
+        })
+
+      callbacks = %{
+        on_tool_execution_failed: fn _chain, _tool_call, _error ->
+          send(test_pid, :failed_callback_fired)
+        end,
+        on_tool_execution_exception: fn _chain, _tool_call, _exception, _stacktrace ->
+          raise "callback failure"
+        end
+      }
+
+      chain =
+        LLMChain.new!(%{
+          llm: ChatAnthropic.new!(%{model: "claude-sonnet-4-5-20250929"}),
+          tools: [tool],
+          callbacks: [callbacks]
+        })
+        |> LLMChain.add_message(
+          Message.new_assistant!(%{
+            tool_calls: [
+              ToolCall.new!(%{call_id: "call_callback_failure", name: "raising_tool"})
+            ]
+          })
+        )
+
+      assert_raise LangChain.LangChainError, ~r/callback failure/, fn ->
+        LLMChain.execute_tool_calls(chain)
+      end
+
+      assert_received :failed_callback_fired
+    end
+
+    test "fires on_tool_execution_exception when argument parsing raises" do
+      test_pid = self()
+
+      tool =
+        Function.new!(%{
+          name: "parser_raising_tool",
+          parse_args: fn _args -> raise ArgumentError, "invalid arguments" end,
+          function: fn _args, _ctx -> {:ok, "unreachable"} end
+        })
+
+      callbacks = %{
+        on_tool_execution_exception: fn _chain, tool_call, exception, stacktrace ->
+          send(test_pid, {:exception, tool_call.name, exception, stacktrace})
+        end
+      }
+
+      chain =
+        LLMChain.new!(%{
+          llm: ChatAnthropic.new!(%{model: "claude-sonnet-4-5-20250929"}),
+          tools: [tool],
+          callbacks: [callbacks]
+        })
+        |> LLMChain.add_message(
+          Message.new_assistant!(%{
+            tool_calls: [
+              ToolCall.new!(%{
+                call_id: "call_parser_exception",
+                name: "parser_raising_tool",
+                arguments: %{}
+              })
+            ]
+          })
+        )
+
+      updated_chain = LLMChain.execute_tool_calls(chain)
+
+      assert_received {:exception, "parser_raising_tool",
+                       %ArgumentError{message: "invalid arguments"}, [_ | _]}
+
+      assert [%{is_error: true, is_exception: true}] = updated_chain.last_message.tool_results
     end
 
     test "fires on_tool_execution_failed callback for invalid tool" do
@@ -166,9 +344,10 @@ defmodule LangChain.Chains.LLMChainToolCallbacksTest do
         })
 
       chain = LLMChain.add_message(chain, message)
-      _updated_chain = LLMChain.execute_tool_calls(chain)
+      updated_chain = LLMChain.execute_tool_calls(chain)
 
       assert_received {:failed, "nonexistent_tool", _error}
+      assert [%{is_error: true, is_exception: false}] = updated_chain.last_message.tool_results
     end
 
     test "fires callbacks for multiple tools in correct order" do
@@ -267,6 +446,40 @@ defmodule LangChain.Chains.LLMChainToolCallbacksTest do
       assert_received {:completed, "test_tool"}
     end
 
+    test "fires on_tool_execution_exception for approved HITL tool exceptions" do
+      test_pid = self()
+
+      tool =
+        Function.new!(%{
+          name: "raising_tool",
+          function: fn _args, _ctx -> raise RuntimeError, "HITL failure" end
+        })
+
+      callbacks = %{
+        on_tool_execution_exception: fn _chain, tool_call, exception, stacktrace ->
+          send(test_pid, {:exception, tool_call.name, exception, stacktrace})
+        end
+      }
+
+      chain =
+        LLMChain.new!(%{
+          llm: ChatAnthropic.new!(%{model: "claude-sonnet-4-5-20250929"}),
+          tools: [tool],
+          callbacks: [callbacks]
+        })
+
+      tool_call =
+        ToolCall.new!(%{call_id: "call_hitl_exception", name: "raising_tool", arguments: %{}})
+
+      updated_chain =
+        LLMChain.execute_tool_calls_with_decisions(chain, [tool_call], [%{type: :approve}])
+
+      assert_received {:exception, "raising_tool", %RuntimeError{message: "HITL failure"},
+                       [_ | _]}
+
+      assert [%{is_error: true, is_exception: true}] = updated_chain.last_message.tool_results
+    end
+
     test "fires on_tool_execution_failed callback for rejected tools in HITL" do
       test_pid = self()
 
@@ -298,10 +511,11 @@ defmodule LangChain.Chains.LLMChainToolCallbacksTest do
 
       decisions = [%{type: :reject}]
 
-      _updated_chain = LLMChain.execute_tool_calls_with_decisions(chain, tool_calls, decisions)
+      updated_chain = LLMChain.execute_tool_calls_with_decisions(chain, tool_calls, decisions)
 
       assert_received {:failed, "test_tool", error}
       assert error =~ "rejected by a human reviewer"
+      assert [%{is_exception: false}] = updated_chain.last_message.tool_results
     end
 
     test "fires callbacks for edited tool calls in HITL" do

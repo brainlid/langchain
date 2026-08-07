@@ -16,6 +16,7 @@ defmodule LangChain.Message.ToolResultTest do
       assert msg.name == nil
       assert msg.display_text == nil
       assert msg.is_error == false
+      assert msg.is_exception == false
     end
 
     test "accepts valid input" do
@@ -78,6 +79,7 @@ defmodule LangChain.Message.ToolResultTest do
       assert msg.tool_call_id == "call_123asdf"
       assert msg.display_text == "Failed to run hello_world"
       assert msg.is_error == true
+      assert msg.is_exception == false
     end
 
     test "returns errors when invalid" do

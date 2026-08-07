@@ -10,6 +10,7 @@ One behavior change to note before upgrading:
 
 ### Added
 
+- **Rescued tool exception details.** The new `:on_tool_execution_exception` callback exposes the original exception and stacktrace when LangChain rescues an exception during tool execution, and the resulting `ToolResult` has `is_exception: true`. The existing `:on_tool_execution_failed` callback still fires with the normalized model-facing content, preserving its lifecycle semantics.
 - **`context_management` option on `ChatOpenAIResponses`** for server-side context compaction on long-running conversations. When the rendered token count crosses the threshold, the server compacts the context before continuing inference.
 
   ```elixir

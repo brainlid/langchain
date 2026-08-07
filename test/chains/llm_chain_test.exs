@@ -3496,12 +3496,13 @@ defmodule LangChain.Chains.LLMChainTest do
              ]
 
       assert result.is_error == true
+      assert result.is_exception == true
       assert result.name == "go_time"
     end
 
     test "outer rescue in execute_tool_call/2 produces a ToolResult tagged with the function name" do
-      # Function.execute/3 has its own inner rescue, so the outer rescue in
-      # execute_tool_call/2 only fires if Function.execute/3 itself raises.
+      # Function.execute_with_exception/3 has its own inner rescue, so the outer
+      # rescue in execute_tool_call/2 only fires if it raises unexpectedly.
       # Stub it to raise so we exercise that defensive branch and verify the
       # produced ToolResult carries the function's name
       tool =
@@ -3511,7 +3512,7 @@ defmodule LangChain.Chains.LLMChainTest do
           function: fn _args, _context -> :unreachable end
         })
 
-      Mimic.expect(Function, :execute, fn _function, _args, _context ->
+      Mimic.expect(Function, :execute_with_exception, fn _function, _args, _context ->
         raise RuntimeError, "boom outside inner rescue"
       end)
 
@@ -3532,6 +3533,7 @@ defmodule LangChain.Chains.LLMChainTest do
       assert result.tool_call_id == "call_fake123"
       assert result.name == "go_time"
       assert result.is_error == true
+      assert result.is_exception == true
 
       assert [%ContentPart{type: :text, content: text}] = result.content
       assert text =~ "ERROR executing tool:"
@@ -3724,6 +3726,7 @@ defmodule LangChain.Chains.LLMChainTest do
             {:ok,
              %ToolResult{
                content: [ContentPart.text!("Hello!", cache_control: true)],
+               is_exception: true,
                options: [custom: 1]
              }}
           end
@@ -3743,6 +3746,7 @@ defmodule LangChain.Chains.LLMChainTest do
       assert result.content == [ContentPart.text!("Hello!", cache_control: true)]
       assert result.processed_content == nil
       assert result.options == [custom: 1]
+      assert result.is_exception == false
     end
 
     test "execute_tool_call handles {:interrupt, msg, data} return", %{chain: chain} do

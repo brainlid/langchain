@@ -300,7 +300,7 @@ defmodule LangChain.TrajectoryTest do
     end
 
     test "serializes tool results in messages" do
-      tr = make_tool_result("search", "Result text")
+      tr = %{make_tool_result("search", "Result text") | is_error: true, is_exception: true}
 
       trajectory = %Trajectory{
         messages: [tool_msg([tr])],
@@ -310,7 +310,18 @@ defmodule LangChain.TrajectoryTest do
 
       result = Trajectory.to_map(trajectory)
 
-      assert [%{tool_results: [%{name: "search", content: "Result text", is_error: false}]}] =
+      assert [
+               %{
+                 tool_results: [
+                   %{
+                     name: "search",
+                     content: "Result text",
+                     is_error: true,
+                     is_exception: true
+                   }
+                 ]
+               }
+             ] =
                result.messages
     end
 

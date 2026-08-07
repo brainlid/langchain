@@ -215,15 +215,45 @@ defmodule LangChain.Chains.ChainCallbacks do
   @typedoc """
   Executed when a single tool execution fails.
 
-  Fires when tool execution raises an exception or returns an error result.
+  Fires when tool execution raises an exception, returns an error result, names
+  an invalid tool, or is rejected during human review.
 
   - First argument: LLMChain.t()
   - Second argument: ToolCall that failed
-  - Third argument: Error reason or exception
+  - Third argument: Normalized error content returned to the model
 
   The handler's return value is discarded.
   """
   @type chain_tool_execution_failed :: (LLMChain.t(), ToolCall.t(), term() -> any())
+
+  @typedoc """
+  Executed when a tool execution raises an exception that LangChain rescues.
+
+  This is an exception-specific companion to `:on_tool_execution_failed`.
+  Both callbacks fire for rescued exceptions: this callback receives the
+  original exception and stacktrace, while `:on_tool_execution_failed` receives
+  the normalized content returned to the model. The resulting `ToolResult` also
+  has `is_exception: true`.
+
+  Expected `{:error, reason}` results, invalid tool calls, human rejections, and
+  interrupts do not fire this callback.
+
+  - First argument: LLMChain.t()
+  - Second argument: ToolCall that raised
+  - Third argument: Original rescued exception
+  - Fourth argument: Exception stacktrace
+
+  Exceptions and stacktraces can contain sensitive application data. They are
+  not sent to the model by LangChain, but handlers should avoid exposing them to
+  untrusted clients.
+
+  The handler's return value is discarded.
+  """
+  @type chain_tool_execution_exception :: (LLMChain.t(),
+                                           ToolCall.t(),
+                                           Exception.t(),
+                                           Exception.stacktrace() ->
+                                             any())
 
   @typedoc """
   Executed when one or more tools return an interrupt signal.
@@ -342,6 +372,7 @@ defmodule LangChain.Chains.ChainCallbacks do
           optional(:on_tool_pre_execution) => chain_tool_pre_execution(),
           optional(:on_tool_execution_completed) => chain_tool_execution_completed(),
           optional(:on_tool_execution_failed) => chain_tool_execution_failed(),
+          optional(:on_tool_execution_exception) => chain_tool_execution_exception(),
           optional(:on_tool_interrupted) => chain_tool_interrupted(),
           optional(:on_tool_response_created) => chain_tool_response_created(),
           optional(:on_llm_error) => chain_llm_error(),

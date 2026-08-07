@@ -298,6 +298,7 @@ defmodule LangChain.Function do
   @type t :: %Function{}
   @type arguments :: %{String.t() => any()}
   @type context :: nil | %{atom() => any()}
+  @type execution_exception :: {Exception.t(), Exception.stacktrace()}
 
   @typedoc """
   Return shape for a `:parse_args` callback. See module doc for full details.
@@ -368,7 +369,15 @@ defmodule LangChain.Function do
   requested by the LLM.
   """
   @spec execute(t(), arguments(), context()) :: any() | no_return()
-  def execute(%Function{function: fun} = function, arguments, context) do
+  def execute(%Function{} = function, arguments, context) do
+    {result, _exception} = execute_with_exception(function, arguments, context)
+    result
+  end
+
+  @doc false
+  @spec execute_with_exception(t(), arguments(), context()) ::
+          {any(), execution_exception() | nil}
+  def execute_with_exception(%Function{function: fun} = function, arguments, context) do
     Logger.debug("Executing function #{inspect(function.name)}")
 
     # An LLM can hand back `nil` instead of an empty map for a no-argument
@@ -377,10 +386,13 @@ defmodule LangChain.Function do
     # tool body itself.
     args = if is_map(arguments), do: arguments, else: %{}
 
-    with :ok <- validate_required_params(function, args),
-         {:ok, parsed_arguments} <- run_parse_args(function, args) do
-      execute_with_error_handling(function, fun, parsed_arguments, context)
-    end
+    result =
+      with :ok <- validate_required_params(function, args),
+           {:ok, parsed_arguments} <- run_parse_args(function, args) do
+        execute_with_error_handling(function, fun, parsed_arguments, context)
+      end
+
+    split_execution_exception(result)
   end
 
   # Invokes the optional `:parse_args` callback. When absent, passes the
@@ -391,7 +403,10 @@ defmodule LangChain.Function do
   # `:on_tool_response_created` callbacks and `[:langchain, :tool, :call]`
   # telemetry firing on parse failures, which downstream consumers rely on for
   # token usage accounting and trajectory analysis.
-  @spec run_parse_args(t(), arguments()) :: {:ok, map()} | {:error, String.t()}
+  @spec run_parse_args(t(), arguments()) ::
+          {:ok, map()}
+          | {:error, String.t()}
+          | {:exception, {:error, String.t()}, Exception.t(), Exception.stacktrace()}
   defp run_parse_args(%Function{parse_args: nil}, arguments), do: {:ok, arguments}
 
   defp run_parse_args(%Function{parse_args: parser, name: name}, arguments)
@@ -406,7 +421,8 @@ defmodule LangChain.Function do
             LangChainError.format_exception(err, __STACKTRACE__)
         end)
 
-        {:error, "ERROR: #{LangChainError.format_exception(err, __STACKTRACE__, :short)}"}
+        message = "ERROR: #{LangChainError.format_exception(err, __STACKTRACE__, :short)}"
+        {:exception, {:error, message}, err, __STACKTRACE__}
     end
   end
 
@@ -614,6 +630,7 @@ defmodule LangChain.Function do
           | {:ok, any(), any()}
           | {:interrupt, String.t(), any()}
           | {:error, String.t()}
+          | {:exception, {:error, String.t()}, Exception.t(), Exception.stacktrace()}
   defp execute_with_error_handling(function, fun, arguments, context) do
     fun.(arguments, context)
     |> normalize_execution_result(function)
@@ -623,11 +640,24 @@ defmodule LangChain.Function do
         "Function! #{function.name} failed in execution. Exception: #{LangChainError.format_exception(err, __STACKTRACE__)}"
       end)
 
-      case argument_error_message(err, function, fun, arguments) do
-        nil -> {:error, "ERROR: #{LangChainError.format_exception(err, __STACKTRACE__, :short)}"}
-        message -> {:error, message}
-      end
+      result =
+        case argument_error_message(err, function, fun, arguments) do
+          nil ->
+            {:error, "ERROR: #{LangChainError.format_exception(err, __STACKTRACE__, :short)}"}
+
+          message ->
+            {:error, message}
+        end
+
+      {:exception, result, err, __STACKTRACE__}
   end
+
+  @spec split_execution_exception(any()) :: {any(), execution_exception() | nil}
+  defp split_execution_exception({:exception, result, exception, stacktrace}) do
+    {result, {exception, stacktrace}}
+  end
+
+  defp split_execution_exception(result), do: {result, nil}
 
   # The required-parameter check can't reach a tool that reads an *optional*
   # argument with `Map.fetch!/2` or pattern-matches one in its head, so those
