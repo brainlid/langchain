@@ -16,6 +16,15 @@ defmodule LangChain.Message.ToolResult do
   Advanced use: You can use the `options` field for LLM-specific features like
   cache control.
 
+  ## Errors
+
+  `is_error` marks any failed tool result. `is_exception` additionally marks
+  results produced when LangChain rescued an exception during tool execution.
+  The original exception and stacktrace are not stored on the result; use the
+  `:on_tool_execution_exception` callback to observe them. The model-facing
+  `content` still contains LangChain's formatted exception message and source
+  location, so applications should not include secrets in exception messages.
+
   To do this, the Elixir function's result should be a `{:ok, "String response
   for LLM", native_elixir_data}`. See `LangChain.Function` for details and
   examples.
@@ -42,6 +51,8 @@ defmodule LangChain.Message.ToolResult do
     field :display_text, :string
     # flag if the result is an error
     field :is_error, :boolean, default: false
+    # flag if the result was produced from a rescued exception
+    field :is_exception, :boolean, default: false
     # flag indicating this tool result represents a paused/interrupted tool
     field :is_interrupt, :boolean, default: false
     # opaque interrupt data (not sent to LLM, virtual only)

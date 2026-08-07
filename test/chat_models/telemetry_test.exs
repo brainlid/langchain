@@ -763,7 +763,7 @@ defmodule LangChain.ChatModels.TelemetryTest do
 
       call = ToolCall.new!(%{call_id: "call-1", name: "hello", arguments: %{}})
 
-      LLMChain.execute_tool_call(call, fun, context: custom_ctx)
+      result = LLMChain.execute_tool_call(call, fun, context: custom_ctx)
 
       assert_received {:telemetry_event, [:langchain, :tool, :call, :start], start_metadata}
       assert start_metadata.tool_name == "hello"
@@ -771,8 +771,41 @@ defmodule LangChain.ChatModels.TelemetryTest do
 
       assert_received {:telemetry_event, [:langchain, :tool, :call, :stop], stop_metadata}
       assert start_metadata.call_id == stop_metadata.call_id
+      assert stop_metadata.result == result
+      assert stop_metadata.tool_result == result
 
       :telemetry.detach("test-tool-custom-context")
+    end
+
+    test "tool call stop telemetry does not expose rescued exceptions" do
+      test_pid = self()
+
+      :telemetry.attach(
+        "test-tool-exception-metadata",
+        [:langchain, :tool, :call, :stop],
+        fn _name, _measurements, metadata, _config ->
+          send(test_pid, {:tool_stop, metadata})
+        end,
+        nil
+      )
+
+      fun =
+        Function.new!(%{
+          name: "raising_tool",
+          function: fn _args, _ctx -> raise RuntimeError, "private failure" end
+        })
+
+      call = ToolCall.new!(%{call_id: "call-exception", name: "raising_tool", arguments: %{}})
+      result = LLMChain.execute_tool_call(call, fun)
+
+      assert_received {:tool_stop, metadata}
+      assert %LangChain.Message.ToolResult{is_error: true, is_exception: true} = metadata.result
+      assert metadata.result == result
+      assert metadata.tool_result == result
+      refute Map.has_key?(metadata, :exception)
+      refute Map.has_key?(metadata, :stacktrace)
+
+      :telemetry.detach("test-tool-exception-metadata")
     end
   end
 

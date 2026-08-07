@@ -1515,56 +1515,36 @@ defmodule LangChain.Chains.LLMChain do
             # Fires inside the spawned Task so handlers (e.g. tenancy/OTel
             # propagation) can re-apply per-process state before the tool runs.
             Callbacks.fire(chain.callbacks, :on_tool_pre_execution, [chain, call, func])
-            result = execute_tool_call(call, func, verbose: verbose, context: use_context)
-            {call, func, result}
+
+            {result, exception} =
+              execute_tool_call_with_exception(call, func,
+                verbose: verbose,
+                context: use_context
+              )
+
+            {call, func, result, exception}
           end)
         end)
         |> Task.await_many(chain.async_tool_timeout || default_async_tool_timeout())
 
       # Fire completed/failed callbacks for async tools and extract results
       async_tool_results =
-        Enum.map(async_results, fn {call, _func, result} ->
-          cond do
-            result.is_interrupt ->
-              :ok
-
-            result.is_error ->
-              Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
-                chain,
-                call,
-                result.content
-              ])
-
-            true ->
-              Callbacks.fire(chain.callbacks, :on_tool_execution_completed, [chain, call, result])
-          end
-
-          result
+        Enum.map(async_results, fn {call, _func, result, exception} ->
+          fire_tool_execution_callbacks(chain, call, result, exception)
         end)
 
       # Execute sync tools with immediate callbacks
       sync_tool_results =
         Enum.map(grouped[:sync], fn {call, func} ->
           Callbacks.fire(chain.callbacks, :on_tool_pre_execution, [chain, call, func])
-          result = execute_tool_call(call, func, verbose: verbose, context: use_context)
 
-          # Fire completed/failed callback immediately after execution
-          cond do
-            result.is_interrupt ->
-              :ok
+          {result, exception} =
+            execute_tool_call_with_exception(call, func,
+              verbose: verbose,
+              context: use_context
+            )
 
-            result.is_error ->
-              Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
-                chain,
-                call,
-                result.content
-              ])
-
-            true ->
-              Callbacks.fire(chain.callbacks, :on_tool_execution_completed, [chain, call, result])
-          end
-
-          result
+          fire_tool_execution_callbacks(chain, call, result, exception)
         end)
 
       # log invalid tool calls (can't augment - no func available)
@@ -1681,30 +1661,13 @@ defmodule LangChain.Chains.LLMChain do
                   func
                 ])
 
-                result =
-                  execute_tool_call(tool_call, func, verbose: verbose, context: use_context)
+                {result, exception} =
+                  execute_tool_call_with_exception(tool_call, func,
+                    verbose: verbose,
+                    context: use_context
+                  )
 
-                # Fire completed/failed callback after execution (skip interrupts)
-                cond do
-                  result.is_interrupt ->
-                    :ok
-
-                  result.is_error ->
-                    Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
-                      chain,
-                      tool_call,
-                      result.content
-                    ])
-
-                  true ->
-                    Callbacks.fire(chain.callbacks, :on_tool_execution_completed, [
-                      chain,
-                      tool_call,
-                      result
-                    ])
-                end
-
-                result
+                fire_tool_execution_callbacks(chain, tool_call, result, exception)
 
               nil ->
                 error_msg = "Tool '#{tool_call.name}' not found"
@@ -1744,30 +1707,13 @@ defmodule LangChain.Chains.LLMChain do
                   func
                 ])
 
-                result =
-                  execute_tool_call(edited_call, func, verbose: verbose, context: use_context)
+                {result, exception} =
+                  execute_tool_call_with_exception(edited_call, func,
+                    verbose: verbose,
+                    context: use_context
+                  )
 
-                # Fire completed/failed callback after execution (skip interrupts)
-                cond do
-                  result.is_interrupt ->
-                    :ok
-
-                  result.is_error ->
-                    Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
-                      chain,
-                      edited_call,
-                      result.content
-                    ])
-
-                  true ->
-                    Callbacks.fire(chain.callbacks, :on_tool_execution_completed, [
-                      chain,
-                      edited_call,
-                      result
-                    ])
-                end
-
-                result
+                fire_tool_execution_callbacks(chain, edited_call, result, exception)
 
               nil ->
                 error_msg = "Tool '#{tool_call.name}' not found"
@@ -1872,6 +1818,13 @@ defmodule LangChain.Chains.LLMChain do
   """
   @spec execute_tool_call(ToolCall.t(), Function.t(), Keyword.t()) :: ToolResult.t()
   def execute_tool_call(%ToolCall{} = call, %Function{} = function, opts \\ []) do
+    {result, _exception} = execute_tool_call_with_exception(call, function, opts)
+    result
+  end
+
+  @spec execute_tool_call_with_exception(ToolCall.t(), Function.t(), Keyword.t()) ::
+          {ToolResult.t(), Function.execution_exception() | nil}
+  defp execute_tool_call_with_exception(%ToolCall{} = call, %Function{} = function, opts) do
     verbose = Keyword.get(opts, :verbose, false)
     context = Keyword.get(opts, :context, nil)
 
@@ -1884,8 +1837,8 @@ defmodule LangChain.Chains.LLMChain do
       arguments: call.arguments
     }
 
-    enrich_stop = fn result ->
-      %{tool_result: result}
+    enrich_stop = fn {result, _exception} ->
+      %{result: result, tool_result: result}
     end
 
     # Enrich the context with the current call's tool_call_id so tool
@@ -1905,78 +1858,125 @@ defmodule LangChain.Chains.LLMChain do
         try do
           if verbose, do: IO.inspect(function.name, label: "EXECUTING FUNCTION")
 
-          case Function.execute(function, call.arguments, enriched_context) do
-            {:ok, %ToolResult{} = result} ->
-              # allow the tool execution to return a ToolResult. Just set the
-              # tool_call_id and fallback settings for name and display_text. This
-              # allows the tool to explicitly set the options for the ToolResult.
-              %{
-                result
-                | tool_call_id: call.call_id,
-                  name: result.name || function.name,
-                  display_text: result.display_text || function.display_text
-              }
+          {execution_result, exception} =
+            Function.execute_with_exception(function, call.arguments, enriched_context)
 
-            {:ok, llm_result, processed_result} ->
-              if verbose, do: IO.inspect(processed_result, label: "FUNCTION PROCESSED RESULT")
-              # successful execution and storage of processed_content.
-              ToolResult.new!(%{
-                tool_call_id: call.call_id,
-                content: llm_result,
-                processed_content: processed_result,
-                name: function.name,
-                display_text: function.display_text
-              })
+          result =
+            case execution_result do
+              {:ok, %ToolResult{} = result} ->
+                # allow the tool execution to return a ToolResult. Just set the
+                # tool_call_id and fallback settings for name and display_text. This
+                # allows the tool to explicitly set the options for the ToolResult.
+                %{
+                  result
+                  | tool_call_id: call.call_id,
+                    name: result.name || function.name,
+                    display_text: result.display_text || function.display_text
+                }
 
-            {:ok, result} ->
-              if verbose, do: IO.inspect(result, label: "FUNCTION RESULT")
-              # successful execution.
-              ToolResult.new!(%{
-                tool_call_id: call.call_id,
-                content: result,
-                name: function.name,
-                display_text: function.display_text
-              })
+              {:ok, llm_result, processed_result} ->
+                if verbose, do: IO.inspect(processed_result, label: "FUNCTION PROCESSED RESULT")
+                # successful execution and storage of processed_content.
+                ToolResult.new!(%{
+                  tool_call_id: call.call_id,
+                  content: llm_result,
+                  processed_content: processed_result,
+                  name: function.name,
+                  display_text: function.display_text
+                })
 
-            {:interrupt, display_message, interrupt_data} ->
-              if verbose, do: IO.inspect(display_message, label: "FUNCTION INTERRUPTED")
+              {:ok, result} ->
+                if verbose, do: IO.inspect(result, label: "FUNCTION RESULT")
+                # successful execution.
+                ToolResult.new!(%{
+                  tool_call_id: call.call_id,
+                  content: result,
+                  name: function.name,
+                  display_text: function.display_text
+                })
 
-              ToolResult.new!(%{
-                tool_call_id: call.call_id,
-                content: display_message,
-                name: function.name,
-                display_text: function.display_text,
-                is_interrupt: true,
-                interrupt_data: interrupt_data
-              })
+              {:interrupt, display_message, interrupt_data} ->
+                if verbose, do: IO.inspect(display_message, label: "FUNCTION INTERRUPTED")
 
-            {:error, reason} when is_binary(reason) ->
-              if verbose, do: IO.inspect(reason, label: "FUNCTION ERROR")
+                ToolResult.new!(%{
+                  tool_call_id: call.call_id,
+                  content: display_message,
+                  name: function.name,
+                  display_text: function.display_text,
+                  is_interrupt: true,
+                  interrupt_data: interrupt_data
+                })
 
-              ToolResult.new!(%{
-                tool_call_id: call.call_id,
-                content: reason,
-                name: function.name,
-                display_text: function.display_text,
-                is_error: true
-              })
-          end
+              {:error, reason} when is_binary(reason) ->
+                if verbose, do: IO.inspect(reason, label: "FUNCTION ERROR")
+
+                ToolResult.new!(%{
+                  tool_call_id: call.call_id,
+                  content: reason,
+                  name: function.name,
+                  display_text: function.display_text,
+                  is_error: true
+                })
+            end
+
+          result = %{result | is_exception: not is_nil(exception)}
+
+          {result, exception}
         rescue
           err ->
+            stacktrace = __STACKTRACE__
+
             Logger.warning(fn ->
-              "Function #{function.name} failed in execution. Exception: #{LangChainError.format_exception(err, __STACKTRACE__)}"
+              "Function #{function.name} failed in execution. Exception: #{LangChainError.format_exception(err, stacktrace)}"
             end)
 
-            ToolResult.new!(%{
-              tool_call_id: call.call_id,
-              name: function.name,
-              content: "ERROR executing tool: #{inspect(err)}",
-              is_error: true
-            })
+            result =
+              ToolResult.new!(%{
+                tool_call_id: call.call_id,
+                name: function.name,
+                content: "ERROR executing tool: #{inspect(err)}",
+                is_error: true
+              })
+
+            {%{result | is_exception: true}, {err, stacktrace}}
         end
       end,
       enrich_stop: enrich_stop
     )
+  end
+
+  @spec fire_tool_execution_callbacks(
+          t(),
+          ToolCall.t(),
+          ToolResult.t(),
+          Function.execution_exception() | nil
+        ) :: ToolResult.t()
+  defp fire_tool_execution_callbacks(chain, call, result, exception) do
+    cond do
+      result.is_interrupt ->
+        :ok
+
+      result.is_error ->
+        Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [chain, call, result.content])
+
+      true ->
+        Callbacks.fire(chain.callbacks, :on_tool_execution_completed, [chain, call, result])
+    end
+
+    case exception do
+      {error, stacktrace} ->
+        Callbacks.fire(chain.callbacks, :on_tool_execution_exception, [
+          chain,
+          call,
+          error,
+          stacktrace
+        ])
+
+      nil ->
+        :ok
+    end
+
+    result
   end
 
   @doc """

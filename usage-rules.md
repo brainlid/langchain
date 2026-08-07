@@ -118,6 +118,7 @@ This pattern allows:
 - `:on_message_processed` — Message complete and processed (use for persistence)
 - `:on_tool_call_identified` — Tool name detected during streaming (args may be incomplete)
 - `:on_tool_execution_started/completed/failed` — Tool execution lifecycle
+- `:on_tool_execution_exception` — Original rescued tool exception and stacktrace
 - `:on_tool_response_created` — Tool results compiled into message
 - `:on_message_processing_error` — Message processor failure
 
