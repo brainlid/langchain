@@ -194,22 +194,6 @@ defmodule LangChain.Chains.DataExtractionChainTest do
     end
   end
 
-  describe "supports_provider_strategy?/1" do
-    test "returns true for a struct/module defining both :json_schema and :json_response" do
-      {:ok, chat} = ChatOpenAI.new(%{model: "gpt-4o-mini-2024-07-18", stream: false})
-
-      assert DataExtractionChain.supports_provider_strategy?(chat)
-      assert DataExtractionChain.supports_provider_strategy?(ChatOpenAI)
-    end
-
-    test "returns false for a struct/module missing either field" do
-      chat = ChatGrok.new!(%{})
-
-      refute DataExtractionChain.supports_provider_strategy?(chat)
-      refute DataExtractionChain.supports_provider_strategy?(ChatGrok)
-    end
-  end
-
   describe "run_chain/4 default strategy (:provider_strategy)" do
     setup do
       schema_parameters =
@@ -266,16 +250,19 @@ defmodule LangChain.Chains.DataExtractionChainTest do
                DataExtractionChain.run(chat, array_schema, "Alex and Claudia are here.")
     end
 
-    test "returns an error when the JSON response is not valid JSON", %{
-      schema_parameters: schema_parameters,
-      chat: chat
-    } do
+    test "surfaces the JsonProcessor's error message when the JSON response is not valid JSON",
+         %{
+           schema_parameters: schema_parameters,
+           chat: chat
+         } do
       message = Message.new_assistant!(%{content: "not json"})
 
       expect(ChatOpenAI, :call, fn _model, _messages, _tools -> {:ok, [message]} end)
 
-      assert {:error, %LangChainError{}} =
+      assert {:error, %LangChainError{message: error_message}} =
                DataExtractionChain.run(chat, schema_parameters, "Alex is here.")
+
+      assert error_message =~ "ERROR: Invalid JSON data:"
     end
 
     test "fills in extra fields (e.g. json_schema_name) with sensible defaults when the struct defines them",

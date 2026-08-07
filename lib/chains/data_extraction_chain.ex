@@ -113,13 +113,13 @@ defmodule LangChain.Chains.DataExtractionChain do
   This chain can ask the LLM to return JSON constrained to a schema natively
   ("structured outputs"), without any tool/function calling. The chain checks
   whether `llm`'s struct type natively supports this (see
-  `supports_provider_strategy?/1`) — i.e. whether its bare struct defines both
-  `:json_schema` and `:json_response` fields. If it does, the chain runs
-  against a patched copy of `llm` with `json_response: true` and `json_schema`
-  set to `schema_parameters` as given, and parses the plain JSON
-  response directly with `extract_result/1` instead of requiring a tool call.
-  Some models require extra parameters alongside the schema itself (e.g.
-  `LangChain.ChatModels.ChatOpenAIResponses` requires a separate
+  `LangChain.ChatModels.ChatModel.supports_json_output?/1`) — i.e. whether its
+  bare struct defines both `:json_schema` and `:json_response` fields. If it
+  does, the chain runs against a patched copy of `llm` with `json_response:
+  true` and `json_schema` set to `schema_parameters` as given, and parses the
+  plain JSON response directly with `extract_result/1` instead of requiring a
+  tool call. Some models require extra parameters alongside the schema itself
+  (e.g. `LangChain.ChatModels.ChatOpenAIResponses` requires a separate
   `:json_schema_name`); the chain fills these in with sensible defaults when
   the struct defines them.
 
@@ -153,10 +153,11 @@ defmodule LangChain.Chains.DataExtractionChain do
   require Logger
   alias LangChain.PromptTemplate
   alias LangChain.Message
+  alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
   alias LangChain.LangChainError
   alias LangChain.Chains.LLMChain
-  alias LangChain.ChatModels.ChatOpenAI
+  alias LangChain.ChatModels.ChatModel
   alias LangChain.MessageProcessors.JsonProcessor
 
   @function_name "information_extraction"
@@ -185,25 +186,6 @@ Passage:
   def normalize_extraction_info(other) do
     {:error,
      LangChainError.exception("Extracted data must be a list or map, got: #{inspect(other)}")}
-  end
-
-  @doc """
-  Returns whether `llm`'s struct type natively supports requesting structured
-  JSON output, i.e. whether its bare struct defines both `:json_schema` and
-  `:json_response` fields. This reflects what the *type* supports, not
-  whether the given instance currently has those fields configured, so it can
-  be used to decide up front whether `:provider_strategy` is viable.
-
-  Accepts either a chat model struct or its module.
-  """
-  @spec supports_provider_strategy?(struct() | module()) :: boolean()
-  def supports_provider_strategy?(module) when is_atom(module) do
-    supports_provider_strategy?(struct(module))
-  end
-
-  def supports_provider_strategy?(%module{}) do
-    pure = struct(module)
-    Map.has_key?(pure, :json_schema) and Map.has_key?(pure, :json_response)
   end
 
   @doc """
@@ -236,14 +218,14 @@ Passage:
     internally run `LLMChain`. See `LangChain.Chains.ChainCallbacks` for the
     available events. Defaults to `[]`.
   """
-  @spec run_chain(ChatOpenAI.t(), json_schema :: map(), prompt :: [any()], opts :: Keyword.t()) ::
+  @spec run_chain(ChatModel.t(), json_schema :: map(), prompt :: [any()], opts :: Keyword.t()) ::
           {:ok, LLMChain.t()} | {:error, LLMChain.t(), LangChainError.t()}
   def run_chain(llm, json_schema, prompt, opts \\ []) do
     case Keyword.fetch(opts, :strategy) do
       :error ->
         # No explicit strategy: default to provider_strategy, but fail
         # gracefully by falling back to tool_strategy when unsupported.
-        if supports_provider_strategy?(llm) do
+        if ChatModel.supports_json_output?(llm.__struct__) do
           run_chain_provider_strategy(llm, json_schema, prompt, opts)
         else
           Logger.warning(
@@ -258,7 +240,7 @@ Passage:
 
       {:ok, :provider_strategy} ->
         # Explicit strategy: used strictly, no fallback.
-        if supports_provider_strategy?(llm) do
+        if ChatModel.supports_json_output?(llm.__struct__) do
           run_chain_provider_strategy(llm, json_schema, prompt, opts)
         else
           raise LangChainError,
@@ -348,7 +330,9 @@ Passage:
   `json_schema` passed to `run_chain/4`.
 
   Returns an error when the LLM did not respond with the expected extraction
-  tool call, or (under `:provider_strategy`) valid JSON.
+  tool call, or (under `:provider_strategy`) valid JSON. When `JsonProcessor`
+  halted on invalid JSON, that corrective error message is surfaced directly
+  instead of a generic "unexpected response" message.
   """
   @spec extract_result(LLMChain.t()) :: {:ok, result :: [any()]} | {:error, LangChainError.t()}
   def extract_result(%LLMChain{
@@ -372,8 +356,19 @@ Passage:
     normalize_extraction_info(processed_content)
   end
 
+  # Assuming there was no last message. the extraction did not work due to invalid json schema
+  # we propagate the error forward.
+  def extract_result(%LLMChain{
+        last_message: %Message{role: :user, content: content}
+      }) do
+    case ContentPart.content_to_string(content) do
+      "ERROR: " <> _ = error_text -> {:error, LangChainError.exception(error_text)}
+      _ -> {:error, LangChainError.exception("Unexpected response.")}
+    end
+  end
+
   def extract_result(%LLMChain{} = chain) do
-    {:error, LangChainError.exception("Unexpected response. #{inspect({:ok, chain})}")}
+    {:error, LangChainError.exception("Unexpected response. #{inspect(chain.last_message)}")}
   end
 
   @doc """
@@ -384,7 +379,7 @@ Passage:
 
   Accepts the same options as `run_chain/4`.
   """
-  @spec run(ChatOpenAI.t(), json_schema :: map(), prompt :: [any()], opts :: Keyword.t()) ::
+  @spec run(ChatModel.t(), json_schema :: map(), prompt :: [any()], opts :: Keyword.t()) ::
           {:ok, result :: [any()]} | {:error, LangChainError.t()}
   def run(llm, json_schema, prompt, opts \\ []) do
     try do
