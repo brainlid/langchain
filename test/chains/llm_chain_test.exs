@@ -584,7 +584,7 @@ defmodule LangChain.Chains.LLMChainTest do
              } = updated_chain.delta
     end
 
-    test "cancels the current delta when applying an overloaded error", %{chain: chain} do
+    test "ends the current delta as a stream error when overloaded", %{chain: chain} do
       assert chain.messages == []
 
       error = LangChainError.exception(type: "overloaded", message: "Overloaded")
@@ -604,12 +604,12 @@ defmodule LangChain.Chains.LLMChainTest do
       assert [%Message{} = new_message] = updated_chain.messages
       assert new_message.role == :assistant
       assert new_message.content == [ContentPart.text!("Greetings from your favorite ")]
-      assert new_message.status == :cancelled
+      assert new_message.status == :stream_error
       # the error is stored in metadata
       assert new_message.metadata.streaming_error == error
     end
 
-    test "cancels the current delta on a generic streaming error", %{chain: chain} do
+    test "ends the current delta as a stream error on a generic streaming error", %{chain: chain} do
       error =
         LangChainError.exception(
           type: "invalid_request_error",
@@ -626,8 +626,39 @@ defmodule LangChain.Chains.LLMChainTest do
       assert [%Message{} = msg] = updated_chain.messages
       assert msg.role == :assistant
       assert msg.content == [ContentPart.text!("Some partial response")]
-      assert msg.status == :cancelled
+      assert msg.status == :stream_error
       assert msg.metadata.streaming_error == error
+    end
+  end
+
+  describe "delta_to_message_when_complete/1" do
+    setup do
+      %{chain: LLMChain.new!(%{llm: ChatOpenAI.new!(%{stream: true})})}
+    end
+
+    test "converts a content filtered delta and keeps the partial content", %{chain: chain} do
+      # A provider that stops a response with its content filter still ends the
+      # stream. Treating the delta as unfinished would leave it hanging on the
+      # chain and the caller waiting on a message that never arrives.
+      updated_chain =
+        chain
+        |> LLMChain.merge_delta(MessageDelta.new!(%{role: :assistant, content: "Some partial "}))
+        |> LLMChain.merge_delta(MessageDelta.new!(%{content: "resp", status: :content_filtered}))
+
+      assert {:ok, %LLMChain{} = result} = LLMChain.delta_to_message_when_complete(updated_chain)
+      assert result.delta == nil
+      assert [%Message{} = msg] = result.messages
+      assert msg.status == :content_filtered
+      assert msg.content == [ContentPart.text!("Some partial resp")]
+    end
+
+    test "leaves an incomplete delta on the chain", %{chain: chain} do
+      updated_chain =
+        LLMChain.merge_delta(chain, MessageDelta.new!(%{role: :assistant, content: "Still "}))
+
+      assert {:ok, %LLMChain{} = result} = LLMChain.delta_to_message_when_complete(updated_chain)
+      assert %MessageDelta{status: :incomplete} = result.delta
+      assert result.messages == []
     end
   end
 
@@ -2866,9 +2897,9 @@ defmodule LangChain.Chains.LLMChainTest do
       assert chain.needs_response == false
     end
 
-    test "streaming error with empty delta produces cancelled message" do
+    test "streaming error with empty delta produces a stream_error message" do
       # A streaming error occurs while the delta has no content yet.
-      # The cancel_delta path converts it to a cancelled message.
+      # The cancel_delta path converts it to a stream_error message.
       handler = %{
         on_error: fn _chain, error ->
           send(self(), {:error_callback, error})
@@ -2889,9 +2920,9 @@ defmodule LangChain.Chains.LLMChainTest do
         |> LLMChain.add_message(Message.new_user!("Hello"))
         |> LLMChain.run()
 
-      # Empty delta converts successfully to a cancelled message
+      # Empty delta converts successfully to a stream_error message
       assert chain.last_message.role == :assistant
-      assert chain.last_message.status == :cancelled
+      assert chain.last_message.status == :stream_error
       assert chain.needs_response == false
     end
 

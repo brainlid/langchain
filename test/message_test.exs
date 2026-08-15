@@ -147,6 +147,37 @@ defmodule LangChain.MessageTest do
     end
   end
 
+  describe "status" do
+    test "accepts each way a message can terminate" do
+      for status <- [:complete, :cancelled, :length, :content_filtered, :stream_error] do
+        assert {:ok, %Message{status: ^status}} =
+                 Message.new(%{role: :assistant, content: "Partial", status: status})
+      end
+    end
+
+    test "rejects an unknown status" do
+      assert {:error, changeset} =
+               Message.new(%{role: :assistant, content: "Partial", status: :made_up})
+
+      assert {"is invalid", _} = changeset.errors[:status]
+    end
+
+    test "defaults to :complete" do
+      assert {:ok, %Message{status: :complete}} = Message.new(%{role: :user, content: "Hi"})
+    end
+
+    test "only a :complete message has its tool call arguments parsed" do
+      # An unfinished message may hold a truncated arguments string, so parsing
+      # is skipped rather than failing the whole message.
+      truncated = ToolCall.new!(%{call_id: "1", name: "search", arguments: "{\"q\": \"eli"})
+
+      assert {:ok, %Message{} = message} =
+               Message.new(%{role: :assistant, tool_calls: [truncated], status: :length})
+
+      assert [%ToolCall{arguments: "{\"q\": \"eli", status: :incomplete}] = message.tool_calls
+    end
+  end
+
   describe "new_system/1" do
     test "creates a system message" do
       assert {:ok, %Message{role: :system} = msg} = Message.new_system("You are an AI.")

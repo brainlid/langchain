@@ -1159,7 +1159,7 @@ if Code.ensure_loaded?(ReqLLM) do
     def translate_finish_reason(:stop), do: :complete
     def translate_finish_reason(:tool_calls), do: :complete
     def translate_finish_reason(:length), do: :length
-    def translate_finish_reason(:content_filter), do: :complete
+    def translate_finish_reason(:content_filter), do: :content_filtered
     def translate_finish_reason(:cancelled), do: :complete
     def translate_finish_reason(:incomplete), do: :length
     def translate_finish_reason(:error), do: :complete

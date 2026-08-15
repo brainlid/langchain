@@ -1031,7 +1031,7 @@ defmodule LangChain.ChatModels.ChatOrq do
           :complete
 
         "content_filter" ->
-          :complete
+          :content_filtered
 
         "length" ->
           :length
@@ -1181,7 +1181,7 @@ defmodule LangChain.ChatModels.ChatOrq do
           :complete
 
         "content_filter" ->
-          :complete
+          :content_filtered
 
         "length" ->
           :length

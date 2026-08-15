@@ -16,6 +16,34 @@ defmodule LangChain.Message do
 
   - `:tool` - A message for returning the result of executing a `tool` request.
 
+  ## Status
+
+  `status` records how the message terminated. Every value other than
+  `:complete` means the model did not finish, and each names a distinct cause so
+  a caller can tell them apart without inspecting metadata:
+
+  - `:complete` - the model finished on its own.
+
+  - `:length` - the output token cap was reached. The message holds whatever was
+    produced up to the cap.
+
+  - `:content_filtered` - the provider's content filter stopped the response.
+    Reported by providers that return a `"content_filter"` finish reason.
+
+  - `:stream_error` - the stream died mid-flight (a provider `overloaded`, an
+    invalid request, a filter applied at the transport level). The partial
+    content is preserved. `LangChain.Chains.LLMChain` sets this and puts the
+    `LangChain.LangChainError` in `metadata[:streaming_error]`, so the reason is
+    available as well as the fact.
+
+  - `:cancelled` - a caller stopped the response. Set by
+    `LangChain.Chains.LLMChain.cancel_delta/2`, which preserves the partial
+    content rather than discarding it.
+
+  Only a `:complete` message has its tool call arguments parsed into maps.
+  Anything else may hold a truncated or unparsed `arguments` string, since the
+  model may have been cut off mid-call.
+
   ## Tools
 
   A `tool_call` comes from the `:assistant` role. The `tool_id` identifies which
@@ -104,7 +132,10 @@ defmodule LangChain.Message do
     field :content, :any, virtual: true
     field :processed_content, :any, virtual: true
     field :index, :integer
-    field :status, Ecto.Enum, values: [:complete, :cancelled, :length], default: :complete
+
+    field :status, Ecto.Enum,
+      values: [:complete, :cancelled, :length, :content_filtered, :stream_error],
+      default: :complete
 
     field :role, Ecto.Enum,
       values: [:system, :user, :assistant, :tool],
@@ -126,7 +157,7 @@ defmodule LangChain.Message do
   end
 
   @type t :: %Message{}
-  @type status :: :complete | :cancelled | :length
+  @type status :: :complete | :cancelled | :length | :content_filtered | :stream_error
 
   @update_fields [
     :role,

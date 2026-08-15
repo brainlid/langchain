@@ -7,6 +7,7 @@ defmodule LangChain.MessageDeltaTest do
   alias LangChain.MessageDelta
   alias LangChain.Message.ToolCall
   alias LangChain.LangChainError
+  alias LangChain.TokenUsage
 
   describe "new/1" do
     test "works with minimal attrs" do
@@ -1436,6 +1437,98 @@ defmodule LangChain.MessageDeltaTest do
       result = MessageDelta.merge_deltas(accumulated, batch)
 
       assert result.status == :length
+    end
+  end
+
+  describe "terminal statuses" do
+    test "merging promotes :incomplete to :content_filtered" do
+      primary = MessageDelta.new!(%{role: :assistant, content: "Some partial "})
+      filtered = MessageDelta.new!(%{content: "resp", status: :content_filtered})
+
+      assert %MessageDelta{status: :content_filtered} =
+               MessageDelta.merge_delta(primary, filtered)
+    end
+
+    test "a terminal status is not overwritten by a later delta" do
+      filtered = MessageDelta.new!(%{role: :assistant, status: :content_filtered})
+      trailing = MessageDelta.new!(%{content: "more", status: :complete})
+
+      assert %MessageDelta{status: :content_filtered} =
+               MessageDelta.merge_delta(filtered, trailing)
+    end
+
+    test "a content filtered delta converts to a message carrying the partial content" do
+      delta = %MessageDelta{
+        role: :assistant,
+        merged_content: [ContentPart.text!("Some partial resp")],
+        status: :content_filtered
+      }
+
+      assert {:ok, %Message{} = msg} = MessageDelta.to_message(delta)
+      assert msg.status == :content_filtered
+      assert msg.content == [ContentPart.text!("Some partial resp")]
+    end
+  end
+
+  describe "merge_delta/2 metadata" do
+    test "carries provider metadata from an incoming delta onto the accumulated one" do
+      primary = MessageDelta.new!(%{role: :assistant, content: "partial"})
+
+      incoming =
+        MessageDelta.new!(%{
+          status: :content_filtered,
+          metadata: %{stop_details: %{"type" => "refusal", "category" => "cyber"}}
+        })
+
+      merged = MessageDelta.merge_delta(primary, incoming)
+
+      assert merged.metadata[:stop_details] == %{"type" => "refusal", "category" => "cyber"}
+    end
+
+    test "merges keys rather than replacing the accumulated metadata map" do
+      primary =
+        MessageDelta.new!(%{role: :assistant, content: "partial", metadata: %{model: "opus"}})
+
+      incoming = MessageDelta.new!(%{metadata: %{stop_details: %{"type" => "refusal"}}})
+
+      merged = MessageDelta.merge_delta(primary, incoming)
+
+      assert merged.metadata[:model] == "opus"
+      assert merged.metadata[:stop_details] == %{"type" => "refusal"}
+    end
+
+    test "usage is still summed rather than replaced by the incoming delta's value" do
+      primary =
+        MessageDelta.new!(%{
+          role: :assistant,
+          metadata: %{usage: TokenUsage.new!(%{input: 10, output: 5})}
+        })
+
+      incoming =
+        MessageDelta.new!(%{
+          metadata: %{
+            usage: TokenUsage.new!(%{input: 0, output: 7}),
+            stop_details: %{"type" => "refusal"}
+          }
+        })
+
+      merged = MessageDelta.merge_delta(primary, incoming)
+
+      assert merged.metadata[:usage].input == 10
+      assert merged.metadata[:usage].output == 12
+      assert merged.metadata[:stop_details] == %{"type" => "refusal"}
+    end
+
+    test "a delta carrying only usage leaves the accumulated metadata otherwise untouched" do
+      primary = MessageDelta.new!(%{role: :assistant, metadata: %{model: "opus"}})
+
+      incoming =
+        MessageDelta.new!(%{metadata: %{usage: TokenUsage.new!(%{input: 1, output: 2})}})
+
+      merged = MessageDelta.merge_delta(primary, incoming)
+
+      assert merged.metadata[:model] == "opus"
+      assert merged.metadata[:usage].output == 2
     end
   end
 

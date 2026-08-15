@@ -594,6 +594,70 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
       assert struct.role == :assistant
       assert struct.content == [ContentPart.text!("Greetings!")]
       assert is_nil(struct.index)
+      refute Map.has_key?(struct.metadata, :stop_details)
+    end
+
+    test "a refusal is content filtered and reports the policy category", %{model: model} do
+      response = %{
+        "id" => "id-123",
+        "type" => "message",
+        "role" => "assistant",
+        "content" => [],
+        "model" => "claude-opus-4-5",
+        "stop_reason" => "refusal",
+        "stop_details" => %{
+          "type" => "refusal",
+          "category" => "cyber",
+          "explanation" => "Request matched a restricted policy."
+        },
+        "usage" => %{"input_tokens" => 17, "output_tokens" => 0}
+      }
+
+      assert %Message{} = struct = ChatAnthropic.do_process_response(model, response)
+      assert struct.role == :assistant
+      assert struct.status == :content_filtered
+      assert struct.content == []
+
+      assert struct.metadata[:stop_details] == %{
+               "type" => "refusal",
+               "category" => "cyber",
+               "explanation" => "Request matched a restricted policy."
+             }
+    end
+
+    test "a refusal that stopped mid-output keeps the partial content", %{model: model} do
+      response = %{
+        "id" => "id-123",
+        "type" => "message",
+        "role" => "assistant",
+        "content" => [%{"type" => "text", "text" => "Here is the first step"}],
+        "model" => "claude-opus-4-5",
+        "stop_reason" => "refusal",
+        "stop_details" => %{"type" => "refusal", "category" => nil, "explanation" => nil},
+        "usage" => %{"input_tokens" => 17, "output_tokens" => 6}
+      }
+
+      assert %Message{} = struct = ChatAnthropic.do_process_response(model, response)
+      assert struct.status == :content_filtered
+      assert struct.content == [ContentPart.text!("Here is the first step")]
+      assert struct.metadata[:stop_details]["type"] == "refusal"
+    end
+
+    test "a non-refusal stop reason carries a null stop_details", %{model: model} do
+      response = %{
+        "id" => "id-123",
+        "type" => "message",
+        "role" => "assistant",
+        "content" => [%{"type" => "text", "text" => "Greetings!"}],
+        "model" => "claude-opus-4-5",
+        "stop_reason" => "end_turn",
+        "stop_details" => nil,
+        "usage" => %{"input_tokens" => 17, "output_tokens" => 11}
+      }
+
+      assert %Message{} = struct = ChatAnthropic.do_process_response(model, response)
+      assert struct.status == :complete
+      refute Map.has_key?(struct.metadata, :stop_details)
     end
 
     test "handles receiving a complete message with thinking", %{model: model} do
@@ -791,6 +855,88 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
                  output: 80,
                  raw: %{"output_tokens" => 80}
                })
+    end
+
+    test "a streamed refusal is content filtered and reports the policy category", %{model: model} do
+      response = %{
+        "type" => "message_delta",
+        "delta" => %{
+          "stop_reason" => "refusal",
+          "stop_sequence" => nil,
+          "stop_details" => %{
+            "type" => "refusal",
+            "category" => "bio",
+            "explanation" => "Request matched a restricted policy."
+          }
+        },
+        "usage" => %{"output_tokens" => 12}
+      }
+
+      assert %MessageDelta{} = struct = ChatAnthropic.do_process_response(model, response)
+      assert struct.status == :content_filtered
+
+      assert struct.metadata[:stop_details] == %{
+               "type" => "refusal",
+               "category" => "bio",
+               "explanation" => "Request matched a restricted policy."
+             }
+    end
+
+    test "a streamed refusal reports stop_details sent at the event level", %{model: model} do
+      response = %{
+        "type" => "message_delta",
+        "delta" => %{"stop_reason" => "refusal", "stop_sequence" => nil},
+        "stop_details" => %{"type" => "refusal", "category" => "cyber"},
+        "usage" => %{"output_tokens" => 12}
+      }
+
+      assert %MessageDelta{} = struct = ChatAnthropic.do_process_response(model, response)
+      assert struct.status == :content_filtered
+      assert struct.metadata[:stop_details] == %{"type" => "refusal", "category" => "cyber"}
+    end
+
+    test "a streamed refusal survives merging into the assembled message", %{model: model} do
+      start_event = %{
+        "type" => "message_start",
+        "message" => %{
+          "type" => "message",
+          "role" => "assistant",
+          "content" => [],
+          "usage" => %{"input_tokens" => 14, "output_tokens" => 1}
+        }
+      }
+
+      text_event = %{
+        "type" => "content_block_delta",
+        "index" => 0,
+        "delta" => %{"type" => "text_delta", "text" => "Here is the first step"}
+      }
+
+      stop_event = %{
+        "type" => "message_delta",
+        "delta" => %{
+          "stop_reason" => "refusal",
+          "stop_sequence" => nil,
+          "stop_details" => %{"type" => "refusal", "category" => "cyber"}
+        },
+        "usage" => %{"output_tokens" => 12}
+      }
+
+      deltas =
+        Enum.map(
+          [start_event, text_event, stop_event],
+          &ChatAnthropic.do_process_response(model, &1)
+        )
+
+      merged = MessageDelta.merge_deltas(deltas)
+      assert merged.status == :content_filtered
+      assert merged.metadata[:stop_details] == %{"type" => "refusal", "category" => "cyber"}
+
+      assert {:ok, %Message{} = message} = MessageDelta.to_message(merged)
+      assert message.status == :content_filtered
+      assert message.content == [ContentPart.text!("Here is the first step")]
+      assert message.metadata[:stop_details] == %{"type" => "refusal", "category" => "cyber"}
+      assert message.metadata[:usage].output == 13
     end
 
     test "handles receiving a content_block_start event for text", %{model: model} do
