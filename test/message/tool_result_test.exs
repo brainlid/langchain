@@ -82,6 +82,21 @@ defmodule LangChain.Message.ToolResultTest do
       assert msg.is_exception == false
     end
 
+    test "flags when produced from a rescued exception" do
+      {:ok, %ToolResult{} = msg} =
+        ToolResult.new(%{
+          type: :function,
+          tool_call_id: "call_123asdf",
+          name: "hello_world",
+          content: "ERROR executing tool: %RuntimeError{message: \"boom\"}",
+          is_error: true,
+          is_exception: true
+        })
+
+      assert msg.is_error == true
+      assert msg.is_exception == true
+    end
+
     test "returns errors when invalid" do
       {:error, changeset} =
         ToolResult.new(%{tool_call_id: nil, content: nil})

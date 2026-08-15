@@ -1837,6 +1837,11 @@ defmodule LangChain.Chains.LLMChain do
       arguments: call.arguments
     }
 
+    # `Telemetry.span/4` seeds stop metadata with `%{result: <block return>}` and
+    # merges this map over it. The block returns `{tool_result, exception}`, so
+    # `:result` must be restated as the ToolResult alone. Dropping it here
+    # publishes the rescued exception and its stacktrace to every consumer of
+    # `[:langchain, :tool, :call, :stop]`.
     enrich_stop = fn {result, _exception} ->
       %{result: result, tool_result: result}
     end

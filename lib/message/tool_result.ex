@@ -71,6 +71,7 @@ defmodule LangChain.Message.ToolResult do
     :processed_content,
     :display_text,
     :is_error,
+    :is_exception,
     :is_interrupt,
     :interrupt_data,
     :options
