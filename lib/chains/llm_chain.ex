@@ -1137,15 +1137,15 @@ defmodule LangChain.Chains.LLMChain do
     %LLMChain{chain | delta: merged}
   end
 
-  # Handle when the server is overloaded and cancelled the stream on the server side.
+  # Handle when the server is overloaded and ended the stream on the server side.
   def merge_delta(%LLMChain{} = chain, {:error, %LangChainError{type: "overloaded"} = error}) do
-    cancel_delta(chain, :cancelled, error)
+    cancel_delta(chain, :stream_error, error)
   end
 
   # Handle any other error received during streaming (e.g. content filtering, invalid_request_error).
   def merge_delta(%LLMChain{} = chain, {:error, %LangChainError{} = error}) do
     Logger.warning("Received error during streaming: #{error.message}")
-    cancel_delta(chain, :cancelled, error)
+    cancel_delta(chain, :stream_error, error)
   end
 
   # Unified function to augment tool calls with display_text and optionally
@@ -1264,7 +1264,7 @@ defmodule LangChain.Chains.LLMChain do
   def delta_to_message_when_complete(
         %LLMChain{delta: %MessageDelta{status: status} = delta} = chain
       )
-      when status in [:complete, :length] do
+      when status in [:complete, :length, :content_filtered] do
     # it's complete. Attempt to convert delta to a message
     case MessageDelta.to_message(delta) do
       {:ok, %Message{} = message} ->
@@ -1982,6 +1982,10 @@ defmodule LangChain.Chains.LLMChain do
   @doc """
   Remove an incomplete MessageDelta from `delta` and add a Message with the
   desired status to the chain.
+
+  The partial content produced so far is preserved on the message rather than
+  discarded. Pass `:cancelled` for a caller-initiated stop and `:stream_error`
+  for a stream that died. See `LangChain.Message` for the full set.
   """
   def cancel_delta(%LLMChain{delta: nil} = chain, _message_status), do: chain
 

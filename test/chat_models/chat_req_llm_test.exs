@@ -242,8 +242,8 @@ if Code.ensure_loaded?(ReqLLM) do
         assert :length == ChatReqLLM.translate_finish_reason(:length)
       end
 
-      test "maps :content_filter to :complete" do
-        assert :complete == ChatReqLLM.translate_finish_reason(:content_filter)
+      test "maps :content_filter to :content_filtered" do
+        assert :content_filtered == ChatReqLLM.translate_finish_reason(:content_filter)
       end
 
       test "maps nil to :complete" do

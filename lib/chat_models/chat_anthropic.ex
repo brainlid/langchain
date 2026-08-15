@@ -450,6 +450,31 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   - **Haiku considerations**: Haiku has a high minimum (4096 tokens) which can mean low initial utilization. However, enabling `:cache_messages` has minimal cost impact, so it's safe to enable.
   - **TTL tradeoff**: Default TTL is 5m (1.25x write cost). Setting TTL to 1h increases write cost to 3x but may improve utilization for longer sessions.
 
+  ## Refusals
+
+  Anthropic's safety classifiers can decline a request. A declined request is a
+  normal HTTP 200 response carrying `stop_reason: "refusal"`, not an error, and
+  its content is empty when the classifier fired before any output or partial
+  when it fired mid-stream.
+
+  A refusal produces a message with `status: :content_filtered`. The response
+  also carries a `stop_details` object naming the policy category that stopped
+  it, which is placed in the message's `metadata` under `:stop_details`:
+
+      {:ok, message} = ChatAnthropic.call(model, messages, [])
+
+      case message.status do
+        :content_filtered ->
+          message.metadata[:stop_details]
+          # => %{"type" => "refusal", "category" => "cyber", "explanation" => "..."}
+
+        _ ->
+          message.content
+      end
+
+  `stop_details` is null for every stop reason other than `refusal`, so the
+  `:stop_details` key is absent from `metadata` on any other message.
+
   ## Connection Retry Behavior
 
   The `retry_count` option controls how many times a request is retried when
@@ -1194,19 +1219,23 @@ defmodule LangChain.ChatModels.ChatAnthropic do
           | MessageDelta.t()
           | [MessageDelta.t()]
           | {:error, LangChainError.t()}
-  def do_process_response(_model, %{
-        "role" => "assistant",
-        "content" => contents,
-        "stop_reason" => stop_reason,
-        "type" => "message",
-        "usage" => usage
-      }) do
+  def do_process_response(
+        _model,
+        %{
+          "role" => "assistant",
+          "content" => contents,
+          "stop_reason" => stop_reason,
+          "type" => "message",
+          "usage" => usage
+        } = data
+      ) do
     new_message =
       %{
         role: :assistant,
         content: [],
         status: stop_reason_to_status(stop_reason)
       }
+      |> Map.merge(stop_details_metadata(data["stop_details"]))
       |> Message.new()
       |> TokenUsage.set_wrapped(get_token_usage(usage))
       |> to_response()
@@ -1397,15 +1426,16 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         _model,
         %{
           "type" => "message_delta",
-          "delta" => %{"stop_reason" => stop_reason},
+          "delta" => %{"stop_reason" => stop_reason} = delta,
           "usage" => usage
-        } = _data
+        } = data
       ) do
     %{
       role: :assistant,
       content: nil,
       status: stop_reason_to_status(stop_reason)
     }
+    |> Map.merge(stop_details_metadata(delta["stop_details"] || data["stop_details"]))
     |> MessageDelta.new()
     |> TokenUsage.set_wrapped(get_token_usage(usage))
     |> to_response()
@@ -1580,11 +1610,19 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   defp stop_reason_to_status("tool_use"), do: :complete
   defp stop_reason_to_status("max_tokens"), do: :length
   defp stop_reason_to_status("stop_sequence"), do: :complete
+  defp stop_reason_to_status("refusal"), do: :content_filtered
 
   defp stop_reason_to_status(other) do
     Logger.warning("Unsupported stop_reason. Reason: #{inspect(other)}")
     nil
   end
+
+  # `stop_details` names the policy category behind a refusal and is null for
+  # every other stop reason, so only a refusal contributes metadata.
+  defp stop_details_metadata(details) when is_map(details),
+    do: %{metadata: %{stop_details: details}}
+
+  defp stop_details_metadata(_details), do: %{}
 
   @doc false
   def parse_stream_events(%ChatAnthropic{bedrock: nil}, {chunk, buffer}) do

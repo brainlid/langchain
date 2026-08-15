@@ -928,7 +928,7 @@ defmodule LangChain.ChatModels.ChatDeepSeekTest do
       %{model: model}
     end
 
-    test "handles response with content_filter finish reason", %{model: model} do
+    test "reports a content_filter finish reason as :content_filtered", %{model: model} do
       response = %{
         "choices" => [
           %{
@@ -941,7 +941,7 @@ defmodule LangChain.ChatModels.ChatDeepSeekTest do
 
       assert [%Message{} = msg] = ChatDeepSeek.do_process_response(model, response)
       assert msg.role == :assistant
-      assert msg.status == :complete
+      assert msg.status == :content_filtered
     end
 
     test "handles response with logprobs data", %{model: model} do

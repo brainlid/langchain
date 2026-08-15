@@ -265,9 +265,9 @@ defmodule LangChain.OpenTelemetry.Attributes do
 
   # Best-effort `gen_ai.response.finish_reasons` reconstructed from the assembled
   # message's normalized `:status`. LangChain collapses a provider's raw finish
-  # reason into `Message.status` (`:complete | :length | :cancelled`), so this is
-  # lossy: a `:complete` message that carries tool calls maps to `"tool_calls"`,
-  # otherwise `:complete` -> `"stop"`. Streaming results (a delta or list of
+  # reason into `Message.status`, so this is lossy: a message that carries tool
+  # calls maps to `"tool_calls"` whatever its status, and `:complete` otherwise
+  # maps to `"stop"`. Streaming results (a delta or list of
   # deltas) are merged to a message first. Returns [] when nothing is derivable.
   @spec finish_reason_attributes(term()) :: [{String.t(), term()}]
   defp finish_reason_attributes(result) do
@@ -305,6 +305,8 @@ defmodule LangChain.OpenTelemetry.Attributes do
   defp message_finish_reason(%LangChain.Message{status: :complete}), do: "stop"
   defp message_finish_reason(%LangChain.Message{status: :length}), do: "length"
   defp message_finish_reason(%LangChain.Message{status: :cancelled}), do: "cancelled"
+  defp message_finish_reason(%LangChain.Message{status: :content_filtered}), do: "content_filter"
+  defp message_finish_reason(%LangChain.Message{status: :stream_error}), do: "error"
   defp message_finish_reason(_), do: nil
 
   # Serializes the LLM output for `gen_ai.output.messages`. Streaming calls return

@@ -65,8 +65,15 @@ defmodule LangChain.MessageDelta do
     field :content, :any, virtual: true
     # The accumulated list of ContentParts after merging deltas
     field :merged_content, :any, virtual: true, default: []
-    # Marks if the delta completes the message.
-    field :status, Ecto.Enum, values: [:incomplete, :complete, :length], default: :incomplete
+    # Marks if the delta completes the message, and how it terminated. Mirrors
+    # `LangChain.Message.status` for the terminal values a provider can report
+    # on a stream. `:cancelled` and `:stream_error` are absent because they are
+    # decided by the chain rather than the provider, and are applied to the
+    # assembled Message.
+    field :status, Ecto.Enum,
+      values: [:incomplete, :complete, :length, :content_filtered],
+      default: :incomplete
+
     # When requesting multiple choices for a response, the `index` represents
     # which choice it is. It is a 0 based list.
     field :index, :integer
@@ -174,6 +181,7 @@ defmodule LangChain.MessageDelta do
     |> merge_tool_calls(new_delta)
     |> update_index(new_delta)
     |> update_status(new_delta)
+    |> merge_delta_metadata(new_delta)
     |> accumulate_token_usage(new_delta)
     |> clear_content()
   end
@@ -398,10 +406,27 @@ defmodule LangChain.MessageDelta do
 
   defp update_index(%MessageDelta{} = primary, %MessageDelta{}), do: primary
 
+  # Carry provider metadata from an incoming delta onto the accumulated one so
+  # it reaches the assembled message. `:usage` is excluded because
+  # `accumulate_token_usage/2` sums it across deltas rather than replacing it.
+  @spec merge_delta_metadata(t(), t()) :: t()
+  defp merge_delta_metadata(%MessageDelta{} = primary, %MessageDelta{metadata: incoming})
+       when is_map(incoming) do
+    case Map.drop(incoming, [:usage]) do
+      empty when map_size(empty) == 0 ->
+        primary
+
+      new_metadata ->
+        %MessageDelta{primary | metadata: Map.merge(primary.metadata || %{}, new_metadata)}
+    end
+  end
+
+  defp merge_delta_metadata(%MessageDelta{} = primary, %MessageDelta{}), do: primary
+
   # Only update status from :incomplete to a terminal state
   @spec update_status(t(), t()) :: t()
   defp update_status(%MessageDelta{status: :incomplete} = primary, %MessageDelta{status: status})
-       when status in [:complete, :length] do
+       when status in [:complete, :length, :content_filtered] do
     %MessageDelta{primary | status: status}
   end
 

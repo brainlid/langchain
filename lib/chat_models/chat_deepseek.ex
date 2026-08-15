@@ -1166,7 +1166,7 @@ defmodule LangChain.ChatModels.ChatDeepSeek do
   defp finish_reason_to_status(nil), do: :incomplete
   defp finish_reason_to_status("stop"), do: :complete
   defp finish_reason_to_status("tool_calls"), do: :complete
-  defp finish_reason_to_status("content_filter"), do: :complete
+  defp finish_reason_to_status("content_filter"), do: :content_filtered
   defp finish_reason_to_status("length"), do: :length
   defp finish_reason_to_status("max_tokens"), do: :length
 
