@@ -1,5 +1,69 @@
 # Changelog
 
+## v0.10.0
+
+`LangChain.Message.status` now names every way a message can fail to finish,
+instead of folding two of them into values that describe something else.
+
+**This release contains breaking changes.** Three status values change for
+existing scenarios:
+
+- **A stream that dies mid-flight now produces `status: :stream_error`**, where
+  it previously produced `:cancelled`. This covers a provider reporting
+  `overloaded`, an invalid request, and transport-level filtering. The error
+  itself is still in `metadata[:streaming_error]`, so code reading the reason is
+  unaffected.
+
+  `:cancelled` remains, and now means only what it says: a caller stopped the
+  response through `LLMChain.cancel_delta/2`. Both preserve the partial content.
+
+- **A `"content_filter"` finish reason now produces `status: :content_filtered`**,
+  where it previously produced `:complete`. A response the provider's filter
+  stopped was being recorded as one the model finished. Applies to
+  `ChatOpenAI`, `ChatDeepSeek`, `ChatAWSMantle`, `ChatOrq`, and `ChatReqLLM`.
+
+- **`ChatAnthropic` maps a `"refusal"` stop reason to `status:
+  :content_filtered`**, where it previously produced `status: nil` and logged an
+  "Unsupported stop_reason" warning. Anthropic's safety classifiers return a
+  refusal as a normal HTTP 200 response, so it arrives on the success path
+  rather than as an error.
+
+### Upgrading from v0.9.7 - v0.10.0
+
+If you pattern match exhaustively on `Message.status`, add clauses for
+`:content_filtered` and `:stream_error`. Code matching on `:cancelled` to detect
+a dead stream must match `:stream_error` instead. If you persist the status and
+may need to roll back, note that older versions cannot read the two new values.
+
+### Added
+
+- **`:stream_error` and `:content_filtered` on `LangChain.Message.status`.**
+  The full set is now `:complete | :cancelled | :length | :content_filtered |
+  :stream_error`, documented on `LangChain.Message`. Every value other than
+  `:complete` means the model did not finish, and each names a distinct cause,
+  so a caller can tell them apart without inspecting metadata. https://github.com/brainlid/langchain/pull/616
+- **`:content_filtered` on `LangChain.MessageDelta.status`**, so a filtered
+  stream is assembled into a message rather than left hanging as an unfinished
+  delta. `:cancelled` and `:stream_error` are absent from the delta, since the
+  chain rather than the provider decides them. https://github.com/brainlid/langchain/pull/616
+- **Anthropic refusal details in `metadata[:stop_details]`.** A refused response
+  carries a `stop_details` object naming the policy category that stopped it.
+  `ChatAnthropic` places it in the message's `metadata` under `:stop_details`,
+  on both the single-response and streaming paths. Anthropic sends
+  `stop_details` only on a refusal, so the key is absent from `metadata` for
+  every other stop reason. https://github.com/brainlid/langchain/pull/616
+
+### Changed
+
+- **`LangChain.MessageDelta.merge_delta/2` carries provider metadata forward.**
+  Metadata on an incoming delta is shallow-merged into the accumulated delta, so
+  values a provider reports alongside the terminating event (a refusal's
+  `:stop_details`, OpenAI's `:logprobs`) survive into the assembled message
+  instead of being dropped. `:usage` is excluded from the merge and continues to
+  be summed across deltas by `accumulate_token_usage/2`. https://github.com/brainlid/langchain/pull/616
+- **OpenTelemetry `gen_ai.response.finish_reasons`** now reports
+  `"content_filter"` and `"error"` for the two new statuses. https://github.com/brainlid/langchain/pull/616
+
 ## v0.9.7
 
 A small release focused on the OpenAI Responses API, adding server-side context compaction and correcting how assistant history is serialized.
