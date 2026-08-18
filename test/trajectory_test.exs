@@ -310,7 +310,18 @@ defmodule LangChain.TrajectoryTest do
 
       result = Trajectory.to_map(trajectory)
 
-      assert [%{tool_results: [%{name: "search", content: "Result text", is_error: false}]}] =
+      assert [
+               %{
+                 tool_results: [
+                   %{
+                     name: "search",
+                     content: "Result text",
+                     is_error: false,
+                     is_exception: false
+                   }
+                 ]
+               }
+             ] =
                result.messages
     end
 

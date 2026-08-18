@@ -139,9 +139,10 @@ defmodule LangChain.FunctionTest do
       # rescues an exception and returns as string text
       result = Function.execute(function, %{}, %{result: :exception})
 
-      assert result ==
-               {:error,
-                "ERROR: (RuntimeError) fake exception at test/function_test.exs:15: LangChain.FunctionTest.returns_context/2"}
+      assert {:error, message, {%RuntimeError{}, [_ | _]}} = result
+
+      assert message ==
+               "ERROR: (RuntimeError) fake exception at test/function_test.exs:15: LangChain.FunctionTest.returns_context/2"
 
       # returns an error when anything else is returned
       result = Function.execute(function, %{}, %{result: 123})
@@ -613,6 +614,60 @@ defmodule LangChain.FunctionTest do
                Function.execute(function, %{}, nil)
     end
 
+    test "a rescued exception is returned alongside the model-facing message" do
+      function =
+        Function.new!(%{
+          name: "raiser",
+          function: fn _args, _ctx -> raise RuntimeError, "kaboom" end
+        })
+
+      assert {:error, message, {exception, stacktrace}} = Function.execute(function, %{}, nil)
+      assert %RuntimeError{message: "kaboom"} = exception
+      assert [{LangChain.FunctionTest, _fun, _arity, _loc} | _] = stacktrace
+      assert message =~ "RuntimeError"
+      assert message =~ "kaboom"
+    end
+
+    test "a rescued :parse_args exception is returned alongside the message" do
+      function =
+        Function.new!(%{
+          name: "raiser",
+          function: &echo_args/2,
+          parse_args: fn _args -> raise ArgumentError, "bad args" end
+        })
+
+      assert {:error, message, {%ArgumentError{message: "bad args"}, [_ | _]}} =
+               Function.execute(function, %{}, nil)
+
+      assert message =~ "bad args"
+    end
+
+    test "an error the tool returns deliberately stays a two-element tuple" do
+      function =
+        Function.new!(%{
+          name: "returns_error",
+          function: fn _args, _ctx -> {:error, "not found"} end
+        })
+
+      assert {:error, "not found"} = Function.execute(function, %{}, nil)
+    end
+
+    test "a missing required parameter stays a two-element tuple" do
+      function =
+        Function.new!(%{
+          name: "needs_path",
+          parameters_schema: %{
+            type: "object",
+            properties: %{path: %{type: "string"}},
+            required: ["path"]
+          },
+          function: fn _args, _ctx -> {:ok, "unreachable"} end
+        })
+
+      assert {:error, message} = Function.execute(function, %{}, nil)
+      assert message =~ "path"
+    end
+
     test "an exception raised inside :parse_args is caught and reported" do
       function =
         Function.new!(%{
@@ -621,7 +676,9 @@ defmodule LangChain.FunctionTest do
           parse_args: fn _args -> raise ArgumentError, "boom" end
         })
 
-      assert {:error, "ERROR: " <> message} = Function.execute(function, %{}, nil)
+      assert {:error, "ERROR: " <> message, {_exception, _stacktrace}} =
+               Function.execute(function, %{}, nil)
+
       assert message =~ "boom"
     end
 
@@ -682,7 +739,9 @@ defmodule LangChain.FunctionTest do
           parse_args: fn args -> {:ok, args} end
         })
 
-      assert {:error, message} = Function.execute(function, %{"path" => "/a.md"}, nil)
+      assert {:error, message, {_exception, _stacktrace}} =
+               Function.execute(function, %{"path" => "/a.md"}, nil)
+
       assert message =~ "KeyError"
       refute message =~ "does not accept"
     end
@@ -780,7 +839,7 @@ defmodule LangChain.FunctionTest do
           function: &fetches_optional/2
         })
 
-      assert {:error, message} =
+      assert {:error, message, {_exception, _stacktrace}} =
                Function.execute(function, %{"path" => "/a.md", "lim" => 5}, %{})
 
       assert message =~ "does not accept"
@@ -803,7 +862,9 @@ defmodule LangChain.FunctionTest do
           function: &fetches_optional/2
         })
 
-      assert {:error, message} = Function.execute(function, %{"path" => "/a.md"}, %{})
+      assert {:error, message, {_exception, _stacktrace}} =
+               Function.execute(function, %{"path" => "/a.md"}, %{})
+
       assert message =~ "needs the \"limit\" argument"
       assert message =~ "Accepted parameters:"
       refute message =~ "KeyError"
@@ -821,7 +882,9 @@ defmodule LangChain.FunctionTest do
           function: &head_matches_path/2
         })
 
-      assert {:error, message} = Function.execute(function, %{"file_path" => "/a.md"}, %{})
+      assert {:error, message, {_exception, _stacktrace}} =
+               Function.execute(function, %{"file_path" => "/a.md"}, %{})
+
       assert message =~ "does not accept"
       assert message =~ "did you mean \"path\"?"
       refute message =~ "FunctionClauseError"
@@ -839,7 +902,9 @@ defmodule LangChain.FunctionTest do
           function: &fetches_unrelated_map/2
         })
 
-      assert {:error, message} = Function.execute(function, %{"path" => "/a.md"}, %{})
+      assert {:error, message, {_exception, _stacktrace}} =
+               Function.execute(function, %{"path" => "/a.md"}, %{})
+
       assert message =~ "KeyError"
       assert message =~ "totally_unrelated"
     end
@@ -847,7 +912,9 @@ defmodule LangChain.FunctionTest do
     test "falls back to the original formatting when no parameters are declared" do
       function = Function.new!(%{name: "read_document", function: &fetches_optional/2})
 
-      assert {:error, message} = Function.execute(function, %{"path" => "/a.md"}, %{})
+      assert {:error, message, {_exception, _stacktrace}} =
+               Function.execute(function, %{"path" => "/a.md"}, %{})
+
       assert message =~ "KeyError"
     end
   end
