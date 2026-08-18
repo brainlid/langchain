@@ -558,8 +558,8 @@ defmodule LangChain.UtilsTest do
   end
 
   describe "generate_tool_call_id/0" do
-    test "returns a prefixed id" do
-      assert Utils.generate_tool_call_id() =~ ~r/^tool_\d+$/
+    test "returns a UUID" do
+      assert {:ok, _uuid} = Ecto.UUID.cast(Utils.generate_tool_call_id())
     end
 
     test "returns a different value on each call" do

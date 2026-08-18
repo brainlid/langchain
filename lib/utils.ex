@@ -543,12 +543,13 @@ defmodule LangChain.Utils do
   @doc """
   Generate an id for a tool call.
 
-  Some providers identify a tool call by name only, such as Gemini's function
-  call parts. An id is synthesized for those so each call in a conversation
-  stays distinct from every other one.
+  Some providers omit an id for a tool call, or identify it by name only, as
+  Gemini's function call parts do. An id is synthesized for those so each call
+  stays distinct from every other one, including across a conversation that is
+  stored and later reloaded.
   """
   @spec generate_tool_call_id() :: String.t()
   def generate_tool_call_id do
-    "tool_#{:erlang.unique_integer([:positive])}"
+    Ecto.UUID.generate()
   end
 end
