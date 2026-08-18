@@ -539,4 +539,17 @@ defmodule LangChain.Utils do
     |> String.replace("_", " ")
     |> String.capitalize()
   end
+
+  @doc """
+  Generate an id for a tool call.
+
+  Some providers omit an id for a tool call, or identify it by name only, as
+  Gemini's function call parts do. An id is synthesized for those so each call
+  stays distinct from every other one, including across a conversation that is
+  stored and later reloaded.
+  """
+  @spec generate_tool_call_id() :: String.t()
+  def generate_tool_call_id do
+    Ecto.UUID.generate()
+  end
 end

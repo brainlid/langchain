@@ -782,12 +782,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
         ContentPart.new!(%{type: type, content: part["text"]})
       end)
 
-    tool_calls_from_parts =
-      parts
-      |> filter_parts_for_types(["functionCall"])
-      |> Enum.map(fn part ->
-        do_process_response(model, part, nil)
-      end)
+    tool_calls_from_parts = parse_tool_calls(model, parts)
 
     tool_result_from_parts =
       parts
@@ -834,12 +829,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
       ContentPart.new!(%{type: :text, content: part["text"]})
     end)
 
-    tool_calls_from_parts =
-      parts
-      |> filter_parts_for_types(["functionCall"])
-      |> Enum.map(fn part ->
-        do_process_response(model, part, nil)
-      end)
+    tool_calls_from_parts = parse_tool_calls(model, parts)
 
     %{
       role: unmap_role(content_data["role"]),
@@ -860,15 +850,14 @@ defmodule LangChain.ChatModels.ChatVertexAI do
 
   def do_process_response(
         _model,
-        %{"functionCall" => %{"args" => raw_args, "name" => name}} = data,
+        %{"functionCall" => %{"args" => raw_args, "name" => name} = call} = data,
         _
       ) do
     %{
-      call_id: "call-#{name}",
+      call_id: call["id"] || Utils.generate_tool_call_id(),
       name: name,
       arguments: raw_args,
       complete: true,
-      index: data["index"],
       metadata:
         if(data["thoughtSignature"],
           do: %{thought_signature: data["thoughtSignature"]},
@@ -948,6 +937,14 @@ defmodule LangChain.ChatModels.ChatVertexAI do
        message: "Unexpected response",
        original: other
      )}
+  end
+
+  defp parse_tool_calls(model, parts) do
+    parts
+    |> filter_parts_for_types(["functionCall"])
+    |> Enum.map(fn part ->
+      do_process_response(model, part, nil)
+    end)
   end
 
   @doc false

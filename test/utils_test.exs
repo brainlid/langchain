@@ -556,4 +556,16 @@ defmodule LangChain.UtilsTest do
       assert nil == Ecto.Changeset.get_change(result, :content)
     end
   end
+
+  describe "generate_tool_call_id/0" do
+    test "returns a UUID" do
+      assert {:ok, _uuid} = Ecto.UUID.cast(Utils.generate_tool_call_id())
+    end
+
+    test "returns a different value on each call" do
+      ids = Enum.map(1..100, fn _ -> Utils.generate_tool_call_id() end)
+
+      assert ids == Enum.uniq(ids)
+    end
+  end
 end
