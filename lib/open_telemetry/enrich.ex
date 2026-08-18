@@ -35,8 +35,7 @@ defmodule LangChain.OpenTelemetry.Enrich do
   | Called from | Span it enriches |
   |---|---|
   | A tool's own function body | `execute_tool {tool}` |
-  | `:on_tool_pre_execution`, `:on_tool_execution_completed`, `:on_tool_execution_failed` | `execute_tool {tool}` |
-  | `:on_message_processed`, `:on_llm_token_usage` | `invoke_agent {chain_type}` |
+  | `:on_message_processed`, `:on_llm_token_usage`, and the tool callbacks (`:on_tool_pre_execution`, `:on_tool_execution_completed`, `:on_tool_execution_failed`, `:on_tool_execution_exception`) | `invoke_agent {chain_type}` |
   | Outside any LangChain operation | Whatever span your app has open, or nothing |
 
   Attributes set this way apply to that one span. They are not inherited by sibling
