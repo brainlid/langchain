@@ -541,10 +541,10 @@ defmodule LangChain.Utils do
   end
 
   @doc """
-  Generates a short random hex string. Used for synthesizing a unique id when
-  a provider's API response doesn't include one, such as Gemini's function
-  call parts. Ecto.UUID.generate() would have been sufficient, but it's
-  unnecessarily too long.
+  Generate a short, random, lowercase hex string.
+
+  Used to synthesize an id when a provider's API response omits one, such as
+  Gemini's function call parts, which identify a tool call by name only.
   """
   @spec generate_short_id() :: String.t()
   def generate_short_id do

@@ -887,6 +887,64 @@ defmodule ChatModels.ChatGoogleAITest do
       assert call.metadata == nil
     end
 
+    test "gives each function call a unique id and its position", %{model: model} do
+      response = %{
+        "candidates" => [
+          %{
+            "content" => %{
+              "role" => "model",
+              "parts" => [
+                %{"functionCall" => %{"args" => %{"city" => "Denver"}, "name" => "get_weather"}},
+                %{"functionCall" => %{"args" => %{"city" => "Moab"}, "name" => "get_weather"}}
+              ]
+            },
+            "finishReason" => "STOP",
+            "index" => 0
+          }
+        ]
+      }
+
+      assert [%Message{} = msg] = ChatGoogleAI.do_process_response(model, response)
+
+      assert [
+               %ToolCall{name: "get_weather", arguments: %{"city" => "Denver"}, index: 0} = denver,
+               %ToolCall{name: "get_weather", arguments: %{"city" => "Moab"}, index: 1} = moab
+             ] = msg.tool_calls
+
+      assert denver.call_id != moab.call_id
+    end
+
+    test "keeps parallel function calls separate when merging deltas", %{model: model} do
+      response = %{
+        "candidates" => [
+          %{
+            "content" => %{
+              "role" => "model",
+              "parts" => [
+                %{"functionCall" => %{"args" => %{"city" => "Denver"}, "name" => "get_weather"}},
+                %{"functionCall" => %{"args" => %{"city" => "Moab"}, "name" => "get_weather"}}
+              ]
+            },
+            "finishReason" => "STOP",
+            "index" => 0
+          }
+        ]
+      }
+
+      assert [%MessageDelta{} = delta] =
+               ChatGoogleAI.do_process_response(model, response, MessageDelta)
+
+      assert {:ok, %Message{} = msg} =
+               [delta] |> MessageDelta.merge_deltas() |> MessageDelta.to_message()
+
+      assert [
+               %ToolCall{name: "get_weather", arguments: %{"city" => "Denver"}} = denver,
+               %ToolCall{name: "get_weather", arguments: %{"city" => "Moab"}} = moab
+             ] = msg.tool_calls
+
+      assert denver.call_id != moab.call_id
+    end
+
     test "handles no parts in content", %{model: model} do
       response = %{
         "candidates" => [

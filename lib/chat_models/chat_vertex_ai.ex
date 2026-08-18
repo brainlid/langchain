@@ -782,12 +782,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
         ContentPart.new!(%{type: type, content: part["text"]})
       end)
 
-    tool_calls_from_parts =
-      parts
-      |> filter_parts_for_types(["functionCall"])
-      |> Enum.map(fn part ->
-        do_process_response(model, part, nil)
-      end)
+    tool_calls_from_parts = parse_tool_calls(model, parts)
 
     tool_result_from_parts =
       parts
@@ -834,12 +829,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
       ContentPart.new!(%{type: :text, content: part["text"]})
     end)
 
-    tool_calls_from_parts =
-      parts
-      |> filter_parts_for_types(["functionCall"])
-      |> Enum.map(fn part ->
-        do_process_response(model, part, nil)
-      end)
+    tool_calls_from_parts = parse_tool_calls(model, parts)
 
     %{
       role: unmap_role(content_data["role"]),
@@ -868,7 +858,6 @@ defmodule LangChain.ChatModels.ChatVertexAI do
       name: name,
       arguments: raw_args,
       complete: true,
-      index: data["index"],
       metadata:
         if(data["thoughtSignature"],
           do: %{thought_signature: data["thoughtSignature"]},
@@ -948,6 +937,24 @@ defmodule LangChain.ChatModels.ChatVertexAI do
        message: "Unexpected response",
        original: other
      )}
+  end
+
+  # Gemini's `functionCall` parts carry neither an id nor a position. Both are
+  # synthesized here: a unique `call_id` keeps parallel calls to the same tool
+  # distinct when a `ToolResult` is matched back to its call or the conversation
+  # is replayed against a provider that requires unique ids, and the positional
+  # `index` keeps those same calls from merging into one during `MessageDelta`
+  # accumulation, which pairs calls by index.
+  defp parse_tool_calls(model, parts) do
+    parts
+    |> filter_parts_for_types(["functionCall"])
+    |> Enum.with_index()
+    |> Enum.map(fn {part, index} ->
+      case do_process_response(model, part, nil) do
+        %ToolCall{} = call -> %ToolCall{call | index: index}
+        other -> other
+      end
+    end)
   end
 
   @doc false

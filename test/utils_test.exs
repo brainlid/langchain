@@ -556,4 +556,16 @@ defmodule LangChain.UtilsTest do
       assert nil == Ecto.Changeset.get_change(result, :content)
     end
   end
+
+  describe "generate_short_id/0" do
+    test "returns a short lowercase hex string" do
+      assert Utils.generate_short_id() =~ ~r/^[0-9a-f]{12}$/
+    end
+
+    test "returns a different value on each call" do
+      ids = Enum.map(1..100, fn _ -> Utils.generate_short_id() end)
+
+      assert ids == Enum.uniq(ids)
+    end
+  end
 end
