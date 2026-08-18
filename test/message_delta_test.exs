@@ -1980,4 +1980,38 @@ defmodule LangChain.MessageDeltaTest do
       refute MessageDelta.all_tools_terminal?(%MessageDelta{role: :assistant, tool_calls: []})
     end
   end
+
+  describe "merge_delta/2 with tool calls" do
+    test "merges an argument fragment into the call sharing its index" do
+      first = %MessageDelta{
+        role: :assistant,
+        tool_calls: [ToolCall.new!(%{call_id: "call_abc", name: "get_weather", index: 0})]
+      }
+
+      fragment = %MessageDelta{
+        role: :assistant,
+        tool_calls: [ToolCall.new!(%{arguments: "{\"city\":", index: 0})]
+      }
+
+      merged = MessageDelta.merge_delta(first, fragment)
+
+      assert [%ToolCall{call_id: "call_abc", arguments: "{\"city\":"}] = merged.tool_calls
+    end
+
+    test "keeps calls apart when their ids disagree on the same index" do
+      denver = %MessageDelta{
+        role: :assistant,
+        tool_calls: [ToolCall.new!(%{call_id: "call_1", name: "get_weather"})]
+      }
+
+      moab = %MessageDelta{
+        role: :assistant,
+        tool_calls: [ToolCall.new!(%{call_id: "call_2", name: "get_weather"})]
+      }
+
+      merged = MessageDelta.merge_delta(denver, moab)
+
+      assert [%ToolCall{call_id: "call_1"}, %ToolCall{call_id: "call_2"}] = merged.tool_calls
+    end
+  end
 end

@@ -15,7 +15,7 @@ defmodule ChatModels.ChatVertexAITest do
   alias LangChain.LangChainError
   alias LangChain.TokenUsage
 
-  @test_model "gemini-2.5-flash"
+  @test_model "gemini-3.7-flash"
 
   setup do
     {:ok, hello_world} =
@@ -900,6 +900,97 @@ defmodule ChatModels.ChatVertexAITest do
       [call] = struct.tool_calls
       assert call.name == "hello_world"
       assert call.arguments == args
+    end
+
+    test "uses the id returned with a function call", %{model: model} do
+      response = %{
+        "candidates" => [
+          %{
+            "content" => %{
+              "role" => "model",
+              "parts" => [
+                %{
+                  "functionCall" => %{
+                    "args" => %{"city" => "Denver"},
+                    "id" => "call_4162774",
+                    "name" => "get_weather"
+                  }
+                }
+              ]
+            },
+            "finishReason" => "STOP",
+            "index" => 0
+          }
+        ]
+      }
+
+      assert [%Message{} = msg] = ChatVertexAI.do_process_response(model, response)
+      assert [%ToolCall{call_id: "call_4162774", name: "get_weather"}] = msg.tool_calls
+    end
+
+    test "synthesizes a distinct id per call when the response omits one", %{model: model} do
+      response = %{
+        "candidates" => [
+          %{
+            "content" => %{
+              "role" => "model",
+              "parts" => [
+                %{"functionCall" => %{"args" => %{"city" => "Denver"}, "name" => "get_weather"}},
+                %{"functionCall" => %{"args" => %{"city" => "Moab"}, "name" => "get_weather"}}
+              ]
+            },
+            "finishReason" => "STOP",
+            "index" => 0
+          }
+        ]
+      }
+
+      assert [%Message{} = msg] = ChatVertexAI.do_process_response(model, response)
+
+      assert [
+               %ToolCall{arguments: %{"city" => "Denver"}} = denver,
+               %ToolCall{arguments: %{"city" => "Moab"}} = moab
+             ] = msg.tool_calls
+
+      assert is_binary(denver.call_id)
+      assert denver.call_id != moab.call_id
+    end
+
+    test "keeps parallel function calls separate when each arrives in its own chunk", %{
+      model: model
+    } do
+      chunk = fn city, id ->
+        %{
+          "candidates" => [
+            %{
+              "content" => %{
+                "role" => "model",
+                "parts" => [
+                  %{
+                    "functionCall" => %{
+                      "args" => %{"city" => city},
+                      "id" => id,
+                      "name" => "get_weather"
+                    }
+                  }
+                ]
+              },
+              "index" => 0
+            }
+          ]
+        }
+      end
+
+      deltas =
+        [chunk.("Denver", "call_1375045"), chunk.("Moab", "call_1375049")]
+        |> Enum.flat_map(&ChatVertexAI.do_process_response(model, &1, MessageDelta))
+
+      merged = MessageDelta.merge_deltas(deltas)
+
+      assert [
+               %ToolCall{call_id: "call_1375045", arguments: %{"city" => "Denver"}},
+               %ToolCall{call_id: "call_1375049", arguments: %{"city" => "Moab"}}
+             ] = merged.tool_calls
     end
 
     test "handles receiving MessageDeltas as well", %{model: model} do

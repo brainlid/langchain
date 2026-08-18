@@ -595,7 +595,7 @@ defmodule LangChain.ChatModels.ChatPerplexity do
                 status: :complete,
                 name: call["name"],
                 arguments: args_json,
-                call_id: Ecto.UUID.generate()
+                call_id: Utils.generate_tool_call_id()
               })
 
             # Force arguments back to JSON string (validate_and_parse_arguments
@@ -622,7 +622,7 @@ defmodule LangChain.ChatModels.ChatPerplexity do
             status: :complete,
             name: List.first(tools).name,
             arguments: content,
-            call_id: Ecto.UUID.generate()
+            call_id: Utils.generate_tool_call_id()
           })
 
         case Message.new(%{
@@ -727,7 +727,7 @@ defmodule LangChain.ChatModels.ChatPerplexity do
                        status: :complete,
                        name: call["name"],
                        arguments: Jason.encode!(call["arguments"]),
-                       call_id: Ecto.UUID.generate()
+                       call_id: Utils.generate_tool_call_id()
                      })
 
                    # Force the arguments field to be a JSON string even if the ToolCall schema casts it

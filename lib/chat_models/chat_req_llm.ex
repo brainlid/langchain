@@ -456,7 +456,7 @@ if Code.ensure_loaded?(ReqLLM) do
            state
          )
          when is_binary(name) do
-      id = meta[:id] || "tool_#{:erlang.unique_integer([:positive])}"
+      id = meta[:id] || Utils.generate_tool_call_id()
       block_index = meta[:index] || 0
 
       tool_call =
@@ -498,7 +498,7 @@ if Code.ensure_loaded?(ReqLLM) do
            state
          )
          when is_binary(name) and is_integer(block_index) do
-      id = meta[:id] || "tool_#{:erlang.unique_integer([:positive])}"
+      id = meta[:id] || Utils.generate_tool_call_id()
 
       base_attrs = %{
         type: :function,
@@ -654,7 +654,7 @@ if Code.ensure_loaded?(ReqLLM) do
           metadata: meta
         })
         when is_binary(name) do
-      id = (meta || %{})[:id] || "tool_#{:erlang.unique_integer([:positive])}"
+      id = (meta || %{})[:id] || Utils.generate_tool_call_id()
 
       args_map = if is_map(args), do: args, else: %{}
 
