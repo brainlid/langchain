@@ -891,8 +891,9 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     tool_calls_from_parts =
       parts
       |> filter_parts_for_types(["functionCall"])
-      |> Enum.map(fn part ->
-        do_process_response(model, part, nil)
+      |> Enum.with_index()
+      |> Enum.map(fn {part, call_index} ->
+        do_process_response(model, part, call_index)
       end)
 
     tool_result_from_parts =
@@ -949,8 +950,9 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     tool_calls_from_parts =
       parts
       |> filter_parts_for_types(["functionCall"])
-      |> Enum.map(fn part ->
-        do_process_response(model, part, nil)
+      |> Enum.with_index()
+      |> Enum.map(fn {part, call_index} ->
+        do_process_response(model, part, call_index)
       end)
 
     %{
@@ -973,14 +975,14 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   def do_process_response(
         _model,
         %{"functionCall" => %{"args" => raw_args, "name" => name}} = data,
-        _
+        call_index
       ) do
     %{
-      call_id: "call-#{name}",
+      call_id: "call-#{name}-#{Utils.generate_short_id()}",
       name: name,
       arguments: raw_args,
       complete: true,
-      index: data["index"],
+      index: call_index,
       metadata:
         if(data["thoughtSignature"],
           do: %{thought_signature: data["thoughtSignature"]},

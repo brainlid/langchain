@@ -539,4 +539,15 @@ defmodule LangChain.Utils do
     |> String.replace("_", " ")
     |> String.capitalize()
   end
+
+  @doc """
+  Generates a short random hex string. Used for synthesizing a unique id when
+  a provider's API response doesn't include one, such as Gemini's function
+  call parts. Ecto.UUID.generate() would have been sufficient, but it's
+  unnecessarily too long.
+  """
+  @spec generate_short_id() :: String.t()
+  def generate_short_id do
+    :crypto.strong_rand_bytes(6) |> Base.encode16(case: :lower)
+  end
 end
