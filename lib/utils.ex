@@ -541,13 +541,14 @@ defmodule LangChain.Utils do
   end
 
   @doc """
-  Generate a short, random, lowercase hex string.
+  Generate an id for a tool call.
 
-  Used to synthesize an id when a provider's API response omits one, such as
-  Gemini's function call parts, which identify a tool call by name only.
+  Some providers identify a tool call by name only, such as Gemini's function
+  call parts. An id is synthesized for those so each call in a conversation
+  stays distinct from every other one.
   """
-  @spec generate_short_id() :: String.t()
-  def generate_short_id do
-    :crypto.strong_rand_bytes(6) |> Base.encode16(case: :lower)
+  @spec generate_tool_call_id() :: String.t()
+  def generate_tool_call_id do
+    "tool_#{:erlang.unique_integer([:positive])}"
   end
 end

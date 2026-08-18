@@ -854,7 +854,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
         _
       ) do
     %{
-      call_id: "call-#{name}-#{Utils.generate_short_id()}",
+      call_id: Utils.generate_tool_call_id(),
       name: name,
       arguments: raw_args,
       complete: true,
@@ -939,12 +939,9 @@ defmodule LangChain.ChatModels.ChatVertexAI do
      )}
   end
 
-  # Gemini's `functionCall` parts carry neither an id nor a position. Both are
-  # synthesized here: a unique `call_id` keeps parallel calls to the same tool
-  # distinct when a `ToolResult` is matched back to its call or the conversation
-  # is replayed against a provider that requires unique ids, and the positional
-  # `index` keeps those same calls from merging into one during `MessageDelta`
-  # accumulation, which pairs calls by index.
+  # Gemini's `functionCall` parts carry no position. The index assigned here
+  # keeps parallel calls to the same tool from merging into a single call
+  # during `MessageDelta` accumulation, which pairs calls by index.
   defp parse_tool_calls(model, parts) do
     parts
     |> filter_parts_for_types(["functionCall"])

@@ -557,13 +557,13 @@ defmodule LangChain.UtilsTest do
     end
   end
 
-  describe "generate_short_id/0" do
-    test "returns a short lowercase hex string" do
-      assert Utils.generate_short_id() =~ ~r/^[0-9a-f]{12}$/
+  describe "generate_tool_call_id/0" do
+    test "returns a prefixed id" do
+      assert Utils.generate_tool_call_id() =~ ~r/^tool_\d+$/
     end
 
     test "returns a different value on each call" do
-      ids = Enum.map(1..100, fn _ -> Utils.generate_short_id() end)
+      ids = Enum.map(1..100, fn _ -> Utils.generate_tool_call_id() end)
 
       assert ids == Enum.uniq(ids)
     end
