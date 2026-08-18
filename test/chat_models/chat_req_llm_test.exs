@@ -1394,6 +1394,159 @@ if Code.ensure_loaded?(ReqLLM) do
     end
 
     # ============================================================
+    # Streaming transport failures (raised during consumption)
+    # ============================================================
+
+    describe "do_api_request/4 streaming transport failures" do
+      # Mirrors req_llm: the lazy stream yields chunks, then raises
+      # ReqLLM.Error.API.Stream when the transport fails mid-consumption.
+      defp failing_stream(chunks, cause) do
+        Stream.concat(
+          chunks,
+          Stream.map([:boom], fn _ ->
+            raise %ReqLLM.Error.API.Stream{
+              reason: "Stream failed: #{inspect(cause)}",
+              cause: cause
+            }
+          end)
+        )
+      end
+
+      defp failing_stream_response(chunks, cause) do
+        %ReqLLM.StreamResponse{
+          stream: failing_stream(chunks, cause),
+          metadata_handle: self(),
+          cancel: fn -> :ok end,
+          model: nil,
+          context: ReqLLM.Context.new([])
+        }
+      end
+
+      test "returns an error tuple when the transport refuses the connection" do
+        model = ChatReqLLM.new!(%{model: @live_model, stream: true, retry_count: 0})
+
+        stub(ReqLLM, :stream_text, fn _model, _context, _opts ->
+          {:ok,
+           failing_stream_response([], %Finch.TransportError{
+             reason: :econnrefused,
+             source: %Mint.TransportError{reason: :econnrefused}
+           })}
+        end)
+
+        assert {:error, %LangChainError{} = error} =
+                 ChatReqLLM.do_api_request(model, [Message.new_user!("hi")], [], 1)
+
+        assert error.original.reason == :econnrefused
+      end
+
+      test "call/3 returns an error tuple instead of raising" do
+        model = ChatReqLLM.new!(%{model: @live_model, stream: true, retry_count: 0})
+
+        stub(ReqLLM, :stream_text, fn _model, _context, _opts ->
+          {:ok,
+           failing_stream_response([], %Finch.TransportError{reason: :econnrefused, source: nil})}
+        end)
+
+        assert {:error, %LangChainError{}} = ChatReqLLM.call(model, "hi", [])
+      end
+
+      test "classifies a mid-stream timeout as a timeout error" do
+        model = ChatReqLLM.new!(%{model: @live_model, stream: true, retry_count: 0})
+
+        stub(ReqLLM, :stream_text, fn _model, _context, _opts ->
+          {:ok, failing_stream_response([], %Finch.TransportError{reason: :timeout, source: nil})}
+        end)
+
+        assert {:error, %LangChainError{type: "timeout"}} =
+                 ChatReqLLM.do_api_request(model, [Message.new_user!("hi")], [], 1)
+      end
+
+      test "classifies an HTTP error surfaced mid-stream by status" do
+        model = ChatReqLLM.new!(%{model: @live_model, stream: true, retry_count: 0})
+
+        stub(ReqLLM, :stream_text, fn _model, _context, _opts ->
+          {:ok,
+           failing_stream_response(
+             [],
+             ReqLLM.Error.API.Request.exception(reason: "Unauthorized", status: 401)
+           )}
+        end)
+
+        assert {:error, %LangChainError{type: "authentication_error"}} =
+                 ChatReqLLM.do_api_request(model, [Message.new_user!("hi")], [], 1)
+      end
+
+      test "retries a closed connection when no deltas were delivered" do
+        call_count = :counters.new(1, [])
+
+        model = ChatReqLLM.new!(%{model: @live_model, stream: true})
+
+        stub(ReqLLM, :stream_text, fn _model, _context, _opts ->
+          count = :counters.get(call_count, 1) + 1
+          :counters.put(call_count, 1, count)
+
+          if count < 2 do
+            {:ok,
+             failing_stream_response([], %Finch.TransportError{reason: :closed, source: nil})}
+          else
+            {:ok,
+             fake_stream_response([
+               %ReqLLM.StreamChunk{type: :content, text: "Recovered!"},
+               %ReqLLM.StreamChunk{
+                 type: :meta,
+                 metadata: %{finish_reason: :stop, terminal?: true}
+               }
+             ])}
+          end
+        end)
+
+        assert [%MessageDelta{} | _] =
+                 ChatReqLLM.do_api_request(model, [Message.new_user!("hi")], [], 3)
+
+        assert :counters.get(call_count, 1) == 2
+      end
+
+      test "does not retry a closed connection after deltas were delivered" do
+        call_count = :counters.new(1, [])
+        test_pid = self()
+
+        model =
+          %{
+            ChatReqLLM.new!(%{model: @live_model, stream: true})
+            | callbacks: [%{on_llm_new_delta: fn deltas -> send(test_pid, {:delta, deltas}) end}]
+          }
+
+        stub(ReqLLM, :stream_text, fn _model, _context, _opts ->
+          count = :counters.get(call_count, 1) + 1
+          :counters.put(call_count, 1, count)
+
+          {:ok,
+           failing_stream_response(
+             [%ReqLLM.StreamChunk{type: :content, text: "partial"}],
+             %Finch.TransportError{reason: :closed, source: nil}
+           )}
+        end)
+
+        assert {:error, %LangChainError{}} =
+                 ChatReqLLM.do_api_request(model, [Message.new_user!("hi")], [], 3)
+
+        assert :counters.get(call_count, 1) == 1
+        assert_received {:delta, [%MessageDelta{content: _}]}
+      end
+
+      test "retries_exceeded surfaces as an error tuple, not a raised exception" do
+        model = ChatReqLLM.new!(%{model: @live_model, stream: true, retry_count: 0})
+
+        stub(ReqLLM, :stream_text, fn _model, _context, _opts ->
+          {:ok, failing_stream_response([], %Finch.TransportError{reason: :closed, source: nil})}
+        end)
+
+        assert {:error, %LangChainError{type: "retries_exceeded"}} =
+                 ChatReqLLM.call(model, "hi", [])
+      end
+    end
+
+    # ============================================================
     # Live API Tests (tagged :live_call — excluded by default)
     # ============================================================
 

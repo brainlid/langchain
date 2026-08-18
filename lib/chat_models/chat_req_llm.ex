@@ -308,22 +308,11 @@ if Code.ensure_loaded?(ReqLLM) do
               result
           end
 
-        {:error, %Req.TransportError{reason: :timeout} = err} ->
-          {:error,
-           LangChainError.exception(type: "timeout", message: "Request timed out", original: err)}
-
-        {:error, %Req.TransportError{reason: :closed}} ->
-          Logger.debug(fn ->
-            "Mint connection closed: retry count = #{inspect(retry_count)}"
-          end)
-
-          do_api_request(model, messages, tools, retry_count - 1)
-
         {:error, %LangChainError{}} = error ->
           error
 
         {:error, error} ->
-          translate_req_llm_error(error)
+          handle_request_failure(model, messages, tools, retry_count, error, true)
 
         other ->
           Logger.warning(fn -> "Unexpected response from ReqLLM: #{inspect(other)}" end)
@@ -355,44 +344,39 @@ if Code.ensure_loaded?(ReqLLM) do
 
       case ReqLLM.stream_text(model.model, context, opts) do
         {:ok, stream_response} ->
-          # Stateful reduce: assigns a monotonic content index to each new content
-          # block type (thinking, text, etc.) so that MessageDelta merging places
-          # each type in the correct merged_content slot. Tool call argument
-          # fragments are emitted incrementally (mirroring ChatAnthropic's approach).
-          initial_state = %{next_content_index: 0, type_index_map: %{}}
+          # req_llm builds the stream lazily, so `stream_text` reports success
+          # before any bytes move. A transport failure surfaces later, as a
+          # ReqLLM.Error.API.Stream raised from inside the stream, and is
+          # classified here so streaming and non-streaming share one contract.
+          delivered = :counters.new(1, [])
 
-          {all_deltas, _final_state} =
-            stream_response.stream
-            |> Enum.reduce({[], initial_state}, fn chunk, {acc_deltas, state} ->
-              {new_deltas, new_state} = process_stream_chunk(chunk, state)
-              if new_deltas != [], do: Utils.fire_streamed_callback(model, new_deltas)
-              {acc_deltas ++ new_deltas, new_state}
-            end)
+          try do
+            all_deltas = consume_stream(model, stream_response, delivered)
 
-          LangChain.Telemetry.emit_event(
-            [:langchain, :llm, :response],
-            %{system_time: System.system_time()},
-            %{model: model.model, streaming: true}
-          )
+            LangChain.Telemetry.emit_event(
+              [:langchain, :llm, :response],
+              %{system_time: System.system_time()},
+              %{model: model.model, streaming: true}
+            )
 
-          all_deltas
-
-        {:error, %Req.TransportError{reason: :timeout} = err} ->
-          {:error,
-           LangChainError.exception(type: "timeout", message: "Request timed out", original: err)}
-
-        {:error, %Req.TransportError{reason: :closed}} ->
-          Logger.debug(fn ->
-            "Mint connection closed: retry count = #{inspect(retry_count)}"
-          end)
-
-          do_api_request(model, messages, tools, retry_count - 1)
+            all_deltas
+          rescue
+            err in ReqLLM.Error.API.Stream ->
+              handle_request_failure(
+                model,
+                messages,
+                tools,
+                retry_count,
+                err.cause || err,
+                :counters.get(delivered, 1) == 0
+              )
+          end
 
         {:error, %LangChainError{}} = error ->
           error
 
         {:error, error} ->
-          translate_req_llm_error(error)
+          handle_request_failure(model, messages, tools, retry_count, error, true)
 
         other ->
           Logger.warning(fn -> "Unexpected response from ReqLLM stream: #{inspect(other)}" end)
@@ -405,6 +389,69 @@ if Code.ensure_loaded?(ReqLLM) do
            )}
       end
     end
+
+    # Reduce the lazy stream into MessageDeltas, firing the streaming callback as
+    # each one is produced.
+    #
+    # Stateful reduce: assigns a monotonic content index to each new content
+    # block type (thinking, text, etc.) so that MessageDelta merging places
+    # each type in the correct merged_content slot. Tool call argument
+    # fragments are emitted incrementally (mirroring ChatAnthropic's approach).
+    #
+    # `delivered` counts the deltas handed to the callback. The count survives an
+    # exception raised mid-stream, which the retry decision depends on.
+    defp consume_stream(model, stream_response, delivered) do
+      initial_state = %{next_content_index: 0, type_index_map: %{}}
+
+      {all_deltas, _final_state} =
+        stream_response.stream
+        |> Enum.reduce({[], initial_state}, fn chunk, {acc_deltas, state} ->
+          {new_deltas, new_state} = process_stream_chunk(chunk, state)
+
+          if new_deltas != [] do
+            :counters.add(delivered, 1, length(new_deltas))
+            Utils.fire_streamed_callback(model, new_deltas)
+          end
+
+          {acc_deltas ++ new_deltas, new_state}
+        end)
+
+      all_deltas
+    end
+
+    # Turn a failed request into the same shape regardless of which library
+    # reported it. `retry_allowed?` is false once a streamed turn has already
+    # delivered deltas to the callback: re-requesting would replay content the
+    # consumer has seen, so the failure is reported instead.
+    defp handle_request_failure(model, messages, tools, retry_count, error, retry_allowed?) do
+      case transport_reason(error) do
+        :timeout ->
+          {:error,
+           LangChainError.exception(
+             type: "timeout",
+             message: "Request timed out",
+             original: error
+           )}
+
+        :closed when retry_allowed? ->
+          Logger.debug(fn ->
+            "Mint connection closed: retry count = #{inspect(retry_count)}"
+          end)
+
+          do_api_request(model, messages, tools, retry_count - 1)
+
+        _other ->
+          translate_req_llm_error(error)
+      end
+    end
+
+    # The same network event arrives as a different struct depending on how far
+    # down the stack it was caught: Req wraps Finch, which wraps Mint. All three
+    # carry the reason atom in the same field.
+    @transport_error_modules [Req.TransportError, Finch.TransportError, Mint.TransportError]
+
+    defp transport_reason(%mod{reason: reason}) when mod in @transport_error_modules, do: reason
+    defp transport_reason(_error), do: nil
 
     # Process a stream chunk with state tracking.
     # Assigns a monotonic content index per chunk type so each content block type
