@@ -15,7 +15,7 @@ defmodule ChatModels.ChatVertexAITest do
   alias LangChain.LangChainError
   alias LangChain.TokenUsage
 
-  @test_model "gemini-2.5-flash"
+  @test_model "gemini-3.7-flash"
 
   setup do
     {:ok, hello_world} =

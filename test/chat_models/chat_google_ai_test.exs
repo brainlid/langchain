@@ -16,7 +16,7 @@ defmodule ChatModels.ChatGoogleAITest do
   alias LangChain.LangChainError
   alias LangChain.ChatModels.ChatGoogleAI
 
-  @test_model "gemini-2.5-flash"
+  @test_model "gemini-3.7-flash"
 
   setup do
     {:ok, hello_world} =
@@ -1929,7 +1929,7 @@ defmodule ChatModels.ChatGoogleAITest do
       alias LangChain.Message
       alias LangChain.NativeTool
 
-      model = ChatGoogleAI.new!(%{temperature: 0, stream: false, model: "gemini-2.0-flash"})
+      model = ChatGoogleAI.new!(%{temperature: 0, stream: false, model: @test_model})
 
       {:ok, updated_chain} =
         %{llm: model, verbose: false, stream: false}
@@ -2105,7 +2105,7 @@ defmodule ChatModels.ChatGoogleAITest do
     alias LangChain.Message.ContentPart
     alias LangChain.Utils.ChainResult
 
-    model = ChatGoogleAI.new!(%{temperature: 0, stream: false, model: "gemini-1.5-flash"})
+    model = ChatGoogleAI.new!(%{temperature: 0, stream: false, model: @test_model})
 
     image_data =
       File.read!("test/support/images/barn_owl.jpg")
