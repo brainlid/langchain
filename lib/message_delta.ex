@@ -394,10 +394,33 @@ defmodule LangChain.MessageDelta do
          %MessageDelta{tool_calls: primary_calls} = acc
        ) do
     calls = primary_calls || []
-    initial = Enum.find(calls, &(&1.index == delta_call.index))
-    merged_call = ToolCall.merge(initial, delta_call)
-    %MessageDelta{acc | tool_calls: upsert_by_index(calls, merged_call)}
+
+    case Enum.find_index(calls, &continues?(&1, delta_call)) do
+      nil ->
+        %MessageDelta{acc | tool_calls: calls ++ [delta_call]}
+
+      position ->
+        merged_call = ToolCall.merge(Enum.at(calls, position), delta_call)
+        %MessageDelta{acc | tool_calls: List.replace_at(calls, position, merged_call)}
+    end
   end
+
+  # A fragment continues the accumulated call sharing its index. Providers that
+  # report an id for every call but no index, as Gemini's function call parts
+  # do, leave every call on the same index, so two ids that disagree mark two
+  # separate calls. A fragment carrying no id of its own always continues the
+  # call at its index, which is how OpenAI streams argument fragments.
+  @spec continues?(ToolCall.t(), ToolCall.t()) :: boolean()
+  defp continues?(%ToolCall{} = call, %ToolCall{} = delta_call) do
+    call.index == delta_call.index and not separate_calls?(call, delta_call)
+  end
+
+  @spec separate_calls?(ToolCall.t(), ToolCall.t()) :: boolean()
+  defp separate_calls?(%ToolCall{call_id: id}, %ToolCall{call_id: delta_id})
+       when is_binary(id) and is_binary(delta_id),
+       do: id != delta_id
+
+  defp separate_calls?(_call, _delta_call), do: false
 
   @spec update_index(t(), t()) :: t()
   defp update_index(%MessageDelta{} = primary, %MessageDelta{index: idx}) when is_number(idx) do
@@ -431,15 +454,6 @@ defmodule LangChain.MessageDelta do
   end
 
   defp update_status(%MessageDelta{} = primary, %MessageDelta{}), do: primary
-
-  # Insert or update tool call in list by matching on index field
-  @spec upsert_by_index([ToolCall.t()], ToolCall.t()) :: [ToolCall.t()]
-  defp upsert_by_index(calls, call) do
-    case Enum.find_index(calls, &(&1.index == call.index)) do
-      nil -> calls ++ [call]
-      pos -> List.replace_at(calls, pos, call)
-    end
-  end
 
   @doc """
   Convert the MessageDelta's merged content to a string. Specify the type of

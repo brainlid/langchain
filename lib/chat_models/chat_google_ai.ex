@@ -962,11 +962,11 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
 
   def do_process_response(
         _model,
-        %{"functionCall" => %{"args" => raw_args, "name" => name}} = data,
+        %{"functionCall" => %{"args" => raw_args, "name" => name} = call} = data,
         _
       ) do
     %{
-      call_id: Utils.generate_tool_call_id(),
+      call_id: call["id"] || Utils.generate_tool_call_id(),
       name: name,
       arguments: raw_args,
       complete: true,
@@ -1007,18 +1007,11 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
      )}
   end
 
-  # Gemini's `functionCall` parts carry no position. The index assigned here
-  # keeps parallel calls to the same tool from merging into a single call
-  # during `MessageDelta` accumulation, which pairs calls by index.
   defp parse_tool_calls(model, parts) do
     parts
     |> filter_parts_for_types(["functionCall"])
-    |> Enum.with_index()
-    |> Enum.map(fn {part, index} ->
-      case do_process_response(model, part, nil) do
-        %ToolCall{} = call -> %ToolCall{call | index: index}
-        other -> other
-      end
+    |> Enum.map(fn part ->
+      do_process_response(model, part, nil)
     end)
   end
 

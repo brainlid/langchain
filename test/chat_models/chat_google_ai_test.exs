@@ -887,7 +887,33 @@ defmodule ChatModels.ChatGoogleAITest do
       assert call.metadata == nil
     end
 
-    test "gives each function call a unique id and its position", %{model: model} do
+    test "uses the id returned with a function call", %{model: model} do
+      response = %{
+        "candidates" => [
+          %{
+            "content" => %{
+              "role" => "model",
+              "parts" => [
+                %{
+                  "functionCall" => %{
+                    "args" => %{"city" => "Denver"},
+                    "id" => "call_4162774",
+                    "name" => "get_weather"
+                  }
+                }
+              ]
+            },
+            "finishReason" => "STOP",
+            "index" => 0
+          }
+        ]
+      }
+
+      assert [%Message{} = msg] = ChatGoogleAI.do_process_response(model, response)
+      assert [%ToolCall{call_id: "call_4162774", name: "get_weather"}] = msg.tool_calls
+    end
+
+    test "synthesizes a distinct id per call when the response omits one", %{model: model} do
       response = %{
         "candidates" => [
           %{
@@ -907,42 +933,49 @@ defmodule ChatModels.ChatGoogleAITest do
       assert [%Message{} = msg] = ChatGoogleAI.do_process_response(model, response)
 
       assert [
-               %ToolCall{name: "get_weather", arguments: %{"city" => "Denver"}, index: 0} = denver,
-               %ToolCall{name: "get_weather", arguments: %{"city" => "Moab"}, index: 1} = moab
+               %ToolCall{arguments: %{"city" => "Denver"}} = denver,
+               %ToolCall{arguments: %{"city" => "Moab"}} = moab
              ] = msg.tool_calls
 
+      assert is_binary(denver.call_id)
       assert denver.call_id != moab.call_id
     end
 
-    test "keeps parallel function calls separate when merging deltas", %{model: model} do
-      response = %{
-        "candidates" => [
-          %{
-            "content" => %{
-              "role" => "model",
-              "parts" => [
-                %{"functionCall" => %{"args" => %{"city" => "Denver"}, "name" => "get_weather"}},
-                %{"functionCall" => %{"args" => %{"city" => "Moab"}, "name" => "get_weather"}}
-              ]
-            },
-            "finishReason" => "STOP",
-            "index" => 0
-          }
-        ]
-      }
+    test "keeps parallel function calls separate when each arrives in its own chunk", %{
+      model: model
+    } do
+      chunk = fn city, id ->
+        %{
+          "candidates" => [
+            %{
+              "content" => %{
+                "role" => "model",
+                "parts" => [
+                  %{
+                    "functionCall" => %{
+                      "args" => %{"city" => city},
+                      "id" => id,
+                      "name" => "get_weather"
+                    }
+                  }
+                ]
+              },
+              "index" => 0
+            }
+          ]
+        }
+      end
 
-      assert [%MessageDelta{} = delta] =
-               ChatGoogleAI.do_process_response(model, response, MessageDelta)
+      deltas =
+        [chunk.("Denver", "call_1375045"), chunk.("Moab", "call_1375049")]
+        |> Enum.flat_map(&ChatGoogleAI.do_process_response(model, &1, MessageDelta))
 
-      assert {:ok, %Message{} = msg} =
-               [delta] |> MessageDelta.merge_deltas() |> MessageDelta.to_message()
+      merged = MessageDelta.merge_deltas(deltas)
 
       assert [
-               %ToolCall{name: "get_weather", arguments: %{"city" => "Denver"}} = denver,
-               %ToolCall{name: "get_weather", arguments: %{"city" => "Moab"}} = moab
-             ] = msg.tool_calls
-
-      assert denver.call_id != moab.call_id
+               %ToolCall{call_id: "call_1375045", arguments: %{"city" => "Denver"}},
+               %ToolCall{call_id: "call_1375049", arguments: %{"city" => "Moab"}}
+             ] = merged.tool_calls
     end
 
     test "handles no parts in content", %{model: model} do
