@@ -275,7 +275,12 @@ if Code.ensure_loaded?(:opentelemetry) do
           Attributes.tool_call_stop(metadata, config)
         end)
 
-      end_span(metadata, stop_attrs)
+      # A tool that raised is rescued by `LLMChain` and reported through the normal
+      # `:stop` event, so without this the span closes unset and a crashing tool is
+      # indistinguishable from a working one. `:stop` is the only point at which the
+      # span is still open — the tool callbacks all fire after `end_span/3` — so the
+      # exception has to be recorded here or not at all.
+      end_span(metadata, stop_attrs, rescued_exception(metadata))
     end
 
     defp do_handle_event(
@@ -288,6 +293,16 @@ if Code.ensure_loaded?(:opentelemetry) do
     end
 
     # --- Private helpers ---
+
+    # Only a rescued exception marks the span errored. A tool returning
+    # `{:error, reason}` is a handled outcome the model is expected to react to, and
+    # flagging those would make error rates meaningless.
+    defp rescued_exception(metadata) do
+      case metadata[:tool_result] do
+        %{is_exception: true, exception: {exception, stacktrace}} -> {exception, stacktrace}
+        _other -> nil
+      end
+    end
 
     # The subset of a chain's attributes that nested `chat` and `execute_tool` spans
     # should also carry: everything the caller put in `:otel_attributes`, plus the
@@ -401,7 +416,7 @@ if Code.ensure_loaded?(:opentelemetry) do
       end
     end
 
-    defp end_span(metadata, extra_attributes) do
+    defp end_span(metadata, extra_attributes, rescued \\ nil) do
       call_id = metadata[:call_id]
 
       case pop_span(call_id) do
@@ -414,6 +429,8 @@ if Code.ensure_loaded?(:opentelemetry) do
             if extra_attributes != [] do
               OpenTelemetry.Span.set_attributes(span_ctx, extra_attributes)
             end
+
+            record_rescued(span_ctx, rescued)
           after
             OpenTelemetry.Span.end_span(span_ctx)
             OpenTelemetry.Ctx.detach(token)
@@ -446,6 +463,22 @@ if Code.ensure_loaded?(:opentelemetry) do
         end)
 
         []
+    end
+
+    # Mirrors the recording half of `end_span_on_exception/1`. Kept separate because a
+    # rescued exception rides a `:stop` event, where the status and attributes derived
+    # from the result have already been applied.
+    defp record_rescued(_span_ctx, nil), do: :ok
+
+    defp record_rescued(span_ctx, {exception, stacktrace}) do
+      OpenTelemetry.Span.set_status(
+        span_ctx,
+        OpenTelemetry.status(:error, Exception.message(exception))
+      )
+
+      OpenTelemetry.Span.set_attributes(span_ctx, [{"error.type", error_type(exception)}])
+      OpenTelemetry.Span.record_exception(span_ctx, exception, stacktrace)
+      :ok
     end
 
     defp end_span_on_exception(metadata) do

@@ -300,6 +300,12 @@ defmodule LangChain.Function do
   @type context :: nil | %{atom() => any()}
 
   @typedoc """
+  A rescued exception and its stacktrace, as returned alongside the model-facing
+  message in a `{:error, message, execution_exception()}` result.
+  """
+  @type execution_exception :: {Exception.t(), Exception.stacktrace()}
+
+  @typedoc """
   Return shape for a `:parse_args` callback. See module doc for full details.
   """
   @type parse_result ::
@@ -366,6 +372,21 @@ defmodule LangChain.Function do
   Execute the function passing in arguments and additional optional context.
   This is called by a `LangChain.Chains.LLMChain` when a `Function` execution is
   requested by the LLM.
+
+  ## Return shapes
+
+  - `{:ok, llm_result}` - success
+  - `{:ok, llm_result, processed_content}` - success, keeping a native Elixir result
+  - `{:interrupt, display_message, interrupt_data}` - paused for review
+  - `{:error, message}` - the tool returned an error, or a check rejected the arguments
+  - `{:error, message, {exception, stacktrace}}` - the tool, or its `:parse_args`
+    parser, raised and the exception was rescued
+
+  The last shape mirrors `{:ok, llm_result, processed_content}`: the second element
+  is the message the model sees, and the third is the native Elixir detail kept for
+  the application. It only appears when an exception was actually rescued, so
+  matching on `{:error, message}` still covers every error a tool returns
+  deliberately.
   """
   @spec execute(t(), arguments(), context()) :: any() | no_return()
   def execute(%Function{function: fun} = function, arguments, context) do
@@ -391,7 +412,10 @@ defmodule LangChain.Function do
   # `:on_tool_response_created` callbacks and `[:langchain, :tool, :call]`
   # telemetry firing on parse failures, which downstream consumers rely on for
   # token usage accounting and trajectory analysis.
-  @spec run_parse_args(t(), arguments()) :: {:ok, map()} | {:error, String.t()}
+  @spec run_parse_args(t(), arguments()) ::
+          {:ok, map()}
+          | {:error, String.t()}
+          | {:error, String.t(), execution_exception()}
   defp run_parse_args(%Function{parse_args: nil}, arguments), do: {:ok, arguments}
 
   defp run_parse_args(%Function{parse_args: parser, name: name}, arguments)
@@ -406,7 +430,8 @@ defmodule LangChain.Function do
             LangChainError.format_exception(err, __STACKTRACE__)
         end)
 
-        {:error, "ERROR: #{LangChainError.format_exception(err, __STACKTRACE__, :short)}"}
+        {:error, "ERROR: #{LangChainError.format_exception(err, __STACKTRACE__, :short)}",
+         {err, __STACKTRACE__}}
     end
   end
 
@@ -614,6 +639,7 @@ defmodule LangChain.Function do
           | {:ok, any(), any()}
           | {:interrupt, String.t(), any()}
           | {:error, String.t()}
+          | {:error, String.t(), execution_exception()}
   defp execute_with_error_handling(function, fun, arguments, context) do
     fun.(arguments, context)
     |> normalize_execution_result(function)
@@ -623,10 +649,13 @@ defmodule LangChain.Function do
         "Function! #{function.name} failed in execution. Exception: #{LangChainError.format_exception(err, __STACKTRACE__)}"
       end)
 
-      case argument_error_message(err, function, fun, arguments) do
-        nil -> {:error, "ERROR: #{LangChainError.format_exception(err, __STACKTRACE__, :short)}"}
-        message -> {:error, message}
-      end
+      message =
+        case argument_error_message(err, function, fun, arguments) do
+          nil -> "ERROR: #{LangChainError.format_exception(err, __STACKTRACE__, :short)}"
+          message -> message
+        end
+
+      {:error, message, {err, __STACKTRACE__}}
   end
 
   # The required-parameter check can't reach a tool that reads an *optional*

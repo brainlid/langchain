@@ -80,6 +80,28 @@ defmodule LangChain.Message.ToolResultTest do
       assert msg.is_error == true
     end
 
+    test "defaults is_exception to false with no exception" do
+      assert {:ok, %ToolResult{is_exception: false, exception: nil}} =
+               ToolResult.new(%{tool_call_id: "call_1", content: "fine"})
+    end
+
+    test "accepts a rescued exception and its stacktrace" do
+      rescued = {%RuntimeError{message: "boom"}, [{Mod, :fun, 2, [file: ~c"a.ex", line: 1]}]}
+
+      assert {:ok, %ToolResult{} = msg} =
+               ToolResult.new(%{
+                 tool_call_id: "call_1",
+                 content: "ERROR executing tool: boom",
+                 is_error: true,
+                 is_exception: true,
+                 exception: rescued
+               })
+
+      assert msg.is_error == true
+      assert msg.is_exception == true
+      assert msg.exception == rescued
+    end
+
     test "returns errors when invalid" do
       {:error, changeset} =
         ToolResult.new(%{tool_call_id: nil, content: nil})

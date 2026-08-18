@@ -1524,22 +1524,7 @@ defmodule LangChain.Chains.LLMChain do
       # Fire completed/failed callbacks for async tools and extract results
       async_tool_results =
         Enum.map(async_results, fn {call, _func, result} ->
-          cond do
-            result.is_interrupt ->
-              :ok
-
-            result.is_error ->
-              Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
-                chain,
-                call,
-                result.content
-              ])
-
-            true ->
-              Callbacks.fire(chain.callbacks, :on_tool_execution_completed, [chain, call, result])
-          end
-
-          result
+          fire_tool_execution_callbacks(chain, call, result)
         end)
 
       # Execute sync tools with immediate callbacks
@@ -1548,23 +1533,7 @@ defmodule LangChain.Chains.LLMChain do
           Callbacks.fire(chain.callbacks, :on_tool_pre_execution, [chain, call, func])
           result = execute_tool_call(call, func, verbose: verbose, context: use_context)
 
-          # Fire completed/failed callback immediately after execution
-          cond do
-            result.is_interrupt ->
-              :ok
-
-            result.is_error ->
-              Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
-                chain,
-                call,
-                result.content
-              ])
-
-            true ->
-              Callbacks.fire(chain.callbacks, :on_tool_execution_completed, [chain, call, result])
-          end
-
-          result
+          fire_tool_execution_callbacks(chain, call, result)
         end)
 
       # log invalid tool calls (can't augment - no func available)
@@ -1684,27 +1653,7 @@ defmodule LangChain.Chains.LLMChain do
                 result =
                   execute_tool_call(tool_call, func, verbose: verbose, context: use_context)
 
-                # Fire completed/failed callback after execution (skip interrupts)
-                cond do
-                  result.is_interrupt ->
-                    :ok
-
-                  result.is_error ->
-                    Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
-                      chain,
-                      tool_call,
-                      result.content
-                    ])
-
-                  true ->
-                    Callbacks.fire(chain.callbacks, :on_tool_execution_completed, [
-                      chain,
-                      tool_call,
-                      result
-                    ])
-                end
-
-                result
+                fire_tool_execution_callbacks(chain, tool_call, result)
 
               nil ->
                 error_msg = "Tool '#{tool_call.name}' not found"
@@ -1747,27 +1696,7 @@ defmodule LangChain.Chains.LLMChain do
                 result =
                   execute_tool_call(edited_call, func, verbose: verbose, context: use_context)
 
-                # Fire completed/failed callback after execution (skip interrupts)
-                cond do
-                  result.is_interrupt ->
-                    :ok
-
-                  result.is_error ->
-                    Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
-                      chain,
-                      edited_call,
-                      result.content
-                    ])
-
-                  true ->
-                    Callbacks.fire(chain.callbacks, :on_tool_execution_completed, [
-                      chain,
-                      edited_call,
-                      result
-                    ])
-                end
-
-                result
+                fire_tool_execution_callbacks(chain, edited_call, result)
 
               nil ->
                 error_msg = "Tool '#{tool_call.name}' not found"
@@ -1867,6 +1796,45 @@ defmodule LangChain.Chains.LLMChain do
     :ok
   end
 
+  # Fires the per-result tool callbacks for one executed tool call and returns the
+  # result unchanged, so call sites can use it inline.
+  #
+  # `:on_tool_execution_exception` fires in addition to `:on_tool_execution_failed`
+  # rather than instead of it. A rescued exception is still a failure, and handlers
+  # registered for the lifecycle event must keep seeing it.
+  @spec fire_tool_execution_callbacks(t(), ToolCall.t(), ToolResult.t()) :: ToolResult.t()
+  defp fire_tool_execution_callbacks(
+         %LLMChain{} = chain,
+         %ToolCall{} = call,
+         %ToolResult{} = result
+       ) do
+    cond do
+      result.is_interrupt ->
+        :ok
+
+      result.is_error ->
+        Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [chain, call, result.content])
+
+      true ->
+        Callbacks.fire(chain.callbacks, :on_tool_execution_completed, [chain, call, result])
+    end
+
+    case result.exception do
+      {exception, stacktrace} ->
+        Callbacks.fire(chain.callbacks, :on_tool_execution_exception, [
+          chain,
+          call,
+          exception,
+          stacktrace
+        ])
+
+      nil ->
+        :ok
+    end
+
+    result
+  end
+
   @doc """
   Execute the tool call with the tool. Returns the tool's message response.
   """
@@ -1960,18 +1928,35 @@ defmodule LangChain.Chains.LLMChain do
                 display_text: function.display_text,
                 is_error: true
               })
+
+            {:error, reason, {_exception, _stacktrace} = rescued} when is_binary(reason) ->
+              if verbose, do: IO.inspect(reason, label: "FUNCTION RAISED")
+
+              ToolResult.new!(%{
+                tool_call_id: call.call_id,
+                content: reason,
+                name: function.name,
+                display_text: function.display_text,
+                is_error: true,
+                is_exception: true,
+                exception: rescued
+              })
           end
         rescue
           err ->
+            stacktrace = __STACKTRACE__
+
             Logger.warning(fn ->
-              "Function #{function.name} failed in execution. Exception: #{LangChainError.format_exception(err, __STACKTRACE__)}"
+              "Function #{function.name} failed in execution. Exception: #{LangChainError.format_exception(err, stacktrace)}"
             end)
 
             ToolResult.new!(%{
               tool_call_id: call.call_id,
               name: function.name,
               content: "ERROR executing tool: #{inspect(err)}",
-              is_error: true
+              is_error: true,
+              is_exception: true,
+              exception: {err, stacktrace}
             })
         end
       end,

@@ -15,6 +15,7 @@ defmodule LangChain.ChatModels.TelemetryTest do
   alias LangChain.Message
   alias LangChain.MessageDelta
   alias LangChain.Message.ToolCall
+  alias LangChain.Message.ToolResult
   alias LangChain.TokenUsage
 
   # Setup for test
@@ -773,6 +774,42 @@ defmodule LangChain.ChatModels.TelemetryTest do
       assert start_metadata.call_id == stop_metadata.call_id
 
       :telemetry.detach("test-tool-custom-context")
+    end
+
+    test "tool stop metadata carries the rescued exception for the OTel handler" do
+      test_pid = self()
+
+      :telemetry.attach(
+        "test-tool-rescued-exception",
+        [:langchain, :tool, :call, :stop],
+        fn _name, _measurements, metadata, _config ->
+          send(test_pid, {:tool_stop, metadata})
+        end,
+        nil
+      )
+
+      fun =
+        Function.new!(%{
+          name: "raising_tool",
+          function: fn _args, _ctx -> raise RuntimeError, "telemetry boom" end
+        })
+
+      call = ToolCall.new!(%{call_id: "call-exception", name: "raising_tool", arguments: %{}})
+      result = LLMChain.execute_tool_call(call, fun)
+
+      assert_received {:tool_stop, metadata}
+
+      # Deliberately NOT scrubbed. The `:stop` event is the only point at which the
+      # tool span is still open, so this is the OpenTelemetry handler's one chance to
+      # record the exception with real stack frames.
+      assert %ToolResult{is_error: true, is_exception: true, exception: {exception, stacktrace}} =
+               metadata.tool_result
+
+      assert %RuntimeError{message: "telemetry boom"} = exception
+      assert [_ | _] = stacktrace
+      assert metadata.tool_result == result
+
+      :telemetry.detach("test-tool-rescued-exception")
     end
   end
 

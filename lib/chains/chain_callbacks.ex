@@ -215,15 +215,45 @@ defmodule LangChain.Chains.ChainCallbacks do
   @typedoc """
   Executed when a single tool execution fails.
 
-  Fires when tool execution raises an exception or returns an error result.
+  Fires when tool execution raises an exception, returns an error result, names a
+  tool that doesn't exist, or is rejected during human review.
 
   - First argument: LLMChain.t()
   - Second argument: ToolCall that failed
-  - Third argument: Error reason or exception
+  - Third argument: The error content returned to the model
 
   The handler's return value is discarded.
   """
   @type chain_tool_execution_failed :: (LLMChain.t(), ToolCall.t(), term() -> any())
+
+  @typedoc """
+  Executed when a tool execution raises an exception that LangChain rescues.
+
+  Fires in addition to `:on_tool_execution_failed`, not instead of it. That
+  callback receives the message the model sees; this one receives the exception
+  itself, which is what an error tracker needs in order to group and fingerprint
+  the failure.
+
+  Does not fire for `{:error, reason}` results, tool calls naming a tool that
+  doesn't exist, human rejections, or interrupts. None of those involve a rescued
+  exception.
+
+  - First argument: LLMChain.t()
+  - Second argument: ToolCall that raised
+  - Third argument: The rescued exception
+  - Fourth argument: The exception's stacktrace
+
+  Fires after the tool's OpenTelemetry span has closed, so attributes set here land
+  on the enclosing chain span rather than on `execute_tool`.
+
+  Exceptions and stacktraces can carry application data from the frames they
+  captured. LangChain never sends them to the model, but handlers should not expose
+  them to untrusted clients.
+
+  The handler's return value is discarded.
+  """
+  @type chain_tool_execution_exception ::
+          (LLMChain.t(), ToolCall.t(), Exception.t(), Exception.stacktrace() -> any())
 
   @typedoc """
   Executed when one or more tools return an interrupt signal.
@@ -342,6 +372,7 @@ defmodule LangChain.Chains.ChainCallbacks do
           optional(:on_tool_pre_execution) => chain_tool_pre_execution(),
           optional(:on_tool_execution_completed) => chain_tool_execution_completed(),
           optional(:on_tool_execution_failed) => chain_tool_execution_failed(),
+          optional(:on_tool_execution_exception) => chain_tool_execution_exception(),
           optional(:on_tool_interrupted) => chain_tool_interrupted(),
           optional(:on_tool_response_created) => chain_tool_response_created(),
           optional(:on_llm_error) => chain_llm_error(),

@@ -16,6 +16,23 @@ defmodule LangChain.Message.ToolResult do
   Advanced use: You can use the `options` field for LLM-specific features like
   cache control.
 
+  ## Errors and rescued exceptions
+
+  `is_error` marks any failed result: a tool that returned `{:error, reason}`, a
+  tool call naming a tool that doesn't exist, a rejected human review, or a tool
+  that raised.
+
+  `is_exception` narrows that to results where LangChain rescued an exception, and
+  `exception` holds the `{exception, stacktrace}` pair it rescued. The exception is
+  never sent to the LLM — only the formatted message in `content` is — and it is
+  never persisted: `exception` is a virtual field, so a result restored from
+  storage carries `is_exception: true` with `exception: nil`. Code that needs the
+  exception itself should read it during the run, most conveniently through the
+  `:on_tool_execution_exception` callback.
+
+  Because `content` carries LangChain's formatted exception message and source
+  location, tools should not put secrets in exception messages.
+
   To do this, the Elixir function's result should be a `{:ok, "String response
   for LLM", native_elixir_data}`. See `LangChain.Function` for details and
   examples.
@@ -42,6 +59,11 @@ defmodule LangChain.Message.ToolResult do
     field :display_text, :string
     # flag if the result is an error
     field :is_error, :boolean, default: false
+    # flag if the result came from an exception LangChain rescued
+    field :is_exception, :boolean, default: false
+    # the rescued `{exception, stacktrace}`. Not sent to the LLM, virtual only, and
+    # absent from a result restored from storage even when `is_exception` is true.
+    field :exception, :any, virtual: true
     # flag indicating this tool result represents a paused/interrupted tool
     field :is_interrupt, :boolean, default: false
     # opaque interrupt data (not sent to LLM, virtual only)
@@ -60,6 +82,8 @@ defmodule LangChain.Message.ToolResult do
     :processed_content,
     :display_text,
     :is_error,
+    :is_exception,
+    :exception,
     :is_interrupt,
     :interrupt_data,
     :options
