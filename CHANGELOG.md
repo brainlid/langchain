@@ -1,5 +1,67 @@
 # Changelog
 
+## v0.11.0
+
+Gemini tool call ids, a `ChatReqLLM` streaming failure that escaped the error path, and visibility into exceptions raised inside a tool.
+
+**This release contains a breaking change** for code that calls
+`LangChain.Function.execute/3` directly. Chain usage is unaffected, since
+`LLMChain` handles the new shape internally.
+
+`Function.execute/3` returns `{:error, message, {exception, stacktrace}}` when it
+rescues an exception raised by a tool or by a `:parse_args` parser. That case
+previously returned `{:error, message}`. A caller matching exhaustively on the
+two-element tuple raises `CaseClauseError` when a tool raises, turning a handled
+failure into a crash.
+
+### Upgrading from v0.10.0 - v0.11.0
+
+Only direct callers of `Function.execute/3` need a change. Add a clause for the
+three-element shape ahead of the two-element one:
+
+```elixir
+case Function.execute(function, arguments, context) do
+  {:ok, llm_result} -> ...
+  {:ok, llm_result, processed_content} -> ...
+  {:interrupt, display_message, interrupt_data} -> ...
+  {:error, message, {exception, stacktrace}} -> ...
+  {:error, message} -> ...
+end
+```
+
+`{:error, message}` still covers every error a tool returns deliberately, along
+with argument checks that reject a call. The three-element shape appears only
+when an exception was actually rescued.
+
+Two behavior changes that need no code change:
+
+- Tool spans now close with an error status when a tool raises, so an
+  OpenTelemetry backend reports a tool error rate where it previously reported
+  none. Alerts thresholded on that rate may fire on the first deploy. A tool
+  returning `{:error, reason}` leaves the span unmarked, so only rescued
+  exceptions count.
+- The default model for `ChatGoogleAI` and `ChatVertexAI` is now
+  `gemini-pro-latest`. The models previously named as defaults answer every
+  request with a 404, and the `-latest` aliases track whatever Google currently
+  serves for the tier.
+
+### Added
+
+- **`:on_tool_execution_exception` callback on `LangChain.Chains.ChainCallbacks`.** Receives the chain, the `ToolCall`, the rescued exception, and its stacktrace. It fires in addition to `:on_tool_execution_failed`, which still receives the message the model sees. Error trackers group and fingerprint by stack frames, which a formatted message cannot support. It does not fire for `{:error, reason}` results, unknown tool names, human rejections, or interrupts, since none of those involve a rescued exception. https://github.com/brainlid/langchain/pull/621
+- **`is_exception` and a virtual `exception` field on `LangChain.Message.ToolResult`.** `is_exception` narrows `is_error` to results where an exception was rescued, and `exception` holds the `{exception, stacktrace}` pair. The exception is never sent to the LLM and never persisted, so a result restored from storage carries `is_exception: true` with `exception: nil`. https://github.com/brainlid/langchain/pull/621
+- **`{:error, message, {exception, stacktrace}}` return shape from `LangChain.Function.execute/3`.** It mirrors the success shape `{:ok, llm_result, processed_content}`: the second element is what the model sees, the third is the native Elixir detail kept for the application. Also returned when a `:parse_args` parser raises. https://github.com/brainlid/langchain/pull/621
+- **`LangChain.Utils.generate_tool_call_id/0`** for synthesizing a tool call id when a provider response omits one. It returns a UUID, which stays distinct from ids held by a conversation that was stored and later reloaded into a new VM. https://github.com/brainlid/langchain/pull/620
+
+### Changed
+
+- **A rescued tool exception marks the `execute_tool` OpenTelemetry span errored.** The stop handler sets an error status and an `error.type` attribute, and records the exception with its real stacktrace. `:stop` is the only point at which the span is still open. A tool returning `{:error, reason}` is a handled outcome the model reacts to and leaves the span unmarked, so error rates stay meaningful. https://github.com/brainlid/langchain/pull/621
+- **Default model for `ChatGoogleAI` and `ChatVertexAI` is `gemini-pro-latest`.** https://github.com/brainlid/langchain/pull/620
+
+### Fixed
+
+- **Gemini tool calls use the id Google reports.** Deriving the id from the tool name alone gave two calls to the same tool the same id, which pairs a `ToolResult` with the wrong call and is rejected when the conversation is replayed against a provider requiring unique ids. During `MessageDelta` accumulation, a tool call fragment continues the call at its index only when the ids agree, which keeps parallel calls separate, while a fragment carrying no id of its own still continues by index as OpenAI streams argument fragments. https://github.com/brainlid/langchain/pull/620
+- **`ChatReqLLM` returns `{:error, %LangChainError{}}` when a streamed request fails mid-stream.** req_llm builds its stream lazily and reports success before any bytes move, so a transport failure was raised from inside the stream during consumption rather than reaching the error clauses. Consumption now runs inside a rescue routing the failure through the same classifier the non-streaming path uses, reading the reason from Req, Finch, and Mint transport errors alike. A closed connection retries only when no deltas have reached the callback, since re-requesting after a consumer has rendered partial content would replay it. https://github.com/brainlid/langchain/pull/623
+
 ## v0.10.0
 
 `LangChain.Message.status` now names every way a message can fail to finish,
