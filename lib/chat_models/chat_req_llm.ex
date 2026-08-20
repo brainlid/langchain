@@ -733,7 +733,7 @@ if Code.ensure_loaded?(ReqLLM) do
             []
 
           usage_map ->
-            case translate_usage(usage_map) do
+            case translate_usage(usage_map, true) do
               nil ->
                 []
 
@@ -1220,15 +1220,28 @@ if Code.ensure_loaded?(ReqLLM) do
 
     @doc """
     Translate a `req_llm` usage map to a `LangChain.TokenUsage` struct.
-    """
-    @spec translate_usage(map() | nil) :: TokenUsage.t() | nil
-    def translate_usage(nil), do: nil
 
-    def translate_usage(usage) when is_map(usage) do
+    `cumulative` marks the usage as a running total for the message rather than
+    an increment. Pass `true` for usage read off a stream chunk: req_llm hands
+    every provider's usage over as a complete snapshot of the message so far,
+    and a provider may report more than one. Anthropic reports two, one opening
+    the message and one closing it, and summing those doubles every input class.
+    """
+    @spec translate_usage(map() | nil, boolean()) :: TokenUsage.t() | nil
+    def translate_usage(usage, cumulative \\ false)
+
+    def translate_usage(nil, _cumulative), do: nil
+
+    def translate_usage(usage, cumulative) when is_map(usage) do
       input = usage[:input_tokens] || 0
       output = usage[:output_tokens] || 0
 
-      case TokenUsage.new(%{input: input, output: output, raw: usage}) do
+      case TokenUsage.new(%{
+             input: input,
+             output: output,
+             raw: usage,
+             cumulative: cumulative
+           }) do
         {:ok, token_usage} -> token_usage
         _ -> nil
       end

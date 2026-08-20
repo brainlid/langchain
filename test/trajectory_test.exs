@@ -154,6 +154,65 @@ defmodule LangChain.TrajectoryTest do
       assert trajectory.token_usage.output == 35
     end
 
+    test "sums per-message totals when the usage is marked cumulative" do
+      # Streaming providers mark a delta's usage cumulative to say it already
+      # includes the earlier deltas *of the same message*. Across messages the
+      # totals still add up.
+      usage1 = TokenUsage.new!(%{input: 100, output: 20, cumulative: true})
+      usage2 = TokenUsage.new!(%{input: 150, output: 35, cumulative: true})
+
+      messages = [
+        user_msg("Hello"),
+        assistant_msg("Hi", usage: usage1),
+        user_msg("More"),
+        assistant_msg("Sure", usage: usage2)
+      ]
+
+      trajectory = Trajectory.from_chain(chain_with_messages(messages))
+
+      assert trajectory.token_usage.input == 250
+      assert trajectory.token_usage.output == 55
+    end
+
+    test "sums nested raw usage details across messages" do
+      # OpenAI-shaped providers report cached and reasoning tokens nested under
+      # detail maps rather than as top-level counts.
+      usage1 =
+        TokenUsage.new!(%{
+          input: 100,
+          output: 20,
+          raw: %{
+            "prompt_tokens" => 100,
+            "prompt_tokens_details" => %{"cached_tokens" => 64},
+            "completion_tokens_details" => %{"reasoning_tokens" => 8}
+          }
+        })
+
+      usage2 =
+        TokenUsage.new!(%{
+          input: 150,
+          output: 35,
+          raw: %{
+            "prompt_tokens" => 150,
+            "prompt_tokens_details" => %{"cached_tokens" => 96},
+            "completion_tokens_details" => %{"reasoning_tokens" => 12}
+          }
+        })
+
+      messages = [
+        user_msg("Hello"),
+        assistant_msg("Hi", usage: usage1),
+        user_msg("More"),
+        assistant_msg("Sure", usage: usage2)
+      ]
+
+      trajectory = Trajectory.from_chain(chain_with_messages(messages))
+
+      assert trajectory.token_usage.raw["prompt_tokens"] == 250
+      assert trajectory.token_usage.raw["prompt_tokens_details"]["cached_tokens"] == 160
+      assert trajectory.token_usage.raw["completion_tokens_details"]["reasoning_tokens"] == 20
+    end
+
     test "returns nil token usage when no messages have usage" do
       messages = [
         user_msg("Hello"),

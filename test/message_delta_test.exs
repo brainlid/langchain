@@ -1533,6 +1533,22 @@ defmodule LangChain.MessageDeltaTest do
   end
 
   describe "to_message/1" do
+    test "settles the cumulative flag on the assembled message's usage" do
+      # `:cumulative` relates one delta to the other deltas of the same message.
+      # Once assembled there are no other deltas, and a message that kept the
+      # flag would make a total across messages collapse to just this one.
+      delta = %MessageDelta{
+        merged_content: [ContentPart.text!("Hi")],
+        role: :assistant,
+        status: :complete,
+        metadata: %{usage: TokenUsage.new!(%{input: 25, output: 15, cumulative: true})}
+      }
+
+      {:ok, %Message{} = msg} = MessageDelta.to_message(delta)
+
+      assert %TokenUsage{input: 25, output: 15, cumulative: false} = TokenUsage.get(msg)
+    end
+
     test "transform a merged and complete MessageDelta to a Message" do
       # :assistant content type
       delta = %LangChain.MessageDelta{

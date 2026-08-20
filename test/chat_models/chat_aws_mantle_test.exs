@@ -2,6 +2,7 @@ defmodule LangChain.ChatModels.ChatAwsMantleTest do
   use LangChain.BaseCase
 
   alias LangChain.ChatModels.ChatAwsMantle
+  alias LangChain.Chains.LLMChain
   alias LangChain.Function
   alias LangChain.FunctionParam
   alias LangChain.LangChainError
@@ -505,13 +506,13 @@ defmodule LangChain.ChatModels.ChatAwsMantleTest do
       assert %MessageDelta{status: :complete} = ChatAwsMantle.do_process_response(m, chunk)
     end
 
-    test "usage-only terminal event is :skip", %{model: m} do
+    test "usage-only terminal event reports the usage", %{model: m} do
       chunk = %{
         "choices" => [],
         "usage" => %{"prompt_tokens" => 10, "completion_tokens" => 5, "total_tokens" => 15}
       }
 
-      assert :skip = ChatAwsMantle.do_process_response(m, chunk)
+      assert %TokenUsage{input: 10, output: 5} = ChatAwsMantle.do_process_response(m, chunk)
     end
 
     test "tool_call delta carries a ToolCall in the MessageDelta.tool_calls field", %{model: m} do
@@ -857,6 +858,72 @@ defmodule LangChain.ChatModels.ChatAwsMantleTest do
       assert text =~ ~r/owl/i
 
       assert %TokenUsage{} = msg.metadata.usage
+    end
+  end
+
+  describe "streamed token usage" do
+    setup do
+      %{
+        model:
+          ChatAwsMantle.new!(%{
+            model: @kimi_model,
+            region: "us-east-1",
+            api_key: "key",
+            stream: true,
+            stream_options: %{include_usage: true}
+          })
+      }
+    end
+
+    @usage %{
+      "prompt_tokens" => 1100,
+      "completion_tokens" => 9,
+      "total_tokens" => 1109,
+      "prompt_tokens_details" => %{"cached_tokens" => 512}
+    }
+
+    test "the usage-only terminal chunk reports usage rather than being dropped", %{model: model} do
+      chunk = %{"choices" => [], "usage" => @usage}
+
+      assert %TokenUsage{} = usage = ChatAwsMantle.do_process_response(model, chunk)
+      assert usage.input == 1100
+      assert usage.output == 9
+      assert usage.raw["prompt_tokens_details"] == %{"cached_tokens" => 512}
+    end
+
+    test "a streamed turn's usage reaches the assembled message", %{model: model} do
+      chunks = [
+        %{
+          "choices" => [
+            %{
+              "index" => 0,
+              "delta" => %{"role" => "assistant", "content" => "Hel"},
+              "finish_reason" => nil
+            }
+          ]
+        },
+        %{
+          "choices" => [
+            %{"index" => 0, "delta" => %{"content" => "lo!"}, "finish_reason" => "stop"}
+          ]
+        },
+        %{"choices" => [], "usage" => @usage}
+      ]
+
+      chain =
+        Enum.reduce(chunks, LLMChain.new!(%{llm: model}), fn chunk, acc ->
+          case ChatAwsMantle.do_process_response(model, chunk) do
+            :skip -> acc
+            item -> LLMChain.merge_delta(acc, item)
+          end
+        end)
+
+      assert {:ok, %Message{} = message} = MessageDelta.to_message(chain.delta)
+
+      usage = TokenUsage.get(message)
+      assert usage.input == 1100
+      assert usage.output == 9
+      assert usage.raw["prompt_tokens_details"]["cached_tokens"] == 512
     end
   end
 end

@@ -106,9 +106,18 @@ defmodule LangChain.ChatModels.ChatModel do
     #       - Google/Vertex tag *every* delta with a `cumulative: true` running
     #         total; `add/2` keeps the latest (the final total). Taking the first
     #         would report an early partial total.
-    #       - Anthropic splits input tokens (`message_start`) from final output
-    #         tokens (`message_delta`) across two deltas; `add/2` combines them.
-    usage = message_usage(flat) || accumulate_delta_usage(flat)
+    #       - Anthropic reports usage twice: `message_start` opens with the input
+    #         classes, and `message_delta` closes with a `cumulative: true` total
+    #         for the whole message. `add/2` keeps the closing total and carries
+    #         forward any class it leaves unreported. Summing the two would
+    #         double every input-class count.
+    # The result is one completed call either way, so the `:cumulative` flag,
+    # which only describes how deltas of this message relate to each other, is
+    # settled here. Emitting it would invite a consumer summing usage across
+    # calls to have `add/2` keep only the last one.
+    usage =
+      (message_usage(flat) || accumulate_delta_usage(flat))
+      |> TokenUsage.clear_cumulative()
 
     %{token_usage: usage}
   end

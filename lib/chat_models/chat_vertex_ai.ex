@@ -747,7 +747,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
 
   def do_process_response(model, %{"candidates" => candidates} = data, message_type)
       when is_list(candidates) do
-    token_usage = get_token_usage(data)
+    token_usage = get_token_usage(data, message_type)
 
     case token_usage do
       %TokenUsage{} = usage ->
@@ -991,16 +991,21 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     end
   end
 
-  defp get_token_usage(%{"usageMetadata" => usage} = _response_body) do
+  defp get_token_usage(%{"usageMetadata" => usage} = _response_body, message_type) do
     # extract out the reported response token usage
     TokenUsage.new!(%{
       input: Map.get(usage, "promptTokenCount", 0),
       output: Map.get(usage, "candidatesTokenCount", 0),
-      raw: usage
+      raw: usage,
+      # Every streamed chunk repeats the totals for the message so far rather
+      # than reporting only what that chunk added, so merging deltas must keep
+      # the latest reading instead of summing them. A whole response reports
+      # once and needs no such marking.
+      cumulative: message_type == MessageDelta
     })
   end
 
-  defp get_token_usage(_response_body), do: nil
+  defp get_token_usage(_response_body, _message_type), do: nil
 
   defp unmap_role("model"), do: "assistant"
   defp unmap_role("function"), do: "tool"
