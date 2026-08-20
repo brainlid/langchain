@@ -498,11 +498,11 @@ defmodule LangChain.Trajectory do
   end
 
   defp aggregate_token_usage(messages) do
+    # Each message carries its own final usage, so this sums per-message totals.
+    # `add_total/2` clears the delta-merge `:cumulative` flag first; left set, it
+    # makes the running total collapse to whichever message came last.
     Enum.reduce(messages, nil, fn msg, acc ->
-      case TokenUsage.get(msg) do
-        nil -> acc
-        usage -> TokenUsage.add(acc, usage)
-      end
+      TokenUsage.add_total(acc, TokenUsage.get(msg))
     end)
   end
 

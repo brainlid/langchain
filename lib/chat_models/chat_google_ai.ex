@@ -850,7 +850,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     # Google is odd in that it returns token usage for each MessageDelta as it
     # goes, incrementing the number of generated tokens. I haven't seen anyone
     # else do this. For now, we fire each and every TokenUsage we receive.
-    token_usage = get_token_usage(data)
+    token_usage = get_token_usage(data, message_type)
 
     case token_usage do
       %TokenUsage{} = usage ->
@@ -1112,18 +1112,20 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     ChatGoogleAI.new(data)
   end
 
-  defp get_token_usage(%{"usageMetadata" => usage} = _response_body) do
+  defp get_token_usage(%{"usageMetadata" => usage} = _response_body, message_type) do
     # extract out the reported response token usage
     TokenUsage.new!(%{
       input: Map.get(usage, "promptTokenCount", 0),
       output: Map.get(usage, "candidatesTokenCount", 0),
       raw: usage,
-      # Empirically, each delta's token usage includes the total token usage so far.
-      cumulative: true
+      # Empirically, each delta's token usage includes the total token usage so
+      # far, so merging deltas keeps the latest reading rather than summing
+      # them. A whole response reports once and needs no such marking.
+      cumulative: message_type == MessageDelta
     })
   end
 
-  defp get_token_usage(_response_body), do: nil
+  defp get_token_usage(_response_body, _message_type), do: nil
 
   # A full list of finish reasons and their meanings can be found here:
   # https://ai.google.dev/api/generate-content#FinishReason

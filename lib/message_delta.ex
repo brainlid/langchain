@@ -490,6 +490,7 @@ defmodule LangChain.MessageDelta do
       delta
       |> Map.from_struct()
       |> Map.put(:content, content)
+      |> settle_token_usage()
 
     case Message.new(attrs) do
       {:ok, message} ->
@@ -499,6 +500,17 @@ defmodule LangChain.MessageDelta do
         {:error, Utils.changeset_error_to_string(changeset)}
     end
   end
+
+  # `:cumulative` describes how one delta's usage relates to the other deltas of
+  # the same message. Those deltas are now merged, so the flag has no remaining
+  # meaning, and a message that kept it would make a later `TokenUsage.add/2`
+  # across messages report only this one. This makes a streamed message's usage
+  # indistinguishable from a non-streamed one's.
+  defp settle_token_usage(%{metadata: %{usage: %TokenUsage{} = usage}} = attrs) do
+    put_in(attrs, [:metadata, :usage], TokenUsage.clear_cumulative(usage))
+  end
+
+  defp settle_token_usage(attrs), do: attrs
 
   # Filter nil values from list (from index padding during delta merging)
   @spec reject_nil(list() | any()) :: list() | any()
