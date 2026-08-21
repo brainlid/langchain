@@ -261,11 +261,18 @@ defmodule LangChain.ChatModels.ChatGrokTest do
           stream_options: %{include_usage: true}
         })
 
-      {:ok, deltas} = ChatGrok.call(grok, "Count from 1 to 3")
+      {:ok, [_ | _] = items} = ChatGrok.call(grok, "Count from 1 to 3")
 
-      assert is_list(deltas)
-      assert length(deltas) > 0
-      assert Enum.all?(deltas, fn delta -> match?(%LangChain.MessageDelta{}, delta) end)
+      # `include_usage` closes the stream with a usage-only chunk, which comes
+      # back as a `%TokenUsage{}` among the deltas.
+      {usage, deltas} = Enum.split_with(items, &match?(%TokenUsage{}, &1))
+
+      assert [%MessageDelta{} | _] = deltas
+      assert Enum.all?(deltas, &match?(%MessageDelta{}, &1))
+
+      assert [%TokenUsage{input: input, output: output}] = usage
+      assert input > 0
+      assert output > 0
     end
 
     @tag live_call: true, live_grok: true
