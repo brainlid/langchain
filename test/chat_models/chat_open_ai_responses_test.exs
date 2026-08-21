@@ -731,6 +731,64 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
     end
   end
 
+  describe "native tool call option shape" do
+    setup do
+      %{model: ChatOpenAIResponses.new!(%{"model" => @test_model})}
+    end
+
+    # A stored conversation comes back with its ContentPart options as a keyword
+    # list. A native tool call has to serialize the same either way, or it goes
+    # missing from the history of a conversation that outlived its process.
+    test "serializes a web_search_call the same before and after a round trip", %{model: model} do
+      %ContentPart{} =
+        part =
+        ContentPart.new!(%{
+          type: :unsupported,
+          options: [id: "ws_1", status: "completed", type: "web_search_call"]
+        })
+
+      restored =
+        %ContentPart{
+          part
+          | options:
+              part.options
+              |> Map.new(fn {k, v} -> {to_string(k), v} end)
+              |> Enum.map(fn {k, v} -> {String.to_existing_atom(k), v} end)
+              |> Keyword.new()
+        }
+
+      assert %{id: "ws_1", type: "web_search_call", status: "completed"} =
+               ChatOpenAIResponses.native_tool_call_for_api(model, part)
+
+      assert ChatOpenAIResponses.native_tool_call_for_api(model, part) ==
+               ChatOpenAIResponses.native_tool_call_for_api(model, restored)
+    end
+
+    test "parses a web_search_call into keyword options", %{model: model} do
+      response = %{
+        "status" => "completed",
+        "output" => [
+          %{"type" => "web_search_call", "id" => "ws_1", "status" => "completed"}
+        ]
+      }
+
+      assert %LangChain.Message{} =
+               message = ChatOpenAIResponses.do_process_response(model, response)
+
+      assert [%ContentPart{type: :unsupported} = part] = message.content
+      assert is_list(part.options)
+      assert part.options[:type] == "web_search_call"
+
+      assert [%{id: "ws_1", type: "web_search_call", status: "completed"}] =
+               ChatOpenAIResponses.for_api(model, message)
+    end
+
+    test "ignores an unsupported part that is not a native tool call", %{model: model} do
+      part = ContentPart.new!(%{type: :unsupported, options: [type: "something_else"]})
+      assert nil == ChatOpenAIResponses.native_tool_call_for_api(model, part)
+    end
+  end
+
   describe "reasoning item continuity" do
     setup do
       %{model: ChatOpenAIResponses.new!(%{"model" => @test_model})}
@@ -905,7 +963,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
       search =
         ContentPart.new!(%{
           type: :unsupported,
-          options: %{id: "ws_one", type: "web_search_call", status: "completed"}
+          options: [id: "ws_one", type: "web_search_call", status: "completed"]
         })
 
       reasoning_two =
@@ -1368,7 +1426,9 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
       assert result.status == :complete
       [content_part] = result.content
       assert content_part.type == :unsupported
-      assert %{results: [_, _], queries: [_], type: "file_search_call"} = content_part.options
+      assert [_, _] = content_part.options[:results]
+      assert [_] = content_part.options[:queries]
+      assert content_part.options[:type] == "file_search_call"
     end
 
     test "handles error responses", %{model: model} do

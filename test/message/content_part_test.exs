@@ -28,6 +28,57 @@ defmodule LangChain.Message.ContentPartTest do
     end
   end
 
+  describe "new/1 options" do
+    test "keeps a keyword list of options as-is" do
+      {:ok, %ContentPart{} = part} =
+        ContentPart.new(%{type: :thinking, content: "hmm", options: [signature: "sig"]})
+
+      assert part.options == [signature: "sig"]
+    end
+
+    test "converts a map of options into a keyword list" do
+      {:ok, %ContentPart{} = part} =
+        ContentPart.new(%{
+          type: :unsupported,
+          options: %{id: "ws_1", status: "completed", type: "web_search_call"}
+        })
+
+      assert is_list(part.options)
+      assert part.options[:id] == "ws_1"
+      assert part.options[:status] == "completed"
+      assert part.options[:type] == "web_search_call"
+    end
+
+    test "converts an empty map of options into an empty list" do
+      {:ok, %ContentPart{} = part} = ContentPart.new(%{type: :text, content: "hi", options: %{}})
+      assert part.options == []
+    end
+
+    test "rejects a map of options with non-atom keys" do
+      # Converting caller-supplied strings to atoms would let untrusted input
+      # grow the atom table.
+      assert {:error, changeset} =
+               ContentPart.new(%{type: :unsupported, options: %{"id" => "ws_1"}})
+
+      refute changeset.valid?
+      assert {"keys must be atoms", _} = changeset.errors[:options]
+    end
+
+    test "options survive the writers and readers that expect a keyword list" do
+      part =
+        ContentPart.new!(%{
+          type: :unsupported,
+          options: %{id: "ws_1", type: "web_search_call"}
+        })
+
+      assert [%ContentPart{} = updated] =
+               ContentPart.set_option_on_last_part([part], :cache_control, true)
+
+      assert updated.options[:cache_control] == true
+      assert updated.options[:id] == "ws_1"
+    end
+  end
+
   describe "new!/1" do
     test "accepts valid settings" do
       %ContentPart{} = part = ContentPart.new!(%{type: :text, content: "Hello!"})

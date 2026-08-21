@@ -172,13 +172,12 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
       Message.new_assistant!([
         ContentPart.new!(%{
           type: :unsupported,
-            options: %{
-              id: "ws_123456789", # ID as provided from Open AI
-              status: "completed",
-              type: "web_search_call"
-            }
-          }
-        ),
+          options: [
+            id: "ws_123456789", # ID as provided from Open AI
+            status: "completed",
+            type: "web_search_call"
+          ]
+        }),
         ContentPart.text!("The Astros won today 5-4...")
       ])
 
@@ -911,9 +910,18 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
           nil | %{id: any(), status: any(), type: <<_::120>>}
   def native_tool_call_for_api(%ChatOpenAIResponses{} = _model, %ContentPart{
         type: :unsupported,
-        options: %{type: "web_search_call"} = opts
-      }) do
-    %{id: opts.id, type: "web_search_call", status: opts.status}
+        options: options
+      })
+      when is_list(options) do
+    if Keyword.get(options, :type) == "web_search_call" do
+      %{
+        id: Keyword.get(options, :id),
+        type: "web_search_call",
+        status: Keyword.get(options, :status)
+      }
+    else
+      nil
+    end
   end
 
   def native_tool_call_for_api(_, _), do: nil
@@ -2092,12 +2100,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
        }) do
     case ContentPart.new(%{
            type: :unsupported,
-           options: %{
-             id: web_search_call_id,
-             status: "completed",
-             type: "web_search_call"
-           },
-           call_id: web_search_call_id
+           options: [id: web_search_call_id, status: "completed", type: "web_search_call"]
          }) do
       {:ok, %ContentPart{} = call} ->
         call
@@ -2146,12 +2149,12 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     # This preserves the information without breaking the flow
     case ContentPart.new(%{
            type: :unsupported,
-           options: %{
+           options: [
              id: part["id"],
              type: "file_search_call",
              queries: part["queries"],
              results: part["results"]
-           }
+           ]
          }) do
       {:ok, %ContentPart{} = part} ->
         part
