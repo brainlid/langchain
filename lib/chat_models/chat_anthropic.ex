@@ -2348,6 +2348,10 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     return
   end
 
+  # A stream reports usage twice. `message_start` opens the message with the
+  # input classes and `message_delta` closes it with the totals for the whole
+  # message, so `TokenUsage.add/2` keeps the larger reading per class rather
+  # than adding the two together.
   defp get_token_usage(usage_data) do
     # if prompt caching has been used the response will also contain
     # "cache_creation_input_tokens" and "cache_read_input_tokens"

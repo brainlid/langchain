@@ -991,6 +991,9 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     end
   end
 
+  # Every streamed chunk repeats the totals for the message so far rather than
+  # reporting only what that chunk added, so `TokenUsage.add/2` keeps the largest
+  # reading across a stream instead of summing the readings.
   defp get_token_usage(%{"usageMetadata" => usage} = _response_body) do
     # extract out the reported response token usage
     TokenUsage.new!(%{

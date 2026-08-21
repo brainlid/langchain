@@ -122,26 +122,27 @@ defmodule LangChain.ChatModels.ChatModelTest do
       assert %{token_usage: ^usage} = ChatModel.token_usage_from_result({:ok, messages})
     end
 
-    test "keeps the final cumulative total across streamed deltas (Google/Vertex)" do
-      # Google/Vertex tag *every* streamed delta with a `cumulative: true` running
-      # total — the final delta carries the full count, earlier ones carry
-      # partials. Regression: selecting the *first* delta with usage reported an
-      # early partial total, under-counting the `:stop` event and the OTEL span.
+    test "keeps the final running total across streamed deltas (Google/Vertex)" do
+      # Google/Vertex report a running total on *every* streamed delta. The
+      # final delta carries the full count, earlier ones carry partials.
+      # Selecting the *first* delta with usage reports an early partial total,
+      # under-counting the `:stop` event and the OTEL span; summing the deltas
+      # reports several times the truth.
       deltas = [
         %MessageDelta{
           role: :assistant,
           content: "a",
-          metadata: %{usage: %TokenUsage{input: 10, output: 1, cumulative: true}}
+          metadata: %{usage: %TokenUsage{input: 10, output: 1}}
         },
         %MessageDelta{
           role: :assistant,
           content: "b",
-          metadata: %{usage: %TokenUsage{input: 10, output: 3, cumulative: true}}
+          metadata: %{usage: %TokenUsage{input: 10, output: 3}}
         },
         %MessageDelta{
           role: :assistant,
           content: "c",
-          metadata: %{usage: %TokenUsage{input: 10, output: 5, cumulative: true}}
+          metadata: %{usage: %TokenUsage{input: 10, output: 5}}
         }
       ]
 
@@ -150,9 +151,9 @@ defmodule LangChain.ChatModels.ChatModelTest do
     end
 
     test "combines usage split across streamed deltas (Anthropic input/output split)" do
-      # Anthropic reports input tokens on the `message_start` delta and the final
-      # output tokens on the `message_delta` delta — two separate, partial deltas.
-      # Neither alone is the full total; `TokenUsage.add/2` combines them, matching
+      # Anthropic reports the input classes on the `message_start` delta and the
+      # final output tokens on the `message_delta` delta. Neither reading alone
+      # describes the whole message; `TokenUsage.add/2` combines them, matching
       # what `MessageDelta.merge_deltas/2` produces on the assembled message.
       deltas = [
         %MessageDelta{
@@ -169,6 +170,59 @@ defmodule LangChain.ChatModels.ChatModelTest do
 
       assert %{token_usage: %TokenUsage{input: 25, output: 15}} =
                ChatModel.token_usage_from_result({:ok, deltas})
+    end
+
+    test "reads a bare %TokenUsage{} carried alongside the streamed deltas", %{usage: usage} do
+      # OpenAI-shaped providers (ChatOpenAI, ChatAwsMantle, ChatGrok) answer the
+      # usage-only terminal chunk with a bare `%TokenUsage{}` rather than hanging
+      # it off a delta's metadata, and `LangChain.Utils` leaves it in the response
+      # body because only `:skip` is filtered out. Scanning only delta metadata
+      # reports `token_usage: nil` for every streamed call those providers make.
+      items = [
+        %MessageDelta{role: :assistant, content: "hi", metadata: nil},
+        %MessageDelta{role: :assistant, content: " there", metadata: nil},
+        usage
+      ]
+
+      assert %{token_usage: ^usage} = ChatModel.token_usage_from_result({:ok, items})
+    end
+
+    test "a bare %TokenUsage{} repeating the deltas' usage is not counted twice" do
+      # An OpenAI-compatible server asked for `continuous_usage_stats` puts a
+      # running total on every content chunk *and* repeats it on the usage-only
+      # terminal chunk. Both carriers describe the same message, so the bare
+      # struct joins the same `TokenUsage.add/2` fold the delta-borne readings go
+      # through rather than being added on top of them.
+      items = [
+        %MessageDelta{
+          role: :assistant,
+          content: "Hel",
+          metadata: %{usage: %TokenUsage{input: 11, output: 1}}
+        },
+        %MessageDelta{
+          role: :assistant,
+          content: "lo!",
+          metadata: %{usage: %TokenUsage{input: 11, output: 2}}
+        },
+        %TokenUsage{input: 11, output: 2}
+      ]
+
+      assert %{token_usage: %TokenUsage{input: 11, output: 2}} =
+               ChatModel.token_usage_from_result({:ok, items})
+    end
+
+    test "a bare %TokenUsage{} fills in a class the deltas never reported" do
+      items = [
+        %MessageDelta{
+          role: :assistant,
+          content: "hi",
+          metadata: %{usage: %TokenUsage{input: 25, output: 0}}
+        },
+        %TokenUsage{output: 15}
+      ]
+
+      assert %{token_usage: %TokenUsage{input: 25, output: 15}} =
+               ChatModel.token_usage_from_result({:ok, items})
     end
 
     test "returns nil usage when none is present" do

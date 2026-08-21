@@ -1068,12 +1068,12 @@ defmodule LangChain.MessageDeltaTest do
                metadata: %{
                  usage: %LangChain.TokenUsage{
                    input: 55,
-                   output: 84,
+                   output: 80,
                    raw: %{
                      "cache_creation_input_tokens" => 0,
                      "cache_read_input_tokens" => 0,
                      "input_tokens" => 55,
-                     "output_tokens" => 84
+                     "output_tokens" => 80
                    }
                  }
                }
@@ -1366,7 +1366,7 @@ defmodule LangChain.MessageDeltaTest do
              }
     end
 
-    test "accumulates token usage across batches" do
+    test "combines token usage across batches" do
       accumulated = nil
 
       batch_1 = [
@@ -1381,20 +1381,21 @@ defmodule LangChain.MessageDeltaTest do
 
       accumulated = MessageDelta.merge_deltas(accumulated, batch_1)
 
+      # A later batch reports the message's counts again, further along.
       batch_2 = [
         %MessageDelta{
           content: " world",
           role: :assistant,
           metadata: %{
-            usage: %LangChain.TokenUsage{input: 5, output: 10}
+            usage: %LangChain.TokenUsage{input: 10, output: 12}
           }
         }
       ]
 
       result = MessageDelta.merge_deltas(accumulated, batch_2)
 
-      assert result.metadata.usage.input == 15
-      assert result.metadata.usage.output == 15
+      assert result.metadata.usage.input == 10
+      assert result.metadata.usage.output == 12
     end
 
     test "handles empty batch list" do
@@ -1497,7 +1498,7 @@ defmodule LangChain.MessageDeltaTest do
       assert merged.metadata[:stop_details] == %{"type" => "refusal"}
     end
 
-    test "usage is still summed rather than replaced by the incoming delta's value" do
+    test "usage is combined rather than replaced wholesale by the incoming delta" do
       primary =
         MessageDelta.new!(%{
           role: :assistant,
@@ -1514,8 +1515,10 @@ defmodule LangChain.MessageDeltaTest do
 
       merged = MessageDelta.merge_delta(primary, incoming)
 
+      # The incoming reading advances the output count and says nothing about
+      # the input one, which stands at what the earlier reading established.
       assert merged.metadata[:usage].input == 10
-      assert merged.metadata[:usage].output == 12
+      assert merged.metadata[:usage].output == 7
       assert merged.metadata[:stop_details] == %{"type" => "refusal"}
     end
 
@@ -1533,6 +1536,19 @@ defmodule LangChain.MessageDeltaTest do
   end
 
   describe "to_message/1" do
+    test "carries the merged usage onto the assembled message" do
+      delta = %MessageDelta{
+        merged_content: [ContentPart.text!("Hi")],
+        role: :assistant,
+        status: :complete,
+        metadata: %{usage: TokenUsage.new!(%{input: 25, output: 15})}
+      }
+
+      {:ok, %Message{} = msg} = MessageDelta.to_message(delta)
+
+      assert %TokenUsage{input: 25, output: 15} = TokenUsage.get(msg)
+    end
+
     test "transform a merged and complete MessageDelta to a Message" do
       # :assistant content type
       delta = %LangChain.MessageDelta{

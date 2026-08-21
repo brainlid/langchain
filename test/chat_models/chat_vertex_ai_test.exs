@@ -1495,4 +1495,73 @@ defmodule ChatModels.ChatVertexAITest do
       verify!()
     end
   end
+
+  describe "streamed token usage" do
+    # Gemini repeats the running totals for the message on every streamed
+    # chunk rather than reporting only what that chunk added, so merging the
+    # deltas must keep the latest reading instead of summing them.
+    defp usage_chunk(text, output_tokens, opts \\ []) do
+      candidate =
+        %{"content" => %{"role" => "model", "parts" => [%{"text" => text}]}, "index" => 0}
+        |> then(fn c ->
+          if opts[:last], do: Map.put(c, "finishReason", "STOP"), else: c
+        end)
+
+      %{
+        "candidates" => [candidate],
+        "usageMetadata" => %{
+          "promptTokenCount" => 100,
+          "candidatesTokenCount" => output_tokens,
+          "totalTokenCount" => 100 + output_tokens
+        }
+      }
+    end
+
+    test "a per-chunk running total is not summed across chunks", %{model: model} do
+      chunks = [
+        usage_chunk("Hel", 1),
+        usage_chunk("lo", 5),
+        usage_chunk("!", 9, last: true)
+      ]
+
+      merged =
+        chunks
+        |> Enum.flat_map(&ChatVertexAI.do_process_response(model, &1, MessageDelta))
+        |> MessageDelta.merge_deltas()
+
+      usage = TokenUsage.get(merged)
+
+      assert usage.input == 100
+      assert usage.output == 9
+      assert usage.raw["promptTokenCount"] == 100
+      assert usage.raw["candidatesTokenCount"] == 9
+    end
+
+    test "no reported count exceeds the largest single chunk reporting it", %{model: model} do
+      chunks = [
+        usage_chunk("Hel", 1),
+        usage_chunk("lo", 5),
+        usage_chunk("!", 9, last: true)
+      ]
+
+      merged =
+        chunks
+        |> Enum.flat_map(&ChatVertexAI.do_process_response(model, &1, MessageDelta))
+        |> MessageDelta.merge_deltas()
+
+      usage = TokenUsage.get(merged)
+
+      assert usage.input <= 100
+      assert usage.output <= 9
+      assert usage.raw["totalTokenCount"] <= 109
+    end
+
+    test "a whole response reports its usage once", %{model: model} do
+      response = usage_chunk("Hello User!", 9, last: true)
+
+      assert [%Message{} = message] = ChatVertexAI.do_process_response(model, response, Message)
+
+      assert %TokenUsage{input: 100, output: 9} = TokenUsage.get(message)
+    end
+  end
 end

@@ -1172,5 +1172,67 @@ defmodule LangChain.ChatModels.ChatPerplexityTest do
 
       :telemetry.detach("test-perplexity-token-usage-stop")
     end
+
+    # Perplexity puts `usage` on the chunk that closes the stream, alongside the
+    # final content delta. Decoding that chunk without reading the usage leaves
+    # a streamed turn reporting nothing at all: no callback, no message
+    # metadata, and `token_usage: nil` on the LLM call :stop event.
+    test "streamed call persists token usage onto the message and stop event" do
+      test_pid = self()
+
+      perplexity =
+        ChatPerplexity.new!(%{
+          model: @test_model,
+          api_key: "test-key",
+          stream: true,
+          callbacks: [
+            %{on_llm_token_usage: fn usage -> send(test_pid, {:usage, usage}) end}
+          ]
+        })
+
+      chunks = [
+        ~s|data: {"choices":[{"index":0,"delta":{"role":"assistant","content":"Hel"},"finish_reason":null}]}\n\n|,
+        ~s|data: {"usage":{"prompt_tokens":5,"completion_tokens":8,"total_tokens":13},"choices":[{"index":0,"delta":{"content":"lo!"},"finish_reason":"stop"}]}\n\n|
+      ]
+
+      expect(Req, :post, fn req, opts ->
+        collector = Keyword.fetch!(opts, :into)
+        start = {req, %Req.Response{status: 200, headers: %{}, body: ""}}
+
+        {_req, response} =
+          Enum.reduce(chunks, start, fn chunk, acc ->
+            case collector.({:data, chunk}, acc) do
+              {:cont, next} -> next
+              {:halt, next} -> next
+            end
+          end)
+
+        {:ok, response}
+      end)
+
+      :telemetry.attach(
+        "test-perplexity-streamed-token-usage-stop",
+        [:langchain, :llm, :call, :stop],
+        fn _name, _measurements, metadata, _config ->
+          send(test_pid, {:stop, metadata})
+        end,
+        nil
+      )
+
+      assert {:ok, items} = ChatPerplexity.call(perplexity, [Message.new_user!("Hi")], [])
+
+      # The usage rides on the deltas, so it survives into the assembled message.
+      assert {:ok, %Message{} = message} =
+               items |> List.flatten() |> MessageDelta.merge_deltas() |> MessageDelta.to_message()
+
+      assert %TokenUsage{input: 5, output: 8} = TokenUsage.get(message)
+
+      assert_received {:usage, %TokenUsage{input: 5, output: 8}}
+
+      assert_received {:stop, stop_metadata}
+      assert %TokenUsage{input: 5, output: 8} = stop_metadata.token_usage
+
+      :telemetry.detach("test-perplexity-streamed-token-usage-stop")
+    end
   end
 end

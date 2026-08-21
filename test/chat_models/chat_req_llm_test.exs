@@ -1763,5 +1763,79 @@ if Code.ensure_loaded?(ReqLLM) do
 
       IO.inspect(last_msg, label: "LIVE STREAMING TOOL CHAIN FINAL MESSAGE")
     end
+
+    describe "streamed token usage" do
+      # req_llm hands usage over as a complete snapshot of the message so far,
+      # and a provider may report more than one. Anthropic reports two: one
+      # opening the message and one closing it.
+      defp usage_snapshot(input, output, opts \\ []) do
+        %{
+          input_tokens: input,
+          output_tokens: output,
+          total_tokens: input + output,
+          cached_tokens: Keyword.get(opts, :cache_read, 0),
+          cache_read_input_tokens: Keyword.get(opts, :cache_read, 0),
+          cache_creation_input_tokens: Keyword.get(opts, :cache_creation, 0),
+          reasoning_tokens: 0
+        }
+      end
+
+      defp merge_usage_chunks(snapshots) do
+        snapshots
+        |> Enum.map(&%ReqLLM.StreamChunk{type: :meta, metadata: %{usage: &1}})
+        |> Enum.flat_map(&ChatReqLLM.translate_stream_chunk/1)
+        |> MessageDelta.merge_deltas()
+        |> TokenUsage.get()
+      end
+
+      test "two snapshots report the later reading, not their sum" do
+        usage =
+          merge_usage_chunks([
+            usage_snapshot(10, 1, cache_creation: 31_350),
+            usage_snapshot(10, 93, cache_creation: 31_350)
+          ])
+
+        assert usage.input == 10
+        assert usage.output == 93
+        assert usage.raw[:cache_creation_input_tokens] == 31_350
+      end
+
+      test "a zero-filled snapshot does not erase a class an earlier one reported" do
+        # req_llm normalizes an unreported class to zero rather than omitting it,
+        # so a closing snapshot that only carries output tokens arrives with
+        # every other count set to 0.
+        usage =
+          merge_usage_chunks([
+            usage_snapshot(25, 1, cache_creation: 4096, cache_read: 128),
+            usage_snapshot(0, 15)
+          ])
+
+        assert usage.input == 25
+        assert usage.output == 15
+        assert usage.raw[:cache_creation_input_tokens] == 4096
+        assert usage.raw[:cache_read_input_tokens] == 128
+      end
+
+      test "no count exceeds the largest single snapshot reporting it" do
+        first = usage_snapshot(10, 1, cache_creation: 31_350)
+        second = usage_snapshot(10, 93, cache_creation: 31_350)
+
+        usage = merge_usage_chunks([first, second])
+
+        for key <- [:input_tokens, :output_tokens, :cache_creation_input_tokens] do
+          largest = max(first[key], second[key])
+
+          assert usage.raw[key] <= largest,
+                 "#{key} accumulated to #{usage.raw[key]}, above the largest snapshot of #{largest}"
+        end
+      end
+
+      test "a whole non-streamed response reports its usage once" do
+        usage = ChatReqLLM.translate_usage(usage_snapshot(100, 20))
+
+        assert %TokenUsage{input: 100, output: 20} = usage
+        assert usage.raw[:total_tokens] == 120
+      end
+    end
   end
 end

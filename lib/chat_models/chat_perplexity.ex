@@ -905,12 +905,43 @@ defmodule LangChain.ChatModels.ChatPerplexity do
     ChatPerplexity.new(data)
   end
 
+  defp process_stream_chunk(perplexity, chunk) do
+    chunk
+    |> decode_stream_chunk()
+    |> attach_stream_usage(perplexity, chunk)
+  end
+
+  # Perplexity reports usage once, on the chunk that closes the stream, riding
+  # alongside the final content delta rather than on a chunk of its own.
+  # Attaching it to the deltas that chunk produced is what carries it onto the
+  # assembled message, and from there to the
+  # `[:langchain, :llm, :call, :stop]` telemetry event and the OTEL span.
+  # `TokenUsage.add/2` combines several readings of one message by keeping the
+  # larger count per field, so a delta pair that both carry it still reports it
+  # once.
+  defp attach_stream_usage(deltas, perplexity, %{"usage" => usage}) when is_map(usage) do
+    case get_token_usage(%{"usage" => usage}) do
+      %TokenUsage{} = token_usage ->
+        Callbacks.fire(perplexity.callbacks, :on_llm_token_usage, [token_usage])
+        apply_stream_usage(deltas, token_usage)
+
+      nil ->
+        deltas
+    end
+  end
+
+  defp attach_stream_usage(deltas, _perplexity, _chunk), do: deltas
+
+  defp apply_stream_usage(deltas, usage) when is_list(deltas),
+    do: Enum.map(deltas, &TokenUsage.set(&1, usage))
+
+  defp apply_stream_usage(delta, usage), do: TokenUsage.set(delta, usage)
+
   # Content delta on the final chunk (finish_reason: "stop"). Also extract
   # citations from the chunk since Perplexity includes them on every chunk
   # but we only need to process them once at completion. Returns a list
   # [citation_delta, content_delta] so both flow through the pipeline.
-  defp process_stream_chunk(
-         _perplexity,
+  defp decode_stream_chunk(
          %{
            "choices" => [
              %{
@@ -931,7 +962,7 @@ defmodule LangChain.ChatModels.ChatPerplexity do
 
   # Content delta on intermediate chunks (no finish_reason or nil).
   # Ignore citations here since they repeat on every chunk.
-  defp process_stream_chunk(_perplexity, %{
+  defp decode_stream_chunk(%{
          "choices" => [
            %{"delta" => %{"content" => content}} | _
          ]
@@ -940,8 +971,7 @@ defmodule LangChain.ChatModels.ChatPerplexity do
   end
 
   # Completion chunk with no content delta.
-  defp process_stream_chunk(
-         _perplexity,
+  defp decode_stream_chunk(
          %{
            "choices" => [
              %{"finish_reason" => "stop"} | _
@@ -956,7 +986,7 @@ defmodule LangChain.ChatModels.ChatPerplexity do
     end
   end
 
-  defp process_stream_chunk(_perplexity, _chunk) do
+  defp decode_stream_chunk(_chunk) do
     %MessageDelta{}
   end
 

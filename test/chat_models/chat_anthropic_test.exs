@@ -936,7 +936,11 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
       assert message.status == :content_filtered
       assert message.content == [ContentPart.text!("Here is the first step")]
       assert message.metadata[:stop_details] == %{"type" => "refusal", "category" => "cyber"}
-      assert message.metadata[:usage].output == 13
+      # `message_delta` closes with the totals for the message, so its 12 output
+      # tokens replace the 1 opened with rather than adding to it. The input
+      # count it does not repeat carries forward from `message_start`.
+      assert message.metadata[:usage].input == 14
+      assert message.metadata[:usage].output == 12
     end
 
     test "handles receiving a content_block_start event for text", %{model: model} do
@@ -1527,12 +1531,12 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
                metadata: %{
                  usage: %LangChain.TokenUsage{
                    input: 99,
-                   output: 362,
+                   output: 234,
                    raw: %{
                      "cache_creation_input_tokens" => 0,
                      "cache_read_input_tokens" => 0,
                      "input_tokens" => 99,
-                     "output_tokens" => 362
+                     "output_tokens" => 234
                    }
                  }
                }
@@ -5184,6 +5188,188 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       refute ChatAnthropic.retry_on_fallback?(
                LangChainError.exception(type: "something_else", message: "Unknown")
              )
+    end
+  end
+
+  describe "streamed token usage" do
+    setup do
+      %{model: ChatAnthropic.new!(%{stream: true})}
+    end
+
+    # The events below are transcribed from Anthropic's streaming documentation.
+    # A stream reports usage twice: `message_start` opens the message and
+    # `message_delta` closes it with the totals for the whole message, repeating
+    # the input classes rather than adding to them.
+    defp stream_to_message(model, events) do
+      {:ok, %Message{} = message} =
+        events
+        |> Enum.filter(&ChatAnthropic.relevant_event?/1)
+        |> Enum.map(&ChatAnthropic.do_process_response(model, &1))
+        |> MessageDelta.merge_deltas()
+        |> MessageDelta.to_message()
+
+      message
+    end
+
+    defp message_start_event(usage) do
+      %{
+        "type" => "message_start",
+        "message" => %{
+          "id" => "msg_01G",
+          "type" => "message",
+          "role" => "assistant",
+          "model" => "claude-3-7-sonnet-20250219",
+          "content" => [],
+          "stop_reason" => nil,
+          "stop_sequence" => nil,
+          "usage" => usage
+        }
+      }
+    end
+
+    defp text_events do
+      [
+        %{
+          "type" => "content_block_start",
+          "index" => 0,
+          "content_block" => %{"type" => "text", "text" => ""}
+        },
+        %{
+          "type" => "content_block_delta",
+          "index" => 0,
+          "delta" => %{"type" => "text_delta", "text" => "Hello"}
+        },
+        %{"type" => "content_block_stop", "index" => 0}
+      ]
+    end
+
+    defp message_delta_event(usage) do
+      %{
+        "type" => "message_delta",
+        "delta" => %{"stop_reason" => "end_turn", "stop_sequence" => nil},
+        "usage" => usage
+      }
+    end
+
+    test "the closing total is the message's usage, not a sum", %{model: model} do
+      message =
+        stream_to_message(
+          model,
+          [
+            message_start_event(%{
+              "input_tokens" => 2679,
+              "cache_creation_input_tokens" => 0,
+              "cache_read_input_tokens" => 0,
+              "output_tokens" => 3
+            })
+          ] ++
+            text_events() ++
+            [
+              message_delta_event(%{
+                "input_tokens" => 10_682,
+                "cache_creation_input_tokens" => 0,
+                "cache_read_input_tokens" => 0,
+                "output_tokens" => 510,
+                "server_tool_use" => %{"web_search_requests" => 1}
+              })
+            ]
+        )
+
+      usage = TokenUsage.get(message)
+
+      assert usage.input == 10_682
+      assert usage.output == 510
+      assert usage.raw["input_tokens"] == 10_682
+      assert usage.raw["server_tool_use"] == %{"web_search_requests" => 1}
+    end
+
+    test "cache classes are reported once, not doubled", %{model: model} do
+      message =
+        stream_to_message(
+          model,
+          [
+            message_start_event(%{
+              "input_tokens" => 10,
+              "cache_creation_input_tokens" => 31_350,
+              "cache_read_input_tokens" => 0,
+              "output_tokens" => 1
+            })
+          ] ++
+            text_events() ++
+            [
+              message_delta_event(%{
+                "input_tokens" => 10,
+                "cache_creation_input_tokens" => 31_350,
+                "cache_read_input_tokens" => 0,
+                "output_tokens" => 93
+              })
+            ]
+        )
+
+      usage = TokenUsage.get(message)
+
+      assert usage.input == 10
+      assert usage.output == 93
+      assert usage.raw["cache_creation_input_tokens"] == 31_350
+      assert usage.raw["cache_read_input_tokens"] == 0
+    end
+
+    test "a closing total that omits the input classes keeps the opening ones", %{model: model} do
+      # Anthropic's documentation also shows `message_delta` carrying only
+      # `output_tokens`. Nothing is added, but nothing is lost either.
+      message =
+        stream_to_message(
+          model,
+          [
+            message_start_event(%{
+              "input_tokens" => 25,
+              "cache_creation_input_tokens" => 4096,
+              "cache_read_input_tokens" => 128,
+              "output_tokens" => 1
+            })
+          ] ++ text_events() ++ [message_delta_event(%{"output_tokens" => 15})]
+        )
+
+      usage = TokenUsage.get(message)
+
+      assert usage.input == 25
+      assert usage.output == 15
+      assert usage.raw["cache_creation_input_tokens"] == 4096
+      assert usage.raw["cache_read_input_tokens"] == 128
+    end
+
+    test "no input class exceeds the largest single event reporting it", %{model: model} do
+      start_usage = %{
+        "input_tokens" => 10,
+        "cache_creation_input_tokens" => 31_350,
+        "cache_read_input_tokens" => 7,
+        "output_tokens" => 1
+      }
+
+      delta_usage = %{
+        "input_tokens" => 10,
+        "cache_creation_input_tokens" => 31_350,
+        "cache_read_input_tokens" => 7,
+        "output_tokens" => 93
+      }
+
+      message =
+        stream_to_message(
+          model,
+          [message_start_event(start_usage)] ++
+            text_events() ++ [message_delta_event(delta_usage)]
+        )
+
+      usage = TokenUsage.get(message)
+
+      for key <- ["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"] do
+        largest_reported = max(start_usage[key], delta_usage[key])
+
+        assert usage.raw[key] <= largest_reported,
+               "#{key} accumulated to #{usage.raw[key]}, above the largest single reading of #{largest_reported}"
+      end
+
+      assert usage.input <= max(start_usage["input_tokens"], delta_usage["input_tokens"])
     end
   end
 end

@@ -145,6 +145,7 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
   alias LangChain.Message.ContentPart
   alias LangChain.MessageDelta
   alias LangChain.Callbacks
+  alias LangChain.TokenUsage
   alias LangChain.Utils
 
   @behaviour ChatModel
@@ -646,6 +647,14 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
   # ---------------------------------------------------------------------------
 
   @doc false
+  @spec do_process_response(t(), data :: map()) ::
+          :skip
+          | TokenUsage.t()
+          | Message.t()
+          | [Message.t()]
+          | MessageDelta.t()
+          | [MessageDelta.t()]
+          | {:error, LangChainError.t()}
   # Streaming delta chunk — matched first because each choice has a "delta" key.
   def do_process_response(
         %ChatAwsMantle{} = model,
@@ -669,9 +678,12 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
   end
 
   # Usage-only terminal event (when stream_options.include_usage is set, Mantle
-  # sends a final chunk with empty `choices` and a `usage` map).
-  def do_process_response(_model, %{"choices" => [], "usage" => _} = _msg) do
-    :skip
+  # sends a final chunk with empty `choices` and a `usage` map). Returning the
+  # `%TokenUsage{}` hands it to `LangChain.Chains.LLMChain.merge_delta/2`, which
+  # folds it into the final delta. Skipping the chunk instead would discard the
+  # only usage a streamed turn reports.
+  def do_process_response(_model, %{"choices" => [], "usage" => usage} = _msg) do
+    get_token_usage(usage)
   end
 
   def do_process_response(_model, %{"error" => %{"message" => message}} = body) do
@@ -822,17 +834,20 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
   defp maybe_add_reasoning(%Message{} = msg, _), do: msg
 
   defp attach_usage(%Message{} = msg, %{"usage" => usage}) when is_map(usage) do
-    token_usage = %LangChain.TokenUsage{
-      input: Map.get(usage, "prompt_tokens"),
-      output: Map.get(usage, "completion_tokens"),
-      raw: usage
-    }
-
-    metadata = Map.merge(msg.metadata || %{}, %{usage: token_usage})
-    %{msg | metadata: metadata}
+    TokenUsage.set(msg, get_token_usage(usage))
   end
 
   defp attach_usage(%Message{} = msg, _), do: msg
+
+  # Mantle reports usage once per response, whether streamed or not. Nested
+  # detail maps such as `prompt_tokens_details` are carried through in `:raw`.
+  defp get_token_usage(usage) when is_map(usage) do
+    TokenUsage.new!(%{
+      input: Map.get(usage, "prompt_tokens"),
+      output: Map.get(usage, "completion_tokens"),
+      raw: usage
+    })
+  end
 
   # Resolve API key from struct or app config. Currently unused (auth_opts/1
   # uses the struct field directly), kept for future config-based auth.

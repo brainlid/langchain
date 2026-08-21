@@ -1220,6 +1220,15 @@ if Code.ensure_loaded?(ReqLLM) do
 
     @doc """
     Translate a `req_llm` usage map to a `LangChain.TokenUsage` struct.
+
+    req_llm hands every provider's usage over as a complete snapshot of the
+    message so far, and a provider may report more than one over a stream.
+    Anthropic reports two, one opening the message and one closing it, which
+    `TokenUsage.add/2` combines by keeping the larger count per class.
+
+    An unreported class arrives normalized to zero rather than omitted, so the
+    derived `:total_tokens` a snapshot carries describes only that snapshot.
+    Read a combined total from `TokenUsage.total/1`.
     """
     @spec translate_usage(map() | nil) :: TokenUsage.t() | nil
     def translate_usage(nil), do: nil

@@ -6,8 +6,30 @@ defmodule LangChain.ChatModels.ChatModel do
   alias LangChain.TokenUsage
   alias LangChain.Utils
 
+  @typedoc """
+  One item of a streamed response.
+
+  Most of them are deltas. OpenAI-shaped providers report the usage-only
+  terminal chunk as a bare `%TokenUsage{}` that rides back in the same list
+  rather than on a delta's metadata, and a mid-stream failure arrives as an
+  error tuple in that list too.
+  """
+  @type stream_item :: MessageDelta.t() | TokenUsage.t() | {:error, LangChainError.t()}
+
+  @typedoc """
+  What a chat model's `call/3` answers with.
+
+  A streamed call collects one list of `t:stream_item/0` per received chunk, so
+  its items arrive nested one level deep. `LangChain.Chains.LLMChain` and
+  `token_usage_from_result/1` both flatten before reading them.
+  """
   @type call_response ::
-          {:ok, Message.t() | [Message.t()] | [MessageDelta.t()]} | {:error, LangChainError.t()}
+          {:ok,
+           Message.t()
+           | [Message.t()]
+           | [stream_item()]
+           | [[stream_item()]]}
+          | {:error, LangChainError.t()}
 
   @type tool :: Function.t()
   @type tools :: [tool()]
@@ -103,14 +125,15 @@ defmodule LangChain.ChatModels.ChatModel do
     #     list, which must be accumulated with `TokenUsage.add/2` (mirroring
     #     `MessageDelta.merge_deltas/2`). A plain "first delta with usage" scan is
     #     wrong whenever more than the final delta reports usage:
-    #       - Google/Vertex tag *every* delta with a `cumulative: true` running
-    #         total; `add/2` keeps the latest (the final total). Taking the first
-    #         would report an early partial total.
-    #       - Anthropic splits input tokens (`message_start`) from final output
-    #         tokens (`message_delta`) across two deltas; `add/2` combines them.
-    usage = message_usage(flat) || accumulate_delta_usage(flat)
-
-    %{token_usage: usage}
+    #       - Google/Vertex report a running total on *every* delta; `add/2`
+    #         keeps the largest (the final total). Taking the first would report
+    #         an early partial total.
+    #       - Anthropic reports usage twice: `message_start` opens with the input
+    #         classes and `message_delta` closes with a total for the whole
+    #         message. `add/2` keeps the closing total and carries forward any
+    #         class it leaves unreported. Summing the two would double every
+    #         input-class count.
+    %{token_usage: message_usage(flat) || accumulate_delta_usage(flat)}
   end
 
   def token_usage_from_result(_result), do: %{token_usage: nil}
@@ -124,12 +147,22 @@ defmodule LangChain.ChatModels.ChatModel do
     end)
   end
 
-  # Usage from a streamed result: fold every delta's `%TokenUsage{}` with
-  # `TokenUsage.add/2`, which is cumulative-aware (replaces on `cumulative: true`,
-  # sums otherwise) — the same accumulation `MessageDelta.merge_deltas/2` performs.
+  # Usage from a streamed result: fold every `%TokenUsage{}` the stream carried
+  # with `TokenUsage.add/2`, the same combination `MessageDelta.merge_deltas/2`
+  # performs. Every reading belongs to the one message the call produced, so the
+  # fold keeps the largest count per field rather than summing readings.
+  #
+  # A stream carries usage in either of two shapes and both have to be read
+  # here. Most providers hang it off a delta's metadata. OpenAI-shaped providers
+  # answer the usage-only terminal chunk (empty `choices`, populated `usage`)
+  # with a bare `%TokenUsage{}` instead, which `LangChain.Utils` leaves in the
+  # response body because only `:skip` is filtered out. Reading just the delta
+  # shape reports `token_usage: nil` on the `[:langchain, :llm, :call, :stop]`
+  # event for every streamed call those providers make.
   defp accumulate_delta_usage(items) do
     Enum.reduce(items, nil, fn
       %MessageDelta{metadata: %{usage: %TokenUsage{} = usage}}, acc -> TokenUsage.add(acc, usage)
+      %TokenUsage{} = usage, acc -> TokenUsage.add(acc, usage)
       _, acc -> acc
     end)
   end
