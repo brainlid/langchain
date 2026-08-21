@@ -3,6 +3,7 @@ defmodule LangChain.ChatModels.ChatGrokTest do
   use Mimic
 
   doctest LangChain.ChatModels.ChatGrok
+  alias LangChain.Chains.LLMChain
   alias LangChain.ChatModels.ChatGrok
   alias LangChain.Function
   alias LangChain.FunctionParam
@@ -10,6 +11,7 @@ defmodule LangChain.ChatModels.ChatGrokTest do
   alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult
+  alias LangChain.MessageDelta
   alias LangChain.TokenUsage
 
   @test_model "grok-4"
@@ -502,6 +504,89 @@ defmodule LangChain.ChatModels.ChatGrokTest do
       assert %TokenUsage{input: 11, output: 22} = stop_metadata.token_usage
 
       :telemetry.detach("test-grok-token-usage-stop")
+    end
+
+    test "streamed call reports the usage-only terminal chunk" do
+      test_pid = self()
+
+      grok =
+        ChatGrok.new!(%{
+          model: "grok-4",
+          api_key: "test-xai-key",
+          stream: true,
+          stream_options: %{include_usage: true}
+        })
+
+      # xAI closes an `include_usage` stream with a chunk that has no choices and
+      # carries the usage for the whole turn.
+      body =
+        Enum.join(
+          [
+            ~s|data: {"choices":[{"index":0,"delta":{"role":"assistant","content":"Hi"}}]}|,
+            ~s|data: {"choices":[],"usage":{"prompt_tokens":11,"completion_tokens":22,"total_tokens":33}}|,
+            "data: [DONE]"
+          ],
+          "\n"
+        )
+
+      expect(Req, :post, fn _opts ->
+        {:ok, %Req.Response{status: 200, body: body}}
+      end)
+
+      :telemetry.attach(
+        "test-grok-stream-token-usage-stop",
+        [:langchain, :llm, :call, :stop],
+        fn _name, _measurements, metadata, _config ->
+          send(test_pid, {:stop, metadata})
+        end,
+        nil
+      )
+
+      assert {:ok, items} = ChatGrok.call(grok, [Message.new_user!("Hi")], [])
+
+      # The usage rides back as a `%TokenUsage{}` among the deltas, the shape
+      # `LLMChain.merge_delta/2` folds into the final delta.
+      assert [%MessageDelta{}, %TokenUsage{input: 11, output: 22}] = items
+
+      # ...and therefore reaches the LLM call :stop telemetry event.
+      assert_received {:stop, stop_metadata}
+      assert %TokenUsage{input: 11, output: 22} = stop_metadata.token_usage
+
+      :telemetry.detach("test-grok-stream-token-usage-stop")
+    end
+
+    test "a streamed turn's usage reaches the merged delta" do
+      grok =
+        ChatGrok.new!(%{
+          model: "grok-4",
+          api_key: "test-xai-key",
+          stream: true,
+          stream_options: %{include_usage: true}
+        })
+
+      body =
+        Enum.join(
+          [
+            ~s|data: {"choices":[{"index":0,"delta":{"role":"assistant","content":"Hel"}}]}|,
+            ~s|data: {"choices":[{"index":0,"delta":{"content":"lo!"}}]}|,
+            ~s|data: {"choices":[],"usage":{"prompt_tokens":11,"completion_tokens":22,"total_tokens":33}}|,
+            "data: [DONE]"
+          ],
+          "\n"
+        )
+
+      expect(Req, :post, fn _opts ->
+        {:ok, %Req.Response{status: 200, body: body}}
+      end)
+
+      assert {:ok, items} = ChatGrok.call(grok, [Message.new_user!("Hi")], [])
+
+      chain =
+        Enum.reduce(items, LLMChain.new!(%{llm: grok}), &LLMChain.merge_delta(&2, &1))
+
+      assert %MessageDelta{} = chain.delta
+      assert %TokenUsage{input: 11, output: 22} = usage = TokenUsage.get(chain.delta)
+      assert usage.raw["total_tokens"] == 33
     end
   end
 end

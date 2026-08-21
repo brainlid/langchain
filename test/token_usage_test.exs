@@ -40,6 +40,14 @@ defmodule LangChain.TokenUsageTest do
       usage = TokenUsage.new!(%{input: 1, output: 10})
       assert 11 == TokenUsage.total(usage)
     end
+
+    test "treats an unreported count as contributing nothing" do
+      # Anthropic's closing `message_delta` event carries only `output_tokens`,
+      # so a usage built from it alone has no input count to add.
+      assert 93 == TokenUsage.total(TokenUsage.new!(%{output: 93}))
+      assert 25 == TokenUsage.total(TokenUsage.new!(%{input: 25}))
+      assert 0 == TokenUsage.total(TokenUsage.new!(%{}))
+    end
   end
 
   describe "add/2" do
@@ -137,6 +145,46 @@ defmodule LangChain.TokenUsageTest do
       assert combined.raw["prompt_tokens_details"]["cached_tokens"] == 96
       assert combined.raw["prompt_tokens_details"]["audio_tokens"] == 0
       assert combined.raw["completion_tokens_details"]["reasoning_tokens"] == 5
+    end
+
+    test "takes the later value for a struct rather than merging it key-by-key" do
+      # Structs are maps, so recursing into one would build a malformed struct
+      # out of two rather than a sum. Whatever a provider parked in `:raw`
+      # arrives intact.
+      usage1 = TokenUsage.new!(%{raw: %{"at" => ~D[2024-01-01], "count" => 1}})
+      usage2 = TokenUsage.new!(%{raw: %{"at" => ~D[2024-06-01], "count" => 2}})
+
+      combined = TokenUsage.add(usage1, usage2)
+
+      assert combined.raw["at"] == ~D[2024-06-01]
+      assert combined.raw["count"] == 3
+
+      cumulative =
+        TokenUsage.add(usage1, TokenUsage.new!(%{raw: usage2.raw, cumulative: true}))
+
+      assert cumulative.raw["at"] == ~D[2024-06-01]
+      assert cumulative.raw["count"] == 2
+    end
+
+    test "takes a list-valued detail from the later usage whole" do
+      # Gemini reports the per-modality breakdown as a list of objects rather
+      # than a keyed map, which offers nothing to accumulate against.
+      details = fn n -> [%{"modality" => "TEXT", "tokenCount" => n}] end
+
+      usage1 =
+        TokenUsage.new!(%{
+          raw: %{"promptTokenCount" => 10, "promptTokensDetails" => details.(10)}
+        })
+
+      usage2 =
+        TokenUsage.new!(%{
+          raw: %{"promptTokenCount" => 20, "promptTokensDetails" => details.(20)}
+        })
+
+      combined = TokenUsage.add(usage1, usage2)
+
+      assert combined.raw["promptTokenCount"] == 30
+      assert combined.raw["promptTokensDetails"] == details.(20)
     end
 
     test "keeps nested keys that only one side reports" do
