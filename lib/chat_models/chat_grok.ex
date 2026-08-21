@@ -774,6 +774,17 @@ defmodule LangChain.ChatModels.ChatGrok do
     }
   end
 
+  # xAI closes a stream with a usage-only chunk (empty `choices`, populated
+  # `usage`) when `stream_options.include_usage` is set. Returning the
+  # `%TokenUsage{}` hands it to `LangChain.Chains.LLMChain.merge_delta/2`, which
+  # folds it into the final delta, matching how `ChatOpenAI` reports the same
+  # chunk. An empty delta instead reports no tokens for the whole streamed turn,
+  # while the request is asking xAI to count them.
+  defp choice_delta_to_message(%{"choices" => [], "usage" => usage} = data, _metadata)
+       when is_map(usage) do
+    get_token_usage(data)
+  end
+
   defp choice_delta_to_message(%{"choices" => []}, metadata) do
     %MessageDelta{
       role: :assistant,
