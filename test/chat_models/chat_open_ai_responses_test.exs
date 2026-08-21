@@ -2295,6 +2295,43 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
       verify!()
     end
 
+    test "connect_websocket! derives the WebSocket scheme from the endpoint" do
+      LangChain.WebSocket
+      |> expect(:start_link, fn opts ->
+        assert opts[:url] == "wss://proxy.internal.example/v1/responses"
+        {:ok, spawn(fn -> Process.sleep(:infinity) end)}
+      end)
+      |> expect(:start_link, fn opts ->
+        assert opts[:url] == "ws://localhost:8080/v1/responses"
+        {:ok, spawn(fn -> Process.sleep(:infinity) end)}
+      end)
+
+      # An https endpoint always upgrades to the TLS-backed wss scheme.
+      secure =
+        ChatOpenAIResponses.new!(%{
+          model: @test_model,
+          endpoint: "https://proxy.internal.example/v1/responses"
+        })
+        |> ChatOpenAIResponses.connect_websocket!()
+
+      # A plaintext endpoint stays plaintext. Rewriting it to wss would make
+      # Mint open a TLS connection to a server that speaks none, so the
+      # connection fails instead of becoming secure.
+      plain =
+        ChatOpenAIResponses.new!(%{
+          model: @test_model,
+          endpoint: "http://localhost:8080/v1/responses"
+        })
+        |> ChatOpenAIResponses.connect_websocket!()
+
+      on_exit(fn ->
+        Process.exit(secure.websocket, :kill)
+        Process.exit(plain.websocket, :kill)
+      end)
+
+      verify!()
+    end
+
     test "disconnect_websocket! clears websocket and is safe on nil" do
       model = ChatOpenAIResponses.new!(%{model: @test_model})
       assert %{websocket: nil} = ChatOpenAIResponses.disconnect_websocket!(model)
