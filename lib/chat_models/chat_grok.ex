@@ -78,9 +78,11 @@ defmodule LangChain.ChatModels.ChatGrok do
   """
   use Ecto.Schema
   import Ecto.Changeset
+  require Logger
   alias __MODULE__
   alias LangChain.Config
   alias LangChain.ChatModels.ChatModel
+  alias LangChain.ChatModels.ChatOpenAI
   alias LangChain.Message
   alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
@@ -585,20 +587,45 @@ defmodule LangChain.ChatModels.ChatGrok do
       IO.inspect(api_payload, pretty: true, limit: :infinity)
     end
 
-    Req.post(
+    req_opts = [
       url: grok.endpoint,
       json: api_payload,
       headers: headers,
       receive_timeout: grok.receive_timeout,
       retry: false,
       max_retries: 0
-    )
+    ]
+
+    # A streamed request collects chunks as they arrive through the shared
+    # `Utils.handle_stream_fn/3`, which decodes each SSE chunk, converts it, and
+    # fires `:on_llm_new_delta` for what that chunk carried. Buffering the whole
+    # body and splitting it afterwards yields the same final list while the
+    # caller sees nothing until the model has finished, which is the opposite of
+    # what asking for a stream is for. xAI speaks the OpenAI SSE dialect, so it
+    # shares `ChatOpenAI.decode_stream/1` the way ChatAwsMantle and ChatGoogleAI
+    # already do.
+    req_opts =
+      if grok.stream do
+        Keyword.put(
+          req_opts,
+          :into,
+          Utils.handle_stream_fn(
+            grok,
+            &ChatOpenAI.decode_stream/1,
+            &choice_delta_to_message(&1, metadata)
+          )
+        )
+      else
+        req_opts
+      end
+
+    Req.post(req_opts)
     |> case do
       {:ok, %Req.Response{status: 200} = response} ->
         Callbacks.fire(grok.callbacks, :on_llm_response_headers, [response.headers])
 
         case grok.stream do
-          true -> handle_stream_response(response, grok, metadata)
+          true -> {:ok, response.body}
           false -> handle_response(response, grok, metadata)
         end
 
@@ -649,13 +676,21 @@ defmodule LangChain.ChatModels.ChatGrok do
   defp handle_response(%Req.Response{body: data}, grok, metadata) do
     case data do
       %{"choices" => choices} = response_data ->
-        grok
-        |> maybe_execute_callback(:on_llm_token_usage, [response_data])
+        token_usage = get_token_usage(response_data)
 
-        # Extract usage as a `%TokenUsage{}` struct (not the raw API map) so it
-        # rides on the message metadata in the shape `ChatModel.token_usage_from_result/1`
-        # reads — otherwise the LLM-call telemetry span reports `token_usage: nil`.
-        updated_metadata = Map.put(metadata, :usage, get_token_usage(response_data))
+        # Model-tier callbacks are fired with just the event argument, and every
+        # other chat model hands this one a `%TokenUsage{}`. Firing the model
+        # alongside the raw API map instead raises `BadArityError` in any handler
+        # written to the documented shape, which `Callbacks.fire/3` turns into an
+        # error tuple for the whole call.
+        if token_usage do
+          Callbacks.fire(grok.callbacks, :on_llm_token_usage, [token_usage])
+        end
+
+        # Usage rides on the message metadata as a `%TokenUsage{}`, the shape
+        # `ChatModel.token_usage_from_result/1` reads, so the LLM-call telemetry
+        # span reports it.
+        updated_metadata = Map.put(metadata, :usage, token_usage)
         messages = Enum.map(choices, &(&1 |> choice_to_message(updated_metadata)))
 
         # Track non-streaming response completion
@@ -681,20 +716,6 @@ defmodule LangChain.ChatModels.ChatGrok do
            original: other
          )}
     end
-  end
-
-  defp handle_stream_response(%Req.Response{body: body}, _grok, metadata) when is_binary(body) do
-    body
-    |> String.split("\n")
-    |> Enum.filter(&String.starts_with?(&1, "data: "))
-    |> Enum.map(&String.slice(&1, 6..-1//1))
-    |> Enum.filter(&(&1 != "[DONE]"))
-    |> Enum.map(&Jason.decode!/1)
-    |> Enum.map(&choice_delta_to_message(&1, metadata))
-    |> then(&{:ok, &1})
-  rescue
-    error ->
-      {:error, LangChainError.exception(type: :stream_parse_error, message: inspect(error))}
   end
 
   defp handle_error_response(%Req.Response{status: status, body: body, headers: headers}) do
@@ -752,12 +773,13 @@ defmodule LangChain.ChatModels.ChatGrok do
 
   defp get_token_usage(_response_body), do: nil
 
-  defp choice_to_message(%{"message" => message_data}, metadata) do
+  defp choice_to_message(%{"message" => message_data} = choice, metadata) do
     usage = metadata[:usage]
 
     %Message{
       role: :assistant,
       content: message_data["content"],
+      status: finish_reason_to_status(choice["finish_reason"]),
       tool_calls: parse_tool_calls(message_data["tool_calls"]),
       metadata: %{usage: usage}
     }
@@ -766,9 +788,15 @@ defmodule LangChain.ChatModels.ChatGrok do
   defp choice_delta_to_message(%{"choices" => [choice | _]}, metadata) do
     delta = choice["delta"]
 
+    # The status is what makes a merged delta convertible. Leaving every delta
+    # `:incomplete` means `MessageDelta.to_message/1` always fails, so an
+    # `LLMChain` run finishes with the assistant's reply stranded in the delta
+    # and never added to the conversation.
     %MessageDelta{
       role: :assistant,
       content: delta["content"] || "",
+      status: finish_reason_to_status(choice["finish_reason"]),
+      index: choice["index"],
       tool_calls: parse_tool_calls(delta["tool_calls"]),
       metadata: metadata
     }
@@ -785,14 +813,7 @@ defmodule LangChain.ChatModels.ChatGrok do
     get_token_usage(data)
   end
 
-  defp choice_delta_to_message(%{"choices" => []}, metadata) do
-    %MessageDelta{
-      role: :assistant,
-      content: "",
-      tool_calls: [],
-      metadata: metadata
-    }
-  end
+  defp choice_delta_to_message(%{"choices" => []}, _metadata), do: :skip
 
   defp choice_delta_to_message(data, metadata) do
     # Fallback for unexpected streaming data format
@@ -802,6 +823,20 @@ defmodule LangChain.ChatModels.ChatGrok do
       tool_calls: [],
       metadata: Map.put(metadata, :raw_data, data)
     }
+  end
+
+  # xAI reports the same finish reasons as OpenAI. `nil` means the message is
+  # still being generated, which is every chunk until the last one.
+  defp finish_reason_to_status(nil), do: :incomplete
+  defp finish_reason_to_status("stop"), do: :complete
+  defp finish_reason_to_status("tool_calls"), do: :complete
+  defp finish_reason_to_status("content_filter"), do: :content_filtered
+  defp finish_reason_to_status("length"), do: :length
+  defp finish_reason_to_status("max_tokens"), do: :length
+
+  defp finish_reason_to_status(other) do
+    Logger.warning("Unsupported finish_reason in Grok message. Reason: #{inspect(other)}")
+    nil
   end
 
   defp parse_tool_calls(nil), do: []
@@ -814,10 +849,6 @@ defmodule LangChain.ChatModels.ChatGrok do
         arguments: tool_call["function"]["arguments"]
       }
     end)
-  end
-
-  defp maybe_execute_callback(grok, callback_name, args) do
-    Callbacks.fire(grok.callbacks, callback_name, [grok | args])
   end
 
   @doc """

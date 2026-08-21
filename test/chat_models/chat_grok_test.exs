@@ -513,71 +513,170 @@ defmodule LangChain.ChatModels.ChatGrokTest do
       :telemetry.detach("test-grok-token-usage-stop")
     end
 
-    test "streamed call reports the usage-only terminal chunk" do
+    test "fires :on_llm_token_usage with a %TokenUsage{} at the model-tier arity" do
+      test_pid = self()
+
+      # Model-tier handlers receive just the event argument. Firing the model
+      # alongside a raw API map raises BadArityError inside `Callbacks.fire/3`,
+      # which fails the whole call rather than only the handler.
       grok =
         ChatGrok.new!(%{
           model: "grok-4",
           api_key: "test-xai-key",
-          stream: true,
-          stream_options: %{include_usage: true}
+          callbacks: [%{on_llm_token_usage: fn usage -> send(test_pid, {:usage, usage}) end}]
         })
 
-      # xAI closes an `include_usage` stream with a chunk that has no choices and
-      # carries the usage for the whole turn.
-      body =
-        Enum.join(
-          [
-            ~s|data: {"choices":[{"index":0,"delta":{"role":"assistant","content":"Hi"}}]}|,
-            ~s|data: {"choices":[],"usage":{"prompt_tokens":11,"completion_tokens":22,"total_tokens":33}}|,
-            "data: [DONE]"
-          ],
-          "\n"
-        )
+      response_body = %{
+        "choices" => [
+          %{
+            "message" => %{"role" => "assistant", "content" => "Hi"},
+            "finish_reason" => "stop",
+            "index" => 0
+          }
+        ],
+        "usage" => %{"prompt_tokens" => 11, "completion_tokens" => 22, "total_tokens" => 33}
+      }
 
       expect(Req, :post, fn _opts ->
-        {:ok, %Req.Response{status: 200, body: body}}
+        {:ok, %Req.Response{status: 200, body: response_body}}
       end)
 
-      assert {:ok, items} = ChatGrok.call(grok, [Message.new_user!("Hi")], [])
+      assert {:ok, [%Message{}]} = ChatGrok.call(grok, [Message.new_user!("Hi")], [])
+
+      assert_received {:usage, %TokenUsage{input: 11, output: 22}}
+    end
+
+    test "carries the finish reason onto a non-streamed message" do
+      grok = ChatGrok.new!(%{model: "grok-4", api_key: "test-xai-key"})
+
+      response_body = %{
+        "choices" => [
+          %{
+            "message" => %{"role" => "assistant", "content" => "Hel"},
+            "finish_reason" => "length",
+            "index" => 0
+          }
+        ]
+      }
+
+      expect(Req, :post, fn _opts ->
+        {:ok, %Req.Response{status: 200, body: response_body}}
+      end)
+
+      assert {:ok, [%Message{status: :length}]} =
+               ChatGrok.call(grok, [Message.new_user!("Hi")], [])
+    end
+
+    # A streamed request hands `Req` an `:into` collector, so a mocked post has
+    # to drive that collector the way a real response would rather than handing
+    # back a buffered body.
+    defp expect_streamed_post(chunks) do
+      expect(Req, :post, fn opts ->
+        collector = Keyword.fetch!(opts, :into)
+        start = {Req.Request.new(), %Req.Response{status: 200, headers: %{}, body: ""}}
+
+        {_req, response} =
+          Enum.reduce(chunks, start, fn chunk, acc ->
+            case collector.({:data, chunk}, acc) do
+              {:cont, next} -> next
+              {:halt, next} -> next
+            end
+          end)
+
+        {:ok, response}
+      end)
+    end
+
+    defp streaming_grok(attrs \\ %{}) do
+      ChatGrok.new!(
+        Map.merge(
+          %{
+            model: "grok-4",
+            api_key: "test-xai-key",
+            stream: true,
+            stream_options: %{include_usage: true}
+          },
+          attrs
+        )
+      )
+    end
+
+    @content_chunk ~s|data: {"choices":[{"index":0,"delta":{"role":"assistant","content":"Hel"},"finish_reason":null}]}\n\n|
+    @final_chunk ~s|data: {"choices":[{"index":0,"delta":{"content":"lo!"},"finish_reason":"stop"}]}\n\n|
+    @usage_chunk ~s|data: {"choices":[],"usage":{"prompt_tokens":11,"completion_tokens":22,"total_tokens":33}}\n\n|
+
+    test "streamed call reports the usage-only terminal chunk" do
+      expect_streamed_post([@content_chunk, @final_chunk, @usage_chunk])
+
+      assert {:ok, items} = ChatGrok.call(streaming_grok(), [Message.new_user!("Hi")], [])
 
       # The usage rides back as a `%TokenUsage{}` among the deltas, the shape
       # `LLMChain.merge_delta/2` folds into the final delta.
-      assert [%MessageDelta{}, %TokenUsage{input: 11, output: 22} = usage] = items
+      assert [%TokenUsage{input: 11, output: 22} = usage] =
+               items |> List.flatten() |> Enum.filter(&match?(%TokenUsage{}, &1))
+
       assert usage.raw["total_tokens"] == 33
     end
 
-    test "a streamed turn's usage reaches the merged delta" do
-      grok =
-        ChatGrok.new!(%{
-          model: "grok-4",
-          api_key: "test-xai-key",
-          stream: true,
-          stream_options: %{include_usage: true}
-        })
+    test "a streamed turn assembles into a complete Message" do
+      # The finish reason is what makes the merged delta convertible. Without it
+      # every delta stays `:incomplete`, `to_message/1` fails, and an LLMChain
+      # run ends with the reply stranded in the delta.
+      expect_streamed_post([@content_chunk, @final_chunk, @usage_chunk])
 
-      body =
-        Enum.join(
-          [
-            ~s|data: {"choices":[{"index":0,"delta":{"role":"assistant","content":"Hel"}}]}|,
-            ~s|data: {"choices":[{"index":0,"delta":{"content":"lo!"}}]}|,
-            ~s|data: {"choices":[],"usage":{"prompt_tokens":11,"completion_tokens":22,"total_tokens":33}}|,
-            "data: [DONE]"
-          ],
-          "\n"
-        )
-
-      expect(Req, :post, fn _opts ->
-        {:ok, %Req.Response{status: 200, body: body}}
-      end)
-
-      assert {:ok, items} = ChatGrok.call(grok, [Message.new_user!("Hi")], [])
+      assert {:ok, items} = ChatGrok.call(streaming_grok(), [Message.new_user!("Hi")], [])
 
       chain =
-        Enum.reduce(items, LLMChain.new!(%{llm: grok}), &LLMChain.merge_delta(&2, &1))
+        items
+        |> List.flatten()
+        |> Enum.reduce(LLMChain.new!(%{llm: streaming_grok()}), &LLMChain.merge_delta(&2, &1))
 
-      assert %MessageDelta{} = chain.delta
-      assert %TokenUsage{input: 11, output: 22} = usage = TokenUsage.get(chain.delta)
-      assert usage.raw["total_tokens"] == 33
+      assert {:ok, %Message{status: :complete} = message} = MessageDelta.to_message(chain.delta)
+      assert ContentPart.parts_to_string(message.content) == "Hello!"
+      assert %TokenUsage{input: 11, output: 22} = TokenUsage.get(message)
+    end
+
+    test "a streamed run through LLMChain adds the assistant message" do
+      expect_streamed_post([@content_chunk, @final_chunk, @usage_chunk])
+
+      assert {:ok, chain} =
+               %{llm: streaming_grok()}
+               |> LLMChain.new!()
+               |> LLMChain.add_message(Message.new_user!("Hi"))
+               |> LLMChain.run()
+
+      assert %Message{role: :assistant, status: :complete} = chain.last_message
+      assert ContentPart.parts_to_string(chain.last_message.content) == "Hello!"
+    end
+
+    test "streaming fires :on_llm_new_delta as chunks arrive" do
+      test_pid = self()
+
+      grok =
+        streaming_grok(%{
+          callbacks: [%{on_llm_new_delta: fn deltas -> send(test_pid, {:delta, deltas}) end}]
+        })
+
+      expect_streamed_post([@content_chunk, @final_chunk, @usage_chunk])
+
+      assert {:ok, _items} = ChatGrok.call(grok, [Message.new_user!("Hi")], [])
+
+      # One callback per arriving chunk, not a single batch after the fact.
+      assert_received {:delta, [%MessageDelta{content: "Hel"}]}
+      assert_received {:delta, [%MessageDelta{content: "lo!", status: :complete}]}
+      assert_received {:delta, [%TokenUsage{input: 11, output: 22}]}
+    end
+
+    test "a truncated stream reports the length status" do
+      truncated =
+        ~s|data: {"choices":[{"index":0,"delta":{"content":"Hel"},"finish_reason":"length"}]}\n\n|
+
+      expect_streamed_post([@content_chunk, truncated])
+
+      assert {:ok, items} = ChatGrok.call(streaming_grok(), [Message.new_user!("Hi")], [])
+
+      merged = items |> List.flatten() |> MessageDelta.merge_deltas()
+      assert %MessageDelta{status: :length} = merged
     end
   end
 end
