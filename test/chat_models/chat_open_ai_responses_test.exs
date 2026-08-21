@@ -731,6 +731,272 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
     end
   end
 
+  describe "reasoning item continuity" do
+    setup do
+      %{model: ChatOpenAIResponses.new!(%{"model" => @test_model})}
+    end
+
+    test "captures encrypted_content from a non-streamed reasoning item", %{model: model} do
+      response = %{
+        "status" => "completed",
+        "output" => [
+          %{
+            "type" => "reasoning",
+            "id" => "rs_abc123",
+            "summary" => [],
+            "encrypted_content" => "gAAAAAB-encrypted-payload"
+          },
+          %{
+            "type" => "message",
+            "content" => [%{"type" => "output_text", "text" => "Let me check."}]
+          }
+        ]
+      }
+
+      assert %LangChain.Message{} =
+               message = ChatOpenAIResponses.do_process_response(model, response)
+
+      assert [%ContentPart{type: :unsupported} = reasoning, %ContentPart{type: :text}] =
+               message.content
+
+      assert reasoning.options[:id] == "rs_abc123"
+      assert reasoning.options[:type] == "reasoning"
+      assert reasoning.options[:encrypted_content] == "gAAAAAB-encrypted-payload"
+    end
+
+    test "omits encrypted_content when the API did not return it", %{model: model} do
+      response = %{
+        "status" => "completed",
+        "output" => [
+          %{"type" => "reasoning", "id" => "rs_abc123", "summary" => []}
+        ]
+      }
+
+      assert %LangChain.Message{} =
+               message = ChatOpenAIResponses.do_process_response(model, response)
+
+      assert [%ContentPart{type: :unsupported} = reasoning] = message.content
+      assert reasoning.options[:id] == "rs_abc123"
+      refute Keyword.has_key?(reasoning.options, :encrypted_content)
+    end
+
+    test "captures the reasoning id and encrypted_content from a streamed item", %{model: model} do
+      response = %{
+        "type" => "response.output_item.done",
+        "output_index" => 0,
+        "item" => %{
+          "type" => "reasoning",
+          "id" => "rs_stream1",
+          "summary" => [],
+          "encrypted_content" => "gAAAAAB-streamed-payload"
+        }
+      }
+
+      assert %LangChain.MessageDelta{} =
+               delta = ChatOpenAIResponses.do_process_response(model, response)
+
+      assert %ContentPart{type: :thinking} = delta.content
+      assert delta.content.options[:id] == "rs_stream1"
+      assert delta.content.options[:type] == "reasoning"
+      assert delta.content.options[:encrypted_content] == "gAAAAAB-streamed-payload"
+    end
+
+    test "replays an unsupported reasoning part as its own input item", %{model: model} do
+      reasoning =
+        ContentPart.new!(%{
+          type: :unsupported,
+          options: [
+            id: "rs_abc123",
+            summary: [],
+            type: "reasoning",
+            encrypted_content: "gAAAAAB-encrypted-payload"
+          ]
+        })
+
+      message =
+        Message.new_assistant!(%{content: [reasoning, ContentPart.text!("Let me check.")]})
+
+      assert [
+               %{
+                 "type" => "reasoning",
+                 "id" => "rs_abc123",
+                 "summary" => [],
+                 "encrypted_content" => "gAAAAAB-encrypted-payload"
+               },
+               %{"type" => "message", "role" => "assistant"}
+             ] = ChatOpenAIResponses.for_api(model, message)
+    end
+
+    test "replays a thinking part that carries reasoning options", %{model: model} do
+      reasoning =
+        ContentPart.new!(%{
+          type: :thinking,
+          content: "",
+          options: [
+            id: "rs_stream1",
+            type: "reasoning",
+            encrypted_content: "gAAAAAB-streamed-payload"
+          ]
+        })
+
+      message = Message.new_assistant!(%{content: [reasoning, ContentPart.text!("Answer")]})
+
+      assert [
+               %{
+                 "type" => "reasoning",
+                 "id" => "rs_stream1",
+                 "encrypted_content" => "gAAAAAB-streamed-payload"
+               },
+               %{"type" => "message", "role" => "assistant"}
+             ] = ChatOpenAIResponses.for_api(model, message)
+    end
+
+    test "omits a reasoning part that has no encrypted_content", %{model: model} do
+      reasoning =
+        ContentPart.new!(%{
+          type: :unsupported,
+          options: [id: "rs_abc123", summary: [], type: "reasoning"]
+        })
+
+      message =
+        Message.new_assistant!(%{content: [reasoning, ContentPart.text!("Let me check.")]})
+
+      assert [%{"type" => "message", "role" => "assistant"}] =
+               ChatOpenAIResponses.for_api(model, message)
+    end
+
+    test "omits a plain thinking part that carries no reasoning item", %{model: model} do
+      message = Message.new_assistant!([ContentPart.new!(%{type: :thinking, content: "hmm"})])
+
+      assert [] = ChatOpenAIResponses.for_api(model, message)
+    end
+
+    test "replays reasoning ahead of the tool calls it produced", %{model: model} do
+      reasoning =
+        ContentPart.new!(%{
+          type: :unsupported,
+          options: [
+            id: "rs_abc123",
+            summary: [],
+            type: "reasoning",
+            encrypted_content: "gAAAAAB-encrypted-payload"
+          ]
+        })
+
+      tool_call =
+        ToolCall.new!(%{call_id: "call_abc", name: "calculator", arguments: %{expression: "1+1"}})
+
+      message =
+        Message.new_assistant!(%{content: [reasoning], tool_calls: [tool_call]})
+
+      assert [
+               %{"type" => "reasoning", "id" => "rs_abc123"},
+               %{"type" => "function_call", "call_id" => "call_abc"}
+             ] = ChatOpenAIResponses.for_api(model, message)
+    end
+
+    test "keeps the original ordering of reasoning and native tool calls", %{model: model} do
+      reasoning_one =
+        ContentPart.new!(%{
+          type: :unsupported,
+          options: [id: "rs_one", summary: [], type: "reasoning", encrypted_content: "first"]
+        })
+
+      search =
+        ContentPart.new!(%{
+          type: :unsupported,
+          options: %{id: "ws_one", type: "web_search_call", status: "completed"}
+        })
+
+      reasoning_two =
+        ContentPart.new!(%{
+          type: :unsupported,
+          options: [id: "rs_two", summary: [], type: "reasoning", encrypted_content: "second"]
+        })
+
+      message =
+        Message.new_assistant!(%{content: [reasoning_one, search, reasoning_two]})
+
+      assert [
+               %{"type" => "reasoning", "id" => "rs_one"},
+               %{type: "web_search_call", id: "ws_one"},
+               %{"type" => "reasoning", "id" => "rs_two"}
+             ] = ChatOpenAIResponses.for_api(model, message)
+    end
+
+    test "carries a streamed reasoning item through merge and back to the API", %{model: model} do
+      events = [
+        %{
+          "type" => "response.output_item.added",
+          "output_index" => 0,
+          "item" => %{"type" => "reasoning", "id" => "rs_stream1"}
+        },
+        %{
+          "type" => "response.output_item.done",
+          "output_index" => 0,
+          "item" => %{
+            "type" => "reasoning",
+            "id" => "rs_stream1",
+            "summary" => [],
+            "encrypted_content" => "gAAAAAB-streamed-payload"
+          }
+        }
+      ]
+
+      assert %LangChain.MessageDelta{} =
+               merged =
+               events
+               |> Enum.map(&ChatOpenAIResponses.do_process_response(model, &1))
+               |> LangChain.MessageDelta.merge_deltas()
+
+      assert {:ok, %LangChain.Message{} = message} =
+               LangChain.MessageDelta.to_message(%LangChain.MessageDelta{
+                 merged
+                 | status: :complete
+               })
+
+      assert [
+               %{
+                 "type" => "reasoning",
+                 "id" => "rs_stream1",
+                 "encrypted_content" => "gAAAAAB-streamed-payload"
+               }
+             ] = ChatOpenAIResponses.for_api(model, message)
+    end
+
+    test "round trips a reasoning item through a tool loop", %{model: model} do
+      response = %{
+        "status" => "completed",
+        "output" => [
+          %{
+            "type" => "reasoning",
+            "id" => "rs_loop",
+            "summary" => [],
+            "encrypted_content" => "gAAAAAB-loop"
+          },
+          %{
+            "type" => "function_call",
+            "call_id" => "call_loop",
+            "name" => "get_weather",
+            "arguments" => ~s({"city":"NYC"})
+          }
+        ]
+      }
+
+      assert %LangChain.Message{} =
+               message = ChatOpenAIResponses.do_process_response(model, response)
+
+      assert [
+               %{
+                 "type" => "reasoning",
+                 "id" => "rs_loop",
+                 "encrypted_content" => "gAAAAAB-loop"
+               },
+               %{"type" => "function_call", "call_id" => "call_loop"}
+             ] = ChatOpenAIResponses.for_api(model, message)
+    end
+  end
+
   describe "for_api/3 verbosity" do
     test "includes verbosity when set" do
       openai =
