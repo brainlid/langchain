@@ -74,17 +74,24 @@ defmodule LangChain.TokenUsage do
 
   @doc """
   Return the total token usage amount. The total is the sum of input and output.
+
+  A count a provider never reported is `nil` and contributes nothing to the
+  total. Anthropic's closing `message_delta` event, for one, carries only
+  `output_tokens`, so a usage built from it alone has no input count.
   """
   @spec total(t()) :: integer()
   def total(%TokenUsage{} = usage) do
-    usage.input + usage.output
+    (usage.input || 0) + (usage.output || 0)
   end
 
   @doc """
   Combines two TokenUsage structs by adding their respective input and output
-  values. The raw maps are merged, with numeric values added at every depth so
-  nested usage details (`prompt_tokens_details`, `completion_tokens_details`, and
-  friends) accumulate per-key rather than the later map replacing the earlier one.
+  values. The raw maps are merged, with numeric values added at every depth, so
+  map-valued usage details such as `prompt_tokens_details` and
+  `completion_tokens_details` accumulate per-key rather than the later map
+  replacing the earlier one. A detail reported as a *list* of per-modality
+  objects, the shape Gemini uses for `promptTokensDetails`, offers no key to
+  accumulate against and is taken from the later usage whole.
 
   When the second argument is marked `cumulative: true` it is a running total for
   the message rather than an increment, so it supersedes the accumulator instead
@@ -153,7 +160,11 @@ defmodule LangChain.TokenUsage do
 
   Returns non-`TokenUsage` values (including `nil`) unchanged.
   """
-  @spec clear_cumulative(t() | nil) :: t() | nil
+  # Two specs, because the catch-all clause makes this intentionally total: a
+  # caller can pipe a `get/1` result straight through without a nil check, and
+  # anything that is not a `%TokenUsage{}` comes back as the type it went in as.
+  @spec clear_cumulative(t()) :: t()
+  @spec clear_cumulative(other) :: other when other: any()
   def clear_cumulative(%TokenUsage{} = usage), do: %TokenUsage{usage | cumulative: false}
   def clear_cumulative(other), do: other
 
@@ -184,7 +195,9 @@ defmodule LangChain.TokenUsage do
   # tokens under `prompt_tokens_details` / `input_tokens_details` /
   # `completion_tokens_details`. Recursing means those inner counts are summed
   # per-key at every depth instead of the earlier map being dropped for the
-  # later one.
+  # later one. Only maps are traversed. Gemini reports the same class of detail
+  # as a list of per-modality objects, which has no key to accumulate against,
+  # so the later value is taken whole.
   defp merge_raw_values(raw1, raw2) do
     Map.merge(raw1, raw2, fn
       _k, v1, v2 when is_number(v1) and is_number(v2) ->

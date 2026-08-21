@@ -6,8 +6,13 @@ defmodule LangChain.ChatModels.ChatModel do
   alias LangChain.TokenUsage
   alias LangChain.Utils
 
+  # A streamed call answers with the deltas it decoded. OpenAI-shaped providers
+  # report the usage-only terminal chunk as a bare `%TokenUsage{}` that rides
+  # back in that same list rather than on a delta's metadata, so consumers of a
+  # streamed response have to be ready for either shape.
   @type call_response ::
-          {:ok, Message.t() | [Message.t()] | [MessageDelta.t()]} | {:error, LangChainError.t()}
+          {:ok, Message.t() | [Message.t()] | [MessageDelta.t() | TokenUsage.t()]}
+          | {:error, LangChainError.t()}
 
   @type tool :: Function.t()
   @type tools :: [tool()]
@@ -133,12 +138,22 @@ defmodule LangChain.ChatModels.ChatModel do
     end)
   end
 
-  # Usage from a streamed result: fold every delta's `%TokenUsage{}` with
-  # `TokenUsage.add/2`, which is cumulative-aware (replaces on `cumulative: true`,
-  # sums otherwise) — the same accumulation `MessageDelta.merge_deltas/2` performs.
+  # Usage from a streamed result: fold every `%TokenUsage{}` the stream carried
+  # with `TokenUsage.add/2`, which is cumulative-aware (replaces on
+  # `cumulative: true`, sums otherwise), the same accumulation
+  # `MessageDelta.merge_deltas/2` performs.
+  #
+  # A stream carries usage in either of two shapes and both have to be read
+  # here. Most providers hang it off a delta's metadata. OpenAI-shaped providers
+  # answer the usage-only terminal chunk (empty `choices`, populated `usage`)
+  # with a bare `%TokenUsage{}` instead, which `LangChain.Utils` leaves in the
+  # response body because only `:skip` is filtered out. Reading just the delta
+  # shape reports `token_usage: nil` on the `[:langchain, :llm, :call, :stop]`
+  # event for every streamed call those providers make.
   defp accumulate_delta_usage(items) do
     Enum.reduce(items, nil, fn
       %MessageDelta{metadata: %{usage: %TokenUsage{} = usage}}, acc -> TokenUsage.add(acc, usage)
+      %TokenUsage{} = usage, acc -> TokenUsage.add(acc, usage)
       _, acc -> acc
     end)
   end

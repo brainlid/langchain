@@ -171,6 +171,37 @@ defmodule LangChain.ChatModels.ChatModelTest do
                ChatModel.token_usage_from_result({:ok, deltas})
     end
 
+    test "reads a bare %TokenUsage{} carried alongside the streamed deltas", %{usage: usage} do
+      # OpenAI-shaped providers (ChatOpenAI, ChatAwsMantle, ChatGrok) answer the
+      # usage-only terminal chunk with a bare `%TokenUsage{}` rather than hanging
+      # it off a delta's metadata, and `LangChain.Utils` leaves it in the response
+      # body because only `:skip` is filtered out. Scanning only delta metadata
+      # reports `token_usage: nil` for every streamed call those providers make.
+      items = [
+        %MessageDelta{role: :assistant, content: "hi", metadata: nil},
+        %MessageDelta{role: :assistant, content: " there", metadata: nil},
+        usage
+      ]
+
+      assert %{token_usage: ^usage} = ChatModel.token_usage_from_result({:ok, items})
+    end
+
+    test "combines a bare %TokenUsage{} with usage already on the deltas" do
+      # Nothing stops a provider from doing both, so the bare struct joins the
+      # same `TokenUsage.add/2` fold the delta-borne readings go through.
+      items = [
+        %MessageDelta{
+          role: :assistant,
+          content: "hi",
+          metadata: %{usage: %TokenUsage{input: 25, output: 0}}
+        },
+        %TokenUsage{input: 0, output: 15}
+      ]
+
+      assert %{token_usage: %TokenUsage{input: 25, output: 15}} =
+               ChatModel.token_usage_from_result({:ok, items})
+    end
+
     test "returns nil usage when none is present" do
       deltas = [%MessageDelta{role: :assistant, content: "hi", metadata: nil}]
       assert %{token_usage: nil} = ChatModel.token_usage_from_result({:ok, deltas})
