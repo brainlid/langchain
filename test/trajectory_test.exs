@@ -154,12 +154,12 @@ defmodule LangChain.TrajectoryTest do
       assert trajectory.token_usage.output == 35
     end
 
-    test "sums per-message totals when the usage is marked cumulative" do
-      # Streaming providers mark a delta's usage cumulative to say it already
-      # includes the earlier deltas *of the same message*. Across messages the
-      # totals still add up.
-      usage1 = TokenUsage.new!(%{input: 100, output: 20, cumulative: true})
-      usage2 = TokenUsage.new!(%{input: 150, output: 35, cumulative: true})
+    test "sums per-message totals rather than keeping the largest message" do
+      # `TokenUsage.add/2` combines several readings of one message by keeping
+      # the larger count. Aggregating a trajectory is the other question, and
+      # answering it with `add/2` would report only the biggest turn.
+      usage1 = TokenUsage.new!(%{input: 100, output: 20})
+      usage2 = TokenUsage.new!(%{input: 150, output: 35})
 
       messages = [
         user_msg("Hello"),

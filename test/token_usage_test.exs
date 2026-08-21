@@ -51,61 +51,28 @@ defmodule LangChain.TokenUsageTest do
   end
 
   describe "add/2" do
-    test "combines two token usages" do
-      usage1 = TokenUsage.new!(%{input: 10, output: 20, raw: %{"total_tokens" => 30}})
-      usage2 = TokenUsage.new!(%{input: 5, output: 15, raw: %{"total_tokens" => 20}})
+    test "keeps the larger reading of each count" do
+      # Two readings of one message: the second reports a further-along picture
+      # of the same counters, not a second message's worth of tokens.
+      opening = TokenUsage.new!(%{input: 10, output: 1, raw: %{"total_tokens" => 11}})
+      closing = TokenUsage.new!(%{input: 10, output: 20, raw: %{"total_tokens" => 30}})
 
-      combined = TokenUsage.add(usage1, usage2)
+      combined = TokenUsage.add(opening, closing)
 
-      assert combined.input == 15
-      assert combined.output == 35
-      assert combined.raw["total_tokens"] == 50
+      assert combined.input == 10
+      assert combined.output == 20
+      assert combined.raw["total_tokens"] == 30
     end
 
-    test "handles nil values gracefully" do
-      usage1 = TokenUsage.new!(%{input: nil, output: 20, raw: %{"total_tokens" => 30}})
-      usage2 = TokenUsage.new!(%{input: 5, output: 15, raw: %{"total_tokens" => 20}})
+    test "handles nil counts on either side" do
+      opening = TokenUsage.new!(%{input: nil, output: 20, raw: %{"total_tokens" => 30}})
+      closing = TokenUsage.new!(%{input: 5, output: 15, raw: %{"total_tokens" => 20}})
 
-      combined = TokenUsage.add(usage1, usage2)
+      combined = TokenUsage.add(opening, closing)
 
       assert combined.input == 5
-      assert combined.output == 35
-      assert combined.raw["total_tokens"] == 50
-    end
-
-    test "merges raw values correctly" do
-      usage1 =
-        TokenUsage.new!(%{
-          input: 55,
-          output: 4,
-          raw: %{
-            "cache_creation_input_tokens" => 0,
-            "cache_read_input_tokens" => 0,
-            "input_tokens" => 55,
-            "output_tokens" => 4
-          }
-        })
-
-      usage2 =
-        TokenUsage.new!(%{
-          input: 30,
-          output: 2,
-          raw: %{
-            "cache_creation_input_tokens" => 10,
-            "cache_read_input_tokens" => 5,
-            "input_tokens" => 30,
-            "output_tokens" => 2
-          }
-        })
-
-      combined = TokenUsage.add(usage1, usage2)
-
-      assert combined.input == 85
-      assert combined.output == 6
-      assert combined.raw["cache_creation_input_tokens"] == 10
-      assert combined.raw["cache_read_input_tokens"] == 5
-      assert combined.raw["input_tokens"] == 85
-      assert combined.raw["output_tokens"] == 6
+      assert combined.output == 20
+      assert combined.raw["total_tokens"] == 30
     end
 
     test "handles nil arguments" do
@@ -116,8 +83,77 @@ defmodule LangChain.TokenUsageTest do
       assert TokenUsage.add(nil, usage) == usage
     end
 
-    test "sums nested raw detail maps per-key at every depth" do
-      usage1 =
+    test "carries forward a class the later reading does not report" do
+      # Anthropic's closing `message_delta` can carry only `output_tokens`.
+      opening =
+        TokenUsage.new!(%{
+          input: 25,
+          output: 1,
+          raw: %{"input_tokens" => 25, "cache_read_input_tokens" => 128}
+        })
+
+      closing = TokenUsage.new!(%{output: 15, raw: %{"output_tokens" => 15}})
+
+      combined = TokenUsage.add(opening, closing)
+
+      assert combined.input == 25
+      assert combined.output == 15
+      assert combined.raw["cache_read_input_tokens"] == 128
+      assert combined.raw["output_tokens"] == 15
+    end
+
+    test "a reading that reports zero does not erase an earlier count" do
+      # Some adapters normalize an unreported class to zero rather than omitting
+      # it. A count never decreases while a message generates, so the earlier
+      # reading stands.
+      opening =
+        TokenUsage.new!(%{
+          input: 25,
+          output: 1,
+          raw: %{"input_tokens" => 25, "cache_creation_input_tokens" => 4096}
+        })
+
+      closing =
+        TokenUsage.new!(%{
+          input: 0,
+          output: 15,
+          raw: %{"input_tokens" => 0, "cache_creation_input_tokens" => 0, "output_tokens" => 15}
+        })
+
+      combined = TokenUsage.add(opening, closing)
+
+      assert combined.input == 25
+      assert combined.output == 15
+      assert combined.raw["input_tokens"] == 25
+      assert combined.raw["cache_creation_input_tokens"] == 4096
+      assert combined.raw["output_tokens"] == 15
+    end
+
+    test "no count exceeds the largest single reading that reports it" do
+      readings = [
+        TokenUsage.new!(%{
+          input: 10,
+          output: 1,
+          raw: %{"input_tokens" => 10, "cache_creation_input_tokens" => 31_350}
+        }),
+        TokenUsage.new!(%{
+          input: 10,
+          output: 93,
+          raw: %{"input_tokens" => 10, "cache_creation_input_tokens" => 31_350}
+        })
+      ]
+
+      combined = Enum.reduce(readings, nil, &TokenUsage.add(&2, &1))
+
+      for key <- ["input_tokens", "cache_creation_input_tokens"] do
+        largest = readings |> Enum.map(& &1.raw[key]) |> Enum.max()
+
+        assert combined.raw[key] == largest
+      end
+    end
+
+    test "advances nested raw detail maps per-key at every depth" do
+      opening =
         TokenUsage.new!(%{
           input: 100,
           output: 10,
@@ -128,47 +164,49 @@ defmodule LangChain.TokenUsageTest do
           }
         })
 
-      usage2 =
+      closing =
         TokenUsage.new!(%{
-          input: 50,
-          output: 5,
+          input: 100,
+          output: 15,
           raw: %{
-            "prompt_tokens" => 50,
-            "prompt_tokens_details" => %{"cached_tokens" => 32, "audio_tokens" => 0},
-            "completion_tokens_details" => %{"reasoning_tokens" => 1}
+            "prompt_tokens" => 100,
+            "prompt_tokens_details" => %{"cached_tokens" => 64, "audio_tokens" => 0},
+            "completion_tokens_details" => %{"reasoning_tokens" => 9}
           }
         })
 
+      combined = TokenUsage.add(opening, closing)
+
+      assert combined.raw["prompt_tokens"] == 100
+      assert combined.raw["prompt_tokens_details"]["cached_tokens"] == 64
+      assert combined.raw["prompt_tokens_details"]["audio_tokens"] == 0
+      assert combined.raw["completion_tokens_details"]["reasoning_tokens"] == 9
+    end
+
+    test "keeps nested keys that only one side reports" do
+      usage1 = TokenUsage.new!(%{raw: %{"details" => %{"a" => 1}}})
+      usage2 = TokenUsage.new!(%{raw: %{"details" => %{"b" => 2}}})
+
       combined = TokenUsage.add(usage1, usage2)
 
-      assert combined.raw["prompt_tokens"] == 150
-      assert combined.raw["prompt_tokens_details"]["cached_tokens"] == 96
-      assert combined.raw["prompt_tokens_details"]["audio_tokens"] == 0
-      assert combined.raw["completion_tokens_details"]["reasoning_tokens"] == 5
+      assert combined.raw["details"] == %{"a" => 1, "b" => 2}
     end
 
     test "takes the later value for a struct rather than merging it key-by-key" do
       # Structs are maps, so recursing into one would build a malformed struct
-      # out of two rather than a sum. Whatever a provider parked in `:raw`
-      # arrives intact.
+      # out of two. Whatever a provider parked in `:raw` arrives intact.
       usage1 = TokenUsage.new!(%{raw: %{"at" => ~D[2024-01-01], "count" => 1}})
       usage2 = TokenUsage.new!(%{raw: %{"at" => ~D[2024-06-01], "count" => 2}})
 
       combined = TokenUsage.add(usage1, usage2)
 
       assert combined.raw["at"] == ~D[2024-06-01]
-      assert combined.raw["count"] == 3
-
-      cumulative =
-        TokenUsage.add(usage1, TokenUsage.new!(%{raw: usage2.raw, cumulative: true}))
-
-      assert cumulative.raw["at"] == ~D[2024-06-01]
-      assert cumulative.raw["count"] == 2
+      assert combined.raw["count"] == 2
     end
 
     test "takes a list-valued detail from the later usage whole" do
       # Gemini reports the per-modality breakdown as a list of objects rather
-      # than a keyed map, which offers nothing to accumulate against.
+      # than a keyed map, which offers nothing to advance against.
       details = fn n -> [%{"modality" => "TEXT", "tokenCount" => n}] end
 
       usage1 =
@@ -183,124 +221,92 @@ defmodule LangChain.TokenUsageTest do
 
       combined = TokenUsage.add(usage1, usage2)
 
-      assert combined.raw["promptTokenCount"] == 30
+      assert combined.raw["promptTokenCount"] == 20
       assert combined.raw["promptTokensDetails"] == details.(20)
     end
 
-    test "keeps nested keys that only one side reports" do
-      usage1 = TokenUsage.new!(%{raw: %{"details" => %{"a" => 1}}})
-      usage2 = TokenUsage.new!(%{raw: %{"details" => %{"b" => 2}}})
+    test "a raw value derived within one reading does not survive the merge" do
+      # An adapter that computes `total_tokens` as this reading's input + output
+      # describes only that reading. Keeping the larger of two such values is
+      # not the total of the merged counts, which is what `total/1` reports.
+      opening = TokenUsage.new!(%{input: 25, output: 1, raw: %{"total_tokens" => 26}})
+      closing = TokenUsage.new!(%{input: 0, output: 15, raw: %{"total_tokens" => 15}})
 
-      combined = TokenUsage.add(usage1, usage2)
+      combined = TokenUsage.add(opening, closing)
 
-      assert combined.raw["details"] == %{"a" => 1, "b" => 2}
-    end
-
-    test "a cumulative usage supersedes the accumulator instead of adding to it" do
-      running = TokenUsage.new!(%{input: 2679, output: 3, raw: %{"input_tokens" => 2679}})
-
-      total =
-        TokenUsage.new!(%{
-          input: 10_682,
-          output: 510,
-          raw: %{"input_tokens" => 10_682},
-          cumulative: true
-        })
-
-      combined = TokenUsage.add(running, total)
-
-      assert combined.input == 10_682
-      assert combined.output == 510
-      assert combined.raw["input_tokens"] == 10_682
-      assert combined.cumulative
-    end
-
-    test "a cumulative usage carries forward the fields it does not report" do
-      running =
-        TokenUsage.new!(%{
-          input: 25,
-          output: 1,
-          raw: %{"input_tokens" => 25, "cache_read_input_tokens" => 128}
-        })
-
-      total = TokenUsage.new!(%{output: 15, raw: %{"output_tokens" => 15}, cumulative: true})
-
-      combined = TokenUsage.add(running, total)
-
-      assert combined.input == 25
-      assert combined.output == 15
-      assert combined.raw["cache_read_input_tokens"] == 128
-      assert combined.raw["output_tokens"] == 15
-    end
-
-    test "a cumulative reading that reports zero does not erase an earlier count" do
-      # Some adapters normalize an unreported class to zero rather than omitting
-      # it. A running total never decreases, so the earlier count stands.
-      running =
-        TokenUsage.new!(%{
-          input: 25,
-          output: 1,
-          raw: %{"input_tokens" => 25, "cache_creation_input_tokens" => 4096}
-        })
-
-      total =
-        TokenUsage.new!(%{
-          input: 0,
-          output: 15,
-          raw: %{"input_tokens" => 0, "cache_creation_input_tokens" => 0, "output_tokens" => 15},
-          cumulative: true
-        })
-
-      combined = TokenUsage.add(running, total)
-
-      assert combined.input == 25
-      assert combined.output == 15
-      assert combined.raw["input_tokens"] == 25
-      assert combined.raw["cache_creation_input_tokens"] == 4096
-      assert combined.raw["output_tokens"] == 15
-    end
-
-    test "a cumulative reading advances nested counts without summing them" do
-      running = TokenUsage.new!(%{raw: %{"details" => %{"cached_tokens" => 64}}})
-
-      total =
-        TokenUsage.new!(%{raw: %{"details" => %{"cached_tokens" => 96}}, cumulative: true})
-
-      combined = TokenUsage.add(running, total)
-
-      assert combined.raw["details"]["cached_tokens"] == 96
-    end
-  end
-
-  describe "clear_cumulative/1" do
-    test "clears the flag and passes other values through" do
-      usage = TokenUsage.new!(%{input: 10, output: 20, cumulative: true})
-
-      assert %TokenUsage{cumulative: false, input: 10, output: 20} =
-               TokenUsage.clear_cumulative(usage)
-
-      assert TokenUsage.clear_cumulative(nil) == nil
+      assert TokenUsage.total(combined) == 40
+      assert combined.raw["total_tokens"] == 26
     end
   end
 
   describe "add_total/2" do
-    test "sums per-message totals even when they are marked cumulative" do
-      first = TokenUsage.new!(%{input: 100, output: 20, cumulative: true})
-      second = TokenUsage.new!(%{input: 150, output: 35, cumulative: true})
+    test "sums the counts of two messages" do
+      first = TokenUsage.new!(%{input: 100, output: 20})
+      second = TokenUsage.new!(%{input: 150, output: 35})
 
       total = TokenUsage.add_total(first, second)
 
       assert total.input == 250
       assert total.output == 55
-      refute total.cumulative
     end
 
     test "handles nil on either side" do
-      usage = TokenUsage.new!(%{input: 10, output: 20, cumulative: true})
+      usage = TokenUsage.new!(%{input: 10, output: 20})
 
       assert TokenUsage.add_total(nil, nil) == nil
-      assert %TokenUsage{input: 10, cumulative: false} = TokenUsage.add_total(nil, usage)
-      assert %TokenUsage{input: 10, cumulative: false} = TokenUsage.add_total(usage, nil)
+      assert %TokenUsage{input: 10} = TokenUsage.add_total(nil, usage)
+      assert %TokenUsage{input: 10} = TokenUsage.add_total(usage, nil)
+    end
+
+    test "treats an unreported count as contributing nothing" do
+      first = TokenUsage.new!(%{input: nil, output: 20})
+      second = TokenUsage.new!(%{input: 5, output: 15})
+
+      total = TokenUsage.add_total(first, second)
+
+      assert total.input == 5
+      assert total.output == 35
+    end
+
+    test "sums raw values, including nested detail maps, at every depth" do
+      first =
+        TokenUsage.new!(%{
+          input: 100,
+          output: 10,
+          raw: %{
+            "prompt_tokens" => 100,
+            "prompt_tokens_details" => %{"cached_tokens" => 64, "audio_tokens" => 0},
+            "completion_tokens_details" => %{"reasoning_tokens" => 4}
+          }
+        })
+
+      second =
+        TokenUsage.new!(%{
+          input: 50,
+          output: 5,
+          raw: %{
+            "prompt_tokens" => 50,
+            "prompt_tokens_details" => %{"cached_tokens" => 32, "audio_tokens" => 0},
+            "completion_tokens_details" => %{"reasoning_tokens" => 1}
+          }
+        })
+
+      total = TokenUsage.add_total(first, second)
+
+      assert total.raw["prompt_tokens"] == 150
+      assert total.raw["prompt_tokens_details"]["cached_tokens"] == 96
+      assert total.raw["prompt_tokens_details"]["audio_tokens"] == 0
+      assert total.raw["completion_tokens_details"]["reasoning_tokens"] == 5
+    end
+
+    test "takes the later value for a struct rather than merging it key-by-key" do
+      first = TokenUsage.new!(%{raw: %{"at" => ~D[2024-01-01], "count" => 1}})
+      second = TokenUsage.new!(%{raw: %{"at" => ~D[2024-06-01], "count" => 2}})
+
+      total = TokenUsage.add_total(first, second)
+
+      assert total.raw["at"] == ~D[2024-06-01]
+      assert total.raw["count"] == 3
     end
   end
 

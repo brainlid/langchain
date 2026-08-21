@@ -17,6 +17,19 @@ defmodule LangChain.TokenUsage do
 
   Refer to the `raw` token usage information for access to LLM-specific information that may be available.
 
+  ## Combining usage
+
+  Two different questions call for two different combinations, and the caller
+  knows which one it is asking:
+
+    * `add/2` combines several readings of the **same** message, as a streamed
+      response produces. Each reading is a snapshot of the message so far, so
+      the combination keeps the largest count per field.
+
+    * `add_total/2` combines the final usage of **different** messages into a
+      running total for a conversation. Each operand is already settled for its
+      own message, so the combination sums them.
+
   """
   use Ecto.Schema
   import Ecto.Changeset
@@ -28,15 +41,11 @@ defmodule LangChain.TokenUsage do
     field :input, :integer
     field :output, :integer
     field :raw, :map, default: %{}
-    # For token usage attached to a MessageDelta, whether the token usage is cumulative
-    # (all tokens for the message so far) or just the token usage for this delta.
-    # Varies by model.
-    field :cumulative, :boolean, default: false
   end
 
   @type t :: %TokenUsage{}
 
-  @create_fields [:input, :output, :raw, :cumulative]
+  @create_fields [:input, :output, :raw]
   # Anthropic returns only the output token count when streaming deltas
   @required_fields []
 
@@ -85,37 +94,50 @@ defmodule LangChain.TokenUsage do
   end
 
   @doc """
-  Combines two TokenUsage structs by adding their respective input and output
-  values. The raw maps are merged, with numeric values added at every depth, so
-  map-valued usage details such as `prompt_tokens_details` and
-  `completion_tokens_details` accumulate per-key rather than the later map
-  replacing the earlier one. A detail reported as a *list* of per-modality
-  objects, the shape Gemini uses for `promptTokensDetails`, offers no key to
-  accumulate against and is taken from the later usage whole.
+  Combines two readings of the same message into one.
 
-  When the second argument is marked `cumulative: true` it is a running total for
-  the message rather than an increment, so it supersedes the accumulator instead
-  of being added to it. Because a running total never decreases, the larger of
-  the two readings is kept per field: a reading that omits a class, or reports it
-  as zero, cannot erase what an earlier reading already established.
+  A streamed response reports usage more than once, and each reading is a
+  snapshot of the message so far rather than a description of one delta's share.
+  Anthropic opens with the input classes on `message_start` and closes with a
+  total on `message_delta`; Gemini repeats the running totals on every chunk;
+  OpenAI-shaped providers answer with a single snapshot on a usage-only terminal
+  chunk. Combining snapshots keeps the larger of the two readings per field.
 
-  This combines two readings of the *same* message. To total usage across
-  different messages, use `add_total/2`.
+  Token counts are counters, so a count never decreases while a message is being
+  generated. Providers differ in how completely each reading repeats the
+  picture: some report every class every time, some report only the classes that
+  changed, and some normalize an unreported class to zero. Keeping the larger
+  reading is correct under all three -- a fuller reading advances the total, and
+  a partial one cannot erase a class it never meant to describe.
+
+  The `raw` maps are merged the same way, at every depth, so map-valued usage
+  details such as `prompt_tokens_details` and `completion_tokens_details` advance
+  per-key rather than the later map replacing the earlier one. A detail reported
+  as a *list* of per-modality objects, the shape Gemini uses for
+  `promptTokensDetails`, offers no key to advance against and is taken from the
+  later usage whole.
+
+  Keeping the larger count is sound for a primitive counter. A `raw` key holding
+  a value *derived* from other counts within a single reading, such as a
+  `total_tokens` an adapter computes as input + output, is only meaningful
+  alongside the reading it came from and does not survive the merge intact. Read
+  the total from `total/1` rather than from `raw`.
+
+  To total usage across different messages, use `add_total/2`.
 
   If both arguments are nil, returns nil.
   If one argument is nil, returns the non-nil argument.
 
   ## Example
 
-      iex> usage1 = LangChain.TokenUsage.new!(%{input: 10, output: 20, raw: %{"total_tokens" => 30}})
-      iex> usage2 = LangChain.TokenUsage.new!(%{input: 5, output: 15, raw: %{"total_tokens" => 20}})
-      iex> combined = LangChain.TokenUsage.add(usage1, usage2)
-      iex> combined.input
-      15
-      iex> combined.output
-      35
-      iex> combined.raw["total_tokens"]
-      50
+      iex> alias LangChain.TokenUsage
+      iex> opening = TokenUsage.new!(%{input: 25, output: 1, raw: %{"input_tokens" => 25}})
+      iex> closing = TokenUsage.new!(%{output: 15, raw: %{"output_tokens" => 15}})
+      iex> combined = TokenUsage.add(opening, closing)
+      iex> {combined.input, combined.output}
+      {25, 15}
+      iex> combined.raw
+      %{"input_tokens" => 25, "output_tokens" => 15}
 
   """
   @spec add(t() | nil, t() | nil) :: t() | nil
@@ -123,72 +145,46 @@ defmodule LangChain.TokenUsage do
   def add(nil, usage), do: usage
   def add(usage, nil), do: usage
 
-  # A `cumulative: true` usage is a running total for the message so far, not an
-  # increment, so it supersedes the accumulator instead of being added to it.
-  #
-  # Token counts are counters, so a running total never decreases while a message
-  # is being generated. Providers differ in how completely each reading repeats
-  # the picture: some report every class every time, some report only the classes
-  # that changed, and some normalize an unreported class to zero. Keeping the
-  # larger of the two readings per field is correct under all three -- a fuller
-  # reading advances the total, and a partial one cannot erase a class it never
-  # meant to describe.
-  def add(%TokenUsage{} = usage1, %TokenUsage{cumulative: true} = usage2) do
+  def add(%TokenUsage{} = usage1, %TokenUsage{} = usage2) do
     %TokenUsage{
       usage2
       | input: running_max(usage1.input, usage2.input),
         output: running_max(usage1.output, usage2.output),
-        raw: merge_cumulative_raw(usage1.raw || %{}, usage2.raw || %{})
+        raw: merge_snapshot_raw(usage1.raw || %{}, usage2.raw || %{})
     }
   end
-
-  def add(%TokenUsage{} = usage1, %TokenUsage{} = usage2) do
-    new!(%{
-      input: (usage1.input || 0) + (usage2.input || 0),
-      output: (usage1.output || 0) + (usage2.output || 0),
-      raw: merge_raw_values(usage1.raw || %{}, usage2.raw || %{})
-    })
-  end
-
-  @doc """
-  Returns the usage with the `:cumulative` flag cleared.
-
-  `:cumulative` describes the relationship between a streaming delta and the
-  *other deltas of the same message*. Once deltas are merged into a message the
-  flag has served its purpose, and carrying it into a total across messages makes
-  `add/2` supersede the accumulator and report only the last message.
-
-  Returns non-`TokenUsage` values (including `nil`) unchanged.
-  """
-  # Two specs, because the catch-all clause makes this intentionally total: a
-  # caller can pipe a `get/1` result straight through without a nil check, and
-  # anything that is not a `%TokenUsage{}` comes back as the type it went in as.
-  @spec clear_cumulative(t()) :: t()
-  @spec clear_cumulative(other) :: other when other: any()
-  def clear_cumulative(%TokenUsage{} = usage), do: %TokenUsage{usage | cumulative: false}
-  def clear_cumulative(other), do: other
 
   @doc """
   Adds one completed message's usage to a running total across messages.
 
   Use this, rather than `add/2`, whenever the two operands are totals for
   *different* messages. Each assembled message's usage is already final for that
-  message, so the values are summed, and `:cumulative` is cleared first because
-  it only describes delta-to-delta relationships within a single message.
+  message, so the values are summed, at every depth of the `raw` map.
+
+  If both arguments are nil, returns nil.
+  If one argument is nil, returns the non-nil argument.
 
   ## Example
 
       iex> alias LangChain.TokenUsage
-      iex> first = TokenUsage.new!(%{input: 100, output: 20, cumulative: true})
-      iex> second = TokenUsage.new!(%{input: 150, output: 35, cumulative: true})
+      iex> first = TokenUsage.new!(%{input: 100, output: 20})
+      iex> second = TokenUsage.new!(%{input: 150, output: 35})
       iex> total = TokenUsage.add_total(first, second)
-      iex> {total.input, total.output, total.cumulative}
-      {250, 55, false}
+      iex> {total.input, total.output}
+      {250, 55}
 
   """
   @spec add_total(t() | nil, t() | nil) :: t() | nil
-  def add_total(accumulator, usage) do
-    add(clear_cumulative(accumulator), clear_cumulative(usage))
+  def add_total(nil, nil), do: nil
+  def add_total(nil, usage), do: usage
+  def add_total(usage, nil), do: usage
+
+  def add_total(%TokenUsage{} = usage1, %TokenUsage{} = usage2) do
+    new!(%{
+      input: (usage1.input || 0) + (usage2.input || 0),
+      output: (usage1.output || 0) + (usage2.output || 0),
+      raw: sum_raw_values(usage1.raw || %{}, usage2.raw || %{})
+    })
   end
 
   # Raw usage maps nest: OpenAI-shaped providers report cached and reasoning
@@ -198,25 +194,25 @@ defmodule LangChain.TokenUsage do
   # later one. Only maps are traversed. Gemini reports the same class of detail
   # as a list of per-modality objects, which has no key to accumulate against,
   # so the later value is taken whole.
-  defp merge_raw_values(raw1, raw2) do
+  defp sum_raw_values(raw1, raw2) do
     Map.merge(raw1, raw2, fn
       _k, v1, v2 when is_number(v1) and is_number(v2) ->
         v1 + v2
 
       _k, v1, v2 ->
-        if plain_map?(v1) and plain_map?(v2), do: merge_raw_values(v1, v2), else: v2
+        if plain_map?(v1) and plain_map?(v2), do: sum_raw_values(v1, v2), else: v2
     end)
   end
 
-  # Same traversal as `merge_raw_values/2`, but keeping the larger of two counts
-  # rather than their sum, because both sides describe the same running total.
-  defp merge_cumulative_raw(raw1, raw2) do
+  # Same traversal as `sum_raw_values/2`, but keeping the larger of two counts
+  # rather than their sum, because both sides describe the same message.
+  defp merge_snapshot_raw(raw1, raw2) do
     Map.merge(raw1, raw2, fn
       _k, v1, v2 when is_number(v1) and is_number(v2) ->
         max(v1, v2)
 
       _k, v1, v2 ->
-        if plain_map?(v1) and plain_map?(v2), do: merge_cumulative_raw(v1, v2), else: v2
+        if plain_map?(v1) and plain_map?(v2), do: merge_snapshot_raw(v1, v2), else: v2
     end)
   end
 
@@ -227,7 +223,7 @@ defmodule LangChain.TokenUsage do
   defp running_max(v1, v2), do: max(v1, v2)
 
   # Structs are maps, but merging them key-by-key would produce a malformed
-  # struct rather than a sum, so only bare maps recurse.
+  # struct rather than a combination, so only bare maps recurse.
   defp plain_map?(value), do: is_map(value) and not is_struct(value)
 
   @doc """

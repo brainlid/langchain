@@ -647,6 +647,14 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
   # ---------------------------------------------------------------------------
 
   @doc false
+  @spec do_process_response(t(), data :: map()) ::
+          :skip
+          | TokenUsage.t()
+          | Message.t()
+          | [Message.t()]
+          | MessageDelta.t()
+          | [MessageDelta.t()]
+          | {:error, LangChainError.t()}
   # Streaming delta chunk — matched first because each choice has a "delta" key.
   def do_process_response(
         %ChatAwsMantle{} = model,
@@ -831,9 +839,8 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
 
   defp attach_usage(%Message{} = msg, _), do: msg
 
-  # Mantle reports usage once per response, whether streamed or not, so no
-  # cumulative marking is needed. Nested detail maps such as
-  # `prompt_tokens_details` are carried through in `:raw`.
+  # Mantle reports usage once per response, whether streamed or not. Nested
+  # detail maps such as `prompt_tokens_details` are carried through in `:raw`.
   defp get_token_usage(usage) when is_map(usage) do
     TokenUsage.new!(%{
       input: Map.get(usage, "prompt_tokens"),

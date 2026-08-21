@@ -715,9 +715,8 @@ defmodule LangChain.Chains.LLMChain do
       %Message{role: :assistant} = msg, acc ->
         # Each assembled assistant message's usage is already the final total for
         # that message, so these are per-message totals being summed rather than
-        # two readings of one message. `add_total/2` is the accumulation that
-        # models that, including clearing the delta-merge `:cumulative` flag that
-        # would otherwise make the total collapse to the last turn.
+        # several readings of one message. `add_total/2` is the combination that
+        # models that; `add/2` would keep the largest turn instead of the sum.
         LangChain.TokenUsage.add_total(acc, LangChain.TokenUsage.get(msg))
 
       _, acc ->

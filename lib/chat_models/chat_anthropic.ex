@@ -1437,7 +1437,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     }
     |> Map.merge(stop_details_metadata(delta["stop_details"] || data["stop_details"]))
     |> MessageDelta.new()
-    |> TokenUsage.set_wrapped(get_token_usage(usage, true))
+    |> TokenUsage.set_wrapped(get_token_usage(usage))
     |> to_response()
   end
 
@@ -2348,17 +2348,17 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     return
   end
 
-  # `cumulative` distinguishes a running total for the whole message from an
-  # increment. The `message_delta` event reports cumulative counts, so its usage
-  # replaces what `message_start` reported instead of adding to it.
-  defp get_token_usage(usage_data, cumulative \\ false) do
+  # A stream reports usage twice. `message_start` opens the message with the
+  # input classes and `message_delta` closes it with the totals for the whole
+  # message, so `TokenUsage.add/2` keeps the larger reading per class rather
+  # than adding the two together.
+  defp get_token_usage(usage_data) do
     # if prompt caching has been used the response will also contain
     # "cache_creation_input_tokens" and "cache_read_input_tokens"
     TokenUsage.new!(%{
       input: Map.get(usage_data, "input_tokens"),
       output: Map.get(usage_data, "output_tokens"),
-      raw: usage_data,
-      cumulative: cumulative
+      raw: usage_data
     })
   end
 

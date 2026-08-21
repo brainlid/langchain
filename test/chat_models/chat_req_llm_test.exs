@@ -1830,12 +1830,11 @@ if Code.ensure_loaded?(ReqLLM) do
         end
       end
 
-      test "a whole non-streamed response is not marked cumulative" do
+      test "a whole non-streamed response reports its usage once" do
         usage = ChatReqLLM.translate_usage(usage_snapshot(100, 20))
 
-        assert usage.input == 100
-        assert usage.output == 20
-        refute usage.cumulative
+        assert %TokenUsage{input: 100, output: 20} = usage
+        assert usage.raw[:total_tokens] == 120
       end
     end
   end

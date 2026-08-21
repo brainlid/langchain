@@ -499,8 +499,8 @@ defmodule LangChain.Trajectory do
 
   defp aggregate_token_usage(messages) do
     # Each message carries its own final usage, so this sums per-message totals.
-    # `add_total/2` clears the delta-merge `:cumulative` flag first; left set, it
-    # makes the running total collapse to whichever message came last.
+    # `add/2` combines several readings of one message and would keep the
+    # largest message here instead of the sum.
     Enum.reduce(messages, nil, fn msg, acc ->
       TokenUsage.add_total(acc, TokenUsage.get(msg))
     end)
@@ -556,7 +556,7 @@ defmodule LangChain.Trajectory do
   defp token_usage_to_map(nil), do: nil
 
   # Intentionally serialize only input/output for a minimal, portable format.
-  # Provider-specific details in :raw and :cumulative are omitted.
+  # Provider-specific details in :raw are omitted.
   defp token_usage_to_map(%TokenUsage{} = usage) do
     %{input: usage.input, output: usage.output}
   end

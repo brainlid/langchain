@@ -988,8 +988,9 @@ defmodule LangChain.Chains.LLMChainTest do
       assert updated_chain.last_message.tool_calls == []
       assert updated_chain.needs_response == false
 
-      # Usage metadata should be preserved on the message
-      assert %LangChain.TokenUsage{input: 3, output: 6} =
+      # Both deltas report the same message's counts, the second further along,
+      # so the message carries the later reading rather than the two added up.
+      assert %LangChain.TokenUsage{input: 2, output: 4} =
                updated_chain.last_message.metadata.usage
     end
 

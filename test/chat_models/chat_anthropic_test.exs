@@ -853,8 +853,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
                TokenUsage.new!(%{
                  input: nil,
                  output: 80,
-                 raw: %{"output_tokens" => 80},
-                 cumulative: true
+                 raw: %{"output_tokens" => 80}
                })
     end
 
@@ -937,12 +936,11 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
       assert message.status == :content_filtered
       assert message.content == [ContentPart.text!("Here is the first step")]
       assert message.metadata[:stop_details] == %{"type" => "refusal", "category" => "cyber"}
-      # `message_delta` closes with the cumulative total for the message, so its
-      # 12 output tokens replace the 1 opened with rather than adding to it. The
-      # input count it does not repeat carries forward from `message_start`.
+      # `message_delta` closes with the totals for the message, so its 12 output
+      # tokens replace the 1 opened with rather than adding to it. The input
+      # count it does not repeat carries forward from `message_start`.
       assert message.metadata[:usage].input == 14
       assert message.metadata[:usage].output == 12
-      refute message.metadata[:usage].cumulative
     end
 
     test "handles receiving a content_block_start event for text", %{model: model} do
@@ -1414,8 +1412,7 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
             usage: %LangChain.TokenUsage{
               input: nil,
               output: 80,
-              raw: %{"output_tokens" => 80},
-              cumulative: true
+              raw: %{"output_tokens" => 80}
             }
           }
         }
@@ -5201,8 +5198,8 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 
     # The events below are transcribed from Anthropic's streaming documentation.
     # A stream reports usage twice: `message_start` opens the message and
-    # `message_delta` closes it with a total that is cumulative for the whole
-    # message, repeating the input classes rather than adding to them.
+    # `message_delta` closes it with the totals for the whole message, repeating
+    # the input classes rather than adding to them.
     defp stream_to_message(model, events) do
       {:ok, %Message{} = message} =
         events
@@ -5254,7 +5251,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       }
     end
 
-    test "the closing cumulative total is the message's usage, not a sum", %{model: model} do
+    test "the closing total is the message's usage, not a sum", %{model: model} do
       message =
         stream_to_message(
           model,
@@ -5284,7 +5281,6 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       assert usage.output == 510
       assert usage.raw["input_tokens"] == 10_682
       assert usage.raw["server_tool_use"] == %{"web_search_requests" => 1}
-      refute usage.cumulative
     end
 
     test "cache classes are reported once, not doubled", %{model: model} do

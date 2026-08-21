@@ -431,7 +431,8 @@ defmodule LangChain.MessageDelta do
 
   # Carry provider metadata from an incoming delta onto the accumulated one so
   # it reaches the assembled message. `:usage` is excluded because
-  # `accumulate_token_usage/2` sums it across deltas rather than replacing it.
+  # `accumulate_token_usage/2` combines it across deltas rather than replacing
+  # it.
   @spec merge_delta_metadata(t(), t()) :: t()
   defp merge_delta_metadata(%MessageDelta{} = primary, %MessageDelta{metadata: incoming})
        when is_map(incoming) do
@@ -490,7 +491,6 @@ defmodule LangChain.MessageDelta do
       delta
       |> Map.from_struct()
       |> Map.put(:content, content)
-      |> settle_token_usage()
 
     case Message.new(attrs) do
       {:ok, message} ->
@@ -501,45 +501,39 @@ defmodule LangChain.MessageDelta do
     end
   end
 
-  # `:cumulative` describes how one delta's usage relates to the other deltas of
-  # the same message. Those deltas are now merged, so the flag has no remaining
-  # meaning, and a message that kept it would make a later `TokenUsage.add/2`
-  # across messages report only this one. This makes a streamed message's usage
-  # indistinguishable from a non-streamed one's.
-  defp settle_token_usage(%{metadata: %{usage: %TokenUsage{} = usage}} = attrs) do
-    put_in(attrs, [:metadata, :usage], TokenUsage.clear_cumulative(usage))
-  end
-
-  defp settle_token_usage(attrs), do: attrs
-
   # Filter nil values from list (from index padding during delta merging)
   @spec reject_nil(list() | any()) :: list() | any()
   defp reject_nil(list) when is_list(list), do: Enum.reject(list, &is_nil/1)
   defp reject_nil(other), do: other
 
   @doc """
-  Accumulates token usage from delta messages. Uses `LangChain.TokenUsage.add/2` to combine
-  the usage data from both deltas.
+  Combines the token usage of two deltas of the same message with
+  `LangChain.TokenUsage.add/2`.
+
+  Every reading a stream carries describes the message so far rather than one
+  delta's share, so the combination keeps the larger count per field. A reading
+  that omits a class, or reports it as zero, leaves what an earlier reading
+  established standing.
 
   ## Example
 
       iex> alias LangChain.TokenUsage
       iex> alias LangChain.MessageDelta
-      iex> delta1 = %MessageDelta{
+      iex> opening = %MessageDelta{
       ...>   metadata: %{
-      ...>     usage: %TokenUsage{input: 10, output: 5}
+      ...>     usage: %TokenUsage{input: 25, output: 1}
       ...>   }
       ...> }
-      iex> delta2 = %MessageDelta{
+      iex> closing = %MessageDelta{
       ...>   metadata: %{
-      ...>     usage: %TokenUsage{input: 5, output: 15}
+      ...>     usage: %TokenUsage{output: 15}
       ...>   }
       ...> }
-      iex> result = MessageDelta.accumulate_token_usage(delta1, delta2)
+      iex> result = MessageDelta.accumulate_token_usage(opening, closing)
       iex> result.metadata.usage.input
-      15
+      25
       iex> result.metadata.usage.output
-      20
+      15
 
   """
   @spec accumulate_token_usage(t(), t()) :: t()

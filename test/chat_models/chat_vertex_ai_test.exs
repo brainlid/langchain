@@ -1556,15 +1556,12 @@ defmodule ChatModels.ChatVertexAITest do
       assert usage.raw["totalTokenCount"] <= 109
     end
 
-    test "a whole response is not marked cumulative", %{model: model} do
+    test "a whole response reports its usage once", %{model: model} do
       response = usage_chunk("Hello User!", 9, last: true)
 
       assert [%Message{} = message] = ChatVertexAI.do_process_response(model, response, Message)
 
-      usage = TokenUsage.get(message)
-      assert usage.input == 100
-      assert usage.output == 9
-      refute usage.cumulative
+      assert %TokenUsage{input: 100, output: 9} = TokenUsage.get(message)
     end
   end
 end

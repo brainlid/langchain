@@ -641,16 +641,14 @@ defmodule LangChain.ChatModels.TelemetryTest do
   describe "chain token usage aggregation across turns" do
     setup :verify_on_exit!
 
-    test "sums usage across all assistant messages, even when flagged cumulative (streaming)" do
+    test "sums usage across all assistant messages of a run" do
       test_pid = self()
 
-      # Two LLM turns, each reporting usage flagged `cumulative: true` — exactly what
-      # a streaming provider (e.g. Google AI) produces once its deltas are assembled
-      # into a message. The cumulative flag is a *delta-merge* signal for a single
-      # message; it must NOT cause an earlier turn to be discarded when the chain
-      # aggregates per-turn totals across the run.
-      turn1_usage = TokenUsage.new!(%{input: 100, output: 20, cumulative: true})
-      turn2_usage = TokenUsage.new!(%{input: 130, output: 15, cumulative: true})
+      # Two LLM turns, each carrying the usage its own message settled on. A
+      # chain aggregates per-turn totals across the run, so the earlier turn
+      # must survive rather than being superseded by the later one.
+      turn1_usage = TokenUsage.new!(%{input: 100, output: 20})
+      turn2_usage = TokenUsage.new!(%{input: 130, output: 15})
 
       ChatOpenAI
       |> expect(:call, fn _model, _messages, _tools ->
@@ -683,8 +681,7 @@ defmodule LangChain.ChatModels.TelemetryTest do
         |> LLMChain.add_message(Message.new_user!("please call do_thing"))
         |> LLMChain.run(mode: :while_needs_response)
 
-      # 100 + 130 input and 20 + 15 output: the first turn is NOT lost despite both
-      # turns being flagged cumulative. (Before the fix this reported {130, 15}.)
+      # 100 + 130 input and 20 + 15 output: the first turn is not lost.
       assert_received {:chain_stop, stop_metadata}
       assert %TokenUsage{input: 230, output: 35} = stop_metadata.token_usage
 
