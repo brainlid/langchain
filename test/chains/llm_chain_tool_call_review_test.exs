@@ -535,6 +535,71 @@ defmodule LangChain.Chains.LLMChainToolCallReviewTest do
       assert text(resumed) == "shipped"
     end
 
+    test "a standing answer carried in the context stops the asking" do
+      # The handler asks about a call unless the tool is already on a list the
+      # user has agreed to. The list rides on custom_context, so a host that
+      # records "always allow this" rebuilds the chain with the tool added.
+      handler = %{
+        on_tool_call_review: fn _chain, call, _func, review ->
+          cond do
+            review.human_decision -> :ok
+            call.name in review.custom_context.always_allow -> :ok
+            true -> {:interrupt, "Run #{call.name}?", %{tool: call.name}}
+          end
+        end
+      }
+
+      ask = fn always_allow ->
+        [tool(self())]
+        |> chain_with([handler])
+        |> Map.put(:custom_context, %{always_allow: always_allow})
+        |> with_call()
+        |> LLMChain.execute_tool_calls()
+        |> only_result()
+      end
+
+      first = ask.([])
+      assert first.is_interrupt
+      assert first.interrupt_data == %{tool: "ship_order"}
+      refute_received {:tool_ran, _}
+
+      # The user answers "always allow this one", the host records it, and the
+      # next call of that tool runs without being asked about again.
+      later = ask.(["ship_order"])
+      refute later.is_interrupt
+      assert_received {:tool_ran, _}
+      assert text(later) == "shipped"
+    end
+
+    test "a batch is reviewed before any of it is asked about" do
+      # Every call is settled before the first interrupt reaches anyone, so an
+      # answer to one of them cannot spare its siblings in the same batch.
+      handler = %{
+        on_tool_call_review: fn _chain, call, _func, _review ->
+          {:interrupt, "Run #{call.name}?", %{tool: call.name}}
+        end
+      }
+
+      message =
+        Message.new_assistant!(%{
+          content: "calling",
+          tool_calls: [
+            ToolCall.new!(%{call_id: "call_1", name: "ship_order", arguments: %{}}),
+            ToolCall.new!(%{call_id: "call_2", name: "ship_order", arguments: %{}})
+          ]
+        })
+
+      chain =
+        [tool(self())]
+        |> chain_with([handler])
+        |> LLMChain.add_message(message)
+
+      assert [first, second] = LLMChain.execute_tool_calls(chain).last_message.tool_results
+      assert first.is_interrupt
+      assert second.is_interrupt
+      refute_received {:tool_ran, _}
+    end
+
     test "carries the context the tool will actually run with" do
       test_pid = self()
 

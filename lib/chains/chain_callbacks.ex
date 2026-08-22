@@ -369,6 +369,49 @@ defmodule LangChain.Chains.ChainCallbacks do
   `LangChain.Message.replace_tool_result/3` rather than adding a second one for
   the same call.
 
+  ### Remembering an answer for later calls
+
+  `:human_decision` answers for one call. It says the user agreed to the call in
+  front of them, not that they agreed to a kind of call, and it is gone by the
+  next one. A user who says "stop asking me about this" is describing a rule,
+  and a rule has to be recorded somewhere the handler can read on the calls that
+  follow.
+
+  `custom_context` is the natural place for one that lasts as long as the
+  conversation, since review is handed it already. The host records what the
+  user agreed to and builds the next chain with it:
+
+      on_tool_call_review: fn _chain, call, _func, review ->
+        cond do
+          # This call was answered directly.
+          review.human_decision ->
+            :ok
+
+          # This kind of call was answered earlier and that answer still stands.
+          call.name in review.custom_context.always_allow ->
+            :ok
+
+          call.name == "delete_file" and
+              not inside?(call.arguments["path"], review.custom_context.workspace_root) ->
+            {:interrupt, "That file is outside your project. Delete it anyway?",
+             %{path: call.arguments["path"]}}
+
+          true ->
+            :ok
+        end
+      end
+
+  A rule meant to outlive the conversation belongs in a store keyed to the user
+  rather than on the chain, but the handler reads it the same way.
+
+  `:human_decision` is checked first so the answer to the call being resumed is
+  honored whatever the standing rules say.
+
+  What this cannot do is spare a call's siblings. Every call in a batch is
+  reviewed before any interrupt reaches anyone, so a model asking to delete three
+  files at once has all three held together and the user is asked about all
+  three. A rule recorded from their answer applies from the next batch on.
+
   ## Rewritten arguments and the transcript
 
   `{:update_arguments, map}` changes what the tool receives and what
