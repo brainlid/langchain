@@ -519,10 +519,18 @@ defmodule LangChain.Chains.LLMChainToolCallReviewTest do
       escalated = LLMChain.execute_tool_calls(chain) |> only_result()
       assert escalated.is_interrupt
       assert escalated.interrupt_data == %{reason: :over_limit}
+      assert text(escalated) == "a manager has to approve this"
+      assert escalated.tool_call_id == "call_1"
+      assert escalated.name == "ship_order"
+      assert escalated.display_text == "Shipping the order"
+      # A call held for a person is not a call that failed.
+      refute escalated.is_error
       refute_received {:tool_ran, _}
 
       resumed = decided(chain, [%{type: :approve}]) |> only_result()
       refute resumed.is_interrupt
+      assert resumed.interrupt_data == nil
+      assert resumed.tool_call_id == "call_1"
       assert_received {:tool_ran, _}
       assert text(resumed) == "shipped"
     end

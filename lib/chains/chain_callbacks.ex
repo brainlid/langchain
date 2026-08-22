@@ -231,56 +231,110 @@ defmodule LangChain.Chains.ChainCallbacks do
 
   ## The review context
 
-  - `:human_decision` - `nil` when the model's call is being run directly, or
-    `:approve` / `:edit` when a person has already decided on this call through
-    `LLMChain.execute_tool_calls_with_decisions/3`.
-  - `:custom_context` - the context the tool will be given, which is the
-    context passed to `LLMChain.execute_tool_calls/2` when one is supplied and
-    `chain.custom_context` otherwise. A handler scoped to a tenant should read
-    this rather than `chain.custom_context`, which is not always the context the
-    call will run under.
+  The fourth argument describes the circumstances of the call rather than the
+  call itself.
 
-  Match the map loosely. It gains keys as the chain learns more about a call.
+  - `:human_decision` is `nil` while the model's call is being run directly. It
+    is `:approve` or `:edit` once a person has decided on this call through
+    `LLMChain.execute_tool_calls_with_decisions/3`, which is the only thing that
+    gives it any other value.
+  - `:custom_context` is the context the tool will be given: the context passed
+    to `LLMChain.execute_tool_calls/2` when one is supplied, and
+    `chain.custom_context` otherwise. A handler scoped to a tenant reads this
+    rather than `chain.custom_context`, which is not always the context the call
+    will run under.
 
-  ## Return values
+  On a chain whose `custom_context` is `%{tenant_id: "acme"}`, a handler running
+  against the model's own call is given:
 
-  - `:ok` - express no opinion; the call proceeds to the next handler
-  - `{:update_arguments, map}` - rewrite the arguments and keep going. Later
-    handlers review the rewritten call, and the tool runs with it.
-  - `{:deny, reason}` - refuse the call. The tool never runs and `reason` is
-    returned to the model as the tool result.
-  - `{:interrupt, message, interrupt_data}` - refuse the call for now and
-    interrupt, producing a `ToolResult` with `is_interrupt: true`. Use this to
-    escalate a decision the handler cannot make on its own.
+      %{human_decision: nil, custom_context: %{tenant_id: "acme"}}
 
-  Handlers are consulted in the order their maps were added to the chain. The
-  first `{:deny, _}` or `{:interrupt, _, _}` settles the call and the remaining
-  handlers are skipped.
-
-  An exception raised by a handler aborts the whole batch of tool calls before
-  any of them runs, including calls an earlier handler already cleared. A
-  handler that cannot reach the system it consults should decide the call, by
-  denying it, rather than raise.
+  Match on the keys a handler cares about rather than the whole map. It gains
+  keys as the chain learns more about a call.
 
   ## Escalating to a person
 
-  A handler that returns `{:interrupt, _, _}` is consulted again for the same
-  call when the person's decision comes back, because review applies to the
-  human-decision path too. Read `:human_decision` and stand aside once it is
-  set, or the escalation is raised again and the call never progresses:
+  Review runs again for the same call once a person has decided on it, so a
+  handler that escalates has to recognize the answer coming back.
+  `:human_decision` is what it reads. A handler that ignores it raises the same
+  escalation a second time and the call never runs.
+
+  Take a refund the handler will not clear on its own:
 
       on_tool_call_review: fn _chain, call, _func, review ->
         cond do
-          review.human_decision -> :ok
-          Policy.needs_sign_off?(call) -> {:interrupt, "Needs a manager", %{call_id: call.call_id}}
-          true -> :ok
+          review.human_decision ->
+            # A person has already answered for this call. Their decision stands.
+            :ok
+
+          call.arguments["amount_cents"] > 50_000 ->
+            {:interrupt, "A manager has to approve a refund this size.",
+             %{limit_cents: 50_000}}
+
+          true ->
+            :ok
         end
       end
 
-  Resuming from an interrupt raised here works the same way as resuming from one
-  a tool returned: the chain already holds a `ToolResult` answering the call, so
-  a resumed run replaces it with `LangChain.Message.replace_tool_result/3`
-  rather than adding a second result for the same call.
+  ### First pass, on the model's call
+
+  The handler is given `%{human_decision: nil, custom_context: %{tenant_id: "acme"}}`.
+  No one has decided anything yet, the amount is over the ceiling, and the
+  handler interrupts. The tool never runs, and the call is answered by a stand-in
+  result:
+
+      %ToolResult{
+        tool_call_id: "call_abc123",
+        name: "issue_refund",
+        display_text: "Issuing the refund",
+        content: [%ContentPart{type: :text, content: "A manager has to approve a refund this size."}],
+        is_error: false,
+        is_interrupt: true,
+        interrupt_data: %{limit_cents: 50_000}
+      }
+
+  The message becomes `content`, as a list of ContentParts rather than the string
+  the handler returned. `interrupt_data` is carried through untouched and is
+  never shown to the model. It is for the code deciding what to ask a person.
+
+  `:on_tool_interrupted` fires with that result, and `LLMChain.run/2` returns:
+
+      {:interrupt, chain, %{limit_cents: 50_000, tool_call_id: "call_abc123"}}
+
+  The chain adds `:tool_call_id` to whatever the handler returned, so a handler
+  does not need to put the call id in `interrupt_data` itself. That id is what
+  ties the question back to the call it came from.
+
+  ### Second pass, once the person has answered
+
+  The host resumes through `LLMChain.execute_tool_calls_with_decisions/3` with
+  the decision it collected. Review runs again on the same call, and this time
+  the handler is given:
+
+      %{human_decision: :approve, custom_context: %{tenant_id: "acme"}}
+
+  The first branch matches, the handler returns `:ok`, and the tool runs. The
+  call is answered the way any other cleared call is:
+
+      %ToolResult{
+        tool_call_id: "call_abc123",
+        name: "issue_refund",
+        display_text: "Issuing the refund",
+        content: [%ContentPart{type: :text, content: "refunded"}],
+        is_error: false,
+        is_interrupt: false,
+        interrupt_data: nil
+      }
+
+  An `:edit` decision reaches the handler the same way, with
+  `human_decision: :edit` and the call already carrying the arguments the person
+  supplied. A `:reject` decision does not reach review at all, because the call
+  does not run.
+
+  An interrupt raised on the model's call leaves the chain holding a ToolResult
+  that already answers it, so a resumed run replaces that result with
+  `LangChain.Message.replace_tool_result/3` rather than adding a second one for
+  the same call.
 
   ## Rewritten arguments and the transcript
 
