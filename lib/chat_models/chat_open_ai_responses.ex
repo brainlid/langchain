@@ -111,6 +111,33 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   same usage information for each choice but it is duplicated and only one
   response is meaningful.
 
+  ## Reasoning Continuity
+
+  Reasoning models such as `gpt-5` and the o-series return a `reasoning` output
+  item alongside their text and tool calls. Handing that item back on the next
+  request lets the model resume the reasoning it already did instead of
+  re-deriving it, which matters most inside a tool loop where every tool result
+  is another round trip.
+
+  The item is only replayable when it carries its `encrypted_content`, and the
+  API only returns that when the request asks for it:
+
+      ChatOpenAIResponses.new!(%{
+        model: "gpt-5",
+        include: ["reasoning.encrypted_content"],
+        reasoning: %{effort: :high}
+      })
+
+  With that set, reasoning items are captured off the response and sent back as
+  their own `input` items on subsequent requests. Nothing else is required. A
+  reasoning item that arrived without `encrypted_content` is omitted rather than
+  sent as a stub, so leaving `:include` alone keeps the previous behavior.
+
+  This is the stateless path, and it works whether or not responses are stored.
+  `:previous_response_id` covers the stored case instead, and is unavailable to
+  a Zero Data Retention organization, which the API treats as stateless by
+  definition.
+
   ## Native Tools (Web Search)
 
   Open AI's Responses API also supports built-in tools. Among those, we support Web Search currently.
@@ -809,8 +836,9 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     Enum.map(tool_results, &for_api(model, &1))
   end
 
-  # Native tool calls (such as web_search_call) need to get plucked
-  # out of the content parts and become their own input items.
+  # Reasoning items and native tool calls (such as web_search_call) are their own
+  # entries in the API's `output` array, so they get plucked out of the content
+  # parts and go back as their own input items.
   def for_api(
         %ChatOpenAIResponses{} = model,
         %Message{role: :assistant, content: content} = msg
@@ -834,7 +862,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
           ]
       end
 
-    native_tool_calls_for_api(model, content) ++
+    stand_alone_items_for_api(model, content) ++
       assistant_message ++
       Enum.map(msg.tool_calls || [], &for_api(model, &1))
   end
@@ -889,6 +917,74 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   end
 
   def native_tool_call_for_api(_, _), do: nil
+
+  @doc """
+  Convert the content parts of an assistant message into the stand-alone items
+  the API expects in `input`, preserving their original order.
+
+  Some content parts do not belong to the assistant message item at all. A
+  reasoning item and a native tool call are each their own entry in the
+  `output` array the API returned, and each must go back as its own entry in
+  `input`. Order matters: the API expects a reasoning item to precede the
+  message or function call it produced.
+  """
+  def stand_alone_items_for_api(%ChatOpenAIResponses{} = model, content_parts)
+      when is_list(content_parts) do
+    Enum.flat_map(content_parts, fn part ->
+      case reasoning_item_for_api(part) do
+        nil ->
+          case native_tool_call_for_api(model, part) do
+            nil -> []
+            item -> [item]
+          end
+
+        item ->
+          [item]
+      end
+    end)
+  end
+
+  @doc """
+  Convert a content part holding a reasoning item back into the reasoning entry
+  the API accepts in `input`. Returns `nil` for any other content part.
+
+  A reasoning item is only accepted back when it carries its
+  `encrypted_content`, which the API returns when the request asked for it with
+  `include: ["reasoning.encrypted_content"]`. Without that payload there is
+  nothing to hand back, so the item is omitted rather than sent as a stub.
+
+  Both shapes a reasoning item arrives as are recognized: the `:unsupported`
+  part built from a non-streamed response, and the `:thinking` part the
+  streaming events build.
+  """
+  def reasoning_item_for_api(%ContentPart{type: type, options: options})
+      when type in [:unsupported, :thinking] and is_list(options) do
+    with "reasoning" <- Keyword.get(options, :type),
+         id when is_binary(id) <- Keyword.get(options, :id),
+         encrypted when is_binary(encrypted) <- Keyword.get(options, :encrypted_content) do
+      %{
+        "type" => "reasoning",
+        "id" => id,
+        "summary" => Keyword.get(options, :summary) || [],
+        "encrypted_content" => encrypted
+      }
+    else
+      _ -> nil
+    end
+  end
+
+  def reasoning_item_for_api(%ContentPart{}), do: nil
+
+  # The API only returns `encrypted_content` when the request asked for it with
+  # `include: ["reasoning.encrypted_content"]`. Leave the key out entirely when
+  # it is absent so a reasoning item without a payload is recognizably
+  # unreplayable.
+  defp maybe_put_encrypted_content(options, encrypted_content)
+       when is_binary(encrypted_content) do
+    Keyword.put(options, :encrypted_content, encrypted_content)
+  end
+
+  defp maybe_put_encrypted_content(options, _encrypted_content), do: options
 
   @doc """
   Convert a list of ContentParts to the expected map of data for the OpenAI API.
@@ -1651,13 +1747,23 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     end
   end
 
+  # The completed reasoning item carries the `id` and, when the request included
+  # `reasoning.encrypted_content`, the encrypted payload. Both ride along in the
+  # thinking part's options so the item can be replayed on the next request.
+  # The part stays `:thinking` because that is the type the earlier
+  # `response.output_item.added` event opened at this index, and content parts
+  # only merge with a part of their own type.
   def do_process_response(_model, %{
         "type" => "response.output_item.done",
         "output_index" => output_index,
-        "item" => %{"type" => "reasoning"}
+        "item" => %{"type" => "reasoning"} = item
       }) do
+    options =
+      [id: item["id"], summary: item["summary"] || [], type: "reasoning"]
+      |> maybe_put_encrypted_content(item["encrypted_content"])
+
     data = %{
-      content: ContentPart.new!(%{type: :thinking, content: ""}),
+      content: ContentPart.new!(%{type: :thinking, content: "", options: options}),
       status: :complete,
       role: :assistant,
       index: output_index
@@ -2001,23 +2107,25 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     end
   end
 
-  # Handle reasoning output from gpt-5 and o-series models
-  # We can either ignore it or store it as metadata
-  defp content_item_to_content_part_or_tool_call(%{
-         "type" => "reasoning",
-         "id" => reasoning_id,
-         "summary" => summary
-       }) do
-    # Store reasoning as an unsupported content part for now
-    # This preserves the information without breaking the flow
-    case ContentPart.new(%{
-           type: :unsupported,
-           options: %{
-             id: reasoning_id,
-             summary: summary,
-             type: "reasoning"
-           }
-         }) do
+  # Reasoning output from gpt-5 and o-series models. The item has no display
+  # value, but it carries the `encrypted_content` the API needs handed back to
+  # keep reasoning continuous across a tool loop, so it is kept as an
+  # `:unsupported` part and replayed by `reasoning_item_for_api/1`.
+  #
+  # `encrypted_content` is only present when the request asked for it with
+  # `include: ["reasoning.encrypted_content"]`.
+  defp content_item_to_content_part_or_tool_call(
+         %{
+           "type" => "reasoning",
+           "id" => reasoning_id,
+           "summary" => summary
+         } = item
+       ) do
+    options =
+      [id: reasoning_id, summary: summary, type: "reasoning"]
+      |> maybe_put_encrypted_content(item["encrypted_content"])
+
+    case ContentPart.new(%{type: :unsupported, options: options}) do
       {:ok, %ContentPart{} = part} ->
         part
 
