@@ -1,5 +1,148 @@
 # Changelog
 
+## v0.12.0
+
+Token usage is reported once per streamed turn, from every provider that sends
+it. `LangChain.Message.ContentPart` options hold one shape whichever way a part
+was built. OpenAI reasoning items survive a tool loop, and `ChatGrok` streaming
+delivers the assistant's reply.
+
+**This release contains breaking changes** for code that reads
+`%LangChain.TokenUsage{}`, combines token usage, reads `ContentPart.options`, or
+handles `:on_llm_token_usage` from `ChatGrok`.
+
+Reported token counts change for streamed `ChatAnthropic`, `ChatVertexAI` and
+`ChatReqLLM` calls, because the old numbers were wrong. Anthropic recorded input,
+cache-creation and cache-read at exactly 2x truth. Vertex AI multiplied usage by
+the chunk count. Streamed `ChatAwsMantle`, `ChatPerplexity` and `ChatGrok`
+calls recorded no tokens at all and now record them, and streamed `ChatOpenAI`
+calls now report tokens to the `[:langchain, :llm, :call, :stop]` telemetry event
+and its OTEL span, which previously saw `token_usage: nil`. Cost dashboards and
+alerts thresholded on any of these will move on the first deploy.
+
+### Upgrading from v0.11.0 - v0.12.0
+
+#### `:cumulative` is removed from `%TokenUsage{}`
+
+The field is gone from the struct and from `@create_fields`, and
+`TokenUsage.clear_cumulative/1` is deleted. Only `ChatGoogleAI` ever set the
+flag, while five other providers needed it and did not, so the distinction it
+carried moved to the call site, where the caller always knows which question it
+is asking.
+
+Anything touching the field through the struct is a compile error that
+`mix compile --warnings-as-errors` surfaces:
+
+```elixir
+%TokenUsage{input: 10, cumulative: true}      # ** (KeyError) key :cumulative not found
+%TokenUsage{usage | cumulative: false}        # ** (KeyError) key :cumulative not found
+def handle(%TokenUsage{cumulative: true}),    # ** (KeyError) key :cumulative not found
+TokenUsage.clear_cumulative(usage)            # warning: undefined function
+```
+
+Two cases do not fail loudly. `Ecto.Changeset.cast/3` drops params outside the
+permitted list, so `TokenUsage.new!(%{input: 10, cumulative: true})` still builds
+and ignores the flag. And `add/2` changed meaning with no compile-time signal.
+Grep for `cumulative` rather than relying on the compiler alone.
+
+#### `TokenUsage.add/2` combines readings of one message; `add_total/2` sums across messages
+
+`add/2` used to sum both operands. It now keeps the larger count per field,
+recursing into nested `raw` detail maps at every depth. That is the correct
+combination for a streamed response, where each reading is a snapshot of the
+message so far rather than one delta's share.
+
+```elixir
+TokenUsage.add(a, b)        # several readings of ONE message, keeps the larger count per field
+TokenUsage.add_total(a, b)  # final usage of DIFFERENT messages, sums them
+```
+
+| If you were... | Do this |
+| --- | --- |
+| Summing usage across messages or turns with `add/2` | Switch to `add_total/2`. **Compilation will not catch this one.** |
+| Combining several readings of one streamed message with `add/2` | No change. This is what `add/2` is now for. |
+| Setting `cumulative: true` in a custom chat model | Delete it. Every reading is treated as a snapshot, so no provider needs the marking. |
+| Branching on the flag to choose between replace and add | Delete the branch and call `add/2`. It handles both conventions. |
+| Calling `TokenUsage.clear_cumulative/1` | Delete the call. |
+| Passing `cumulative:` to `new/1` or `new!/1` | Remove it. It is ignored rather than rejected. |
+
+A `raw` key holding a value *derived* from other counts within a single reading,
+such as the `total_tokens` `req_llm` computes per snapshot, is only meaningful
+alongside the reading it came from and does not survive the merge intact. Read a
+combined total from `TokenUsage.total/1`.
+
+#### `ContentPart.options` is always a keyword list
+
+`ContentPart.new/1` normalizes a map of options into a keyword list, so a part
+holds the same shape whichever way it was built and keeps it across a
+serialization round trip.
+
+Callers passing a map keep working, since normalization happens in the
+constructor. Already-persisted conversations need no migration, because a JSON
+round trip already returned a keyword list. What breaks is code that *reads*
+`part.options` expecting a map:
+
+```elixir
+# Before
+part.options.id
+%ContentPart{options: %{type: "web_search_call"} = opts} -> ...
+
+# After
+Keyword.get(part.options, :id)
+%ContentPart{options: opts} -> if Keyword.get(opts, :type) == "web_search_call", do: ...
+```
+
+Option keys must be atoms. A map with any non-atom key is rejected with a
+changeset error rather than converted, because `String.to_atom/1` on
+caller-supplied input is an atom-table exhaustion vector.
+
+#### `ChatGrok` fires `:on_llm_token_usage` at the documented arity
+
+The callback fired as `[grok, response_data]`, two arguments ending in the raw
+API map. It now fires with one argument, a `%TokenUsage{}`, matching every other
+chat model. A handler written to the documented shape previously raised
+`BadArityError` inside `Callbacks.fire/3` and failed the entire `call/3`, so it
+starts working rather than needing a change. A handler written for the old
+two-argument shape needs updating.
+
+#### A streamed response can carry a bare `%TokenUsage{}`
+
+`ChatGrok` and `ChatAwsMantle` report the usage-only terminal chunk as a
+`%TokenUsage{}` where they previously returned an empty `%MessageDelta{}` and
+`:skip`. This is the shape `ChatOpenAI` has always returned, and `LLMChain`
+already folds it into the final delta. Code that assumes every item in a streamed
+response is a `%MessageDelta{}` needs to account for it.
+
+### Added
+
+- **`LangChain.TokenUsage.add_total/2`** for summing the final usage of different messages into a running total, at every depth of the `raw` map. `LLMChain` and `Trajectory` aggregation use it. https://github.com/brainlid/langchain/pull/625
+- **`LangChain.ChatModels.ChatModel.stream_item/0`** typespec, covering the three things a stream carries: deltas, a bare `%TokenUsage{}`, and in-list error tuples. `call_response/0` now also declares the list-of-lists nesting that `Utils.handle_stream_fn/3` produces. https://github.com/brainlid/langchain/pull/625
+- **OpenAI reasoning continuity across a tool loop.** `ChatOpenAIResponses` captures `reasoning.encrypted_content` on both the streamed and non-streamed paths and replays reasoning items as their own input entries, ordered ahead of the message or function call they produced. Set `include: ["reasoning.encrypted_content"]` to opt in; without it the code stays inert. New public `stand_alone_items_for_api/2` and `reasoning_item_for_api/1`. https://github.com/brainlid/langchain/pull/630
+- **`ContentPart.new/1` accepts a map of options** and converts it to a keyword list. https://github.com/brainlid/langchain/pull/631
+
+### Changed
+
+- **`TokenUsage.add/2` keeps the larger count per field** rather than summing, treating both operands as readings of the same message. This one semantic change fixes the double and multiplied counts in four providers at once. https://github.com/brainlid/langchain/pull/625
+- **`:cumulative` removed from `%TokenUsage{}`**, along with `TokenUsage.clear_cumulative/1`. https://github.com/brainlid/langchain/pull/625
+- **`ContentPart` options are normalized to a keyword list** in the constructor, and `ChatOpenAIResponses` reads them with `Keyword`. https://github.com/brainlid/langchain/pull/631
+- **`ChatGrok` derives message status from `finish_reason`**, on streamed deltas and non-streamed messages alike, so a truncated or filtered turn reports `:length` or `:content_filtered` instead of passing as complete. Streamed deltas also carry the choice `index`. https://github.com/brainlid/langchain/pull/627
+- **`ChatGrok` fires `:on_llm_token_usage` with a single `%TokenUsage{}`.** https://github.com/brainlid/langchain/pull/627
+- **`ChatAwsMantle` reports its usage-only terminal chunk** as a `%TokenUsage{}` instead of `:skip`. https://github.com/brainlid/langchain/pull/625
+- **`ChatGrok` reports its usage-only terminal chunk** as a `%TokenUsage{}` instead of an empty `%MessageDelta{}`. A chunk carrying neither choices nor usage is now `:skip`. https://github.com/brainlid/langchain/pull/626 https://github.com/brainlid/langchain/pull/627
+
+### Fixed
+
+- **Streamed `ChatAnthropic` usage was recorded at 2x.** `message_start` opens the message with the input classes and `message_delta` closes it with the message total, and the two readings were summed. Input, cache-creation and cache-read counts were each doubled. https://github.com/brainlid/langchain/pull/625
+- **Streamed `ChatVertexAI` usage was multiplied by the chunk count.** It decodes the same Gemini shape as `ChatGoogleAI`, where every chunk repeats the running totals, but never marked them as such. https://github.com/brainlid/langchain/pull/625
+- **`ChatReqLLM` reproduced the Anthropic double count** through the dependency. https://github.com/brainlid/langchain/pull/625
+- **`ChatPerplexity` never read `usage` on the streaming path.** No callback fired, nothing reached message metadata, and the telemetry span reported `token_usage: nil`. https://github.com/brainlid/langchain/pull/625
+- **Streamed `ChatOpenAI` and `ChatAwsMantle` calls reported no tokens to telemetry.** `ChatModel.token_usage_from_result/1` read usage only off delta metadata and ignored the bare `%TokenUsage{}` that OpenAI-shaped providers return in the same list. This also covers vLLM and OpenRouter, which put a running total on every content chunk under `continuous_usage_stats: true`. https://github.com/brainlid/langchain/pull/625
+- **`TokenUsage.total/1` raised `ArithmeticError` on an unreported count.** An unreported count now contributes nothing. Anthropic's closing event carries only `output_tokens`, so a `nil` input is a real shape. https://github.com/brainlid/langchain/pull/625
+- **A streamed `ChatGrok` turn never reached `chain.messages`.** Deltas stayed `:incomplete` because `finish_reason` was never read, so `MessageDelta.to_message/1` always failed and `LLMChain.run/1` returned `{:ok, chain}` with the reply stranded in `chain.delta`. https://github.com/brainlid/langchain/pull/627
+- **A streamed `ChatGrok` request did not stream.** The response was buffered whole and split afterwards, so `:on_llm_new_delta` and the `[:langchain, :llm, :stream, :first_token]` telemetry never fired. It now uses the shared `Utils.handle_stream_fn/3` collector. https://github.com/brainlid/langchain/pull/627
+- **OpenAI reasoning items were parsed and then dropped.** The non-streaming path produced an `:unsupported` part that no outbound clause could emit; the streaming path discarded the reasoning `id` and emitted an empty `:thinking` part. The model re-derived its reasoning on every round trip of a tool loop. https://github.com/brainlid/langchain/pull/630
+- **`ChatOpenAIResponses` dropped native tool calls from a replayed history after persistence.** `web_search_call` and `file_search_call` parts were built with map options and matched as maps, but a stored conversation returns keyword lists, so the clause fell through and the tool call vanished with no error. The same part crashed `ContentPart.set_option_on_last_part/3` with a `FunctionClauseError`. https://github.com/brainlid/langchain/pull/631
+
 ## v0.11.0
 
 Gemini tool call ids, a `ChatReqLLM` streaming failure that escaped the error path, and visibility into exceptions raised inside a tool.
