@@ -32,6 +32,12 @@ defmodule LangChain.Message.ContentPart do
     the options may contain LLM specific data that is recommended to be
     preserved like a `signature` or `redacted_thinking` data used by the LLM.
 
+    A map of options is accepted and converted to a keyword list, so a part
+    holds the same shape whichever way it was built and keeps it across a
+    serialization round trip. The keys must be atoms; a map with a string key
+    is rejected rather than converted, because turning caller-supplied strings
+    into atoms would let untrusted input grow the atom table.
+
   ## Image mime types
 
   The `:media` option is used to specify the mime type of the image. Various
@@ -84,8 +90,33 @@ defmodule LangChain.Message.ContentPart do
     %ContentPart{}
     |> cast(attrs, @create_fields)
     |> Utils.assign_string_value(:content, attrs)
+    |> normalize_options()
     |> common_validations()
     |> apply_action(:insert)
+  end
+
+  # Options are a keyword list. A map of options is accepted and converted so
+  # that every part reaching a chat model has one shape to read, and so a part
+  # keeps that shape across a serialization round trip.
+  #
+  # Keys must already be atoms. Converting caller-supplied strings to atoms
+  # would let untrusted input grow the atom table, so a map with any non-atom
+  # key is left alone and reported as invalid.
+  defp normalize_options(changeset) do
+    case get_field(changeset, :options) do
+      options when is_map(options) and map_size(options) > 0 ->
+        if Enum.all?(options, fn {k, _v} -> is_atom(k) end) do
+          put_change(changeset, :options, Enum.map(options, fn {k, v} -> {k, v} end))
+        else
+          add_error(changeset, :options, "keys must be atoms")
+        end
+
+      options when is_map(options) ->
+        put_change(changeset, :options, [])
+
+      _other ->
+        changeset
+    end
   end
 
   @doc """
