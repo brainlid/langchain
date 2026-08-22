@@ -501,30 +501,30 @@ defmodule LangChain.Chains.LLMChainToolCallReviewTest do
       assert_received {:review_context, %{human_decision: :edit}}
     end
 
-    test "an escalation stands aside once a human has answered it" do
-      # A handler that escalates every call it has not yet heard back about.
-      # The decision in the review context is what lets it recognize the answer
-      # and let the call through instead of escalating it a second time.
+    test "a handler stops asking once the user has answered" do
+      # A handler that asks about every call it has not yet heard back about.
+      # The answer in the review context is what lets it recognize the reply and
+      # let the call through instead of asking the same question again.
       handler = %{
         on_tool_call_review: fn _chain, _call, _func, review ->
           case review.human_decision do
-            nil -> {:interrupt, "a manager has to approve this", %{reason: :over_limit}}
-            _decided -> :ok
+            nil -> {:interrupt, "confirm before this runs", %{reason: :over_limit}}
+            _answered -> :ok
           end
         end
       }
 
       chain = [tool(self())] |> chain_with([handler]) |> with_call()
 
-      escalated = LLMChain.execute_tool_calls(chain) |> only_result()
-      assert escalated.is_interrupt
-      assert escalated.interrupt_data == %{reason: :over_limit}
-      assert text(escalated) == "a manager has to approve this"
-      assert escalated.tool_call_id == "call_1"
-      assert escalated.name == "ship_order"
-      assert escalated.display_text == "Shipping the order"
+      asked = LLMChain.execute_tool_calls(chain) |> only_result()
+      assert asked.is_interrupt
+      assert asked.interrupt_data == %{reason: :over_limit}
+      assert text(asked) == "confirm before this runs"
+      assert asked.tool_call_id == "call_1"
+      assert asked.name == "ship_order"
+      assert asked.display_text == "Shipping the order"
       # A call held for a person is not a call that failed.
-      refute escalated.is_error
+      refute asked.is_error
       refute_received {:tool_ran, _}
 
       resumed = decided(chain, [%{type: :approve}]) |> only_result()

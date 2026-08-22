@@ -166,9 +166,9 @@ defmodule LangChain.Chains.ChainCallbacks do
   `:on_tool_pre_execution` instead.
 
   It fires only for a call that is going to run. An `:on_tool_call_review`
-  handler settles its call before this point, so a denied or escalated call is
-  reported to `:on_tool_execution_failed` or `:on_tool_interrupted` without ever
-  being announced as started. A UI tracking tool state must reach those from
+  handler settles its call before this point, so a call it denied, or held to ask
+  the user about, is reported to `:on_tool_execution_failed` or
+  `:on_tool_interrupted` without ever being announced as started. A UI tracking tool state must reach those from
   `:on_tool_call_identified` as well as from here.
 
   The ToolCall carries whatever arguments review left it with, which is what the
@@ -235,7 +235,7 @@ defmodule LangChain.Chains.ChainCallbacks do
   call itself.
 
   - `:human_decision` is `nil` while the model's call is being run directly. It
-    is `:approve` or `:edit` once a person has decided on this call through
+    is `:approve` or `:edit` once the user has decided on this call through
     `LLMChain.execute_tool_calls_with_decisions/3`, which is the only thing that
     gives it any other value.
   - `:custom_context` is the context the tool will be given: the context passed
@@ -252,83 +252,116 @@ defmodule LangChain.Chains.ChainCallbacks do
   Match on the keys a handler cares about rather than the whole map. It gains
   keys as the chain learns more about a call.
 
-  ## Escalating to a person
+  ## Return values
 
-  Review runs again for the same call once a person has decided on it, so a
-  handler that escalates has to recognize the answer coming back.
-  `:human_decision` is what it reads. A handler that ignores it raises the same
-  escalation a second time and the call never runs.
+  - `:ok` - express no opinion; the call proceeds to the next handler
+  - `{:update_arguments, map}` - rewrite the arguments and keep going. Later
+    handlers review the rewritten call, and the tool runs with it.
+  - `{:deny, reason}` - refuse the call. The tool never runs and `reason` is
+    returned to the model as the tool result.
+  - `{:interrupt, message, interrupt_data}` - refuse the call for now and
+    interrupt, producing a `ToolResult` with `is_interrupt: true`. Use this to
+    put the call in front of the user before it runs.
 
-  Take a refund the handler will not clear on its own:
+  Handlers are consulted in the order their maps were added to the chain. The
+  first `{:deny, _}` or `{:interrupt, _, _}` settles the call and the remaining
+  handlers are skipped.
+
+  An exception raised by a handler aborts the whole batch of tool calls before
+  any of them runs, including calls an earlier handler already cleared. A
+  handler that cannot reach the system it consults should decide the call, by
+  denying it, rather than raise.
+
+  ## Asking the user to confirm
+
+  A handler decides from the arguments the model chose and what the chain knows
+  about the user, so the same tool can run without comment in one case and be
+  worth stopping on in another. `{:interrupt, _, _}` puts that call in front of
+  the user before it runs.
+
+  Review runs again for the call once the user answers, so a handler has to
+  recognize their answer coming back. `:human_decision` is what it reads. A
+  handler that ignores it asks the same question a second time and the call
+  never runs.
+
+  Take a file deletion, on a chain whose `custom_context` carries the project
+  the user is working in:
 
       on_tool_call_review: fn _chain, call, _func, review ->
         cond do
+          # The user already answered for this call. Their answer stands.
           review.human_decision ->
-            # A person has already answered for this call. Their decision stands.
             :ok
 
-          call.arguments["amount_cents"] > 50_000 ->
-            {:interrupt, "A manager has to approve a refund this size.",
-             %{limit_cents: 50_000}}
+          call.name == "delete_file" and
+              not inside?(call.arguments["path"], review.custom_context.workspace_root) ->
+            {:interrupt, "That file is outside your project. Delete it anyway?",
+             %{path: call.arguments["path"]}}
 
           true ->
             :ok
         end
       end
 
+  A delete inside the project runs without comment. A delete outside it stops
+  and asks. Withholding the tool cannot draw that line, because which case a
+  call falls into depends on the path the model chose.
+
   ### First pass, on the model's call
 
-  The handler is given `%{human_decision: nil, custom_context: %{tenant_id: "acme"}}`.
-  No one has decided anything yet, the amount is over the ceiling, and the
-  handler interrupts. The tool never runs, and the call is answered by a stand-in
-  result:
+  The handler is given
+  `%{human_decision: nil, custom_context: %{workspace_root: "/home/sam/project"}}`.
+  The user has not been asked anything yet, the path is outside the project, and
+  the handler interrupts. The tool never runs, and the call is answered by a
+  stand-in result:
 
       %ToolResult{
         tool_call_id: "call_abc123",
-        name: "issue_refund",
-        display_text: "Issuing the refund",
-        content: [%ContentPart{type: :text, content: "A manager has to approve a refund this size."}],
+        name: "delete_file",
+        display_text: "Deleting the file",
+        content: [%ContentPart{type: :text, content: "That file is outside your project. Delete it anyway?"}],
         is_error: false,
         is_interrupt: true,
-        interrupt_data: %{limit_cents: 50_000}
+        interrupt_data: %{path: "/home/sam/notes.md"}
       }
 
   The message becomes `content`, as a list of ContentParts rather than the string
   the handler returned. `interrupt_data` is carried through untouched and is
-  never shown to the model. It is for the code deciding what to ask a person.
+  never shown to the model. It is for the code that builds the question, which
+  needs the path here to show the user what they are agreeing to.
 
   `:on_tool_interrupted` fires with that result, and `LLMChain.run/2` returns:
 
-      {:interrupt, chain, %{limit_cents: 50_000, tool_call_id: "call_abc123"}}
+      {:interrupt, chain, %{path: "/home/sam/notes.md", tool_call_id: "call_abc123"}}
 
   The chain adds `:tool_call_id` to whatever the handler returned, so a handler
   does not need to put the call id in `interrupt_data` itself. That id is what
-  ties the question back to the call it came from.
+  ties the answer back to the call it came from.
 
-  ### Second pass, once the person has answered
+  ### Second pass, once the user has answered
 
   The host resumes through `LLMChain.execute_tool_calls_with_decisions/3` with
-  the decision it collected. Review runs again on the same call, and this time
-  the handler is given:
+  the answer it collected. Review runs again on the same call, and this time the
+  handler is given:
 
-      %{human_decision: :approve, custom_context: %{tenant_id: "acme"}}
+      %{human_decision: :approve, custom_context: %{workspace_root: "/home/sam/project"}}
 
   The first branch matches, the handler returns `:ok`, and the tool runs. The
   call is answered the way any other cleared call is:
 
       %ToolResult{
         tool_call_id: "call_abc123",
-        name: "issue_refund",
-        display_text: "Issuing the refund",
-        content: [%ContentPart{type: :text, content: "refunded"}],
+        name: "delete_file",
+        display_text: "Deleting the file",
+        content: [%ContentPart{type: :text, content: "deleted"}],
         is_error: false,
         is_interrupt: false,
         interrupt_data: nil
       }
 
-  An `:edit` decision reaches the handler the same way, with
-  `human_decision: :edit` and the call already carrying the arguments the person
-  supplied. A `:reject` decision does not reach review at all, because the call
+  An `:edit` answer reaches the handler the same way, with
+  `human_decision: :edit` and the call already carrying the arguments the user
+  supplied. A `:reject` answer does not reach review at all, because the call
   does not run.
 
   An interrupt raised on the model's call leaves the chain holding a ToolResult

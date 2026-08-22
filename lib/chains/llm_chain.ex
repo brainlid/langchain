@@ -1599,10 +1599,10 @@ defmodule LangChain.Chains.LLMChain do
   - `:reject` - Create an error result without executing the tool
 
   An approved or edited call is still put to any `:on_tool_call_review`
-  handlers, which are told the decision the person made. A person agreeing to a
-  call is not the same as policy agreeing to it, and a handler that escalated the
-  call to them reads the decision to recognize the answer coming back. A rejected
-  call is not reviewed, since it does not run.
+  handlers, which are told the answer the user gave. A user agreeing to a call is
+  not the same as policy agreeing to it, and a handler that asked the user about
+  the call reads the answer to know not to ask again. A rejected call is not
+  reviewed, since it does not run.
 
   Returns the updated chain with tool results added and callbacks fired.
 
