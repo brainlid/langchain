@@ -165,6 +165,15 @@ defmodule LangChain.Chains.ChainCallbacks do
   (e.g. propagating tenancy/OTel/Sentry context across the async boundary), use
   `:on_tool_pre_execution` instead.
 
+  It fires only for a call that is going to run. An `:on_tool_call_review`
+  handler settles its call before this point, so a denied or escalated call is
+  reported to `:on_tool_execution_failed` or `:on_tool_interrupted` without ever
+  being announced as started. A UI tracking tool state must reach those from
+  `:on_tool_call_identified` as well as from here.
+
+  The ToolCall carries whatever arguments review left it with, which is what the
+  tool is actually given.
+
   - First argument: LLMChain.t()
   - Second argument: ToolCall struct being executed
   - Third argument: Function struct for the tool (includes display_text)
@@ -211,9 +220,27 @@ defmodule LangChain.Chains.ChainCallbacks do
   `LLMChain.execute_tool_calls_with_decisions/3`. A human approving a call in a
   Human-in-the-Loop workflow does not exempt it from review.
 
+  It does not fire for a call naming a tool the chain does not have. There is no
+  `Function` to hand a handler, so there is nothing to allow or deny. A handler
+  auditing what the model attempts sees only calls that resolve to a real tool.
+
   - First argument: LLMChain.t()
   - Second argument: ToolCall struct under review
   - Third argument: Function struct for the tool
+  - Fourth argument: a review context map describing the circumstances
+
+  ## The review context
+
+  - `:human_decision` - `nil` when the model's call is being run directly, or
+    `:approve` / `:edit` when a person has already decided on this call through
+    `LLMChain.execute_tool_calls_with_decisions/3`.
+  - `:custom_context` - the context the tool will be given, which is the
+    context passed to `LLMChain.execute_tool_calls/2` when one is supplied and
+    `chain.custom_context` otherwise. A handler scoped to a tenant should read
+    this rather than `chain.custom_context`, which is not always the context the
+    call will run under.
+
+  Match the map loosely. It gains keys as the chain learns more about a call.
 
   ## Return values
 
@@ -230,15 +257,56 @@ defmodule LangChain.Chains.ChainCallbacks do
   first `{:deny, _}` or `{:interrupt, _, _}` settles the call and the remaining
   handlers are skipped.
 
+  An exception raised by a handler aborts the whole batch of tool calls before
+  any of them runs, including calls an earlier handler already cleared. A
+  handler that cannot reach the system it consults should decide the call, by
+  denying it, rather than raise.
+
+  ## Escalating to a person
+
+  A handler that returns `{:interrupt, _, _}` is consulted again for the same
+  call when the person's decision comes back, because review applies to the
+  human-decision path too. Read `:human_decision` and stand aside once it is
+  set, or the escalation is raised again and the call never progresses:
+
+      on_tool_call_review: fn _chain, call, _func, review ->
+        cond do
+          review.human_decision -> :ok
+          Policy.needs_sign_off?(call) -> {:interrupt, "Needs a manager", %{call_id: call.call_id}}
+          true -> :ok
+        end
+      end
+
+  Resuming from an interrupt raised here works the same way as resuming from one
+  a tool returned: the chain already holds a `ToolResult` answering the call, so
+  a resumed run replaces it with `LangChain.Message.replace_tool_result/3`
+  rather than adding a second result for the same call.
+
+  ## Rewritten arguments and the transcript
+
+  `{:update_arguments, map}` changes what the tool receives and what
+  `:on_tool_execution_started` reports. It does not change the assistant message
+  already recorded in `chain.messages`, which keeps the arguments the model
+  produced, and it does not change what `:on_tool_call_identified` reported
+  during streaming. A UI or audit trail that reads arguments off the assistant
+  message shows what was asked for, not what ran.
+
+  ## Denials and the failure counter
+
   A denied call is reported with `is_error: false`. It is a decision about the
   call, not a fault in it, so it leaves the chain's failure counter alone and
-  cannot exhaust `max_retry_count`. A policy that turns down many calls in a
-  row will not abort the run.
+  cannot exhaust `max_retry_count`. A policy that turns down many calls in a row
+  will not abort the run.
+
+  That counter is also the only bound on a tool-calling loop, so a model that
+  keeps reaching for a tool that keeps being denied is not stopped by it. Write
+  the `reason` so the model can act on it, naming what to do instead of
+  retrying, since the reason is the whole of what the model learns.
 
   ## Example
 
       callback_handler = %{
-        on_tool_call_review: fn _chain, tool_call, _func ->
+        on_tool_call_review: fn _chain, tool_call, _func, _review ->
           case Policy.check(tool_call.name, tool_call.arguments) do
             :allowed -> :ok
             {:refused, why} -> {:deny, why}
@@ -248,7 +316,7 @@ defmodule LangChain.Chains.ChainCallbacks do
 
   """
   @type chain_tool_call_review ::
-          (LLMChain.t(), ToolCall.t(), Function.t() ->
+          (LLMChain.t(), ToolCall.t(), Function.t(), map() ->
              :ok
              | {:update_arguments, map()}
              | {:deny, String.t()}
@@ -272,7 +340,13 @@ defmodule LangChain.Chains.ChainCallbacks do
   Executed when a single tool execution fails.
 
   Fires when tool execution raises an exception, returns an error result, names a
-  tool that doesn't exist, or is rejected during human review.
+  tool that doesn't exist, is rejected during human review, or is denied by an
+  `:on_tool_call_review` handler.
+
+  A denial and a human rejection both report a `ToolResult` with
+  `is_error: false`, because each is a decision about the call rather than a
+  fault in it. A handler that counts failures should read the `ToolResult` rather
+  than assume every call it hears about here errored.
 
   - First argument: LLMChain.t()
   - Second argument: ToolCall that failed

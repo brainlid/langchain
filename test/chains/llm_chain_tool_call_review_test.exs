@@ -49,7 +49,7 @@ defmodule LangChain.Chains.LLMChainToolCallReviewTest do
     test ":ok lets the call through untouched" do
       chain =
         [tool(self())]
-        |> chain_with([%{on_tool_call_review: fn _chain, _call, _func -> :ok end}])
+        |> chain_with([%{on_tool_call_review: fn _chain, _call, _func, _review -> :ok end}])
         |> with_call()
 
       result = LLMChain.execute_tool_calls(chain) |> only_result()
@@ -70,7 +70,9 @@ defmodule LangChain.Chains.LLMChainToolCallReviewTest do
 
     test "{:deny, reason} keeps the tool from running and returns the reason" do
       handler = %{
-        on_tool_call_review: fn _chain, _call, _func -> {:deny, "over the store limit"} end
+        on_tool_call_review: fn _chain, _call, _func, _review ->
+          {:deny, "over the store limit"}
+        end
       }
 
       chain = [tool(self())] |> chain_with([handler]) |> with_call()
@@ -85,7 +87,7 @@ defmodule LangChain.Chains.LLMChainToolCallReviewTest do
     end
 
     test "a denial is not an error and leaves the failure counter alone" do
-      handler = %{on_tool_call_review: fn _chain, _call, _func -> {:deny, "no"} end}
+      handler = %{on_tool_call_review: fn _chain, _call, _func, _review -> {:deny, "no"} end}
 
       chain =
         [tool(self())]
@@ -103,7 +105,7 @@ defmodule LangChain.Chains.LLMChainToolCallReviewTest do
 
     test "{:update_arguments, args} rewrites what the tool receives" do
       handler = %{
-        on_tool_call_review: fn _chain, call, _func ->
+        on_tool_call_review: fn _chain, call, _func, _review ->
           {:update_arguments, Map.put(call.arguments, "warehouse", "EU-1")}
         end
       }
@@ -117,7 +119,7 @@ defmodule LangChain.Chains.LLMChainToolCallReviewTest do
 
     test "{:interrupt, message, data} settles the call as an interrupt" do
       handler = %{
-        on_tool_call_review: fn _chain, _call, _func ->
+        on_tool_call_review: fn _chain, _call, _func, _review ->
           {:interrupt, "needs a manager", %{approver: "manager"}}
         end
       }
@@ -133,7 +135,7 @@ defmodule LangChain.Chains.LLMChainToolCallReviewTest do
     end
 
     test "an unrecognized return value raises with the tool named" do
-      handler = %{on_tool_call_review: fn _chain, _call, _func -> :maybe end}
+      handler = %{on_tool_call_review: fn _chain, _call, _func, _review -> :maybe end}
 
       chain = [tool(self())] |> chain_with([handler]) |> with_call()
 
@@ -151,7 +153,7 @@ defmodule LangChain.Chains.LLMChainToolCallReviewTest do
 
       handlers = [
         %{
-          on_tool_call_review: fn _chain, _call, _func -> {:deny, "no"} end,
+          on_tool_call_review: fn _chain, _call, _func, _review -> {:deny, "no"} end,
           on_tool_execution_started: fn _chain, call, _func ->
             send(test_pid, {:started, call.name})
           end,
@@ -170,7 +172,7 @@ defmodule LangChain.Chains.LLMChainToolCallReviewTest do
     end
 
     test "an async tool is denied without spawning its Task" do
-      handler = %{on_tool_call_review: fn _chain, _call, _func -> {:deny, "no"} end}
+      handler = %{on_tool_call_review: fn _chain, _call, _func, _review -> {:deny, "no"} end}
 
       chain =
         [tool(self(), async: true)]
@@ -188,7 +190,7 @@ defmodule LangChain.Chains.LLMChainToolCallReviewTest do
 
       handlers = [
         %{
-          on_tool_call_review: fn _chain, _call, _func -> :ok end,
+          on_tool_call_review: fn _chain, _call, _func, _review -> :ok end,
           on_tool_execution_started: fn _chain, call, _func ->
             send(test_pid, {:started, call.name})
           end
@@ -208,13 +210,13 @@ defmodule LangChain.Chains.LLMChainToolCallReviewTest do
       test_pid = self()
 
       first = %{
-        on_tool_call_review: fn _chain, call, _func ->
+        on_tool_call_review: fn _chain, call, _func, _review ->
           {:update_arguments, Map.put(call.arguments, "step", ["first"])}
         end
       }
 
       second = %{
-        on_tool_call_review: fn _chain, call, _func ->
+        on_tool_call_review: fn _chain, call, _func, _review ->
           send(test_pid, {:second_saw, call.arguments})
           {:update_arguments, Map.update!(call.arguments, "step", &(&1 ++ ["second"]))}
         end
@@ -231,10 +233,12 @@ defmodule LangChain.Chains.LLMChainToolCallReviewTest do
     test "the first denial settles the call and later handlers are skipped" do
       test_pid = self()
 
-      first = %{on_tool_call_review: fn _chain, _call, _func -> {:deny, "first says no"} end}
+      first = %{
+        on_tool_call_review: fn _chain, _call, _func, _review -> {:deny, "first says no"} end
+      }
 
       second = %{
-        on_tool_call_review: fn _chain, _call, _func ->
+        on_tool_call_review: fn _chain, _call, _func, _review ->
           send(test_pid, :second_consulted)
           :ok
         end
@@ -265,7 +269,7 @@ defmodule LangChain.Chains.LLMChainToolCallReviewTest do
         })
 
       handler = %{
-        on_tool_call_review: fn _chain, call, _func ->
+        on_tool_call_review: fn _chain, call, _func, _review ->
           if call.name == "ship_order", do: {:deny, "no shipping"}, else: :ok
         end
       }
@@ -305,7 +309,9 @@ defmodule LangChain.Chains.LLMChainToolCallReviewTest do
 
     test "an approved call is still reviewed and can be denied" do
       handler = %{
-        on_tool_call_review: fn _chain, _call, _func -> {:deny, "store policy still says no"} end
+        on_tool_call_review: fn _chain, _call, _func, _review ->
+          {:deny, "store policy still says no"}
+        end
       }
 
       chain = [tool(self())] |> chain_with([handler]) |> with_call()
@@ -320,7 +326,7 @@ defmodule LangChain.Chains.LLMChainToolCallReviewTest do
       test_pid = self()
 
       handler = %{
-        on_tool_call_review: fn _chain, call, _func ->
+        on_tool_call_review: fn _chain, call, _func, _review ->
           send(test_pid, {:reviewed, call.arguments})
           :ok
         end
@@ -336,7 +342,7 @@ defmodule LangChain.Chains.LLMChainToolCallReviewTest do
 
     test "review can rewrite arguments on an approved call" do
       handler = %{
-        on_tool_call_review: fn _chain, call, _func ->
+        on_tool_call_review: fn _chain, call, _func, _review ->
           {:update_arguments, Map.put(call.arguments, "warehouse", "EU-1")}
         end
       }
@@ -366,6 +372,180 @@ defmodule LangChain.Chains.LLMChainToolCallReviewTest do
 
       refute_received {:tool_ran, _}
       assert text(result) =~ "rejected by a human reviewer"
+    end
+  end
+
+  describe "the order results come back in" do
+    defp named_tool(test_pid, name, opts \\ []) do
+      Function.new!(%{
+        name: name,
+        description: "does #{name}",
+        async: Keyword.get(opts, :async, false),
+        parameters_schema: %{type: "object", properties: %{}},
+        function: fn _args, _ctx ->
+          send(test_pid, {:ran, name})
+          {:ok, "did #{name}"}
+        end
+      })
+    end
+
+    defp call_all(chain, names) do
+      calls =
+        names
+        |> Enum.with_index(1)
+        |> Enum.map(fn {name, index} ->
+          ToolCall.new!(%{call_id: "call_#{index}", name: name, arguments: %{}})
+        end)
+
+      LLMChain.add_message(
+        chain,
+        Message.new_assistant!(%{content: "calling", tool_calls: calls})
+      )
+    end
+
+    defp result_ids(%LLMChain{} = chain) do
+      Enum.map(chain.last_message.tool_results, & &1.tool_call_id)
+    end
+
+    test "a denied call keeps the slot its call had" do
+      handler = %{
+        on_tool_call_review: fn _chain, call, _func, _review ->
+          if call.name == "b", do: {:deny, "not b"}, else: :ok
+        end
+      }
+
+      chain =
+        [named_tool(self(), "a"), named_tool(self(), "b"), named_tool(self(), "c")]
+        |> chain_with([handler])
+        |> call_all(["a", "b", "c"])
+
+      assert result_ids(LLMChain.execute_tool_calls(chain)) == ["call_1", "call_2", "call_3"]
+    end
+
+    test "async and sync tools answer in call order" do
+      chain =
+        [
+          named_tool(self(), "s1"),
+          named_tool(self(), "a1", async: true),
+          named_tool(self(), "s2")
+        ]
+        |> chain_with([])
+        |> call_all(["s1", "a1", "s2"])
+
+      assert result_ids(LLMChain.execute_tool_calls(chain)) == ["call_1", "call_2", "call_3"]
+    end
+
+    test "a call naming an unknown tool keeps its slot too" do
+      chain =
+        [named_tool(self(), "a"), named_tool(self(), "c")]
+        |> chain_with([])
+        |> call_all(["a", "nope", "c"])
+
+      updated = LLMChain.execute_tool_calls(chain)
+
+      assert result_ids(updated) == ["call_1", "call_2", "call_3"]
+      assert [_a, missing, _c] = updated.last_message.tool_results
+      assert missing.is_error
+    end
+  end
+
+  describe "the review context" do
+    test "reports no human decision when the model's call runs directly" do
+      test_pid = self()
+
+      handler = %{
+        on_tool_call_review: fn _chain, _call, _func, review ->
+          send(test_pid, {:review_context, review})
+          :ok
+        end
+      }
+
+      chain = [tool(self())] |> chain_with([handler]) |> with_call()
+
+      LLMChain.execute_tool_calls(chain)
+
+      assert_received {:review_context, %{human_decision: nil}}
+    end
+
+    test "names the decision a human made on an approved call" do
+      test_pid = self()
+
+      handler = %{
+        on_tool_call_review: fn _chain, _call, _func, review ->
+          send(test_pid, {:review_context, review})
+          :ok
+        end
+      }
+
+      chain = [tool(self())] |> chain_with([handler]) |> with_call()
+
+      decided(chain, [%{type: :approve}])
+
+      assert_received {:review_context, %{human_decision: :approve}}
+    end
+
+    test "names the decision a human made on an edited call" do
+      test_pid = self()
+
+      handler = %{
+        on_tool_call_review: fn _chain, _call, _func, review ->
+          send(test_pid, {:review_context, review})
+          :ok
+        end
+      }
+
+      chain = [tool(self())] |> chain_with([handler]) |> with_call()
+
+      decided(chain, [%{type: :edit, arguments: %{"amount" => 1}}])
+
+      assert_received {:review_context, %{human_decision: :edit}}
+    end
+
+    test "an escalation stands aside once a human has answered it" do
+      # A handler that escalates every call it has not yet heard back about.
+      # The decision in the review context is what lets it recognize the answer
+      # and let the call through instead of escalating it a second time.
+      handler = %{
+        on_tool_call_review: fn _chain, _call, _func, review ->
+          case review.human_decision do
+            nil -> {:interrupt, "a manager has to approve this", %{reason: :over_limit}}
+            _decided -> :ok
+          end
+        end
+      }
+
+      chain = [tool(self())] |> chain_with([handler]) |> with_call()
+
+      escalated = LLMChain.execute_tool_calls(chain) |> only_result()
+      assert escalated.is_interrupt
+      assert escalated.interrupt_data == %{reason: :over_limit}
+      refute_received {:tool_ran, _}
+
+      resumed = decided(chain, [%{type: :approve}]) |> only_result()
+      refute resumed.is_interrupt
+      assert_received {:tool_ran, _}
+      assert text(resumed) == "shipped"
+    end
+
+    test "carries the context the tool will actually run with" do
+      test_pid = self()
+
+      handler = %{
+        on_tool_call_review: fn _chain, _call, _func, review ->
+          send(test_pid, {:review_context, review})
+          :ok
+        end
+      }
+
+      chain =
+        [tool(self())]
+        |> chain_with([handler])
+        |> Map.put(:custom_context, %{tenant: "default"})
+        |> with_call()
+
+      LLMChain.execute_tool_calls(chain, %{tenant: "override"})
+
+      assert_received {:review_context, %{custom_context: %{tenant: "override"}}}
     end
   end
 end

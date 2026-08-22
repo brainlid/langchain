@@ -22,29 +22,12 @@ defmodule LangChain.Callbacks do
   end
 
   def fire(callbacks, callback_name, arguments) when is_list(callbacks) do
-    # A model may contain multiple callback handler maps. Cycle through them to
-    # execute the named callback with the arguments if assigned.
-    Enum.each(callbacks, fn handlers_map ->
-      # find if the callback is in the handler map
-      case Map.get(handlers_map, callback_name) do
-        nil ->
-          # no handler attached
-          :ok
-
-        callback_fn when is_function(callback_fn) ->
-          try do
-            # execute the function
-            apply(callback_fn, arguments)
-          rescue
-            err ->
-              raise LangChainError,
-                    "Callback handler for #{inspect(callback_name)} raised an exception: #{LangChainError.format_exception(err, __STACKTRACE__, :short)}"
-          end
-
-        other ->
-          raise LangChainError,
-                "Unexpected callback handler. Callback #{inspect(callback_name)} was assigned #{inspect(other)}"
-      end
+    # A model may contain multiple callback handler maps. Every handler gets the
+    # same arguments and whatever it returns is discarded, which is `reduce/4`
+    # with nothing to accumulate.
+    reduce(callbacks, callback_name, :ok, fn invoke, acc ->
+      invoke.(arguments)
+      {:cont, acc}
     end)
   end
 
@@ -55,12 +38,15 @@ defmodule LangChain.Callbacks do
   map that does not define `callback_name` is skipped without consulting the
   reducer.
 
-  `reducer` receives two arguments: a zero-risk `invoke` function that applies
-  the handler to a list of arguments, and the current accumulator. It returns
-  `{:cont, acc}` to consult the next handler or `{:halt, acc}` to stop. Passing
-  `invoke` rather than the raw handler lets the reducer choose the arguments
-  per handler (so a handler can see what an earlier one changed) while the
-  exception wrapping stays here, identical to `fire/3`.
+  `reducer` receives two arguments: an `invoke` function that applies the handler
+  to a list of arguments, and the current accumulator. It returns `{:cont, acc}`
+  to consult the next handler or `{:halt, acc}` to stop. Passing `invoke` rather
+  than the raw handler lets the reducer choose the arguments per handler, so a
+  handler can be shown what an earlier one changed, while the exception wrapping
+  stays here.
+
+  This is the primitive the module is built on. `fire/3` is this function with
+  the same arguments given to every handler and nothing accumulated.
 
   ## Example
 
