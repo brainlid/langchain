@@ -199,6 +199,62 @@ defmodule LangChain.Chains.ChainCallbacks do
   @type chain_tool_pre_execution :: (LLMChain.t(), ToolCall.t(), Function.t() -> any())
 
   @typedoc """
+  Executed before a tool call is announced or run, to decide whether it may
+  proceed.
+
+  This is the one tool callback whose return value is used. It fires in the
+  parent chain process ahead of `:on_tool_execution_started`, before any async
+  `Task` is spawned, so a call that is turned away is never announced as
+  running and never reaches the tool function.
+
+  It fires on every path that executes a tool, including
+  `LLMChain.execute_tool_calls_with_decisions/3`. A human approving a call in a
+  Human-in-the-Loop workflow does not exempt it from review.
+
+  - First argument: LLMChain.t()
+  - Second argument: ToolCall struct under review
+  - Third argument: Function struct for the tool
+
+  ## Return values
+
+  - `:ok` - express no opinion; the call proceeds to the next handler
+  - `{:update_arguments, map}` - rewrite the arguments and keep going. Later
+    handlers review the rewritten call, and the tool runs with it.
+  - `{:deny, reason}` - refuse the call. The tool never runs and `reason` is
+    returned to the model as the tool result.
+  - `{:interrupt, message, interrupt_data}` - refuse the call for now and
+    interrupt, producing a `ToolResult` with `is_interrupt: true`. Use this to
+    escalate a decision the handler cannot make on its own.
+
+  Handlers are consulted in the order their maps were added to the chain. The
+  first `{:deny, _}` or `{:interrupt, _, _}` settles the call and the remaining
+  handlers are skipped.
+
+  A denied call is reported with `is_error: false`. It is a decision about the
+  call, not a fault in it, so it leaves the chain's failure counter alone and
+  cannot exhaust `max_retry_count`. A policy that turns down many calls in a
+  row will not abort the run.
+
+  ## Example
+
+      callback_handler = %{
+        on_tool_call_review: fn _chain, tool_call, _func ->
+          case Policy.check(tool_call.name, tool_call.arguments) do
+            :allowed -> :ok
+            {:refused, why} -> {:deny, why}
+          end
+        end
+      }
+
+  """
+  @type chain_tool_call_review ::
+          (LLMChain.t(), ToolCall.t(), Function.t() ->
+             :ok
+             | {:update_arguments, map()}
+             | {:deny, String.t()}
+             | {:interrupt, String.t(), map()})
+
+  @typedoc """
   Executed when a single tool execution completes successfully.
 
   Fires after individual tool execution, before results are aggregated.
@@ -370,6 +426,7 @@ defmodule LangChain.Chains.ChainCallbacks do
           optional(:on_tool_call_identified) => chain_tool_call_identified(),
           optional(:on_tool_execution_started) => chain_tool_execution_started(),
           optional(:on_tool_pre_execution) => chain_tool_pre_execution(),
+          optional(:on_tool_call_review) => chain_tool_call_review(),
           optional(:on_tool_execution_completed) => chain_tool_execution_completed(),
           optional(:on_tool_execution_failed) => chain_tool_execution_failed(),
           optional(:on_tool_execution_exception) => chain_tool_execution_exception(),

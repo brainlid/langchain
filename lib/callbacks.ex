@@ -47,4 +47,60 @@ defmodule LangChain.Callbacks do
       end
     end)
   end
+
+  @doc """
+  Fold a decision-returning callback across the attached handler maps.
+
+  Where `fire/3` discards what a handler returns, this collects it. A handler
+  map that does not define `callback_name` is skipped without consulting the
+  reducer.
+
+  `reducer` receives two arguments: a zero-risk `invoke` function that applies
+  the handler to a list of arguments, and the current accumulator. It returns
+  `{:cont, acc}` to consult the next handler or `{:halt, acc}` to stop. Passing
+  `invoke` rather than the raw handler lets the reducer choose the arguments
+  per handler (so a handler can see what an earlier one changed) while the
+  exception wrapping stays here, identical to `fire/3`.
+
+  ## Example
+
+      Callbacks.reduce(callbacks, :on_thing_reviewed, :allowed, fn invoke, acc ->
+        case invoke.([subject]) do
+          :ok -> {:cont, acc}
+          {:denied, _reason} = denial -> {:halt, denial}
+        end
+      end)
+
+  """
+  @spec reduce([map()], atom(), acc, (([any()] -> any()), acc -> {:cont, acc} | {:halt, acc})) ::
+          acc
+        when acc: term()
+  def reduce(callbacks, callback_name, acc, reducer)
+      when is_list(callbacks) and is_function(reducer, 2) do
+    Enum.reduce_while(callbacks, acc, fn handlers_map, acc ->
+      case Map.get(handlers_map, callback_name) do
+        nil ->
+          {:cont, acc}
+
+        callback_fn when is_function(callback_fn) ->
+          reducer.(invoker(callback_name, callback_fn), acc)
+
+        other ->
+          raise LangChainError,
+                "Unexpected callback handler. Callback #{inspect(callback_name)} was assigned #{inspect(other)}"
+      end
+    end)
+  end
+
+  defp invoker(callback_name, callback_fn) do
+    fn arguments ->
+      try do
+        apply(callback_fn, arguments)
+      rescue
+        err ->
+          raise LangChainError,
+                "Callback handler for #{inspect(callback_name)} raised an exception: #{LangChainError.format_exception(err, __STACKTRACE__, :short)}"
+      end
+    end
+  end
 end

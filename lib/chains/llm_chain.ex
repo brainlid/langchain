@@ -1480,18 +1480,25 @@ defmodule LangChain.Chains.LLMChain do
           end
         end)
 
+      # Let :on_tool_call_review handlers settle each call first. A call they
+      # turn away is never announced as started and never reaches a Task, so a
+      # refusal leaves no trace of a tool that appeared to run.
+      {async_calls, async_reviewed} = partition_reviewed_calls(chain, grouped[:async])
+      {sync_calls, sync_reviewed} = partition_reviewed_calls(chain, grouped[:sync])
+      reviewed_results = async_reviewed ++ sync_reviewed
+
       # Fire execution started callbacks for ALL valid tools BEFORE execution
       # This is the ONLY place :on_tool_execution_started fires (not during streaming detection)
       # The :on_tool_call_identified callback already fired earlier during streaming
       # Augment each ToolCall with display_text from Function before firing callback
-      Enum.each(grouped[:async] ++ grouped[:sync], fn {call, func} ->
+      Enum.each(async_calls ++ sync_calls, fn {call, func} ->
         Callbacks.fire(chain.callbacks, :on_tool_execution_started, [chain, call, func])
       end)
 
       # execute all the async calls. This keeps the responses in order too.
       # Return tuple with call and func for callback firing
       async_results =
-        grouped[:async]
+        async_calls
         |> Enum.map(fn {call, func} ->
           # Capture the current OpenTelemetry context in THIS (parent) process. It
           # lives in the process dictionary and is NOT inherited by a spawned Task,
@@ -1523,7 +1530,7 @@ defmodule LangChain.Chains.LLMChain do
 
       # Execute sync tools with immediate callbacks
       sync_tool_results =
-        Enum.map(grouped[:sync], fn {call, func} ->
+        Enum.map(sync_calls, fn {call, func} ->
           Callbacks.fire(chain.callbacks, :on_tool_pre_execution, [chain, call, func])
           result = execute_tool_call(call, func, verbose: verbose, context: use_context)
 
@@ -1547,7 +1554,8 @@ defmodule LangChain.Chains.LLMChain do
           })
         end)
 
-      combined_results = async_tool_results ++ sync_tool_results ++ invalid_calls
+      combined_results =
+        async_tool_results ++ sync_tool_results ++ reviewed_results ++ invalid_calls
 
       # Fire interrupt callback if any tools interrupted
       interrupted_results = Enum.filter(combined_results, & &1.is_interrupt)
@@ -1629,85 +1637,13 @@ defmodule LangChain.Chains.LLMChain do
       |> Enum.map(fn {tool_call, decision} ->
         case decision.type do
           :approve ->
-            # Execute with original arguments
-            case chain._tool_map[tool_call.name] do
-              %Function{} = func ->
-                Callbacks.fire(chain.callbacks, :on_tool_execution_started, [
-                  chain,
-                  tool_call,
-                  func
-                ])
-
-                Callbacks.fire(chain.callbacks, :on_tool_pre_execution, [
-                  chain,
-                  tool_call,
-                  func
-                ])
-
-                result =
-                  execute_tool_call(tool_call, func, verbose: verbose, context: use_context)
-
-                fire_tool_execution_callbacks(chain, tool_call, result)
-
-              nil ->
-                error_msg = "Tool '#{tool_call.name}' not found"
-
-                Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
-                  chain,
-                  tool_call,
-                  error_msg
-                ])
-
-                ToolResult.new!(%{
-                  tool_call_id: tool_call.call_id,
-                  name: tool_call.name,
-                  content: error_msg,
-                  is_error: true
-                })
-            end
+            dispatch_decided_call(chain, tool_call, use_context, verbose)
 
           :edit ->
             # Execute with edited arguments
             edited_args = Map.get(decision, :arguments, %{})
-
-            case chain._tool_map[tool_call.name] do
-              %Function{} = func ->
-                edited_call = %{tool_call | arguments: edited_args}
-
-                # Fire started callback before execution
-                Callbacks.fire(chain.callbacks, :on_tool_execution_started, [
-                  chain,
-                  edited_call,
-                  func
-                ])
-
-                Callbacks.fire(chain.callbacks, :on_tool_pre_execution, [
-                  chain,
-                  edited_call,
-                  func
-                ])
-
-                result =
-                  execute_tool_call(edited_call, func, verbose: verbose, context: use_context)
-
-                fire_tool_execution_callbacks(chain, edited_call, result)
-
-              nil ->
-                error_msg = "Tool '#{tool_call.name}' not found"
-
-                Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
-                  chain,
-                  tool_call,
-                  error_msg
-                ])
-
-                ToolResult.new!(%{
-                  tool_call_id: tool_call.call_id,
-                  name: tool_call.name,
-                  content: error_msg,
-                  is_error: true
-                })
-            end
+            edited_call = %{tool_call | arguments: edited_args}
+            dispatch_decided_call(chain, edited_call, use_context, verbose)
 
           :reject ->
             # Create rejection result without executing
@@ -1827,6 +1763,130 @@ defmodule LangChain.Chains.LLMChain do
     end
 
     result
+  end
+
+  # Split reviewed `{call, func}` pairs into the ones cleared to run and the
+  # ToolResults standing in for the ones that were not. A cleared call carries
+  # whatever arguments review left it with.
+  defp partition_reviewed_calls(%LLMChain{} = chain, pairs) do
+    {allowed, results} =
+      Enum.reduce(pairs, {[], []}, fn {call, func}, {allowed, results} ->
+        case review_tool_call(chain, call, func) do
+          {:execute, reviewed_call} ->
+            {[{reviewed_call, func} | allowed], results}
+
+          settled ->
+            {allowed, [reviewed_tool_result(chain, settled, func) | results]}
+        end
+      end)
+
+    {Enum.reverse(allowed), Enum.reverse(results)}
+  end
+
+  # Consult every :on_tool_call_review handler in turn. Argument rewrites thread
+  # forward so a later handler reviews what an earlier one produced; the first
+  # handler to deny or interrupt settles the call and the rest are skipped.
+  defp review_tool_call(%LLMChain{} = chain, %ToolCall{} = call, %Function{} = func) do
+    Callbacks.reduce(
+      chain.callbacks,
+      :on_tool_call_review,
+      {:execute, call},
+      &apply_review_decision(&1, &2, chain, func)
+    )
+  end
+
+  defp apply_review_decision(invoke, {:execute, %ToolCall{} = current} = acc, chain, func) do
+    case invoke.([chain, current, func]) do
+      :ok ->
+        {:cont, acc}
+
+      {:update_arguments, arguments} when is_map(arguments) ->
+        {:cont, {:execute, %ToolCall{current | arguments: arguments}}}
+
+      {:deny, reason} when is_binary(reason) ->
+        {:halt, {:deny, reason, current}}
+
+      {:interrupt, message, interrupt_data} when is_binary(message) ->
+        {:halt, {:interrupt, message, interrupt_data, current}}
+
+      other ->
+        raise LangChainError,
+              "Unexpected :on_tool_call_review result for tool #{inspect(func.name)}. " <>
+                "Expected :ok, {:update_arguments, map}, {:deny, reason}, or " <>
+                "{:interrupt, message, data}. Got: #{inspect(other)}"
+    end
+  end
+
+  # A refusal is a decision about the call, not a fault in it, so it reports
+  # `is_error: false` and leaves the chain's failure counter untouched. A policy
+  # that turns down many calls in a row must not exhaust `max_retry_count`.
+  defp reviewed_tool_result(
+         %LLMChain{} = chain,
+         {:deny, reason, %ToolCall{} = call},
+         %Function{} = func
+       ) do
+    Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [chain, call, reason])
+
+    ToolResult.new!(%{
+      tool_call_id: call.call_id,
+      name: func.name,
+      content: reason,
+      display_text: func.display_text,
+      is_error: false
+    })
+  end
+
+  defp reviewed_tool_result(
+         %LLMChain{},
+         {:interrupt, message, interrupt_data, %ToolCall{} = call},
+         %Function{} = func
+       ) do
+    ToolResult.new!(%{
+      tool_call_id: call.call_id,
+      name: func.name,
+      content: message,
+      display_text: func.display_text,
+      is_interrupt: true,
+      interrupt_data: interrupt_data
+    })
+  end
+
+  # Resolve and run one call that a human decision cleared. Review still
+  # applies: an approval says a person agreed, not that policy did.
+  defp dispatch_decided_call(%LLMChain{} = chain, %ToolCall{} = call, use_context, verbose) do
+    case chain._tool_map[call.name] do
+      %Function{} = func ->
+        case review_tool_call(chain, call, func) do
+          {:execute, reviewed_call} ->
+            Callbacks.fire(chain.callbacks, :on_tool_execution_started, [
+              chain,
+              reviewed_call,
+              func
+            ])
+
+            Callbacks.fire(chain.callbacks, :on_tool_pre_execution, [chain, reviewed_call, func])
+
+            result =
+              execute_tool_call(reviewed_call, func, verbose: verbose, context: use_context)
+
+            fire_tool_execution_callbacks(chain, reviewed_call, result)
+
+          settled ->
+            reviewed_tool_result(chain, settled, func)
+        end
+
+      nil ->
+        error_msg = "Tool '#{call.name}' not found"
+
+        Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [chain, call, error_msg])
+
+        ToolResult.new!(%{
+          tool_call_id: call.call_id,
+          name: call.name,
+          content: error_msg,
+          is_error: true
+        })
+    end
   end
 
   @doc """
