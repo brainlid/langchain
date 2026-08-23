@@ -2496,4 +2496,65 @@ defmodule ChatModels.ChatGoogleAITest do
       assert error.message =~ "Empty streaming response"
     end
   end
+
+  describe "parallel tool calls" do
+    @tag live_call: true, live_google_ai: true
+    test "each result is paired with the call it answers" do
+      alias LangChain.Chains.LLMChain
+      alias LangChain.Function
+      alias LangChain.Message
+
+      # A distinct number per city, so a result paired with the wrong call shows
+      # up as the wrong number in the reply rather than passing unnoticed.
+      temperatures = %{"Denver" => "11", "Cairo" => "37", "Oslo" => "52"}
+
+      tool =
+        Function.new!(%{
+          name: "get_temperature",
+          description: "Returns the current temperature for a city, in degrees",
+          parameters_schema: %{
+            type: "object",
+            properties: %{"city" => %{type: "string", description: "The city to look up"}},
+            required: ["city"]
+          },
+          function: fn %{"city" => city}, _ctx ->
+            {:ok, Map.get(temperatures, city, "unknown") <> " degrees"}
+          end
+        })
+
+      {:ok, updated_chain} =
+        %{llm: ChatGoogleAI.new!(%{temperature: 0, stream: false, model: @test_model})}
+        |> LLMChain.new!()
+        |> LLMChain.add_message(
+          Message.new_user!(
+            "What is the temperature in Denver, Cairo, and Oslo? " <>
+              "Call get_temperature once for each city, then report all three."
+          )
+        )
+        |> LLMChain.add_tools(tool)
+        |> LLMChain.run(mode: :while_needs_response)
+
+      # Every tool message answers the calls of the assistant message before it,
+      # one result per call and in the same order. A functionResponse carries the
+      # tool's name and its content, so Gemini pairs it with a functionCall by
+      # position and a result out of place is answered against the wrong call.
+      updated_chain.messages
+      |> Enum.chunk_every(2, 1, :discard)
+      |> Enum.filter(fn [first, second] ->
+        first.role == :assistant and first.tool_calls not in [nil, []] and second.role == :tool
+      end)
+      |> tap(fn pairs -> assert pairs != [], "expected at least one tool round trip" end)
+      |> Enum.each(fn [call_message, result_message] ->
+        assert Enum.map(call_message.tool_calls, & &1.call_id) ==
+                 Enum.map(result_message.tool_results, & &1.tool_call_id)
+      end)
+
+      # The model repeated each city's own number back, so nothing was mis-paired
+      # on the way out either.
+      answer = ContentPart.parts_to_string(updated_chain.last_message.content)
+      assert answer =~ "11"
+      assert answer =~ "37"
+      assert answer =~ "52"
+    end
+  end
 end
