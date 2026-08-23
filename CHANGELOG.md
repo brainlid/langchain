@@ -1,5 +1,54 @@
 # Changelog
 
+## v0.13.0
+
+A new callback can decide each tool call before it runs, tool results come back in the
+order the model asked for them, and a Gemini function call carries its id in
+both directions.
+
+No breaking API changes. Two behavior changes to know about: tool results are
+ordered by the model's `tool_calls` rather than by how they were executed, and
+Gemini and Vertex AI requests now include the tool call id in the JSON body.
+
+### Added
+
+- **`:on_tool_call_review` callback on `LangChain.Chains.ChainCallbacks`.**
+  Consulted for each tool call, and unlike the observation-only tool callbacks
+  its return value is honored: `:ok` to abstain, `{:update_arguments, map}` to
+  rewrite the call, `{:deny, reason}` to stop it and answer the model with
+  `reason`, or `{:interrupt, message, data}` to put it in front of the user
+  first. Decides from the arguments the model chose, which withholding a tool
+  cannot do. https://github.com/brainlid/langchain/pull/633
+- **`LangChain.Callbacks.reduce/4`**, the decision-capable counterpart to
+  `fire/3`, which now delegates to it.
+  https://github.com/brainlid/langchain/pull/633
+
+### Changed
+
+- **Tool results are returned in the order the model requested the calls.** Each
+  call keeps its own slot through execution instead of being grouped by async,
+  sync, denied, and unknown-tool. Gemini pairs a function response with its call
+  by position, so a result out of place was answered against the wrong call.
+  https://github.com/brainlid/langchain/pull/633
+- **Review runs in the parent chain process before the
+  `:on_tool_execution_started` fan-out and before any `Task` is spawned**, so a
+  refused call is never announced as running. Reviews for async tools therefore
+  run serially. https://github.com/brainlid/langchain/pull/633
+- **A denied call reports `is_error: false`**, leaving the chain's failure
+  counter alone so a policy that turns down many calls cannot exhaust
+  `max_retry_count`. https://github.com/brainlid/langchain/pull/633
+- **`execute_tool_calls_with_decisions/3` reviews too**, since a human approving
+  a call says a person agreed, not that policy did.
+  https://github.com/brainlid/langchain/pull/633
+
+### Fixed
+
+- **Gemini and Vertex AI carry the tool call id through the exchange.** Newer
+  models issue an id with every call and expect it back, which is what pairs a
+  turn holding several calls to the same tool unambiguously rather than by
+  position. A call with no id sends none, and so does its answer.
+  https://github.com/brainlid/langchain/pull/634
+
 ## v0.12.0
 
 Token usage is reported once per streamed turn, from every provider that sends
