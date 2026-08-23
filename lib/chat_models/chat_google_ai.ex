@@ -479,18 +479,6 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     %{"functionCall" => function_call_for_api(call)}
   end
 
-  # Gemini pairs a functionResponse with the functionCall it answers by `id`
-  # when the two carry one, and by their position among the parts when they do
-  # not. Newer models issue an `id` with every call and expect it back, so the
-  # call's id is sent here and the answering result sends the same one.
-  defp function_call_for_api(%ToolCall{} = call) do
-    %{
-      "args" => ToolCall.arguments_as_map(call),
-      "name" => call.name
-    }
-    |> Utils.conditionally_add_to_map("id", call.call_id)
-  end
-
   def for_api(%ToolResult{} = result) do
     # `content` may be nil, a string, or a list of ContentParts.
     # `content_to_string/1` accepts all three, where `parts_to_string/1`
@@ -539,6 +527,18 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
 
   def for_api(%NativeTool{name: name, configuration: nil}) do
     name
+  end
+
+  # Gemini pairs a functionResponse with the functionCall it answers by `id`
+  # when the two carry one, and by their position among the parts when they do
+  # not. Newer models issue an `id` with every call and expect it back, so the
+  # call's id is sent here and the answering result sends the same one.
+  defp function_call_for_api(%ToolCall{} = call) do
+    %{
+      "args" => ToolCall.arguments_as_map(call),
+      "name" => call.name
+    }
+    |> Utils.conditionally_add_to_map("id", call.call_id)
   end
 
   # A tool result may carry no text at all: `content` can be nil, or a
