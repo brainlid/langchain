@@ -2535,9 +2535,9 @@ defmodule ChatModels.ChatGoogleAITest do
         |> LLMChain.run(mode: :while_needs_response)
 
       # Every tool message answers the calls of the assistant message before it,
-      # one result per call and in the same order. Gemini pairs a functionResponse
-      # with its functionCall by id when the call carries one and by position
-      # otherwise, so a reordered result message is answered against the wrong call.
+      # one result per call and in the same order. A functionResponse carries the
+      # tool's name and its content, so Gemini pairs it with a functionCall by
+      # position and a result out of place is answered against the wrong call.
       updated_chain.messages
       |> Enum.chunk_every(2, 1, :discard)
       |> Enum.filter(fn [first, second] ->
