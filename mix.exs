@@ -2,7 +2,7 @@ defmodule LangChain.MixProject do
   use Mix.Project
 
   @source_url "https://github.com/brainlid/langchain"
-  @version "0.12.0"
+  @version "0.13.0"
 
   def project do
     [
@@ -77,7 +77,7 @@ defmodule LangChain.MixProject do
   defp aliases do
     [
       precommit: [
-        "compile --warning-as-errors",
+        "compile --warnings-as-errors",
         "deps.unlock --unused",
         "format",
         "sobelow",
