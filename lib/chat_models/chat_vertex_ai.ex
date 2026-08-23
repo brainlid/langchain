@@ -412,21 +412,13 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   defp for_api(%ToolCall{metadata: %{thought_signature: signature}} = call)
        when is_binary(signature) do
     %{
-      "functionCall" => %{
-        "args" => ToolCall.arguments_as_map(call),
-        "name" => call.name
-      },
+      "functionCall" => function_call_for_api(call),
       "thoughtSignature" => signature
     }
   end
 
   defp for_api(%ToolCall{} = call) do
-    %{
-      "functionCall" => %{
-        "args" => ToolCall.arguments_as_map(call),
-        "name" => call.name
-      }
-    }
+    %{"functionCall" => function_call_for_api(call)}
   end
 
   defp for_api(%ToolResult{} = result) do
@@ -434,10 +426,12 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     response_parts = tool_result_parts_for_api(result.content)
 
     %{
-      "functionResponse" => %{
-        "name" => result.name,
-        "response" => response
-      }
+      "functionResponse" =>
+        %{
+          "name" => result.name,
+          "response" => response
+        }
+        |> Utils.conditionally_add_to_map("id", result.tool_call_id)
     }
     |> maybe_add_function_response_parts(response_parts)
   end
@@ -451,6 +445,18 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   end
 
   defp for_api(nil), do: nil
+
+  # Gemini pairs a functionResponse with the functionCall it answers by `id`
+  # when the two carry one, and by their position among the parts when they do
+  # not. Newer models issue an `id` with every call and expect it back, so the
+  # call's id is sent here and the answering result sends the same one.
+  defp function_call_for_api(%ToolCall{} = call) do
+    %{
+      "args" => ToolCall.arguments_as_map(call),
+      "name" => call.name
+    }
+    |> Utils.conditionally_add_to_map("id", call.call_id)
+  end
 
   defp maybe_add_function_response_parts(
          %{"functionResponse" => function_response} = data,

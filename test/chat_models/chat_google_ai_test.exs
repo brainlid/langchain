@@ -239,6 +239,77 @@ defmodule ChatModels.ChatGoogleAITest do
       assert result["functionCall"]["name"] == "test_function"
     end
 
+    test "for_api includes the call id on a functionCall" do
+      tool_call =
+        ToolCall.new!(%{
+          call_id: "call_123",
+          name: "test_function",
+          arguments: %{"arg" => "value"}
+        })
+
+      assert %{"functionCall" => %{"id" => "call_123"}} = ChatGoogleAI.for_api(tool_call)
+    end
+
+    test "for_api includes the call id alongside a thoughtSignature" do
+      tool_call =
+        ToolCall.new!(%{
+          call_id: "call_123",
+          name: "test_function",
+          arguments: %{"arg" => "value"},
+          metadata: %{thought_signature: "sig_abc123"}
+        })
+
+      result = ChatGoogleAI.for_api(tool_call)
+
+      assert result["thoughtSignature"] == "sig_abc123"
+      assert result["functionCall"]["id"] == "call_123"
+    end
+
+    test "for_api includes the answered call id on a functionResponse" do
+      tool_result =
+        ToolResult.new!(%{
+          tool_call_id: "call_123",
+          name: "test_function",
+          content: "the answer"
+        })
+
+      assert %{"functionResponse" => %{"id" => "call_123"}} = ChatGoogleAI.for_api(tool_result)
+    end
+
+    test "for_api omits the id when a call has none" do
+      tool_call = %ToolCall{status: :incomplete, name: "test_function", arguments: nil}
+
+      refute Map.has_key?(ChatGoogleAI.for_api(tool_call)["functionCall"], "id")
+    end
+
+    test "a call the model identified and the result answering it carry the same id" do
+      model = ChatGoogleAI.new!(%{model: "gemini-3.7-flash"})
+
+      call =
+        ChatGoogleAI.do_process_response(
+          model,
+          %{
+            "functionCall" => %{
+              "name" => "get_temperature",
+              "args" => %{"city" => "Oslo"},
+              "id" => "model-supplied-id"
+            }
+          },
+          nil
+        )
+
+      tool_result =
+        ToolResult.new!(%{
+          tool_call_id: call.call_id,
+          name: call.name,
+          content: "2 degrees"
+        })
+
+      assert %{"functionCall" => %{"id" => sent_id}} = ChatGoogleAI.for_api(call)
+      assert %{"functionResponse" => %{"id" => ^sent_id}} = ChatGoogleAI.for_api(tool_result)
+      assert sent_id == "model-supplied-id"
+    end
+
     test "for_api excludes thoughtSignature when not in ToolCall metadata" do
       tool_call =
         ToolCall.new!(%{
@@ -301,6 +372,7 @@ defmodule ChatModels.ChatGoogleAITest do
           "parts" => [
             %{
               "functionResponse" => %{
+                "id" => "call-find_theaters",
                 "name" => "find_theaters",
                 "response" => %{
                   "name" => "find_theaters",
@@ -345,6 +417,7 @@ defmodule ChatModels.ChatGoogleAITest do
     test "tool result creates expected map" do
       expected = %{
         "functionResponse" => %{
+          "id" => "call-find_theaters",
           "name" => "find_theaters",
           "response" => %{
             "name" => "find_theaters",
@@ -369,6 +442,7 @@ defmodule ChatModels.ChatGoogleAITest do
       # shapes for `content`.
       expected = %{
         "functionResponse" => %{
+          "id" => "call-find_theaters",
           "name" => "find_theaters",
           "response" => %{
             "name" => "find_theaters",
@@ -392,6 +466,7 @@ defmodule ChatModels.ChatGoogleAITest do
       # hand-built structs.
       expected = %{
         "functionResponse" => %{
+          "id" => "call-take_screenshot",
           "name" => "take_screenshot",
           "response" => %{
             "name" => "take_screenshot",
@@ -413,6 +488,7 @@ defmodule ChatModels.ChatGoogleAITest do
     test "tool result with nil content creates expected map" do
       expected = %{
         "functionResponse" => %{
+          "id" => "call-find_theaters",
           "name" => "find_theaters",
           "response" => %{
             "name" => "find_theaters",
