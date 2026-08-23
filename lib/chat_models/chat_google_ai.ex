@@ -470,21 +470,25 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   def for_api(%ToolCall{metadata: %{thought_signature: signature}} = call)
       when is_binary(signature) do
     %{
-      "functionCall" => %{
-        "args" => ToolCall.arguments_as_map(call),
-        "name" => call.name
-      },
+      "functionCall" => function_call_for_api(call),
       "thoughtSignature" => signature
     }
   end
 
   def for_api(%ToolCall{} = call) do
+    %{"functionCall" => function_call_for_api(call)}
+  end
+
+  # Gemini pairs a functionResponse with the functionCall it answers by `id`
+  # when the two carry one, and by their position among the parts when they do
+  # not. Newer models issue an `id` with every call and expect it back, so the
+  # call's id is sent here and the answering result sends the same one.
+  defp function_call_for_api(%ToolCall{} = call) do
     %{
-      "functionCall" => %{
-        "args" => ToolCall.arguments_as_map(call),
-        "name" => call.name
-      }
+      "args" => ToolCall.arguments_as_map(call),
+      "name" => call.name
     }
+    |> Utils.conditionally_add_to_map("id", call.call_id)
   end
 
   def for_api(%ToolResult{} = result) do
@@ -500,13 +504,15 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     #
     # https://ai.google.dev/gemini-api/docs/function-calling#expandable-7
     %{
-      "functionResponse" => %{
-        "name" => result.name,
-        "response" => %{
+      "functionResponse" =>
+        %{
           "name" => result.name,
-          "content" => content
+          "response" => %{
+            "name" => result.name,
+            "content" => content
+          }
         }
-      }
+        |> Utils.conditionally_add_to_map("id", result.tool_call_id)
     }
   end
 

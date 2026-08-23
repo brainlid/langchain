@@ -241,6 +241,44 @@ defmodule ChatModels.ChatVertexAITest do
              } = data
     end
 
+    test "carries the call id onto a functionCall and the result answering it",
+         %{vertex_ai: vertex_ai} do
+      # Gemini pairs a functionResponse with the functionCall it answers by id,
+      # so the two have to agree.
+      data =
+        ChatVertexAI.for_api(
+          vertex_ai,
+          [
+            Message.new_assistant!(%{
+              tool_calls: [
+                ToolCall.new!(%{
+                  call_id: "call-find_theaters",
+                  name: "find_theaters",
+                  arguments: %{"location" => "Mountain View"}
+                })
+              ]
+            }),
+            Message.new_tool_result!(%{
+              tool_results: [
+                ToolResult.new!(%{
+                  tool_call_id: "call-find_theaters",
+                  name: "find_theaters",
+                  content: "AMC 16"
+                })
+              ]
+            })
+          ],
+          []
+        )
+
+      assert %{"contents" => [call_message, result_message]} = data
+      assert %{"parts" => [%{"functionCall" => function_call}]} = call_message
+      assert %{"parts" => [%{"functionResponse" => function_response}]} = result_message
+
+      assert function_call["id"] == "call-find_theaters"
+      assert function_response["id"] == "call-find_theaters"
+    end
+
     test "generates a map containing user and assistant messages", %{vertex_ai: vertex_ai} do
       user_message = "Hello Assistant!"
       assistant_message = "Hello User!"
