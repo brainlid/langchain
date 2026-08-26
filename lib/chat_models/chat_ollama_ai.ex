@@ -346,7 +346,15 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   @spec new(attrs :: map()) :: {:ok, t} | {:error, Ecto.Changeset.t()}
   def new(%{} = attrs \\ %{}) do
     %ChatOllamaAI{}
-    |> cast(attrs, @create_fields, empty_values: [""])
+    # Ecto trims a value before checking it against `:empty_values`, so a
+    # whitespace-only string counts as empty and is dropped from an array
+    # field. Stop sequences are frequently exactly that: "\n" and "\t" are
+    # ordinary stop sequences. Comparing untrimmed keeps them, while an empty
+    # string is still discarded.
+    |> cast(attrs, @create_fields,
+      empty_values: [""],
+      trim_values: fn _type, value -> value end
+    )
     |> common_validation()
     |> apply_action(:insert)
   end
