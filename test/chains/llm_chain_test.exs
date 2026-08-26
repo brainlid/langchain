@@ -2914,6 +2914,30 @@ defmodule LangChain.Chains.LLMChainTest do
       refute_received :retries_exceeded_callback
     end
 
+    test "a looping mode cannot re-invoke the model past the retry budget" do
+      # An unterminated response used to add no message, leaving needs_response
+      # true, so a looping mode re-invoked the model with the same transcript
+      # until something eventually completed. :while_needs_response has no run
+      # bound of its own, so the chain's retry budget is the only ceiling.
+      # Mimic fails the test if a call is made beyond the expected count.
+      incomplete_deltas = [
+        MessageDelta.new!(%{role: :assistant, content: nil, status: :incomplete}),
+        MessageDelta.new!(%{content: "Sock", status: :incomplete})
+      ]
+
+      expect(ChatOpenAI, :call, 2, fn _model, _messages, _tools -> {:ok, incomplete_deltas} end)
+
+      chain =
+        LLMChain.new!(%{llm: ChatOpenAI.new!(%{stream: true}), max_retry_count: 2})
+        |> LLMChain.add_message(Message.new_user!("Hello"))
+
+      assert {:error, error_chain, %LangChainError{type: "incomplete_stream"}} =
+               LLMChain.run(chain, mode: :while_needs_response)
+
+      assert error_chain.delta == nil
+      assert [%Message{role: :user}] = error_chain.messages
+    end
+
     test "transient incomplete stream recovers on retry without duplicating text" do
       # The retry starts from a clean chain: the first attempt's partial text
       # must not be prepended to the retry's message.
