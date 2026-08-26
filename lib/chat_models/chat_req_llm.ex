@@ -466,12 +466,18 @@ if Code.ensure_loaded?(ReqLLM) do
     defp closing_delta(_stream_response, []), do: nil
 
     defp closing_delta(stream_response, deltas) do
-      if Enum.any?(deltas, &(&1.status != :incomplete)) do
+      if Enum.any?(deltas, &turn_closed?/1) do
         nil
       else
         close_turn(stream_finish_reason(stream_response))
       end
     end
+
+    # A stream error ends the turn the same way a terminal delta does:
+    # `LLMChain` turns the text streamed so far into a `:stream_error` message
+    # and stops. Nothing is missing, so there is no closing delta to add.
+    defp turn_closed?({:error, _reason}), do: true
+    defp turn_closed?(%MessageDelta{status: status}), do: status != :incomplete
 
     defp close_turn(finish_reason) when finish_reason in @finished_reasons do
       Logger.warning(fn ->

@@ -1437,6 +1437,58 @@ if Code.ensure_loaded?(ReqLLM) do
 
         assert text == "Hello there!"
       end
+
+      test "a provider failure frame ends the stream with a stream error" do
+        model = ChatReqLLM.new!(%{model: @live_model, stream: true})
+
+        chunks = [
+          %ReqLLM.StreamChunk{type: :content, text: "Partial answ"},
+          %ReqLLM.StreamChunk{
+            type: :meta,
+            metadata: %{terminal?: true, finish_reason: :error, error: "The model run failed"}
+          }
+        ]
+
+        stub(ReqLLM, :stream_text, fn _model, _context, _opts ->
+          {:ok, fake_stream_response(chunks, :error)}
+        end)
+
+        assert [
+                 %MessageDelta{},
+                 {:error, %LangChainError{type: "stream_error", message: "The model run failed"}}
+               ] = ChatReqLLM.do_api_request(model, [Message.new_user!("hi")], [], 3)
+      end
+
+      test "LLMChain keeps the partial text of a failed stream as a stream_error message" do
+        model = ChatReqLLM.new!(%{model: @live_model, stream: true})
+
+        chunks = [
+          %ReqLLM.StreamChunk{type: :content, text: "Partial answ"},
+          %ReqLLM.StreamChunk{
+            type: :meta,
+            metadata: %{terminal?: true, finish_reason: :error, error: "The model run failed"}
+          }
+        ]
+
+        stub(ReqLLM, :stream_text, fn _model, _context, _opts ->
+          {:ok, fake_stream_response(chunks, :error)}
+        end)
+
+        assert {:ok, chain} =
+                 %{llm: model}
+                 |> LLMChain.new!()
+                 |> LLMChain.add_message(Message.new_user!("Say hello"))
+                 |> LLMChain.run()
+
+        assert %Message{role: :assistant, status: :stream_error} = chain.last_message
+        assert ContentPart.parts_to_string(chain.last_message.content) == "Partial answ"
+
+        assert %LangChainError{type: "stream_error", message: "The model run failed"} =
+                 chain.last_message.metadata.streaming_error
+
+        assert chain.delta == nil
+        refute chain.needs_response
+      end
     end
 
     # ============================================================

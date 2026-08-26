@@ -32,7 +32,11 @@ When `stream: true`, responses arrive as partial `MessageDelta` structs over tim
    whose deltas never reach a terminal status is a failed call, not a silent
    success: the partial delta is dropped and the call is retried as an
    `"incomplete_stream"` error
-4. Chain fires `:on_message_processed` with completed message
+4. A provider that reports the stream as failed puts an
+   `{:error, %LangChainError{type: "stream_error"}}` tuple in the delta list.
+   The text streamed so far is kept as a message with status `:stream_error`,
+   carrying the error under `metadata.streaming_error`, and the turn ends
+5. Chain fires `:on_message_processed` with completed message
 
 **Key insight**: The `:on_llm_new_delta` callback runs in the HTTP task context, not the main process. For LiveView/GenServer integrations, these callbacks should send messages to the main process for state updates.
 
