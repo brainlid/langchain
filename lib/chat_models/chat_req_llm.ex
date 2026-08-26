@@ -450,7 +450,6 @@ if Code.ensure_loaded?(ReqLLM) do
     # stream. A stream that ended without its terminal event is reported as
     # `:incomplete`, which maps to a truncated (`:length`) message rather than
     # a clean one.
-    @spec closing_delta(ReqLLM.StreamResponse.t(), [MessageDelta.t()]) :: MessageDelta.t() | nil
     defp closing_delta(_stream_response, []), do: nil
 
     defp closing_delta(stream_response, deltas) do
