@@ -3021,6 +3021,61 @@ defmodule LangChain.Chains.LLMChainTest do
                updated_chain.last_message
     end
 
+    test "stream ending with an error terminal preserves partial text as a stream_error message" do
+      # A provider failure frame (e.g. OpenAI Responses `response.failed`)
+      # arrives as an error tuple in the delta stream. The partial text is
+      # kept, but marked :stream_error with the provider's error in metadata,
+      # and the turn ends.
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:ok,
+         [
+           MessageDelta.new!(%{role: :assistant, content: nil, status: :incomplete}),
+           MessageDelta.new!(%{content: "Partial answ", status: :incomplete}),
+           {:error,
+            LangChainError.exception(type: "stream_error", message: "The model run failed")}
+         ]}
+      end)
+
+      {:ok, updated_chain} =
+        %{llm: ChatOpenAI.new!(%{stream: true})}
+        |> LLMChain.new!()
+        |> LLMChain.add_message(Message.new_user!("Hello"))
+        |> LLMChain.run()
+
+      content = [ContentPart.text!("Partial answ")]
+
+      assert %Message{role: :assistant, content: ^content, status: :stream_error} =
+               updated_chain.last_message
+
+      assert %LangChainError{message: "The model run failed"} =
+               updated_chain.last_message.metadata.streaming_error
+
+      assert updated_chain.delta == nil
+      assert updated_chain.needs_response == false
+    end
+
+    test "stream that fails before any content returns the stream error" do
+      handler = %{
+        on_llm_error: fn _chain, error ->
+          send(self(), {:llm_error_callback, error})
+        end
+      }
+
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:ok,
+         [{:error, LangChainError.exception(type: "stream_error", message: "Invalid request")}]}
+      end)
+
+      chain =
+        LLMChain.new!(%{llm: ChatOpenAI.new!(%{stream: true}), callbacks: [handler]})
+        |> LLMChain.add_message(Message.new_user!("Hello"))
+
+      assert {:error, _chain, %LangChainError{type: "stream_error", message: "Invalid request"}} =
+               LLMChain.run(chain)
+
+      assert_received {:llm_error_callback, %LangChainError{type: "stream_error"}}
+    end
+
     test "empty streaming response succeeds in run" do
       # Return deltas that produce an empty assistant message (no content, no tool_calls).
       # This is valid -- e.g., LLM has nothing to say after processing tool results.
