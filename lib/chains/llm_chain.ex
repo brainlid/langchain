@@ -297,7 +297,9 @@ defmodule LangChain.Chains.LLMChain do
     # Track the current merged `%MessageDelta{}` struct received when streamed.
     # Set to `nil` when there is no current delta being tracked. This happens
     # when the final delta is received that completes the message. At that point,
-    # the delta is converted to a message and the delta is set to nil.
+    # the delta is converted to a message and the delta is set to nil. A response
+    # that ends without a completing delta is converted anyway, so a delta never
+    # outlives the LLM call that produced it.
     field :delta, :any, virtual: true
 
     # Track the last `%Message{}` received in the chain.
@@ -959,31 +961,11 @@ defmodule LangChain.Chains.LLMChain do
 
       {:ok, [%MessageDelta{} | _] = deltas} ->
         if chain.verbose_deltas, do: IO.inspect(deltas, label: "DELTA MESSAGE LIST RESPONSE")
-
-        case apply_deltas(chain, deltas) do
-          {:ok, updated_chain} ->
-            if chain.verbose,
-              do: IO.inspect(updated_chain.last_message, label: "COMBINED DELTA MESSAGE RESPONSE")
-
-            {:ok, updated_chain}
-
-          {:error, _chain, _reason} = error ->
-            handle_delta_error(error)
-        end
+        apply_llm_deltas(chain, deltas)
 
       {:ok, [[%MessageDelta{} | _] | _] = deltas} ->
         if chain.verbose_deltas, do: IO.inspect(deltas, label: "DELTA MESSAGE LIST RESPONSE")
-
-        case apply_deltas(chain, deltas) do
-          {:ok, updated_chain} ->
-            if chain.verbose,
-              do: IO.inspect(updated_chain.last_message, label: "COMBINED DELTA MESSAGE RESPONSE")
-
-            {:ok, updated_chain}
-
-          {:error, _chain, _reason} = error ->
-            handle_delta_error(error)
-        end
+        apply_llm_deltas(chain, deltas)
 
       {:error, %LangChainError{} = reason} ->
         if chain.verbose, do: IO.inspect(reason, label: "ERROR")
@@ -1214,6 +1196,49 @@ defmodule LangChain.Chains.LLMChain do
   @spec reset_streaming_state(t()) :: t()
   defp reset_streaming_state(%LLMChain{} = chain) do
     %LLMChain{chain | delta: nil}
+  end
+
+  # Apply the deltas an LLM call returned. The call is over by the time this
+  # runs, so whatever has accumulated is the whole of the response.
+  #
+  # A ChatModel is expected to end a streamed response with a delta carrying a
+  # terminal status, which is what converts the accumulated delta into a
+  # message. When one never arrives the delta has nowhere to go: it stays live
+  # on the chain, no message is appended, and `needs_response` stays true. A
+  # looping mode then calls the model again and the next response merges into
+  # the same accumulator at the same content index, so several separate
+  # generations arrive as one run-on message. Close the delta out here so a
+  # single call always yields a single message.
+  @spec apply_llm_deltas(t(), list()) :: {:ok, t()} | {:error, t(), LangChainError.t()}
+  defp apply_llm_deltas(%LLMChain{} = chain, deltas) do
+    case apply_deltas(chain, deltas) do
+      {:ok, %LLMChain{delta: %MessageDelta{} = hanging} = unfinished_chain} ->
+        Logger.warning(
+          "Response ended without a completed delta. Converting the partial delta to a message."
+        )
+
+        forced_chain = %LLMChain{
+          unfinished_chain
+          | delta: %MessageDelta{hanging | status: :complete}
+        }
+
+        case delta_to_message_when_complete(forced_chain) do
+          {:ok, updated_chain} ->
+            {:ok, updated_chain}
+
+          {:error, _chain, _reason} = error ->
+            handle_delta_error(error)
+        end
+
+      {:ok, updated_chain} ->
+        if chain.verbose,
+          do: IO.inspect(updated_chain.last_message, label: "COMBINED DELTA MESSAGE RESPONSE")
+
+        {:ok, updated_chain}
+
+      {:error, _chain, _reason} = error ->
+        handle_delta_error(error)
+    end
   end
 
   # Handle a delta-conversion error like a retryable LLM error: fire

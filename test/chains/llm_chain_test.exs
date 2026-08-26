@@ -216,24 +216,18 @@ defmodule LangChain.Chains.LLMChainTest do
     test "remove delta and adds cancelled message" do
       model = ChatOpenAI.new!(%{temperature: 1, stream: true})
 
-      # Made NOT LIVE here
-      fake_messages = [
-        [MessageDelta.new!(%{role: :assistant, content: nil, status: :incomplete})],
-        [MessageDelta.new!(%{content: "Sock", status: :incomplete})]
-      ]
-
-      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
-        {:ok, fake_messages}
-      end)
-
-      # We can construct an LLMChain from a PromptTemplate and an LLM.
-      {:ok, updated_chain} =
+      # Cancelling happens partway through a stream, so build the chain up to
+      # the point a live delta is on it.
+      updated_chain =
         %{llm: model, verbose: false}
         |> LLMChain.new!()
         |> LLMChain.add_message(
           Message.new_user!("What is a good name for a company that makes colorful socks?")
         )
-        |> LLMChain.run()
+        |> LLMChain.merge_delta(
+          MessageDelta.new!(%{role: :assistant, content: nil, status: :incomplete})
+        )
+        |> LLMChain.merge_delta(MessageDelta.new!(%{content: "Sock", status: :incomplete}))
 
       assert %MessageDelta{} = updated_chain.delta
       new_chain = LLMChain.cancel_delta(updated_chain, :cancelled)
@@ -659,6 +653,75 @@ defmodule LangChain.Chains.LLMChainTest do
       assert {:ok, %LLMChain{} = result} = LLMChain.delta_to_message_when_complete(updated_chain)
       assert %MessageDelta{status: :incomplete} = result.delta
       assert result.messages == []
+    end
+  end
+
+  describe "run/2 with a streamed response that never completes" do
+    setup do
+      %{chain: LLMChain.new!(%{llm: ChatOpenAI.new!(%{stream: true}), verbose: false})}
+    end
+
+    test "converts the partial delta into a message", %{chain: chain} do
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:ok,
+         [
+           MessageDelta.new!(%{role: :assistant, content: "Sounds like "}),
+           MessageDelta.new!(%{content: "a shakedown run."})
+         ]}
+      end)
+
+      chain = LLMChain.add_message(chain, Message.new_user!("Testing"))
+
+      assert {:ok, updated_chain} = LLMChain.run(chain)
+      assert updated_chain.delta == nil
+      assert %Message{role: :assistant} = answer = updated_chain.last_message
+      assert ContentPart.parts_to_string(answer.content) == "Sounds like a shakedown run."
+      assert updated_chain.needs_response == false
+    end
+
+    test "does not merge a later response into the unfinished one", %{chain: chain} do
+      # An unfinished delta used to stay live on the chain while `needs_response`
+      # stayed true, so a looping mode called the model again and the next
+      # response merged into the same content slot. One call, one message.
+      expect(ChatOpenAI, :call, 1, fn _model, _messages, _tools ->
+        {:ok, [MessageDelta.new!(%{role: :assistant, content: "First answer."})]}
+      end)
+
+      chain = LLMChain.add_message(chain, Message.new_user!("Testing"))
+
+      assert {:ok, updated_chain} = LLMChain.run(chain, mode: :while_needs_response)
+      assert [_user, %Message{role: :assistant} = answer] = updated_chain.messages
+      assert ContentPart.parts_to_string(answer.content) == "First answer."
+    end
+
+    test "reports an unparsable tool call rather than converting it", %{chain: chain} do
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:ok,
+         [
+           MessageDelta.new!(%{
+             role: :assistant,
+             tool_calls: [
+               ToolCall.new!(%{
+                 status: :incomplete,
+                 type: :function,
+                 call_id: "call_bad",
+                 name: "search_web",
+                 arguments: "{\"query\": ",
+                 index: 0
+               })
+             ]
+           })
+         ]}
+      end)
+
+      chain =
+        chain
+        |> Map.put(:max_retry_count, 1)
+        |> LLMChain.add_message(Message.new_user!("Testing"))
+
+      assert {:error, error_chain, %LangChainError{} = error} = LLMChain.run(chain)
+      assert error.type == "delta_conversion_failed"
+      assert error_chain.delta == nil
     end
   end
 
@@ -1606,18 +1669,10 @@ defmodule LangChain.Chains.LLMChainTest do
                |> LLMChain.add_messages([Message.new_user!("Hi")])
                |> LLMChain.run()
 
-      assert %MessageDelta{
-               merged_content: [
-                 %ContentPart{
-                   type: :text,
-                   content: "Hello World",
-                   options: []
-                 }
-               ],
-               status: :incomplete,
-               role: :assistant
-             } =
-               updated_chain.delta
+      assert %Message{
+               role: :assistant,
+               content: [%ContentPart{type: :text, content: "Hello World", options: []}]
+             } = updated_chain.last_message
     end
 
     test "returns error when receives overloaded from Anthropic" do
