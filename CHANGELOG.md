@@ -1,5 +1,76 @@
 # Changelog
 
+## v0.13.1
+
+A patch release for streamed responses. A stream that never terminates is a
+failed call that gets retried instead of quietly merging into the next response,
+a stream the provider reports as failed surfaces that error instead of
+presenting a truncated answer as a finished one, and whitespace-only Ollama stop
+sequences survive Ecto 3.14's casting.
+
+No breaking API changes. Two things to know about: an unterminated stream now
+ends the run as a retried `"incomplete_stream"` error rather than returning
+`{:ok, chain}` with no message added, and a retry replays text that already
+reached consumers through `:on_llm_new_delta`, so a host rendering raw deltas
+should reset its buffer on `:on_llm_error`. Using `ChatReqLLM` against the
+OpenAI Responses API wants `req_llm` v1.21.1 or later, which is where failure
+frames are decoded into a terminal chunk this release can act on.
+
+### Changed
+
+- **An unterminated streamed response is treated as a failed call.** `LLMChain`
+  drops the hanging delta and routes the call through its existing failure path
+  as an `"incomplete_stream"` error: `:on_llm_error` per attempt, bounded by
+  `max_retry_count`, `:on_retries_exceeded` on exhaustion. A leftover delta is
+  also cleared before every attempt. The partial text is discarded rather than
+  salvaged, because a response cut off partway through is indistinguishable from
+  one that finished and lost only its terminator.
+  https://github.com/brainlid/langchain/pull/636
+- **Dependency upgrades**, notably `req_llm` to v1.21.1 for an upstream fix to
+  the OpenAI Responses API used through `ChatReqLLM`, and `sobelow` to v0.15.
+  The remaining updates are transitive. https://github.com/brainlid/langchain/pull/639
+
+### Fixed
+
+- **Separate streamed responses no longer concatenate into one message.** A
+  stream that produced no terminal delta left `chain.delta` live and
+  `needs_response` true, so a looping mode called the model again and the next
+  generation merged into the same accumulator. The result was a single assistant
+  message holding several complete answers end to end, unbounded because
+  `WhileNeedsResponse` has no run limit of its own.
+  https://github.com/brainlid/langchain/pull/636
+- **`ChatReqLLM` closes a turn whose terminal marker went missing.** When the
+  stream carried no terminal chunk but `req_llm`'s finish reason reports a
+  response the provider finished (`:stop`, `:tool_calls`, `:length`,
+  `:content_filter`), a closing delta is synthesized and delivered through the
+  streaming callback. Any other reason, including `:incomplete` or one that
+  could not be read, leaves the response unfinished for the chain to retry.
+  https://github.com/brainlid/langchain/pull/636
+- **A failed `ChatReqLLM` stream reports the provider's error instead of
+  completing.** A terminal chunk with `finish_reason: :error` emitted an
+  ordinary `:complete` message and discarded the error message. It now emits a
+  `"stream_error"` `LangChainError` into the delta stream, so the text streamed
+  so far is kept as a `:stream_error` message carrying the error under
+  `metadata.streaming_error`, matching how streamed provider errors are already
+  handled elsewhere. Usage metadata on the same chunk is still captured.
+  https://github.com/brainlid/langchain/pull/638
+- **A stream that fails before producing any content returns its error.** The
+  delta list is headed by an error tuple in that case, which no `do_run/1`
+  clause matched, so it fell through to a generic `unexpected_response`. It now
+  fires `:on_llm_error` and returns the error with its type intact.
+  https://github.com/brainlid/langchain/pull/638
+- **A failed OpenAI Responses stream no longer raises `BadMapError`.** The
+  turn-closing check read `.status` off every accumulated delta, and an error
+  tuple has none. An error tuple ends a turn the same way a terminal delta does.
+  https://github.com/brainlid/langchain/pull/638
+- **`ChatOllamaAI` keeps whitespace-only stop sequences.** Ecto 3.14 moved
+  trimming into a separate `:trim_values` option applied before the
+  `:empty_values` comparison, which disabled the module's deliberate opt-out.
+  `"\n"` and `"\t"` trimmed to `""`, matched `empty_values: [""]`, and were
+  dropped from the `stop` array with no error or warning. `new/1` now compares
+  untrimmed, so an empty string is still discarded and anything else is kept.
+  https://github.com/brainlid/langchain/pull/640
+
 ## v0.13.0
 
 A new callback can decide each tool call before it runs, tool results come back in the
