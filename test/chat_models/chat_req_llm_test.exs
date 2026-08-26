@@ -1042,6 +1042,15 @@ if Code.ensure_loaded?(ReqLLM) do
       }
     end
 
+    # Same, with the out-of-band metadata req_llm collects alongside the chunk
+    # stream. Reached only when the stream ends without a terminal chunk.
+    defp fake_stream_response(chunks, finish_reason) do
+      {:ok, handle} =
+        ReqLLM.StreamResponse.MetadataHandle.start_link(fn -> %{finish_reason: finish_reason} end)
+
+      %{fake_stream_response(chunks) | metadata_handle: handle}
+    end
+
     # ============================================================
     # translate_stream_chunk/1
     # ============================================================
@@ -1396,6 +1405,167 @@ if Code.ensure_loaded?(ReqLLM) do
     # ============================================================
     # Streaming transport failures (raised during consumption)
     # ============================================================
+
+    describe "do_api_request/4 streaming without a terminal chunk" do
+      test "closes the turn when the finish reason reports a finished response" do
+        model = ChatReqLLM.new!(%{model: @live_model, stream: true})
+
+        chunks = [
+          %ReqLLM.StreamChunk{type: :content, text: "All "},
+          %ReqLLM.StreamChunk{type: :content, text: "done"}
+        ]
+
+        stub(ReqLLM, :stream_text, fn _model, _context, _opts ->
+          {:ok, fake_stream_response(chunks, :stop)}
+        end)
+
+        assert [%MessageDelta{}, %MessageDelta{}, %MessageDelta{} = closing] =
+                 ChatReqLLM.do_api_request(model, [Message.new_user!("hi")], [], 3)
+
+        assert closing.status == :complete
+        assert closing.content == nil
+      end
+
+      test "carries a truncating finish reason onto the closing delta" do
+        model = ChatReqLLM.new!(%{model: @live_model, stream: true})
+
+        chunks = [%ReqLLM.StreamChunk{type: :content, text: "As far as I got"}]
+
+        stub(ReqLLM, :stream_text, fn _model, _context, _opts ->
+          {:ok, fake_stream_response(chunks, :length)}
+        end)
+
+        assert [%MessageDelta{}, %MessageDelta{status: :length}] =
+                 ChatReqLLM.do_api_request(model, [Message.new_user!("hi")], [], 3)
+      end
+
+      test "leaves the turn unfinished when the stream ended early" do
+        # req_llm reports `:incomplete` for a body that ended without a
+        # recognized terminal event. The response may be a fragment, so the
+        # deltas are handed over as they are and the chain decides.
+        model = ChatReqLLM.new!(%{model: @live_model, stream: true})
+
+        chunks = [
+          %ReqLLM.StreamChunk{type: :content, text: "Half an "},
+          %ReqLLM.StreamChunk{type: :content, text: "answer"}
+        ]
+
+        stub(ReqLLM, :stream_text, fn _model, _context, _opts ->
+          {:ok, fake_stream_response(chunks, :incomplete)}
+        end)
+
+        assert [%MessageDelta{status: :incomplete}, %MessageDelta{status: :incomplete}] =
+                 ChatReqLLM.do_api_request(model, [Message.new_user!("hi")], [], 3)
+      end
+
+      test "leaves the turn unfinished when the finish reason cannot be read" do
+        model = ChatReqLLM.new!(%{model: @live_model, stream: true})
+
+        chunks = [%ReqLLM.StreamChunk{type: :content, text: "Half an answer"}]
+
+        # `fake_stream_response/1` supplies a metadata handle that cannot answer.
+        stub(ReqLLM, :stream_text, fn _model, _context, _opts ->
+          {:ok, fake_stream_response(chunks)}
+        end)
+
+        assert [%MessageDelta{status: :incomplete}] =
+                 ChatReqLLM.do_api_request(model, [Message.new_user!("hi")], [], 3)
+      end
+
+      test "delivers the closing delta to the streaming callback" do
+        test_pid = self()
+
+        model =
+          %{
+            ChatReqLLM.new!(%{model: @live_model, stream: true})
+            | callbacks: [%{on_llm_new_delta: fn deltas -> send(test_pid, {:delta, deltas}) end}]
+          }
+
+        chunks = [%ReqLLM.StreamChunk{type: :content, text: "Hi"}]
+
+        stub(ReqLLM, :stream_text, fn _model, _context, _opts ->
+          {:ok, fake_stream_response(chunks, :stop)}
+        end)
+
+        ChatReqLLM.do_api_request(model, [Message.new_user!("hi")], [], 3)
+
+        assert_received {:delta, [%MessageDelta{status: :incomplete}]}
+        assert_received {:delta, [%MessageDelta{status: :complete}]}
+      end
+
+      test "adds nothing when the stream already ended with a terminal chunk" do
+        model = ChatReqLLM.new!(%{model: @live_model, stream: true})
+
+        chunks = [
+          %ReqLLM.StreamChunk{type: :content, text: "Complete"},
+          %ReqLLM.StreamChunk{type: :meta, metadata: %{finish_reason: :stop, terminal?: true}}
+        ]
+
+        stub(ReqLLM, :stream_text, fn _model, _context, _opts ->
+          {:ok, fake_stream_response(chunks, :stop)}
+        end)
+
+        assert [%MessageDelta{}, %MessageDelta{status: :complete}] =
+                 ChatReqLLM.do_api_request(model, [Message.new_user!("hi")], [], 3)
+      end
+
+      test "leaves an empty stream alone" do
+        model = ChatReqLLM.new!(%{model: @live_model, stream: true})
+
+        stub(ReqLLM, :stream_text, fn _model, _context, _opts ->
+          {:ok, fake_stream_response([], :stop)}
+        end)
+
+        assert [] = ChatReqLLM.do_api_request(model, [Message.new_user!("hi")], [], 3)
+      end
+
+      test "a finished response missing its marker becomes one message through the chain" do
+        chunks = [
+          %ReqLLM.StreamChunk{type: :content, text: "Sounds like "},
+          %ReqLLM.StreamChunk{type: :content, text: "a shakedown run."}
+        ]
+
+        stub(ReqLLM, :stream_text, fn _model, _context, _opts ->
+          {:ok, fake_stream_response(chunks, :stop)}
+        end)
+
+        model = ChatReqLLM.new!(%{model: @live_model, stream: true})
+
+        assert {:ok, updated_chain} =
+                 %{llm: model}
+                 |> LLMChain.new!()
+                 |> LLMChain.add_message(Message.new_user!("Testing"))
+                 |> LLMChain.run()
+
+        assert updated_chain.delta == nil
+        assert [_user, %Message{role: :assistant} = answer] = updated_chain.messages
+        assert ContentPart.parts_to_string(answer.content) == "Sounds like a shakedown run."
+        assert updated_chain.needs_response == false
+      end
+
+      test "a stream that ended early is retried by the chain and never merged" do
+        # Each attempt streams its own text. The chain must discard the first
+        # rather than merge the second onto it.
+        stub(ReqLLM, :stream_text, fn _model, _context, _opts ->
+          {:ok,
+           fake_stream_response(
+             [%ReqLLM.StreamChunk{type: :content, text: "First generation."}],
+             :incomplete
+           )}
+        end)
+
+        model = ChatReqLLM.new!(%{model: @live_model, stream: true})
+
+        assert {:error, error_chain, %LangChainError{type: "incomplete_stream"}} =
+                 %{llm: model, max_retry_count: 2}
+                 |> LLMChain.new!()
+                 |> LLMChain.add_message(Message.new_user!("Testing"))
+                 |> LLMChain.run()
+
+        assert error_chain.delta == nil
+        assert [%Message{role: :user}] = error_chain.messages
+      end
+    end
 
     describe "do_api_request/4 streaming transport failures" do
       # Mirrors req_llm: the lazy stream yields chunks, then raises

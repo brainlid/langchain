@@ -50,6 +50,22 @@ if Code.ensure_loaded?(ReqLLM) do
           provider_opts: %{"thinking" => %{"type" => "enabled", "budget_tokens" => 2000}}
         })
 
+    ## Stream Completion
+
+    A streamed turn is finished when a chunk marks the response terminal, which
+    req_llm derives from a provider's terminal event. A stream whose body simply
+    ends carries no such chunk, and the accumulated text would then never become
+    a message.
+
+    The finish reason req_llm records alongside the stream says which case this
+    is. When it reports a finished response (`:stop`, `:tool_calls`, `:length`,
+    `:content_filter`), only the marker went missing and the turn is closed here
+    with that status. When it reports anything else, including the `:incomplete`
+    of a body that ended without a recognized terminal event, the response is
+    left unfinished so `LangChain.Chains.LLMChain` reports it as an
+    `"incomplete_stream"` error and retries rather than admitting half a
+    response into the conversation. Both paths log a warning.
+
     ## Connection Retry Behavior
 
     The `retry_count` option controls how many times a request is retried when
@@ -407,16 +423,89 @@ if Code.ensure_loaded?(ReqLLM) do
         stream_response.stream
         |> Enum.reduce({[], initial_state}, fn chunk, {acc_deltas, state} ->
           {new_deltas, new_state} = process_stream_chunk(chunk, state)
-
-          if new_deltas != [] do
-            :counters.add(delivered, 1, length(new_deltas))
-            Utils.fire_streamed_callback(model, new_deltas)
-          end
-
+          deliver_deltas(model, new_deltas, delivered)
           {acc_deltas ++ new_deltas, new_state}
         end)
 
-      all_deltas
+      case closing_delta(stream_response, all_deltas) do
+        nil ->
+          all_deltas
+
+        %MessageDelta{} = delta ->
+          deliver_deltas(model, [delta], delivered)
+          all_deltas ++ [delta]
+      end
+    end
+
+    defp deliver_deltas(_model, [], _delivered), do: :ok
+
+    defp deliver_deltas(model, deltas, delivered) do
+      :counters.add(delivered, 1, length(deltas))
+      Utils.fire_streamed_callback(model, deltas)
+      :ok
+    end
+
+    # req_llm finish reasons that report a response the provider actually
+    # finished. Nothing else is evidence the turn is whole: not a body that
+    # ended without a recognized terminal event, not an error, and not a reason
+    # that could not be read.
+    @finished_reasons [:stop, :tool_calls, :length, :content_filter]
+
+    # A streamed turn is only finished once a delta carries a terminal status;
+    # that is what tells `LLMChain` to turn the accumulated delta into a
+    # message. req_llm derives terminality from a recognized terminal event in
+    # the response body, so a provider whose stream simply ends leaves every
+    # delta `:incomplete` and the text is never converted.
+    #
+    # Whether that is safe to close here depends on why the stream ended, which
+    # only the finish reason can say. A finished response that lost its marker
+    # is completed with the status the reason maps to. A stream that ended for
+    # any other reason is left alone: `LLMChain` sees the hanging delta, drops
+    # it, and retries, which is the right outcome when the response may be a
+    # fragment.
+    defp closing_delta(_stream_response, []), do: nil
+
+    defp closing_delta(stream_response, deltas) do
+      if Enum.any?(deltas, &(&1.status != :incomplete)) do
+        nil
+      else
+        close_turn(stream_finish_reason(stream_response))
+      end
+    end
+
+    defp close_turn(finish_reason) when finish_reason in @finished_reasons do
+      Logger.warning(fn ->
+        "ReqLLM stream carried no terminal chunk. Closing the turn using " <>
+          "finish_reason #{inspect(finish_reason)}."
+      end)
+
+      MessageDelta.new!(%{
+        role: :assistant,
+        status: translate_finish_reason(finish_reason),
+        index: 0
+      })
+    end
+
+    defp close_turn(finish_reason) do
+      Logger.warning(fn ->
+        "ReqLLM stream carried no terminal chunk and finish_reason " <>
+          "#{inspect(finish_reason)} does not report a finished response. " <>
+          "Leaving the turn unfinished."
+      end)
+
+      nil
+    end
+
+    # req_llm collects the finish reason in a process separate from the chunk
+    # stream, and it is settled by the time the stream is exhausted. A collector
+    # that is gone or fails reports no reason, which leaves the turn unfinished
+    # rather than closing it on a guess.
+    defp stream_finish_reason(stream_response) do
+      ReqLLM.StreamResponse.finish_reason(stream_response)
+    rescue
+      _error -> nil
+    catch
+      :exit, _reason -> nil
     end
 
     # Turn a failed request into the same shape regardless of which library
