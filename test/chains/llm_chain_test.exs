@@ -656,75 +656,6 @@ defmodule LangChain.Chains.LLMChainTest do
     end
   end
 
-  describe "run/2 with a streamed response that never completes" do
-    setup do
-      %{chain: LLMChain.new!(%{llm: ChatOpenAI.new!(%{stream: true}), verbose: false})}
-    end
-
-    test "converts the partial delta into a message", %{chain: chain} do
-      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
-        {:ok,
-         [
-           MessageDelta.new!(%{role: :assistant, content: "Sounds like "}),
-           MessageDelta.new!(%{content: "a shakedown run."})
-         ]}
-      end)
-
-      chain = LLMChain.add_message(chain, Message.new_user!("Testing"))
-
-      assert {:ok, updated_chain} = LLMChain.run(chain)
-      assert updated_chain.delta == nil
-      assert %Message{role: :assistant} = answer = updated_chain.last_message
-      assert ContentPart.parts_to_string(answer.content) == "Sounds like a shakedown run."
-      assert updated_chain.needs_response == false
-    end
-
-    test "does not merge a later response into the unfinished one", %{chain: chain} do
-      # An unfinished delta used to stay live on the chain while `needs_response`
-      # stayed true, so a looping mode called the model again and the next
-      # response merged into the same content slot. One call, one message.
-      expect(ChatOpenAI, :call, 1, fn _model, _messages, _tools ->
-        {:ok, [MessageDelta.new!(%{role: :assistant, content: "First answer."})]}
-      end)
-
-      chain = LLMChain.add_message(chain, Message.new_user!("Testing"))
-
-      assert {:ok, updated_chain} = LLMChain.run(chain, mode: :while_needs_response)
-      assert [_user, %Message{role: :assistant} = answer] = updated_chain.messages
-      assert ContentPart.parts_to_string(answer.content) == "First answer."
-    end
-
-    test "reports an unparsable tool call rather than converting it", %{chain: chain} do
-      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
-        {:ok,
-         [
-           MessageDelta.new!(%{
-             role: :assistant,
-             tool_calls: [
-               ToolCall.new!(%{
-                 status: :incomplete,
-                 type: :function,
-                 call_id: "call_bad",
-                 name: "search_web",
-                 arguments: "{\"query\": ",
-                 index: 0
-               })
-             ]
-           })
-         ]}
-      end)
-
-      chain =
-        chain
-        |> Map.put(:max_retry_count, 1)
-        |> LLMChain.add_message(Message.new_user!("Testing"))
-
-      assert {:error, error_chain, %LangChainError{} = error} = LLMChain.run(chain)
-      assert error.type == "delta_conversion_failed"
-      assert error_chain.delta == nil
-    end
-  end
-
   describe "apply_deltas/2" do
     test "applies list of deltas" do
       deltas = [
@@ -1658,7 +1589,8 @@ defmodule LangChain.Chains.LLMChainTest do
              MessageDelta.new!(%{content: "Hello ", role: :assistant}),
              [],
              MessageDelta.new!(%{content: "World", role: :assistant})
-           ]
+           ],
+           [MessageDelta.new!(%{content: nil, status: :complete})]
          ]}
       end)
 
@@ -1669,10 +1601,12 @@ defmodule LangChain.Chains.LLMChainTest do
                |> LLMChain.add_messages([Message.new_user!("Hi")])
                |> LLMChain.run()
 
-      assert %Message{
-               role: :assistant,
-               content: [%ContentPart{type: :text, content: "Hello World", options: []}]
-             } = updated_chain.last_message
+      content = [ContentPart.text!("Hello World")]
+
+      assert %Message{role: :assistant, content: ^content, status: :complete} =
+               updated_chain.last_message
+
+      assert updated_chain.delta == nil
     end
 
     test "returns error when receives overloaded from Anthropic" do
@@ -2929,6 +2863,138 @@ defmodule LangChain.Chains.LLMChainTest do
       # :on_retries_exceeded fired exactly once at the end
       assert_received :retries_exceeded_callback
       refute_received :retries_exceeded_callback
+    end
+
+    test "stream ending without a terminal delta exhausts retries with incomplete_stream" do
+      # A stream whose deltas never reach a terminal status is a failed LLM
+      # call, not a silent success. Each attempt fires :on_llm_error and
+      # retries from a clean chain until max_retry_count is exhausted.
+      handler = %{
+        on_llm_error: fn _chain, error ->
+          send(self(), {:llm_error_callback, error})
+        end,
+        on_retries_exceeded: fn _chain ->
+          send(self(), :retries_exceeded_callback)
+        end
+      }
+
+      incomplete_deltas = [
+        MessageDelta.new!(%{role: :assistant, content: nil, status: :incomplete}),
+        MessageDelta.new!(%{content: "Sock", status: :incomplete})
+      ]
+
+      # max_retry_count: 3 -> expect exactly 3 LLM calls before exhausting
+      expect(ChatOpenAI, :call, 3, fn _model, _messages, _tools -> {:ok, incomplete_deltas} end)
+
+      chain =
+        LLMChain.new!(%{
+          llm: ChatOpenAI.new!(%{stream: true}),
+          max_retry_count: 3,
+          callbacks: [handler]
+        })
+        |> LLMChain.add_message(Message.new_user!("Hello"))
+
+      assert {:error, error_chain, %LangChainError{type: "incomplete_stream"}} =
+               LLMChain.run(chain)
+
+      # the hanging delta is cleared, never carried into a later call
+      assert error_chain.delta == nil
+
+      # no message was added, so needs_response still reflects the user message
+      assert error_chain.needs_response == true
+
+      # :on_llm_error fired once per attempt (3 total)
+      assert_received {:llm_error_callback, %LangChainError{type: "incomplete_stream"}}
+      assert_received {:llm_error_callback, %LangChainError{type: "incomplete_stream"}}
+      assert_received {:llm_error_callback, %LangChainError{type: "incomplete_stream"}}
+      refute_received {:llm_error_callback, _}
+
+      # :on_retries_exceeded fired exactly once at the end
+      assert_received :retries_exceeded_callback
+      refute_received :retries_exceeded_callback
+    end
+
+    test "transient incomplete stream recovers on retry without duplicating text" do
+      # The retry starts from a clean chain: the first attempt's partial text
+      # must not be prepended to the retry's message.
+      handler = %{
+        on_llm_error: fn _chain, error ->
+          send(self(), {:llm_error_callback, error})
+        end,
+        on_retries_exceeded: fn _chain ->
+          send(self(), :retries_exceeded_callback)
+        end
+      }
+
+      incomplete_deltas = [
+        MessageDelta.new!(%{role: :assistant, content: nil, status: :incomplete}),
+        MessageDelta.new!(%{content: "Sock", status: :incomplete})
+      ]
+
+      good_deltas = [
+        MessageDelta.new!(%{role: :assistant, content: nil, status: :incomplete}),
+        MessageDelta.new!(%{content: "Socktastic!", status: :incomplete}),
+        MessageDelta.new!(%{content: nil, status: :complete})
+      ]
+
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools -> {:ok, incomplete_deltas} end)
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools -> {:ok, good_deltas} end)
+
+      chain =
+        LLMChain.new!(%{
+          llm: ChatOpenAI.new!(%{stream: true}),
+          max_retry_count: 3,
+          callbacks: [handler]
+        })
+        |> LLMChain.add_message(Message.new_user!("Hello"))
+
+      assert {:ok, updated_chain} = LLMChain.run(chain)
+
+      content = [ContentPart.text!("Socktastic!")]
+
+      assert %Message{role: :assistant, content: ^content, status: :complete} =
+               updated_chain.last_message
+
+      # :on_llm_error fired exactly once for the transient failure
+      assert_received {:llm_error_callback, %LangChainError{type: "incomplete_stream"}}
+      refute_received {:llm_error_callback, _}
+      refute_received :retries_exceeded_callback
+    end
+
+    test "leftover delta from a prior call is dropped before a new run" do
+      # A chain can arrive at do_run with a delta still attached, from an
+      # external caller re-running a chain after an errored stream or from a
+      # host that accumulates deltas onto the chain itself. The stale delta is
+      # dropped so it cannot merge with the new call's deltas.
+      good_deltas = [
+        MessageDelta.new!(%{role: :assistant, content: nil, status: :incomplete}),
+        MessageDelta.new!(%{content: "Socktastic!", status: :incomplete}),
+        MessageDelta.new!(%{content: nil, status: :complete})
+      ]
+
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools -> {:ok, good_deltas} end)
+
+      chain =
+        LLMChain.new!(%{llm: ChatOpenAI.new!(%{stream: true})})
+        |> LLMChain.add_message(Message.new_user!("Hello"))
+        |> LLMChain.merge_delta(
+          MessageDelta.new!(%{role: :assistant, content: ContentPart.text!("stale text")})
+        )
+
+      assert chain.delta != nil
+
+      {result, log} =
+        ExUnit.CaptureLog.with_log(fn ->
+          LLMChain.run(chain)
+        end)
+
+      assert {:ok, updated_chain} = result
+      assert log =~ "leftover streaming delta"
+
+      content = [ContentPart.text!("Socktastic!")]
+
+      assert %Message{role: :assistant, content: ^content, status: :complete} =
+               updated_chain.last_message
     end
 
     test "empty streaming response succeeds in run" do

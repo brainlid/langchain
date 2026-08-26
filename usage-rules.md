@@ -28,7 +28,10 @@ When `stream: true`, responses arrive as partial `MessageDelta` structs over tim
 **Main Process Context (LLMChain caller):**
 1. After stream ends, LLMChain receives accumulated deltas
 2. `apply_deltas/2` merges them using `MessageDelta.merge_delta/2`
-3. When delta status becomes `:complete`, converts to `Message`
+3. When delta status becomes `:complete`, converts to `Message`. A response
+   whose deltas never reach a terminal status is a failed call, not a silent
+   success: the partial delta is dropped and the call is retried as an
+   `"incomplete_stream"` error
 4. Chain fires `:on_message_processed` with completed message
 
 **Key insight**: The `:on_llm_new_delta` callback runs in the HTTP task context, not the main process. For LiveView/GenServer integrations, these callbacks should send messages to the main process for state updates.
