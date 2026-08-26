@@ -1128,6 +1128,43 @@ if Code.ensure_loaded?(ReqLLM) do
         assert delta.status == :length
       end
 
+      test "terminal meta with :error finish reason produces a stream error tuple" do
+        chunk = %ReqLLM.StreamChunk{
+          type: :meta,
+          metadata: %{finish_reason: :error, terminal?: true, error: "The model run failed"}
+        }
+
+        assert [{:error, %LangChainError{type: "stream_error", message: "The model run failed"}}] =
+                 ChatReqLLM.translate_stream_chunk(chunk)
+      end
+
+      test "terminal meta with :error finish reason falls back to a generic message" do
+        chunk = %ReqLLM.StreamChunk{
+          type: :meta,
+          metadata: %{finish_reason: :error, terminal?: true}
+        }
+
+        assert [{:error, %LangChainError{type: "stream_error", message: "stream error"}}] =
+                 ChatReqLLM.translate_stream_chunk(chunk)
+      end
+
+      test "terminal meta with :error finish reason still emits usage" do
+        chunk = %ReqLLM.StreamChunk{
+          type: :meta,
+          metadata: %{
+            finish_reason: :error,
+            terminal?: true,
+            error: "boom",
+            usage: %{input_tokens: 10, output_tokens: 5}
+          }
+        }
+
+        assert [%MessageDelta{} = usage_delta, {:error, %LangChainError{type: "stream_error"}}] =
+                 ChatReqLLM.translate_stream_chunk(chunk)
+
+        assert %TokenUsage{input: 10, output: 5} = usage_delta.metadata[:usage]
+      end
+
       test "meta chunk with usage produces a usage MessageDelta" do
         chunk = %ReqLLM.StreamChunk{
           type: :meta,

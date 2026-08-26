@@ -832,11 +832,28 @@ if Code.ensure_loaded?(ReqLLM) do
         end
 
       finish_deltas =
-        if meta[:terminal?] do
-          status = translate_finish_reason(meta[:finish_reason])
-          [MessageDelta.new!(%{role: :assistant, status: status, index: 0})]
-        else
-          []
+        cond do
+          meta[:terminal?] != true ->
+            []
+
+          meta[:finish_reason] == :error ->
+            # The provider reported the stream as failed (e.g. OpenAI Responses
+            # `response.failed`). Emitting a :complete finish delta here would
+            # present the partial text as a finished answer and drop the
+            # provider's error message. An error tuple routes through
+            # LLMChain's cancel_delta path instead: the partial text becomes a
+            # :stream_error message carrying this error in metadata.
+            [
+              {:error,
+               LangChainError.exception(
+                 type: "stream_error",
+                 message: meta[:error] || "stream error"
+               )}
+            ]
+
+          true ->
+            status = translate_finish_reason(meta[:finish_reason])
+            [MessageDelta.new!(%{role: :assistant, status: status, index: 0})]
         end
 
       usage_deltas ++ finish_deltas

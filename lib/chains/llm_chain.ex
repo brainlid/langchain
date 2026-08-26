@@ -999,6 +999,14 @@ defmodule LangChain.Chains.LLMChain do
         Logger.error("Error during chat call. Reason: #{inspect(reason)}")
         {:error, chain, reason}
 
+      # A streamed response can fail before producing any delta (e.g. a
+      # provider error frame as the first event), arriving as a flat list
+      # whose head is an error tuple.
+      {:ok, [{:error, %LangChainError{} = reason} | _]} ->
+        if chain.verbose, do: IO.inspect(reason, label: "ERROR")
+        Callbacks.fire(chain.callbacks, :on_llm_error, [chain, reason])
+        {:error, chain, reason}
+
       {:ok, unexpected} ->
         Logger.warning("Unexpected LLM response format: #{inspect(unexpected)}")
 
