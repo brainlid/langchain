@@ -59,6 +59,11 @@ defmodule LangChain.ChatModels.ChatMistralAI do
     # JSON Schema to validate the output format (for structured JSON output)
     field :json_schema, :map
 
+    # The name given to the schema when json_schema is set. Mistral requires
+    # every JSON schema response format to be given a name; defaults to
+    # "output" when left unset.
+    field :json_schema_name, :string, default: nil
+
     # Whether to force a JSON response format
     field :json_response, :boolean, default: false
 
@@ -92,6 +97,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
     :stream,
     :tool_choice,
     :json_schema,
+    :json_schema_name,
     :json_response,
     :parallel_tool_calls,
     :verbose_api,
@@ -166,7 +172,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
   end
 
   # Creates the response_format field for JSON output when json_response is true.
-  # If json_schema is provided, it will be included in the response format.
+  # If json_schema is provided, it will be wrapped in the response format.
   #
   # For Mistral, the format is as follows:
   # https://docs.mistral.ai/capabilities/structured-output/custom_structured_output/
@@ -179,10 +185,37 @@ defmodule LangChain.ChatModels.ChatMistralAI do
   #   }
   # }
   @spec set_response_format(t()) :: map() | nil
-  defp set_response_format(%ChatMistralAI{json_response: true, json_schema: schema})
-       when is_map(schema) and map_size(schema) > 0 do
-    # The schema should already be in the correct format
+  # DEPRECATED: previously `json_schema` was expected to already be the full
+  # `response_format` envelope. Detected here and passed through unchanged
+  # for backwards compatibility, with a warning. Support for this shape will
+  # be removed in a future release — pass a bare JSON Schema instead.
+  defp set_response_format(%ChatMistralAI{
+         json_response: true,
+         json_schema: %{"type" => "json_schema", "json_schema" => %{} = _inner} = schema
+       }) do
+    Logger.warning(
+      "ChatMistralAI: passing a pre-wrapped response_format map as `json_schema` is " <>
+        "deprecated and will be removed in a future release. Set `json_schema` to a bare " <>
+        "JSON Schema instead; it will be wrapped automatically using `json_schema_name`."
+    )
+
     schema
+  end
+
+  defp set_response_format(%ChatMistralAI{
+         json_response: true,
+         json_schema: schema,
+         json_schema_name: name
+       })
+       when is_map(schema) and map_size(schema) > 0 do
+    %{
+      "type" => "json_schema",
+      "json_schema" => %{
+        "schema" => schema,
+        "name" => name || "output",
+        "strict" => true
+      }
+    }
   end
 
   defp set_response_format(%ChatMistralAI{json_response: true}) do
@@ -917,6 +950,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
         :random_seed,
         :stream,
         :json_schema,
+        :json_schema_name,
         :json_response,
         :verbose_api
       ],
