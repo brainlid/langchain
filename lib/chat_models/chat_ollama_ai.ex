@@ -88,6 +88,17 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
         endpoint: "http://my-ollama-host:11434/api/chat"
       })
 
+  ### Using with llmman
+
+  [llmman](https://github.com/llmmanorg/llmman) is a local model runner that
+  serves the Ollama API on port 17434, so `ChatOllamaAI` works against it
+  unchanged (adjust the port if `LLMMAN_HOST` binds it elsewhere):
+
+      ChatOllamaAI.new(%{
+        model: "gemma4",
+        endpoint: "http://localhost:17434/api/chat"
+      })
+
   ## Structured Outputs (`:format`)
 
   Ollama supports server-side structured output via the request's top-level
