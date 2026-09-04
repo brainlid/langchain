@@ -18,6 +18,7 @@ Elixir LangChain enables Elixir applications to integrate AI services and self-h
 - **Google Vertex AI** - Google's enterprise AI offering
 - **DeepSeek** - DeepSeek models with prompt caching support
 - **Ollama** - Locally hosted open-source models
+- **llmman** - Local model runner serving the Ollama API on port 17434, via `ChatOllamaAI`
 - **Mistral** - Mistral AI models
 - **Perplexity** - Perplexity AI models
 - **orq.ai** - orq.ai Deployments API
@@ -322,6 +323,18 @@ endpoint =
 ```
 
 Streaming and tool calling work the same as with native OpenAI: set `stream: true` and add tools via `LLMChain.add_tools/2`.
+
+### llmman
+
+[llmman](https://github.com/llmmanorg/llmman) is a local model runner that serves the Ollama API on port 17434, so it works through `ChatOllamaAI` by overriding `endpoint` (adjust if `LLMMAN_HOST` binds elsewhere):
+
+```elixir
+{:ok, chat} =
+  ChatOllamaAI.new(%{
+    endpoint: "http://localhost:17434/api/chat",
+    model: "gemma4"
+  })
+```
 
 ### Bumblebee Chat Support
 
