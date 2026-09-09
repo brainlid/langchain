@@ -1,5 +1,45 @@
 # Changelog
 
+## v0.13.2
+
+A patch release for reasoning models reached through OpenAI-compatible
+endpoints. Thinking those services return in a `reasoning_content` field is now
+captured as a `:thinking` content part instead of being dropped, and a message
+carrying thinking can be sent back to the provider without raising.
+
+No breaking API changes.
+
+### Added
+
+- **A reasoning model's thinking is captured on OpenAI-compatible endpoints.**
+  Services other than OpenAI itself return thinking in a `reasoning_content`
+  field beside `content`, on the message for a single response and on every
+  chunk when streaming. `ChatOpenAI` turns it into a
+  `LangChain.Message.ContentPart` of type `:thinking`, kept separate from the
+  answer text and ordered ahead of it, including when the same response also
+  calls a tool. Reaching such a service takes an `endpoint` for it and often an
+  extra header through `req_config`; the `ChatOpenAI` module docs show the
+  Cloudflare form. https://github.com/brainlid/langchain/pull/645
+
+### Changed
+
+- **`ChatOpenAI` omits `:thinking` and `:unsupported` content parts when
+  serializing a request.** Both are response-side artifacts with no
+  representation on this wire format, and both reach a request only by
+  round-tripping a message the provider produced. The omission is unconditional,
+  which is what keeps a prompt-cache prefix matching itself turn after turn.
+  `ChatAwsMantle` drops its own filtering and serializes straight through the
+  shared path. https://github.com/brainlid/langchain/pull/645
+
+### Fixed
+
+- **Sending a message that contains thinking back through `ChatOpenAI` no longer
+  raises.** `content_part_for_api/2` has no clause for a `:thinking` or
+  `:unsupported` part, so any module delegating to the shared serialization hit a
+  `FunctionClauseError` on the next turn of a conversation with a reasoning
+  model. Those parts are now rejected before serialization.
+  https://github.com/brainlid/langchain/pull/645
+
 ## v0.13.1
 
 A patch release for streamed responses. A stream that never terminates is a
