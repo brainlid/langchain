@@ -82,6 +82,10 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
   K2 Thinking always reasons (it's the model's default mode); the field is
   populated regardless of `:reasoning_effort`.
 
+  Use `reasoning_effort: "none"` to disable reasoning. Some OpenAI Chat
+  Completions models require this value when the request contains function
+  tools.
+
   ## Sampling controls
 
   Standard OpenAI sampling parameters are supported and passed through to
@@ -97,6 +101,8 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
     reasonable starting defense.**
   - `:presence_penalty` — -2.0 to 2.0. Binary variant of frequency_penalty
     (penalizes any token that has appeared at all)
+  - `:max_completion_tokens` — Some OpenAI models use this field instead of
+    `:max_tokens`. This field replaces `:max_tokens` in the request.
 
   ## Streaming
 
@@ -177,6 +183,9 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
     # Standard OpenAI-shaped knobs
     field :temperature, :float, default: 1.0
     field :max_tokens, :integer, default: @default_max_tokens
+    # Use this field for models that do not accept max_tokens.
+    # The request omits max_tokens when this field has a value.
+    field :max_completion_tokens, :integer
     field :stream, :boolean, default: false
 
     # Nucleus sampling (0.0–1.0). OpenAI docs recommend altering *either* this
@@ -192,9 +201,8 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
     # than frequency-weighted). Positive values encourage topic diversity.
     field :presence_penalty, :float
 
-    # OpenAI-standard reasoning control. Passed through to Mantle, which
-    # translates into the upstream model's thinking mode (verified working
-    # for Kimi K2.5).
+    # Control reasoning for OpenAI-compatible models.
+    # Some models require "none" when a request contains function tools.
     field :reasoning_effort, :string
 
     # Tool choice option, mirrors ChatOpenAI's shape
@@ -231,6 +239,7 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
     :credentials,
     :temperature,
     :max_tokens,
+    :max_completion_tokens,
     :stream,
     :top_p,
     :frequency_penalty,
@@ -247,7 +256,7 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
   ]
   @required_fields [:model]
 
-  @valid_reasoning_efforts ~w(low medium high)
+  @valid_reasoning_efforts ~w(none low medium high)
 
   @doc """
   Build a new `ChatAwsMantle` instance from attributes.
@@ -369,6 +378,8 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
   """
   @spec for_api(t(), [Message.t()], [LangChain.Function.t()]) :: %{atom() => any()}
   def for_api(%ChatAwsMantle{} = model, messages, tools) do
+    max_tokens = if is_nil(model.max_completion_tokens), do: model.max_tokens
+
     %{
       model: model.model,
       stream: model.stream,
@@ -383,7 +394,8 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
         |> Enum.reverse()
     }
     |> Utils.conditionally_add_to_map(:temperature, model.temperature)
-    |> Utils.conditionally_add_to_map(:max_tokens, model.max_tokens)
+    |> Utils.conditionally_add_to_map(:max_tokens, max_tokens)
+    |> Utils.conditionally_add_to_map(:max_completion_tokens, model.max_completion_tokens)
     |> Utils.conditionally_add_to_map(:top_p, model.top_p)
     |> Utils.conditionally_add_to_map(:frequency_penalty, model.frequency_penalty)
     |> Utils.conditionally_add_to_map(:presence_penalty, model.presence_penalty)

@@ -94,11 +94,12 @@ defmodule LangChain.ChatModels.ChatAwsMantleTest do
                  reasoning_effort: "extreme"
                })
 
-      assert {"must be one of: low, medium, high", _} = changeset.errors[:reasoning_effort]
+      assert {"must be one of: none, low, medium, high", _} =
+               changeset.errors[:reasoning_effort]
     end
 
     test "accepts valid reasoning_effort values" do
-      for effort <- ~w(low medium high) do
+      for effort <- ~w(none low medium high) do
         assert {:ok, %ChatAwsMantle{reasoning_effort: ^effort}} =
                  ChatAwsMantle.new(%{
                    model: @kimi_model,
@@ -192,6 +193,14 @@ defmodule LangChain.ChatModels.ChatAwsMantleTest do
     test "omits :reasoning_effort when not set", %{model: m} do
       body = ChatAwsMantle.for_api(m, [Message.new_user!("hi")], [])
       refute Map.has_key?(body, :reasoning_effort)
+    end
+
+    test "uses :max_completion_tokens and omits :max_tokens", %{model: m} do
+      updated = %{m | max_completion_tokens: 64}
+      body = ChatAwsMantle.for_api(updated, [Message.new_user!("hi")], [])
+
+      assert body.max_completion_tokens == 64
+      refute Map.has_key?(body, :max_tokens)
     end
 
     test "passes :top_p, :frequency_penalty, :presence_penalty through to the body when set", %{
