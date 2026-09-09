@@ -256,6 +256,32 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     be spent on thinking through and reasoning about the request and the
     response.
 
+  ### Returned Thinking
+
+  OpenAI-compatible services other than OpenAI itself return a reasoning
+  model's thinking in a `reasoning_content` field beside `content`. It arrives
+  on the message for a single response and on each chunk when streaming.
+
+  That thinking becomes a `LangChain.Message.ContentPart` of type `:thinking`,
+  held separately from the answer text and ordered ahead of it:
+
+      [
+        %ContentPart{type: :thinking, content: "Comparing the tenths place..."},
+        %ContentPart{type: :text, content: "9.9 is larger."}
+      ]
+
+  Reaching such a service takes an `endpoint` for it, and often an extra header
+  supplied through `req_config`:
+
+      ChatOpenAI.new!(%{
+        endpoint: "https://api.cloudflare.com/client/v4/accounts/\#{account_id}/ai/v1/chat/completions",
+        api_key: api_key,
+        model: "@cf/zai-org/glm-5.3-flash",
+        reasoning_mode: true,
+        reasoning_effort: "medium",
+        req_config: %{headers: [{"cf-aig-gateway-id", gateway_id}]}
+      })
+
   ## Connection Retry Behavior
 
   The `retry_count` option controls how many times a request is retried when
@@ -699,9 +725,35 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
   @doc """
   Convert a list of ContentParts to the expected map of data for the OpenAI API.
+
+  Thinking and unsupported parts are omitted. Both are response-side artifacts
+  that this API surface has no request representation for, and both reach it by
+  round-tripping a message the provider itself produced.
+
+  There is no agreed request representation for thinking across the services
+  that speak this API. A provider returning it in `reasoning_content` may
+  accept that field back, ignore it, or accept it only in a particular mode,
+  and the field is absent from the OpenAI request schema the rest of these
+  services are modeled on. Unsupported parts, such as the `redacted_thinking`
+  block Anthropic returns, hold opaque provider data with no meaning here at
+  all.
+
+  Nothing depends on returning either. Reasoning on this surface carries no
+  signature to validate and no continuity requirement, so a conversation sends
+  the answer text and any tool calls, and the model reasons afresh on the next
+  turn.
+
+  The omission is unconditional, which is what keeps prompt caching working.
+  A prefix cache is built from what the client sends rather than from what the
+  model produced, so a conversation that always omits thinking presents a
+  prefix that matches itself turn after turn. Omitting it on some turns and
+  including it on others would break the prefix at the first message that
+  differs and cost a cache miss for everything after it.
   """
   def content_parts_for_api(%_{} = model, content_parts) when is_list(content_parts) do
-    Enum.map(content_parts, &content_part_for_api(model, &1))
+    content_parts
+    |> Enum.reject(&(&1.type in [:thinking, :unsupported]))
+    |> Enum.map(&content_part_for_api(model, &1))
   end
 
   @doc """
@@ -1144,6 +1196,32 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     end
   end
 
+  # Complete message carrying a reasoning model's thinking.
+  #
+  # OpenAI-compatible providers that expose reasoning models return the
+  # thinking in a `reasoning_content` field beside `content`. The two become
+  # separate content parts, thinking first, matching the order the model
+  # produced them.
+  #
+  # Handled ahead of the tool call and plain message clauses so a reasoning
+  # model that also calls a tool keeps both. Once the thinking is folded into
+  # `content`, the message is dispatched again for the clause that matches its
+  # shape.
+  def do_process_response(
+        model,
+        %{"message" => %{"reasoning_content" => reasoning} = message} = data
+      )
+      when is_binary(reasoning) and reasoning != "" do
+    content = reasoning_content_parts(reasoning, message["content"])
+
+    data
+    |> Map.put(
+      "message",
+      message |> Map.delete("reasoning_content") |> Map.put("content", content)
+    )
+    |> then(&do_process_response(model, &1))
+  end
+
   # Full message with tool call
   def do_process_response(
         model,
@@ -1167,6 +1245,41 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       {:error, %Ecto.Changeset{} = changeset} ->
         {:error, LangChainError.exception(changeset)}
     end
+  end
+
+  # Delta carrying a reasoning model's thinking.
+  #
+  # Providers streaming a reasoning model send `reasoning_content` alongside
+  # `content` on every chunk, carrying the thinking while it is being produced
+  # and `nil` once the answer begins. Thinking accumulates as a content part at
+  # position 0 and the answer text at position 1, keeping them distinct in the
+  # assembled message.
+  #
+  # `index` selects the position to merge into, so this repurposes the choice
+  # index. A request asking for multiple choices from a reasoning model would
+  # collapse them together.
+  def do_process_response(
+        model,
+        %{"delta" => %{"reasoning_content" => _} = delta_body} = msg
+      ) do
+    {index, content} =
+      case delta_body["reasoning_content"] do
+        reasoning when is_binary(reasoning) and reasoning != "" ->
+          {0, ContentPart.thinking!(reasoning)}
+
+        _no_reasoning ->
+          {1, delta_body["content"]}
+      end
+
+    delta_body =
+      delta_body
+      |> Map.delete("reasoning_content")
+      |> Map.put("content", content)
+
+    msg
+    |> Map.put("delta", delta_body)
+    |> Map.put("index", index)
+    |> then(&do_process_response(model, &1))
   end
 
   # Delta message tool call
@@ -1326,6 +1439,17 @@ defmodule LangChain.ChatModels.ChatOpenAI do
        message: "Unexpected response",
        original: other
      )}
+  end
+
+  # Build the content parts for a message that carried thinking, keeping the
+  # thinking ahead of the answer text. A response can be thinking-only, such as
+  # when the model stops on a token limit before answering.
+  defp reasoning_content_parts(reasoning, content) when is_binary(content) and content != "" do
+    [ContentPart.thinking!(reasoning), ContentPart.text!(content)]
+  end
+
+  defp reasoning_content_parts(reasoning, _content) do
+    [ContentPart.thinking!(reasoning)]
   end
 
   # Extract logprobs from a choice-level response map and return a metadata map.
