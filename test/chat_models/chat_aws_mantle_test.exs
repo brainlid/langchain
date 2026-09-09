@@ -213,10 +213,10 @@ defmodule LangChain.ChatModels.ChatAwsMantleTest do
 
     test "strips :thinking ContentParts from assistant messages before serialization", %{model: m} do
       # Mantle's wire format has no representation for thinking blocks.
-      # ChatAwsMantle surfaces them from delta.reasoning for UI display, but
-      # on the way back out (when a multi-turn conversation re-sends the
-      # assistant message as history), they must be filtered or ChatOpenAI's
-      # content_part_for_api/2 crashes (no clause for :thinking).
+      # ChatAwsMantle surfaces them from delta.reasoning for UI display. On the
+      # way back out, when a multi-turn conversation re-sends the assistant
+      # message as history, serialization goes through
+      # ChatOpenAI.content_parts_for_api/2, which omits them.
       history = [
         Message.new_user!("What model are you?"),
         %Message{
@@ -230,8 +230,6 @@ defmodule LangChain.ChatModels.ChatAwsMantleTest do
         Message.new_user!("Great, what files do I have?")
       ]
 
-      # Should not raise — crashes pre-fix because the assistant message has
-      # a thinking part that ChatOpenAI can't serialize.
       body = ChatAwsMantle.for_api(m, history, [])
 
       assistant_serialized = Enum.at(body.messages, 1)
@@ -248,9 +246,9 @@ defmodule LangChain.ChatModels.ChatAwsMantleTest do
       # Anthropic returns `redacted_thinking` blocks when extended thinking is
       # enabled but the content is encrypted. LangChain stores these as
       # %ContentPart{type: :unsupported, options: [type: "redacted_thinking"]}.
-      # If such a message is sent back to Mantle as history, the :unsupported
-      # part must be stripped — ChatOpenAI.content_part_for_api/2 has no clause
-      # for it and will crash.
+      # When such a message is sent back to Mantle as history, the
+      # :unsupported part is omitted by ChatOpenAI.content_parts_for_api/2,
+      # which holds no meaning on this wire format.
       redacted_thinking = %ContentPart{
         type: :unsupported,
         content: "<encrypted_thinking_data>",

@@ -695,6 +695,22 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
                ChatOpenAI.content_parts_for_api(model, parts)
     end
 
+    test "omits unsupported parts" do
+      model = ChatOpenAI.new!(%{"model" => @test_model})
+
+      parts = [
+        %ContentPart{
+          type: :unsupported,
+          content: "<encrypted_thinking_data>",
+          options: [type: "redacted_thinking"]
+        },
+        ContentPart.text!("The answer is 42.")
+      ]
+
+      assert [%{"type" => "text", "text" => "The answer is 42."}] =
+               ChatOpenAI.content_parts_for_api(model, parts)
+    end
+
     test "a message of only thinking serializes with empty content" do
       model = ChatOpenAI.new!(%{"model" => @test_model})
 

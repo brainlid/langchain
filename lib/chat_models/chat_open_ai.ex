@@ -726,17 +726,22 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   @doc """
   Convert a list of ContentParts to the expected map of data for the OpenAI API.
 
-  Thinking parts are omitted.
+  Thinking and unsupported parts are omitted. Both are response-side artifacts
+  that this API surface has no request representation for, and both reach it by
+  round-tripping a message the provider itself produced.
 
   There is no agreed request representation for thinking across the services
   that speak this API. A provider returning it in `reasoning_content` may
   accept that field back, ignore it, or accept it only in a particular mode,
   and the field is absent from the OpenAI request schema the rest of these
-  services are modeled on.
+  services are modeled on. Unsupported parts, such as the `redacted_thinking`
+  block Anthropic returns, hold opaque provider data with no meaning here at
+  all.
 
-  Nothing depends on returning it. Reasoning here carries no signature to
-  validate and no continuity requirement, so a conversation sends the answer
-  text and any tool calls, and the model reasons afresh on the next turn.
+  Nothing depends on returning either. Reasoning on this surface carries no
+  signature to validate and no continuity requirement, so a conversation sends
+  the answer text and any tool calls, and the model reasons afresh on the next
+  turn.
 
   The omission is unconditional, which is what keeps prompt caching working.
   A prefix cache is built from what the client sends rather than from what the
@@ -747,7 +752,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   """
   def content_parts_for_api(%_{} = model, content_parts) when is_list(content_parts) do
     content_parts
-    |> Enum.reject(&(&1.type == :thinking))
+    |> Enum.reject(&(&1.type in [:thinking, :unsupported]))
     |> Enum.map(&content_part_for_api(model, &1))
   end
 

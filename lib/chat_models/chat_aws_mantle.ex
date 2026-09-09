@@ -374,7 +374,6 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
       stream: model.stream,
       messages:
         messages
-        |> Enum.map(&strip_thinking_parts/1)
         |> Enum.reduce([], fn m, acc ->
           case ChatOpenAI.for_api(model, m) do
             %{} = data -> [data | acc]
@@ -397,25 +396,6 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
       stream_options_for_api(model.stream_options)
     )
   end
-
-  # Strip :thinking ContentParts before sending a message back to Mantle.
-  # Mantle's wire format (OpenAI Chat Completions) has no representation for
-  # reasoning blocks — they're a response-side artifact we surface for UI
-  # display. `ChatOpenAI.content_part_for_api/2` has no clause for :thinking
-  # and will crash if one round-trips, so we filter them here.
-  @spec strip_thinking_parts(Message.t()) :: Message.t()
-  defp strip_thinking_parts(%Message{content: content} = msg) when is_list(content) do
-    cleaned =
-      Enum.reject(content, fn
-        %ContentPart{type: :thinking} -> true
-        %ContentPart{type: :unsupported} -> true
-        _ -> false
-      end)
-
-    %{msg | content: cleaned}
-  end
-
-  defp strip_thinking_parts(msg), do: msg
 
   defp response_format(%ChatAwsMantle{json_response: true, json_schema: schema})
        when not is_nil(schema) do
