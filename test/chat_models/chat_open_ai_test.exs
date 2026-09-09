@@ -682,6 +682,39 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     end
   end
 
+  describe "content_parts_for_api/2" do
+    test "omits thinking parts" do
+      model = ChatOpenAI.new!(%{"model" => @test_model})
+
+      parts = [
+        ContentPart.thinking!("Let me work through this."),
+        ContentPart.text!("The answer is 42.")
+      ]
+
+      assert [%{"type" => "text", "text" => "The answer is 42."}] =
+               ChatOpenAI.content_parts_for_api(model, parts)
+    end
+
+    test "a message of only thinking serializes with empty content" do
+      model = ChatOpenAI.new!(%{"model" => @test_model})
+
+      message =
+        Message.new_assistant!(%{
+          content: [ContentPart.thinking!("The user wants the weather, so call the tool.")],
+          tool_calls: [
+            ToolCall.new!(%{
+              call_id: "call_123",
+              name: "get_weather",
+              arguments: %{"city" => "Moab"}
+            })
+          ]
+        })
+
+      assert %{"role" => :assistant, "content" => [], "tool_calls" => [_call]} =
+               ChatOpenAI.for_api(model, message)
+    end
+  end
+
   describe "content_part_for_api/2" do
     test "turns a text ContentPart into the expected JSON format" do
       expected = %{"type" => "text", "text" => "Tell me about this image:"}
@@ -2216,6 +2249,120 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert %Message{role: :assistant} = response
       assert String.contains?(ContentPart.parts_to_string(response.content), "boardwalk")
       assert String.contains?(ContentPart.parts_to_string(response.content), "grass")
+    end
+  end
+
+  describe "do_process_response/2 with reasoning content" do
+    setup do
+      model = ChatOpenAI.new!(%{"model" => @test_model})
+      %{model: model}
+    end
+
+    test "splits a complete message into thinking and text parts", %{model: model} do
+      response = %{
+        "finish_reason" => "stop",
+        "index" => 0,
+        "message" => %{
+          "role" => "assistant",
+          "content" => "9.9 is larger.",
+          "reasoning_content" => "Compare the tenths place: 9 beats 1."
+        }
+      }
+
+      assert %Message{role: :assistant, status: :complete} =
+               message = ChatOpenAI.do_process_response(model, response)
+
+      assert [
+               %ContentPart{type: :thinking, content: "Compare the tenths place: 9 beats 1."},
+               %ContentPart{type: :text, content: "9.9 is larger."}
+             ] = message.content
+    end
+
+    test "keeps thinking when the message also calls a tool", %{model: model} do
+      response = %{
+        "finish_reason" => "tool_calls",
+        "index" => 0,
+        "message" => %{
+          "role" => "assistant",
+          "content" => nil,
+          "reasoning_content" => "The user wants the weather, so call the tool.",
+          "tool_calls" => [
+            %{
+              "id" => "call_123",
+              "type" => "function",
+              "function" => %{"name" => "get_weather", "arguments" => "{\"city\": \"Moab\"}"}
+            }
+          ]
+        }
+      }
+
+      assert %Message{role: :assistant} =
+               message = ChatOpenAI.do_process_response(model, response)
+
+      assert [
+               %ContentPart{
+                 type: :thinking,
+                 content: "The user wants the weather, so call the tool."
+               }
+             ] =
+               message.content
+
+      assert [%ToolCall{name: "get_weather", arguments: %{"city" => "Moab"}}] = message.tool_calls
+    end
+
+    test "a thinking delta merges separately from the answer text", %{model: model} do
+      thinking_delta = %{
+        "delta" => %{"role" => "assistant", "content" => nil, "reasoning_content" => "Let me "},
+        "finish_reason" => nil,
+        "index" => 0
+      }
+
+      more_thinking_delta = %{
+        "delta" => %{"content" => nil, "reasoning_content" => "think."},
+        "finish_reason" => nil,
+        "index" => 0
+      }
+
+      answer_delta = %{
+        "delta" => %{"content" => "9.9 ", "reasoning_content" => nil},
+        "finish_reason" => nil,
+        "index" => 0
+      }
+
+      more_answer_delta = %{
+        "delta" => %{"content" => "is larger.", "reasoning_content" => nil},
+        "finish_reason" => "stop",
+        "index" => 0
+      }
+
+      assert %MessageDelta{index: 0, content: %ContentPart{type: :thinking, content: "Let me "}} =
+               d1 = ChatOpenAI.do_process_response(model, thinking_delta)
+
+      assert %MessageDelta{index: 0} =
+               d2 = ChatOpenAI.do_process_response(model, more_thinking_delta)
+
+      assert %MessageDelta{index: 1} = d3 = ChatOpenAI.do_process_response(model, answer_delta)
+
+      assert %MessageDelta{index: 1} =
+               d4 = ChatOpenAI.do_process_response(model, more_answer_delta)
+
+      merged = MessageDelta.merge_deltas([d1, d2, d3, d4])
+
+      assert [
+               %ContentPart{type: :thinking, content: "Let me think."},
+               %ContentPart{type: :text, content: "9.9 is larger."}
+             ] = merged.merged_content
+    end
+
+    test "a delta without reasoning_content is unaffected", %{model: model} do
+      delta = %{
+        "delta" => %{"role" => "assistant", "content" => "Hello"},
+        "finish_reason" => nil,
+        "index" => 0
+      }
+
+      assert %MessageDelta{role: :assistant, content: "Hello", index: 0} =
+               ChatOpenAI.do_process_response(model, delta)
     end
   end
 
