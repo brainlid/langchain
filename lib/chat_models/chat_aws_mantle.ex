@@ -82,6 +82,10 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
   K2 Thinking always reasons (it's the model's default mode); the field is
   populated regardless of `:reasoning_effort`.
 
+  Use `reasoning_effort: "none"` to disable reasoning. Some OpenAI Chat
+  Completions models require this value when the request contains function
+  tools.
+
   ## Sampling controls
 
   Standard OpenAI sampling parameters are supported and passed through to
@@ -97,6 +101,47 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
     reasonable starting defense.**
   - `:presence_penalty` — -2.0 to 2.0. Binary variant of frequency_penalty
     (penalizes any token that has appeared at all)
+
+  ## Token Limits
+
+  `:max_tokens` sets the upper bound on generated tokens. It is sent as
+  `max_completion_tokens`, the name AWS documents for Mantle. The Kimi and
+  gpt-oss models accept either name; OpenAI's newer models reject the older
+  `max_tokens` and accept only this one.
+
+      ChatAwsMantle.new!(%{model: "openai.gpt-oss-120b", max_tokens: 4096})
+
+  The default is `4096`, low enough to cap a runaway generation. Raise it when
+  a reasoning budget needs more headroom.
+
+  A model that accepts only the older `max_tokens` key needs the key swapped
+  with `:extra_body`:
+
+      ChatAwsMantle.new!(%{
+        model: "some.legacy-model",
+        max_tokens: 4096,
+        extra_body: %{"max_completion_tokens" => nil, "max_tokens" => 4096}
+      })
+
+  Keep the `:max_tokens` field set as well, since telemetry reports the limit
+  from it.
+
+  ## Provider-Specific Parameters
+
+  Mantle hosts models from several vendors, each of which accepts parameters
+  this module has no field for. `:extra_body` is a map of values merged into
+  the request body last, so they override anything the model computed:
+
+      ChatAwsMantle.new!(%{
+        model: "moonshotai.kimi-k2.5",
+        extra_body: %{"repetition_penalty" => 1.05}
+      })
+
+  Keys may be strings or atoms, a `nil` value removes the key from the body,
+  and nested maps merge key by key. See `LangChain.Utils.merge_extra_body/2`
+  for the full rules. Overriding `stream`, `messages`, `tools` or `model` can
+  break response handling; headers and transport options belong in
+  `:req_config`, not `:extra_body`.
 
   ## Streaming
 
@@ -176,6 +221,10 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
 
     # Standard OpenAI-shaped knobs
     field :temperature, :float, default: 1.0
+    # Upper bound on generated tokens. Sent as `max_completion_tokens`, the
+    # name AWS documents for Mantle. A model that instead wants the older
+    # `max_tokens` key needs the swap shown in the "Token Limits" section of
+    # the module docs.
     field :max_tokens, :integer, default: @default_max_tokens
     field :stream, :boolean, default: false
 
@@ -192,9 +241,8 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
     # than frequency-weighted). Positive values encourage topic diversity.
     field :presence_penalty, :float
 
-    # OpenAI-standard reasoning control. Passed through to Mantle, which
-    # translates into the upstream model's thinking mode (verified working
-    # for Kimi K2.5).
+    # Control reasoning for OpenAI-compatible models.
+    # Some models require "none" when a request contains function tools.
     field :reasoning_effort, :string
 
     # Tool choice option, mirrors ChatOpenAI's shape
@@ -219,6 +267,11 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
 
     # Req options to merge into the request
     field :req_config, :map, default: %{}
+
+    # Provider-specific values merged into the request body last, overriding
+    # anything the model computed. A `nil` value removes that key from the
+    # body. See `LangChain.Utils.merge_extra_body/2` for the merge rules.
+    field :extra_body, :map, default: nil
   end
 
   @type t :: %ChatAwsMantle{}
@@ -243,11 +296,12 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
     :stream_options,
     :verbose_api,
     :req_config,
+    :extra_body,
     :callbacks
   ]
   @required_fields [:model]
 
-  @valid_reasoning_efforts ~w(low medium high)
+  @valid_reasoning_efforts ~w(none low medium high)
 
   @doc """
   Build a new `ChatAwsMantle` instance from attributes.
@@ -383,7 +437,7 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
         |> Enum.reverse()
     }
     |> Utils.conditionally_add_to_map(:temperature, model.temperature)
-    |> Utils.conditionally_add_to_map(:max_tokens, model.max_tokens)
+    |> Utils.conditionally_add_to_map(:max_completion_tokens, model.max_tokens)
     |> Utils.conditionally_add_to_map(:top_p, model.top_p)
     |> Utils.conditionally_add_to_map(:frequency_penalty, model.frequency_penalty)
     |> Utils.conditionally_add_to_map(:presence_penalty, model.presence_penalty)
@@ -395,6 +449,7 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
       :stream_options,
       stream_options_for_api(model.stream_options)
     )
+    |> Utils.merge_extra_body(model.extra_body)
   end
 
   defp response_format(%ChatAwsMantle{json_response: true, json_schema: schema})
