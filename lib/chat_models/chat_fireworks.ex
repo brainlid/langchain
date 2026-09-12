@@ -14,14 +14,20 @@ defmodule LangChain.ChatModels.ChatFireworks do
     not sent.
   - **Reasoning controls.** `:reasoning_effort` and `:reasoning_history` are
     sent as fields, and system messages keep the `system` role. The chat
-    templates of open models such as GLM have no `developer` role.
+    templates of open models such as GLM have no `developer` role. Fireworks
+    accepts a `developer` message for GLM-5.3-Flash but leaves it out of the
+    prompt.
   - **Thinking in history.** With `send_reasoning_content: true`, thinking from
-    earlier assistant turns is sent back as `reasoning_content`.
+    earlier assistant turns is sent back as `reasoning_content`. For
+    GLM-5.3-Flash, Fireworks keeps it in the prompt unless `:reasoning_history`
+    says otherwise.
   - **Typed errors.** HTTP 429 rate limits and 503 load shedding become typed
     errors that `retry_on_fallback?/1` accepts, so `LangChain.Chains.LLMChain`
     fallbacks can take over.
   - **Stream positions.** Thinking merges at content position 0 and answer text
-    at position 1, whether or not a chunk carries a reasoning field.
+    at position 1. Fireworks omits the reasoning field from answer chunks rather
+    than sending it empty, so the position comes from the kind of content, not
+    from the fields a chunk carries.
 
   ## Tested Models
 
