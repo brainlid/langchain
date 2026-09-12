@@ -30,6 +30,66 @@ defmodule LangChain.Utils do
     Map.put(map, key, value)
   end
 
+  @doc """
+  Merge user-supplied `extra_body` values into a request body built by a chat
+  model's `for_api/3`.
+
+  Values in `extra` win over values in `body`:
+
+  - Keys are matched by their string form, so a string key in `extra`
+    overwrites an existing atom key of the same name in place instead of
+    producing a duplicate key in the encoded JSON. Keys not already present are
+    added exactly as given; no atoms are created.
+  - A `nil` value removes the key from the body.
+  - When both sides hold a map, they are merged recursively by the same rules.
+    Any other value, lists included, replaces the existing value.
+
+  Returns `body` unchanged when `extra` is `nil` or empty.
+
+  Overriding keys the model depends on to parse the response, such as
+  `stream`, `messages`, `model` or `tools`, can break response handling.
+
+  ## Examples
+
+      iex> LangChain.Utils.merge_extra_body(%{max_tokens: 100, n: 1}, %{"max_tokens" => 10, "n" => nil})
+      %{max_tokens: 10}
+
+      iex> LangChain.Utils.merge_extra_body(%{model: "gpt-4o"}, %{"service_tier" => "priority"})
+      %{:model => "gpt-4o", "service_tier" => "priority"}
+  """
+  @spec merge_extra_body(map(), map() | nil) :: map()
+  def merge_extra_body(body, nil), do: body
+  def merge_extra_body(body, extra) when map_size(extra) == 0, do: body
+
+  def merge_extra_body(body, %{} = extra) when is_map(body) do
+    Enum.reduce(extra, body, fn {key, value}, acc ->
+      existing_key = find_key_by_string(acc, key)
+      target_key = existing_key || key
+
+      case {Map.get(acc, existing_key), value} do
+        {_current, nil} ->
+          Map.delete(acc, target_key)
+
+        {%{} = current, %{} = incoming} ->
+          Map.put(acc, target_key, merge_extra_body(current, incoming))
+
+        _other ->
+          Map.put(acc, target_key, value)
+      end
+    end)
+  end
+
+  # Find the key in `map` whose string form equals that of `key`, so `:n` and
+  # `"n"` are treated as the same JSON key. Returns `nil` when there is none.
+  defp find_key_by_string(map, key) do
+    if Map.has_key?(map, key) do
+      key
+    else
+      target = to_string(key)
+      Enum.find(Map.keys(map), fn existing -> to_string(existing) == target end)
+    end
+  end
+
   # Generate wrapped LLM callbacks on the model that include the chain as part
   # of the context.
   @doc false

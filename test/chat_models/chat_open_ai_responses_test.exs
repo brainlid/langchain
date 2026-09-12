@@ -2209,6 +2209,93 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
     end
   end
 
+  describe "service_tier" do
+    test "is not sent when not set" do
+      openai = ChatOpenAIResponses.new!(%{"model" => @test_model})
+
+      refute Map.has_key?(ChatOpenAIResponses.for_api(openai, [], []), :service_tier)
+    end
+
+    test "is sent when set" do
+      openai = ChatOpenAIResponses.new!(%{"model" => @test_model, "service_tier" => "flex"})
+
+      assert %{service_tier: "flex"} = ChatOpenAIResponses.for_api(openai, [], [])
+    end
+
+    test "the served tier is kept in the token usage of a completed response" do
+      model = ChatOpenAIResponses.new!(%{"model" => @test_model})
+
+      response = %{
+        "status" => "completed",
+        "service_tier" => "flex",
+        "output" => [
+          %{
+            "type" => "message",
+            "role" => "assistant",
+            "status" => "completed",
+            "content" => [%{"type" => "output_text", "text" => "hello", "annotations" => []}]
+          }
+        ],
+        "usage" => %{"input_tokens" => 27, "output_tokens" => 5, "total_tokens" => 32}
+      }
+
+      assert %Message{metadata: %{usage: %LangChain.TokenUsage{raw: raw}}} =
+               ChatOpenAIResponses.do_process_response(model, response)
+
+      assert raw["service_tier"] == "flex"
+    end
+
+    test "the served tier is kept in the token usage of a streamed response.completed event" do
+      model = ChatOpenAIResponses.new!(%{"model" => @test_model, "stream" => true})
+
+      completed = %{
+        "type" => "response.completed",
+        "response" => %{
+          "service_tier" => "priority",
+          "usage" => %{"input_tokens" => 5, "output_tokens" => 2}
+        }
+      }
+
+      assert %LangChain.MessageDelta{
+               metadata: %{usage: %LangChain.TokenUsage{raw: %{"service_tier" => "priority"}}}
+             } = ChatOpenAIResponses.do_process_response(model, completed)
+    end
+  end
+
+  describe "extra_body" do
+    test "values override computed keys and add new ones" do
+      openai =
+        ChatOpenAIResponses.new!(%{
+          "model" => @test_model,
+          "max_output_tokens" => 1000,
+          "extra_body" => %{"max_output_tokens" => 10, "prompt_cache_key" => "user-123"}
+        })
+
+      data = ChatOpenAIResponses.for_api(openai, [], [])
+      assert data.max_output_tokens == 10
+      refute Map.has_key?(data, "max_output_tokens")
+      assert data["prompt_cache_key"] == "user-123"
+    end
+
+    test "service_tier and extra_body survive a serialize and restore round trip" do
+      original =
+        ChatOpenAIResponses.new!(%{
+          "model" => @test_model,
+          "service_tier" => "flex",
+          "extra_body" => %{"prompt_cache_key" => "user-123"}
+        })
+
+      config = ChatOpenAIResponses.serialize_config(original)
+      assert config["service_tier"] == "flex"
+      assert config["extra_body"] == %{"prompt_cache_key" => "user-123"}
+
+      assert {:ok, restored} = ChatOpenAIResponses.restore_from_map(config)
+
+      assert ChatOpenAIResponses.for_api(restored, [], []) ==
+               ChatOpenAIResponses.for_api(original, [], [])
+    end
+  end
+
   describe "serialize and restore" do
     test "serializes and restores config" do
       original =
@@ -2544,6 +2631,55 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
       assert [%LangChain.Message.ContentPart{type: :text, content: "Hello from WebSocket!"}] =
                content
 
+      verify!()
+    end
+
+    test "do_api_request with websocket drops transport keys supplied through extra_body" do
+      fake_pid = spawn(fn -> Process.sleep(:infinity) end)
+      on_exit(fn -> Process.exit(fake_pid, :kill) end)
+
+      completed_response = %{
+        "status" => "completed",
+        "output" => [
+          %{
+            "type" => "message",
+            "role" => "assistant",
+            "content" => [%{"type" => "output_text", "text" => "Hi"}]
+          }
+        ],
+        "usage" => %{"input_tokens" => 3, "output_tokens" => 1, "total_tokens" => 4},
+        "id" => "resp_ws_456"
+      }
+
+      LangChain.WebSocket
+      |> expect(:send_and_collect, fn ^fake_pid, payload, _done_fn, _opts ->
+        decoded = Jason.decode!(payload)
+
+        refute Map.has_key?(decoded, "temperature")
+        refute Map.has_key?(decoded, "top_p")
+        refute Map.has_key?(decoded, "stream")
+        assert decoded["service_tier"] == "flex"
+        assert decoded["prompt_cache_key"] == "user-123"
+
+        {:ok, [%{"type" => "response.completed", "response" => completed_response}]}
+      end)
+
+      model =
+        ChatOpenAIResponses.new!(%{
+          model: @test_model,
+          stream: false,
+          service_tier: "flex",
+          extra_body: %{"temperature" => 0.5, "top_p" => 0.9, "prompt_cache_key" => "user-123"},
+          websocket: fake_pid
+        })
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert %Message{role: :assistant} =
+                   ChatOpenAIResponses.do_api_request(model, [Message.new_user!("Hi")], [])
+        end)
+
+      assert log =~ "dropping :temperature and :top_p"
       verify!()
     end
 
