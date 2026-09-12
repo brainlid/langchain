@@ -357,21 +357,52 @@ defmodule LangChain.MessageDelta do
         parts_list
       end
 
-    # Get the content part at the specified index from the primary's content list
-    primary_part = Enum.at(padded_list, position)
+    case Enum.at(padded_list, position) do
+      nil ->
+        put_content_part(primary, padded_list, position, new_content_part)
 
-    # Merge the parts if we have an existing part, otherwise use the new part
-    merged_part =
-      if primary_part do
-        ContentPart.merge_part(primary_part, new_content_part)
-      else
-        new_content_part
-      end
+      %ContentPart{type: type} = existing when type == new_content_part.type ->
+        merged_part = ContentPart.merge_part(existing, new_content_part)
+        put_content_part(primary, padded_list, position, merged_part)
 
-    # Replace the part at the specified index
-    updated_list = List.replace_at(padded_list, position, merged_part)
+      %ContentPart{} ->
+        merge_content_part_after(primary, padded_list, position, new_content_part)
+    end
+  end
 
-    %MessageDelta{primary | merged_content: updated_list}
+  # A part of a different type already holds the position. That happens when a
+  # provider streams thinking and answer text without keeping them apart, for
+  # example by leaving the reasoning field off answer chunks instead of sending
+  # it as null. Merging the two would drop the new part, so it goes to the next
+  # position that already holds its type, or else the next free one.
+  defp merge_content_part_after(
+         %MessageDelta{} = primary,
+         parts_list,
+         position,
+         %ContentPart{type: type} = part
+       ) do
+    later_parts =
+      parts_list
+      |> Enum.with_index()
+      |> Enum.drop(position + 1)
+
+    same_type = Enum.find(later_parts, &match?({%ContentPart{type: ^type}, _index}, &1))
+    free = Enum.find(later_parts, &match?({nil, _index}, &1))
+
+    case {same_type, free} do
+      {{existing, index}, _free} ->
+        put_content_part(primary, parts_list, index, ContentPart.merge_part(existing, part))
+
+      {nil, {nil, index}} ->
+        put_content_part(primary, parts_list, index, part)
+
+      {nil, nil} ->
+        %MessageDelta{primary | merged_content: parts_list ++ [part]}
+    end
+  end
+
+  defp put_content_part(%MessageDelta{} = primary, parts_list, position, part) do
+    %MessageDelta{primary | merged_content: List.replace_at(parts_list, position, part)}
   end
 
   # Merge tool call deltas by matching on each fragment's index value (not

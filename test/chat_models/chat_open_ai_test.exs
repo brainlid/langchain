@@ -2383,6 +2383,31 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert %MessageDelta{role: :assistant, content: "Hello", index: 0} =
                ChatOpenAI.do_process_response(model, delta)
     end
+
+    test "keeps the answer when answer chunks leave out reasoning_content", %{model: model} do
+      # Fireworks sends `reasoning_content` only on chunks that carry thinking.
+      # Its answer chunks leave the key out instead of sending it as null.
+      chunks = [
+        %{
+          "delta" => %{"role" => "assistant", "reasoning_content" => "9.9 = 9.90 "},
+          "finish_reason" => nil,
+          "index" => 0
+        },
+        %{"delta" => %{"reasoning_content" => "> 9.11."}, "finish_reason" => nil, "index" => 0},
+        %{"delta" => %{"content" => "9.9 "}, "finish_reason" => nil, "index" => 0},
+        %{"delta" => %{"content" => "is larger."}, "finish_reason" => "stop", "index" => 0}
+      ]
+
+      merged =
+        chunks
+        |> Enum.map(&ChatOpenAI.do_process_response(model, &1))
+        |> MessageDelta.merge_deltas()
+
+      assert [
+               %ContentPart{type: :thinking, content: "9.9 = 9.90 > 9.11."},
+               %ContentPart{type: :text, content: "9.9 is larger."}
+             ] = merged.merged_content
+    end
   end
 
   describe "do_process_response - MessageDeltas" do

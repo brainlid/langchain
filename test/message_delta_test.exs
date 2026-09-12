@@ -838,6 +838,31 @@ defmodule LangChain.MessageDeltaTest do
              }
     end
 
+    test "keeps text that arrives at a position already holding thinking" do
+      deltas = [
+        %MessageDelta{
+          content: %ContentPart{type: :thinking, content: "Let me "},
+          index: 0,
+          role: :assistant
+        },
+        %MessageDelta{content: %ContentPart{type: :thinking, content: "think."}, index: 0},
+        %MessageDelta{content: "9.9 ", index: 0},
+        %MessageDelta{content: "is larger.", index: 0, status: :complete}
+      ]
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn -> send(self(), MessageDelta.merge_deltas(deltas)) end)
+
+      assert_received %MessageDelta{} = merged
+
+      assert [
+               %ContentPart{type: :thinking, content: "Let me think."},
+               %ContentPart{type: :text, content: "9.9 is larger."}
+             ] = merged.merged_content
+
+      refute log =~ "Cannot merge content parts"
+    end
+
     test "handles merging a thinking part with the signature" do
       merged =
         [
