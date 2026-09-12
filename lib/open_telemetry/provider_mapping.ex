@@ -5,7 +5,7 @@ defmodule LangChain.OpenTelemetry.ProviderMapping do
 
   Values are verified against the well-known `gen_ai.provider.name` set in the
   GenAI semantic conventions. Providers with no well-known value (`ollama`,
-  `orq`, `bumblebee`) intentionally pass through unchanged — the spec permits
+  `orq`, `bumblebee`, `fireworks`) intentionally pass through unchanged — the spec permits
   custom identifiers for providers it doesn't enumerate.
 
   ## `google` → `gcp.gemini` (reconciliation note)
@@ -36,7 +36,8 @@ defmodule LangChain.OpenTelemetry.ProviderMapping do
     "ollama" => "ollama",
     "orq" => "orq",
     "bumblebee" => "bumblebee",
-    "aws_mantle" => "aws.bedrock"
+    "aws_mantle" => "aws.bedrock",
+    "fireworks" => "fireworks"
   }
 
   @doc """

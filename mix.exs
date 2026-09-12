@@ -108,6 +108,7 @@ defmodule LangChain.MixProject do
           LangChain.ChatModels.ChatOpenAIResponses,
           LangChain.ChatModels.ChatAnthropic,
           LangChain.ChatModels.ChatAwsMantle,
+          LangChain.ChatModels.ChatFireworks,
           LangChain.ChatModels.ChatBumblebee,
           LangChain.ChatModels.ChatGoogleAI,
           LangChain.ChatModels.ChatVertexAI,

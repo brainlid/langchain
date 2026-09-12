@@ -12,6 +12,7 @@ Application.put_env(:langchain, :mistral_api_key, System.get_env("MISTRAL_API_KE
 Application.put_env(:langchain, :vertex_ai_key, System.get_env("VERTEX_API_KEY", ""))
 Application.put_env(:langchain, :vertex_ai_endpoint, System.get_env("VERTEX_API_ENDPOINT", ""))
 Application.put_env(:langchain, :xai_api_key, System.get_env("XAI_API_KEY", ""))
+Application.put_env(:langchain, :fireworks_api_key, System.get_env("FIREWORKS_API_KEY", ""))
 
 Application.put_env(
   :langchain,

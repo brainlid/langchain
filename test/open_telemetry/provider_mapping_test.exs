@@ -7,6 +7,7 @@ defmodule LangChain.OpenTelemetry.ProviderMappingTest do
   alias LangChain.ChatModels.ChatAwsMantle
   alias LangChain.ChatModels.ChatBumblebee
   alias LangChain.ChatModels.ChatDeepSeek
+  alias LangChain.ChatModels.ChatFireworks
   alias LangChain.ChatModels.ChatGoogleAI
   alias LangChain.ChatModels.ChatGrok
   alias LangChain.ChatModels.ChatMistralAI
@@ -34,7 +35,8 @@ defmodule LangChain.OpenTelemetry.ProviderMappingTest do
     "ollama" => "ollama",
     "orq" => "orq",
     "bumblebee" => "bumblebee",
-    "aws_mantle" => "aws.bedrock"
+    "aws_mantle" => "aws.bedrock",
+    "fireworks" => "fireworks"
   }
 
   # Every chat model that participates in telemetry via the `provider/0` callback.
@@ -53,7 +55,8 @@ defmodule LangChain.OpenTelemetry.ProviderMappingTest do
     ChatOllamaAI,
     ChatOrq,
     ChatBumblebee,
-    ChatAwsMantle
+    ChatAwsMantle,
+    ChatFireworks
   ]
 
   describe "to_otel/1" do

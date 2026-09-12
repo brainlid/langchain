@@ -13,6 +13,7 @@ Elixir LangChain enables Elixir applications to integrate AI services and self-h
 - **OpenAI ChatGPT** - GPT models via the Chat Completions API
 - **OpenAI Responses API** - OpenAI's newer Responses API with WebSocket transport support
 - **Cloudflare Workers AI** - OpenAI-compatible gateway via `ChatOpenAI` (e.g. Moonshot Kimi K2.6 and other Workers AI models)
+- **Fireworks AI** - Open models on Fireworks serverless (e.g. Z.ai GLM-5.3-Flash) with reasoning controls, fallback-ready error types, and US-only routing
 - **xAI Grok** - Grok-4, Grok-3-mini, Grok-4 Heavy (multi-agent), and more
 - **Google Gemini** - Gemini AI models
 - **Google Vertex AI** - Google's enterprise AI offering
@@ -206,6 +207,40 @@ Key capabilities:
 
 See the `LangChain.ChatModels.ChatAwsMantle` module documentation for the full list of tested models, per-model quirks, sampling controls (`:temperature`, `:top_p`, `:frequency_penalty`, `:presence_penalty`), and usage notes.
 
+### Fireworks AI Support
+
+LangChain supports [Fireworks AI](https://fireworks.ai) serverless inference through `ChatFireworks`, which uses Fireworks' OpenAI-compatible Chat Completions API. It has been tested with Z.ai's GLM-5.3-Flash.
+
+```elixir
+alias LangChain.ChatModels.ChatFireworks
+alias LangChain.Chains.LLMChain
+alias LangChain.Message
+
+{:ok, fireworks} = ChatFireworks.new(%{
+  model: "accounts/fireworks/models/glm-5p3-flash",
+  api_key: System.fetch_env!("FIREWORKS_API_KEY"),
+  reasoning_effort: "high",
+  stream: true
+})
+
+{:ok, chain} =
+  LLMChain.new!(%{llm: fireworks})
+  |> LLMChain.add_message(Message.new_system!("You are a concise assistant."))
+  |> LLMChain.add_message(Message.new_user!("Summarize Elixir's actor model"))
+  |> LLMChain.run()
+```
+
+Key capabilities:
+
+- **Reasoning controls**: `:reasoning_effort` and `:reasoning_history` are sent as fields, and system messages keep the `system` role. Thinking comes back as a `ContentPart` of type `:thinking`.
+- **Thinking in history**: `send_reasoning_content: true` sends earlier thinking back to the model on later turns, which Fireworks asks multi-turn tool-calling agents to do.
+- **Fallback-ready errors**: rate limits (429), load shedding (503), server errors and timeouts become typed errors, so `LLMChain` fallbacks can take over.
+- **US-only routing**: point `:endpoint` at `https://us.api.fireworks.ai/inference/v1/chat/completions` and use a US router model ID such as `accounts/fireworks/routers/glm-5p3-flash-us`.
+- **Prompt caching**: set `:prompt_cache_key` per conversation to route related requests to the same cache.
+- **Provider-specific parameters**: `:extra_body` merges Fireworks-only fields into the request, following the same rules as `ChatOpenAI`.
+
+See the `LangChain.ChatModels.ChatFireworks` module documentation for tested models and usage notes.
+
 ### Exposing a custom Elixir function to ChatGPT
 
 A really powerful feature of LangChain is making it easy to integrate an LLM into your application and expose features, data, and functionality _from_ your application to the LLM.
@@ -360,6 +395,7 @@ mix test --include live_open_ai
 mix test --include live_ollama_ai
 mix test --include live_anthropic
 mix test --include live_aws_mantle
+mix test --include live_fireworks
 mix test --include live_mistral_ai
 mix test --include live_grok
 mix test --include live_vertex_ai
