@@ -92,12 +92,18 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
 
   [llmman](https://github.com/llmmanorg/llmman) is a local model runner that
   serves the Ollama API on port 17434, so `ChatOllamaAI` works against it
-  unchanged (adjust the port if `LLMMAN_HOST` binds it elsewhere):
+  unchanged:
 
       ChatOllamaAI.new(%{
         model: "gemma4",
         endpoint: "http://localhost:17434/api/chat"
       })
+
+  `ChatOllamaAI` sends no credentials, matching Ollama's own unauthenticated
+  loopback service. llmman accepts these calls on its default loopback bind.
+  A daemon the network can reach, such as one bound wider through
+  `LLMMAN_HOST`, requires an API key on every request and rejects them unless
+  it runs with `LLMMAN_AUTH=off`.
 
   ## Structured Outputs (`:format`)
 

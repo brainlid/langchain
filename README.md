@@ -326,15 +326,23 @@ Streaming and tool calling work the same as with native OpenAI: set `stream: tru
 
 ### llmman
 
-[llmman](https://github.com/llmmanorg/llmman) is a local model runner that serves the Ollama API on port 17434, so it works through `ChatOllamaAI` by overriding `endpoint` (adjust if `LLMMAN_HOST` binds elsewhere):
+[llmman](https://github.com/llmmanorg/llmman) is a local model runner that serves the Ollama API on port 17434, so it works through `ChatOllamaAI` by overriding `endpoint`:
 
 ```elixir
+alias LangChain.ChatModels.ChatOllamaAI
+
 {:ok, chat} =
   ChatOllamaAI.new(%{
     endpoint: "http://localhost:17434/api/chat",
     model: "gemma4"
   })
 ```
+
+`ChatOllamaAI` sends no credentials, so it reaches llmman only while the daemon
+accepts unauthenticated requests. This is the case for the default loopback
+bind. A daemon the network can reach, such as one bound wider through
+`LLMMAN_HOST`, requires an API key on every request and rejects these calls
+unless it runs with `LLMMAN_AUTH=off`.
 
 ### Bumblebee Chat Support
 
