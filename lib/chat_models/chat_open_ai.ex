@@ -235,6 +235,72 @@ defmodule LangChain.ChatModels.ChatOpenAI do
 
   `https://some-subdomain.cognitiveservices.azure.com/openai/deployments/gpt-4o-mini/chat/completions?api-version=2024-08-01-preview"`
 
+  ## Service Tier
+
+  The `service_tier` option asks the provider to serve the request with a
+  particular processing tier, trading cost against latency:
+
+      ChatOpenAI.new!(%{model: "gpt-5", service_tier: "priority"})
+
+  OpenAI accepts values such as `"auto"`, `"default"`, `"flex"`, `"scale"`,
+  `"priority"` and `"fast"`. OpenAI-compatible providers accept their own
+  subset, so the value is passed through without validation.
+
+  The tier that actually served the request can differ from the one requested.
+  When the provider reports it, it is kept in the token usage's `raw` map:
+
+      %Message{metadata: %{usage: %TokenUsage{raw: %{"service_tier" => tier}}}} = message
+
+  When streaming, token usage (and the tier with it) is only reported when
+  `stream_options: %{include_usage: true}` is set. Some providers don't report a
+  tier at all.
+
+  ## Token Limits
+
+  `max_tokens` sets the upper bound on generated tokens. It is sent as
+  `max_completion_tokens`, OpenAI's current name for the limit. OpenAI's
+  reasoning models require that name, and the limit includes reasoning tokens.
+
+      ChatOpenAI.new!(%{model: "gpt-5", max_tokens: 4000})
+
+  Some OpenAI-compatible servers, such as Ollama's `/v1` endpoint, only accept
+  the older `max_tokens` key. They ignore `max_completion_tokens`, which leaves
+  the request with no limit at all. For those servers, swap the key with
+  `extra_body`:
+
+      ChatOpenAI.new!(%{
+        endpoint: "http://localhost:11434/v1/chat/completions",
+        model: "llama3.2",
+        max_tokens: 4000,
+        extra_body: %{"max_completion_tokens" => nil, "max_tokens" => 4000}
+      })
+
+  Keep the `max_tokens` field set as well, since telemetry reports the limit
+  from it.
+
+  ## Provider-Specific Parameters
+
+  OpenAI-compatible providers accept parameters of their own that `ChatOpenAI`
+  has no field for. `extra_body` is a map of values merged into the request
+  body last, so they override anything the model computed:
+
+      ChatOpenAI.new!(%{
+        endpoint: "http://localhost:8000/v1/chat/completions",
+        model: "Qwen/Qwen3-8B",
+        extra_body: %{"top_k" => 20, "repetition_penalty" => 1.05}
+      })
+
+  - Keys may be strings or atoms. A key naming one the model already sends
+    replaces that value, so `%{"n" => 2}` overrides the `n` field.
+  - A `nil` value removes the key from the body. `%{"n" => nil}` stops the
+    always-sent `n` from going out, for providers that reject it.
+  - Nested maps are merged key by key. Any other value replaces the existing
+    one.
+
+  Overriding `stream`, `messages`, `tools` or `model` can break response
+  handling. Headers and transport options belong in `req_config`, not
+  `extra_body`. See `LangChain.Utils.merge_extra_body/2` for the full rules.
+
   ## Reasoning Model Support
 
   OpenAI made some significant API changes with the introduction of their
@@ -279,6 +345,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         model: "@cf/zai-org/glm-5.3-flash",
         reasoning_mode: true,
         reasoning_effort: "medium",
+        service_tier: "priority",
         req_config: %{headers: [{"cf-aig-gateway-id", gateway_id}]}
       })
 
@@ -376,6 +443,14 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     # https://platform.openai.com/docs/api-reference/chat/create#chat-create-verbosity
     field :verbosity, :string
 
+    # The processing tier to serve the request with. Known values include
+    # "auto", "default", "flex", "scale", "priority" and "fast"; the set differs
+    # between OpenAI and compatible providers, so it is not validated here. The
+    # tier that actually served the request is reported in the token usage's
+    # `raw` map under "service_tier".
+    # https://platform.openai.com/docs/api-reference/chat/create#chat-create-service_tier
+    field :service_tier, :string
+
     # Duration in seconds for the response to be received. When streaming a very
     # lengthy response, a longer time limit may be required. However, when it
     # goes on too long by itself, it tends to hallucinate more.
@@ -388,6 +463,10 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     field :json_response, :boolean, default: false
     field :json_schema, :map, default: nil
     field :stream, :boolean, default: false
+    # Upper bound on generated tokens. Sent as `max_completion_tokens`, OpenAI's
+    # current name for the limit, which also counts reasoning tokens. A server
+    # that only accepts the older `max_tokens` key needs the swap shown in the
+    # "Token Limits" section of the module docs.
     field :max_tokens, :integer, default: nil
     # Options for streaming response. Only set this when you set `stream: true`
     # https://platform.openai.com/docs/api-reference/chat/create#chat-create-stream_options
@@ -430,6 +509,11 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     # Refer to `https://hexdocs.pm/req/Req.html#new/1-options` for
     # `Req.new` supported set of options.
     field :req_config, :map, default: %{}
+
+    # Provider-specific values merged into the request body last, overriding
+    # anything the model computed. A `nil` value removes that key from the
+    # body. See `LangChain.Utils.merge_extra_body/2` for the merge rules.
+    field :extra_body, :map, default: nil
   end
 
   @type t :: %ChatOpenAI{}
@@ -447,6 +531,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     :reasoning_mode,
     :reasoning_effort,
     :verbosity,
+    :service_tier,
     :receive_timeout,
     :json_response,
     :json_schema,
@@ -460,6 +545,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     :verbose_api,
     :retry_count,
     :req_config,
+    :extra_body,
     :callbacks
   ]
   @required_fields [:endpoint, :model]
@@ -560,7 +646,8 @@ defmodule LangChain.ChatModels.ChatOpenAI do
       if(openai.reasoning_mode, do: openai.reasoning_effort, else: nil)
     )
     |> Utils.conditionally_add_to_map(:verbosity, openai.verbosity)
-    |> Utils.conditionally_add_to_map(:max_tokens, openai.max_tokens)
+    |> Utils.conditionally_add_to_map(:max_completion_tokens, openai.max_tokens)
+    |> Utils.conditionally_add_to_map(:service_tier, openai.service_tier)
     |> Utils.conditionally_add_to_map(:seed, openai.seed)
     |> Utils.conditionally_add_to_map(
       :stream_options,
@@ -571,6 +658,7 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     |> Utils.conditionally_add_to_map(:parallel_tool_calls, openai.parallel_tool_calls)
     |> Utils.conditionally_add_to_map(:logprobs, openai.logprobs)
     |> Utils.conditionally_add_to_map(:top_logprobs, openai.top_logprobs)
+    |> Utils.merge_extra_body(openai.extra_body)
   end
 
   defp get_tools_for_api(%_{} = _model, nil), do: []
@@ -1509,14 +1597,18 @@ defmodule LangChain.ChatModels.ChatOpenAI do
     return
   end
 
-  defp get_token_usage(%{"usage" => usage} = _response_body) when is_map(usage) do
+  defp get_token_usage(%{"usage" => usage} = response_body) when is_map(usage) do
     # extract out the reported response token usage
     #
     #  https://platform.openai.com/docs/api-reference/chat/object#chat/object-usage
+    #
+    # The tier that served the request is reported beside `usage`, not inside
+    # it. Keeping it in `raw` carries it to the final message along with the
+    # usage, which is also where ChatAnthropic reports its tier.
     TokenUsage.new!(%{
       input: Map.get(usage, "prompt_tokens"),
       output: Map.get(usage, "completion_tokens"),
-      raw: usage
+      raw: Utils.conditionally_add_to_map(usage, "service_tier", response_body["service_tier"])
     })
   end
 
@@ -1561,7 +1653,9 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         :json_schema,
         :stream,
         :max_tokens,
-        :stream_options
+        :stream_options,
+        :service_tier,
+        :extra_body
       ],
       @current_config_version
     )

@@ -244,6 +244,32 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   through to the API as given, so new types and options work without a library
   change.
 
+  ## Service Tier
+
+  The `service_tier` option asks OpenAI to serve the request with a particular
+  processing tier, such as `"flex"` or `"priority"`:
+
+      ChatOpenAIResponses.new!(%{model: "gpt-5", service_tier: "priority"})
+
+  The tier that actually served the request can differ from the one requested.
+  It is kept in the token usage's `raw` map under `"service_tier"`.
+
+  ## Provider-Specific Parameters
+
+  `extra_body` is a map of values merged into the request body last, so they
+  override anything the model computed. Use it for parameters this module has
+  no field for:
+
+      ChatOpenAIResponses.new!(%{
+        model: "gpt-5",
+        extra_body: %{"prompt_cache_key" => "user-123"}
+      })
+
+  A `nil` value removes the key from the body. The WebSocket transport always
+  removes `stream`, `background`, `temperature` and `top_p` from the payload,
+  including values supplied through `extra_body`. See
+  `LangChain.Utils.merge_extra_body/2` for the full merge rules.
+
   ## WebSocket Transport
 
   Instead of HTTP, requests can be sent over a persistent WebSocket connection
@@ -372,7 +398,11 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     field :previous_response_id, :string, default: nil
     # Reasoning options for gpt-5 and o-series models
     embeds_one(:reasoning, ReasoningOptions)
-    # omit service_tier because chat_open_ai also omits it
+    # The processing tier to serve the request with. Known values include
+    # "auto", "default", "flex", "scale", "priority" and "fast"; the set changes
+    # over time, so it is not validated here. The tier that actually served the
+    # request is reported in the token usage's `raw` map under "service_tier".
+    field :service_tier, :string
     field :store, :boolean, default: false
     field :stream, :boolean, default: false
     field :temperature, :float, default: nil
@@ -398,6 +428,11 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     # Refer to `https://hexdocs.pm/req/Req.html#new/1-options` for
     # `Req.new` supported set of options.
     field :req_config, :map, default: %{}
+
+    # Provider-specific values merged into the request body last, overriding
+    # anything the model computed. A `nil` value removes that key from the
+    # body. See `LangChain.Utils.merge_extra_body/2` for the merge rules.
+    field :extra_body, :map, default: nil
 
     # Optional WebSocket transport. When set to a PID of a
     # `LangChain.WebSocket` process, requests will be sent over the
@@ -431,6 +466,8 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     :verbose_api,
     :retry_count,
     :req_config,
+    :service_tier,
+    :extra_body,
     :websocket,
     :callbacks
   ]
@@ -654,10 +691,12 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     |> Utils.conditionally_add_to_map(:text, set_text_format(openai))
     |> Utils.conditionally_add_to_map(:tool_choice, get_tool_choice(openai))
     |> Utils.conditionally_add_to_map(:truncation, openai.truncation)
+    |> Utils.conditionally_add_to_map(:service_tier, openai.service_tier)
     |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(openai, tools))
     |> Utils.conditionally_add_to_map(:user, openai.user)
     |> Utils.conditionally_add_to_map(:temperature, openai.temperature)
     |> maybe_add_top_p(openai)
+    |> Utils.merge_extra_body(openai.extra_body)
   end
 
   # Build the payload for WebSocket mode. Wraps the standard API payload
@@ -671,9 +710,16 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     defp for_api_websocket(%ChatOpenAIResponses{} = openai, messages, tools) do
       payload = for_api(openai, messages, tools)
 
-      dropped = [:stream, :background, :temperature, :top_p]
+      # Matched by string form, so the same keys supplied as strings through
+      # `extra_body` are dropped too.
+      dropped = ["stream", "background", "temperature", "top_p"]
 
-      if payload[:temperature] || payload[:top_p] do
+      sampling_values_present? =
+        Enum.any?(payload, fn {key, value} ->
+          to_string(key) in ["temperature", "top_p"] and value != nil
+        end)
+
+      if sampling_values_present? do
         Logger.warning(
           "WebSocket transport: dropping :temperature and :top_p from payload " <>
             "due to an OpenAI bug that silently closes the connection when these " <>
@@ -682,7 +728,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
       end
 
       payload
-      |> Map.drop(dropped)
+      |> Map.reject(fn {key, _value} -> to_string(key) in dropped end)
       |> Map.put(:type, "response.create")
       |> Jason.encode!()
     end
@@ -2011,14 +2057,18 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     end
   end
 
-  defp get_token_usage(%{"usage" => usage} = _response_body) when is_map(usage) do
+  defp get_token_usage(%{"usage" => usage} = response_body) when is_map(usage) do
     # extract out the reported response token usage
     #
     # https://platform.openai.com/docs/api-reference/responses_streaming/response/completed#responses_streaming/response/completed-response-usage
+    #
+    # The tier that served the request is reported beside `usage`, not inside
+    # it. Keeping it in `raw` carries it to the final message along with the
+    # usage, which is also where ChatAnthropic reports its tier.
     TokenUsage.new!(%{
       input: Map.get(usage, "input_tokens"),
       output: Map.get(usage, "output_tokens"),
-      raw: usage
+      raw: Utils.conditionally_add_to_map(usage, "service_tier", response_body["service_tier"])
     })
   end
 
@@ -2278,7 +2328,9 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         :stream,
         :max_tokens,
         :stream_options,
-        :verbosity
+        :verbosity,
+        :service_tier,
+        :extra_body
       ],
       @current_config_version
     )

@@ -98,6 +98,96 @@ defmodule LangChain.UtilsTest do
     end
   end
 
+  describe "merge_extra_body/2" do
+    test "an atom key and a string key of the same name encode as duplicate JSON keys" do
+      naive = Map.merge(%{max_tokens: 64_000}, %{"max_tokens" => 10})
+      naive_json = Jason.encode!(naive)
+
+      assert length(Regex.scan(~r/"max_tokens"/, naive_json)) == 2
+      # Jason keeps the first occurrence when decoding, so the override is lost
+      assert %{"max_tokens" => 64_000} = Jason.decode!(naive_json)
+
+      merged = Utils.merge_extra_body(%{max_tokens: 64_000}, %{"max_tokens" => 10})
+      merged_json = Jason.encode!(merged)
+
+      assert length(Regex.scan(~r/"max_tokens"/, merged_json)) == 1
+      assert %{"max_tokens" => 10} = Jason.decode!(merged_json)
+    end
+
+    test "returns the body unchanged for nil or an empty map" do
+      body = %{model: "gpt-4o", messages: [%{"role" => "user", "content" => "Hi"}]}
+
+      assert Utils.merge_extra_body(body, nil) === body
+      assert Utils.merge_extra_body(body, %{}) === body
+    end
+
+    test "adds a new string key as a string key" do
+      assert Utils.merge_extra_body(%{model: "gpt-4o"}, %{"service_tier" => "priority"}) ==
+               %{:model => "gpt-4o", "service_tier" => "priority"}
+    end
+
+    test "a string key overwrites the atom key of the same name in place" do
+      assert Utils.merge_extra_body(%{model: "gpt-4o", max_tokens: 64_000}, %{"max_tokens" => 10}) ==
+               %{model: "gpt-4o", max_tokens: 10}
+    end
+
+    test "an atom key overwrites the string key of the same name in place" do
+      body = %{"generationConfig" => %{"topK" => 1}}
+
+      assert Utils.merge_extra_body(body, %{generationConfig: %{topK: 5}}) ==
+               %{"generationConfig" => %{"topK" => 5}}
+    end
+
+    test "a nil value removes the key" do
+      body = %{model: "gpt-4o", max_completion_tokens: 4000}
+
+      assert Utils.merge_extra_body(body, %{"max_completion_tokens" => nil, "max_tokens" => 4000}) ==
+               %{:model => "gpt-4o", "max_tokens" => 4000}
+    end
+
+    test "a nil value for a missing key leaves the body unchanged" do
+      assert Utils.merge_extra_body(%{model: "gpt-4o"}, %{"n" => nil}) == %{model: "gpt-4o"}
+    end
+
+    test "deep-merges nested maps, keeping sibling keys" do
+      body = %{model: "llama3", options: %{num_ctx: 2048, top_k: 40}}
+
+      assert Utils.merge_extra_body(body, %{"options" => %{"num_ctx" => 8192, "min_p" => 0.05}}) ==
+               %{model: "llama3", options: %{:num_ctx => 8192, :top_k => 40, "min_p" => 0.05}}
+    end
+
+    test "a nested nil removes only that nested key" do
+      body = %{thinking: %{"type" => "enabled", "budget_tokens" => 2000}}
+
+      assert Utils.merge_extra_body(body, %{"thinking" => %{"budget_tokens" => nil}}) ==
+               %{thinking: %{"type" => "enabled"}}
+    end
+
+    test "a list replaces the existing list" do
+      body = %{stop: ["a", "b"]}
+
+      assert Utils.merge_extra_body(body, %{"stop" => ["c"]}) == %{stop: ["c"]}
+    end
+
+    test "a map replaces a non-map value and a non-map replaces a map" do
+      body = %{user: "someone", response_format: %{"type" => "json_object"}}
+
+      assert Utils.merge_extra_body(body, %{
+               "user" => %{"id" => 1},
+               "response_format" => "text"
+             }) == %{user: %{"id" => 1}, response_format: "text"}
+    end
+
+    test "does not create atoms from new keys" do
+      key = "never_an_atom_#{System.unique_integer([:positive])}"
+
+      assert Utils.merge_extra_body(%{model: "gpt-4o"}, %{key => true}) ==
+               %{:model => "gpt-4o", key => true}
+
+      assert_raise ArgumentError, fn -> String.to_existing_atom(key) end
+    end
+  end
+
   describe "put_in_list/3" do
     test "adds to empty list" do
       assert [1] == Utils.put_in_list([], 0, 1)

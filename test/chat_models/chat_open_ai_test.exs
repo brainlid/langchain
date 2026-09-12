@@ -253,7 +253,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
              }
     end
 
-    test "generates a map for an API call with max_tokens set" do
+    test "generates a map for an API call with max_tokens sent as max_completion_tokens" do
       {:ok, openai} =
         ChatOpenAI.new(%{
           "model" => @test_model,
@@ -266,7 +266,8 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert data.model == @test_model
       assert data.temperature == 1
       assert data.frequency_penalty == 0.5
-      assert data.max_tokens == 1234
+      assert data.max_completion_tokens == 1234
+      refute Map.has_key?(data, :max_tokens)
     end
 
     test "generates a map for an API call with stream_options set correctly" do
@@ -1553,6 +1554,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
       assert usage.output == 4
 
       assert usage.raw == %{
+               "service_tier" => "default",
                "completion_tokens" => 4,
                "completion_tokens_details" => %{
                  "accepted_prediction_tokens" => 0,
@@ -1597,6 +1599,7 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
                input: 15,
                output: 3,
                raw: %{
+                 "service_tier" => "default",
                  "completion_tokens" => 3,
                  "completion_tokens_details" => %{
                    "accepted_prediction_tokens" => 0,
@@ -2991,6 +2994,176 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
     ]
   end
 
+  describe "service_tier" do
+    test "is not sent when not set" do
+      openai = ChatOpenAI.new!(%{model: @test_model})
+
+      refute Map.has_key?(ChatOpenAI.for_api(openai, [], []), :service_tier)
+    end
+
+    test "is sent when set" do
+      openai = ChatOpenAI.new!(%{model: @test_model, service_tier: "priority"})
+
+      assert %{service_tier: "priority"} = ChatOpenAI.for_api(openai, [], [])
+    end
+
+    test "the served tier is kept in the token usage of a complete message" do
+      model = ChatOpenAI.new!(%{model: @test_model})
+
+      response = %{
+        "choices" => [
+          %{
+            "finish_reason" => "stop",
+            "index" => 0,
+            "logprobs" => nil,
+            "message" => %{
+              "annotations" => [],
+              "content" => "Hello",
+              "refusal" => nil,
+              "role" => "assistant"
+            }
+          }
+        ],
+        "object" => "chat.completion",
+        "service_tier" => "priority",
+        "usage" => %{"completion_tokens" => 1, "prompt_tokens" => 5, "total_tokens" => 6}
+      }
+
+      assert [%Message{metadata: %{usage: %TokenUsage{raw: raw}}}] =
+               ChatOpenAI.do_process_response(model, response)
+
+      assert raw["service_tier"] == "priority"
+    end
+
+    test "the served tier is kept in the token usage of the final streamed chunk" do
+      model = ChatOpenAI.new!(%{model: @test_model, stream: true})
+
+      response = %{
+        "choices" => [],
+        "object" => "chat.completion.chunk",
+        "service_tier" => "flex",
+        "usage" => %{"completion_tokens" => 1, "prompt_tokens" => 5, "total_tokens" => 6}
+      }
+
+      assert %TokenUsage{raw: %{"service_tier" => "flex"}} =
+               ChatOpenAI.do_process_response(model, response)
+    end
+
+    test "token usage raw is the reported usage when no tier is reported" do
+      model = ChatOpenAI.new!(%{model: @test_model, stream: true})
+      usage = %{"completion_tokens" => 1, "prompt_tokens" => 5, "total_tokens" => 6}
+
+      assert %TokenUsage{raw: ^usage} =
+               ChatOpenAI.do_process_response(model, %{"choices" => [], "usage" => usage})
+    end
+  end
+
+  describe "extra_body" do
+    test "defaults to nil and leaves the body unchanged" do
+      plain = ChatOpenAI.new!(%{model: @test_model, max_tokens: 100})
+      assert plain.extra_body == nil
+
+      with_empty = ChatOpenAI.new!(%{model: @test_model, max_tokens: 100, extra_body: %{}})
+
+      assert ChatOpenAI.for_api(with_empty, [], []) == ChatOpenAI.for_api(plain, [], [])
+    end
+
+    test "adds provider-specific keys to the body" do
+      openai =
+        ChatOpenAI.new!(%{
+          model: @test_model,
+          extra_body: %{"top_k" => 20, "repetition_penalty" => 1.05}
+        })
+
+      data = ChatOpenAI.for_api(openai, [], [])
+      assert data["top_k"] == 20
+      assert data["repetition_penalty"] == 1.05
+    end
+
+    test "a string key overrides the computed atom key, leaving a single key" do
+      openai =
+        ChatOpenAI.new!(%{
+          model: @test_model,
+          max_tokens: 64_000,
+          extra_body: %{"max_completion_tokens" => 10}
+        })
+
+      data = ChatOpenAI.for_api(openai, [], [])
+      assert data.max_completion_tokens == 10
+      refute Map.has_key?(data, "max_completion_tokens")
+    end
+
+    test "swaps in max_tokens for servers that only accept the older key" do
+      openai =
+        ChatOpenAI.new!(%{
+          model: @test_model,
+          max_tokens: 4000,
+          extra_body: %{"max_completion_tokens" => nil, "max_tokens" => 4000}
+        })
+
+      data = ChatOpenAI.for_api(openai, [], [])
+      assert data["max_tokens"] == 4000
+      refute Map.has_key?(data, :max_completion_tokens)
+
+      json = Jason.encode!(data)
+      assert json =~ ~s("max_tokens":4000)
+      refute json =~ "max_completion_tokens"
+    end
+
+    test "a nil value removes the always-sent n" do
+      openai = ChatOpenAI.new!(%{model: @test_model, extra_body: %{"n" => nil}})
+
+      refute Map.has_key?(ChatOpenAI.for_api(openai, [], []), :n)
+    end
+
+    test "overrides service_tier" do
+      openai =
+        ChatOpenAI.new!(%{
+          model: @test_model,
+          service_tier: "default",
+          extra_body: %{"service_tier" => "priority"}
+        })
+
+      assert %{service_tier: "priority"} = ChatOpenAI.for_api(openai, [], [])
+    end
+
+    test "rejects a keyword list" do
+      assert {:error, changeset} =
+               ChatOpenAI.new(%{model: @test_model, extra_body: [top_k: 5]})
+
+      assert {"is invalid", _} = changeset.errors[:extra_body]
+    end
+
+    test "sends the same body after a serialize and restore round trip" do
+      original =
+        ChatOpenAI.new!(%{
+          model: @test_model,
+          max_tokens: 4000,
+          service_tier: "flex",
+          extra_body: %{max_completion_tokens: nil, max_tokens: 4000, top_k: 20}
+        })
+
+      config = ChatOpenAI.serialize_config(original)
+      assert config["service_tier"] == "flex"
+
+      assert config["extra_body"] == %{
+               "max_completion_tokens" => nil,
+               "max_tokens" => 4000,
+               "top_k" => 20
+             }
+
+      assert {:ok, restored} = ChatOpenAI.restore_from_map(config)
+      assert restored.service_tier == "flex"
+
+      sent = fn model ->
+        model |> ChatOpenAI.for_api([], []) |> Jason.encode!() |> Jason.decode!()
+      end
+
+      assert sent.(restored) == sent.(original)
+      refute Map.has_key?(sent.(restored), "max_completion_tokens")
+    end
+  end
+
   describe "serialize_config/2" do
     test "does not include the API key or callbacks" do
       model = ChatOpenAI.new!(%{model: "gpt-4o"})
@@ -3030,6 +3203,8 @@ defmodule LangChain.ChatModels.ChatOpenAITest do
                "temperature" => 0.0,
                "version" => 1,
                "json_schema" => nil,
+               "service_tier" => nil,
+               "extra_body" => nil,
                "module" => "Elixir.LangChain.ChatModels.ChatOpenAI"
              }
     end
