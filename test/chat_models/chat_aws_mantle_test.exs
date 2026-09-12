@@ -2,6 +2,7 @@ defmodule LangChain.ChatModels.ChatAwsMantleTest do
   use LangChain.BaseCase
 
   alias LangChain.ChatModels.ChatAwsMantle
+  alias LangChain.ChatModels.ChatModel
   alias LangChain.Chains.LLMChain
   alias LangChain.Function
   alias LangChain.FunctionParam
@@ -178,7 +179,8 @@ defmodule LangChain.ChatModels.ChatAwsMantleTest do
       assert body.model == @kimi_model
       assert body.stream == false
       assert body.temperature == 0.0
-      assert body.max_tokens == 64
+      assert body.max_completion_tokens == 64
+      refute Map.has_key?(body, :max_tokens)
       assert is_list(body.messages)
       assert [%{} = msg] = body.messages
       assert msg["role"] == :user
@@ -195,12 +197,36 @@ defmodule LangChain.ChatModels.ChatAwsMantleTest do
       refute Map.has_key?(body, :reasoning_effort)
     end
 
-    test "uses :max_completion_tokens and omits :max_tokens", %{model: m} do
-      updated = %{m | max_completion_tokens: 64}
+    test "sends the default :max_tokens as max_completion_tokens" do
+      m = ChatAwsMantle.new!(%{model: @kimi_model, region: "us-east-1", api_key: "k"})
+      body = ChatAwsMantle.for_api(m, [Message.new_user!("hi")], [])
+
+      assert body.max_completion_tokens == 4096
+      refute Map.has_key?(body, :max_tokens)
+    end
+
+    test ":extra_body can swap the limit back to the legacy max_tokens key", %{model: m} do
+      updated = %{m | extra_body: %{"max_completion_tokens" => nil, "max_tokens" => 64}}
       body = ChatAwsMantle.for_api(updated, [Message.new_user!("hi")], [])
 
+      assert body["max_tokens"] == 64
+      refute Map.has_key?(body, :max_completion_tokens)
+    end
+
+    test ":extra_body adds vendor parameters the schema has no field for", %{model: m} do
+      updated = %{m | extra_body: %{"repetition_penalty" => 1.05}}
+      body = ChatAwsMantle.for_api(updated, [Message.new_user!("hi")], [])
+
+      assert body["repetition_penalty"] == 1.05
       assert body.max_completion_tokens == 64
-      refute Map.has_key?(body, :max_tokens)
+    end
+
+    test ":extra_body overrides a value the model computed", %{model: m} do
+      updated = %{m | extra_body: %{"temperature" => 0.9}}
+      body = ChatAwsMantle.for_api(updated, [Message.new_user!("hi")], [])
+
+      assert body[:temperature] == 0.9
+      refute Map.has_key?(body, "temperature")
     end
 
     test "passes :top_p, :frequency_penalty, :presence_penalty through to the body when set", %{
@@ -286,6 +312,46 @@ defmodule LangChain.ChatModels.ChatAwsMantleTest do
 
       # :unsupported was stripped; text survived.
       assert [%{"type" => "text", "text" => "The answer is 42."}] = content
+    end
+  end
+
+  describe "serialize_config/1 and restore_from_map/1" do
+    test "round-trips :extra_body and the token limit" do
+      original =
+        ChatAwsMantle.new!(%{
+          model: @kimi_model,
+          region: "us-east-1",
+          api_key: "k",
+          max_tokens: 512,
+          extra_body: %{"repetition_penalty" => 1.05}
+        })
+
+      config = ChatAwsMantle.serialize_config(original)
+
+      # serialize_config/1 drops the credentials, so a caller re-supplies them
+      # when restoring.
+      config = Map.put(config, "api_key", "k")
+
+      assert {:ok, %ChatAwsMantle{} = restored} = ChatAwsMantle.restore_from_map(config)
+      assert restored.max_tokens == 512
+      assert restored.extra_body == %{"repetition_penalty" => 1.05}
+    end
+  end
+
+  describe "telemetry request options" do
+    test "reports the limit that is actually sent" do
+      m =
+        ChatAwsMantle.new!(%{
+          model: @kimi_model,
+          region: "us-east-1",
+          api_key: "k",
+          max_tokens: 512
+        })
+
+      body = ChatAwsMantle.for_api(m, [Message.new_user!("hi")], [])
+
+      assert %{max_tokens: 512} = ChatModel.request_options(m)
+      assert body.max_completion_tokens == 512
     end
   end
 
