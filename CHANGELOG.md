@@ -1,5 +1,87 @@
 # Changelog
 
+## v0.14.0
+
+OpenAI-compatible servers are reachable with more of their own API. A
+`service_tier` field trades cost against latency, an `extra_body` map passes
+provider-specific parameters the library has no field for, and `ChatAwsMantle`
+gains the same escape hatch for the several vendors Mantle hosts.
+
+No breaking API changes. One behavior change to know about: `ChatOpenAI` and
+`ChatAwsMantle` now send `:max_tokens` under OpenAI's current name,
+`max_completion_tokens`. A server that accepts only the older `max_tokens` key
+ignores the new one, which leaves the request with no token limit at all. See
+the upgrade note below. `ChatGrok`, `ChatMistralAI` and `ChatOllamaAI` build
+their own request bodies and are unaffected.
+
+### Upgrading from v0.13.2 - v0.14.0
+
+If you point `ChatOpenAI` at OpenAI itself, no change is needed.
+`max_completion_tokens` is the name OpenAI documents, and its reasoning models
+require it.
+
+If you point `ChatOpenAI` at an OpenAI-compatible server that accepts only
+`max_tokens`, such as Ollama's `/v1` endpoint, swap the key back with
+`extra_body`:
+
+```elixir
+ChatOpenAI.new!(%{
+  endpoint: "http://localhost:11434/v1/chat/completions",
+  model: "llama3.2",
+  max_tokens: 4000,
+  extra_body: %{"max_completion_tokens" => nil, "max_tokens" => 4000}
+})
+```
+
+A `nil` value in `extra_body` removes that key from the request body. Keep the
+`max_tokens` field set as well, since telemetry reports the limit from it.
+
+The same swap applies to `ChatAwsMantle`. The Kimi and gpt-oss models on Bedrock
+accept either name, so most callers need no change.
+
+### Added
+
+- **`extra_body` passes provider-specific parameters straight through.** A map
+  of values merged into the request body last, so they override anything the
+  model computed. Available on `ChatOpenAI`, `ChatOpenAIResponses` and
+  `ChatAwsMantle`, and it covers parameters such as `top_k` or
+  `repetition_penalty` that these modules have no field for. Keys may be strings
+  or atoms and are matched by their string form, so a string key replaces an
+  existing atom key in place rather than producing a duplicate in the encoded
+  JSON. A `nil` value removes the key, and nested maps merge key by key.
+  `LangChain.Utils.merge_extra_body/2` is public and documents the full rules.
+  https://github.com/brainlid/langchain/pull/648
+- **`service_tier` selects a processing tier.** Asks the provider to serve the
+  request at a tier that trades cost against latency, such as `"flex"` or
+  `"priority"`. Supported on `ChatOpenAI` and `ChatOpenAIResponses`. The value is
+  passed through without validation, since compatible providers accept their own
+  subsets. https://github.com/brainlid/langchain/pull/648
+- **The tier that served a request is reported back.** Providers report it beside
+  `usage` rather than inside it, so it is kept in the token usage's `raw` map
+  under `"service_tier"`, reaching the final message along with the usage. It can
+  differ from the tier requested, and some providers omit it. When streaming, it
+  arrives only with `stream_options: %{include_usage: true}`.
+  https://github.com/brainlid/langchain/pull/648
+- **`ChatAwsMantle` accepts `reasoning_effort: "none"`.** Some OpenAI Chat
+  Completions models on Mantle require that value when the request carries
+  function tools. https://github.com/brainlid/langchain/pull/647
+
+### Changed
+
+- **`ChatOpenAI` and `ChatAwsMantle` send `:max_tokens` as
+  `max_completion_tokens`.** That is OpenAI's current name for the limit, it
+  counts reasoning tokens, and OpenAI's reasoning models accept no other name.
+  `:max_tokens` remains the single public field on both modules, with
+  `extra_body` as the escape hatch for a server that wants the older key.
+  https://github.com/brainlid/langchain/pull/648
+  https://github.com/brainlid/langchain/pull/647
+- **The `ChatOpenAIResponses` WebSocket transport matches dropped keys by string
+  form.** It always removes `stream`, `background`, `temperature` and `top_p`
+  from the payload, working around an OpenAI bug that silently closes the
+  connection. Matching on the string form means those keys are dropped when
+  supplied through `extra_body` as strings, not only when the model set them as
+  atoms. https://github.com/brainlid/langchain/pull/648
+
 ## v0.13.2
 
 A patch release for reasoning models reached through OpenAI-compatible
