@@ -10,17 +10,20 @@ defmodule LangChain.OpenTelemetry.MessageSerializer do
   alias LangChain.Message
   alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
+  alias LangChain.Message.ToolResult
 
   @doc """
   Serializes a list of messages to a JSON string for `gen_ai.input.messages`.
 
   Each message is represented as a map with `role` and `content` keys.
   Tool calls are included under the `tool_calls` key when present.
+  Tool results expand into individual tool messages with `tool_call_id` and
+  their LLM-visible content, preserving the order of the results.
   """
   @spec serialize_input(list(Message.t())) :: String.t()
   def serialize_input(messages) when is_list(messages) do
     messages
-    |> Enum.map(&serialize_message/1)
+    |> Enum.flat_map(&serialize_message/1)
     |> Jason.encode!()
   end
 
@@ -35,8 +38,18 @@ defmodule LangChain.OpenTelemetry.MessageSerializer do
 
   def serialize_output(messages) when is_list(messages) do
     messages
-    |> Enum.map(&serialize_message/1)
+    |> Enum.flat_map(&serialize_message/1)
     |> Jason.encode!()
+  end
+
+  defp serialize_message(%Message{role: :tool, tool_results: [_ | _] = results}) do
+    Enum.map(results, fn %ToolResult{} = result ->
+      %{
+        "role" => "tool",
+        "tool_call_id" => result.tool_call_id,
+        "content" => serialize_content(result.content)
+      }
+    end)
   end
 
   defp serialize_message(%Message{} = msg) do
@@ -47,10 +60,10 @@ defmodule LangChain.OpenTelemetry.MessageSerializer do
 
     case msg.tool_calls do
       [_ | _] = tool_calls ->
-        Map.put(base, "tool_calls", Enum.map(tool_calls, &serialize_tool_call/1))
+        [Map.put(base, "tool_calls", Enum.map(tool_calls, &serialize_tool_call/1))]
 
       _ ->
-        base
+        [base]
     end
   end
 

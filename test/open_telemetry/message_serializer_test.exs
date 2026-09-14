@@ -4,6 +4,7 @@ defmodule LangChain.OpenTelemetry.MessageSerializerTest do
   alias LangChain.Message
   alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
+  alias LangChain.Message.ToolResult
   alias LangChain.OpenTelemetry.MessageSerializer
 
   describe "serialize_input/1" do
@@ -58,6 +59,67 @@ defmodule LangChain.OpenTelemetry.MessageSerializerTest do
       assert tc["function"]["name"] == "calculator"
     end
 
+    test "expands tool results in conversation order with their call IDs and error content" do
+      messages = [
+        Message.new_assistant!(%{
+          tool_calls: [
+            ToolCall.new!(%{call_id: "call-1", name: "lookup", arguments: %{}}),
+            ToolCall.new!(%{call_id: "call-2", name: "lookup", arguments: %{}})
+          ]
+        }),
+        Message.new_tool_result!(%{
+          tool_results: [
+            ToolResult.new!(%{tool_call_id: "call-1", content: "Found a match"}),
+            ToolResult.new!(%{
+              tool_call_id: "call-2",
+              content: "No match found",
+              is_error: true
+            })
+          ]
+        }),
+        Message.new_assistant!(%{content: "One match was found"})
+      ]
+
+      assert [
+               %{
+                 "role" => "assistant",
+                 "tool_calls" => [%{"id" => "call-1"}, %{"id" => "call-2"}]
+               },
+               %{"role" => "tool", "tool_call_id" => "call-1", "content" => "Found a match"},
+               %{"role" => "tool", "tool_call_id" => "call-2", "content" => "No match found"},
+               %{"role" => "assistant", "content" => "One match was found"}
+             ] = messages |> MessageSerializer.serialize_input() |> Jason.decode!()
+    end
+
+    test "serializes tool content parts without application-only or reasoning data" do
+      message =
+        Message.new_tool_result!(%{
+          tool_results: [
+            ToolResult.new!(%{
+              tool_call_id: "call-1",
+              content: [
+                ContentPart.text!("A chart"),
+                ContentPart.image_url!("https://example.com/chart.png"),
+                ContentPart.new!(%{type: :thinking, content: "private reasoning"})
+              ],
+              processed_content: %{internal: "application data"},
+              display_text: "UI text"
+            })
+          ]
+        })
+
+      assert [
+               %{
+                 "role" => "tool",
+                 "tool_call_id" => "call-1",
+                 "content" => [
+                   %{"type" => "text", "text" => "A chart"},
+                   %{"type" => "image_url", "url" => "https://example.com/chart.png"}
+                 ]
+               }
+             ] == [message] |> MessageSerializer.serialize_input() |> Jason.decode!()
+    end
+
     test "serializes empty list" do
       assert MessageSerializer.serialize_input([]) == "[]"
     end
@@ -83,6 +145,16 @@ defmodule LangChain.OpenTelemetry.MessageSerializerTest do
   end
 
   describe "serialize_output/1" do
+    test "serializes a tool-result message with legacy string content" do
+      message = %Message{
+        role: :tool,
+        tool_results: [%ToolResult{tool_call_id: "call-1", content: "Found a match"}]
+      }
+
+      assert [%{"role" => "tool", "tool_call_id" => "call-1", "content" => "Found a match"}] =
+               message |> MessageSerializer.serialize_output() |> Jason.decode!()
+    end
+
     test "serializes a single message" do
       msg = Message.new_assistant!(%{content: "Hello!"})
 
