@@ -410,6 +410,244 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
     end
   end
 
+  describe "prompt caching" do
+    test "preserves cache configuration through JSON serialization and restoration" do
+      for options <- [%{mode: "explicit", ttl: "30m"}, %{"mode" => "explicit", "ttl" => "30m"}] do
+        model =
+          ChatOpenAIResponses.new!(%{
+            prompt_cache_key: "shared-reference-v1",
+            prompt_cache_options: options
+          })
+
+        payload = ChatOpenAIResponses.for_api(model, [], [])
+        assert payload[:prompt_cache_key] == "shared-reference-v1"
+        assert payload[:prompt_cache_options] == options
+
+        config =
+          model |> ChatOpenAIResponses.serialize_config() |> Jason.encode!() |> Jason.decode!()
+
+        assert config["prompt_cache_key"] == "shared-reference-v1"
+        assert config["prompt_cache_options"] == %{"mode" => "explicit", "ttl" => "30m"}
+        assert {:ok, restored} = ChatOpenAIResponses.restore_from_map(config)
+
+        assert restored
+               |> ChatOpenAIResponses.for_api([], [])
+               |> Jason.encode!()
+               |> Jason.decode!() ==
+                 payload |> Jason.encode!() |> Jason.decode!()
+      end
+    end
+
+    test "omits unset cache options and preserves extra_body overrides and removal" do
+      payload = ChatOpenAIResponses.for_api(ChatOpenAIResponses.new!(), [], [])
+      refute Map.has_key?(payload, :prompt_cache_key)
+      refute Map.has_key?(payload, :prompt_cache_options)
+
+      model =
+        ChatOpenAIResponses.new!(%{
+          prompt_cache_key: "original",
+          prompt_cache_options: %{mode: "explicit", ttl: "30m"},
+          extra_body: %{"prompt_cache_key" => "override", "prompt_cache_options" => nil}
+        })
+
+      payload = ChatOpenAIResponses.for_api(model, [], []) |> Jason.encode!() |> Jason.decode!()
+      assert payload["prompt_cache_key"] == "override"
+      refute Map.has_key?(payload, "prompt_cache_options")
+    end
+
+    test "adds breakpoints to supported input blocks while preserving their content attributes" do
+      model = ChatOpenAIResponses.new!()
+
+      cases = [
+        {ContentPart.text!("Reference"), %{"type" => "input_text", "text" => "Reference"}},
+        {ContentPart.file_url!("https://example.com/reference.pdf"),
+         %{"type" => "input_file", "file_url" => "https://example.com/reference.pdf"}},
+        {ContentPart.file!("file-document", type: :file_id),
+         %{"type" => "input_file", "file_id" => "file-document"}},
+        {ContentPart.file!("PDF_DATA", filename: "reference.pdf"),
+         %{
+           "type" => "input_file",
+           "filename" => "reference.pdf",
+           "file_data" => "data:application/pdf;base64,PDF_DATA"
+         }},
+        {ContentPart.image_url!("https://example.com/image.png", detail: "low"),
+         %{
+           "type" => "input_image",
+           "image_url" => "https://example.com/image.png",
+           "detail" => "low"
+         }},
+        {ContentPart.image!("file-image", type: :file_id, detail: "high"),
+         %{"type" => "input_image", "file_id" => "file-image", "detail" => "high"}},
+        {ContentPart.image!("IMAGE_DATA", media: :png, detail: "low"),
+         %{
+           "type" => "input_image",
+           "image_url" => "data:image/png;base64,IMAGE_DATA",
+           "detail" => "low"
+         }}
+      ]
+
+      for {part, expected} <- cases,
+          role <- [:user, :system, :developer],
+          breakpoint <- [nil, %{mode: "explicit"}, %{"mode" => "explicit"}] do
+        marked = %{
+          part
+          | options: Keyword.put(part.options, :prompt_cache_breakpoint, breakpoint)
+        }
+
+        result = ChatOpenAIResponses.content_part_for_api(model, marked, role)
+
+        if breakpoint do
+          assert result == Map.put(expected, "prompt_cache_breakpoint", breakpoint)
+        else
+          assert result == expected
+        end
+      end
+    end
+
+    test "does not add breakpoints to assistant output or reasoning items" do
+      model = ChatOpenAIResponses.new!()
+      breakpoint = %{mode: "explicit"}
+      text = ContentPart.text!("Answer", prompt_cache_breakpoint: breakpoint)
+
+      reasoning =
+        ContentPart.new!(%{
+          type: :thinking,
+          content: "",
+          options: [
+            id: "rs_example",
+            type: "reasoning",
+            encrypted_content: "encrypted-example",
+            prompt_cache_breakpoint: breakpoint
+          ]
+        })
+
+      message = Message.new_assistant!([reasoning, text])
+
+      assert [
+               %{"type" => "reasoning"} = reasoning_item,
+               %{"content" => [%{"type" => "output_text", "text" => "Answer"} = output]}
+             ] = ChatOpenAIResponses.for_api(model, message)
+
+      refute Map.has_key?(reasoning_item, "prompt_cache_breakpoint")
+      refute Map.has_key?(output, "prompt_cache_breakpoint")
+      assert [] = ChatOpenAIResponses.content_parts_for_api(model, [reasoning], :user)
+    end
+
+    test "preserves tool result order and IDs with plain, marked, and multimodal outputs" do
+      model = ChatOpenAIResponses.new!()
+      breakpoint = %{mode: "explicit"}
+
+      results = [
+        ToolResult.new!(%{tool_call_id: "call_string", content: "Plain string"}),
+        ToolResult.new!(%{tool_call_id: "call_text", content: [ContentPart.text!("Plain text")]}),
+        ToolResult.new!(%{
+          tool_call_id: "call_cached",
+          content: [ContentPart.text!("Reference", prompt_cache_breakpoint: breakpoint)],
+          processed_content: %{private: "application data"},
+          display_text: "Private display text"
+        }),
+        ToolResult.new!(%{
+          tool_call_id: "call_multimodal",
+          content: [
+            ContentPart.text!("Document preview"),
+            ContentPart.image_url!("https://example.com/preview.png", detail: "low"),
+            ContentPart.file!("file-document",
+              type: :file_id,
+              prompt_cache_breakpoint: breakpoint
+            )
+          ]
+        }),
+        ToolResult.new!(%{
+          tool_call_id: "call_multiple_text",
+          content: [ContentPart.text!("First"), ContentPart.text!("Second")]
+        })
+      ]
+
+      payload =
+        ChatOpenAIResponses.for_api(
+          model,
+          [Message.new_tool_result!(%{tool_results: results})],
+          []
+        )
+
+      assert payload.input == [
+               %{
+                 "type" => "function_call_output",
+                 "call_id" => "call_string",
+                 "output" => "Plain string"
+               },
+               %{
+                 "type" => "function_call_output",
+                 "call_id" => "call_text",
+                 "output" => "Plain text"
+               },
+               %{
+                 "type" => "function_call_output",
+                 "call_id" => "call_cached",
+                 "output" => [
+                   %{
+                     "type" => "input_text",
+                     "text" => "Reference",
+                     "prompt_cache_breakpoint" => breakpoint
+                   }
+                 ]
+               },
+               %{
+                 "type" => "function_call_output",
+                 "call_id" => "call_multimodal",
+                 "output" => [
+                   %{"type" => "input_text", "text" => "Document preview"},
+                   %{
+                     "type" => "input_image",
+                     "image_url" => "https://example.com/preview.png",
+                     "detail" => "low"
+                   },
+                   %{
+                     "type" => "input_file",
+                     "file_id" => "file-document",
+                     "prompt_cache_breakpoint" => breakpoint
+                   }
+                 ]
+               },
+               %{
+                 "type" => "function_call_output",
+                 "call_id" => "call_multiple_text",
+                 "output" => [
+                   %{"type" => "input_text", "text" => "First"},
+                   %{"type" => "input_text", "text" => "Second"}
+                 ]
+               }
+             ]
+    end
+
+    test "includes cache configuration and breakpoints in the HTTP payload" do
+      expect(Req, :post, fn request ->
+        payload = request.options[:json] |> Jason.encode!() |> Jason.decode!()
+        assert payload["prompt_cache_key"] == "shared-reference-v1"
+        assert payload["prompt_cache_options"] == %{"mode" => "explicit", "ttl" => "30m"}
+
+        assert [%{"content" => [%{"prompt_cache_breakpoint" => %{"mode" => "explicit"}}]}] =
+                 payload["input"]
+
+        {:error, RuntimeError.exception("stop after inspecting request")}
+      end)
+
+      model =
+        ChatOpenAIResponses.new!(%{
+          prompt_cache_key: "shared-reference-v1",
+          prompt_cache_options: %{mode: "explicit", ttl: "30m"}
+        })
+
+      message =
+        Message.new_user!([
+          ContentPart.text!("Reference", prompt_cache_breakpoint: %{mode: "explicit"})
+        ])
+
+      assert {:error, _error} = ChatOpenAIResponses.do_api_request(model, [message], [])
+      verify!()
+    end
+  end
+
   describe "for_api/3 reasoning options" do
     test "includes reasoning options when set" do
       openai =
@@ -2605,6 +2843,13 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
                  %{"type" => "compaction", "compact_threshold" => 300_000}
                ]
 
+        assert decoded["prompt_cache_key"] == "shared-reference-v1"
+        assert decoded["prompt_cache_options"] == %{"mode" => "explicit", "ttl" => "30m"}
+
+        assert [
+                 %{"content" => [%{"prompt_cache_breakpoint" => %{"mode" => "explicit"}}]}
+               ] = decoded["input"]
+
         # These should be stripped for WebSocket
         refute Map.has_key?(decoded, "stream")
         refute Map.has_key?(decoded, "temperature")
@@ -2622,11 +2867,18 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesTest do
           model: @test_model,
           stream: false,
           context_management: [%{type: "compaction", compact_threshold: 300_000}],
+          prompt_cache_key: "shared-reference-v1",
+          prompt_cache_options: %{mode: "explicit", ttl: "30m"},
           websocket: fake_pid
         })
 
+      message =
+        Message.new_user!([
+          ContentPart.text!("Reference", prompt_cache_breakpoint: %{mode: "explicit"})
+        ])
+
       assert %Message{role: :assistant, content: content} =
-               ChatOpenAIResponses.do_api_request(model, [Message.new_user!("Hi")], [])
+               ChatOpenAIResponses.do_api_request(model, [message], [])
 
       assert [%LangChain.Message.ContentPart{type: :text, content: "Hello from WebSocket!"}] =
                content

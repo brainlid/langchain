@@ -26,7 +26,10 @@ defmodule LangChain.Message.ContentPart do
     the LLM for a particular message type. For example, multi-modal message
     (ones that include image data) use the `:media` option to specify the
     mimetype information. Options may also contain key-value settings like
-    `cache_control: true` for models like Anthropic that support caching.
+    `cache_control: true` for models like Anthropic that support caching, or
+    `prompt_cache_breakpoint: %{mode: "explicit"}` for supported OpenAI Responses
+    input blocks. See `LangChain.ChatModels.ChatOpenAIResponses` for prompt
+    caching configuration.
 
     When receiving content parts like with Anthropic Claude's thinking model,
     the options may contain LLM specific data that is recommended to be
