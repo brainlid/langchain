@@ -10,6 +10,8 @@ defmodule LangChain.Chains.LLMChain.Mode.StepsTest do
   alias LangChain.Message.ToolResult
   alias LangChain.Function
   alias LangChain.LangChainError
+  alias LangChain.Message.ContentPart
+  alias LangChain.MessageExpansion
 
   setup :verify_on_exit!
 
@@ -461,6 +463,220 @@ defmodule LangChain.Chains.LLMChain.Mode.StepsTest do
 
       assert final_chain.last_message.role == :assistant
       assert Steps.get_run_count(final_chain) == 2
+    end
+  end
+
+  describe "expand_tool_results/2" do
+    setup %{chain: chain} do
+      tool_call = ToolCall.new!(%{call_id: "call_1", name: "load_reference", arguments: %{}})
+
+      staged =
+        chain
+        |> LLMChain.add_message(Message.new_user!("What does the policy say?"))
+        |> LLMChain.add_message(Message.new_assistant!(%{tool_calls: [tool_call]}))
+
+      %{staged: staged}
+    end
+
+    test "inserts the expansion's messages before the model is called", %{staged: staged} do
+      chain = add_tool_results(staged, [expanding_result("call_1", "THE MATERIAL")])
+
+      assert {:continue, expanded} = Steps.expand_tool_results({:continue, chain})
+
+      assert [
+               %Message{role: :user},
+               %Message{role: :assistant, tool_calls: [_]},
+               %Message{role: :tool},
+               %Message{role: :assistant} = material,
+               %Message{role: :user} = anchor
+             ] = expanded.messages
+
+      assert [%ContentPart{content: "THE MATERIAL"}] = material.content
+      assert [%ContentPart{content: anchor_text}] = anchor.content
+      assert is_binary(anchor_text)
+    end
+
+    test "inserts exactly the messages the tool chose", %{staged: staged} do
+      chain =
+        add_tool_results(staged, [
+          expanding_result("call_1", "THE MATERIAL",
+            messages: [Message.new_user!("THE MATERIAL")]
+          )
+        ])
+
+      assert {:continue, expanded} = Steps.expand_tool_results({:continue, chain})
+
+      assert [_user, _assistant, _tool, %Message{role: :user} = material] = expanded.messages
+      assert [%ContentPart{content: "THE MATERIAL"}] = material.content
+    end
+
+    test "inserts a longer sequence unchanged", %{staged: staged} do
+      messages = [
+        Message.new_assistant!("one"),
+        Message.new_user!("two"),
+        Message.new_assistant!("three"),
+        Message.new_user!("four")
+      ]
+
+      chain =
+        add_tool_results(staged, [
+          expanding_result("call_1", "THE MATERIAL", messages: messages)
+        ])
+
+      assert {:continue, expanded} = Steps.expand_tool_results({:continue, chain})
+
+      assert Enum.drop(expanded.messages, 3) == messages
+    end
+
+    test "replaces the result content with what the expansion keeps", %{staged: staged} do
+      result = expanding_result("call_1", "THE MATERIAL", result_content: "Loaded 1 document.")
+      chain = add_tool_results(staged, [result])
+
+      # Fail-open: before the step runs the result carries the whole payload.
+      assert [%ContentPart{content: before_text}] = hd(chain.last_message.tool_results).content
+      assert before_text =~ "THE MATERIAL"
+
+      assert {:continue, expanded} = Steps.expand_tool_results({:continue, chain})
+
+      assert [_user, _assistant, tool_message | _inserted] = expanded.messages
+
+      assert [%ToolResult{content: [%ContentPart{content: "Loaded 1 document."}]}] =
+               tool_message.tool_results
+    end
+
+    test "keeps messages, exchanged_messages and last_message in agreement", %{staged: staged} do
+      chain = add_tool_results(staged, [expanding_result("call_1", "THE MATERIAL")])
+
+      assert {:continue, expanded} = Steps.expand_tool_results({:continue, chain})
+
+      assert expanded.last_message == List.last(expanded.messages)
+      assert expanded.last_message.role == :user
+      assert expanded.needs_response
+
+      trimmed = Enum.find(expanded.messages, &(&1.role == :tool))
+      assert trimmed in expanded.exchanged_messages
+      refute Enum.any?(expanded.exchanged_messages, &(&1.role == :tool and &1 != trimmed))
+    end
+
+    test "applies when the tool message is absent from exchanged_messages", %{staged: staged} do
+      # The shape a resume after human approval produces: the chain is rebuilt
+      # from stored messages, so exchanged_messages starts empty.
+      staged = add_tool_results(staged, [expanding_result("call_1", "THE MATERIAL")])
+      chain = %LLMChain{staged | exchanged_messages: []}
+
+      assert {:continue, expanded} = Steps.expand_tool_results({:continue, chain})
+
+      assert %Message{role: :user} = expanded.last_message
+
+      assert Enum.any?(
+               expanded.messages,
+               &(&1.role == :assistant and &1.tool_calls in [nil, []])
+             )
+
+      # Only the inserted messages were exchanged.
+      assert [%Message{role: :assistant}, %Message{role: :user}] = expanded.exchanged_messages
+    end
+
+    test "is idempotent", %{staged: staged} do
+      chain = add_tool_results(staged, [expanding_result("call_1", "THE MATERIAL")])
+
+      assert {:continue, once} = Steps.expand_tool_results({:continue, chain})
+      assert {:continue, twice} = Steps.expand_tool_results({:continue, once})
+
+      assert once.messages == twice.messages
+      assert once == twice
+    end
+
+    test "inserts in tool-call order when several tools deliver", %{staged: staged} do
+      results = [
+        expanding_result("call_1", "FIRST", result_content: "1"),
+        expanding_result("call_2", "SECOND", result_content: "2")
+      ]
+
+      chain = add_tool_results(staged, results)
+
+      assert {:continue, expanded} = Steps.expand_tool_results({:continue, chain})
+
+      inserted =
+        expanded.messages
+        |> Enum.drop(3)
+        |> Enum.map(fn %Message{content: [%ContentPart{content: text}]} -> text end)
+
+      assert ["FIRST", _anchor, "SECOND", _anchor2] = inserted
+    end
+
+    test "ignores an interrupted result", %{staged: staged} do
+      {:ok, result} =
+        MessageExpansion.expand("THE MATERIAL", [Message.new_assistant!("THE MATERIAL")])
+
+      interrupted = %ToolResult{
+        result
+        | tool_call_id: "call_1",
+          name: "load_reference",
+          is_interrupt: true,
+          interrupt_data: %{type: :halt}
+      }
+
+      chain = add_tool_results(staged, [interrupted])
+
+      assert {:continue, ^chain} = Steps.expand_tool_results({:continue, chain})
+    end
+
+    test "ignores a result with no expansion", %{staged: staged} do
+      result = ToolResult.new!(%{tool_call_id: "call_1", name: "search", content: "found it"})
+      chain = add_tool_results(staged, [result])
+
+      assert {:continue, ^chain} = Steps.expand_tool_results({:continue, chain})
+    end
+
+    test "passes through when the last message is not a tool message", %{staged: staged} do
+      chain = LLMChain.add_message(staged, Message.new_assistant!("done"))
+
+      assert {:continue, ^chain} = Steps.expand_tool_results({:continue, chain})
+    end
+
+    test "passes terminals through untouched", %{staged: staged} do
+      chain = add_tool_results(staged, [expanding_result("call_1", "THE MATERIAL")])
+
+      assert {:ok, ^chain} = Steps.expand_tool_results({:ok, chain})
+      assert {:ok, ^chain, :extra} = Steps.expand_tool_results({:ok, chain, :extra})
+      assert {:pause, ^chain} = Steps.expand_tool_results({:pause, chain})
+      assert {:interrupt, ^chain, :data} = Steps.expand_tool_results({:interrupt, chain, :data})
+      assert {:error, ^chain, :why} = Steps.expand_tool_results({:error, chain, :why})
+    end
+
+    test "a terminal check still sees the tool message as last_message", %{staged: staged} do
+      # The invariant the placement exists to preserve: until-tool termination
+      # reads last_message, and must find what the tools returned.
+      chain =
+        add_tool_results(staged, [
+          expanding_result("call_1", "THE MATERIAL", result_content: "Loaded.")
+        ])
+
+      assert {:ok, ^chain, %ToolResult{name: "load_reference"}} =
+               Steps.check_until_tool({:continue, chain}, tool_names: ["load_reference"])
+    end
+
+    defp add_tool_results(chain, results) do
+      LLMChain.add_message(
+        chain,
+        Message.new_tool_result!(%{content: nil, tool_results: results})
+      )
+    end
+
+    # An expansion in the canonical shape: the material established as something
+    # the model said, then a short user turn for it to answer.
+    defp expanding_result(call_id, material, opts \\ []) do
+      messages =
+        Keyword.get(opts, :messages, [
+          Message.new_assistant!(material),
+          Message.new_user!("Use the content above to continue.")
+        ])
+
+      {:ok, result} =
+        MessageExpansion.expand(material, messages, Keyword.take(opts, [:result_content]))
+
+      %ToolResult{result | tool_call_id: call_id, name: "load_reference"}
     end
   end
 end

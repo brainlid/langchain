@@ -1743,13 +1743,33 @@ defmodule LangChain.Chains.LLMChain do
   @doc """
   Replace a tool result in the chain's messages by `tool_call_id`.
 
-  Delegates to `Message.replace_tool_result/3`.
+  Delegates to `Message.replace_tool_result/3`, and applies the same replacement
+  to the chain's other views of the conversation.
+
+  `exchanged_messages` holds what this run exchanged and feeds token
+  aggregation; `last_message` is what a mode reads to decide whether the run is
+  over. A replacement that reached `messages` alone would leave the three
+  disagreeing about what the tool returned.
   """
   @spec replace_tool_result(t(), String.t(), ToolResult.t()) :: t()
   def replace_tool_result(%LLMChain{} = chain, tool_call_id, %ToolResult{} = new_result) do
-    updated_messages = Message.replace_tool_result(chain.messages, tool_call_id, new_result)
-    %{chain | messages: updated_messages}
+    %LLMChain{
+      chain
+      | messages: Message.replace_tool_result(chain.messages, tool_call_id, new_result),
+        exchanged_messages:
+          Message.replace_tool_result(chain.exchanged_messages, tool_call_id, new_result),
+        last_message: replace_last_message_result(chain.last_message, tool_call_id, new_result)
+    }
   end
+
+  defp replace_last_message_result(%Message{role: :tool} = message, tool_call_id, new_result) do
+    case Message.replace_tool_result([message], tool_call_id, new_result) do
+      [updated] -> updated
+      _other -> message
+    end
+  end
+
+  defp replace_last_message_result(last_message, _tool_call_id, _new_result), do: last_message
 
   # Best-effort OpenTelemetry context propagation for async tools. LangChain does
   # not depend on OpenTelemetry, so these dispatch at runtime only when the

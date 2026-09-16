@@ -33,6 +33,16 @@ defmodule LangChain.Message.ToolResult do
   Because `content` carries LangChain's formatted exception message and source
   location, tools should not put secrets in exception messages.
 
+  ## Message expansion
+
+  `message_expansion` holds a `LangChain.MessageExpansion`: a request to insert
+  messages into the conversation before the next LLM call, and to trim what this
+  result keeps once they are in. It is applied by
+  `LangChain.Chains.LLMChain.Mode.Steps.expand_tool_results/2`, so it does
+  nothing under a mode that does not compose that step. Like `interrupt_data` it
+  is virtual: it is never sent to the LLM and does not survive storage, which is
+  what keeps a restored conversation from inserting the same material twice.
+
   To do this, the Elixir function's result should be a `{:ok, "String response
   for LLM", native_elixir_data}`. See `LangChain.Function` for details and
   examples.
@@ -68,6 +78,9 @@ defmodule LangChain.Message.ToolResult do
     field :is_interrupt, :boolean, default: false
     # opaque interrupt data (not sent to LLM, virtual only)
     field :interrupt_data, :any, virtual: true
+    # a `LangChain.MessageExpansion` this result asks to have applied to the
+    # conversation before the next LLM call. Not sent to the LLM, virtual only.
+    field :message_expansion, :any, virtual: true
     # options potentially LLM specific (i.e. cache control for Anthropic)
     field :options, :any, virtual: true
   end
@@ -86,6 +99,7 @@ defmodule LangChain.Message.ToolResult do
     :exception,
     :is_interrupt,
     :interrupt_data,
+    :message_expansion,
     :options
   ]
   @create_fields @update_fields

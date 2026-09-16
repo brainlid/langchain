@@ -4082,6 +4082,50 @@ defmodule LangChain.Chains.LLMChainTest do
       assert replaced.is_interrupt == false
       assert replaced.content == [ContentPart.text!("completed")]
     end
+
+    test "keeps exchanged_messages and last_message in agreement", %{chain: chain} do
+      result =
+        ToolResult.new!(%{
+          tool_call_id: "call_1",
+          name: "task",
+          content: "placeholder",
+          is_interrupt: true
+        })
+
+      tool_msg = Message.new_tool_result!(%{content: nil, tool_results: [result]})
+      chain = LLMChain.add_message(chain, tool_msg)
+
+      new_result =
+        ToolResult.new!(%{tool_call_id: "call_1", name: "task", content: "completed"})
+
+      updated_chain = LLMChain.replace_tool_result(chain, "call_1", new_result)
+
+      assert [%{tool_results: [replaced]}] =
+               Enum.filter(updated_chain.exchanged_messages, &(&1.role == :tool))
+
+      assert replaced.content == [ContentPart.text!("completed")]
+      assert updated_chain.last_message == List.last(updated_chain.messages)
+
+      assert [%ToolResult{content: [%ContentPart{content: "completed"}]}] =
+               updated_chain.last_message.tool_results
+    end
+
+    test "leaves a last_message that is not the replaced tool message alone", %{chain: chain} do
+      result = ToolResult.new!(%{tool_call_id: "call_1", name: "task", content: "placeholder"})
+
+      chain =
+        chain
+        |> LLMChain.add_message(Message.new_tool_result!(%{content: nil, tool_results: [result]}))
+        |> LLMChain.add_message(Message.new_assistant!("all done"))
+
+      new_result =
+        ToolResult.new!(%{tool_call_id: "call_1", name: "task", content: "completed"})
+
+      updated_chain = LLMChain.replace_tool_result(chain, "call_1", new_result)
+
+      assert %Message{role: :assistant} = updated_chain.last_message
+      assert updated_chain.last_message == chain.last_message
+    end
   end
 
   describe "execute_tool_calls_with_decisions/3" do
