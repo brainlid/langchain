@@ -284,26 +284,11 @@ defmodule LangChain.ChatModels.ChatOrq do
 
   def for_api(%_{} = model, %Message{role: :assistant, tool_calls: tool_calls} = msg)
       when is_list(tool_calls) do
-    content =
-      case msg.content do
-        content when is_list(content) -> content_parts_to_string(content)
-        content -> content
-      end
-
     %{
       "role" => :assistant,
-      "content" => content
+      "content" => msg.content
     }
     |> Utils.conditionally_add_to_map("tool_calls", Enum.map(tool_calls, &for_api(model, &1)))
-  end
-
-  def for_api(%_{} = _model, %Message{role: :user, content: content} = msg)
-      when is_list(content) do
-    %{
-      "role" => msg.role,
-      "content" => content_parts_to_string(content)
-    }
-    |> Utils.conditionally_add_to_map("name", msg.name)
   end
 
   def for_api(%_{} = _model, %ToolResult{type: :function} = result) do
