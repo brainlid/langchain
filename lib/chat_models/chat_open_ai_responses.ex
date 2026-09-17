@@ -254,6 +254,33 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   The tier that actually served the request can differ from the one requested.
   It is kept in the token usage's `raw` map under `"service_tier"`.
 
+  ## Prompt Caching
+
+  `prompt_cache_key` groups requests for prompt caching. `prompt_cache_options`
+  configures caching on supported models (GPT-5.6 and later):
+
+      ChatOpenAIResponses.new!(%{
+        model: "gpt-5.6",
+        prompt_cache_key: "shared-reference-v1",
+        prompt_cache_options: %{mode: "explicit", ttl: "30m"}
+      })
+
+  Add an explicit breakpoint to a text, image, or file input block through its
+  `ContentPart` options:
+
+      ContentPart.text!("Stable reference material",
+        prompt_cache_breakpoint: %{mode: "explicit"}
+      )
+
+  These options also work on content blocks in tool results. Assistant output
+  text and reasoning items don't support breakpoints. Caching settings are
+  omitted unless supplied. Option maps are passed through to OpenAI, which
+  validates supported values and model availability. `extra_body` can override
+  the request-level settings.
+
+  See the [OpenAI prompt caching guide](https://developers.openai.com/api/docs/guides/prompt-caching)
+  for caching modes, cache lifetimes, and breakpoint limits.
+
   ## Provider-Specific Parameters
 
   `extra_body` is a map of values merged into the request body last, so they
@@ -262,7 +289,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
 
       ChatOpenAIResponses.new!(%{
         model: "gpt-5",
-        extra_body: %{"prompt_cache_key" => "user-123"}
+        extra_body: %{"safety_identifier" => "user-123"}
       })
 
   A `nil` value removes the key from the body. The WebSocket transport always
@@ -396,6 +423,8 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     # omit metadata because chat_open_ai also omits it
     # omit parallel_tool_calls because chat_open_ai also omits it
     field :previous_response_id, :string, default: nil
+    field :prompt_cache_key, :string, default: nil
+    field :prompt_cache_options, :map, default: nil
     # Reasoning options for gpt-5 and o-series models
     embeds_one(:reasoning, ReasoningOptions)
     # The processing tier to serve the request with. Known values include
@@ -452,6 +481,8 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     :context_management,
     :max_output_tokens,
     :previous_response_id,
+    :prompt_cache_key,
+    :prompt_cache_options,
     :store,
     :stream,
     :temperature,
@@ -687,6 +718,8 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     |> Utils.conditionally_add_to_map(:include, openai.include)
     |> Utils.conditionally_add_to_map(:max_output_tokens, openai.max_output_tokens)
     |> Utils.conditionally_add_to_map(:previous_response_id, openai.previous_response_id)
+    |> Utils.conditionally_add_to_map(:prompt_cache_key, openai.prompt_cache_key)
+    |> Utils.conditionally_add_to_map(:prompt_cache_options, openai.prompt_cache_options)
     |> Utils.conditionally_add_to_map(:reasoning, ReasoningOptions.to_api_map(openai.reasoning))
     |> Utils.conditionally_add_to_map(:text, set_text_format(openai))
     |> Utils.conditionally_add_to_map(:tool_choice, get_tool_choice(openai))
@@ -920,9 +953,12 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     Enum.map(tool_calls, &for_api(model, &1))
   end
 
-  def for_api(%ChatOpenAIResponses{} = _model, %ToolResult{type: :function} = result) do
-    # a ToolResult becomes a stand-alone %Message{role: :tool} response.
-    [%ContentPart{type: :text, content: output, options: []}] = result.content
+  def for_api(%ChatOpenAIResponses{} = model, %ToolResult{type: :function} = result) do
+    output =
+      case content_parts_for_api(model, result.content) do
+        [%{"type" => "input_text", "text" => text} = part] when map_size(part) == 2 -> text
+        parts -> parts
+      end
 
     %{
       "call_id" => result.tool_call_id,
@@ -1079,6 +1115,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         _role
       ) do
     %{"type" => "input_text", "text" => part.content}
+    |> add_prompt_cache_breakpoint(part)
   end
 
   def content_part_for_api(
@@ -1090,6 +1127,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
       "type" => "input_file",
       "file_url" => part.content
     }
+    |> add_prompt_cache_breakpoint(part)
   end
 
   def content_part_for_api(
@@ -1111,6 +1149,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
           "file_data" => "data:application/pdf;base64," <> part.content
         }
     end
+    |> add_prompt_cache_breakpoint(part)
   end
 
   def content_part_for_api(
@@ -1156,7 +1195,9 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
 
     detail_option = Keyword.get(part.options, :detail, nil)
 
-    Utils.conditionally_add_to_map(output, "detail", detail_option)
+    output
+    |> Utils.conditionally_add_to_map("detail", detail_option)
+    |> add_prompt_cache_breakpoint(part)
   end
 
   # Thinking content parts are output-only and should be omitted when sending to the API
@@ -1170,6 +1211,14 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         _role
       ),
       do: nil
+
+  defp add_prompt_cache_breakpoint(output, %ContentPart{options: options}) do
+    Utils.conditionally_add_to_map(
+      output,
+      "prompt_cache_breakpoint",
+      Keyword.get(options || [], :prompt_cache_breakpoint)
+    )
+  end
 
   @doc false
   def get_parameters(%Function{parameters: [], parameters_schema: nil} = _fun) do
@@ -2317,6 +2366,8 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         :endpoint,
         :model,
         :context_management,
+        :prompt_cache_key,
+        :prompt_cache_options,
         :temperature,
         :frequency_penalty,
         :reasoning,
