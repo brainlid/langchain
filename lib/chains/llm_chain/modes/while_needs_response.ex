@@ -4,10 +4,15 @@ defmodule LangChain.Chains.LLMChain.Modes.WhileNeedsResponse do
 
   After each LLM call, if the response contains tool calls, this mode:
   1. Executes the pending tool calls
-  2. Calls the LLM again with the tool results
-  3. Repeats until `needs_response` is false (no more tool calls)
+  2. Applies any `LangChain.MessageExpansion` those tools asked for
+  3. Calls the LLM again with the tool results
+  4. Repeats until `needs_response` is false (no more tool calls)
 
   The LLM always gets the last word after tool execution.
+
+  Step 2 costs nothing for a tool that asks for no expansion, which is every
+  tool that has not opted in. It is included so that a tool carrying one is
+  honoured under the standard mode rather than silently ignored.
 
   ## Usage
 
@@ -32,6 +37,7 @@ defmodule LangChain.Chains.LLMChain.Modes.WhileNeedsResponse do
 
     {:continue, chain}
     |> execute_tools()
+    |> expand_tool_results(opts)
     |> call_llm()
     |> continue_or_done(&run/2, opts)
   end

@@ -28,6 +28,10 @@ defmodule LangChain.Chains.LLMChain.Mode.Steps do
   """
 
   alias LangChain.Chains.LLMChain
+  alias LangChain.Message
+  alias LangChain.Message.ContentPart
+  alias LangChain.Message.ToolResult
+  alias LangChain.MessageExpansion
 
   @type pipeline_result ::
           {:continue, LLMChain.t()}
@@ -64,6 +68,125 @@ defmodule LangChain.Chains.LLMChain.Mode.Steps do
   end
 
   def execute_tools(terminal), do: terminal
+
+  @doc """
+  Expand any tool results that asked to, before the model is called.
+
+  A tool result can carry a `LangChain.MessageExpansion` asking for messages to
+  be inserted into the conversation and for the result's own content to be
+  trimmed once they are. This step is what honours that request. Placing it
+  immediately before `call_llm/1` is what makes the guarantee the tool is
+  relying on true: the messages are in the conversation for the very next model
+  call, in the same run.
+
+      {:continue, chain}
+      |> expand_tool_results(opts)
+      |> call_llm()
+
+  ## What it does
+
+  Reads `chain.last_message`. If it is a `:tool` message, every result carrying
+  an expansion is applied in tool-call order:
+
+  1. The result's content becomes the expansion's `result_content`, or is left
+     alone when that is nil.
+  2. The expansion is cleared from the result, so applying the step twice
+     inserts once.
+  3. The expansion's messages are appended with `LLMChain.add_messages/2`, which
+     keeps `messages`, `exchanged_messages`, `last_message` and `needs_response`
+     in agreement.
+
+  Any other pipeline result passes through untouched, including a terminal. A
+  turn that interrupted or satisfied an until-tool contract is over, so nothing
+  is inserted into it.
+
+  ## Where it must not go
+
+  Not after the steps that decide whether the run is over. `check_until_tool/2`,
+  `Sagents.Mode.Steps.check_until_tool_success/2` and the chain's telemetry all
+  read `chain.last_message` to answer that question, and every one of them is
+  entitled to find a message the model produced or the tools returned there.
+  Expanding before the model call keeps that true; expanding after the terminal
+  checks would put a synthetic message under code that cannot tell the
+  difference.
+
+  Inserted messages fire no callbacks, so they produce no transcript rows. A
+  host that mirrors a conversation from `:on_message_processed` sees them when
+  it next reads the whole chain, not as they are inserted.
+  """
+  def expand_tool_results(pipeline_result, opts \\ [])
+
+  def expand_tool_results(
+        {:continue, %LLMChain{last_message: %Message{role: :tool} = tool_message} = chain},
+        _opts
+      ) do
+    case Enum.filter(tool_message.tool_results || [], &MessageExpansion.expandable?/1) do
+      [] -> {:continue, chain}
+      expanding -> {:continue, apply_expansions(chain, tool_message, expanding)}
+    end
+  end
+
+  def expand_tool_results({:continue, chain}, _opts), do: {:continue, chain}
+
+  def expand_tool_results(terminal, _opts), do: terminal
+
+  defp apply_expansions(%LLMChain{} = chain, %Message{} = tool_message, expanding) do
+    inserted = Enum.flat_map(expanding, & &1.message_expansion.messages)
+
+    chain
+    |> replace_message(tool_message, consume_expansions(tool_message))
+    |> LLMChain.add_messages(inserted)
+  end
+
+  defp consume_expansions(%Message{tool_results: results} = tool_message) do
+    %Message{tool_message | tool_results: Enum.map(results, &consume_expansion/1)}
+  end
+
+  defp consume_expansion(%ToolResult{message_expansion: %MessageExpansion{} = expansion} = result) do
+    if MessageExpansion.expandable?(result) do
+      %ToolResult{result | content: trimmed_content(expansion, result), message_expansion: nil}
+    else
+      result
+    end
+  end
+
+  defp consume_expansion(%ToolResult{} = result), do: result
+
+  # Mirrors what `ToolResult.new/1` does to a binary content, so a trimmed
+  # result is shaped the same as one the tool built itself.
+  defp trimmed_content(%MessageExpansion{result_content: nil}, %ToolResult{content: content}),
+    do: content
+
+  defp trimmed_content(%MessageExpansion{result_content: content}, _result)
+       when is_binary(content),
+       do: [ContentPart.text!(content)]
+
+  defp trimmed_content(%MessageExpansion{result_content: %ContentPart{} = part}, _result),
+    do: [part]
+
+  defp trimmed_content(%MessageExpansion{result_content: content}, _result), do: content
+
+  # The tool message is rewritten in place wherever the chain holds it.
+  # `exchanged_messages` legitimately may not: it is reset per run, so a chain
+  # built fresh from stored messages (a resume after human approval) carries the
+  # tool message in `messages` alone.
+  defp replace_message(%LLMChain{} = chain, old, new) do
+    %LLMChain{
+      chain
+      | messages: swap_message(chain.messages, old, new),
+        exchanged_messages: swap_message(chain.exchanged_messages, old, new),
+        last_message: if(chain.last_message == old, do: new, else: chain.last_message)
+    }
+  end
+
+  defp swap_message(messages, old, new) when is_list(messages) do
+    Enum.map(messages, fn
+      ^old -> new
+      other -> other
+    end)
+  end
+
+  defp swap_message(other, _old, _new), do: other
 
   # ── Safety Checks ───────────────────────────────────────────────
 
