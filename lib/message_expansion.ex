@@ -51,17 +51,48 @@ defmodule LangChain.MessageExpansion do
   The message list is entirely the tool author's: one message, or six, in
   whatever order and at whichever of the two roles the prompt needs.
 
-  ## Ending on an assistant message
+  ## Shaping the ends of the list
 
-  Anthropic reads a trailing assistant message as a prefill to continue rather
-  than a turn to answer, so an expansion whose last message is an `:assistant`
-  one becomes the opening of the model's own next sentence rather than something
-  it responds to. Ending the list with a short `:user` message that re-anchors
-  the request avoids that, and is the same shape an application hand-builds when
-  seeding a conversation before an agent starts.
+  Both ends of the message list meet something, and each has a consequence
+  worth knowing. These are prompt-shaping recommendations, not rules; nothing
+  is added or reordered on the author's behalf.
 
-  This is a prompt-shaping recommendation, not a rule. A tool that wants a
-  prefill can have one; nothing is appended on the author's behalf.
+  **Starting with a user message.** The messages follow the tool result
+  directly, and a `:tool` message reaches Anthropic as a user-role message.
+  Consecutive user-role messages are combined, so a list that starts with a
+  `:user` message is merged into the tool result's turn, which then holds the
+  tool result followed by the text. The request is valid, since Anthropic
+  requires tool results first with any text after them, but the text no longer
+  stands as a turn of its own. Starting with an `:assistant` message keeps them
+  apart.
+
+  **Ending on an assistant message.** Anthropic reads a trailing assistant
+  message as a prefill to continue rather than a turn to answer, so an expansion
+  whose last message is an `:assistant` one becomes the opening of the model's
+  own next sentence rather than something it responds to. Ending the list with a
+  short `:user` message that re-anchors the request avoids that.
+
+  Together these make `[assistant, user]` the shape for established material:
+  the material as something the model said, then a turn asking it to act. It is
+  the same shape an application hand-builds when seeding a conversation before
+  an agent starts.
+
+  ## Limitation: unresolved server tools
+
+  Do not expand from a tool that runs in the same turn as an Anthropic server
+  tool (web search, web fetch, code execution) whose result has not arrived yet,
+  or alongside a programmatic tool call that is still pending.
+
+  In that turn Anthropic requires the message answering the tool calls to hold
+  only `tool_result` blocks, and resumes the server tool on the request that
+  carries them. A list starting with a `:user` message merges text into that
+  message, which ends the turn early and, for a server tool the model called
+  directly, fails the request with a 400 naming the unresolved tool. A list
+  starting with an `:assistant` message keeps that message clean but puts turns
+  between the tool results and the server tool's resumption, which Anthropic
+  does not document as supported.
+
+  The step does not detect this case.
 
   ## Roles
 

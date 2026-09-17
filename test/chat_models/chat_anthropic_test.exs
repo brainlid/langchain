@@ -165,6 +165,78 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
     end
   end
 
+  describe "for_api/3 with messages inserted after a tool result" do
+    # A user turn, an assistant tool call, and the tool result answering it.
+    defp tool_call_turn do
+      [
+        Message.new_user!("Go!"),
+        Message.new_assistant!(%{
+          tool_calls: [
+            ToolCall.new!(%{status: :complete, call_id: "call_1", name: "load_reference"})
+          ]
+        }),
+        Message.new_tool_result!(%{
+          tool_results: [
+            ToolResult.new!(%{tool_call_id: "call_1", name: "load_reference", content: "Loaded."})
+          ]
+        })
+      ]
+    end
+
+    test "an [assistant, user] pair stays three separate turns" do
+      # The assistant message breaks the run of user-role messages, so the tool
+      # result turn carries only the tool result and the user message stands as
+      # a turn of its own. This is the shape `LangChain.MessageExpansion`
+      # recommends for established material.
+      {:ok, anthropic} = ChatAnthropic.new()
+
+      messages =
+        tool_call_turn() ++
+          [
+            Message.new_assistant!("The reference material."),
+            Message.new_user!("Use the reference above.")
+          ]
+
+      %{messages: api_messages} = ChatAnthropic.for_api(anthropic, messages, [])
+
+      assert [
+               %{"role" => "user"},
+               %{"role" => "assistant"},
+               %{"role" => "user", "content" => tool_turn},
+               %{"role" => "assistant", "content" => material},
+               %{"role" => "user", "content" => anchor}
+             ] = api_messages
+
+      assert [%{"type" => "tool_result", "tool_use_id" => "call_1"}] = tool_turn
+      assert [%{"type" => "text", "text" => "The reference material."}] = material
+      assert [%{"type" => "text", "text" => "Use the reference above."}] = anchor
+    end
+
+    test "a user message directly after a tool result merges into the tool result turn" do
+      # A `:tool` message serializes to `"role" => "user"`, and consecutive
+      # user-role messages are combined in order. Anthropic requires tool_result
+      # blocks first in a user message with any text after them, which is the
+      # order produced here, so the request is valid. The text shares the tool
+      # result's turn instead of standing as its own.
+      {:ok, anthropic} = ChatAnthropic.new()
+
+      messages = tool_call_turn() ++ [Message.new_user!("Use the reference above.")]
+
+      %{messages: api_messages} = ChatAnthropic.for_api(anthropic, messages, [])
+
+      assert [
+               %{"role" => "user"},
+               %{"role" => "assistant"},
+               %{"role" => "user", "content" => combined}
+             ] = api_messages
+
+      assert [
+               %{"type" => "tool_result", "tool_use_id" => "call_1"},
+               %{"type" => "text", "text" => "Use the reference above."}
+             ] = combined
+    end
+  end
+
   describe "for_api/3" do
     test "generates a map for an API call" do
       {:ok, anthropic} =
