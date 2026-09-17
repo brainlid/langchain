@@ -1,10 +1,14 @@
 defmodule LangChain.OpenTelemetry.MessageSerializerTest do
   use ExUnit.Case, async: true
 
+  alias LangChain.Chains.LLMChain
+  alias LangChain.Chains.LLMChain.Mode.Steps
+  alias LangChain.ChatModels.ChatOpenAI
   alias LangChain.Message
   alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
   alias LangChain.Message.ToolResult
+  alias LangChain.MessageExpansion
   alias LangChain.OpenTelemetry.MessageSerializer
 
   describe "serialize_input/1" do
@@ -118,6 +122,55 @@ defmodule LangChain.OpenTelemetry.MessageSerializerTest do
                  ]
                }
              ] == [message] |> MessageSerializer.serialize_input() |> Jason.decode!()
+    end
+
+    test "an unapplied expansion serializes the result's fallback content only" do
+      {:ok, result} =
+        MessageExpansion.expand(
+          "THE MATERIAL",
+          [Message.new_assistant!("THE MATERIAL"), Message.new_user!("Use the content above.")],
+          result_content: "Loaded 1 document."
+        )
+
+      message =
+        Message.new_tool_result!(%{
+          tool_results: [%ToolResult{result | tool_call_id: "call-1", name: "load_reference"}]
+        })
+
+      assert [%{"role" => "tool", "tool_call_id" => "call-1", "content" => "THE MATERIAL"}] ==
+               [message] |> MessageSerializer.serialize_input() |> Jason.decode!()
+    end
+
+    test "an applied expansion serializes the trimmed result followed by the inserted messages" do
+      {:ok, result} =
+        MessageExpansion.expand(
+          "THE MATERIAL",
+          [Message.new_assistant!("THE MATERIAL"), Message.new_user!("Use the content above.")],
+          result_content: "Loaded 1 document."
+        )
+
+      tool_call = ToolCall.new!(%{call_id: "call-1", name: "load_reference", arguments: %{}})
+
+      chain =
+        %{llm: ChatOpenAI.new!()}
+        |> LLMChain.new!()
+        |> LLMChain.add_message(Message.new_user!("What does the policy say?"))
+        |> LLMChain.add_message(Message.new_assistant!(%{tool_calls: [tool_call]}))
+        |> LLMChain.add_message(
+          Message.new_tool_result!(%{
+            tool_results: [%ToolResult{result | tool_call_id: "call-1", name: "load_reference"}]
+          })
+        )
+
+      assert {:continue, expanded} = Steps.expand_tool_results({:continue, chain})
+
+      assert [
+               %{"role" => "user", "content" => "What does the policy say?"},
+               %{"role" => "assistant", "tool_calls" => [%{"id" => "call-1"}]},
+               %{"role" => "tool", "tool_call_id" => "call-1", "content" => "Loaded 1 document."},
+               %{"role" => "assistant", "content" => "THE MATERIAL"},
+               %{"role" => "user", "content" => "Use the content above."}
+             ] = expanded.messages |> MessageSerializer.serialize_input() |> Jason.decode!()
     end
 
     test "serializes empty list" do
