@@ -28,14 +28,17 @@ defmodule LangChain.Security.PromptTemplateSecurityTest do
   alias LangChain.Message.ContentPart
 
   @moduletag :security
+  @moduletag :tmp_dir
 
-  # A unique tmp path per test run so we can verify side-effects without
-  # colliding with anything else.
-  setup do
-    File.mkdir_p!("tmp/security_test")
-    path = "tmp/security_test/#{System.unique_integer([:positive])}.txt"
-    on_exit(fn -> File.rm_rf!("tmp/security_test") end)
-    {:ok, %{scratch: path}}
+  setup %{tmp_dir: tmp_dir} do
+    file = Path.join(tmp_dir, "reference.txt")
+    file_content = "private fixture content\n"
+    File.write!(file, file_content)
+
+    {:ok,
+     scratch: Path.join(tmp_dir, "scratch.txt"),
+     file_content: file_content,
+     file_read: "<%= File.read!(#{inspect(file)}) %>"}
   end
 
   describe "UNSAFE: template text is evaluated as Elixir (never accept untrusted template text)" do
@@ -54,13 +57,9 @@ defmodule LangChain.Security.PromptTemplateSecurityTest do
       assert String.contains?(result, "/")
     end
 
-    test "File.read!/1 reads arbitrary host files" do
-      # /etc/hostname is readable on any Linux host and has a stable shape.
-      prompt = PromptTemplate.from_template!("<%= File.read!(\"/etc/hostname\") %>")
-      result = PromptTemplate.format(prompt, %{})
-      # It's a short string ending in a newline. Just assert it's non-empty.
-      assert is_binary(result)
-      assert byte_size(result) > 0
+    test "File.read!/1 reads arbitrary host files", context do
+      prompt = PromptTemplate.from_template!(context.file_read)
+      assert PromptTemplate.format(prompt, %{}) == context.file_content
     end
 
     test "File.write!/2 creates files on disk", %{scratch: scratch} do
@@ -68,7 +67,7 @@ defmodule LangChain.Security.PromptTemplateSecurityTest do
 
       prompt =
         PromptTemplate.from_template!(
-          "<%= File.write!(\"#{scratch}\", \"pwned by template\") %>done"
+          "<%= File.write!(#{inspect(scratch)}, \"pwned by template\") %>done"
         )
 
       PromptTemplate.format(prompt, %{})
@@ -134,18 +133,18 @@ defmodule LangChain.Security.PromptTemplateSecurityTest do
   end
 
   describe "SAFE: untrusted data in assigns is NOT re-evaluated" do
-    test "EEx syntax inside an assign value is returned as a literal string" do
+    test "EEx syntax inside an assign value is returned as a literal string", context do
       # Developer writes the template (trusted). User supplies @name (untrusted).
       prompt = PromptTemplate.from_template!("Hello <%= @name %>!")
 
       # Attempted injection via the assign value.
-      payload = "<%= File.read!(\"/etc/hostname\") %>"
+      payload = context.file_read
 
       result = PromptTemplate.format(prompt, %{name: payload})
 
       # The payload is returned VERBATIM — EEx does not re-evaluate assigns.
       assert result == "Hello #{payload}!"
-      refute result =~ "/etc/hostname\n"
+      refute result =~ context.file_content
     end
 
     test "assigns containing code-like strings are inert" do
@@ -162,7 +161,8 @@ defmodule LangChain.Security.PromptTemplateSecurityTest do
                "<%= File.read!(\"/etc/passwd\") %>|System.cmd(\"whoami\", [])|<% raise \"boom\" %>"
     end
 
-    test "format_composed/3: raw-string composed_of values are inserted as strings, not re-evaluated" do
+    test "format_composed/3: raw-string composed_of values are inserted as strings, not re-evaluated",
+         context do
       full =
         PromptTemplate.from_template!("intro: <%= @intro %>\nbody: <%= @body %>")
 
@@ -171,7 +171,7 @@ defmodule LangChain.Security.PromptTemplateSecurityTest do
         PromptTemplate.format_composed(
           full,
           %{
-            intro: "<%= File.read!(\"/etc/hostname\") %>",
+            intro: context.file_read,
             body: "<%= 2 + 2 %>"
           },
           %{}
@@ -179,26 +179,24 @@ defmodule LangChain.Security.PromptTemplateSecurityTest do
 
       # Both composed_of values are inserted literally.
       assert result ==
-               "intro: <%= File.read!(\"/etc/hostname\") %>\nbody: <%= 2 + 2 %>"
+               "intro: #{context.file_read}\nbody: <%= 2 + 2 %>"
     end
 
-    test "format_composed/3: a PromptTemplate sub-template's output is still treated as a string in the outer render" do
+    test "format_composed/3: a PromptTemplate sub-template's output is still treated as a string in the outer render",
+         context do
       full = PromptTemplate.from_template!("outer(<%= @inner %>)")
 
       # The INNER template is developer-written, so it evaluates (that's expected).
       # The inner result is then inserted as a STRING into the outer template and
       # is NOT re-evaluated.
-      # Inner template produces the literal text `<%= File.read!("/etc/hostname") %>`
-      # by wrapping it in a plain EEx string expression.
-      inner_text = ~S[<%= ~s(<%= File.read!("/etc/hostname") %>) %>]
-      inner = PromptTemplate.from_template!(inner_text)
+      inner = PromptTemplate.from_template!("<%= @file_read %>")
 
       result =
-        PromptTemplate.format_composed(full, %{inner: inner}, %{})
+        PromptTemplate.format_composed(full, %{inner: inner}, %{file_read: context.file_read})
 
       # The inner rendered to that literal; the outer inserted it as a string.
       # No file was read — the inserted string was not re-evaluated by the outer.
-      assert result == ~S[outer(<%= File.read!("/etc/hostname") %>)]
+      assert result == "outer(#{context.file_read})"
     end
   end
 
@@ -213,24 +211,19 @@ defmodule LangChain.Security.PromptTemplateSecurityTest do
     # per rendered template. Assign values are inserted into the output as
     # plain strings and are never re-parsed as EEx.
 
-    test "prose with an embedded EEx payload is inserted verbatim" do
+    test "prose with an embedded EEx payload is inserted verbatim", context do
       # Developer-authored template — trusted.
       prompt =
         PromptTemplate.from_template!("Assistant, the user said: <%= @user_message %>")
 
       # User-supplied text — hostile.
-      hostile =
-        ~s|My name is John. My host is <%= File.read!("/etc/hostname") %>|
+      hostile = "My name is John. File contents: #{context.file_read}"
 
       result = PromptTemplate.format(prompt, %{user_message: hostile})
 
       # The payload is returned as a plain string — NOT evaluated.
-      assert result ==
-               ~s|Assistant, the user said: My name is John. My host is <%= File.read!("/etc/hostname") %>|
-
-      # Sanity: the real /etc/hostname value is NOT in the result.
-      real_hostname = File.read!("/etc/hostname") |> String.trim()
-      refute String.contains?(result, "host is #{real_hostname}")
+      assert result == "Assistant, the user said: #{hostile}"
+      refute String.contains?(result, context.file_content)
     end
 
     test "prose with `<% … %>` (non-printing) EEx tag is inserted verbatim" do
@@ -243,7 +236,7 @@ defmodule LangChain.Security.PromptTemplateSecurityTest do
       assert result == ~s|User: hello <% raise "boom" %> world|
     end
 
-    test "to_messages! with hostile user input in assigns is inert" do
+    test "to_messages! with hostile user input in assigns is inert", context do
       # Mirrors the real call pattern used by LLMChain / routing_chain /
       # data_extraction_chain where a user's text is passed as an assign.
       templates = [
@@ -254,45 +247,40 @@ defmodule LangChain.Security.PromptTemplateSecurityTest do
         PromptTemplate.new!(%{role: :user, text: "<%= @input %>"})
       ]
 
-      hostile =
-        ~s|Hi. <%= File.read!("/etc/hostname") %> <%= System.get_env("PATH") %>|
+      hostile = "Hi. #{context.file_read} <%= System.get_env(\"PATH\") %>"
 
       [sys, usr] = PromptTemplate.to_messages!(templates, %{input: hostile})
 
       assert %Message{role: :system} = sys
       assert %Message{role: :user} = usr
       assert extract_text(usr) == hostile
+      refute extract_text(usr) =~ context.file_content
       refute extract_text(usr) =~ "bin:"
     end
 
-    test "multi-pass through format_composed does not cause re-evaluation" do
+    test "multi-pass through format_composed does not cause re-evaluation", context do
       # `format_composed/3` renders the inner templates first, then renders the
       # outer template with those results as assigns. Confirm that even when the
       # inner render intentionally produces EEx-looking output, the outer pass
       # treats it as a string.
       outer = PromptTemplate.from_template!("outer:<%= @a %>|<%= @b %>")
 
-      # Inner template whose rendered output contains `<%= File.read!(...) %>`
-      # as a literal. We construct it by producing the EEx-looking string via a
-      # plain string expression inside the inner template.
-      inner_literal_template =
-        PromptTemplate.from_template!(~S[<%= ~s(<%= File.read!("/etc/hostname") %>) %>])
+      inner_literal_template = PromptTemplate.from_template!("<%= @file_read %>")
 
       result =
         PromptTemplate.format_composed(
           outer,
           %{
             a: inner_literal_template,
-            b: ~s|prose with <%= File.read!("/etc/hostname") %>|
+            b: "prose with #{context.file_read}"
           },
-          %{}
+          %{file_read: context.file_read}
         )
 
       assert result ==
-               ~S[outer:<%= File.read!("/etc/hostname") %>|prose with <%= File.read!("/etc/hostname") %>]
+               "outer:#{context.file_read}|prose with #{context.file_read}"
 
-      real_hostname = File.read!("/etc/hostname") |> String.trim()
-      refute String.contains?(result, real_hostname)
+      refute String.contains?(result, context.file_content)
     end
   end
 
