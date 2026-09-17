@@ -406,15 +406,6 @@ defmodule LangChain.ChatModels.ChatDeepSeek do
     |> Utils.conditionally_add_to_map("tool_calls", Enum.map(tool_calls, &for_api(model, &1)))
   end
 
-  def for_api(%_{} = model, %Message{role: :user, content: content} = msg)
-      when is_list(content) do
-    %{
-      "role" => msg.role,
-      "content" => Enum.map(content, &for_api(model, &1))
-    }
-    |> Utils.conditionally_add_to_map("name", msg.name)
-  end
-
   def for_api(%_{} = _model, %ToolResult{type: :function} = result) do
     # a ToolResult becomes a stand-alone %Message{role: :tool} response.
     %{
