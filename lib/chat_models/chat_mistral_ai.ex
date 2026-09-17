@@ -249,7 +249,6 @@ defmodule LangChain.ChatModels.ChatMistralAI do
       when is_list(tool_calls) do
     content =
       case msg.content do
-        content when is_binary(content) -> content
         content when is_list(content) -> ContentPart.parts_to_string(content)
         nil -> nil
       end
