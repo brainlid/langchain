@@ -1,5 +1,53 @@
 # Changelog
 
+## v0.14.1
+
+A tool can now expand its result into conversation messages, placing material
+into the conversation as established turns rather than as tool output.
+`ChatOpenAIResponses` gains OpenAI's prompt caching controls.
+
+No breaking changes.
+
+### Added
+
+- **Tool results can expand into conversation messages.** A tool returns a
+  `LangChain.MessageExpansion`, built with `MessageExpansion.expand/3`, that
+  asks for `:user` and `:assistant` messages to be inserted into the
+  conversation before the next LLM call, and for its own result to be trimmed
+  to a short summary once they are in. The tool supplies the plain result as
+  well, which the model reads under any mode that does not apply expansions.
+  The `:while_needs_response` mode applies them, and custom modes can compose
+  `LLMChain.Mode.Steps.expand_tool_results/2`. The expansion is virtual on
+  `ToolResult`, so a restored conversation does not insert the same messages
+  twice. The moduledoc covers how to shape the message list for Anthropic and a
+  limitation around unresolved server tools.
+  https://github.com/brainlid/langchain/pull/656
+  https://github.com/brainlid/langchain/pull/657
+- **Prompt caching on `ChatOpenAIResponses`.** New `prompt_cache_key` and
+  `prompt_cache_options` fields, plus a `prompt_cache_breakpoint` option on
+  text, image and file `ContentPart`s (including those in tool results) to mark
+  explicit cache breakpoints. https://github.com/brainlid/langchain/pull/653
+
+### Changed
+
+- `LLMChain.replace_tool_result/3` also updates `exchanged_messages` and
+  `last_message`, so all of the chain's views of the conversation agree on what
+  the tool returned. https://github.com/brainlid/langchain/pull/656
+- CI lint runs on Elixir 1.20 / OTP 29. Unreachable `for_api` clauses that
+  Elixir 1.20 warns about were removed from `ChatOpenAI`, `ChatDeepSeek`,
+  `ChatOrq` and `ChatMistralAI`. https://github.com/brainlid/langchain/pull/658
+
+### Fixed
+
+- `ChatOpenAIResponses` sends tool results with multiple content parts, or with
+  content part options, instead of raising a `MatchError`.
+  https://github.com/brainlid/langchain/pull/653
+- OpenTelemetry `gen_ai.input.messages` serializes each tool result as its own
+  tool message with its `tool_call_id` and LLM-visible content.
+  https://github.com/brainlid/langchain/pull/652
+- Prompt template security tests run portably across environments.
+  https://github.com/brainlid/langchain/pull/654
+
 ## v0.14.0
 
 OpenAI-compatible servers are reachable with more of their own API. A
