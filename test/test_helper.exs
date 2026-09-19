@@ -32,6 +32,7 @@ Mimic.copy(LangChain.Utils.AwsEventstreamDecoder)
 
 Mimic.copy(Req)
 Mimic.copy(LangChain.ChatModels.ChatOpenAI)
+Mimic.copy(LangChain.ChatModels.ChatOpenAIResponses)
 Mimic.copy(LangChain.ChatModels.ChatAnthropic)
 Mimic.copy(LangChain.ChatModels.ChatMistralAI)
 Mimic.copy(LangChain.ChatModels.ChatBumblebee)

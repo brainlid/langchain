@@ -263,6 +263,22 @@ defmodule LangChain.ChatModels.ChatModel do
 
   defp json_response_format?(_), do: false
 
+  @doc """
+  Returns whether a chat model module natively supports requesting
+  structured JSON output, i.e. whether its bare struct defines both
+  `:json_schema` and `:json_response` fields. This reflects what the *type*
+  supports, not whether a given instance currently has those fields
+  configured — use `output_type/1` for that.
+
+  Takes the chat model module, not a struct instance — pass `llm.__struct__`
+  when starting from a configured struct.
+  """
+  @spec supports_json_output?(module()) :: boolean()
+  def supports_json_output?(module) when is_atom(module) do
+    pure = struct(module)
+    Map.has_key?(pure, :json_schema) and Map.has_key?(pure, :json_response)
+  end
+
   # Request endpoint URL for `server.address`/`server.port`, when the model exposes
   # one under the conventional `:endpoint` field.
   @spec endpoint(struct() | nil) :: String.t() | nil
