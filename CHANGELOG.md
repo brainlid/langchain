@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`ChatLiteLLM` for the LiteLLM AI gateway.** LiteLLM is a self-hosted
+  gateway that puts one OpenAI-compatible endpoint in front of 100+ providers,
+  adding centralized cost tracking, budgets, rate limiting, fallbacks, and load
+  balancing. The module defaults to a gateway running locally on port 4000,
+  treats `:model` as an opaque routing string so provider-prefixed names and
+  gateway aliases pass through untouched, and makes the API key optional since
+  a gateway started without a master key serves unauthenticated requests.
+  `ChatLiteLLM.list_models/1` discovers what the gateway is actually serving,
+  and `:extra_body` passes gateway-specific routing controls through. Supports
+  streaming, tool calling, JSON and JSON-schema response formats, and reasoning
+  content.
+
 ## v0.14.1
 
 A tool can now expand its result into conversation messages, placing material

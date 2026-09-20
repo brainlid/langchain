@@ -21,6 +21,7 @@ Elixir LangChain enables Elixir applications to integrate AI services and self-h
 - **Mistral** - Mistral AI models
 - **Perplexity** - Perplexity AI models
 - **orq.ai** - orq.ai Deployments API
+- **LiteLLM** - Self-hosted AI gateway fronting 100+ providers with cost tracking, budgets, fallbacks, and load balancing
 - **Bumblebee** - Self-hosted models via Nx (Llama, Mistral, Zephyr)
 - **ReqLLM** - Multi-provider adapter via the `req_llm` library (Anthropic, OpenAI, Gemini, Groq, Ollama, AWS Bedrock, etc.)
 
@@ -97,6 +98,7 @@ config :langchain, openai_org_id: "YOUR_OPENAI_ORG_ID"
 
 config :langchain, :anthropic_key, System.fetch_env!("ANTHROPIC_API_KEY")
 config :langchain, :xai_api_key, System.fetch_env!("XAI_API_KEY")
+config :langchain, :litellm_key, System.fetch_env!("LITELLM_API_KEY")
 ```
 
 It's possible to use a function or a tuple to resolve the secret:
@@ -284,6 +286,55 @@ For example, if a locally running service provided that feature, the following c
   })
   |> LLMChain.add_message(Message.new_user!("Hello!"))
   |> LLMChain.run()
+```
+
+### LiteLLM Gateway Support
+
+[LiteLLM](https://docs.litellm.ai/) is a self-hosted AI gateway that puts one OpenAI-compatible endpoint in front of 100+ providers, adding centralized cost tracking, budgets, rate limiting, fallbacks, and load balancing. `ChatLiteLLM` talks to it directly.
+
+```elixir
+alias LangChain.ChatModels.ChatLiteLLM
+alias LangChain.Chains.LLMChain
+alias LangChain.Message
+
+# Defaults to a gateway running locally on port 4000.
+{:ok, updated_chain} =
+  %{llm: ChatLiteLLM.new!(%{model: "gpt-4o-mini"})}
+  |> LLMChain.new!()
+  |> LLMChain.add_message(Message.new_user!("Why is the sky blue?"))
+  |> LLMChain.run()
+```
+
+The `model` is passed through to the gateway untouched, so it can be a plain name, a provider-prefixed name, or an alias configured in the gateway's `model_list`. Switching providers is a one-line change with no other code differences:
+
+```elixir
+ChatLiteLLM.new!(%{
+  endpoint: "https://litellm.internal.example.com/v1/chat/completions",
+  api_key: System.get_env("LITELLM_API_KEY"),
+  model: "anthropic/claude-sonnet-4-5",
+  stream: true
+})
+```
+
+Because the set of reachable models is whatever the gateway operator configured, it is discovered rather than hardcoded:
+
+```elixir
+{:ok, model_ids} = ChatLiteLLM.list_models(ChatLiteLLM.new!(%{model: "gpt-4o-mini"}))
+```
+
+The API key is optional: a gateway started without a master key serves unauthenticated requests. When set, it is the gateway's master or virtual key, not an upstream provider key, since upstream credentials live server-side in the gateway's own configuration.
+
+```elixir
+config :langchain, :litellm_key, System.fetch_env!("LITELLM_API_KEY")
+```
+
+Gateway-specific routing controls that have no dedicated field can be passed through with `:extra_body`:
+
+```elixir
+ChatLiteLLM.new!(%{
+  model: "gpt-4o-mini",
+  extra_body: %{"fallbacks" => ["claude-sonnet-4-5"], "tags" => ["team-a"]}
+})
 ```
 
 ### Cloudflare Workers AI
