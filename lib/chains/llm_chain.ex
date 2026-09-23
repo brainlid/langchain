@@ -460,7 +460,9 @@ defmodule LangChain.Chains.LLMChain do
   1. Sends the chain's messages and tools to the LLM
   2. Processes the LLM's response (message or streaming deltas)
   3. Adds the response to the chain's messages
-  4. Sets `needs_response` based on whether tool calls are pending
+  4. Sets `needs_response` based on whether the model's turn is still open:
+     tool calls are pending, or the assistant message is narration only (see
+     `LangChain.Message.narration?/1`)
 
   Returns `{:ok, updated_chain}` or `{:error, chain, reason}`.
 
@@ -509,6 +511,8 @@ defmodule LangChain.Chains.LLMChain do
     and only the failed `ToolCall` until it succeeds or exceeds the
     `max_retry_count`. In essence, once we have a successful response from the
     LLM, we don't return any more to it and don't want any further responses.
+    An assistant message that is narration only is not a response, so the LLM
+    is called again. Bounded by `:max_runs`, which defaults to 25.
 
   - `mode: :while_needs_response` - (for interactive chats that make
     `ToolCalls`) Repeatedly evaluates functions and submits to the LLM so long
@@ -517,6 +521,14 @@ defmodule LangChain.Chains.LLMChain do
     are evaluated, the `ToolResult` messages are returned to the LLM giving it
     an opportunity to use the `ToolResult` information in an assistant response
     message. In essence, this mode always gives the LLM the last word.
+
+    An assistant message whose text is entirely narration (the model saying
+    what it is about to do, see `LangChain.Message.narration?/1`) leaves the
+    turn open, so the LLM is called again rather than the run ending on it.
+
+    The loop is bounded by `:max_runs`, the number of LLM calls allowed in one
+    run. It defaults to 25. When exceeded, a
+    `%LangChainError{type: "exceeded_max_runs"}` is returned.
 
   - `mode: :step` - (for step-by-step execution control) Executes one step of
     the chain: makes an LLM call, processes the message, executes any tool
@@ -1432,6 +1444,8 @@ defmodule LangChain.Chains.LLMChain do
       cond do
         new_message.role in [:user, :tool] -> true
         Message.is_tool_call?(new_message) -> true
+        # The model narrated what it is about to do and has not answered.
+        Message.narration?(new_message) -> true
         new_message.role in [:system, :assistant] -> false
       end
 

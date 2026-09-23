@@ -61,7 +61,11 @@ defmodule LangChain.MixProject do
       {:ex_doc, "~> 0.40", only: :dev, runtime: false},
       {:mimic, "~> 1.8", only: :test},
       {:dotenvy, "~> 1.1"},
-      {:req_llm, ">= 1.6.0", optional: true},
+      # 1.11.0 is the first release that decodes and re-encodes the assistant
+      # `phase` the OpenAI Responses API puts on each message item. Below it,
+      # `LangChain.ChatModels.ChatReqLLM` has nothing to read the narration
+      # marker from and nothing that would send it back.
+      {:req_llm, ">= 1.11.0", optional: true},
       {:sobelow, "~> 0.14", only: [:dev, :test], runtime: false, warn_if_outdated: true},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:mix_audit, "~> 2.1", only: [:dev, :test], runtime: false}

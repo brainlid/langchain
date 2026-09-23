@@ -40,3 +40,7 @@ my_docs/
 
 # Dialyzer PLT files
 /priv/plts/
+
+# Scratch output from the live Responses phase capture test. The curated
+# fixtures beside it are committed; these are whatever the last run produced.
+/test/fixtures/openai_phase/captures/

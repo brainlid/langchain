@@ -1,0 +1,147 @@
+{
+  "safety_identifier": null,
+  "store": false,
+  "error": null,
+  "created_at": 1790120323,
+  "presence_penalty": 0.0,
+  "status": "completed",
+  "tool_usage": {
+    "image_gen": {
+      "input_tokens": 0,
+      "input_tokens_details": {
+        "image_tokens": 0,
+        "text_tokens": 0
+      },
+      "output_tokens": 0,
+      "output_tokens_details": {
+        "image_tokens": 0,
+        "text_tokens": 0
+      },
+      "total_tokens": 0
+    },
+    "web_search": {
+      "num_requests": 0
+    }
+  },
+  "max_tool_calls": null,
+  "instructions": null,
+  "billing": {
+    "payer": "developer"
+  },
+  "prompt_cache_retention": "24h",
+  "completed_at": 1790120325,
+  "temperature": 1.0,
+  "text": {
+    "format": {
+      "type": "text"
+    },
+    "verbosity": "medium"
+  },
+  "parallel_tool_calls": true,
+  "tool_choice": "auto",
+  "frequency_penalty": 0.0,
+  "top_logprobs": 0,
+  "reasoning": {
+    "context": "current_turn",
+    "effort": "none",
+    "mode": "standard",
+    "summary": null
+  },
+  "usage": {
+    "input_tokens": 175,
+    "input_tokens_details": {
+      "cache_write_tokens": 0,
+      "cached_tokens": 0
+    },
+    "output_tokens": 209,
+    "output_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "total_tokens": 384
+  },
+  "access_programs": null,
+  "incomplete_details": null,
+  "model": "gpt-5.4-2026-03-05",
+  "truncation": "disabled",
+  "metadata": {},
+  "service_tier": "default",
+  "id": "resp_0779f49b6049e939016ab3118356f087d0bb2c89f7b1056f32",
+  "top_p": 0.98,
+  "user": null,
+  "prompt_cache_key": null,
+  "moderation": null,
+  "object": "response",
+  "background": false,
+  "previous_response_id": null,
+  "max_output_tokens": null,
+  "output": [
+    {
+      "content": [
+        {
+          "annotations": [],
+          "logprobs": [],
+          "text": "You want me to figure out why the deployment failed by checking several likely failure points, and give you a concise diagnosis.\n\nPlan:\n1. Inspect the deployment state to see the top-level failure condition.\n2. Check recent events for scheduling, image, probe, or config errors.\n3. Inspect pod logs for runtime failures if pods started at all.\n4. Inspect image details in case the failure is related to pulling or image configuration.\n5. Synthesize the findings into the most likely root cause and next steps.\n\nProgress 1/5: inspecting the main deployment, events, pod logs, and image details in parallel.",
+          "type": "output_text"
+        }
+      ],
+      "id": "msg_0779f49b6049e939016ab31183df0c87d0a54fd963b1f73fdb",
+      "phase": "commentary",
+      "role": "assistant",
+      "status": "completed",
+      "type": "message"
+    },
+    {
+      "arguments": "{\"resource\":\"deployment\"}",
+      "call_id": "call_htp4R6NurhPSK0NX7AopEVAj",
+      "id": "fc_0779f49b6049e939016ab31185769087d0962b9ac6e57e54c3",
+      "name": "inspect_resource",
+      "status": "completed",
+      "type": "function_call"
+    },
+    {
+      "arguments": "{\"resource\":\"events\"}",
+      "call_id": "call_aScCS8tTwZBp9JFyuI0qwLi1",
+      "id": "fc_0779f49b6049e939016ab3118576a487d0963e04179775e0a8",
+      "name": "inspect_resource",
+      "status": "completed",
+      "type": "function_call"
+    },
+    {
+      "arguments": "{\"resource\":\"pod_logs\"}",
+      "call_id": "call_8XbJ8V7pSWBJdAhAuDMmF0Io",
+      "id": "fc_0779f49b6049e939016ab3118576ac87d0ac97c2614cb491b1",
+      "name": "inspect_resource",
+      "status": "completed",
+      "type": "function_call"
+    },
+    {
+      "arguments": "{\"resource\":\"image\"}",
+      "call_id": "call_zr3wwL3kQ4GTjea80kyDAnIZ",
+      "id": "fc_0779f49b6049e939016ab3118576b487d0a12159582cd11c62",
+      "name": "inspect_resource",
+      "status": "completed",
+      "type": "function_call"
+    }
+  ],
+  "tools": [
+    {
+      "description": "Inspect one named resource belonging to the failed deployment and return its current details.",
+      "name": "inspect_resource",
+      "output_schema": null,
+      "parameters": {
+        "properties": {
+          "resource": {
+            "description": "The resource to inspect, such as \"deployment\", \"pod_logs\", \"events\", or \"image\".",
+            "type": "string"
+          }
+        },
+        "required": [
+          "resource"
+        ],
+        "type": "object"
+      },
+      "strict": false,
+      "type": "function"
+    }
+  ]
+}

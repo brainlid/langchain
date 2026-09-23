@@ -437,6 +437,124 @@ defmodule LangChain.MessageTest do
     end
   end
 
+  describe "narration?/1" do
+    test "true when every text part is narration" do
+      msg =
+        Message.new_assistant!(%{
+          content: [
+            ContentPart.narration!("Checking."),
+            ContentPart.narration!("Still checking.")
+          ]
+        })
+
+      assert Message.narration?(msg)
+    end
+
+    test "true when non-text parts sit beside narration" do
+      msg =
+        Message.new_assistant!(%{
+          content: [ContentPart.thinking!("hmm"), ContentPart.narration!("Checking.")]
+        })
+
+      assert Message.narration?(msg)
+    end
+
+    test "false when narration and an answer are mixed" do
+      msg =
+        Message.new_assistant!(%{
+          content: [ContentPart.narration!("Checking."), ContentPart.answer!("Found it.")]
+        })
+
+      refute Message.narration?(msg)
+    end
+
+    test "false when narration sits beside an unmarked part" do
+      msg =
+        Message.new_assistant!(%{
+          content: [ContentPart.narration!("Checking."), ContentPart.text!("Found it.")]
+        })
+
+      refute Message.narration?(msg)
+    end
+
+    test "false when unmarked" do
+      refute Message.narration?(Message.new_assistant!(%{content: "Howdy"}))
+    end
+
+    test "false when there is no text part" do
+      refute Message.narration?(
+               Message.new_assistant!(%{content: [ContentPart.thinking!("hmm")]})
+             )
+    end
+
+    test "false with tool calls" do
+      msg =
+        Message.new_assistant!(%{
+          content: [ContentPart.narration!("Checking.")],
+          tool_calls: [ToolCall.new!(%{call_id: "call_1", name: "my_fun", arguments: nil})]
+        })
+
+      refute Message.narration?(msg)
+      assert Message.is_tool_call?(msg)
+    end
+
+    test "false for a non-assistant role" do
+      refute Message.narration?(Message.new_user!([ContentPart.narration!("Checking.")]))
+
+      msg =
+        Message.new_tool_result!(%{
+          tool_results: [ToolResult.new!(%{tool_call_id: "call_1", content: "ok"})]
+        })
+
+      refute Message.narration?(msg)
+    end
+
+    test "false for string content" do
+      refute Message.narration?(%Message{role: :assistant, content: "Checking."})
+    end
+  end
+
+  describe "answer_content/1" do
+    test "drops narration parts" do
+      msg =
+        Message.new_assistant!(%{
+          content: [ContentPart.narration!("Checking."), ContentPart.answer!(~s({"a": 1}))]
+        })
+
+      assert Message.answer_content(msg) == ~s({"a": 1})
+    end
+
+    test "joins the remaining text parts like content_to_string/1" do
+      msg =
+        Message.new_assistant!(%{
+          content: [
+            ContentPart.text!("One"),
+            ContentPart.narration!("x"),
+            ContentPart.text!("Two")
+          ]
+        })
+
+      assert Message.answer_content(msg) == "One\n\nTwo"
+    end
+
+    test "matches content_to_string/1 when there is no narration" do
+      msg = Message.new_assistant!(%{content: "Howdy"})
+      assert Message.answer_content(msg) == ContentPart.content_to_string(msg.content)
+    end
+
+    test "nil when the message is narration only or has no content" do
+      assert Message.answer_content(
+               Message.new_assistant!(%{content: [ContentPart.narration!("Checking.")]})
+             ) == nil
+
+      assert Message.answer_content(%Message{role: :assistant, content: nil}) == nil
+    end
+
+    test "returns string content as is" do
+      assert Message.answer_content(%Message{role: :assistant, content: "Hi"}) == "Hi"
+    end
+  end
+
   describe "is_tool_related?/1" do
     test "returns true when a tool call" do
       msg =

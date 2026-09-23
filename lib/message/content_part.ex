@@ -41,6 +41,30 @@ defmodule LangChain.Message.ContentPart do
     is rejected rather than converted, because turning caller-supplied strings
     into atoms would let untrusted input grow the atom table.
 
+  ## Narration and answers
+
+  Some models speak more than once in a single turn. Before calling a tool, a
+  model may say what it is about to do ("I'll check the logs first"). That text
+  is narration: a status update about work in progress, not a reply. The turn
+  is not over until the model answers.
+
+  A part records which kind of utterance it is in the `:utterance` option:
+
+  - `"narration"` - the model is describing work in progress and has more to
+    do. Build one with `narration!/1`.
+  - `"answer"` - the model is replying. Build one with `answer!/1`.
+  - `nil` (option absent) - unmarked. The provider did not say, and the part is
+    treated as an answer.
+
+  Read the marker with `utterance/1` or `narration?/1` rather than from the
+  options directly. Chat models that support the distinction set the marker on
+  the parts they decode, and send it back to the provider when the message is
+  replayed as history, because a model that sees its own narration replayed as
+  an unlabelled reply behaves worse on later turns.
+
+  `LangChain.Message.narration?/1` answers the question for a whole message,
+  and `LangChain.Chains.LLMChain` uses it to keep a turn open.
+
   ## Image mime types
 
   The `:media` option is used to specify the mime type of the image. Various
@@ -80,6 +104,11 @@ defmodule LangChain.Message.ContentPart do
   end
 
   @type t :: %ContentPart{}
+
+  @typedoc "The kind of utterance a text part holds. See \"Narration and answers\"."
+  @type utterance :: String.t()
+
+  @utterance_kinds ["narration", "answer"]
 
   @update_fields [:type, :content, :options]
   @create_fields @update_fields
@@ -153,6 +182,62 @@ defmodule LangChain.Message.ContentPart do
   def text!(content, opts \\ []) do
     new!(%{type: :text, content: content, options: opts})
   end
+
+  @doc """
+  Create a text ContentPart marked as narration: the model describing work in
+  progress rather than answering. Raises an exception if not valid.
+
+  ## Example
+
+      ContentPart.narration!("I'll check the logs first.")
+  """
+  @spec narration!(String.t()) :: t() | no_return()
+  def narration!(content), do: content |> text!() |> put_utterance("narration")
+
+  @doc """
+  Create a text ContentPart explicitly marked as an answer. Raises an exception
+  if not valid.
+  """
+  @spec answer!(String.t()) :: t() | no_return()
+  def answer!(content), do: content |> text!() |> put_utterance("answer")
+
+  @doc """
+  Mark a part as `"narration"` or `"answer"`. Any other value raises a
+  `FunctionClauseError`.
+  """
+  @spec put_utterance(t(), utterance()) :: t()
+  def put_utterance(%ContentPart{} = part, kind) when kind in @utterance_kinds do
+    %ContentPart{part | options: Keyword.put(part.options || [], :utterance, kind)}
+  end
+
+  @doc """
+  Return the part's utterance marker: `"narration"`, `"answer"`, or `nil` when
+  the part is unmarked. A value other than the two recognized strings reads as
+  `nil`.
+
+  ## Examples
+
+      iex> utterance(narration!("Looking that up."))
+      "narration"
+
+      iex> utterance(text!("Hello"))
+      nil
+  """
+  @spec utterance(t()) :: utterance() | nil
+  def utterance(%ContentPart{options: opts}) when is_list(opts) do
+    case Keyword.get(opts, :utterance) do
+      kind when kind in @utterance_kinds -> kind
+      _other -> nil
+    end
+  end
+
+  def utterance(%ContentPart{}), do: nil
+
+  @doc """
+  Return `true` when the part is marked as narration.
+  """
+  @spec narration?(t()) :: boolean()
+  def narration?(%ContentPart{} = part), do: utterance(part) == "narration"
 
   @doc """
   Create a new ContentPart that contains an image encoded as base64 data. Raises
@@ -298,6 +383,9 @@ defmodule LangChain.Message.ContentPart do
     # value
     merged_opts =
       Keyword.merge(primary_opts, new_opts, fn
+        # The utterance marker is a label, not streamed text. Every delta that
+        # carries it carries the whole value, so the latest one stands.
+        :utterance, _v1, v2 -> v2
         _k, v1, v2 when is_binary(v1) and is_binary(v2) -> v1 <> v2
         _k, _v1, v2 -> v2
       end)

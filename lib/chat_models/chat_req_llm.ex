@@ -50,6 +50,31 @@ if Code.ensure_loaded?(ReqLLM) do
           provider_opts: %{"thinking" => %{"type" => "enabled", "budget_tokens" => 2000}}
         })
 
+    ## Narration (Assistant Phase)
+
+    The OpenAI Responses API labels each assistant `message` item with a
+    `phase`: `"commentary"` for the model narrating what it is about to do,
+    often just before a tool call, and `"final_answer"` for its reply. Each
+    label becomes a marker on the text
+    `LangChain.Message.ContentPart` it belongs to, `"narration"` or
+    `"answer"` (see `LangChain.Message.ContentPart.utterance/1`). Text with no
+    label is left unmarked, which is every other provider.
+
+    A message whose text is entirely narration and has no tool calls is not an
+    answer (`LangChain.Message.narration?/1`), so
+    `LangChain.Chains.LLMChain` calls the model again to finish its turn.
+
+    The marker goes back with assistant history, because the model degrades
+    when its own commentary is replayed unlabelled. Keep it wherever the
+    conversation is stored.
+
+    How much of this a given `req_llm` reports depends on its version. When it
+    labels each content part, two items stay two parts and a streaming consumer
+    knows a part is narration from its first token. When it labels only the
+    message, the parts are rebuilt from the per-item text it reports alongside,
+    and while streaming the marker arrives with the terminal chunk, after the
+    text.
+
     ## Stream Completion
 
     A streamed turn is finished when a chunk marks the response terminal, which
@@ -113,6 +138,13 @@ if Code.ensure_loaded?(ReqLLM) do
     @behaviour ChatModel
 
     @current_config_version 1
+
+    # The OpenAI Responses API labels each assistant message item with a
+    # `phase`. These two maps are the only place that vocabulary appears; every
+    # other line reads or writes the provider-neutral marker on the content
+    # part (`LangChain.Message.ContentPart.utterance/1`).
+    @phase_to_utterance %{"commentary" => "narration", "final_answer" => "answer"}
+    @utterance_to_phase %{"narration" => "commentary", "answer" => "final_answer"}
 
     @primary_key false
     embedded_schema do
@@ -572,6 +604,38 @@ if Code.ensure_loaded?(ReqLLM) do
       {[delta], new_state}
     end
 
+    # Labelled text content. A provider that reports which output item a chunk
+    # belongs to gets one content slot per item, so two items stay two parts
+    # instead of merging into one. The narration marker rides on every chunk
+    # for the item and survives the repeated merge because `:utterance` is not
+    # concatenated like other string options.
+    defp process_stream_chunk(
+           %ReqLLM.StreamChunk{
+             type: :content,
+             text: text,
+             metadata: %{output_index: output_index} = meta
+           },
+           state
+         )
+         when is_binary(text) and text != "" do
+      {index, new_state} = get_or_assign_content_index(state, {:content, output_index})
+
+      part =
+        text
+        |> ContentPart.text!()
+        |> put_utterance_from_phase(phase_from_part_metadata(meta))
+
+      delta =
+        MessageDelta.new!(%{
+          role: :assistant,
+          content: part,
+          status: :incomplete,
+          index: index
+        })
+
+      {[delta], new_state}
+    end
+
     # Text content: get or assign a stable index for :content blocks
     defp process_stream_chunk(
            %ReqLLM.StreamChunk{type: :content, text: text},
@@ -669,6 +733,53 @@ if Code.ensure_loaded?(ReqLLM) do
       {[delta], state}
     end
 
+    # A provider version that labels the message rather than each chunk reports
+    # the label on the terminal meta chunk, after the text has streamed. Mark
+    # the text slot from there so the marker is on the assembled message and
+    # goes back with the history, even though a consumer could not know while
+    # the text arrived.
+    #
+    # The terminal chunk also carries usage, the finish reason and possibly the
+    # thinking signature, so the phase is stripped and the chunk re-dispatched
+    # rather than consumed here.
+    defp process_stream_chunk(
+           %ReqLLM.StreamChunk{type: :meta, metadata: %{phase: phase} = meta} = chunk,
+           state
+         )
+         when is_binary(phase) do
+      {deltas, new_state} =
+        process_stream_chunk(%{chunk | metadata: Map.delete(meta, :phase)}, state)
+
+      {utterance_deltas(state, phase) ++ deltas, new_state}
+    end
+
+    # A terminal chunk describing several message items reports them as
+    # `phase_items`. Text that has already streamed arrived without anything
+    # marking where one item ended, so it has merged into a single part and
+    # cannot be split back apart here.
+    #
+    # When every item carries the same phase, that merged part is wholly that
+    # phase and takes the marker. When the items disagree, the part holds both
+    # an item of narration and an item of answer, and no single marker is true
+    # of it, so it stays unmarked. A message holding an answer is not narration
+    # either way, so the loop still ends on it; what is lost is the replay
+    # label and the split.
+    defp process_stream_chunk(
+           %ReqLLM.StreamChunk{type: :meta, metadata: %{phase_items: items} = meta} = chunk,
+           state
+         )
+         when is_list(items) and items != [] do
+      meta = Map.delete(meta, :phase_items)
+
+      meta =
+        case uniform_phase(items) do
+          nil -> meta
+          phase -> Map.put(meta, :phase, phase)
+        end
+
+      process_stream_chunk(%{chunk | metadata: meta}, state)
+    end
+
     # The provider only surfaces the accumulated thinking signature in a
     # terminal meta chunk; there is no signature StreamChunk. Attach it to
     # the thinking content slot so the merged assistant message can be
@@ -733,6 +844,45 @@ if Code.ensure_loaded?(ReqLLM) do
     # All other chunks: delegate to stateless translation
     defp process_stream_chunk(chunk, state) do
       {translate_stream_chunk(chunk), state}
+    end
+
+    # The phase every item shares, or nil when they differ or any is missing.
+    defp uniform_phase(items) do
+      items
+      |> Enum.map(fn
+        %{"phase" => phase} when is_binary(phase) -> phase
+        _item -> nil
+      end)
+      |> Enum.uniq()
+      |> case do
+        [phase] when is_binary(phase) -> phase
+        _mixed -> nil
+      end
+    end
+
+    # A marker delta for the text slot, carrying no text of its own. Empty
+    # string content would be dropped before the merge, so the content is nil.
+    defp utterance_deltas(state, phase) do
+      index = Map.get(state.type_index_map, :content)
+      utterance = Map.get(@phase_to_utterance, phase)
+
+      if is_nil(index) or is_nil(utterance) do
+        []
+      else
+        part =
+          %{type: :text, content: nil}
+          |> ContentPart.new!()
+          |> ContentPart.put_utterance(utterance)
+
+        [
+          MessageDelta.new!(%{
+            role: :assistant,
+            content: part,
+            status: :incomplete,
+            index: index
+          })
+        ]
+      end
     end
 
     # Assigns a monotonic content index per chunk type. The first time a chunk type
@@ -985,12 +1135,79 @@ if Code.ensure_loaded?(ReqLLM) do
       content = lc_content_to_req_llm(msg.content)
       req_tool_calls = Enum.map(calls, &lc_tool_call_to_req_llm/1)
 
-      [%ReqLLM.Message{role: :assistant, content: content, tool_calls: req_tool_calls}]
+      [
+        %ReqLLM.Message{
+          role: :assistant,
+          content: content,
+          tool_calls: req_tool_calls,
+          metadata: assistant_phase_metadata(msg.content)
+        }
+      ]
+    end
+
+    def message_to_req_llm_messages(%Message{role: :assistant} = msg) do
+      content = lc_content_to_req_llm(msg.content)
+
+      [
+        %ReqLLM.Message{
+          role: :assistant,
+          content: content,
+          metadata: assistant_phase_metadata(msg.content)
+        }
+      ]
     end
 
     def message_to_req_llm_messages(%Message{} = msg) do
       content = lc_content_to_req_llm(msg.content)
       [%ReqLLM.Message{role: msg.role, content: content}]
+    end
+
+    # The narration marker goes back to the provider two ways at once: on each
+    # content part, and on the message. A provider version that reads only the
+    # message needs the second form; one that reads the parts produces the same
+    # items from either. A message with no marked part gets neither, so every
+    # provider behind this adapter sees the structs it has always seen.
+    #
+    # `phase_items` replaces a message's content wholesale and an entry without
+    # a phase is discarded, so a message that mixes marked and unmarked text
+    # cannot use it without losing the unmarked text. That message sends no
+    # message-level metadata: its text replays in full, and only the labels
+    # wait for the part-level form.
+    defp assistant_phase_metadata(content) when is_list(content) do
+      text_parts = Enum.filter(content, &match?(%ContentPart{type: :text}, &1))
+      utterances = Enum.map(text_parts, &ContentPart.utterance/1)
+
+      cond do
+        utterances == [] or Enum.all?(utterances, &is_nil/1) ->
+          %{}
+
+        Enum.any?(utterances, &is_nil/1) ->
+          %{}
+
+        match?([_single], Enum.uniq(utterances)) ->
+          %{phase: Map.fetch!(@utterance_to_phase, hd(utterances))}
+
+        true ->
+          %{phase_items: phase_items_for_api(text_parts)}
+      end
+    end
+
+    defp assistant_phase_metadata(_content), do: %{}
+
+    # Consecutive parts sharing a marker become one item, so the order the
+    # model produced them in is what goes back.
+    defp phase_items_for_api(text_parts) do
+      text_parts
+      |> Enum.chunk_by(&ContentPart.utterance/1)
+      |> Enum.map(fn [first | _] = group ->
+        %{
+          "phase" => Map.fetch!(@utterance_to_phase, ContentPart.utterance(first)),
+          "content" =>
+            Enum.map(group, fn part ->
+              %{"type" => "output_text", "text" => part.content || ""}
+            end)
+        }
+      end)
     end
 
     defp lc_content_to_req_llm(nil), do: []
@@ -1011,8 +1228,11 @@ if Code.ensure_loaded?(ReqLLM) do
     Returns `nil` for unsupported types (they are filtered out of the content list).
     """
     @spec content_part_to_req_llm(ContentPart.t()) :: ReqLLM.Message.ContentPart.t() | nil
-    def content_part_to_req_llm(%ContentPart{type: :text, content: text}) do
-      ReqLLM.Message.ContentPart.text(text || "")
+    def content_part_to_req_llm(%ContentPart{type: :text, content: text} = part) do
+      case Map.get(@utterance_to_phase, ContentPart.utterance(part)) do
+        nil -> ReqLLM.Message.ContentPart.text(text || "")
+        phase -> ReqLLM.Message.ContentPart.text(text || "", %{phase: phase})
+      end
     end
 
     # Anthropic refuses replayed thinking blocks that lack their original
@@ -1178,6 +1398,7 @@ if Code.ensure_loaded?(ReqLLM) do
         response.message.content
         |> translate_response_content()
         |> attach_reasoning_signature(response.message)
+        |> attach_assistant_phase(response.message)
 
       tool_calls = translate_response_tool_calls(response.message.tool_calls)
       status = translate_finish_reason(response.finish_reason)
@@ -1230,6 +1451,88 @@ if Code.ensure_loaded?(ReqLLM) do
 
     defp attach_reasoning_signature(parts, _message), do: parts
 
+    # A provider that labels its assistant message items reports the label on
+    # each text part. A provider version that reports it only on the message
+    # takes the two fallbacks below, which reconstruct what the part-level
+    # label would have said.
+    defp attach_assistant_phase(parts, %ReqLLM.Message{metadata: metadata})
+         when is_map(metadata) do
+      if Enum.any?(parts, &(ContentPart.utterance(&1) != nil)) do
+        parts
+      else
+        phase_from_message_metadata(parts, metadata)
+      end
+    end
+
+    defp attach_assistant_phase(parts, _message), do: parts
+
+    # `phase_items` holds one entry per assistant message item, each with its
+    # own text. The message's own `content` holds those same items' text joined
+    # into a single part, so the answer arrives with the preamble on the front
+    # of it. Rebuilding the parts from the items is what separates them again.
+    defp phase_from_message_metadata(parts, %{phase_items: items})
+         when is_list(items) and items != [] do
+      case Enum.flat_map(items, &phase_item_to_content_part/1) do
+        [] -> parts
+        rebuilt -> replace_text_parts(parts, rebuilt)
+      end
+    end
+
+    # A single item labels the whole message, so every text part takes its
+    # marker.
+    defp phase_from_message_metadata(parts, %{phase: phase}) when is_binary(phase) do
+      Enum.map(parts, fn
+        %ContentPart{type: :text} = part -> put_utterance_from_phase(part, phase)
+        part -> part
+      end)
+    end
+
+    defp phase_from_message_metadata(parts, _metadata), do: parts
+
+    defp phase_item_to_content_part(%{"phase" => phase, "content" => content})
+         when is_list(content) do
+      case phase_item_text(content) do
+        "" -> []
+        text -> [put_utterance_from_phase(ContentPart.text!(text), phase)]
+      end
+    end
+
+    defp phase_item_to_content_part(_item), do: []
+
+    defp phase_item_text(content) do
+      Enum.map_join(content, "", fn
+        %{"text" => text} when is_binary(text) -> text
+        _part -> ""
+      end)
+    end
+
+    # The rebuilt parts stand where the joined text part stood, so any thinking
+    # part keeps its position relative to them.
+    defp replace_text_parts(parts, rebuilt) do
+      if Enum.any?(parts, &match?(%ContentPart{type: :text}, &1)) do
+        {spliced, _seen} =
+          Enum.flat_map_reduce(parts, false, fn
+            %ContentPart{type: :text}, false -> {rebuilt, true}
+            %ContentPart{type: :text}, true -> {[], true}
+            part, seen -> {[part], seen}
+          end)
+
+        spliced
+      else
+        parts ++ rebuilt
+      end
+    end
+
+    defp phase_from_part_metadata(%{phase: phase}) when is_binary(phase), do: phase
+    defp phase_from_part_metadata(_meta), do: nil
+
+    defp put_utterance_from_phase(%ContentPart{} = part, phase) do
+      case Map.get(@phase_to_utterance, phase) do
+        nil -> part
+        utterance -> ContentPart.put_utterance(part, utterance)
+      end
+    end
+
     defp translate_response_content(nil), do: []
     defp translate_response_content([]), do: []
 
@@ -1239,8 +1542,15 @@ if Code.ensure_loaded?(ReqLLM) do
       |> Enum.reject(&is_nil/1)
     end
 
-    defp req_llm_content_part_to_lc(%ReqLLM.Message.ContentPart{type: :text, text: text}) do
-      ContentPart.text!(text || "")
+    defp req_llm_content_part_to_lc(%ReqLLM.Message.ContentPart{
+           type: :text,
+           text: text,
+           metadata: meta
+         }) do
+      text
+      |> Kernel.||("")
+      |> ContentPart.text!()
+      |> put_utterance_from_phase(phase_from_part_metadata(meta))
     end
 
     defp req_llm_content_part_to_lc(%ReqLLM.Message.ContentPart{

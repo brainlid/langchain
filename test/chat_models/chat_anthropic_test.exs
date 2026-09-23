@@ -5444,4 +5444,196 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
       assert usage.input <= max(start_usage["input_tokens"], delta_usage["input_tokens"])
     end
   end
+
+  describe "progress updates (thinking display: \"updates\")" do
+    defp updates_model do
+      ChatAnthropic.new!(%{
+        thinking: %{type: "enabled", budget_tokens: 2000, display: "updates"}
+      })
+    end
+
+    defp thinking_response(blocks) do
+      %{
+        "id" => "msg_progress",
+        "type" => "message",
+        "role" => "assistant",
+        "content" => blocks,
+        "model" => "claude-haiku-4-5",
+        "stop_reason" => "tool_use",
+        "stop_details" => nil,
+        "usage" => %{"input_tokens" => 10, "output_tokens" => 5}
+      }
+    end
+
+    test "marks a non-empty thinking block as narration" do
+      response =
+        thinking_response([
+          %{"type" => "thinking", "thinking" => "Checking the logs next.", "signature" => "SIG"}
+        ])
+
+      assert %Message{content: [part]} =
+               ChatAnthropic.do_process_response(updates_model(), response)
+
+      assert part.type == :thinking
+      assert ContentPart.utterance(part) == "narration"
+    end
+
+    test "leaves a thinking block unmarked under the default display" do
+      response =
+        thinking_response([
+          %{"type" => "thinking", "thinking" => "Reasoning about this.", "signature" => "SIG"}
+        ])
+
+      model = ChatAnthropic.new!(%{thinking: %{type: "enabled", budget_tokens: 2000}})
+
+      assert %Message{content: [part]} = ChatAnthropic.do_process_response(model, response)
+      assert ContentPart.utterance(part) == nil
+    end
+
+    test "leaves a thinking block unmarked under display summarized" do
+      response =
+        thinking_response([
+          %{"type" => "thinking", "thinking" => "A summary.", "signature" => "SIG"}
+        ])
+
+      model =
+        ChatAnthropic.new!(%{
+          thinking: %{type: "enabled", budget_tokens: 2000, display: "summarized"}
+        })
+
+      assert %Message{content: [part]} = ChatAnthropic.do_process_response(model, response)
+      assert ContentPart.utterance(part) == nil
+    end
+
+    test "reads display from a string-keyed thinking map" do
+      response =
+        thinking_response([
+          %{"type" => "thinking", "thinking" => "On it.", "signature" => "SIG"}
+        ])
+
+      model =
+        ChatAnthropic.new!(%{
+          thinking: %{"type" => "enabled", "budget_tokens" => 2000, "display" => "updates"}
+        })
+
+      assert %Message{content: [part]} = ChatAnthropic.do_process_response(model, response)
+      assert ContentPart.utterance(part) == "narration"
+    end
+
+    test "leaves an empty thinking block unmarked" do
+      response =
+        thinking_response([%{"type" => "thinking", "thinking" => "", "signature" => "SIG"}])
+
+      assert %Message{content: [part]} =
+               ChatAnthropic.do_process_response(updates_model(), response)
+
+      assert ContentPart.utterance(part) == nil
+    end
+
+    test "leaves text parts unmarked" do
+      response =
+        thinking_response([
+          %{"type" => "thinking", "thinking" => "Looking it up.", "signature" => "SIG"},
+          %{"type" => "text", "text" => "Here is the answer."}
+        ])
+
+      assert %Message{content: [thinking, text]} =
+               ChatAnthropic.do_process_response(updates_model(), response)
+
+      assert ContentPart.utterance(thinking) == "narration"
+      assert ContentPart.utterance(text) == nil
+    end
+
+    test "a message with a narration thinking part and a tool call is still a tool call" do
+      response =
+        thinking_response([
+          %{"type" => "thinking", "thinking" => "Calling the tool.", "signature" => "SIG"},
+          %{
+            "type" => "tool_use",
+            "id" => "toolu_1",
+            "name" => "get_weather",
+            "input" => %{"city" => "Paris"}
+          }
+        ])
+
+      message = ChatAnthropic.do_process_response(updates_model(), response)
+
+      assert Message.is_tool_call?(message)
+      refute Message.narration?(message)
+    end
+
+    test "a message whose only content is a narration thinking part is not narration" do
+      response =
+        thinking_response([
+          %{"type" => "thinking", "thinking" => "Thinking out loud.", "signature" => "SIG"}
+        ])
+
+      message = ChatAnthropic.do_process_response(updates_model(), response)
+
+      # narration? reads text parts. A progress update is a rendering signal,
+      # so it never decides whether the turn is over.
+      refute Message.narration?(message)
+    end
+
+    test "marks a streamed thinking block from its opening event" do
+      delta =
+        ChatAnthropic.do_process_response(updates_model(), %{
+          "type" => "content_block_start",
+          "index" => 0,
+          "content_block" => %{
+            "type" => "thinking",
+            "thinking" => "Starting the search.",
+            "signature" => ""
+          }
+        })
+
+      assert %MessageDelta{content: part} = delta
+      assert ContentPart.utterance(part) == "narration"
+    end
+
+    test "marks streamed thinking deltas and merges to one marker" do
+      model = updates_model()
+
+      deltas =
+        for text <- ["Checking ", "the logs."] do
+          ChatAnthropic.do_process_response(model, %{
+            "type" => "content_block_delta",
+            "index" => 0,
+            "delta" => %{"type" => "thinking_delta", "thinking" => text}
+          })
+        end
+
+      merged = MessageDelta.merge_deltas(deltas)
+
+      assert [part] = merged.merged_content
+      assert part.content == "Checking the logs."
+      assert ContentPart.utterance(part) == "narration"
+    end
+
+    test "leaves streamed thinking deltas unmarked under the default display" do
+      model = ChatAnthropic.new!(%{thinking: %{type: "enabled", budget_tokens: 2000}})
+
+      delta =
+        ChatAnthropic.do_process_response(model, %{
+          "type" => "content_block_delta",
+          "index" => 0,
+          "delta" => %{"type" => "thinking_delta", "thinking" => "Reasoning."}
+        })
+
+      assert %MessageDelta{content: part} = delta
+      assert ContentPart.utterance(part) == nil
+    end
+
+    test "a model with no thinking config marks nothing" do
+      response =
+        thinking_response([
+          %{"type" => "thinking", "thinking" => "Hmm.", "signature" => "SIG"}
+        ])
+
+      model = ChatAnthropic.new!(%{})
+
+      assert %Message{content: [part]} = ChatAnthropic.do_process_response(model, response)
+      assert ContentPart.utterance(part) == nil
+    end
+  end
 end

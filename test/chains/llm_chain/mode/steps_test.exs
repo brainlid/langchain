@@ -278,6 +278,21 @@ defmodule LangChain.Chains.LLMChain.Mode.StepsTest do
     end
   end
 
+  describe "reset_run_count/1" do
+    test "creates mode_state when absent", %{chain: chain} do
+      assert Steps.reset_run_count(chain).custom_context.mode_state == %{run_count: 0}
+    end
+
+    test "zeroes the count and keeps other mode_state keys", %{chain: chain} do
+      chain = LLMChain.update_custom_context(chain, %{mode_state: %{run_count: 7, other: :kept}})
+
+      assert Steps.reset_run_count(chain).custom_context.mode_state == %{
+               run_count: 0,
+               other: :kept
+             }
+    end
+  end
+
   describe "check_tool_interrupts/2" do
     test "returns continue when no tool messages", %{chain: chain} do
       assert {:continue, ^chain} = Steps.check_tool_interrupts({:continue, chain}, [])
