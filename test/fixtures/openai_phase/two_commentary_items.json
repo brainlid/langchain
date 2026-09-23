@@ -1,0 +1,169 @@
+{
+  "safety_identifier": null,
+  "store": false,
+  "error": null,
+  "created_at": 1790120310,
+  "presence_penalty": 0.0,
+  "status": "completed",
+  "tool_usage": {
+    "image_gen": {
+      "input_tokens": 0,
+      "input_tokens_details": {
+        "image_tokens": 0,
+        "text_tokens": 0
+      },
+      "output_tokens": 0,
+      "output_tokens_details": {
+        "image_tokens": 0,
+        "text_tokens": 0
+      },
+      "total_tokens": 0
+    },
+    "web_search": {
+      "num_requests": 0
+    }
+  },
+  "max_tool_calls": null,
+  "instructions": null,
+  "billing": {
+    "payer": "developer"
+  },
+  "prompt_cache_retention": "24h",
+  "completed_at": 1790120312,
+  "temperature": 1.0,
+  "text": {
+    "format": {
+      "type": "text"
+    },
+    "verbosity": "medium"
+  },
+  "parallel_tool_calls": true,
+  "tool_choice": "auto",
+  "frequency_penalty": 0.0,
+  "top_logprobs": 0,
+  "reasoning": {
+    "context": "all_turns",
+    "effort": "medium",
+    "mode": "standard",
+    "summary": null
+  },
+  "usage": {
+    "input_tokens": 215,
+    "input_tokens_details": {
+      "cache_write_tokens": 0,
+      "cached_tokens": 0
+    },
+    "output_tokens": 232,
+    "output_tokens_details": {
+      "reasoning_tokens": 23
+    },
+    "total_tokens": 447
+  },
+  "access_programs": null,
+  "incomplete_details": null,
+  "model": "gpt-5.6-terra",
+  "truncation": "disabled",
+  "metadata": {},
+  "service_tier": "default",
+  "id": "resp_04e3ca13a3938b3d016ab31175f7e887d081268b16c2942d8e",
+  "top_p": 0.98,
+  "user": null,
+  "prompt_cache_key": null,
+  "moderation": null,
+  "object": "response",
+  "background": false,
+  "previous_response_id": null,
+  "max_output_tokens": null,
+  "output": [
+    {
+      "content": [
+        {
+          "annotations": [],
+          "logprobs": [],
+          "text": "I’ll investigate the failed deployment broadly to identify the most likely root cause, checking the deployment state, pod logs, events, and image details.  \n\nPlan:\n1. Inspect the deployment configuration and rollout status.\n2. Review pod logs for application or startup errors.\n3. Check cluster events for scheduling, pull, probe, or permission failures.\n4. Inspect the image metadata/status for image-related issues.\n5. Correlate the findings and summarize the cause and recommended fix.",
+          "type": "output_text"
+        }
+      ],
+      "id": "msg_04e3ca13a3938b3d016ab31176e46487d08c7caebd0aef8457",
+      "phase": "commentary",
+      "role": "assistant",
+      "status": "completed",
+      "type": "message"
+    },
+    {
+      "content": [],
+      "encrypted_content": "gAAAAABqsxF49IHKVWDbBwUpHCzU46UIA-fPm4Ze_kjGd23ozq5autK_STIZ3xj-uAcNeVxnzSKqYOQoe_R2jJKOehQOxcHoAMZPtLO7XE_cplYwrWJVX7yvDCVKJEmb_3OUCsoja2NTDRORlfm5fy2hGZ61HBg2NWM808eaTVR3ZLJ1TqK_JbzZ1gBf1MnNnJ8UZBjBtcmJwIdardVdeOdlpRBi5HboraFA-8t773O3v4xAll4op3iTCksrYm2sKRC4dZfKFChBtgDXoUVJ6yKNEpcGOGFf8M3g4aUcWgAC2QxWjop-etWmjguNrLnxH9Yyl_7go8N1cJbutbQwaaHe1Du-WYXgHWTQplUpXeVMAgY9opxyh6lr75otXEn7NVpnQKvFlQKAZ2WFsBp2Sd-gd-d_1PitTW-HBkPYha8jjizH-qX15Hr57E8BNN5Vzodz_ja_FA80Gtb-pefjQsRTNNRU9zzcrBs-FF1w4Ha-Id02Cmykdvv7mfZJpb93B1MGDmOKULhgoLf9jE4OoBkenveb8GNF1wJ_QN1KjjbaP85ycrHcItiuowKUsTlyrdL7g03DwTdoDHRbQHqzYilCAuT1-uq3BWckKOUeQROf_pveUz6EnjF0DZcP7XM484j5j2nkS-pTX9RfyjmqLMqhbbND_FrzfhIr4TJol2phH5e9ddoo4tEYG73lJsj4CUfikqZLNo4epVrs7k6xvlZoTP_4SiwKVhLISRBsAdSzPafhwdu3gV-DnPOL0VBI_OlygycFfCkaGXGU31-UUD5fEqSEhPRsa8EDMsBvHH4IDQzhKJTGptILPqq6zIGCkPm6wmlqdXBvzoOdHzpYfY9ucMr1G4X44SJqq5rTOfgO_4lGcjMiWTJfHRXdbnMWeFWC1Z1x8x4iqIBA9EkaXw9Hh7GRgxhDBJbODwuhwt5aTL4thCHMTPZLj1ncLojXciN_gPV_ygwzKLL2ktEygIlsSs6hZPRbeiXsdj8g4UF3LFrJI9a4GQPV29whraTtNTg3mmJ34kEZSt9B1bUzsa5Fj7atWLqM5EjFG2h6h43YC8fb2b0sAzcB9G7Axw7VVRz3PouoOR8nja4w_DevdACnYEtGpItuQ8MGMCf0kFHAe4h-DAjYAlDKHYaT15Y2W-ajFYWpYgrMsbequjtndRj1tlnxGP2LRAPIiA0Im7vEEp-s-jVJo8xq-JT0p9St1P1HMasrgMiZHuDwFqAts9X0HtEudkPbCTHXQuVTwBy1vYLg3gKTeqEAQudcICTfnlJDePzVTa2vlTR2hoTKuyVjiLzBWBW2SZLBRDU6coaIhdndY1Bwfzc=",
+      "id": "rs_04e3ca13a3938b3d016ab31177d8f487d0b6a894b8f54467cd",
+      "summary": [],
+      "type": "reasoning"
+    },
+    {
+      "content": [
+        {
+          "annotations": [],
+          "logprobs": [],
+          "text": "**Progress 1/5 — gathering the deployment, runtime, event, and image evidence in parallel.**",
+          "type": "output_text"
+        }
+      ],
+      "id": "msg_04e3ca13a3938b3d016ab31178389c87d08443ffb51cbb3a00",
+      "phase": "commentary",
+      "role": "assistant",
+      "status": "completed",
+      "type": "message"
+    },
+    {
+      "arguments": "{\"resource\":\"deployment\"}",
+      "call_id": "call_oPpCt8Cz1mpEp4VqzgDRBjgT",
+      "id": "fc_04e3ca13a3938b3d016ab31178e5d087d0a13c23b974fa47e5",
+      "name": "inspect_resource",
+      "status": "completed",
+      "type": "function_call"
+    },
+    {
+      "arguments": "{\"resource\":\"pod_logs\"}",
+      "call_id": "call_Heyz1Y5rFxUZatuaGHPCI0Gw",
+      "id": "fc_04e3ca13a3938b3d016ab31178e5e087d09f58f8e15eda1f49",
+      "name": "inspect_resource",
+      "status": "completed",
+      "type": "function_call"
+    },
+    {
+      "arguments": "{\"resource\":\"events\"}",
+      "call_id": "call_fF9POUjHjES8Ls4VjB9JwyU8",
+      "id": "fc_04e3ca13a3938b3d016ab31178e5ec87d08d0f1a4affb429e1",
+      "name": "inspect_resource",
+      "status": "completed",
+      "type": "function_call"
+    },
+    {
+      "arguments": "{\"resource\":\"image\"}",
+      "call_id": "call_2jv9Yn9FRLU4hWZhqRWxFng6",
+      "id": "fc_04e3ca13a3938b3d016ab31178e5f487d0a7cc5ee5978052ee",
+      "name": "inspect_resource",
+      "status": "completed",
+      "type": "function_call"
+    }
+  ],
+  "tools": [
+    {
+      "description": "Inspect one named resource belonging to the failed deployment and return its current details.",
+      "name": "inspect_resource",
+      "output_schema": null,
+      "parameters": {
+        "properties": {
+          "resource": {
+            "description": "The resource to inspect, such as \"deployment\", \"pod_logs\", \"events\", or \"image\".",
+            "type": "string"
+          }
+        },
+        "required": [
+          "resource"
+        ],
+        "type": "object"
+      },
+      "strict": false,
+      "type": "function"
+    }
+  ]
+}

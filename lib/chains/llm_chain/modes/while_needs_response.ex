@@ -10,9 +10,20 @@ defmodule LangChain.Chains.LLMChain.Modes.WhileNeedsResponse do
 
   The LLM always gets the last word after tool execution.
 
+  An assistant message that is narration only (see
+  `LangChain.Message.narration?/1`) also leaves `needs_response` true, so the
+  LLM is called again to finish its turn.
+
   Step 2 costs nothing for a tool that asks for no expansion, which is every
   tool that has not opted in. It is included so that a tool carrying one is
   honoured under the standard mode rather than silently ignored.
+
+  ## Options
+
+  - `:max_runs` - Maximum LLM calls in one run before returning
+    `%LangChainError{type: "exceeded_max_runs"}`. Default: 25. The count starts
+    at 0 on every `LLMChain.run/2`, so a chain that is run again after a new
+    message gets a fresh budget.
 
   ## Usage
 
@@ -33,12 +44,21 @@ defmodule LangChain.Chains.LLMChain.Modes.WhileNeedsResponse do
   end
 
   def run(%LLMChain{} = chain, opts) do
-    chain = ensure_mode_state(chain)
+    chain
+    |> reset_run_count()
+    |> do_run(Keyword.put_new(opts, :max_runs, 25))
+  end
 
+  defp do_run(%LLMChain{needs_response: false} = chain, _opts) do
+    {:ok, chain}
+  end
+
+  defp do_run(%LLMChain{} = chain, opts) do
     {:continue, chain}
+    |> check_max_runs(opts)
     |> execute_tools()
     |> expand_tool_results(opts)
     |> call_llm()
-    |> continue_or_done(&run/2, opts)
+    |> continue_or_done(&do_run/2, opts)
   end
 end

@@ -2096,5 +2096,441 @@ if Code.ensure_loaded?(ReqLLM) do
         assert usage.raw[:total_tokens] == 120
       end
     end
+
+    # ============================================================
+    # Narration marker (assistant phase)
+    # ============================================================
+
+    describe "narration marker, inbound non-streaming" do
+      setup do
+        {:ok, model: ChatReqLLM.new!(%{model: "openai:gpt-5.4"})}
+      end
+
+      defp phased_response(content, metadata \\ %{}) do
+        struct!(
+          ReqLLM.Response,
+          Map.merge(base_response_fields(), %{
+            message: %ReqLLM.Message{
+              role: :assistant,
+              content: content,
+              tool_calls: nil,
+              metadata: metadata
+            },
+            finish_reason: :stop,
+            usage: nil
+          })
+        )
+      end
+
+      test "marks each part from its own phase metadata", %{model: model} do
+        response =
+          phased_response([
+            ReqLLM.Message.ContentPart.text("I'll check the logs.", %{phase: "commentary"}),
+            ReqLLM.Message.ContentPart.text("The job ran out of memory.", %{phase: "final_answer"})
+          ])
+
+        result = ChatReqLLM.do_process_response(model, response)
+
+        assert [narration, answer] = result.content
+        assert ContentPart.utterance(narration) == "narration"
+        assert ContentPart.utterance(answer) == "answer"
+        refute Message.narration?(result)
+        assert Message.answer_content(result) == "The job ran out of memory."
+      end
+
+      test "a part-marked commentary-only message is narration", %{model: model} do
+        response =
+          phased_response([
+            ReqLLM.Message.ContentPart.text("Let me look that up.", %{phase: "commentary"})
+          ])
+
+        result = ChatReqLLM.do_process_response(model, response)
+
+        assert Message.narration?(result)
+      end
+
+      test "message-level phase_items split the joined text back into parts", %{model: model} do
+        # The message's own content is every item's text joined, so the answer
+        # arrives with the preamble on the front of it.
+        response =
+          phased_response(
+            [ReqLLM.Message.ContentPart.text("I'll check the logs.The job ran out of memory.")],
+            %{
+              phase_items: [
+                %{
+                  "phase" => "commentary",
+                  "content" => [%{"type" => "output_text", "text" => "I'll check the logs."}]
+                },
+                %{
+                  "phase" => "final_answer",
+                  "content" => [
+                    %{"type" => "output_text", "text" => "The job ran out of memory."}
+                  ]
+                }
+              ]
+            }
+          )
+
+        result = ChatReqLLM.do_process_response(model, response)
+
+        assert [narration, answer] = result.content
+        assert narration.content == "I'll check the logs."
+        assert ContentPart.utterance(narration) == "narration"
+        assert answer.content == "The job ran out of memory."
+        assert ContentPart.utterance(answer) == "answer"
+        assert Message.answer_content(result) == "The job ran out of memory."
+      end
+
+      test "phase_items keep a thinking part in place", %{model: model} do
+        response =
+          phased_response(
+            [
+              ReqLLM.Message.ContentPart.thinking("reasoning"),
+              ReqLLM.Message.ContentPart.text("Looking.Found it.")
+            ],
+            %{
+              phase_items: [
+                %{
+                  "phase" => "commentary",
+                  "content" => [%{"type" => "output_text", "text" => "Looking."}]
+                },
+                %{
+                  "phase" => "final_answer",
+                  "content" => [%{"type" => "output_text", "text" => "Found it."}]
+                }
+              ]
+            }
+          )
+
+        result = ChatReqLLM.do_process_response(model, response)
+
+        assert [%ContentPart{type: :thinking}, narration, answer] = result.content
+        assert ContentPart.utterance(narration) == "narration"
+        assert ContentPart.utterance(answer) == "answer"
+      end
+
+      test "a single message-level phase marks every text part", %{model: model} do
+        response =
+          phased_response(
+            [ReqLLM.Message.ContentPart.text("Checking that now.")],
+            %{phase: "commentary"}
+          )
+
+        result = ChatReqLLM.do_process_response(model, response)
+
+        assert [part] = result.content
+        assert ContentPart.utterance(part) == "narration"
+        assert Message.narration?(result)
+      end
+
+      test "part-level metadata wins over message-level metadata", %{model: model} do
+        response =
+          phased_response(
+            [ReqLLM.Message.ContentPart.text("Answering.", %{phase: "final_answer"})],
+            %{phase: "commentary"}
+          )
+
+        result = ChatReqLLM.do_process_response(model, response)
+
+        assert [part] = result.content
+        assert ContentPart.utterance(part) == "answer"
+      end
+
+      test "an unlabelled response is unmarked", %{model: model} do
+        result = ChatReqLLM.do_process_response(model, req_llm_text_response("Hello there!"))
+
+        assert [part] = result.content
+        assert ContentPart.utterance(part) == nil
+        refute Message.narration?(result)
+      end
+
+      test "an unknown phase value leaves the part unmarked", %{model: model} do
+        response =
+          phased_response([ReqLLM.Message.ContentPart.text("Hi", %{phase: "something_new"})])
+
+        result = ChatReqLLM.do_process_response(model, response)
+
+        assert [part] = result.content
+        assert ContentPart.utterance(part) == nil
+      end
+    end
+
+    describe "narration marker, outbound" do
+      test "a single marked phase rides on the message and the part" do
+        msg =
+          Message.new_assistant!(%{content: [ContentPart.narration!("Checking that now.")]})
+
+        [req_msg] = ChatReqLLM.message_to_req_llm_messages(msg)
+
+        assert req_msg.metadata == %{phase: "commentary"}
+        assert [%ReqLLM.Message.ContentPart{metadata: %{phase: "commentary"}}] = req_msg.content
+      end
+
+      test "several phases become consecutive phase_items" do
+        msg =
+          Message.new_assistant!(%{
+            content: [
+              ContentPart.narration!("I'll check the logs."),
+              ContentPart.narration!(" Reading them now."),
+              ContentPart.answer!("The job ran out of memory.")
+            ]
+          })
+
+        [req_msg] = ChatReqLLM.message_to_req_llm_messages(msg)
+
+        assert %{
+                 phase_items: [
+                   %{"phase" => "commentary", "content" => commentary},
+                   %{"phase" => "final_answer", "content" => answer}
+                 ]
+               } = req_msg.metadata
+
+        assert commentary == [
+                 %{"type" => "output_text", "text" => "I'll check the logs."},
+                 %{"type" => "output_text", "text" => " Reading them now."}
+               ]
+
+        assert answer == [
+                 %{"type" => "output_text", "text" => "The job ran out of memory."}
+               ]
+      end
+
+      test "an unmarked assistant message sends no metadata and no part metadata" do
+        msg = Message.new_assistant!(%{content: [ContentPart.text!("Just an answer.")]})
+
+        [req_msg] = ChatReqLLM.message_to_req_llm_messages(msg)
+
+        assert req_msg.metadata == %{}
+        assert [%ReqLLM.Message.ContentPart{metadata: %{}}] = req_msg.content
+      end
+
+      test "a message mixing marked and unmarked text sends no message metadata" do
+        # phase_items replaces a message's content and drops an entry with no
+        # phase, so the unmarked text would vanish from the replayed history.
+        msg =
+          Message.new_assistant!(%{
+            content: [
+              ContentPart.narration!("I'll check."),
+              ContentPart.text!("Unlabelled text.")
+            ]
+          })
+
+        [req_msg] = ChatReqLLM.message_to_req_llm_messages(msg)
+
+        assert req_msg.metadata == %{}
+
+        assert [
+                 %ReqLLM.Message.ContentPart{
+                   text: "I'll check.",
+                   metadata: %{phase: "commentary"}
+                 },
+                 %ReqLLM.Message.ContentPart{text: "Unlabelled text.", metadata: %{}}
+               ] = req_msg.content
+      end
+
+      test "an assistant message with tool calls carries the marker too" do
+        msg =
+          Message.new_assistant!(%{
+            content: [ContentPart.narration!("Calling the tool.")],
+            tool_calls: [
+              ToolCall.new!(%{call_id: "call_1", name: "get_weather", arguments: %{}})
+            ]
+          })
+
+        [req_msg] = ChatReqLLM.message_to_req_llm_messages(msg)
+
+        assert req_msg.metadata == %{phase: "commentary"}
+        assert length(req_msg.tool_calls) == 1
+      end
+
+      test "a user message is untouched" do
+        [req_msg] = ChatReqLLM.message_to_req_llm_messages(Message.new_user!("hi"))
+
+        assert req_msg.metadata == %{}
+      end
+
+      test "a decoded message re-encodes to the phases it arrived with" do
+        model = ChatReqLLM.new!(%{model: "openai:gpt-5.4"})
+
+        response =
+          struct!(
+            ReqLLM.Response,
+            Map.merge(base_response_fields(), %{
+              message: %ReqLLM.Message{
+                role: :assistant,
+                content: [
+                  ReqLLM.Message.ContentPart.text("I'll check.", %{phase: "commentary"}),
+                  ReqLLM.Message.ContentPart.text("Out of memory.", %{phase: "final_answer"})
+                ],
+                tool_calls: nil,
+                metadata: %{}
+              },
+              finish_reason: :stop,
+              usage: nil
+            })
+          )
+
+        [req_msg] =
+          model
+          |> ChatReqLLM.do_process_response(response)
+          |> ChatReqLLM.message_to_req_llm_messages()
+
+        assert Enum.map(req_msg.content, & &1.metadata) == [
+                 %{phase: "commentary"},
+                 %{phase: "final_answer"}
+               ]
+
+        assert %{phase_items: [%{"phase" => "commentary"}, %{"phase" => "final_answer"}]} =
+                 req_msg.metadata
+      end
+    end
+
+    describe "narration marker, streaming" do
+      test "per-chunk labels give each output item its own marked part" do
+        model = ChatReqLLM.new!(%{model: "openai:gpt-5.4", stream: true})
+
+        chunks = [
+          %ReqLLM.StreamChunk{
+            type: :content,
+            text: "I'll check",
+            metadata: %{phase: "commentary", output_index: 0}
+          },
+          %ReqLLM.StreamChunk{
+            type: :content,
+            text: " the logs.",
+            metadata: %{phase: "commentary", output_index: 0}
+          },
+          %ReqLLM.StreamChunk{
+            type: :content,
+            text: "Out of memory.",
+            metadata: %{phase: "final_answer", output_index: 1}
+          },
+          %ReqLLM.StreamChunk{type: :meta, metadata: %{finish_reason: :stop, terminal?: true}}
+        ]
+
+        stub(ReqLLM, :stream_text, fn _model, _context, _opts ->
+          {:ok, fake_stream_response(chunks)}
+        end)
+
+        merged =
+          model
+          |> ChatReqLLM.do_api_request([Message.new_user!("why did it fail")], [], 3)
+          |> MessageDelta.merge_deltas()
+
+        assert [narration, answer] = merged.merged_content
+        assert narration.content == "I'll check the logs."
+        assert ContentPart.utterance(narration) == "narration"
+        assert answer.content == "Out of memory."
+        assert ContentPart.utterance(answer) == "answer"
+      end
+
+      test "the marker is not concatenated across the chunks of one item" do
+        model = ChatReqLLM.new!(%{model: "openai:gpt-5.4", stream: true})
+
+        chunks =
+          for text <- ["a", "b", "c"] do
+            %ReqLLM.StreamChunk{
+              type: :content,
+              text: text,
+              metadata: %{phase: "commentary", output_index: 0}
+            }
+          end ++
+            [%ReqLLM.StreamChunk{type: :meta, metadata: %{finish_reason: :stop, terminal?: true}}]
+
+        stub(ReqLLM, :stream_text, fn _model, _context, _opts ->
+          {:ok, fake_stream_response(chunks)}
+        end)
+
+        merged =
+          model
+          |> ChatReqLLM.do_api_request([Message.new_user!("hi")], [], 3)
+          |> MessageDelta.merge_deltas()
+
+        assert [part] = merged.merged_content
+        assert part.content == "abc"
+        assert ContentPart.utterance(part) == "narration"
+      end
+
+      test "a terminal phase marks the text that already streamed" do
+        model = ChatReqLLM.new!(%{model: "openai:gpt-5.4", stream: true})
+
+        chunks = [
+          %ReqLLM.StreamChunk{type: :content, text: "Checking that now."},
+          %ReqLLM.StreamChunk{
+            type: :meta,
+            metadata: %{phase: "commentary", finish_reason: :stop, terminal?: true}
+          }
+        ]
+
+        stub(ReqLLM, :stream_text, fn _model, _context, _opts ->
+          {:ok, fake_stream_response(chunks)}
+        end)
+
+        deltas = ChatReqLLM.do_api_request(model, [Message.new_user!("hi")], [], 3)
+        merged = MessageDelta.merge_deltas(deltas)
+
+        assert [part] = merged.merged_content
+        assert part.content == "Checking that now."
+        assert ContentPart.utterance(part) == "narration"
+
+        # The terminal chunk still closes the turn: stripping the phase off it
+        # must not swallow the finish delta.
+        assert List.last(deltas).status == :complete
+      end
+
+      test "a terminal phase_items list leaves the streamed text unmarked" do
+        model = ChatReqLLM.new!(%{model: "openai:gpt-5.4", stream: true})
+
+        chunks = [
+          %ReqLLM.StreamChunk{type: :content, text: "Looking.Found it."},
+          %ReqLLM.StreamChunk{
+            type: :meta,
+            metadata: %{
+              phase_items: [
+                %{"phase" => "commentary", "content" => []},
+                %{"phase" => "final_answer", "content" => []}
+              ],
+              finish_reason: :stop,
+              terminal?: true
+            }
+          }
+        ]
+
+        stub(ReqLLM, :stream_text, fn _model, _context, _opts ->
+          {:ok, fake_stream_response(chunks)}
+        end)
+
+        merged =
+          model
+          |> ChatReqLLM.do_api_request([Message.new_user!("hi")], [], 3)
+          |> MessageDelta.merge_deltas()
+
+        assert [part] = merged.merged_content
+        assert ContentPart.utterance(part) == nil
+      end
+
+      test "an unlabelled stream still merges into one part" do
+        model = ChatReqLLM.new!(%{model: @live_model, stream: true})
+
+        chunks = [
+          %ReqLLM.StreamChunk{type: :content, text: "Hello"},
+          %ReqLLM.StreamChunk{type: :content, text: " world"},
+          %ReqLLM.StreamChunk{type: :meta, metadata: %{finish_reason: :stop, terminal?: true}}
+        ]
+
+        stub(ReqLLM, :stream_text, fn _model, _context, _opts ->
+          {:ok, fake_stream_response(chunks)}
+        end)
+
+        merged =
+          model
+          |> ChatReqLLM.do_api_request([Message.new_user!("hi")], [], 3)
+          |> MessageDelta.merge_deltas()
+
+        assert [part] = merged.merged_content
+        assert part.content == "Hello world"
+        assert ContentPart.utterance(part) == nil
+      end
+    end
   end
 end

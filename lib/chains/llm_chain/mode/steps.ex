@@ -350,6 +350,20 @@ defmodule LangChain.Chains.LLMChain.Mode.Steps do
   end
 
   @doc """
+  Set `mode_state.run_count` to 0, keeping any other `mode_state` keys.
+
+  `mode_state` lives in the chain's `custom_context`, which persists when the
+  same chain is run again after a new message is added. A mode that bounds
+  each run with `check_max_runs/2` calls this once on entry, before it starts
+  recursing, so the count covers the current run rather than the chain's
+  whole history.
+  """
+  def reset_run_count(%LLMChain{} = chain) do
+    mode_state = get_in_custom_context(chain, [:mode_state]) || %{}
+    LLMChain.update_custom_context(chain, %{mode_state: Map.put(mode_state, :run_count, 0)})
+  end
+
+  @doc """
   Get the current run count from mode_state.
   """
   def get_run_count(%LLMChain{} = chain) do

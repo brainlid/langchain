@@ -534,6 +534,50 @@ defmodule LangChain.Message do
   def is_tool_call?(%Message{}), do: false
 
   @doc """
+  Return `true` when an assistant message is narration only: the model spoke
+  without answering, and its turn is not over.
+
+  That is the case when every text part is marked as narration (see
+  `LangChain.Message.ContentPart.narration?/1`) and the message has no tool
+  calls. A message with tool calls is already a turn in progress and answers
+  `false` here, so `is_tool_call?/1` stays the question that decides it. A
+  message holding both narration and an answer part has answered. An unmarked
+  message is an answer.
+  """
+  @spec narration?(t()) :: boolean()
+  def narration?(%Message{role: :assistant, tool_calls: calls})
+      when is_list(calls) and calls != [],
+      do: false
+
+  def narration?(%Message{role: :assistant, content: parts}) when is_list(parts) do
+    text_parts = Enum.filter(parts, &match?(%ContentPart{type: :text}, &1))
+    text_parts != [] and Enum.all?(text_parts, &ContentPart.narration?/1)
+  end
+
+  def narration?(%Message{}), do: false
+
+  @doc """
+  Return the message's answer text: the text parts that are not narration,
+  joined as `LangChain.Message.ContentPart.parts_to_string/2` joins them.
+  Returns `nil` when there is no answer text.
+
+  This is the text to parse when a caller expects structured output, because a
+  narration part in front of the answer would otherwise be decoded with it.
+  For a message with no narration it is the same as
+  `LangChain.Message.ContentPart.content_to_string/1`.
+  """
+  @spec answer_content(t()) :: String.t() | nil
+  def answer_content(%Message{content: content}) when is_binary(content), do: content
+
+  def answer_content(%Message{content: parts}) when is_list(parts) do
+    parts
+    |> Enum.reject(&(is_nil(&1) or ContentPart.narration?(&1)))
+    |> ContentPart.parts_to_string()
+  end
+
+  def answer_content(%Message{}), do: nil
+
+  @doc """
   Return if a Message is tool related. It may be a tool call or a tool result.
   """
   def is_tool_related?(%Message{role: :tool}), do: true

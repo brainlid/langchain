@@ -138,6 +138,29 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   a Zero Data Retention organization, which the API treats as stateless by
   definition.
 
+  ## Narration (Assistant Phase)
+
+  A response can hold several assistant `message` items, each labelled with a
+  `phase`. `"commentary"` is the model narrating what it is about to do, often
+  just before a tool call. `"final_answer"` is its reply. Each item becomes its
+  own text `LangChain.Message.ContentPart`, marked as `"narration"` or
+  `"answer"` (see `LangChain.Message.ContentPart.utterance/1`). An item with no
+  `phase` leaves its part unmarked.
+
+  When streaming, the marker is set from the item's opening
+  `response.output_item.added` event, so a consumer knows a part is narration
+  from its first token.
+
+  A message whose text is entirely narration and has no tool calls is not an
+  answer (`LangChain.Message.narration?/1`), so `LangChain.Chains.LLMChain`
+  calls the model again to finish its turn.
+
+  The marker is sent back with assistant history: consecutive parts with the
+  same marker become one `message` item carrying the matching `phase`. The
+  model degrades when its own commentary is replayed unlabelled, so the marker
+  should be kept wherever the conversation is stored. Unmarked assistant text
+  is sent as a single `message` item with no `phase`.
+
   ## Native Tools (Web Search)
 
   Open AI's Responses API also supports built-in tools. Among those, we support Web Search currently.
@@ -925,23 +948,30 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     # Assistant messages are sent back as "output" messages. They only support
     # `output_text` and `refusal` content parts, so anything else is omitted. If
     # nothing remains, the message item itself is omitted.
-    assistant_message =
-      case content_parts_for_api(model, content, :assistant) do
-        [] ->
-          []
-
-        parts ->
-          [
-            %{
-              "role" => "assistant",
-              "type" => "message",
-              "content" => parts
-            }
-          ]
-      end
+    #
+    # The API labels each message item with a `phase`, so consecutive parts
+    # sharing an utterance marker go back as one item carrying that phase, in
+    # their original order. Unmarked parts form one item with no `phase`.
+    assistant_messages =
+      content
+      |> Enum.flat_map(fn part ->
+        case content_part_for_api(model, part, :assistant) do
+          nil -> []
+          api_part -> [{ContentPart.utterance(part), api_part}]
+        end
+      end)
+      |> Enum.chunk_by(fn {utterance, _api_part} -> utterance end)
+      |> Enum.map(fn [{utterance, _} | _] = group ->
+        %{
+          "role" => "assistant",
+          "type" => "message",
+          "content" => Enum.map(group, fn {_utterance, api_part} -> api_part end)
+        }
+        |> Utils.conditionally_add_to_map("phase", phase_for_utterance(utterance))
+      end)
 
     stand_alone_items_for_api(model, content) ++
-      assistant_message ++
+      assistant_messages ++
       Enum.map(msg.tool_calls || [], &for_api(model, &1))
   end
 
@@ -1787,6 +1817,49 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     end
   end
 
+  # A message item's `phase` arrives on `response.output_item.added`, before the
+  # first `response.output_text.delta` for that item, and again on
+  # `response.output_item.done`. Both emit the utterance marker at the item's
+  # `output_index`, where it merges onto the text accumulated there, so the
+  # part is labelled from its first token.
+  #
+  # The marker part is `:text` with `nil` content. It has to be `:text` because
+  # content parts only merge with a part of their own type, and `nil` rather
+  # than `""` because an empty text part is skipped by the merge. The marker
+  # survives the repeated merge because `:utterance` is not concatenated like
+  # other string options.
+  def do_process_response(model, %{
+        "type" => event,
+        "output_index" => output_index,
+        "item" => %{"type" => "message"} = item
+      })
+      when event in ["response.output_item.added", "response.output_item.done"] do
+    case %ContentPart{type: :text, content: nil} |> put_utterance_from_phase(item["phase"]) do
+      %ContentPart{options: []} ->
+        if model.verbose_api do
+          Logger.debug("[LANGCHAIN] Skipping streaming event: #{event}")
+        end
+
+        :skip
+
+      marker ->
+        data = %{
+          content: marker,
+          status: :incomplete,
+          role: :assistant,
+          index: output_index
+        }
+
+        case MessageDelta.new(data) do
+          {:ok, delta} ->
+            delta
+
+          {:error, %Ecto.Changeset{} = changeset} ->
+            {:error, LangChainError.exception(changeset)}
+        end
+    end
+  end
+
   # This is the first event we get for a function call.
   # It is followed by a series of `response.function_call_arguments.delta` events.
   # It is followed by a `response.function_call_arguments.done` event. (which we skip)
@@ -2141,10 +2214,12 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     end)
   end
 
-  defp content_item_to_content_part_or_tool_call(%{
-         "type" => "message",
-         "content" => message_contents
-       }) do
+  defp content_item_to_content_part_or_tool_call(
+         %{
+           "type" => "message",
+           "content" => message_contents
+         } = item
+       ) do
     {text_parts, all_citations} =
       Enum.reduce(message_contents, {[], []}, fn
         %{"type" => "output_text", "text" => text} = item, {texts, citations} ->
@@ -2157,7 +2232,9 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
 
     text = Enum.join(text_parts, " ")
     part = ContentPart.text!(text)
+
     %{part | citations: all_citations}
+    |> put_utterance_from_phase(item["phase"])
   end
 
   defp content_item_to_content_part_or_tool_call(%{
@@ -2272,6 +2349,22 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     # Return empty text content to avoid breaking the flow
     ContentPart.text!("")
   end
+
+  # A message item's `phase` says whether the model is narrating work in
+  # progress (`"commentary"`) or answering (`"final_answer"`). This mapping and
+  # its inverse in `phase_for_utterance/1` are the only places the API's
+  # vocabulary appears; everything else reads the part's utterance marker.
+  defp put_utterance_from_phase(part, "commentary"),
+    do: ContentPart.put_utterance(part, "narration")
+
+  defp put_utterance_from_phase(part, "final_answer"),
+    do: ContentPart.put_utterance(part, "answer")
+
+  defp put_utterance_from_phase(part, _phase), do: part
+
+  defp phase_for_utterance("narration"), do: "commentary"
+  defp phase_for_utterance("answer"), do: "final_answer"
+  defp phase_for_utterance(_utterance), do: nil
 
   # -- OpenAI annotation parsing helpers --
 

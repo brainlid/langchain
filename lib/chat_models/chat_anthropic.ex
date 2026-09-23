@@ -135,6 +135,36 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
   As of the documentation for Claude 3.7 Sonnet, the minimum budget for thinking is 1024 tokens.
 
+  ### Progress Updates
+
+  Between tool calls the model can write a progress update: a sentence or two
+  on what it just found and what it is about to do, written for the person
+  watching rather than as reasoning. It arrives as its own `thinking` block,
+  immediately before the `tool_use` block it introduces.
+
+  `display` decides what comes back in a thinking block. Under
+  `display: "updates"`, reasoning blocks have empty text and only progress
+  updates carry any, so a thinking block with text is a progress update. Those
+  parts are marked as `"narration"`
+  (see `LangChain.Message.ContentPart.utterance/1`) and a consumer can render
+  them as a status line while keeping reasoning hidden.
+
+  It needs a beta header, which is set by the caller:
+
+      model = ChatAnthropic.new!(%{
+        model: "claude-haiku-4-5",
+        thinking: %{type: "enabled", budget_tokens: 2000, display: "updates"},
+        beta_headers: ["structured-outputs-2025-11-13", "thinking-display-updates-2026-08-18"]
+      })
+
+  Under any other `display`, a thinking block with text is reasoning and is
+  left unmarked.
+
+  The marker says what kind of utterance a part is, not whether the turn is
+  over. Turn completion is decided by `stop_reason` alone. A progress update is
+  followed by the tool call it introduces, and that is what keeps the turn
+  going.
+
   ## Structured Outputs (JSON Response)
 
   Anthropic supports [structured outputs](https://docs.anthropic.com/en/docs/build-with-claude/structured-outputs)
@@ -1220,7 +1250,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
           | [MessageDelta.t()]
           | {:error, LangChainError.t()}
   def do_process_response(
-        _model,
+        model,
         %{
           "role" => "assistant",
           "content" => contents,
@@ -1241,9 +1271,11 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       |> to_response()
 
     # reduce over the contents and accumulate to the message
-    Enum.reduce(contents, new_message, fn content, acc ->
+    contents
+    |> Enum.reduce(new_message, fn content, acc ->
       do_process_content_response(acc, content)
     end)
+    |> mark_progress_updates(model)
   end
 
   def do_process_response(_model, %{
@@ -1265,7 +1297,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     |> to_response()
   end
 
-  def do_process_response(_model, %{
+  def do_process_response(model, %{
         "type" => "content_block_start",
         "index" => index,
         "content_block" => %{
@@ -1274,10 +1306,14 @@ defmodule LangChain.ChatModels.ChatAnthropic do
           "signature" => signature
         }
       }) do
+    part =
+      %{type: :thinking, content: content, options: [signature: signature]}
+      |> ContentPart.new!()
+      |> mark_progress_update(model)
+
     %{
       role: :assistant,
-      content:
-        ContentPart.new!(%{type: :thinking, content: content, options: [signature: signature]}),
+      content: part,
       status: :incomplete,
       index: index
     }
@@ -1392,16 +1428,21 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     |> to_response()
   end
 
-  def do_process_response(_model, %{
+  def do_process_response(model, %{
         "type" => "content_block_delta",
         "index" => content_index,
         "delta" => %{"type" => "thinking_delta", "thinking" => thinking}
       }) do
+    part =
+      %{type: :thinking, content: thinking}
+      |> ContentPart.new!()
+      |> mark_progress_update(model)
+
     %{
       role: :assistant,
       status: :incomplete,
       index: content_index,
-      content: ContentPart.new!(%{type: :thinking, content: thinking})
+      content: part
     }
     |> MessageDelta.new()
     |> to_response()
@@ -1600,6 +1641,48 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   defp do_process_content_response({:error, _reason} = error, _content) do
     error
   end
+
+  # Under `thinking: %{display: "updates"}` the model writes a progress update
+  # between tool calls: a sentence for the person watching, in its own thinking
+  # block, while reasoning blocks come back with empty text. A thinking block
+  # with text is therefore a progress update, and is marked as narration so a
+  # consumer can render it as a status line rather than as reasoning.
+  #
+  # Under any other `display`, a thinking block with text is reasoning, so
+  # nothing is marked.
+  #
+  # The marker here says what an utterance is, not whether the turn is over.
+  # `LangChain.Message.narration?/1` reads text parts, so a progress update
+  # never decides the loop; a progress update is followed by the `tool_use`
+  # block it introduces, and that is what keeps the turn going.
+  defp mark_progress_updates(%Message{content: parts} = message, %ChatAnthropic{} = model)
+       when is_list(parts) do
+    %Message{message | content: Enum.map(parts, &mark_progress_update(&1, model))}
+  end
+
+  defp mark_progress_updates(result, _model), do: result
+
+  defp mark_progress_update(
+         %ContentPart{type: :thinking, content: content} = part,
+         %ChatAnthropic{} = model
+       )
+       when is_binary(content) and content != "" do
+    if progress_updates?(model) do
+      ContentPart.put_utterance(part, "narration")
+    else
+      part
+    end
+  end
+
+  defp mark_progress_update(part, _model), do: part
+
+  # `:thinking` is passed to the API as given, so it is read the same way here,
+  # accepting either key form a caller may have built it with.
+  defp progress_updates?(%ChatAnthropic{thinking: thinking}) when is_map(thinking) do
+    (Map.get(thinking, :display) || Map.get(thinking, "display")) == "updates"
+  end
+
+  defp progress_updates?(%ChatAnthropic{}), do: false
 
   defp to_response({:ok, message}), do: message
 

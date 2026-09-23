@@ -2917,8 +2917,8 @@ defmodule LangChain.Chains.LLMChainTest do
     test "a looping mode cannot re-invoke the model past the retry budget" do
       # An unterminated response used to add no message, leaving needs_response
       # true, so a looping mode re-invoked the model with the same transcript
-      # until something eventually completed. :while_needs_response has no run
-      # bound of its own, so the chain's retry budget is the only ceiling.
+      # until something eventually completed. The chain's retry budget is below
+      # the mode's :max_runs, so it is the ceiling here.
       # Mimic fails the test if a call is made beyond the expected count.
       incomplete_deltas = [
         MessageDelta.new!(%{role: :assistant, content: nil, status: :incomplete}),
@@ -3332,6 +3332,101 @@ defmodule LangChain.Chains.LLMChainTest do
 
       assert_received {:error_callback,
                        %LangChainError{message: "LLMChain cannot be run without messages"}}
+    end
+  end
+
+  describe "narration" do
+    setup do
+      chain =
+        LLMChain.new!(%{llm: ChatOpenAI.new!(%{})})
+        |> LLMChain.add_message(Message.new_user!("Check the logs."))
+
+      %{chain: chain}
+    end
+
+    defp narration_msg(text \\ "I'll check the logs."),
+      do: Message.new_assistant!(%{content: [ContentPart.narration!(text)]})
+
+    defp expect_responses(messages) do
+      Enum.each(messages, fn message ->
+        expect(ChatOpenAI, :call, fn _model, _messages, _tools -> {:ok, [message]} end)
+      end)
+    end
+
+    test "add_message/2 leaves the turn open on a narration message", %{chain: chain} do
+      assert LLMChain.add_message(chain, narration_msg()).needs_response
+      refute LLMChain.add_message(chain, Message.new_assistant!("Done.")).needs_response
+    end
+
+    test "add_message/2 closes the turn when an answer part follows narration", %{chain: chain} do
+      msg =
+        Message.new_assistant!(%{
+          content: [ContentPart.narration!("Checking."), ContentPart.answer!("Done.")]
+        })
+
+      refute LLMChain.add_message(chain, msg).needs_response
+    end
+
+    test ":while_needs_response calls the LLM again after narration", %{chain: chain} do
+      expect_responses([narration_msg(), Message.new_assistant!("The logs are clean.")])
+
+      assert {:ok, updated_chain} = LLMChain.run(chain, mode: :while_needs_response)
+
+      assert [%Message{role: :user}, narration, answer] = updated_chain.messages
+      assert Message.narration?(narration)
+      assert ContentPart.content_to_string(answer.content) == "The logs are clean."
+      assert updated_chain.last_message == answer
+      refute updated_chain.needs_response
+    end
+
+    test ":while_needs_response stops at max_runs", %{chain: chain} do
+      expect_responses([narration_msg(), narration_msg(), narration_msg()])
+
+      assert {:error, error_chain, %LangChainError{type: "exceeded_max_runs"}} =
+               LLMChain.run(chain, mode: :while_needs_response, max_runs: 3)
+
+      assert length(error_chain.exchanged_messages) == 3
+    end
+
+    test ":while_needs_response gives each run a fresh max_runs budget", %{chain: chain} do
+      expect_responses([
+        narration_msg(),
+        Message.new_assistant!("First answer."),
+        narration_msg(),
+        Message.new_assistant!("Second answer.")
+      ])
+
+      assert {:ok, chain} = LLMChain.run(chain, mode: :while_needs_response, max_runs: 2)
+
+      assert {:ok, chain} =
+               chain
+               |> LLMChain.add_message(Message.new_user!("Again."))
+               |> LLMChain.run(mode: :while_needs_response, max_runs: 2)
+
+      assert ContentPart.content_to_string(chain.last_message.content) == "Second answer."
+    end
+
+    test ":until_success calls the LLM again after narration", %{chain: chain} do
+      expect_responses([narration_msg(), Message.new_assistant!("The logs are clean.")])
+
+      assert {:ok, updated_chain} = LLMChain.run(chain, mode: :until_success)
+
+      assert [%Message{role: :user}, _narration, answer] = updated_chain.messages
+      assert ContentPart.content_to_string(answer.content) == "The logs are clean."
+    end
+
+    test ":until_success returns on an unmarked assistant message", %{chain: chain} do
+      expect_responses([Message.new_assistant!("The logs are clean.")])
+
+      assert {:ok, updated_chain} = LLMChain.run(chain, mode: :until_success)
+      assert [%Message{role: :user}, %Message{role: :assistant}] = updated_chain.messages
+    end
+
+    test ":until_success stops at max_runs", %{chain: chain} do
+      expect_responses([narration_msg(), narration_msg()])
+
+      assert {:error, _chain, %LangChainError{type: "exceeded_max_runs"}} =
+               LLMChain.run(chain, mode: :until_success, max_runs: 2)
     end
   end
 

@@ -280,6 +280,85 @@ defmodule LangChain.Message.ContentPartTest do
     end
   end
 
+  describe "utterance markers" do
+    test "narration!/1 builds a text part marked as narration" do
+      part = ContentPart.narration!("I'll check the logs.")
+      assert %ContentPart{type: :text, content: "I'll check the logs."} = part
+      assert part.options == [utterance: "narration"]
+      assert ContentPart.utterance(part) == "narration"
+      assert ContentPart.narration?(part)
+    end
+
+    test "answer!/1 builds a text part marked as an answer" do
+      part = ContentPart.answer!("Done.")
+      assert %ContentPart{type: :text, content: "Done."} = part
+      assert ContentPart.utterance(part) == "answer"
+      refute ContentPart.narration?(part)
+    end
+
+    test "put_utterance/2 keeps existing options and replaces a previous marker" do
+      part =
+        ContentPart.text!("Hi", cache_control: true)
+        |> ContentPart.put_utterance("narration")
+        |> ContentPart.put_utterance("answer")
+
+      assert part.options[:cache_control] == true
+      assert ContentPart.utterance(part) == "answer"
+    end
+
+    test "put_utterance/2 rejects an unknown kind" do
+      assert_raise FunctionClauseError, fn ->
+        ContentPart.put_utterance(ContentPart.text!("Hi"), "commentary")
+      end
+    end
+
+    test "utterance/1 is nil for an unmarked part" do
+      assert ContentPart.utterance(ContentPart.text!("Hi")) == nil
+      assert ContentPart.utterance(%ContentPart{type: :text, content: "Hi", options: nil}) == nil
+      refute ContentPart.narration?(ContentPart.text!("Hi"))
+    end
+
+    test "utterance/1 reads an unrecognized value as nil" do
+      assert ContentPart.utterance(ContentPart.text!("Hi", utterance: "bogus")) == nil
+      assert ContentPart.utterance(ContentPart.text!("Hi", utterance: :narration)) == nil
+      refute ContentPart.narration?(ContentPart.text!("Hi", utterance: :narration))
+    end
+
+    test "merge_part/2 keeps a single marker when both parts carry it" do
+      merged =
+        ContentPart.merge_part(
+          ContentPart.text!("I'll ", utterance: "narration"),
+          ContentPart.text!("check.", utterance: "narration")
+        )
+
+      assert merged.content == "I'll check."
+      assert merged.options[:utterance] == "narration"
+      assert ContentPart.narration?(merged)
+    end
+
+    test "merge_part/2 takes the marker from a delta with no text" do
+      merged =
+        ContentPart.merge_part(
+          ContentPart.text!("I'll check."),
+          ContentPart.text!("", utterance: "narration")
+        )
+
+      assert merged.content == "I'll check."
+      assert ContentPart.narration?(merged)
+    end
+
+    test "merge_part/2 still concatenates other string options" do
+      merged =
+        ContentPart.merge_part(
+          ContentPart.thinking!("a", signature: "abc", utterance: "narration"),
+          ContentPart.thinking!("b", signature: "def", utterance: "narration")
+        )
+
+      assert merged.options[:signature] == "abcdef"
+      assert merged.options[:utterance] == "narration"
+    end
+  end
+
   describe "parts_to_string/2" do
     test "joins text content parts with double newlines" do
       parts = [
