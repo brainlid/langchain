@@ -1,5 +1,69 @@
 # Changelog
 
+## v0.14.2
+
+A model that says what it is about to do, without doing it yet, no longer ends
+the run. OpenAI's Responses API labels this text with a `phase` of
+`"commentary"`. `ChatOpenAIResponses` and `ChatReqLLM` now read that label and
+send it back, and `LLMChain` keeps the turn open when an assistant message is
+only narration.
+
+No breaking changes. Two behavior changes are worth checking before upgrading:
+`:while_needs_response` and `:until_success` now stop after 25 LLM calls per
+run by default, and the optional `req_llm` dependency now requires `>= 1.11.0`.
+
+### Added
+
+- **Narration and answer markers on text `ContentPart`s.** Chat models can
+  now mark a text part as `"narration"` (the model describing work in progress)
+  or `"answer"`. Unmarked parts count as answers, so providers that do not use
+  the marker behave as before. Build and read the marker with
+  `ContentPart.narration!/1`, `answer!/1`, `put_utterance/2`, `utterance/1` and
+  `narration?/1`. `Message.narration?/1` checks a whole message, and
+  `Message.answer_content/1` returns only the answer text, which is useful when
+  parsing structured output that might have narration in front of it.
+  https://github.com/brainlid/langchain/pull/661
+- **OpenAI `phase` support in `ChatOpenAIResponses`.** Each assistant
+  `message` item becomes its own text part, marked from its `phase`. When
+  streaming, the marker is set from the first token. On replay, consecutive
+  parts with the same marker go out as one `message` item with the matching
+  `phase`, which OpenAI needs under `store: false`.
+  https://github.com/brainlid/langchain/pull/661
+- **OpenAI `phase` support in `ChatReqLLM`.** Handles both the per-part and
+  per-message shapes req_llm uses to report `phase`, including splitting joined
+  non-streaming text back into one part per item, and sends the marker back on
+  replay. https://github.com/brainlid/langchain/pull/661
+- **Progress updates in `ChatAnthropic`.** With
+  `thinking: %{display: "updates"}`, thinking blocks that contain progress text
+  are marked `"narration"` so a UI can show them as status lines. This does not
+  change when the chain stops. https://github.com/brainlid/langchain/pull/661
+- `LLMChain.Mode.Steps.reset_run_count/1` for custom modes that limit each run
+  with `check_max_runs/2`. https://github.com/brainlid/langchain/pull/661
+
+### Changed
+
+- `LLMChain.add_message/2` sets `needs_response: true` for an assistant
+  message that has no tool calls and contains only narration, so
+  `:while_needs_response` and `:until_success` call the LLM again instead of
+  ending the run on a statement of intent.
+  https://github.com/brainlid/langchain/pull/661
+- `:while_needs_response` and `:until_success` are limited by `:max_runs`
+  (default 25 LLM calls per run). When the limit is hit they return
+  `%LangChainError{type: "exceeded_max_runs"}`. The count starts over on every
+  `LLMChain.run/2`. Pass `max_runs:` to `LLMChain.run/2` to change the limit.
+  https://github.com/brainlid/langchain/pull/661
+- The optional `req_llm` dependency now requires `>= 1.11.0` (was
+  `>= 1.6.0`), the first release that decodes and re-encodes `phase`.
+  https://github.com/brainlid/langchain/pull/661
+
+### Fixed
+
+- Runs using GPT-5.3 and later models through the Responses API could stop
+  early when the model replied with commentary and no tool calls. The chain
+  returned `{:ok, chain}` with no error, but the final message was only the
+  model saying what it would do next.
+  https://github.com/brainlid/langchain/pull/661
+
 ## v0.14.1
 
 A tool can now expand its result into conversation messages, placing material
