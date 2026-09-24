@@ -447,10 +447,18 @@ defmodule LangChain.MessageDelta do
 
   defp merge_delta_metadata(%MessageDelta{} = primary, %MessageDelta{}), do: primary
 
-  # Only update status from :incomplete to a terminal state
+  # Status only moves from :incomplete to a terminal state, with one exception.
+  # A provider can finish one item of a response and then report that the
+  # response as a whole was cut off, so a truncating status replaces
+  # :complete. Nothing replaces a truncating status.
   @spec update_status(t(), t()) :: t()
   defp update_status(%MessageDelta{status: :incomplete} = primary, %MessageDelta{status: status})
        when status in [:complete, :length, :content_filtered] do
+    %MessageDelta{primary | status: status}
+  end
+
+  defp update_status(%MessageDelta{status: :complete} = primary, %MessageDelta{status: status})
+       when status in [:length, :content_filtered] do
     %MessageDelta{primary | status: status}
   end
 

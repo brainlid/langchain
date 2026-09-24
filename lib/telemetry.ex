@@ -22,6 +22,13 @@ defmodule LangChain.Telemetry do
   * `[:langchain, :chain, :execute, :start]` - Emitted when a chain execution starts
   * `[:langchain, :chain, :execute, :stop]` - Emitted when a chain execution completes
   * `[:langchain, :chain, :execute, :exception]` - Emitted when a chain execution raises an exception
+  * `[:langchain, :chain, :turn, :no_answer]` - Emitted when a run that has narrated
+    (see `LangChain.Message.narration?/1`) ends on an assistant message holding no
+    answer text, so the last thing the model said was what it would do next. The
+    run still returns `{:ok, chain}`. Metadata carries the chain's
+    `:custom_context` and, under `:message` and `:last_narration`, the shape of the
+    two messages: response id, status, `end_turn`, tool call count, and each content
+    part's type, utterance and text length. No message text is included.
   * `[:langchain, :tool, :call, :start]` - Emitted when a tool call starts
   * `[:langchain, :tool, :call, :stop]` - Emitted when a tool call completes
   * `[:langchain, :tool, :call, :exception]` - Emitted when a tool call raises an exception

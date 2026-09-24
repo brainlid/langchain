@@ -784,32 +784,21 @@ if Code.ensure_loaded?(ReqLLM) do
     # terminal meta chunk; there is no signature StreamChunk. Attach it to
     # the thinking content slot so the merged assistant message can be
     # replayed with a signed thinking block during tool loops.
+    #
+    # The same terminal chunk carries the usage and the finish reason, so the
+    # details are stripped and the chunk re-dispatched rather than consumed
+    # here. A turn whose only output is a reasoning item streams no thinking
+    # text and has no slot to sign, and still closes on its finish reason.
     defp process_stream_chunk(
-           %ReqLLM.StreamChunk{type: :meta, metadata: %{reasoning_details: details}},
+           %ReqLLM.StreamChunk{type: :meta, metadata: %{reasoning_details: details} = meta} =
+             chunk,
            state
          )
          when is_list(details) do
-      signature =
-        Enum.find_value(details, fn
-          %{signature: signature} when is_binary(signature) and signature != "" -> signature
-          _ -> nil
-        end)
+      {deltas, new_state} =
+        process_stream_chunk(%{chunk | metadata: Map.delete(meta, :reasoning_details)}, state)
 
-      thinking_index = Map.get(state.type_index_map, :thinking)
-
-      if is_nil(signature) or is_nil(thinking_index) do
-        {[], state}
-      else
-        delta =
-          MessageDelta.new!(%{
-            role: :assistant,
-            content: ContentPart.new!(%{type: :thinking, options: [signature: signature]}),
-            status: :incomplete,
-            index: thinking_index
-          })
-
-        {[delta], state}
-      end
+      {signature_deltas(state, details) ++ deltas, new_state}
     end
 
     # Tool call arg fragment: emit incomplete ToolCall delta with the partial JSON string.
@@ -844,6 +833,31 @@ if Code.ensure_loaded?(ReqLLM) do
     # All other chunks: delegate to stateless translation
     defp process_stream_chunk(chunk, state) do
       {translate_stream_chunk(chunk), state}
+    end
+
+    # A signature delta for the thinking slot, or none when there is no
+    # signature or no thinking text streamed to attach it to.
+    defp signature_deltas(state, details) do
+      signature =
+        Enum.find_value(details, fn
+          %{signature: signature} when is_binary(signature) and signature != "" -> signature
+          _ -> nil
+        end)
+
+      thinking_index = Map.get(state.type_index_map, :thinking)
+
+      if is_nil(signature) or is_nil(thinking_index) do
+        []
+      else
+        [
+          MessageDelta.new!(%{
+            role: :assistant,
+            content: ContentPart.new!(%{type: :thinking, options: [signature: signature]}),
+            status: :incomplete,
+            index: thinking_index
+          })
+        ]
+      end
     end
 
     # The phase every item shares, or nil when they differ or any is missing.
@@ -1009,13 +1023,34 @@ if Code.ensure_loaded?(ReqLLM) do
 
           true ->
             status = translate_finish_reason(meta[:finish_reason])
-            [MessageDelta.new!(%{role: :assistant, status: status, index: 0})]
+
+            [
+              %{role: :assistant, status: status, index: 0}
+              |> Utils.conditionally_add_to_map(
+                :metadata,
+                end_turn_metadata(meta[:provider_meta])
+              )
+              |> MessageDelta.new!()
+            ]
         end
 
       usage_deltas ++ finish_deltas
     end
 
     def translate_stream_chunk(_), do: []
+
+    # req_llm passes response fields it does not model through in
+    # `provider_meta`, which is where a provider's `end_turn` arrives. It states
+    # whether the model ended its turn and is read as
+    # `LangChain.Message.end_turn/1`.
+    defp end_turn_metadata(%{} = provider_meta) do
+      case Map.get(provider_meta, "end_turn", Map.get(provider_meta, :end_turn)) do
+        end_turn when is_boolean(end_turn) -> %{end_turn: end_turn}
+        _other -> nil
+      end
+    end
+
+    defp end_turn_metadata(_provider_meta), do: nil
 
     defp build_req_llm_opts(%ChatReqLLM{} = model, tools) do
       []
@@ -1400,8 +1435,8 @@ if Code.ensure_loaded?(ReqLLM) do
         |> attach_reasoning_signature(response.message)
         |> attach_assistant_phase(response.message)
 
-      tool_calls = translate_response_tool_calls(response.message.tool_calls)
       status = translate_finish_reason(response.finish_reason)
+      tool_calls = translate_response_tool_calls(response.message.tool_calls, status)
       usage = translate_usage(response.usage)
 
       %{
@@ -1410,6 +1445,7 @@ if Code.ensure_loaded?(ReqLLM) do
         tool_calls: tool_calls,
         status: status
       }
+      |> Utils.conditionally_add_to_map(:metadata, end_turn_metadata(response.provider_meta))
       |> Message.new()
       |> TokenUsage.set_wrapped(usage)
       |> unwrap_message()
@@ -1597,23 +1633,33 @@ if Code.ensure_loaded?(ReqLLM) do
       nil
     end
 
-    defp translate_response_tool_calls(nil), do: nil
-    defp translate_response_tool_calls([]), do: nil
+    defp translate_response_tool_calls(nil, _status), do: nil
+    defp translate_response_tool_calls([], _status), do: nil
 
-    defp translate_response_tool_calls(tool_calls) when is_list(tool_calls) do
+    # A response cut off by its provider can end partway through a call's
+    # arguments. In a truncated response, a call whose arguments do not parse
+    # stays incomplete with the text it received, rather than becoming a
+    # complete call with no arguments that could be run.
+    defp translate_response_tool_calls(tool_calls, status) when is_list(tool_calls) do
       Enum.map(tool_calls, fn %ReqLLM.ToolCall{
                                 id: id,
                                 function: %{name: name, arguments: args_json}
                               } ->
-        arguments =
+        {call_status, arguments} =
           case Jason.decode(args_json || "{}") do
-            {:ok, map} when is_map(map) -> map
-            _ -> %{}
+            {:ok, map} when is_map(map) ->
+              {:complete, map}
+
+            _unparsed when status in [:length, :content_filtered] ->
+              {:incomplete, args_json}
+
+            _unparsed ->
+              {:complete, %{}}
           end
 
         ToolCall.new!(%{
           type: :function,
-          status: :complete,
+          status: call_status,
           call_id: id,
           name: name,
           arguments: arguments

@@ -155,8 +155,16 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   answer (`LangChain.Message.narration?/1`), so `LangChain.Chains.LLMChain`
   calls the model again to finish its turn.
 
-  The marker is sent back with assistant history: consecutive parts with the
-  same marker become one `message` item carrying the matching `phase`. The
+  A completed response that carries `end_turn` states the turn boundary
+  outright. The value is stored as `metadata[:end_turn]` on the message
+  (`LangChain.Message.end_turn/1`) and decides whether the chain continues,
+  ahead of the narration marker. The public Responses API does not send it
+  today, so most messages have none and the narration rule applies.
+
+  The marker is sent back with assistant history, and the output items go
+  back in the order the API produced them: consecutive text parts with the
+  same marker become one `message` item carrying the matching `phase`, and a
+  reasoning item between two of them stays between them. The
   model degrades when its own commentary is replayed unlabelled, so the marker
   should be kept wherever the conversation is stored. Unmarked assistant text
   is sent as a single `message` item with no `phase`.
@@ -945,34 +953,50 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         %Message{role: :assistant, content: content} = msg
       )
       when is_list(content) do
-    # Assistant messages are sent back as "output" messages. They only support
-    # `output_text` and `refusal` content parts, so anything else is omitted. If
-    # nothing remains, the message item itself is omitted.
+    # The content parts go back as the items the API produced, in the order it
+    # produced them. A reasoning part or native tool call is its own item.
+    # Text goes back inside "output" message items, which only support
+    # `output_text` and `refusal` content parts, so anything else is omitted.
     #
-    # The API labels each message item with a `phase`, so consecutive parts
-    # sharing an utterance marker go back as one item carrying that phase, in
-    # their original order. Unmarked parts form one item with no `phase`.
-    assistant_messages =
+    # The API labels each message item with a `phase`, so consecutive text
+    # parts sharing an utterance marker go back as one item carrying that
+    # phase. Unmarked parts form one item with no `phase`. A stand-alone item
+    # between two text parts ends the message item before it, so
+    # `[commentary, reasoning, commentary]` replays as three items, not two.
+    items =
       content
       |> Enum.flat_map(fn part ->
-        case content_part_for_api(model, part, :assistant) do
-          nil -> []
-          api_part -> [{ContentPart.utterance(part), api_part}]
+        case stand_alone_item_for_api(model, part) do
+          nil ->
+            case content_part_for_api(model, part, :assistant) do
+              nil -> []
+              api_part -> [{:text, ContentPart.utterance(part), api_part}]
+            end
+
+          item ->
+            [{:item, item}]
         end
       end)
-      |> Enum.chunk_by(fn {utterance, _api_part} -> utterance end)
-      |> Enum.map(fn [{utterance, _} | _] = group ->
-        %{
-          "role" => "assistant",
-          "type" => "message",
-          "content" => Enum.map(group, fn {_utterance, api_part} -> api_part end)
-        }
-        |> Utils.conditionally_add_to_map("phase", phase_for_utterance(utterance))
+      |> Enum.chunk_by(fn
+        {:text, utterance, _api_part} -> {:text, utterance}
+        {:item, item} -> {:item, item}
+      end)
+      |> Enum.flat_map(fn
+        [{:text, utterance, _} | _] = group ->
+          [
+            %{
+              "role" => "assistant",
+              "type" => "message",
+              "content" => Enum.map(group, fn {:text, _utterance, api_part} -> api_part end)
+            }
+            |> Utils.conditionally_add_to_map("phase", phase_for_utterance(utterance))
+          ]
+
+        items ->
+          Enum.map(items, fn {:item, item} -> item end)
       end)
 
-    stand_alone_items_for_api(model, content) ++
-      assistant_messages ++
-      Enum.map(msg.tool_calls || [], &for_api(model, &1))
+    items ++ Enum.map(msg.tool_calls || [], &for_api(model, &1))
   end
 
   def for_api(
@@ -1051,18 +1075,20 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   def stand_alone_items_for_api(%ChatOpenAIResponses{} = model, content_parts)
       when is_list(content_parts) do
     Enum.flat_map(content_parts, fn part ->
-      case reasoning_item_for_api(part) do
-        nil ->
-          case native_tool_call_for_api(model, part) do
-            nil -> []
-            item -> [item]
-          end
-
-        item ->
-          [item]
+      case stand_alone_item_for_api(model, part) do
+        nil -> []
+        item -> [item]
       end
     end)
   end
+
+  # The stand-alone input item a content part represents, or `nil` when the
+  # part is not one.
+  defp stand_alone_item_for_api(%ChatOpenAIResponses{} = model, %ContentPart{} = part) do
+    reasoning_item_for_api(part) || native_tool_call_for_api(model, part)
+  end
+
+  defp stand_alone_item_for_api(%ChatOpenAIResponses{}, _part), do: nil
 
   @doc """
   Convert a content part holding a reasoning item back into the reasoning entry
@@ -1612,12 +1638,13 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
           | [MessageDelta.t()]
           | {:error, LangChainError.t()}
 
-  # Complete Response with output lists
+  # A response with its output. An `"incomplete"` response was cut off, and its
+  # message carries the reason as its status (see `response_status/1`).
   def do_process_response(
         _model,
-        %{"status" => "completed", "output" => content_items} = response
+        %{"status" => status, "output" => content_items} = response
       )
-      when is_list(content_items) do
+      when status in ["completed", "incomplete"] and is_list(content_items) do
     {content_parts, tool_calls} = content_items_to_content_parts_and_tool_calls(content_items)
 
     metadata =
@@ -1626,10 +1653,11 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         %TokenUsage{} = usage -> %{usage: usage}
       end
       |> maybe_add_response_id(response)
+      |> maybe_add_end_turn(response)
 
     Message.new!(%{
       content: content_parts,
-      status: :complete,
+      status: response_status(response),
       role: :assistant,
       tool_calls: tool_calls,
       metadata: metadata
@@ -1981,16 +2009,29 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     end
   end
 
+  # The terminal event of a streamed response. `response.incomplete` means the
+  # response was cut off, so the message closes with the reason as its status
+  # even when an earlier item's text finished and marked it complete.
   def do_process_response(_model, %{
-        "type" => "response.completed",
+        "type" => event,
         "response" => response
-      }) do
+      })
+      when event in ["response.completed", "response.incomplete"] do
     usage = get_token_usage(response)
-    metadata = %{usage: usage} |> maybe_add_response_id(response)
+
+    metadata =
+      %{usage: usage}
+      |> maybe_add_response_id(response)
+      |> maybe_add_end_turn(response)
+
+    status =
+      if event == "response.incomplete",
+        do: response_status(Map.put(response, "status", "incomplete")),
+        else: :complete
 
     data = %{
       content: "",
-      status: :complete,
+      status: status,
       role: :assistant,
       metadata: metadata
     }
@@ -2034,7 +2075,6 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     "keepalive",
     "response.created",
     "response.in_progress",
-    "response.incomplete",
     "response.output_item.added",
     "response.output_item.done",
     "response.content_part.added",
@@ -2202,6 +2242,27 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
 
   defp maybe_add_response_id(metadata, _response), do: metadata
 
+  # The message status for a response. An `"incomplete"` response stopped
+  # early: `incomplete_details.reason` is `"max_output_tokens"` when it ran out
+  # of output tokens or context, and `"content_filter"` when it was filtered.
+  defp response_status(%{"status" => "incomplete"} = response) do
+    case get_in(response, ["incomplete_details", "reason"]) do
+      "content_filter" -> :content_filtered
+      _max_output_tokens -> :length
+    end
+  end
+
+  defp response_status(_response), do: :complete
+
+  # A provider that reports whether the model ended its turn sends it as
+  # `end_turn` on the completed response. It is kept only when it is a boolean,
+  # so a missing or malformed value leaves the turn boundary to the content.
+  defp maybe_add_end_turn(metadata, %{"end_turn" => end_turn}) when is_boolean(end_turn) do
+    Map.put(metadata, :end_turn, end_turn)
+  end
+
+  defp maybe_add_end_turn(metadata, _response), do: metadata
+
   defp content_items_to_content_parts_and_tool_calls(content_items) do
     Enum.reduce(content_items, {[], []}, fn content_item, {content_parts, tool_calls} ->
       case content_item_to_content_part_or_tool_call(content_item) do
@@ -2237,15 +2298,22 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     |> put_utterance_from_phase(item["phase"])
   end
 
-  defp content_item_to_content_part_or_tool_call(%{
-         "type" => "function_call",
-         "call_id" => call_id,
-         "name" => name,
-         "arguments" => args
-       }) do
+  # A function call cut off with its response carries `"status":
+  # "incomplete"` and arguments that stop partway, so it stays an incomplete
+  # call holding the raw text rather than being parsed and run.
+  defp content_item_to_content_part_or_tool_call(
+         %{
+           "type" => "function_call",
+           "call_id" => call_id,
+           "name" => name,
+           "arguments" => args
+         } = item
+       ) do
+    status = if item["status"] == "incomplete", do: :incomplete, else: :complete
+
     case ToolCall.new(%{
            type: :function,
-           status: :complete,
+           status: status,
            name: name,
            arguments: args,
            call_id: call_id

@@ -514,6 +514,56 @@ defmodule LangChain.MessageTest do
     end
   end
 
+  describe "end_turn/1" do
+    test "reads the provider's report from metadata" do
+      assert Message.end_turn(
+               Message.new_assistant!(%{content: "Hi", metadata: %{end_turn: true}})
+             )
+
+      refute Message.end_turn(
+               Message.new_assistant!(%{content: "Hi", metadata: %{end_turn: false}})
+             )
+    end
+
+    test "nil when the provider did not report it" do
+      assert Message.end_turn(Message.new_assistant!("Hi")) == nil
+      assert Message.end_turn(Message.new_assistant!(%{content: "Hi", metadata: %{}})) == nil
+    end
+
+    test "nil for a value that is not a boolean" do
+      msg = Message.new_assistant!(%{content: "Hi", metadata: %{end_turn: "false"}})
+      assert Message.end_turn(msg) == nil
+    end
+  end
+
+  describe "continues_turn?/1" do
+    defp narration, do: Message.new_assistant!(%{content: [ContentPart.narration!("Checking.")]})
+
+    defp with_end_turn(%Message{} = msg, value), do: %Message{msg | metadata: %{end_turn: value}}
+
+    test "narration continues the turn when the provider did not report" do
+      assert Message.continues_turn?(narration())
+      refute Message.continues_turn?(Message.new_assistant!("Done."))
+    end
+
+    test "end_turn false continues the turn whatever the content" do
+      assert Message.continues_turn?(Message.new_assistant!("Done.") |> with_end_turn(false))
+
+      assert Message.continues_turn?(
+               Message.new_assistant!(%{content: []})
+               |> with_end_turn(false)
+             )
+    end
+
+    test "end_turn true ends the turn, narration included" do
+      refute Message.continues_turn?(narration() |> with_end_turn(true))
+    end
+
+    test "false for roles other than assistant" do
+      refute Message.continues_turn?(Message.new_user!("Continue."))
+    end
+  end
+
   describe "answer_content/1" do
     test "drops narration parts" do
       msg =

@@ -1,0 +1,480 @@
+{
+  "model": "gpt-5.4-2026-03-05",
+  "turns": [
+    {
+      "id": "resp_syn_01",
+      "object": "response",
+      "status": "completed",
+      "model": "gpt-5.4-2026-03-05",
+      "output": [
+        {
+          "id": "rs_syn_01",
+          "type": "reasoning",
+          "summary": [],
+          "encrypted_content": "gAAAAsyn01"
+        },
+        {
+          "id": "msg_syn_01",
+          "type": "message",
+          "status": "completed",
+          "role": "assistant",
+          "phase": "commentary",
+          "content": [
+            {
+              "type": "output_text",
+              "annotations": [],
+              "logprobs": [],
+              "text": "I'll start by pulling the recent deployments, the pod logs, and the error-rate metrics so I can line up when the failures began."
+            }
+          ]
+        },
+        {
+          "id": "fc_syn_01a",
+          "type": "function_call",
+          "status": "completed",
+          "call_id": "call_syn_01a",
+          "name": "list_deployments",
+          "arguments": "{\"service\":\"checkout\"}"
+        },
+        {
+          "id": "fc_syn_01b",
+          "type": "function_call",
+          "status": "completed",
+          "call_id": "call_syn_01b",
+          "name": "search_logs",
+          "arguments": "{\"query\":\"checkout ERROR\",\"since\":\"2h\"}"
+        },
+        {
+          "id": "fc_syn_01c",
+          "type": "function_call",
+          "status": "completed",
+          "call_id": "call_syn_01c",
+          "name": "get_metrics",
+          "arguments": "{\"metric\":\"error_rate\",\"service\":\"checkout\"}"
+        }
+      ],
+      "usage": {
+        "input_tokens": 2400,
+        "output_tokens": 180,
+        "total_tokens": 2580,
+        "output_tokens_details": {
+          "reasoning_tokens": 64
+        },
+        "input_tokens_details": {
+          "cached_tokens": 0
+        }
+      }
+    },
+    {
+      "id": "resp_syn_02",
+      "object": "response",
+      "status": "completed",
+      "model": "gpt-5.4-2026-03-05",
+      "output": [
+        {
+          "id": "rs_syn_02",
+          "type": "reasoning",
+          "summary": [],
+          "encrypted_content": "gAAAAsyn02"
+        },
+        {
+          "id": "msg_syn_02",
+          "type": "message",
+          "status": "completed",
+          "role": "assistant",
+          "phase": "commentary",
+          "content": [
+            {
+              "type": "output_text",
+              "annotations": [],
+              "logprobs": [],
+              "text": "The errors start two minutes after deploy 4812. Next I'll inspect that deployment and read the config it shipped."
+            }
+          ]
+        },
+        {
+          "id": "fc_syn_02a",
+          "type": "function_call",
+          "status": "completed",
+          "call_id": "call_syn_02a",
+          "name": "inspect_resource",
+          "arguments": "{\"resource\":\"deployment/4812\"}"
+        },
+        {
+          "id": "fc_syn_02b",
+          "type": "function_call",
+          "status": "completed",
+          "call_id": "call_syn_02b",
+          "name": "read_file",
+          "arguments": "{\"path\":\"config/checkout.yaml\"}"
+        }
+      ],
+      "usage": {
+        "input_tokens": 3100,
+        "output_tokens": 140,
+        "total_tokens": 3240,
+        "output_tokens_details": {
+          "reasoning_tokens": 40
+        },
+        "input_tokens_details": {
+          "cached_tokens": 2304
+        }
+      }
+    },
+    {
+      "id": "resp_syn_03",
+      "object": "response",
+      "status": "completed",
+      "model": "gpt-5.4-2026-03-05",
+      "output": [
+        {
+          "id": "rs_syn_03",
+          "type": "reasoning",
+          "summary": [],
+          "encrypted_content": "gAAAAsyn03"
+        },
+        {
+          "id": "msg_syn_03",
+          "type": "message",
+          "status": "completed",
+          "role": "assistant",
+          "phase": "commentary",
+          "content": [
+            {
+              "type": "output_text",
+              "annotations": [],
+              "logprobs": [],
+              "text": "The config drops the payment gateway timeout from 30s to 3s. Before I call that the cause, I want to confirm the timeouts in the logs line up with gateway calls."
+            }
+          ]
+        }
+      ],
+      "usage": {
+        "input_tokens": 3900,
+        "output_tokens": 90,
+        "total_tokens": 3990,
+        "output_tokens_details": {
+          "reasoning_tokens": 30
+        },
+        "input_tokens_details": {
+          "cached_tokens": 3072
+        }
+      }
+    },
+    {
+      "id": "resp_syn_04",
+      "object": "response",
+      "status": "completed",
+      "model": "gpt-5.4-2026-03-05",
+      "output": [
+        {
+          "id": "msg_syn_04a",
+          "type": "message",
+          "status": "completed",
+          "role": "assistant",
+          "phase": "commentary",
+          "content": [
+            {
+              "type": "output_text",
+              "annotations": [],
+              "logprobs": [],
+              "text": "Checking the gateway call timings now."
+            }
+          ]
+        },
+        {
+          "id": "rs_syn_04",
+          "type": "reasoning",
+          "summary": [],
+          "encrypted_content": "gAAAAsyn04"
+        },
+        {
+          "id": "msg_syn_04b",
+          "type": "message",
+          "status": "completed",
+          "role": "assistant",
+          "phase": "commentary",
+          "content": [
+            {
+              "type": "output_text",
+              "annotations": [],
+              "logprobs": [],
+              "text": "I'll search for gateway timeouts specifically."
+            }
+          ]
+        }
+      ],
+      "usage": {
+        "input_tokens": 4000,
+        "output_tokens": 60,
+        "total_tokens": 4060,
+        "output_tokens_details": {
+          "reasoning_tokens": 20
+        },
+        "input_tokens_details": {
+          "cached_tokens": 3840
+        }
+      }
+    },
+    {
+      "id": "resp_syn_05",
+      "object": "response",
+      "status": "completed",
+      "model": "gpt-5.4-2026-03-05",
+      "output": [
+        {
+          "id": "rs_syn_05",
+          "type": "reasoning",
+          "summary": [],
+          "encrypted_content": "gAAAAsyn05"
+        },
+        {
+          "id": "msg_syn_05",
+          "type": "message",
+          "status": "completed",
+          "role": "assistant",
+          "phase": "commentary",
+          "content": [
+            {
+              "type": "output_text",
+              "annotations": [],
+              "logprobs": [],
+              "text": "Searching the logs for gateway timeouts since the deploy."
+            }
+          ]
+        },
+        {
+          "id": "fc_syn_05a",
+          "type": "function_call",
+          "status": "completed",
+          "call_id": "call_syn_05a",
+          "name": "search_logs",
+          "arguments": "{\"query\":\"gateway timeout\",\"since\":\"2h\"}"
+        }
+      ],
+      "usage": {
+        "input_tokens": 4100,
+        "output_tokens": 70,
+        "total_tokens": 4170,
+        "output_tokens_details": {
+          "reasoning_tokens": 16
+        },
+        "input_tokens_details": {
+          "cached_tokens": 3968
+        }
+      }
+    },
+    {
+      "id": "resp_syn_06",
+      "object": "response",
+      "status": "completed",
+      "model": "gpt-5.4-2026-03-05",
+      "output": [
+        {
+          "id": "rs_syn_06",
+          "type": "reasoning",
+          "summary": [],
+          "encrypted_content": "gAAAAsyn06"
+        },
+        {
+          "id": "msg_syn_06",
+          "type": "message",
+          "status": "completed",
+          "role": "assistant",
+          "phase": "final_answer",
+          "content": [
+            {
+              "type": "output_text",
+              "annotations": [],
+              "logprobs": [],
+              "text": "Deploy 4812 lowered the payment gateway timeout from 30s to 3s. Gateway p95 latency is about 4s, so most checkout requests now time out. Restore the 30s timeout and redeploy."
+            }
+          ]
+        }
+      ],
+      "usage": {
+        "input_tokens": 4400,
+        "output_tokens": 120,
+        "total_tokens": 4520,
+        "output_tokens_details": {
+          "reasoning_tokens": 48
+        },
+        "input_tokens_details": {
+          "cached_tokens": 4096
+        }
+      }
+    }
+  ],
+  "after_narration": {
+    "reasoning_only": {
+      "object": "response",
+      "status": "completed",
+      "model": "gpt-5.4-2026-03-05",
+      "usage": {
+        "input_tokens": 4000,
+        "output_tokens": 24,
+        "total_tokens": 4024,
+        "output_tokens_details": {
+          "reasoning_tokens": 24
+        },
+        "input_tokens_details": {
+          "cached_tokens": 3840
+        }
+      },
+      "id": "resp_syn_r1",
+      "output": [
+        {
+          "id": "rs_syn_r1",
+          "type": "reasoning",
+          "summary": [],
+          "encrypted_content": "gAAAAsynr1"
+        }
+      ]
+    },
+    "empty": {
+      "object": "response",
+      "status": "completed",
+      "model": "gpt-5.4-2026-03-05",
+      "usage": {
+        "input_tokens": 4000,
+        "output_tokens": 24,
+        "total_tokens": 4024,
+        "output_tokens_details": {
+          "reasoning_tokens": 24
+        },
+        "input_tokens_details": {
+          "cached_tokens": 3840
+        }
+      },
+      "id": "resp_syn_e1",
+      "output": []
+    },
+    "unphased": {
+      "object": "response",
+      "status": "completed",
+      "model": "gpt-5.4-2026-03-05",
+      "usage": {
+        "input_tokens": 4000,
+        "output_tokens": 24,
+        "total_tokens": 4024,
+        "output_tokens_details": {
+          "reasoning_tokens": 24
+        },
+        "input_tokens_details": {
+          "cached_tokens": 3840
+        }
+      },
+      "id": "resp_syn_u1",
+      "output": [
+        {
+          "id": "msg_syn_u1",
+          "type": "message",
+          "status": "completed",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "output_text",
+              "annotations": [],
+              "logprobs": [],
+              "text": "Let me check the gateway call timings."
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "truncated": {
+    "id": "resp_syn_t1",
+    "object": "response",
+    "status": "incomplete",
+    "model": "gpt-5.4-2026-03-05",
+    "output": [
+      {
+        "id": "rs_syn_05",
+        "type": "reasoning",
+        "summary": [],
+        "encrypted_content": "gAAAAsyn05"
+      },
+      {
+        "id": "msg_syn_05",
+        "type": "message",
+        "status": "completed",
+        "role": "assistant",
+        "phase": "commentary",
+        "content": [
+          {
+            "type": "output_text",
+            "annotations": [],
+            "logprobs": [],
+            "text": "Searching the logs for gateway timeouts since the deploy."
+          }
+        ]
+      },
+      {
+        "id": "fc_syn_05a",
+        "type": "function_call",
+        "status": "incomplete",
+        "call_id": "call_syn_05a",
+        "name": "search_logs",
+        "arguments": "{\"query\":\"gatew"
+      }
+    ],
+    "usage": {
+      "input_tokens": 4100,
+      "output_tokens": 70,
+      "total_tokens": 4170,
+      "output_tokens_details": {
+        "reasoning_tokens": 16
+      },
+      "input_tokens_details": {
+        "cached_tokens": 3968
+      }
+    },
+    "incomplete_details": {
+      "reason": "max_output_tokens"
+    }
+  },
+  "truncated_after_commentary": {
+    "id": "resp_syn_t2",
+    "object": "response",
+    "status": "incomplete",
+    "model": "gpt-5.4-2026-03-05",
+    "output": [
+      {
+        "id": "rs_syn_03",
+        "type": "reasoning",
+        "summary": [],
+        "encrypted_content": "gAAAAsyn03"
+      },
+      {
+        "id": "msg_syn_03",
+        "type": "message",
+        "status": "completed",
+        "role": "assistant",
+        "phase": "commentary",
+        "content": [
+          {
+            "type": "output_text",
+            "annotations": [],
+            "logprobs": [],
+            "text": "The config drops the payment gateway timeout from 30s to 3s. Before I call that the cause, I want to confirm the timeouts in the logs line up with gateway calls."
+          }
+        ]
+      }
+    ],
+    "usage": {
+      "input_tokens": 3900,
+      "output_tokens": 90,
+      "total_tokens": 3990,
+      "output_tokens_details": {
+        "reasoning_tokens": 30
+      },
+      "input_tokens_details": {
+        "cached_tokens": 3072
+      }
+    },
+    "incomplete_details": {
+      "reason": "max_output_tokens"
+    }
+  }
+}

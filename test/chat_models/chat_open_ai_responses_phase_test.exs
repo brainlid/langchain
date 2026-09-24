@@ -292,6 +292,32 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesPhaseTest do
       assert replayed == original
     end
 
+    test "items re-encode in the order the API produced them", %{model: model} do
+      response = fixture("two_commentary_items.json")
+
+      shape = fn items ->
+        for item <- items do
+          case item do
+            %{"type" => "message"} -> {"message", item["phase"]}
+            %{"type" => "reasoning"} -> {"reasoning", item["id"]}
+            %{"type" => "function_call"} -> {"function_call", item["call_id"]}
+          end
+        end
+      end
+
+      assert [
+               {"message", "commentary"},
+               {"reasoning", _},
+               {"message", "commentary"} | _calls
+             ] = original = shape.(response["output"])
+
+      decoded = ChatOpenAIResponses.do_process_response(model, response)
+      assert shape.(ChatOpenAIResponses.for_api(model, decoded)) == original
+
+      streamed = stream_to_message(model, LangChain.ScriptedResponsesAdapter.sse(response))
+      assert shape.(ChatOpenAIResponses.for_api(model, streamed)) == original
+    end
+
     test "a streamed message re-encodes with its phase", %{model: model} do
       body = File.read!(Path.join(@fixture_dir, "commentary_with_tool_calls_stream.txt"))
       message = stream_to_message(model, body)
@@ -300,6 +326,44 @@ defmodule LangChain.ChatModels.ChatOpenAIResponsesPhaseTest do
                ChatOpenAIResponses.for_api(model, message)
 
       assert Enum.all?(calls, &(&1["type"] == "function_call"))
+    end
+  end
+
+  describe "a response cut off by max_output_tokens" do
+    # The API reports a response it stopped early with `status: "incomplete"`
+    # and the reason in `incomplete_details`. Text that finished streaming
+    # before the cut-off does not make the response complete.
+    setup do
+      response =
+        "../fixtures/openai_phase/synthesized_tool_loop.json"
+        |> Path.expand(__DIR__)
+        |> File.read!()
+        |> Jason.decode!()
+        |> Map.fetch!("truncated_after_commentary")
+
+      %{response: response}
+    end
+
+    test "decodes as :length", %{model: model, response: response} do
+      assert %Message{status: :length} = ChatOpenAIResponses.do_process_response(model, response)
+    end
+
+    test "a filtered response decodes as :content_filtered", %{model: model, response: response} do
+      filtered = %{response | "incomplete_details" => %{"reason" => "content_filter"}}
+
+      assert %Message{status: :content_filtered} =
+               ChatOpenAIResponses.do_process_response(model, filtered)
+    end
+
+    test "streams as :length", %{model: model, response: response} do
+      message = stream_to_message(model, LangChain.ScriptedResponsesAdapter.sse(response))
+
+      assert message.status == :length
+
+      assert [%ContentPart{type: :text} = part] =
+               for(%{type: :text} = p <- message.content, do: p)
+
+      assert ContentPart.narration?(part)
     end
   end
 

@@ -8,9 +8,11 @@ defmodule LangChain.Chains.LLMChain.Modes.UntilSuccess do
   - Max retry count is exceeded (error)
   - Max runs is exceeded (error)
 
-  An assistant message that is narration only (see
-  `LangChain.Message.narration?/1`) is not a response. The model has said what
-  it is about to do without doing it, so the LLM is called again.
+  An assistant message that leaves the model's turn open (see
+  `LangChain.Message.continues_turn?/1`) is not a response, so the LLM is
+  called again. That is a message the provider reported as not ending the
+  turn, or one that is narration only: the model has said what it is about to
+  do without doing it.
 
   ## Options
 
@@ -58,7 +60,7 @@ defmodule LangChain.Chains.LLMChain.Modes.UntilSuccess do
         last_message.role == :tool && !Message.tool_had_errors?(last_message) ->
           {:ok, chain}
 
-        last_message.role == :assistant and not Message.narration?(last_message) ->
+        last_message.role == :assistant and not Message.continues_turn?(last_message) ->
           {:ok, chain}
 
         true ->

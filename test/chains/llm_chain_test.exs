@@ -3344,8 +3344,12 @@ defmodule LangChain.Chains.LLMChainTest do
       %{chain: chain}
     end
 
-    defp narration_msg(text \\ "I'll check the logs."),
-      do: Message.new_assistant!(%{content: [ContentPart.narration!(text)]})
+    defp narration_msg(metadata \\ nil),
+      do:
+        Message.new_assistant!(%{
+          content: [ContentPart.narration!("I'll check the logs.")],
+          metadata: metadata
+        })
 
     defp expect_responses(messages) do
       Enum.each(messages, fn message ->
@@ -3427,6 +3431,82 @@ defmodule LangChain.Chains.LLMChainTest do
 
       assert {:error, _chain, %LangChainError{type: "exceeded_max_runs"}} =
                LLMChain.run(chain, mode: :until_success, max_runs: 2)
+    end
+
+    test "add_message/2 follows a reported end_turn over the content", %{chain: chain} do
+      open = Message.new_assistant!(%{content: "Done.", metadata: %{end_turn: false}})
+      assert LLMChain.add_message(chain, open).needs_response
+
+      closed = narration_msg(%{end_turn: true})
+      refute LLMChain.add_message(chain, closed).needs_response
+    end
+
+    test ":until_success follows a reported end_turn", %{chain: chain} do
+      expect_responses([
+        Message.new_assistant!(%{content: "Looking.", metadata: %{end_turn: false}}),
+        narration_msg(%{end_turn: true})
+      ])
+
+      assert {:ok, updated_chain} = LLMChain.run(chain, mode: :until_success)
+      assert [%Message{role: :user}, _open, closed] = updated_chain.messages
+      assert Message.end_turn(closed)
+    end
+  end
+
+  describe "a truncated response" do
+    setup do
+      chain =
+        LLMChain.new!(%{llm: ChatOpenAI.new!(%{})})
+        |> LLMChain.add_message(Message.new_user!("Summarize the logs."))
+
+      %{chain: chain}
+    end
+
+    defp respond_with(message) do
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools -> {:ok, [message]} end)
+    end
+
+    test "ends the run as response_truncated, keeping the message", %{chain: chain} do
+      respond_with(Message.new_assistant!(%{content: "The logs show", status: :length}))
+
+      assert {:error, error_chain, %LangChainError{type: "response_truncated"}} =
+               LLMChain.run(chain)
+
+      assert %Message{role: :assistant, status: :length} = error_chain.last_message
+    end
+
+    test "ends a looping mode rather than continuing", %{chain: chain} do
+      truncated =
+        Message.new_assistant!(%{
+          content: [ContentPart.narration!("I'll check the logs.")],
+          status: :length
+        })
+
+      respond_with(truncated)
+
+      assert {:error, _chain, %LangChainError{type: "response_truncated"}} =
+               LLMChain.run(chain, mode: :while_needs_response)
+    end
+
+    test "a filtered response ends as content_filtered", %{chain: chain} do
+      respond_with(Message.new_assistant!(%{content: "", status: :content_filtered}))
+
+      assert {:error, _chain, %LangChainError{type: "content_filtered"}} =
+               LLMChain.run(chain, mode: :until_success)
+    end
+
+    test "fires on_llm_error", %{chain: chain} do
+      test_pid = self()
+
+      chain =
+        LLMChain.add_callback(chain, %{
+          on_llm_error: fn _chain, reason -> send(test_pid, {:llm_error, reason.type}) end
+        })
+
+      respond_with(Message.new_assistant!(%{content: "The logs show", status: :length}))
+
+      assert {:error, _chain, _reason} = LLMChain.run(chain)
+      assert_received {:llm_error, "response_truncated"}
     end
   end
 
