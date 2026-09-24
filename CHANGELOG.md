@@ -1,5 +1,64 @@
 # Changelog
 
+## v0.14.3
+
+Follow-up to the OpenAI `phase` work in v0.14.2. A provider can now say
+outright whether the model ended its turn, a response the provider cut off
+ends the run as an error instead of looking like a finished answer, and
+`ChatOpenAIResponses` replays reasoning items in the order the API produced
+them.
+
+No API breaking changes. One behavior change is worth checking before
+upgrading: an assistant response with status `:length` or `:content_filtered`
+now makes `LLMChain.run/2` return `{:error, chain, %LangChainError{}}` with
+type `"response_truncated"` or `"content_filtered"`. The partial message is
+still added to the chain, and its tool calls are not executed.
+
+### Added
+
+- `Message.end_turn/1` and `Message.continues_turn?/1`. A provider that
+  reports `end_turn` on its response has it stored as `metadata[:end_turn]`,
+  and it decides whether the turn continues. Without it, a narration-only
+  message keeps the turn open as before. `LLMChain`, `:while_needs_response`
+  and `:until_success` now use `continues_turn?/1`.
+  https://github.com/brainlid/langchain/pull/663
+- `ChatOpenAIResponses` and `ChatReqLLM` read `end_turn` from the response
+  (req_llm passes it through `provider_meta`).
+  https://github.com/brainlid/langchain/pull/663
+- `[:langchain, :chain, :turn, :no_answer]` telemetry event and a logged
+  warning when a run that narrated ends on an assistant message with no answer
+  text. The metadata describes the shape of the messages but includes none of
+  their text. https://github.com/brainlid/langchain/pull/663
+
+### Changed
+
+- `LLMChain` ends the run with an error when the received assistant message
+  has status `:length` or `:content_filtered`, and fires `:on_llm_error`.
+  https://github.com/brainlid/langchain/pull/663
+- `ChatOpenAIResponses` replays assistant content as items in their original
+  order, so a reasoning item between two commentary parts stays between them
+  instead of being moved to the front.
+  https://github.com/brainlid/langchain/pull/663
+
+### Fixed
+
+- `ChatOpenAIResponses` handles `"incomplete"` responses and the streamed
+  `response.incomplete` event. The message status is `:length` or
+  `:content_filtered` from `incomplete_details.reason`, and a cut-off
+  `function_call` stays an incomplete tool call with its raw arguments rather
+  than being run. https://github.com/brainlid/langchain/pull/663
+- `ChatReqLLM` keeps a tool call whose arguments do not parse in a truncated
+  response as incomplete, instead of turning it into a complete call with
+  empty arguments. https://github.com/brainlid/langchain/pull/663
+- `ChatReqLLM` streaming no longer drops the finish reason and usage when the
+  terminal meta chunk also carries reasoning details, so a turn whose only
+  output is a reasoning item still closes.
+  https://github.com/brainlid/langchain/pull/663
+- Merging `MessageDelta`s lets a truncating status (`:length`,
+  `:content_filtered`) replace `:complete`, since a provider can finish one
+  item and then report the whole response was cut off.
+  https://github.com/brainlid/langchain/pull/663
+
 ## v0.14.2
 
 A model that says what it is about to do, without doing it yet, no longer ends
