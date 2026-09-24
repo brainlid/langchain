@@ -10,9 +10,9 @@ defmodule LangChain.Chains.LLMChain.Modes.WhileNeedsResponse do
 
   The LLM always gets the last word after tool execution.
 
-  An assistant message that is narration only (see
-  `LangChain.Message.narration?/1`) also leaves `needs_response` true, so the
-  LLM is called again to finish its turn.
+  An assistant message that leaves the model's turn open (see
+  `LangChain.Message.continues_turn?/1`) also leaves `needs_response` true, so
+  the LLM is called again to finish its turn.
 
   Step 2 costs nothing for a tool that asks for no expansion, which is every
   tool that has not opted in. It is included so that a tool carrying one is

@@ -461,8 +461,8 @@ defmodule LangChain.Chains.LLMChain do
   2. Processes the LLM's response (message or streaming deltas)
   3. Adds the response to the chain's messages
   4. Sets `needs_response` based on whether the model's turn is still open:
-     tool calls are pending, or the assistant message is narration only (see
-     `LangChain.Message.narration?/1`)
+     tool calls are pending, or the assistant message leaves the turn open (see
+     `LangChain.Message.continues_turn?/1`)
 
   Returns `{:ok, updated_chain}` or `{:error, chain, reason}`.
 
@@ -511,8 +511,9 @@ defmodule LangChain.Chains.LLMChain do
     and only the failed `ToolCall` until it succeeds or exceeds the
     `max_retry_count`. In essence, once we have a successful response from the
     LLM, we don't return any more to it and don't want any further responses.
-    An assistant message that is narration only is not a response, so the LLM
-    is called again. Bounded by `:max_runs`, which defaults to 25.
+    An assistant message that leaves the turn open (see
+    `LangChain.Message.continues_turn?/1`) is not a response, so the LLM is
+    called again. Bounded by `:max_runs`, which defaults to 25.
 
   - `mode: :while_needs_response` - (for interactive chats that make
     `ToolCalls`) Repeatedly evaluates functions and submits to the LLM so long
@@ -522,9 +523,11 @@ defmodule LangChain.Chains.LLMChain do
     an opportunity to use the `ToolResult` information in an assistant response
     message. In essence, this mode always gives the LLM the last word.
 
-    An assistant message whose text is entirely narration (the model saying
-    what it is about to do, see `LangChain.Message.narration?/1`) leaves the
-    turn open, so the LLM is called again rather than the run ending on it.
+    An assistant message that leaves the turn open is not the last word, so
+    the LLM is called again rather than the run ending on it. That is a
+    message the provider reported as not ending the turn, or one whose text is
+    entirely narration (the model saying what it is about to do). See
+    `LangChain.Message.continues_turn?/1`.
 
     The loop is bounded by `:max_runs`, the number of LLM calls allowed in one
     run. It defaults to 25. When exceeded, a
@@ -936,6 +939,39 @@ defmodule LangChain.Chains.LLMChain do
   end
 
   defp do_run(%LLMChain{} = chain) do
+    chain
+    |> call_llm_and_process()
+    |> end_on_truncated_response()
+  end
+
+  # A received assistant message whose status says the provider cut the
+  # response off (`:length` when it ran out of output tokens or context,
+  # `:content_filtered` when it was filtered) ends the run as an error. Its
+  # tool calls may be partial and must not run, and any text in it is not the
+  # model's finished turn. The message stays in the chain so the caller can
+  # show what was received.
+  defp end_on_truncated_response(
+         {:ok, %LLMChain{last_message: %Message{role: :assistant, status: status}} = chain}
+       )
+       when status in [:length, :content_filtered] do
+    {type, message} =
+      case status do
+        :length ->
+          {"response_truncated",
+           "The LLM response was cut off before it finished, by its output token limit or context window"}
+
+        :content_filtered ->
+          {"content_filtered", "The LLM response was stopped by the provider's content filter"}
+      end
+
+    reason = LangChainError.exception(type: type, message: message)
+    Callbacks.fire(chain.callbacks, :on_llm_error, [chain, reason])
+    {:error, chain, reason}
+  end
+
+  defp end_on_truncated_response(result), do: result
+
+  defp call_llm_and_process(%LLMChain{} = chain) do
     chain = drop_stale_delta(chain)
 
     # submit to LLM. The "llm" is a struct. Match to get the name of the module
@@ -1418,10 +1454,82 @@ defmodule LangChain.Chains.LLMChain do
 
         chain
         |> add_message(augmented_message)
+        |> report_turn_without_answer(augmented_message)
         |> reset_current_failure_count_if(fn -> !Message.is_tool_related?(augmented_message) end)
         |> fire_callback_and_return(:on_message_processed, [augmented_message])
         |> fire_usage_callback_and_return(:on_llm_token_usage, [augmented_message])
     end
+  end
+
+  # A run that has narrated and then ends on an assistant message holding no
+  # answer text finishes with the model's last visible words being narration:
+  # it said what it would do next and the turn closed without it. The provider
+  # reported nothing wrong, so the result is still `{:ok, chain}`. This reports
+  # it, as the `[:langchain, :chain, :turn, :no_answer]` telemetry event and a
+  # warning, carrying the shape of the message and of the run's last narration
+  # but none of their text.
+  defp report_turn_without_answer(
+         %LLMChain{needs_response: false} = chain,
+         %Message{role: :assistant} = message
+       ) do
+    with true <- blank?(Message.answer_content(message)),
+         %Message{} = narration <- last_narration_in_run(chain, message) do
+      metadata = %{
+        custom_context: chain.custom_context,
+        message: message_shape(message),
+        last_narration: message_shape(narration)
+      }
+
+      Logger.warning(fn ->
+        "LLM turn ended without an answer after narration. #{inspect(Map.delete(metadata, :custom_context))}"
+      end)
+
+      LangChain.Telemetry.emit_event(
+        [:langchain, :chain, :turn, :no_answer],
+        %{system_time: System.system_time()},
+        metadata
+      )
+    end
+
+    chain
+  end
+
+  defp report_turn_without_answer(%LLMChain{} = chain, _message), do: chain
+
+  defp blank?(nil), do: true
+  defp blank?(text) when is_binary(text), do: String.trim(text) == ""
+
+  # The most recent assistant message of this run, before `message`, holding a
+  # narration part. `exchanged_messages` starts empty on every run.
+  defp last_narration_in_run(%LLMChain{exchanged_messages: exchanged}, message) do
+    exchanged
+    |> Enum.reverse()
+    |> Enum.reject(&(&1 == message))
+    |> Enum.find(fn
+      %Message{role: :assistant, content: parts} when is_list(parts) ->
+        Enum.any?(parts, &ContentPart.narration?/1)
+
+      _other ->
+        false
+    end)
+  end
+
+  # For assistance when needing to log a message with a possible issue.
+  defp message_shape(%Message{} = message) do
+    %{
+      response_id: (message.metadata || %{})[:response_id],
+      status: message.status,
+      end_turn: Message.end_turn(message),
+      tool_call_count: length(message.tool_calls || []),
+      parts:
+        for %ContentPart{} = part <- List.wrap(message.content) do
+          %{
+            type: part.type,
+            utterance: ContentPart.utterance(part),
+            length: if(is_binary(part.content), do: String.length(part.content), else: 0)
+          }
+        end
+    }
   end
 
   @doc """
@@ -1444,8 +1552,9 @@ defmodule LangChain.Chains.LLMChain do
       cond do
         new_message.role in [:user, :tool] -> true
         Message.is_tool_call?(new_message) -> true
-        # The model narrated what it is about to do and has not answered.
-        Message.narration?(new_message) -> true
+        # The provider reported the turn is not over, or the model narrated
+        # what it is about to do and has not answered.
+        Message.continues_turn?(new_message) -> true
         new_message.role in [:system, :assistant] -> false
       end
 

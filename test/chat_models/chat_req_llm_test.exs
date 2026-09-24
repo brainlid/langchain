@@ -671,6 +671,36 @@ if Code.ensure_loaded?(ReqLLM) do
         assert result.status == :length
       end
 
+      test "a tool call cut off with its response stays incomplete", %{model: model} do
+        response = %{
+          req_llm_tool_call_response([
+            ReqLLM.ToolCall.new("c1", "search", ~s({"query":"elixir"})),
+            ReqLLM.ToolCall.new("c2", "search", ~s({"query":"gatew))
+          ])
+          | finish_reason: :length
+        }
+
+        result = ChatReqLLM.do_process_response(model, response)
+
+        assert result.status == :length
+
+        assert [
+                 %ToolCall{status: :complete, arguments: %{"query" => "elixir"}},
+                 %ToolCall{status: :incomplete, arguments: ~s({"query":"gatew)}
+               ] = result.tool_calls
+
+        refute Message.is_tool_call?(result)
+      end
+
+      test "unparseable arguments in a finished response are unchanged", %{model: model} do
+        response =
+          req_llm_tool_call_response([ReqLLM.ToolCall.new("c1", "search", "not json")])
+
+        result = ChatReqLLM.do_process_response(model, response)
+
+        assert [%ToolCall{status: :complete, arguments: %{}}] = result.tool_calls
+      end
+
       test "grafts the reasoning-details signature onto thinking content parts", %{model: model} do
         response =
           struct!(
@@ -2021,6 +2051,63 @@ if Code.ensure_loaded?(ReqLLM) do
       assert String.contains?(text, "Paris") or String.contains?(text, "Sunny")
 
       IO.inspect(last_msg, label: "LIVE STREAMING TOOL CHAIN FINAL MESSAGE")
+    end
+
+    describe "do_api_request/4 streaming, a terminal chunk carrying reasoning details" do
+      # req_llm reports the reasoning details, the usage and the finish reason on
+      # one terminal chunk. Each has to reach the merged message.
+      defp terminal_chunk(details) do
+        %ReqLLM.StreamChunk{
+          type: :meta,
+          metadata: %{
+            terminal?: true,
+            finish_reason: :stop,
+            reasoning_details: details,
+            usage: %{input_tokens: 120, output_tokens: 30, total_tokens: 150}
+          }
+        }
+      end
+
+      defp stream_and_merge(chunks) do
+        stub(ReqLLM, :stream_text, fn _model, _context, _opts ->
+          {:ok, fake_stream_response(chunks)}
+        end)
+
+        %{model: @live_model, stream: true}
+        |> ChatReqLLM.new!()
+        |> ChatReqLLM.do_api_request([Message.new_user!("hi")], [], 3)
+        |> MessageDelta.merge_deltas()
+      end
+
+      test "signs the thinking part and still closes the turn with its usage" do
+        chunks = [
+          %ReqLLM.StreamChunk{type: :thinking, text: "Weighing the options."},
+          %ReqLLM.StreamChunk{type: :content, text: "Use the first one."},
+          terminal_chunk([%{signature: "SIG_FROM_DETAILS"}])
+        ]
+
+        {merged, log} = ExUnit.CaptureLog.with_log(fn -> stream_and_merge(chunks) end)
+
+        refute log =~ "carried no terminal chunk"
+        assert merged.status == :complete
+        assert %TokenUsage{input: 120, output: 30} = TokenUsage.get(merged)
+
+        assert {:ok, message} = MessageDelta.to_message(merged)
+
+        assert [%ContentPart{type: :thinking} = thinking, %ContentPart{type: :text}] =
+                 message.content
+
+        assert thinking.options[:signature] == "SIG_FROM_DETAILS"
+      end
+
+      test "a turn whose only output is reasoning closes rather than coming back empty" do
+        # A reasoning item with no summary streams no thinking text, so there
+        # is no thinking slot for the details to sign.
+        merged = stream_and_merge([terminal_chunk([%{encrypted_content: "gAAAA"}])])
+
+        assert %MessageDelta{status: :complete} = merged
+        assert %TokenUsage{input: 120, output: 30} = TokenUsage.get(merged)
+      end
     end
 
     describe "streamed token usage" do

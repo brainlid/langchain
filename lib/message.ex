@@ -557,6 +557,43 @@ defmodule LangChain.Message do
   def narration?(%Message{}), do: false
 
   @doc """
+  Return whether the provider reported that the model ended its turn with this
+  assistant message: `true`, `false`, or `nil` when the provider did not say.
+
+  A provider that reports it (as `end_turn` on the completed response) is
+  stating the turn boundary outright, which no reading of the message's
+  content can do. Most providers do not report it, and `nil` is the common
+  case. Chat models store the value under `metadata[:end_turn]`, and the chain
+  reads it when the message arrives.
+  """
+  @spec end_turn(t()) :: boolean() | nil
+  def end_turn(%Message{role: :assistant, metadata: %{end_turn: value}}) when is_boolean(value),
+    do: value
+
+  def end_turn(%Message{}), do: nil
+
+  @doc """
+  Return `true` when an assistant message leaves the model's turn open, so the
+  model is called again even though the message has no tool calls.
+
+  The provider's `end_turn/1` report decides when present: `false` keeps the
+  turn open and `true` closes it, whatever the content. Without a report, a
+  message that is narration only (`narration?/1`) keeps the turn open.
+
+  A message with tool calls continues the turn through `is_tool_call?/1`, which
+  callers ask first. This question is about the messages that have none.
+  """
+  @spec continues_turn?(t()) :: boolean()
+  def continues_turn?(%Message{role: :assistant} = message) do
+    case end_turn(message) do
+      nil -> narration?(message)
+      ended? -> not ended?
+    end
+  end
+
+  def continues_turn?(%Message{}), do: false
+
+  @doc """
   Return the message's answer text: the text parts that are not narration,
   joined as `LangChain.Message.ContentPart.parts_to_string/2` joins them.
   Returns `nil` when there is no answer text.
