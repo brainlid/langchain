@@ -76,7 +76,7 @@ if Code.ensure_loaded?(ReqLLM) do
 
         assert model.model == "anthropic:claude-haiku-4-5"
         assert model.stream == false
-        assert model.receive_timeout == nil
+        assert model.receive_timeout == 60_000
         assert model.provider_opts == %{}
         assert model.callbacks == []
         assert model.verbose_api == false
@@ -974,16 +974,33 @@ if Code.ensure_loaded?(ReqLLM) do
       end
 
       test "does not pass nil fields to opts", %{model: model} do
-        # model has nil max_tokens, temperature and receive_timeout by default
+        # model has nil max_tokens and nil temperature by default
         stub(ReqLLM, :generate_text, fn _model_spec, _context, opts ->
           refute Keyword.has_key?(opts, :max_tokens)
           refute Keyword.has_key?(opts, :temperature)
+          {:ok, req_llm_text_response("OK")}
+        end)
+
+        assert {:ok, _} = ChatReqLLM.call(model, "Test", [])
+      end
+
+      test "passes the default receive_timeout as an opt", %{model: model} do
+        stub(ReqLLM, :generate_text, fn _model_spec, _context, opts ->
+          assert Keyword.get(opts, :receive_timeout) == 60_000
+          {:ok, req_llm_text_response("OK")}
+        end)
+
+        assert {:ok, _} = ChatReqLLM.call(model, "Test", [])
+      end
+
+      test "does not pass receive_timeout when set to nil", %{model: model} do
+        stub(ReqLLM, :generate_text, fn _model_spec, _context, opts ->
           # Leaves req_llm to apply its provider-specific default timeout
           refute Keyword.has_key?(opts, :receive_timeout)
           {:ok, req_llm_text_response("OK")}
         end)
 
-        assert {:ok, _} = ChatReqLLM.call(model, "Test", [])
+        assert {:ok, _} = ChatReqLLM.call(%{model | receive_timeout: nil}, "Test", [])
       end
 
       test "passes receive_timeout as an opt", %{model: model} do
