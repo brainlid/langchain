@@ -1014,6 +1014,15 @@ if Code.ensure_loaded?(ReqLLM) do
         assert :counters.get(call_count, 1) == 1
       end
 
+      test "classifies a bare :timeout error as a timeout", %{model: model} do
+        stub(ReqLLM, :generate_text, fn _model_spec, _context, _opts ->
+          {:error, :timeout}
+        end)
+
+        assert {:error, %LangChainError{type: "timeout", original: :timeout}} =
+                 ChatReqLLM.call(model, "Test", [])
+      end
+
       test "fires on_llm_new_message callback on success", %{model: model} do
         test_pid = self()
 
@@ -1747,6 +1756,19 @@ if Code.ensure_loaded?(ReqLLM) do
         end)
 
         assert {:error, %LangChainError{type: "timeout"}} =
+                 ChatReqLLM.do_api_request(model, [Message.new_user!("hi")], [], 1)
+      end
+
+      # req_llm raises this when StreamServer.next/2 receives no chunk within
+      # the receive timeout: the cause is the bare atom, not a transport struct.
+      test "classifies a bare :timeout from the stream consumer as a timeout error" do
+        model = ChatReqLLM.new!(%{model: @live_model, stream: true, retry_count: 0})
+
+        stub(ReqLLM, :stream_text, fn _model, _context, _opts ->
+          {:ok, failing_stream_response([], :timeout)}
+        end)
+
+        assert {:error, %LangChainError{type: "timeout", original: :timeout}} =
                  ChatReqLLM.do_api_request(model, [Message.new_user!("hi")], [], 1)
       end
 

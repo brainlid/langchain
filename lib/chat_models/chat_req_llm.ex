@@ -574,10 +574,13 @@ if Code.ensure_loaded?(ReqLLM) do
 
     # The same network event arrives as a different struct depending on how far
     # down the stack it was caught: Req wraps Finch, which wraps Mint. All three
-    # carry the reason atom in the same field.
+    # carry the reason atom in the same field. req_llm's stream consumer reports
+    # a chunk that did not arrive within the receive timeout as a bare
+    # `:timeout`, with no transport struct around it.
     @transport_error_modules [Req.TransportError, Finch.TransportError, Mint.TransportError]
 
     defp transport_reason(%mod{reason: reason}) when mod in @transport_error_modules, do: reason
+    defp transport_reason(:timeout), do: :timeout
     defp transport_reason(_error), do: nil
 
     # Process a stream chunk with state tracking.
