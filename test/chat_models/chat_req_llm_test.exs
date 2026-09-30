@@ -76,7 +76,7 @@ if Code.ensure_loaded?(ReqLLM) do
 
         assert model.model == "anthropic:claude-haiku-4-5"
         assert model.stream == false
-        assert model.receive_timeout == 60_000
+        assert model.receive_timeout == nil
         assert model.provider_opts == %{}
         assert model.callbacks == []
         assert model.verbose_api == false
@@ -133,6 +133,11 @@ if Code.ensure_loaded?(ReqLLM) do
       test "returns error when max_tokens is zero or negative" do
         assert {:error, _} = ChatReqLLM.new(%{model: "anthropic:x", max_tokens: 0})
         assert {:error, _} = ChatReqLLM.new(%{model: "anthropic:x", max_tokens: -1})
+      end
+
+      test "returns error when receive_timeout is zero or negative" do
+        assert {:error, _} = ChatReqLLM.new(%{model: "anthropic:x", receive_timeout: 0})
+        assert {:error, _} = ChatReqLLM.new(%{model: "anthropic:x", receive_timeout: -1})
       end
 
       test "new!/1 raises on invalid" do
@@ -979,6 +984,29 @@ if Code.ensure_loaded?(ReqLLM) do
         assert {:ok, _} = ChatReqLLM.call(model, "Test", [])
       end
 
+      test "does not pass receive_timeout by default", %{model: model} do
+        assert model.receive_timeout == nil
+
+        stub(ReqLLM, :generate_text, fn _model_spec, _context, opts ->
+          # Leaves req_llm to apply its provider-specific default timeout
+          refute Keyword.has_key?(opts, :receive_timeout)
+          {:ok, req_llm_text_response("OK")}
+        end)
+
+        assert {:ok, _} = ChatReqLLM.call(model, "Test", [])
+      end
+
+      test "passes receive_timeout as an opt", %{model: model} do
+        model_with_timeout = %{model | receive_timeout: 90_000}
+
+        stub(ReqLLM, :generate_text, fn _model_spec, _context, opts ->
+          assert Keyword.get(opts, :receive_timeout) == 90_000
+          {:ok, req_llm_text_response("OK")}
+        end)
+
+        assert {:ok, _} = ChatReqLLM.call(model_with_timeout, "Test", [])
+      end
+
       test "retries on connection closed error", %{model: model} do
         call_count = :counters.new(1, [])
 
@@ -1012,6 +1040,15 @@ if Code.ensure_loaded?(ReqLLM) do
 
         # Exactly 1 HTTP request, no retries
         assert :counters.get(call_count, 1) == 1
+      end
+
+      test "classifies a bare :timeout error as a timeout", %{model: model} do
+        stub(ReqLLM, :generate_text, fn _model_spec, _context, _opts ->
+          {:error, :timeout}
+        end)
+
+        assert {:error, %LangChainError{type: "timeout", original: :timeout}} =
+                 ChatReqLLM.call(model, "Test", [])
       end
 
       test "fires on_llm_new_message callback on success", %{model: model} do
@@ -1266,6 +1303,25 @@ if Code.ensure_loaded?(ReqLLM) do
 
         final_delta = List.last(result)
         assert final_delta.status == :complete
+      end
+
+      test "passes receive_timeout to stream_text" do
+        test_pid = self()
+        model = ChatReqLLM.new!(%{model: @live_model, stream: true, receive_timeout: 90_000})
+
+        stub(ReqLLM, :stream_text, fn _model, _context, opts ->
+          send(test_pid, {:opts, opts})
+
+          {:ok,
+           fake_stream_response([
+             %ReqLLM.StreamChunk{type: :meta, metadata: %{finish_reason: :stop, terminal?: true}}
+           ])}
+        end)
+
+        ChatReqLLM.do_api_request(model, [Message.new_user!("hi")], [], 3)
+
+        assert_received {:opts, opts}
+        assert Keyword.get(opts, :receive_timeout) == 90_000
       end
 
       test "fires on_llm_new_delta callback for each chunk" do
@@ -1747,6 +1803,19 @@ if Code.ensure_loaded?(ReqLLM) do
         end)
 
         assert {:error, %LangChainError{type: "timeout"}} =
+                 ChatReqLLM.do_api_request(model, [Message.new_user!("hi")], [], 1)
+      end
+
+      # req_llm raises this when StreamServer.next/2 receives no chunk within
+      # the receive timeout: the cause is the bare atom, not a transport struct.
+      test "classifies a bare :timeout from the stream consumer as a timeout error" do
+        model = ChatReqLLM.new!(%{model: @live_model, stream: true, retry_count: 0})
+
+        stub(ReqLLM, :stream_text, fn _model, _context, _opts ->
+          {:ok, failing_stream_response([], :timeout)}
+        end)
+
+        assert {:error, %LangChainError{type: "timeout", original: :timeout}} =
                  ChatReqLLM.do_api_request(model, [Message.new_user!("hi")], [], 1)
       end
 

@@ -166,8 +166,11 @@ if Code.ensure_loaded?(ReqLLM) do
       # Temperature (0.0–2.0 depending on provider)
       field :temperature, :float
 
-      # Receive timeout in ms for non-streaming requests
-      field :receive_timeout, :integer, default: 60_000
+      # Receive timeout in ms, forwarded to req_llm as `:receive_timeout`. For a
+      # streamed request it also bounds the wait for each chunk. When nil,
+      # req_llm applies its own default, which varies by provider and by
+      # whether thinking is enabled.
+      field :receive_timeout, :integer
 
       # Pass-through opts forwarded verbatim to req_llm calls.
       # Allows provider-specific options: thinking, tool_choice, seed, top_p, etc.
@@ -234,7 +237,8 @@ if Code.ensure_loaded?(ReqLLM) do
       |> validate_length(:model, min: 1)
       |> validate_number(:temperature, greater_than_or_equal_to: 0, less_than_or_equal_to: 2)
       |> validate_number(:max_tokens, greater_than: 0)
-      |> validate_number(:receive_timeout, greater_than_or_equal_to: 0)
+      # req_llm only accepts a positive timeout
+      |> validate_number(:receive_timeout, greater_than: 0)
     end
 
     # ============================================================
@@ -574,10 +578,13 @@ if Code.ensure_loaded?(ReqLLM) do
 
     # The same network event arrives as a different struct depending on how far
     # down the stack it was caught: Req wraps Finch, which wraps Mint. All three
-    # carry the reason atom in the same field.
+    # carry the reason atom in the same field. req_llm's stream consumer reports
+    # a chunk that did not arrive within the receive timeout as a bare
+    # `:timeout`, with no transport struct around it.
     @transport_error_modules [Req.TransportError, Finch.TransportError, Mint.TransportError]
 
     defp transport_reason(%mod{reason: reason}) when mod in @transport_error_modules, do: reason
+    defp transport_reason(:timeout), do: :timeout
     defp transport_reason(_error), do: nil
 
     # Process a stream chunk with state tracking.
@@ -1061,6 +1068,7 @@ if Code.ensure_loaded?(ReqLLM) do
       |> maybe_put(:temperature, model.temperature)
       |> maybe_put(:api_key, model.api_key)
       |> maybe_put(:base_url, model.base_url)
+      |> maybe_put(:receive_timeout, model.receive_timeout)
       |> merge_provider_opts(model.provider_opts)
     end
 
