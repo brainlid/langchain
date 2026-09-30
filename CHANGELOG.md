@@ -1,5 +1,37 @@
 # Changelog
 
+## v0.14.4
+
+Two `ChatReqLLM` timeout fixes.
+
+No API breaking changes. One behavior change is worth checking before
+upgrading: `ChatReqLLM`'s `receive_timeout` now takes effect.
+
+### Upgrading from v0.14.3 - v0.14.4
+
+`ChatReqLLM`'s `receive_timeout` field was documented with a 60s default but
+was never sent to req_llm, so every request used req_llm's own timeout.
+
+- If you do not set `receive_timeout`, nothing changes. The field now
+  defaults to `nil`, and req_llm keeps applying its per-provider default
+  (for example 120s for Anthropic, 300s for thinking and OpenAI Responses API
+  requests, and 30s for each streamed chunk).
+- If you do set `receive_timeout`, it is now honored. That includes streamed
+  requests, where it also limits how long to wait for each chunk. Check that
+  the value you set is long enough for your slowest requests.
+- `receive_timeout: 0` is now rejected. req_llm only accepts a positive
+  timeout.
+
+### Fixed
+
+- `ChatReqLLM` forwards `receive_timeout` to req_llm. To stop long streamed
+  responses stalling out after req_llm's 30s per-chunk default, set it
+  explicitly. https://github.com/brainlid/langchain/pull/665
+- `ChatReqLLM` classifies a streamed chunk that doesn't arrive in time as a
+  `LangChainError` with type `"timeout"`. It was logged as an unhandled error
+  before. Timeouts are eligible for model fallback.
+  https://github.com/brainlid/langchain/pull/665
+
 ## v0.14.3
 
 Follow-up to the OpenAI `phase` work in v0.14.2. A provider can now say
