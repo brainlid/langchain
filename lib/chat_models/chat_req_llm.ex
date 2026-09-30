@@ -167,10 +167,10 @@ if Code.ensure_loaded?(ReqLLM) do
       field :temperature, :float
 
       # Receive timeout in ms, forwarded to req_llm as `:receive_timeout`. For a
-      # streamed request it also bounds the wait for each chunk. Setting it to
-      # nil leaves req_llm to apply its own default, which varies by provider
-      # and by whether thinking is enabled.
-      field :receive_timeout, :integer, default: 60_000
+      # streamed request it also bounds the wait for each chunk. When nil,
+      # req_llm applies its own default, which varies by provider and by
+      # whether thinking is enabled.
+      field :receive_timeout, :integer
 
       # Pass-through opts forwarded verbatim to req_llm calls.
       # Allows provider-specific options: thinking, tool_choice, seed, top_p, etc.
