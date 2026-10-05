@@ -1,5 +1,97 @@
 # Changelog
 
+## v0.15.0
+
+Adds `ChatOpenAICompatible`, a chat model for services that expose an
+OpenAI-compatible Chat Completions endpoint: Cloudflare Workers AI, Groq,
+OpenRouter, Together, DeepInfra, Fireworks, vLLM, SGLang, Ollama and LM Studio.
+`ChatOpenAI` stays OpenAI's own client and keeps following OpenAI's API.
+
+No API breaking changes, and `ChatOpenAI`'s behavior is unchanged.
+
+### Upgrading from v0.14.4 - v0.15.0
+
+If you point `ChatOpenAI` at a non-OpenAI service, switch to
+`ChatOpenAICompatible`. With `ChatOpenAI`, these services can fail silently:
+
+- With `reasoning_mode: true`, system messages are sent as `role: "developer"`.
+  SGLang and vLLM (behind Cloudflare Workers AI, for example) accept the role,
+  but models whose chat template has no `developer` branch, such as GLM and
+  Qwen, never see the system prompt. There is no error.
+- `reasoning_effort` is only sent when `reasoning_mode: true` is set.
+- The token limit is sent as `max_completion_tokens`, which many compatible
+  servers ignore.
+- With no `api_key` set, the global OpenAI key is sent to the endpoint, along
+  with OpenAI organization and project headers.
+
+A Cloudflare Workers AI configuration:
+
+```elixir
+ChatOpenAICompatible.new!(%{
+  endpoint: "https://api.cloudflare.com/client/v4/accounts/#{account_id}/ai/v1/chat/completions",
+  api_key: api_token,
+  model: "@cf/zai-org/glm-5.3-flash",
+  reasoning_effort: "low",
+  req_config: %{
+    headers: [
+      {"cf-aig-gateway-id", gateway_id},
+      {"x-session-affinity", session_id}
+    ]
+  }
+})
+```
+
+When migrating:
+
+- `ChatOpenAICompatible` sends only the fields you set. `temperature` and `n`
+  are no longer sent by default.
+- `reasoning_mode`, `n`, `logprobs`, `top_logprobs`, `service_tier`,
+  `verbosity`, `user` and `org_id` are not fields. Pass any of these through
+  `extra_body` if your service supports them.
+- `api_key` must be set explicitly. With `api_key: nil`, no `Authorization`
+  header is sent.
+- `serialize_config/1` does not store `api_key` or `req_config`, so set both
+  again after `restore_from_map/1`. Configs saved as `ChatOpenAI` still restore
+  as `ChatOpenAI`.
+- `provider/0` returns `"openai_compatible"`, which appears in telemetry.
+
+Tests that mock `ChatOpenAI.decode_stream/1` or `ChatOpenAI.for_api/2` with
+Mimic no longer affect `ChatAwsMantle`, `ChatVertexAI`, `ChatGrok`,
+`ChatMistralAI`, `ChatOllamaAI` or `ChatGoogleAI`. Those models now call the
+shared encoder and decoder directly.
+
+### Added
+
+- `ChatOpenAICompatible`. It always sends system messages as `system`, sends
+  `reasoning_effort` whenever it is set, sends the token limit as `max_tokens`,
+  and requires explicit credentials. It parses `reasoning_content` into
+  `:thinking` content parts and reports Cloudflare's `{"errors": [...]}` error
+  shape. The moduledoc has recipes for Cloudflare Workers AI, Ollama, LM Studio,
+  vLLM, SGLang, OpenRouter and Groq.
+  https://github.com/brainlid/langchain/pull/667
+- A live conformance suite for OpenAI-compatible providers, tagged
+  `live_openai_compatible` with a tag per provider (`live_cloudflare`,
+  `live_ollama`, `live_openrouter`, `live_groq`). A provider whose environment
+  variables are missing is skipped. It replaces
+  `chat_open_ai_reasoning_live_test.exs`.
+  https://github.com/brainlid/langchain/pull/667
+
+### Changed
+
+- The Chat Completions wire format (encoding messages, tools and content parts;
+  decoding responses and streams) moved out of `ChatOpenAI` into an internal
+  shared module. `ChatOpenAI`'s public `for_api/2`, `content_part_for_api/2`,
+  `decode_stream/1`, `do_process_response/2` and `get_parameters/1` remain and
+  delegate to it. `ChatAwsMantle`, `ChatVertexAI`, `ChatGrok`,
+  `ChatMistralAI`, `ChatOllamaAI` and `ChatGoogleAI` use the shared module
+  directly. https://github.com/brainlid/langchain/pull/667
+- `ChatOpenAI` docs now send OpenAI-compatible services to
+  `ChatOpenAICompatible`. The Cloudflare example and the
+  `max_completion_tokens`/`max_tokens` workaround moved there, and the
+  `reasoning_effort` field docs list OpenAI's current values. The README's
+  "OpenAI compatible" section is rewritten around the new module.
+  https://github.com/brainlid/langchain/pull/667
+
 ## v0.14.4
 
 Two `ChatReqLLM` timeout fixes.
