@@ -121,7 +121,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   alias __MODULE__
   alias LangChain.Config
   alias LangChain.ChatModels.ChatModel
-  alias LangChain.ChatModels.ChatOpenAI
+  alias LangChain.ChatModels.ChatCompletionsFormat
   alias LangChain.Message
   alias LangChain.MessageDelta
   alias LangChain.Message.ContentPart
@@ -508,7 +508,8 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     encoded =
       %{
         "name" => function.name,
-        "parameters" => function |> ChatOpenAI.get_parameters() |> GoogleSchema.sanitize()
+        "parameters" =>
+          function |> ChatCompletionsFormat.get_parameters() |> GoogleSchema.sanitize()
       }
       |> Utils.conditionally_add_to_map("description", function.description)
 
@@ -707,7 +708,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
       into:
         Utils.handle_stream_fn(
           google_ai,
-          &ChatOpenAI.decode_stream/1,
+          &ChatCompletionsFormat.decode_stream/1,
           &do_process_response(google_ai, &1, MessageDelta)
         )
     )

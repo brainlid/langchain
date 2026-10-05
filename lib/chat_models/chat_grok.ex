@@ -82,7 +82,7 @@ defmodule LangChain.ChatModels.ChatGrok do
   alias __MODULE__
   alias LangChain.Config
   alias LangChain.ChatModels.ChatModel
-  alias LangChain.ChatModels.ChatOpenAI
+  alias LangChain.ChatModels.ChatCompletionsFormat
   alias LangChain.Message
   alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
@@ -602,8 +602,7 @@ defmodule LangChain.ChatModels.ChatGrok do
     # body and splitting it afterwards yields the same final list while the
     # caller sees nothing until the model has finished, which is the opposite of
     # what asking for a stream is for. xAI speaks the OpenAI SSE dialect, so it
-    # shares `ChatOpenAI.decode_stream/1` the way ChatAwsMantle and ChatGoogleAI
-    # already do.
+    # uses the shared Chat Completions stream decoder.
     req_opts =
       if grok.stream do
         Keyword.put(
@@ -611,7 +610,7 @@ defmodule LangChain.ChatModels.ChatGrok do
           :into,
           Utils.handle_stream_fn(
             grok,
-            &ChatOpenAI.decode_stream/1,
+            &ChatCompletionsFormat.decode_stream/1,
             &choice_delta_to_message(&1, metadata)
           )
         )
