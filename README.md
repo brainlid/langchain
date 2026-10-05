@@ -12,7 +12,7 @@ Elixir LangChain enables Elixir applications to integrate AI services and self-h
 - **AWS Bedrock Mantle** - OpenAI-compatible gateway for third-party models hosted on Bedrock (Moonshot Kimi K2 family, OpenAI gpt-oss, and many others)
 - **OpenAI ChatGPT** - GPT models via the Chat Completions API
 - **OpenAI Responses API** - OpenAI's newer Responses API with WebSocket transport support
-- **Cloudflare Workers AI** - OpenAI-compatible gateway via `ChatOpenAI` (e.g. Moonshot Kimi K2.6 and other Workers AI models)
+- **OpenAI-compatible services** - Cloudflare Workers AI, Groq, OpenRouter, vLLM, SGLang, LM Studio and others via `ChatOpenAICompatible`
 - **xAI Grok** - Grok-4, Grok-3-mini, Grok-4 Heavy (multi-agent), and more
 - **Google Gemini** - Gemini AI models
 - **Google Vertex AI** - Google's enterprise AI offering
@@ -271,44 +271,57 @@ IO.puts(ChainResult.to_string!(updated_chain))
 # => "The hairbrush is located in the drawer."
 ```
 
-### Alternative OpenAI compatible APIs
+### OpenAI-compatible services
 
-There are several services or self-hosted applications that provide an OpenAI compatible API for ChatGPT-like behavior. To use a service like that, the `endpoint` of the `ChatOpenAI` struct can be pointed to an API compatible `endpoint` for chats.
+Many services and self-hosted servers expose an OpenAI-compatible Chat Completions endpoint: Cloudflare Workers AI, Groq, OpenRouter, Together, vLLM, SGLang, Ollama, LM Studio and others. Use `ChatOpenAICompatible` for them.
 
-For example, if a locally running service provided that feature, the following code could connect to the service:
+`ChatOpenAI` follows OpenAI's own API, including changes these services often do not support, such as sending the token limit as `max_completion_tokens` or sending system messages under the `developer` role. `ChatOpenAICompatible` sends only the fields you set, always sends system messages as `system`, sends the token limit as `max_tokens`, and never falls back to the global OpenAI API key.
+
+For example, a locally running server needs only its endpoint and a model name:
 
 ```elixir
+alias LangChain.ChatModels.ChatOpenAICompatible
+
 {:ok, updated_chain} =
   LLMChain.new!(%{
-    llm: ChatOpenAI.new!(%{endpoint: "http://localhost:1234/v1/chat/completions"}),
+    llm:
+      ChatOpenAICompatible.new!(%{
+        endpoint: "http://localhost:1234/v1/chat/completions",
+        model: "qwen3-8b"
+      })
   })
   |> LLMChain.add_message(Message.new_user!("Hello!"))
   |> LLMChain.run()
 ```
 
+Service-specific parameters go in `extra_body`, and extra headers in `req_config`. A reasoning model's thinking, returned by many of these services in a `reasoning_content` field, arrives as a `:thinking` content part ahead of the answer.
+
 ### Cloudflare Workers AI
 
-Cloudflare Workers AI exposes an OpenAI-compatible `/chat/completions` endpoint, so it works through `ChatOpenAI` by overriding the `endpoint` and supplying a Cloudflare API token. Any model in the Workers AI catalog (e.g. `@cf/moonshotai/kimi-k2.6`) can be used this way, including with streaming and tool calling.
+Cloudflare Workers AI is reached through `ChatOpenAICompatible` with the account's endpoint and a Workers AI API token. Any model in the Workers AI catalog (e.g. `@cf/zai-org/glm-5.3-flash` or `@cf/moonshotai/kimi-k2.6`) can be used this way, including with streaming and tool calling.
 
 ```elixir
-alias LangChain.ChatModels.ChatOpenAI
+alias LangChain.ChatModels.ChatOpenAICompatible
 alias LangChain.Chains.LLMChain
 alias LangChain.Message
 
 account_id = System.fetch_env!("CLOUDFLARE_ACCOUNT_ID")
-api_key = System.fetch_env!("CLOUDFLARE_API_TOKEN")
-
-endpoint =
-  "https://api.cloudflare.com/client/v4/accounts/#{account_id}/ai/v1/chat/completions"
+# Any id shared by requests that reuse the same system prompt.
+conversation_id = "conversation-123"
 
 {:ok, chat} =
-  ChatOpenAI.new(%{
-    endpoint: endpoint,
-    api_key: api_key,
-    model: "@cf/moonshotai/kimi-k2.6",
-    temperature: 0,
-    seed: 0,
-    stream: false
+  ChatOpenAICompatible.new(%{
+    endpoint:
+      "https://api.cloudflare.com/client/v4/accounts/#{account_id}/ai/v1/chat/completions",
+    api_key: System.fetch_env!("CLOUDFLARE_AI_API_TOKEN"),
+    model: "@cf/zai-org/glm-5.3-flash",
+    reasoning_effort: "low",
+    req_config: %{
+      headers: [
+        {"cf-aig-gateway-id", System.fetch_env!("CLOUDFLARE_AI_GATEWAY_ID")},
+        {"x-session-affinity", conversation_id}
+      ]
+    }
   })
 
 {:ok, updated_chain} =
@@ -321,7 +334,11 @@ endpoint =
   |> LLMChain.run()
 ```
 
-Streaming and tool calling work the same as with native OpenAI: set `stream: true` and add tools via `LLMChain.add_tools/2`.
+- `cf-aig-gateway-id` routes the call through a named AI Gateway. On the Workers Free plan some models are reachable only this way.
+- `x-session-affinity` sends requests that share an id to the same replica, so a repeated prompt prefix is served from the prompt cache. Without it, repeated prefixes are not cached.
+- `reasoning_effort` controls how long a reasoning model thinks, which affects latency and output tokens.
+
+Streaming and tool calling work as with any other chat model: set `stream: true` and add tools via `LLMChain.add_tools/2`.
 
 ### Bumblebee Chat Support
 

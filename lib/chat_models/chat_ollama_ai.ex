@@ -173,7 +173,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   import Ecto.Changeset
   alias __MODULE__
   alias LangChain.ChatModels.ChatModel
-  alias LangChain.ChatModels.ChatOpenAI
+  alias LangChain.ChatModels.ChatCompletionsFormat
   alias LangChain.Message
   alias LangChain.Message.ContentPart
   alias LangChain.Message.ToolCall
@@ -723,7 +723,7 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
       into:
         Utils.handle_stream_fn(
           ollama_ai,
-          &ChatOpenAI.decode_stream/1,
+          &ChatCompletionsFormat.decode_stream/1,
           &do_process_response(ollama_ai, &1)
         )
     )

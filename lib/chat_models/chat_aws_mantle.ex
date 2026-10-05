@@ -155,8 +155,8 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
   ## Multimodal (K2.5 vision)
 
   Kimi K2.5 is natively multimodal. Send images via standard LangChain
-  `ContentPart` structs — `ChatAwsMantle` delegates serialization to
-  `ChatOpenAI.content_part_for_api/2`, which emits Mantle's expected
+  `ContentPart` structs. `ChatAwsMantle` uses the shared Chat Completions
+  content encoding, which emits Mantle's expected
   `{"type": "image_url", "image_url": {"url": "data:<media>;base64,..."}}`
   shape:
 
@@ -183,7 +183,7 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
   import Ecto.Changeset
   alias __MODULE__
   alias LangChain.ChatModels.ChatModel
-  alias LangChain.ChatModels.ChatOpenAI
+  alias LangChain.ChatModels.ChatCompletionsFormat
   alias LangChain.Config
   alias LangChain.LangChainError
   alias LangChain.Message
@@ -417,24 +417,16 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
   end
 
   @doc """
-  Format the request body for the Mantle API. Reuses `ChatOpenAI`'s per-message
-  formatting (since the wire format is OpenAI-shaped), but assembles the
-  top-level body with Mantle-relevant fields only.
+  Format the request body for the Mantle API. Messages and tools use the shared
+  Chat Completions encoding, since the wire format is OpenAI-shaped. The
+  top-level body carries Mantle-relevant fields only.
   """
   @spec for_api(t(), [Message.t()], [LangChain.Function.t()]) :: %{atom() => any()}
   def for_api(%ChatAwsMantle{} = model, messages, tools) do
     %{
       model: model.model,
       stream: model.stream,
-      messages:
-        messages
-        |> Enum.reduce([], fn m, acc ->
-          case ChatOpenAI.for_api(model, m) do
-            %{} = data -> [data | acc]
-            data when is_list(data) -> Enum.reverse(data) ++ acc
-          end
-        end)
-        |> Enum.reverse()
+      messages: ChatCompletionsFormat.messages_for_api(messages)
     }
     |> Utils.conditionally_add_to_map(:temperature, model.temperature)
     |> Utils.conditionally_add_to_map(:max_completion_tokens, model.max_tokens)
@@ -443,7 +435,7 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
     |> Utils.conditionally_add_to_map(:presence_penalty, model.presence_penalty)
     |> Utils.conditionally_add_to_map(:reasoning_effort, model.reasoning_effort)
     |> Utils.conditionally_add_to_map(:response_format, response_format(model))
-    |> Utils.conditionally_add_to_map(:tools, tools_for_api(model, tools))
+    |> Utils.conditionally_add_to_map(:tools, ChatCompletionsFormat.tools_for_api(tools))
     |> Utils.conditionally_add_to_map(:tool_choice, tool_choice_for_api(model))
     |> Utils.conditionally_add_to_map(
       :stream_options,
@@ -459,15 +451,6 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
 
   defp response_format(%ChatAwsMantle{json_response: true}), do: %{"type" => "json_object"}
   defp response_format(%ChatAwsMantle{json_response: false}), do: nil
-
-  defp tools_for_api(_model, nil), do: []
-  defp tools_for_api(_model, []), do: []
-
-  defp tools_for_api(%ChatAwsMantle{} = model, tools) do
-    Enum.map(tools, fn %LangChain.Function{} = function ->
-      %{"type" => "function", "function" => ChatOpenAI.for_api(model, function)}
-    end)
-  end
 
   defp tool_choice_for_api(%ChatAwsMantle{tool_choice: nil}), do: nil
   defp tool_choice_for_api(%ChatAwsMantle{tool_choice: choice}), do: choice
@@ -636,7 +619,7 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
       into:
         Utils.handle_stream_fn(
           model,
-          &ChatOpenAI.decode_stream/1,
+          &ChatCompletionsFormat.decode_stream/1,
           &do_process_response(model, &1)
         )
     )
@@ -676,7 +659,8 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
   end
 
   # ---------------------------------------------------------------------------
-  # Response parsing — delegates the OpenAI-shaped bits to ChatOpenAI then
+  # Response parsing — delegates the OpenAI-shaped bits to the shared Chat
+  # Completions parser, then
   # extracts the Mantle-specific `message.reasoning` field into a thinking
   # ContentPart.
   # ---------------------------------------------------------------------------
@@ -737,10 +721,10 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
      )}
   end
 
-  defp process_choice(model, %{"message" => message_data} = choice, body) do
-    # Hand off to ChatOpenAI's parser for the standard OpenAI-shaped fields
+  defp process_choice(_model, %{"message" => message_data} = choice, body) do
+    # Hand off to the shared Chat Completions parser for the standard fields
     # (content, tool_calls, role, etc.), then layer reasoning extraction on top.
-    case ChatOpenAI.do_process_response(model, choice) do
+    case ChatCompletionsFormat.process_response(choice) do
       %Message{} = msg ->
         msg
         |> maybe_add_reasoning(message_data)
@@ -823,9 +807,9 @@ defmodule LangChain.ChatModels.ChatAwsMantle do
   defp maybe_tool_calls_delta(acc, _model, nil, _role, _status), do: acc
   defp maybe_tool_calls_delta(acc, _model, [], _role, _status), do: acc
 
-  defp maybe_tool_calls_delta(acc, model, tool_calls_raw, role, status)
+  defp maybe_tool_calls_delta(acc, _model, tool_calls_raw, role, status)
        when is_list(tool_calls_raw) do
-    tool_calls = Enum.map(tool_calls_raw, &ChatOpenAI.do_process_response(model, &1))
+    tool_calls = Enum.map(tool_calls_raw, &ChatCompletionsFormat.process_response/1)
 
     acc ++
       [

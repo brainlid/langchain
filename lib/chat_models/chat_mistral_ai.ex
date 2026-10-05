@@ -5,7 +5,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
   alias __MODULE__
   alias LangChain.Config
   alias LangChain.ChatModels.ChatModel
-  alias LangChain.ChatModels.ChatOpenAI
+  alias LangChain.ChatModels.ChatCompletionsFormat
   alias LangChain.Function
   alias LangChain.Message
   alias LangChain.Message.ContentPart
@@ -507,7 +507,7 @@ defmodule LangChain.ChatModels.ChatMistralAI do
           mistralai,
           # Mistral's streaming API is mostly compatible with OpenAI's,
           # so we can reuse the same decoder
-          &ChatOpenAI.decode_stream/1,
+          &ChatCompletionsFormat.decode_stream/1,
           &do_process_response(mistralai, &1)
         )
     )

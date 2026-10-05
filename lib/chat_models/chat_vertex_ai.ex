@@ -115,7 +115,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   alias __MODULE__
   alias LangChain.Config
   alias LangChain.ChatModels.ChatModel
-  alias LangChain.ChatModels.ChatOpenAI
+  alias LangChain.ChatModels.ChatCompletionsFormat
   alias LangChain.Message
   alias LangChain.MessageDelta
   alias LangChain.Message.ContentPart
@@ -303,7 +303,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
           # Note: We strip the "strict" field as it's OpenAI-specific and not supported by Vertex AI
           "functionDeclarations" =>
             functions
-            |> Enum.map(&ChatOpenAI.for_api(vertex_ai, &1))
+            |> Enum.map(&ChatCompletionsFormat.item_for_api/1)
             |> Enum.map(&Map.delete(&1, "strict"))
             |> Enum.map(&function_declaration_for_api/1)
         }
@@ -696,7 +696,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
       into:
         Utils.handle_stream_fn(
           vertex_ai,
-          &ChatOpenAI.decode_stream/1,
+          &ChatCompletionsFormat.decode_stream/1,
           &do_process_response(vertex_ai, &1, MessageDelta)
         )
     )

@@ -1384,7 +1384,7 @@ if Code.ensure_loaded?(ReqLLM) do
 
     # Build the JSONSchema parameter map for a Function, supporting both the
     # `:parameters` (FunctionParam list) and `:parameters_schema` (raw map) forms.
-    # Mirrors `LangChain.ChatModels.ChatOpenAI.get_parameters/1`.
+    # Mirrors the shared Chat Completions `get_parameters/1`.
     @spec get_parameter_schema(Function.t()) :: map()
     defp get_parameter_schema(%Function{parameters: [], parameters_schema: nil}) do
       %{"type" => "object", "properties" => %{}}
