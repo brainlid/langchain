@@ -1031,6 +1031,27 @@ defmodule ChatModels.ChatVertexAITest do
              ] = merged.tool_calls
     end
 
+    test "marks a streamed function call complete", %{model: model} do
+      response = %{
+        "candidates" => [
+          %{
+            "content" => %{
+              "role" => "model",
+              "parts" => [
+                %{"functionCall" => %{"args" => %{"city" => "Denver"}, "name" => "get_weather"}}
+              ]
+            },
+            "index" => 0
+          }
+        ]
+      }
+
+      assert [%MessageDelta{} = delta] =
+               ChatVertexAI.do_process_response(model, response, MessageDelta)
+
+      assert [%ToolCall{status: :complete, name: "get_weather"}] = delta.tool_calls
+    end
+
     test "handles receiving MessageDeltas as well", %{model: model} do
       response = %{
         "candidates" => [

@@ -863,7 +863,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
       call_id: call["id"] || Utils.generate_tool_call_id(),
       name: name,
       arguments: raw_args,
-      complete: true,
+      status: :complete,
       metadata:
         if(data["thoughtSignature"],
           do: %{thought_signature: data["thoughtSignature"]},
