@@ -742,6 +742,52 @@ if Code.ensure_loaded?(ReqLLM) do
         assert opts[:signature] == "SIG_FROM_DETAILS"
       end
 
+      test "gives each thinking part its own reasoning-details signature", %{model: model} do
+        detail = fn text, signature, index ->
+          %ReqLLM.Message.ReasoningDetails{
+            text: text,
+            signature: signature,
+            encrypted?: true,
+            provider: :anthropic,
+            format: "anthropic-thinking-v1",
+            index: index
+          }
+        end
+
+        response =
+          struct!(
+            ReqLLM.Response,
+            Map.merge(base_response_fields(), %{
+              message: %ReqLLM.Message{
+                role: :assistant,
+                content: [
+                  ReqLLM.Message.ContentPart.thinking("Find the issue."),
+                  ReqLLM.Message.ContentPart.text("Looking it up."),
+                  ReqLLM.Message.ContentPart.thinking("Then assign it.")
+                ],
+                tool_calls: [ReqLLM.ToolCall.new("c1", "assign_issue", "{}")],
+                reasoning_details: [
+                  detail.("Find the issue.", "SIG_FIRST", 0),
+                  detail.("Then assign it.", "SIG_SECOND", 1)
+                ]
+              },
+              finish_reason: :tool_calls,
+              usage: nil
+            })
+          )
+
+        result = ChatReqLLM.do_process_response(model, response)
+
+        assert [
+                 %ContentPart{type: :thinking} = first,
+                 %ContentPart{type: :text},
+                 %ContentPart{type: :thinking} = second
+               ] = result.content
+
+        assert first.options[:signature] == "SIG_FIRST"
+        assert second.options[:signature] == "SIG_SECOND"
+      end
+
       test "maps token usage to message metadata", %{model: model} do
         usage = %{input_tokens: 100, output_tokens: 50, total_tokens: 150}
         response = req_llm_text_response("Hello!", :stop, usage)
