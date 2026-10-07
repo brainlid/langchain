@@ -750,6 +750,67 @@ if Code.ensure_loaded?(ReqLLM) do
         assert %TokenUsage{input: 100, output: 50} = result.metadata[:usage]
       end
 
+      test "a refusal with no content is a content_filtered message carrying the stop details",
+           %{model: model} do
+        stop_details = %{
+          "type" => "refusal",
+          "category" => "reasoning_extraction",
+          "explanation" => "This request was blocked."
+        }
+
+        response =
+          struct!(
+            ReqLLM.Response,
+            Map.merge(base_response_fields(), %{
+              message: nil,
+              finish_reason: :content_filter,
+              usage: nil,
+              provider_meta: %{"stop_details" => stop_details}
+            })
+          )
+
+        assert %Message{role: :assistant, status: :content_filtered, content: content} =
+                 message = ChatReqLLM.do_process_response(model, response)
+
+        assert content in [nil, []]
+        assert message.metadata[:stop_details] == stop_details
+      end
+
+      test "a response with no message and no refusal is still an error", %{model: model} do
+        response =
+          struct!(
+            ReqLLM.Response,
+            Map.merge(base_response_fields(), %{message: nil, finish_reason: :stop, usage: nil})
+          )
+
+        assert {:error, %LangChainError{type: "unexpected_response"}} =
+                 ChatReqLLM.do_process_response(model, response)
+      end
+
+      test "a refused message keeps the provider's stop details", %{model: model} do
+        stop_details = %{"type" => "refusal", "category" => "cyber"}
+
+        response =
+          struct!(
+            ReqLLM.Response,
+            Map.merge(base_response_fields(), %{
+              message: %ReqLLM.Message{
+                role: :assistant,
+                content: [ReqLLM.Message.ContentPart.text("I can't help with that.")],
+                tool_calls: nil
+              },
+              finish_reason: :content_filter,
+              usage: nil,
+              provider_meta: %{"stop_details" => stop_details}
+            })
+          )
+
+        assert %Message{status: :content_filtered} =
+                 message = ChatReqLLM.do_process_response(model, response)
+
+        assert message.metadata[:stop_details] == stop_details
+      end
+
       test "returns error when response has error field set", %{model: model} do
         response =
           struct!(

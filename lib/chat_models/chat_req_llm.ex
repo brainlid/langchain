@@ -1059,6 +1059,26 @@ if Code.ensure_loaded?(ReqLLM) do
 
     defp end_turn_metadata(_provider_meta), do: nil
 
+    # The message metadata a non-streamed response carries from `provider_meta`:
+    # `end_turn` (see above) and, for a refusal, the provider's `stop_details`
+    # explaining why the model stopped.
+    defp provider_message_metadata(%{} = provider_meta) do
+      stop_details = Map.get(provider_meta, "stop_details", Map.get(provider_meta, :stop_details))
+
+      (end_turn_metadata(provider_meta) || %{})
+      |> then(fn metadata ->
+        if is_map(stop_details),
+          do: Map.put(metadata, :stop_details, stop_details),
+          else: metadata
+      end)
+      |> case do
+        empty when map_size(empty) == 0 -> nil
+        metadata -> metadata
+      end
+    end
+
+    defp provider_message_metadata(_provider_meta), do: nil
+
     defp build_req_llm_opts(%ChatReqLLM{} = model, tools) do
       []
       |> then(fn opts ->
@@ -1428,6 +1448,25 @@ if Code.ensure_loaded?(ReqLLM) do
        )}
     end
 
+    # A refusal can arrive with no content block at all (Anthropic answers
+    # `stop_reason: "refusal"` with `content: []`), and req_llm then reports
+    # no message. It is still the model's reply, so it becomes an empty
+    # assistant message with the content_filtered status and the provider's
+    # refusal details, rather than an error that hides why it stopped.
+    def do_process_response(
+          %ChatReqLLM{} = _model,
+          %ReqLLM.Response{message: nil, finish_reason: :content_filter} = response
+        ) do
+      %{role: :assistant, content: [], status: :content_filtered}
+      |> Utils.conditionally_add_to_map(
+        :metadata,
+        provider_message_metadata(response.provider_meta)
+      )
+      |> Message.new()
+      |> TokenUsage.set_wrapped(translate_usage(response.usage))
+      |> unwrap_message()
+    end
+
     def do_process_response(%ChatReqLLM{} = _model, %ReqLLM.Response{message: nil}) do
       {:error,
        LangChainError.exception(
@@ -1453,7 +1492,10 @@ if Code.ensure_loaded?(ReqLLM) do
         tool_calls: tool_calls,
         status: status
       }
-      |> Utils.conditionally_add_to_map(:metadata, end_turn_metadata(response.provider_meta))
+      |> Utils.conditionally_add_to_map(
+        :metadata,
+        provider_message_metadata(response.provider_meta)
+      )
       |> Message.new()
       |> TokenUsage.set_wrapped(usage)
       |> unwrap_message()
