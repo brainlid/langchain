@@ -2169,6 +2169,39 @@ if Code.ensure_loaded?(ReqLLM) do
         assert thinking.options[:signature] == "SIG_FROM_DETAILS"
       end
 
+      test "keeps each streamed thinking block as its own signed part, in order" do
+        # Anthropic reports a thinking block's signature when the block stops,
+        # so a response with two thinking blocks streams two signature chunks.
+        block_signature = fn signature ->
+          %ReqLLM.StreamChunk{
+            type: :meta,
+            metadata: %{reasoning_details: [%{signature: signature}]}
+          }
+        end
+
+        chunks = [
+          %ReqLLM.StreamChunk{type: :thinking, text: "Find the issue."},
+          block_signature.("SIG_FIRST"),
+          %ReqLLM.StreamChunk{type: :content, text: "Looking it up."},
+          %ReqLLM.StreamChunk{type: :thinking, text: "Then assign it."},
+          block_signature.("SIG_SECOND"),
+          %ReqLLM.StreamChunk{type: :content, text: "Assigning now."},
+          terminal_chunk([])
+        ]
+
+        assert {:ok, message} = chunks |> stream_and_merge() |> MessageDelta.to_message()
+
+        assert [
+                 %ContentPart{type: :thinking, content: "Find the issue."} = first,
+                 %ContentPart{type: :text, content: "Looking it up."},
+                 %ContentPart{type: :thinking, content: "Then assign it."} = second,
+                 %ContentPart{type: :text, content: "Assigning now."}
+               ] = message.content
+
+        assert first.options[:signature] == "SIG_FIRST"
+        assert second.options[:signature] == "SIG_SECOND"
+      end
+
       test "a turn whose only output is reasoning closes rather than coming back empty" do
         # A reasoning item with no summary streams no thinking text, so there
         # is no thinking slot for the details to sign.
