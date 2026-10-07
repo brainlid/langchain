@@ -909,7 +909,6 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     %{
       role: unmap_role(role),
       content: text_part,
-      complete: true,
       index: data["index"],
       metadata: build_grounding_message_metadata(grounding_metadata)
     }
