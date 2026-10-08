@@ -2,6 +2,7 @@ defmodule ChatModels.ChatVertexAITest do
   alias LangChain.ChatModels.ChatVertexAI
   use LangChain.BaseCase
   use Mimic
+  import ExUnit.CaptureLog
 
   doctest LangChain.ChatModels.ChatVertexAI
   alias LangChain.ChatModels.ChatVertexAI
@@ -1060,7 +1061,6 @@ defmodule ChatModels.ChatVertexAITest do
               "role" => "model",
               "parts" => [%{"text" => "This is the first part of a mes"}]
             },
-            "finishReason" => "STOP",
             "index" => 0
           }
         ]
@@ -1552,6 +1552,125 @@ defmodule ChatModels.ChatVertexAITest do
 
       assert {:error, _} = ChatVertexAI.call(model, "prompt", [])
       verify!()
+    end
+  end
+
+  describe "finishReason status" do
+    defp candidate_response(finish_reason, parts \\ [%{"text" => "Hello"}]) do
+      candidate =
+        %{"content" => %{"role" => "model", "parts" => parts}, "index" => 0}
+        |> then(fn c ->
+          if finish_reason, do: Map.put(c, "finishReason", finish_reason), else: c
+        end)
+
+      %{"candidates" => [candidate]}
+    end
+
+    test "STOP completes a message", %{model: model} do
+      assert [%Message{status: :complete}] =
+               ChatVertexAI.do_process_response(model, candidate_response("STOP"), Message)
+    end
+
+    test "MAX_TOKENS marks a message as truncated", %{model: model} do
+      assert [%Message{status: :length}] =
+               ChatVertexAI.do_process_response(model, candidate_response("MAX_TOKENS"), Message)
+    end
+
+    test "content filter reasons mark a message as filtered", %{model: model} do
+      for reason <- [
+            "SAFETY",
+            "RECITATION",
+            "BLOCKLIST",
+            "PROHIBITED_CONTENT",
+            "SPII",
+            "MODEL_ARMOR"
+          ] do
+        assert [%Message{status: :content_filtered}] =
+                 ChatVertexAI.do_process_response(model, candidate_response(reason), Message),
+               "expected #{reason} to map to :content_filtered"
+      end
+    end
+
+    test "a blocked candidate without content is a filtered message", %{model: model} do
+      response = %{"candidates" => [%{"finishReason" => "SAFETY", "index" => 0}]}
+
+      assert [%Message{role: :assistant, status: :content_filtered, content: []}] =
+               ChatVertexAI.do_process_response(model, response, Message)
+    end
+
+    test "a blocked candidate with empty content is a filtered delta", %{model: model} do
+      response = %{
+        "candidates" => [
+          %{"content" => %{"role" => "model"}, "finishReason" => "SAFETY", "index" => 0}
+        ]
+      }
+
+      assert [%MessageDelta{role: :assistant, status: :content_filtered}] =
+               ChatVertexAI.do_process_response(model, response, MessageDelta)
+    end
+
+    test "a reason that still stops generation completes the message", %{model: model} do
+      for reason <- ["OTHER", "MALFORMED_FUNCTION_CALL"] do
+        assert [%Message{status: :complete}] =
+                 ChatVertexAI.do_process_response(model, candidate_response(reason), Message)
+      end
+    end
+
+    test "an unrecognized reason completes the message and logs it", %{model: model} do
+      log =
+        capture_log(fn ->
+          assert [%Message{status: :complete}] =
+                   ChatVertexAI.do_process_response(
+                     model,
+                     candidate_response("SOMETHING_NEW"),
+                     Message
+                   )
+        end)
+
+      assert log =~ "SOMETHING_NEW"
+    end
+
+    test "a streamed delta without a finishReason is incomplete", %{model: model} do
+      assert [%MessageDelta{status: :incomplete}] =
+               ChatVertexAI.do_process_response(model, candidate_response(nil), MessageDelta)
+    end
+
+    test "a streamed delta carries the status of its finishReason", %{model: model} do
+      assert [%MessageDelta{status: :length}] =
+               ChatVertexAI.do_process_response(
+                 model,
+                 candidate_response("MAX_TOKENS"),
+                 MessageDelta
+               )
+    end
+
+    test "a stream that hit the token limit merges to a truncated message", %{model: model} do
+      {:ok, message} =
+        [candidate_response(nil), candidate_response("MAX_TOKENS", [%{"text" => " wor"}])]
+        |> Enum.map(&ChatVertexAI.do_process_response(model, &1, MessageDelta))
+        |> ChatVertexAI.complete_final_delta()
+        |> List.flatten()
+        |> MessageDelta.merge_deltas()
+        |> MessageDelta.to_message()
+
+      assert %Message{status: :length} = message
+    end
+  end
+
+  describe "complete_final_delta/1" do
+    test "completes a final delta left incomplete" do
+      data = [[%MessageDelta{status: :incomplete}], [%MessageDelta{status: :incomplete}]]
+
+      assert [[%MessageDelta{status: :incomplete}], [%MessageDelta{status: :complete}]] =
+               ChatVertexAI.complete_final_delta(data)
+    end
+
+    test "keeps a terminal status the provider reported" do
+      for status <- [:complete, :length, :content_filtered] do
+        data = [[%MessageDelta{status: :incomplete}], [%MessageDelta{status: status}]]
+
+        assert [[_], [%MessageDelta{status: ^status}]] = ChatVertexAI.complete_final_delta(data)
+      end
     end
   end
 
