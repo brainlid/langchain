@@ -704,9 +704,9 @@ defmodule LangChain.ChatModels.ChatVertexAI do
       {:ok, %Req.Response{body: data} = response} ->
         Callbacks.fire(vertex_ai.callbacks, :on_llm_response_headers, [response.headers])
 
-        # Google AI uses `finishReason: "STOP` for all messages in the stream.
-        # This field can't be used to terminate the list of deltas, so simulate
-        # this behavior by forcing the final delta to have `status: :complete`.
+        # The chunk that ends a stream carries its `finishReason`. A stream that
+        # closes without one still completes its final delta so the deltas can
+        # become a message.
         complete_final_delta(data)
 
       {:error, %LangChainError{} = error} ->
@@ -746,7 +746,10 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   defp get_action(%ChatVertexAI{stream: true}), do: "streamGenerateContent"
 
   def complete_final_delta(data) when is_list(data) do
-    update_in(data, [Access.at(-1), Access.at(-1)], &%{&1 | status: :complete})
+    update_in(data, [Access.at(-1), Access.at(-1)], fn
+      %MessageDelta{status: :incomplete} = delta -> %MessageDelta{delta | status: :complete}
+      other -> other
+    end)
   end
 
   def do_process_response(model, response, message_type \\ Message)
@@ -767,6 +770,25 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     candidates
     |> Enum.map(&do_process_response(model, &1, message_type))
     |> Enum.map(&TokenUsage.set(&1, token_usage))
+  end
+
+  # A candidate stopped by a content filter can arrive with no content, or with
+  # content that has no parts.
+  def do_process_response(model, %{"finishReason" => _} = data, message_type)
+      when message_type in [Message, MessageDelta] and
+             not is_map_key(data, "content") do
+    do_process_response(model, Map.put(data, "content", %{}), message_type)
+  end
+
+  def do_process_response(model, %{"content" => content_data} = data, message_type)
+      when message_type in [Message, MessageDelta] and
+             not is_map_key(content_data, "parts") do
+    content_data =
+      content_data
+      |> Map.put("parts", [])
+      |> Map.put_new("role", "model")
+
+    do_process_response(model, %{data | "content" => content_data}, message_type)
   end
 
   def do_process_response(
@@ -800,6 +822,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     %{
       role: unmap_role(content_data["role"]),
       content: text_part,
+      status: finish_reason_to_status(data["finishReason"], :complete),
       index: data["index"]
     }
     |> Utils.conditionally_add_to_map(:tool_calls, tool_calls_from_parts)
@@ -839,6 +862,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     %{
       role: unmap_role(content_data["role"]),
       content: text_content,
+      status: finish_reason_to_status(data["finishReason"], :incomplete),
       index: data["index"]
     }
     |> Utils.conditionally_add_to_map(:tool_calls, tool_calls_from_parts)
@@ -878,51 +902,6 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     end
   end
 
-  def do_process_response(
-        _model,
-        %{
-          "finishReason" => finish,
-          "content" => %{"parts" => parts, "role" => role},
-          "index" => index
-        },
-        message_type
-      )
-      when is_list(parts) do
-    status =
-      case message_type do
-        MessageDelta ->
-          :incomplete
-
-        Message ->
-          case finish do
-            "STOP" ->
-              :complete
-
-            "SAFETY" ->
-              :complete
-
-            other ->
-              Logger.warning("Unsupported finishReason in response. Reason: #{inspect(other)}")
-              nil
-          end
-      end
-
-    content = Enum.map_join(parts, & &1["text"])
-
-    case message_type.new(%{
-           "content" => content,
-           "role" => unmap_role(role),
-           "status" => status,
-           "index" => index
-         }) do
-      {:ok, message} ->
-        message
-
-      {:error, %Ecto.Changeset{} = changeset} ->
-        {:error, LangChainError.exception(changeset)}
-    end
-  end
-
   def do_process_response(_model, %{"error" => %{"message" => reason}} = response, _) do
     {:error, LangChainError.exception(message: reason, original: response)}
   end
@@ -941,6 +920,35 @@ defmodule LangChain.ChatModels.ChatVertexAI do
        message: "Unexpected response",
        original: other
      )}
+  end
+
+  # An empty `finishReason` means the model has not stopped generating. That is
+  # every streamed chunk but the last, and is the given default otherwise.
+  @spec finish_reason_to_status(String.t() | nil, atom()) :: atom()
+  defp finish_reason_to_status(nil, default), do: default
+  defp finish_reason_to_status("STOP", _default), do: :complete
+  defp finish_reason_to_status("MAX_TOKENS", _default), do: :length
+
+  defp finish_reason_to_status(reason, _default)
+       when reason in [
+              "SAFETY",
+              "RECITATION",
+              "BLOCKLIST",
+              "PROHIBITED_CONTENT",
+              "SPII",
+              "MODEL_ARMOR"
+            ],
+       do: :content_filtered
+
+  defp finish_reason_to_status(reason, _default)
+       when reason in ["FINISH_REASON_UNSPECIFIED", "OTHER", "MALFORMED_FUNCTION_CALL"],
+       do: :complete
+
+  # Any value means generation has stopped, so a reason added to the API after
+  # this mapping still completes the message.
+  defp finish_reason_to_status(reason, _default) do
+    Logger.warning("Unsupported finishReason in response. Reason: #{inspect(reason)}")
+    :complete
   end
 
   defp parse_tool_calls(model, parts) do
