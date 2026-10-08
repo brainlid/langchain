@@ -423,6 +423,40 @@ if Code.ensure_loaded?(ReqLLM) do
         assert details == openai_reasoning_details()
       end
 
+      test "an OpenAI Responses request carries the kept reasoning item before its function call" do
+        messages = [
+          Message.new_user!("Find a family SUV."),
+          Message.new_assistant!(%{
+            tool_calls: [
+              ToolCall.new!(%{
+                call_id: "c1",
+                name: "search",
+                arguments: %{"q" => "suv"},
+                status: :complete
+              })
+            ],
+            metadata: %{reasoning_details: openai_reasoning_details()}
+          }),
+          Message.new_tool_result!(%{
+            tool_results: [ToolResult.new!(%{tool_call_id: "c1", name: "search", content: "[]"})]
+          })
+        ]
+
+        body =
+          messages
+          |> ChatReqLLM.messages_to_req_llm_context()
+          |> ReqLLM.Providers.OpenAI.ResponsesAPI.build_request_body("gpt-5", [], nil)
+
+        input = body["input"]
+        reasoning = Enum.find_index(input, &(&1["type"] == "reasoning"))
+        call = Enum.find_index(input, &(&1["type"] == "function_call"))
+
+        assert %{"id" => "rs_1", "encrypted_content" => "ENCRYPTED_REASONING"} =
+                 Enum.at(input, reasoning)
+
+        assert reasoning < call
+      end
+
       test "an assistant message without kept reasoning sends none" do
         [result] = ChatReqLLM.message_to_req_llm_messages(Message.new_assistant!("Answer"))
         assert result.reasoning_details == nil
