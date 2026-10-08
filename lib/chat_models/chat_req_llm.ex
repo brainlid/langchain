@@ -47,7 +47,7 @@ if Code.ensure_loaded?(ReqLLM) do
 
         ChatReqLLM.new!(%{
           model: "anthropic:claude-haiku-4-5",
-          provider_opts: %{"thinking" => %{"type" => "enabled", "budget_tokens" => 2000}}
+          provider_opts: %{thinking: %{type: "enabled", budget_tokens: 2000}}
         })
 
     ## Narration (Assistant Phase)
@@ -74,6 +74,21 @@ if Code.ensure_loaded?(ReqLLM) do
     message, the parts are rebuilt from the per-item text it reports alongside,
     and while streaming the marker arrives with the terminal chunk, after the
     text.
+
+    ## Reasoning Continuity
+
+    A reasoning model's own reasoning goes back to it with the assistant
+    message that produced it. OpenAI's Responses API wants its encrypted
+    reasoning items alongside the function call outputs of a tool loop, and
+    Anthropic needs its signed thinking blocks. req_llm reports both as the
+    message's reasoning details and rebuilds the provider's form from them.
+
+    The details are kept on the assistant message as one `:unsupported`
+    `LangChain.Message.ContentPart` whose `:reasoning_details` option holds
+    them as plain string-keyed maps, for streamed and non-streamed responses
+    alike. Because the part holds only JSON values, it survives a conversation
+    being stored and reloaded, and a reloaded message sends its reasoning back
+    exactly as the original did. Other chat models skip the part.
 
     ## Stream Completion
 
@@ -796,16 +811,23 @@ if Code.ensure_loaded?(ReqLLM) do
     # details are stripped and the chunk re-dispatched rather than consumed
     # here. A turn whose only output is a reasoning item streams no thinking
     # text and has no slot to sign, and still closes on its finish reason.
+    #
+    # The details themselves become the reasoning part, in a slot of their own.
     defp process_stream_chunk(
            %ReqLLM.StreamChunk{type: :meta, metadata: %{reasoning_details: details} = meta} =
              chunk,
            state
          )
          when is_list(details) do
-      {deltas, new_state} =
-        process_stream_chunk(%{chunk | metadata: Map.delete(meta, :reasoning_details)}, state)
+      {reasoning_deltas, state_with_slot} = reasoning_details_deltas(state, details)
 
-      {signature_deltas(state, details) ++ deltas, new_state}
+      {deltas, new_state} =
+        process_stream_chunk(
+          %{chunk | metadata: Map.delete(meta, :reasoning_details)},
+          state_with_slot
+        )
+
+      {signature_deltas(state, details) ++ reasoning_deltas ++ deltas, new_state}
     end
 
     # Tool call arg fragment: emit incomplete ToolCall delta with the partial JSON string.
@@ -864,6 +886,29 @@ if Code.ensure_loaded?(ReqLLM) do
             index: thinking_index
           })
         ]
+      end
+    end
+
+    # A delta placing the reasoning part in its own slot, or none when no
+    # detail can be kept. The slot is only claimed when a part fills it, so no
+    # empty position is left in the merged content.
+    defp reasoning_details_deltas(state, details) do
+      case reasoning_details_part(details) do
+        nil ->
+          {[], state}
+
+        part ->
+          {index, new_state} = get_or_assign_content_index(state, :reasoning_details)
+
+          delta =
+            MessageDelta.new!(%{
+              role: :assistant,
+              content: part,
+              status: :incomplete,
+              index: index
+            })
+
+          {[delta], new_state}
       end
     end
 
@@ -1183,7 +1228,8 @@ if Code.ensure_loaded?(ReqLLM) do
           role: :assistant,
           content: content,
           tool_calls: req_tool_calls,
-          metadata: assistant_phase_metadata(msg.content)
+          metadata: assistant_phase_metadata(msg.content),
+          reasoning_details: reasoning_details(msg)
         }
       ]
     end
@@ -1195,7 +1241,8 @@ if Code.ensure_loaded?(ReqLLM) do
         %ReqLLM.Message{
           role: :assistant,
           content: content,
-          metadata: assistant_phase_metadata(msg.content)
+          metadata: assistant_phase_metadata(msg.content),
+          reasoning_details: reasoning_details(msg)
         }
       ]
     end
@@ -1204,6 +1251,82 @@ if Code.ensure_loaded?(ReqLLM) do
       content = lc_content_to_req_llm(msg.content)
       [%ReqLLM.Message{role: msg.role, content: content}]
     end
+
+    # The details kept in the message's reasoning part, rebuilt as the structs
+    # req_llm's encoders read, or nil when there are none.
+    defp reasoning_details(%Message{content: parts}) when is_list(parts) do
+      parts
+      |> Enum.flat_map(fn
+        %ContentPart{} = part -> stored_reasoning_details(part)
+        _other -> []
+      end)
+      |> Enum.flat_map(&decode_reasoning_detail/1)
+      |> case do
+        [] -> nil
+        details -> details
+      end
+    end
+
+    defp reasoning_details(_msg), do: nil
+
+    defp stored_reasoning_details(%ContentPart{type: :unsupported, options: options})
+         when is_list(options) do
+      case Keyword.get(options, :reasoning_details) do
+        details when is_list(details) -> details
+        _other -> []
+      end
+    end
+
+    defp stored_reasoning_details(_part), do: []
+
+    # The reasoning part for a response's details, or nil when none can be
+    # kept. Each detail is stored as the string-keyed map a JSON round trip
+    # would produce anyway, so a reloaded message reads exactly like a fresh
+    # one.
+    defp reasoning_details_part(details) when is_list(details) do
+      case Enum.flat_map(details, &encode_reasoning_detail/1) do
+        [] -> nil
+        encoded -> ContentPart.new!(%{type: :unsupported, options: [reasoning_details: encoded]})
+      end
+    end
+
+    defp reasoning_details_part(_details), do: nil
+
+    defp encode_reasoning_detail(%ReqLLM.Message.ReasoningDetails{} = detail) do
+      [
+        %{
+          "text" => detail.text,
+          "signature" => detail.signature,
+          "encrypted" => detail.encrypted?,
+          "provider" => detail.provider && Atom.to_string(detail.provider),
+          "format" => detail.format,
+          "index" => detail.index,
+          "provider_data" => detail.provider_data || %{}
+        }
+      ]
+    end
+
+    defp encode_reasoning_detail(_detail), do: []
+
+    # The provider decides which encoder replays a detail, so a detail whose
+    # provider is not a known atom is dropped rather than sent unattributed.
+    defp decode_reasoning_detail(%{"provider" => provider} = stored) when is_binary(provider) do
+      [
+        %ReqLLM.Message.ReasoningDetails{
+          text: stored["text"],
+          signature: stored["signature"],
+          encrypted?: stored["encrypted"] == true,
+          provider: String.to_existing_atom(provider),
+          format: stored["format"],
+          index: stored["index"] || 0,
+          provider_data: stored["provider_data"] || %{}
+        }
+      ]
+    rescue
+      ArgumentError -> []
+    end
+
+    defp decode_reasoning_detail(_stored), do: []
 
     # The narration marker goes back to the provider two ways at once: on each
     # content part, and on the message. A provider version that reads only the
@@ -1323,8 +1446,13 @@ if Code.ensure_loaded?(ReqLLM) do
       ReqLLM.Message.ContentPart.text("URL: #{url}")
     end
 
-    def content_part_to_req_llm(%ContentPart{type: :unsupported}) do
-      Logger.warning("Unsupported ContentPart type skipped during ChatReqLLM translation")
+    # The reasoning part goes back as the message's reasoning details, not as
+    # content.
+    def content_part_to_req_llm(%ContentPart{type: :unsupported, options: options}) do
+      unless is_list(options) and Keyword.has_key?(options, :reasoning_details) do
+        Logger.warning("Unsupported ContentPart type skipped during ChatReqLLM translation")
+      end
+
       nil
     end
 
@@ -1442,6 +1570,7 @@ if Code.ensure_loaded?(ReqLLM) do
         |> translate_response_content()
         |> attach_reasoning_signature(response.message)
         |> attach_assistant_phase(response.message)
+        |> append_reasoning_details_part(response.message)
 
       status = translate_finish_reason(response.finish_reason)
       tool_calls = translate_response_tool_calls(response.message.tool_calls, status)
@@ -1457,6 +1586,13 @@ if Code.ensure_loaded?(ReqLLM) do
       |> Message.new()
       |> TokenUsage.set_wrapped(usage)
       |> unwrap_message()
+    end
+
+    defp append_reasoning_details_part(parts, %ReqLLM.Message{reasoning_details: details}) do
+      case reasoning_details_part(details) do
+        nil -> parts
+        part -> parts ++ [part]
+      end
     end
 
     defp unwrap_message({:ok, message}), do: message
