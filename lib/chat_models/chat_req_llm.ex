@@ -802,17 +802,26 @@ if Code.ensure_loaded?(ReqLLM) do
       process_stream_chunk(%{chunk | metadata: meta}, state)
     end
 
-    # The provider only surfaces the accumulated thinking signature in a
-    # terminal meta chunk; there is no signature StreamChunk. Attach it to
-    # the thinking content slot so the merged assistant message can be
-    # replayed with a signed thinking block during tool loops.
+    # Reasoning details arrive on meta chunks; there is no signature
+    # StreamChunk. Anthropic reports each thinking block's details as that
+    # block stops, so a response with several thinking blocks streams several
+    # of these chunks, while OpenAI reports all of them on the terminal chunk.
+    # The signature goes onto the thinking content slot so the merged message
+    # can be replayed with signed thinking blocks during tool loops.
     #
-    # The same terminal chunk carries the usage and the finish reason, so the
+    # Once a block is signed, the thinking and text slots are released, so the
+    # next thinking block and the text after it get parts of their own, in
+    # order. Each block is replayed as it was produced, with only its own
+    # signature; merging two blocks into one part would send a block that
+    # matches neither.
+    #
+    # A terminal chunk carries the usage and the finish reason too, so the
     # details are stripped and the chunk re-dispatched rather than consumed
     # here. A turn whose only output is a reasoning item streams no thinking
     # text and has no slot to sign, and still closes on its finish reason.
     #
-    # The details themselves become the reasoning part, in a slot of their own.
+    # The details themselves become the reasoning part, in a slot of their own,
+    # which holds every detail the stream has reported so far.
     defp process_stream_chunk(
            %ReqLLM.StreamChunk{type: :meta, metadata: %{reasoning_details: details} = meta} =
              chunk,
@@ -827,7 +836,10 @@ if Code.ensure_loaded?(ReqLLM) do
           state_with_slot
         )
 
-      {signature_deltas(state, details) ++ reasoning_deltas ++ deltas, new_state}
+      case signature_deltas(state, details) do
+        [] -> {reasoning_deltas ++ deltas, new_state}
+        signed -> {signed ++ reasoning_deltas ++ deltas, close_thinking_block(new_state)}
+      end
     end
 
     # Tool call arg fragment: emit incomplete ToolCall delta with the partial JSON string.
@@ -892,8 +904,14 @@ if Code.ensure_loaded?(ReqLLM) do
     # A delta placing the reasoning part in its own slot, or none when no
     # detail can be kept. The slot is only claimed when a part fills it, so no
     # empty position is left in the merged content.
+    #
+    # A list option replaces the one before it when deltas merge, so each delta
+    # carries every detail reported so far rather than only the newest.
     defp reasoning_details_deltas(state, details) do
-      case reasoning_details_part(details) do
+      reported = Map.get(state, :reasoning_details, []) ++ details
+      state = Map.put(state, :reasoning_details, reported)
+
+      case reasoning_details_part(reported) do
         nil ->
           {[], state}
 
@@ -949,6 +967,12 @@ if Code.ensure_loaded?(ReqLLM) do
           })
         ]
       end
+    end
+
+    # Releases the thinking and text slots, so the next chunk of either type
+    # starts a new part after the ones already streamed.
+    defp close_thinking_block(state) do
+      %{state | type_index_map: Map.drop(state.type_index_map, [:thinking, :content])}
     end
 
     # Assigns a monotonic content index per chunk type. The first time a chunk type
