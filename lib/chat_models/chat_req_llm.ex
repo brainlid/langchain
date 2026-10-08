@@ -1607,37 +1607,53 @@ if Code.ensure_loaded?(ReqLLM) do
     #
     # A response can carry several thinking blocks (adaptive and interleaved
     # thinking). Each one has its own signature, and Anthropic rejects a replay
-    # where any block carries another block's signature. When every thinking
-    # part has a matching detail, pair them by position. Otherwise fall back to
-    # the first signature, which is right for the single-block case.
+    # where any block carries another block's signature. Each thinking part
+    # takes the signature of the detail holding the same thinking text, and
+    # each detail is used once, in order, so blocks with identical text pair by
+    # position. A part with no matching detail stays unsigned rather than take
+    # another block's signature. A lone thinking part takes the first
+    # signature, the shape of a provider that reports a single detail.
     defp attach_reasoning_signature(parts, %ReqLLM.Message{reasoning_details: details})
          when is_list(details) do
-      thinking_count = Enum.count(parts, &match?(%ContentPart{type: :thinking}, &1))
+      case Enum.count(parts, &match?(%ContentPart{type: :thinking}, &1)) do
+        1 ->
+          signature = Enum.find_value(details, &detail_signature/1)
 
-      if thinking_count == length(details) do
-        sign_thinking_parts(parts, Enum.map(details, &detail_signature/1))
-      else
-        case Enum.find_value(details, &detail_signature/1) do
-          nil -> parts
-          signature -> sign_thinking_parts(parts, List.duplicate(signature, thinking_count))
-        end
+          Enum.map(parts, fn
+            %ContentPart{type: :thinking} = part -> put_thinking_signature(part, signature)
+            part -> part
+          end)
+
+        _count ->
+          sign_thinking_parts_by_text(parts, details)
       end
     end
 
     defp attach_reasoning_signature(parts, _message), do: parts
 
-    defp sign_thinking_parts(parts, signatures) do
-      {signed, _rest} =
-        Enum.map_reduce(parts, signatures, fn
-          %ContentPart{type: :thinking} = part, [signature | rest] ->
-            {put_thinking_signature(part, signature), rest}
+    defp sign_thinking_parts_by_text(parts, details) do
+      {signed, _unused} =
+        Enum.map_reduce(parts, details, fn
+          %ContentPart{type: :thinking} = part, remaining ->
+            case Enum.split_while(remaining, &(not same_thinking_text?(&1, part))) do
+              {before, [detail | rest]} ->
+                {put_thinking_signature(part, detail_signature(detail)), before ++ rest}
 
-          part, signatures ->
-            {part, signatures}
+              {_no_match, []} ->
+                {part, remaining}
+            end
+
+          part, remaining ->
+            {part, remaining}
         end)
 
       signed
     end
+
+    defp same_thinking_text?(%{text: detail_text}, %ContentPart{content: part_text}),
+      do: (detail_text || "") == (part_text || "")
+
+    defp same_thinking_text?(_detail, _part), do: false
 
     defp put_thinking_signature(%ContentPart{} = part, nil), do: part
 
