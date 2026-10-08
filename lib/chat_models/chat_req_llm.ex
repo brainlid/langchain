@@ -1104,7 +1104,7 @@ if Code.ensure_loaded?(ReqLLM) do
               %{role: :assistant, status: status, index: 0}
               |> Utils.conditionally_add_to_map(
                 :metadata,
-                end_turn_metadata(meta[:provider_meta])
+                provider_message_metadata(meta[:provider_meta])
               )
               |> MessageDelta.new!()
             ]
@@ -1116,17 +1116,36 @@ if Code.ensure_loaded?(ReqLLM) do
     def translate_stream_chunk(_), do: []
 
     # req_llm passes response fields it does not model through in
-    # `provider_meta`, which is where a provider's `end_turn` arrives. It states
-    # whether the model ended its turn and is read as
-    # `LangChain.Message.end_turn/1`.
-    defp end_turn_metadata(%{} = provider_meta) do
-      case Map.get(provider_meta, "end_turn", Map.get(provider_meta, :end_turn)) do
-        end_turn when is_boolean(end_turn) -> %{end_turn: end_turn}
-        _other -> nil
-      end
+    # `provider_meta`. Two of them become message metadata:
+    #
+    # - `end_turn` states whether the model ended its turn and is read as
+    #   `LangChain.Message.end_turn/1`.
+    # - `stop_details` names the policy category behind a refusal, with an
+    #   explanation. It is null for every other stop reason, so the key is
+    #   present only on a refused message, as `ChatAnthropic` reports it.
+    defp provider_message_metadata(%{} = provider_meta) do
+      metadata =
+        %{}
+        |> put_end_turn(provider_meta_field(provider_meta, :end_turn))
+        |> put_stop_details(provider_meta_field(provider_meta, :stop_details))
+
+      if map_size(metadata) == 0, do: nil, else: metadata
     end
 
-    defp end_turn_metadata(_provider_meta), do: nil
+    defp provider_message_metadata(_provider_meta), do: nil
+
+    defp provider_meta_field(provider_meta, key),
+      do: Map.get(provider_meta, Atom.to_string(key), Map.get(provider_meta, key))
+
+    defp put_end_turn(metadata, end_turn) when is_boolean(end_turn),
+      do: Map.put(metadata, :end_turn, end_turn)
+
+    defp put_end_turn(metadata, _end_turn), do: metadata
+
+    defp put_stop_details(metadata, details) when is_map(details),
+      do: Map.put(metadata, :stop_details, details)
+
+    defp put_stop_details(metadata, _details), do: metadata
 
     defp build_req_llm_opts(%ChatReqLLM{} = model, tools) do
       []
@@ -1611,6 +1630,26 @@ if Code.ensure_loaded?(ReqLLM) do
        )}
     end
 
+    # A refusal can arrive with no content block at all (Anthropic answers
+    # `stop_reason: "refusal"` with `content: []`), and req_llm then reports no
+    # message. It is still the model's reply, so it becomes an empty assistant
+    # message with the `:content_filtered` status and the provider's stop
+    # details, which `LangChain.Chains.LLMChain` ends the run on as a
+    # `"content_filtered"` error while keeping the message.
+    def do_process_response(
+          %ChatReqLLM{} = _model,
+          %ReqLLM.Response{message: nil, finish_reason: :content_filter} = response
+        ) do
+      %{role: :assistant, content: [], status: :content_filtered}
+      |> Utils.conditionally_add_to_map(
+        :metadata,
+        provider_message_metadata(response.provider_meta)
+      )
+      |> Message.new()
+      |> TokenUsage.set_wrapped(translate_usage(response.usage))
+      |> unwrap_message()
+    end
+
     def do_process_response(%ChatReqLLM{} = _model, %ReqLLM.Response{message: nil}) do
       {:error,
        LangChainError.exception(
@@ -1637,7 +1676,10 @@ if Code.ensure_loaded?(ReqLLM) do
         tool_calls: tool_calls,
         status: status
       }
-      |> Utils.conditionally_add_to_map(:metadata, end_turn_metadata(response.provider_meta))
+      |> Utils.conditionally_add_to_map(
+        :metadata,
+        provider_message_metadata(response.provider_meta)
+      )
       |> Message.new()
       |> TokenUsage.set_wrapped(usage)
       |> unwrap_message()
