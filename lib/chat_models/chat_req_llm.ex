@@ -1207,8 +1207,15 @@ if Code.ensure_loaded?(ReqLLM) do
       [%ReqLLM.Message{role: msg.role, content: content}]
     end
 
-    defp reasoning_details(%Message{metadata: %{reasoning_details: [_ | _] = details}}),
-      do: details
+    # Only ReasoningDetails structs go back. A message restored from JSON holds
+    # string-keyed maps here, and ReqLLM's encoders read struct fields directly,
+    # so passing them on raises while building the request.
+    defp reasoning_details(%Message{metadata: %{reasoning_details: [_ | _] = details}}) do
+      case Enum.filter(details, &match?(%ReqLLM.Message.ReasoningDetails{}, &1)) do
+        [] -> nil
+        kept -> kept
+      end
+    end
 
     defp reasoning_details(_msg), do: nil
 

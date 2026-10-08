@@ -462,6 +462,37 @@ if Code.ensure_loaded?(ReqLLM) do
         assert result.reasoning_details == nil
       end
 
+      test "reasoning details restored from JSON are not sent back" do
+        restored = openai_reasoning_details() |> Jason.encode!() |> Jason.decode!()
+
+        messages = [
+          Message.new_user!("Find a family SUV."),
+          Message.new_assistant!(%{
+            tool_calls: [
+              ToolCall.new!(%{
+                call_id: "c1",
+                name: "search",
+                arguments: %{"q" => "suv"},
+                status: :complete
+              })
+            ],
+            metadata: %{reasoning_details: restored}
+          }),
+          Message.new_tool_result!(%{
+            tool_results: [ToolResult.new!(%{tool_call_id: "c1", name: "search", content: "[]"})]
+          })
+        ]
+
+        context = ChatReqLLM.messages_to_req_llm_context(messages)
+
+        assert [_user, %ReqLLM.Message{role: :assistant, reasoning_details: nil}, _tool] =
+                 context.messages
+
+        body = ReqLLM.Providers.OpenAI.ResponsesAPI.build_request_body(context, "gpt-5", [], nil)
+
+        refute Enum.any?(body["input"], &(&1["type"] == "reasoning"))
+      end
+
       test "translates a system message with string content" do
         msg = Message.new_system!("You are helpful.")
         [result] = ChatReqLLM.message_to_req_llm_messages(msg)
