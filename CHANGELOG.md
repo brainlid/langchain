@@ -1,5 +1,82 @@
 # Changelog
 
+## v0.15.1
+
+`ChatReqLLM` now sends a reasoning model's own reasoning back in tool loops.
+That covers OpenAI's encrypted reasoning items and Anthropic's signed thinking,
+streamed or not, and it is kept when a conversation is stored and reloaded.
+`ChatVertexAI` now reports when a response was cut off or filtered, and both
+Gemini models mark streamed tool calls complete.
+
+No API breaking changes. The optional `req_llm` dependency now requires
+`>= 1.25.0`, and three behavior changes are worth checking before upgrading.
+
+### Upgrading from v0.15.0 - v0.15.1
+
+- **`req_llm` >= 1.25.0.** If you use `ChatReqLLM`, run
+  `mix deps.update req_llm`. 1.25.0 is the first release that labels each
+  content part with its OpenAI Responses `phase`, which `ChatReqLLM` now relies
+  on.
+- **`ChatVertexAI` truncation and content filters end the run.** A response
+  stopped by `maxOutputTokens` or by a content filter now makes
+  `LLMChain.run/2` return `{:error, chain, %LangChainError{}}` with type
+  `"response_truncated"` or `"content_filtered"`. These runs used to look
+  successful. Other providers already behave this way.
+- **`ChatReqLLM` refusals.** A refusal with no content (Anthropic's
+  `stop_reason: "refusal"`) now returns a `"content_filtered"` error from
+  `LLMChain.run/2` and keeps the empty refused message. It used to be an
+  `"unexpected_response"` error.
+- **`ChatReqLLM` reasoning part.** An assistant message from a reasoning model
+  now ends with a `:unsupported` `ContentPart` holding the reasoning details in
+  its `:reasoning_details` option. Code that walks content parts should skip
+  `:unsupported` parts, as it already must for `ChatOpenAIResponses` reasoning.
+  `ChatAnthropic` logs a warning for this part if a `ChatReqLLM` conversation
+  is replayed through it.
+
+### Added
+
+- `ChatReqLLM` sends reasoning details back with an assistant message, so
+  OpenAI Responses tool loops include the model's encrypted reasoning items.
+  https://github.com/brainlid/langchain/pull/673
+- `ChatReqLLM` keeps reasoning details for streamed responses and stores them
+  in a JSON-safe content part, so they survive persistence.
+  https://github.com/brainlid/langchain/pull/674
+- `ChatReqLLM` puts the provider's `stop_details` on `metadata[:stop_details]`,
+  the same key `ChatAnthropic` uses.
+  https://github.com/brainlid/langchain/pull/678
+
+### Changed
+
+- The optional `req_llm` dependency now requires `>= 1.25.0` (was
+  `>= 1.11.0`). `ChatReqLLM` reads and sends the OpenAI Responses `phase` only
+  per content part. An assistant message that mixes narration with unlabelled
+  text now goes back with its narration labelled.
+  https://github.com/brainlid/langchain/pull/680
+
+### Fixed
+
+- `ChatReqLLM` gives each thinking block its own signature. Anthropic rejected
+  a multi-block response sent back with the first block's signature on every
+  block. https://github.com/brainlid/langchain/pull/675
+- `ChatReqLLM` sends signed Anthropic thinking back in the order the model
+  produced it, interleaved with text and tool calls.
+  https://github.com/brainlid/langchain/pull/676
+- `ChatReqLLM` keeps each streamed Anthropic thinking block as its own signed
+  part. Several blocks were merged into one part with concatenated signatures,
+  and the first block was dropped when sent back.
+  https://github.com/brainlid/langchain/pull/677
+- `ChatReqLLM` turns a refusal with no content into a `:content_filtered`
+  message instead of an `"unexpected_response"` error.
+  https://github.com/brainlid/langchain/pull/678
+- `ChatVertexAI` maps `finishReason` to the message status: `MAX_TOKENS` to
+  `:length`, and `SAFETY`, `RECITATION`, `BLOCKLIST`, `PROHIBITED_CONTENT`,
+  `SPII` and `MODEL_ARMOR` to `:content_filtered`. A blocked candidate with no
+  content or parts becomes an empty message with that status instead of an
+  error. https://github.com/brainlid/langchain/pull/679
+- `ChatGoogleAI` and `ChatVertexAI` mark function calls `:complete` in streamed
+  deltas. They were reported as `:incomplete` to callbacks.
+  https://github.com/brainlid/langchain/pull/671
+
 ## v0.15.0
 
 Adds `ChatOpenAICompatible`, a chat model for services that expose an
