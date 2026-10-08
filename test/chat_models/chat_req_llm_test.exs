@@ -2580,6 +2580,39 @@ if Code.ensure_loaded?(ReqLLM) do
         assert thinking.options[:signature] == "SIG_FROM_DETAILS"
       end
 
+      test "keeps each streamed thinking block as its own signed part, in order" do
+        # Anthropic reports a thinking block's signature when the block stops,
+        # so a response with two thinking blocks streams two signature chunks.
+        block_signature = fn signature ->
+          %ReqLLM.StreamChunk{
+            type: :meta,
+            metadata: %{reasoning_details: [%{signature: signature}]}
+          }
+        end
+
+        chunks = [
+          %ReqLLM.StreamChunk{type: :thinking, text: "Find the issue."},
+          block_signature.("SIG_FIRST"),
+          %ReqLLM.StreamChunk{type: :content, text: "Looking it up."},
+          %ReqLLM.StreamChunk{type: :thinking, text: "Then assign it."},
+          block_signature.("SIG_SECOND"),
+          %ReqLLM.StreamChunk{type: :content, text: "Assigning now."},
+          terminal_chunk([])
+        ]
+
+        assert {:ok, message} = chunks |> stream_and_merge() |> MessageDelta.to_message()
+
+        assert [
+                 %ContentPart{type: :thinking, content: "Find the issue."} = first,
+                 %ContentPart{type: :text, content: "Looking it up."},
+                 %ContentPart{type: :thinking, content: "Then assign it."} = second,
+                 %ContentPart{type: :text, content: "Assigning now."}
+               ] = message.content
+
+        assert first.options[:signature] == "SIG_FIRST"
+        assert second.options[:signature] == "SIG_SECOND"
+      end
+
       test "a turn whose only output is reasoning closes rather than coming back empty" do
         # A reasoning item with no summary streams no thinking text, so there
         # is no thinking slot for the details to sign.
@@ -3375,6 +3408,145 @@ if Code.ensure_loaded?(ReqLLM) do
       @tag live_api: :anthropic
       test "Anthropic streaming with thinking: a reloaded turn sends its thinking in place" do
         run_anthropic_loop(true)
+      end
+    end
+
+    describe "do_api_request/4 streaming, several thinking blocks" do
+      # The chunks req_llm's Anthropic stream decoder produces for a response's
+      # server-sent events, in order, including any it holds until the stream
+      # is flushed.
+      defp anthropic_stream_chunks(events) do
+        {:ok, model} = ReqLLM.model("anthropic:claude-haiku-4-5")
+        decoder = ReqLLM.Providers.Anthropic.Response
+
+        {chunks, state} =
+          Enum.flat_map_reduce(events, decoder.init_stream_state(), fn data, state ->
+            decoder.decode_stream_event(%{data: data}, model, state)
+          end)
+
+        {flushed, _state} = decoder.flush_stream_state(model, state)
+        chunks ++ flushed
+      end
+
+      defp thinking_block_events(index, text, signature) do
+        [
+          %{
+            "type" => "content_block_start",
+            "index" => index,
+            "content_block" => %{"type" => "thinking", "thinking" => ""}
+          },
+          %{
+            "type" => "content_block_delta",
+            "index" => index,
+            "delta" => %{"type" => "thinking_delta", "thinking" => text}
+          },
+          %{
+            "type" => "content_block_delta",
+            "index" => index,
+            "delta" => %{"type" => "signature_delta", "signature" => signature}
+          },
+          %{"type" => "content_block_stop", "index" => index}
+        ]
+      end
+
+      defp text_block_events(index, text) do
+        [
+          %{
+            "type" => "content_block_start",
+            "index" => index,
+            "content_block" => %{"type" => "text", "text" => ""}
+          },
+          %{
+            "type" => "content_block_delta",
+            "index" => index,
+            "delta" => %{"type" => "text_delta", "text" => text}
+          },
+          %{"type" => "content_block_stop", "index" => index}
+        ]
+      end
+
+      defp tool_use_block_events(index) do
+        [
+          %{
+            "type" => "content_block_start",
+            "index" => index,
+            "content_block" => %{
+              "type" => "tool_use",
+              "id" => "toolu_1",
+              "name" => "assign_issue",
+              "input" => %{}
+            }
+          },
+          %{
+            "type" => "content_block_delta",
+            "index" => index,
+            "delta" => %{"type" => "input_json_delta", "partial_json" => "{}"}
+          },
+          %{"type" => "content_block_stop", "index" => index}
+        ]
+      end
+
+      # A response that thinks, narrates, thinks again and calls a tool.
+      defp interleaved_thinking_events() do
+        [
+          %{
+            "type" => "message_start",
+            "message" => %{
+              "id" => "msg_1",
+              "usage" => %{"input_tokens" => 50, "output_tokens" => 1}
+            }
+          }
+        ] ++
+          thinking_block_events(0, "Find the issue.", "SIG_FIRST") ++
+          text_block_events(1, "Looking it up.") ++
+          thinking_block_events(2, "Then assign it.", "SIG_SECOND") ++
+          tool_use_block_events(3) ++
+          [
+            %{
+              "type" => "message_delta",
+              "delta" => %{"stop_reason" => "tool_use"},
+              "usage" => %{"output_tokens" => 40}
+            },
+            %{"type" => "message_stop"}
+          ]
+      end
+
+      test "keeps each thinking block as its own signed part, in order" do
+        assert {:ok, message} =
+                 interleaved_thinking_events()
+                 |> anthropic_stream_chunks()
+                 |> stream_and_merge()
+                 |> MessageDelta.to_message()
+
+        assert [
+                 %ContentPart{type: :thinking, content: "Find the issue."} = first,
+                 %ContentPart{type: :unsupported} = reasoning,
+                 %ContentPart{type: :text, content: "Looking it up."},
+                 %ContentPart{type: :thinking, content: "Then assign it."} = second
+               ] = message.content
+
+        assert first.options[:signature] == "SIG_FIRST"
+        assert second.options[:signature] == "SIG_SECOND"
+
+        assert [%{"signature" => "SIG_FIRST"}, %{"signature" => "SIG_SECOND"}] =
+                 reasoning.options[:reasoning_details]
+
+        assert [%ToolCall{name: "assign_issue"}] = message.tool_calls
+      end
+
+      test "sends every thinking block back as it was produced, after a reload" do
+        assert {:ok, message} =
+                 interleaved_thinking_events()
+                 |> anthropic_stream_chunks()
+                 |> stream_and_merge()
+                 |> MessageDelta.to_message()
+
+        assert [
+                 %{type: "thinking", thinking: "Find the issue.", signature: "SIG_FIRST"},
+                 %{type: "text", text: "Looking it up."},
+                 %{type: "thinking", thinking: "Then assign it.", signature: "SIG_SECOND"},
+                 %{type: "tool_use", name: "assign_issue"}
+               ] = message |> json_round_trip() |> anthropic_assistant_blocks()
       end
     end
   end
