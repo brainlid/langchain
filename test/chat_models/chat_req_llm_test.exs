@@ -75,6 +75,34 @@ if Code.ensure_loaded?(ReqLLM) do
       }
     end
 
+    # Two thinking blocks interleaved with narration, each with its own
+    # signature, ahead of a tool call.
+    defp interleaved_thinking_response() do
+      thinking_response(
+        [
+          ReqLLM.Message.ContentPart.thinking("Find the issue."),
+          ReqLLM.Message.ContentPart.text("Looking it up."),
+          ReqLLM.Message.ContentPart.thinking("Then assign it.")
+        ],
+        [
+          anthropic_detail("Find the issue.", "SIG_FIRST", 0),
+          anthropic_detail("Then assign it.", "SIG_SECOND", 1)
+        ]
+      )
+    end
+
+    # The content blocks req_llm's Anthropic encoder sends for an assistant
+    # message, read back from the request body.
+    defp anthropic_assistant_blocks(%Message{} = message) do
+      {:ok, model} = ReqLLM.model("anthropic:claude-haiku-4-5")
+
+      context = ChatReqLLM.messages_to_req_llm_context([Message.new_user!("hi"), message])
+      body = ReqLLM.Providers.Anthropic.Context.encode_request(context, model)
+
+      assert [_user, %{role: "assistant", content: blocks}] = body.messages
+      blocks
+    end
+
     # A tool-calling response whose content and reasoning details are given.
     defp thinking_response(content, details) do
       struct!(
@@ -543,6 +571,71 @@ if Code.ensure_loaded?(ReqLLM) do
 
         assert [%ReqLLM.Message.ContentPart{type: :text, text: "Answer"}] = result.content
         refute log =~ "Unsupported ContentPart"
+      end
+
+      test "sends interleaved Anthropic thinking back in the order it was produced" do
+        model = ChatReqLLM.new!(%{model: "anthropic:claude-haiku-4-5"})
+
+        message =
+          model
+          |> ChatReqLLM.do_process_response(interleaved_thinking_response())
+          |> json_round_trip()
+
+        assert [%ReqLLM.Message{reasoning_details: nil}] =
+                 ChatReqLLM.message_to_req_llm_messages(message)
+
+        assert [
+                 %{type: "thinking", thinking: "Find the issue.", signature: "SIG_FIRST"},
+                 %{type: "text", text: "Looking it up."},
+                 %{type: "thinking", thinking: "Then assign it.", signature: "SIG_SECOND"},
+                 %{type: "tool_use", name: "assign_issue"}
+               ] = anthropic_assistant_blocks(message)
+      end
+
+      test "sends Anthropic details when a detail has no thinking part of its own" do
+        model = ChatReqLLM.new!(%{model: "anthropic:claude-haiku-4-5"})
+        # Two streamed blocks merged into one part carry one signature, so the
+        # second block exists only as a detail. Sending the parts would drop it.
+        response =
+          thinking_response(
+            [ReqLLM.Message.ContentPart.thinking("Find the issue.")],
+            [
+              anthropic_detail("Find the issue.", "SIG_FIRST", 0),
+              anthropic_detail("Then assign it.", "SIG_SECOND", 1)
+            ]
+          )
+
+        message = ChatReqLLM.do_process_response(model, response)
+
+        assert [%ReqLLM.Message{reasoning_details: [_, _]}] =
+                 ChatReqLLM.message_to_req_llm_messages(message)
+
+        assert [
+                 %{type: "thinking", signature: "SIG_FIRST"},
+                 %{type: "thinking", signature: "SIG_SECOND"},
+                 %{type: "tool_use"}
+               ] = anthropic_assistant_blocks(message)
+      end
+
+      test "sends OpenAI reasoning as details even when a summary part carries it" do
+        model = ChatReqLLM.new!(%{model: "anthropic:claude-haiku-4-5"})
+        # OpenAI's encoder rebuilds reasoning items from the details alone and
+        # skips thinking parts, so the details always go.
+        [detail] = openai_reasoning_details()
+
+        response =
+          thinking_response(
+            [ReqLLM.Message.ContentPart.thinking("Planning the search.")],
+            [%{detail | text: "Planning the search."}]
+          )
+
+        message = ChatReqLLM.do_process_response(model, response)
+
+        assert [%ContentPart{type: :thinking} = summary | _] = message.content
+        assert summary.options[:signature] == "ENCRYPTED_REASONING"
+
+        assert [%ReqLLM.Message{reasoning_details: [%ReqLLM.Message.ReasoningDetails{}]}] =
+                 ChatReqLLM.message_to_req_llm_messages(message)
       end
 
       test "a reasoning part reloaded from JSON sends its reasoning back unchanged" do
@@ -3112,14 +3205,23 @@ if Code.ensure_loaded?(ReqLLM) do
         })
       end
 
-      # The message with every kept reasoning signature replaced by one the
-      # provider cannot verify. Nothing else in the message changes.
+      # The message with every kept reasoning signature, on the reasoning part
+      # and on its thinking parts, replaced by one the provider cannot verify.
+      # Nothing else in the message changes.
       defp corrupt_reasoning(%Message{content: parts} = message) do
         corrupted =
           Enum.map(parts, fn
             %ContentPart{type: :unsupported, options: [reasoning_details: details]} = part ->
               details = Enum.map(details, &Map.put(&1, "signature", "not-a-valid-signature"))
               %ContentPart{part | options: [reasoning_details: details]}
+
+            %ContentPart{type: :thinking, options: options} = part when is_list(options) ->
+              if Keyword.has_key?(options, :signature),
+                do: %ContentPart{
+                  part
+                  | options: Keyword.put(options, :signature, "not-a-valid-signature")
+                },
+                else: part
 
             part ->
               part
@@ -3211,18 +3313,17 @@ if Code.ensure_loaded?(ReqLLM) do
         run_openai_loop(true)
       end
 
-      # Anthropic checks the signature on every thinking block it is sent, so a
-      # turn whose reloaded reasoning reaches it intact is one it accepts.
-      @tag :live_call
-      @tag :live_anthropic
-      @tag live_api: :anthropic
-      test "Anthropic streaming with thinking: a reloaded turn sends a signature Anthropic verifies" do
+      # A thinking block whose signature matches its own part goes back as that
+      # part, in place, rather than rebuilt from the details. Anthropic checks
+      # each block it is sent against its signature, so a turn it accepts sent
+      # the block intact.
+      defp run_anthropic_loop(stream?) do
         record_req_llm_contexts()
 
         model =
           ChatReqLLM.new!(%{
             model: @live_model,
-            stream: true,
+            stream: stream?,
             max_tokens: 4000,
             provider_opts: %{thinking: %{type: "enabled", budget_tokens: 1024}}
           })
@@ -3239,15 +3340,20 @@ if Code.ensure_loaded?(ReqLLM) do
 
         reloaded = live_step(model, [user, json_round_trip(assistant), tool_result])
 
-        assert [%ReqLLM.Message.ReasoningDetails{provider: :anthropic, signature: signature} | _] =
-                 sent_assistant_reasoning(sent_context())
+        assert %ReqLLM.Context{messages: sent} = sent_context()
+
+        assert [%ReqLLM.Message{reasoning_details: nil, content: content}] =
+                 Enum.filter(sent, &(&1.role == :assistant))
+
+        assert [%ReqLLM.Message.ContentPart{type: :thinking, metadata: %{signature: signature}}] =
+                 Enum.filter(content, &(&1.type == :thinking))
 
         assert is_binary(signature) and signature != ""
         assert reloaded.role == :assistant
 
-        # Control: Anthropic verifies a thinking block's signature when one is
-        # sent. Corrupting it only inside the reasoning part gets the turn
-        # refused, so the reasoning part is what reached the provider.
+        # Control: the same turn with the signature corrupted on both the
+        # thinking part and its detail still goes back in place, as the
+        # recorded context above shows, and Anthropic refuses it.
         tampered = assistant |> json_round_trip() |> corrupt_reasoning()
 
         assert {:error,
@@ -3255,6 +3361,20 @@ if Code.ensure_loaded?(ReqLLM) do
                  ChatReqLLM.call(model, [user, tampered, tool_result], [order_tool()])
 
         assert reason =~ "signature"
+      end
+
+      @tag :live_call
+      @tag :live_anthropic
+      @tag live_api: :anthropic
+      test "Anthropic non-streaming with thinking: a reloaded turn sends its thinking in place" do
+        run_anthropic_loop(false)
+      end
+
+      @tag :live_call
+      @tag :live_anthropic
+      @tag live_api: :anthropic
+      test "Anthropic streaming with thinking: a reloaded turn sends its thinking in place" do
+        run_anthropic_loop(true)
       end
     end
   end

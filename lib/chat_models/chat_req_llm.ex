@@ -1253,7 +1253,8 @@ if Code.ensure_loaded?(ReqLLM) do
     end
 
     # The details kept in the message's reasoning part, rebuilt as the structs
-    # req_llm's encoders read, or nil when there are none.
+    # req_llm's encoders read, or nil when there are none or when the
+    # message's own thinking parts already carry all of them.
     defp reasoning_details(%Message{content: parts}) when is_list(parts) do
       parts
       |> Enum.flat_map(fn
@@ -1262,12 +1263,42 @@ if Code.ensure_loaded?(ReqLLM) do
       end)
       |> Enum.flat_map(&decode_reasoning_detail/1)
       |> case do
-        [] -> nil
-        details -> details
+        [] ->
+          nil
+
+        details ->
+          if carried_by_thinking_parts?(details, parts), do: nil, else: details
       end
     end
 
     defp reasoning_details(_msg), do: nil
+
+    # Reasoning goes back in the order the model produced it. Given details,
+    # req_llm's Anthropic encoder builds every thinking block from them and
+    # places them all ahead of the message's text and tool calls, so a
+    # response that interleaves thinking with text would go back reordered.
+    # Given none, it encodes each signed thinking part where it sits in the
+    # content. When the thinking parts carry every detail, matched by
+    # signature, the parts go back on their own.
+    #
+    # A detail with no part of its own, such as a redacted block or several
+    # streamed blocks merged into one part, sends the details instead: a
+    # complete message in another order, rather than one missing a block.
+    #
+    # Only the Anthropic encoder replays thinking parts. Every other provider's
+    # reasoning is rebuilt from the details alone, so its details always go.
+    defp carried_by_thinking_parts?(details, parts) do
+      signatures =
+        for %ContentPart{type: :thinking, options: options} <- parts,
+            signature = Keyword.get(options || [], :signature),
+            is_binary(signature),
+            into: MapSet.new(),
+            do: signature
+
+      Enum.all?(details, fn detail ->
+        detail.provider == :anthropic and MapSet.member?(signatures, detail.signature)
+      end)
+    end
 
     defp stored_reasoning_details(%ContentPart{type: :unsupported, options: options})
          when is_list(options) do
