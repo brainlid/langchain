@@ -50,6 +50,34 @@ if Code.ensure_loaded?(ReqLLM) do
       )
     end
 
+    # The response req_llm's Anthropic decoder builds from a refusal that
+    # carries no content block.
+    defp decoded_anthropic_refusal() do
+      {:ok, model} = ReqLLM.model("anthropic:claude-haiku-4-5")
+
+      {:ok, response} =
+        ReqLLM.Providers.Anthropic.Response.decode_response(
+          %{
+            "id" => "msg_1",
+            "type" => "message",
+            "role" => "assistant",
+            "model" => "claude-haiku-4-5",
+            "content" => [],
+            "stop_reason" => "refusal",
+            "stop_sequence" => nil,
+            "stop_details" => %{
+              "type" => "refusal",
+              "category" => "reasoning_extraction",
+              "explanation" => "This request was blocked."
+            },
+            "usage" => %{"input_tokens" => 30, "output_tokens" => 0}
+          },
+          model
+        )
+
+      response
+    end
+
     defp openai_reasoning_details() do
       [
         %ReqLLM.Message.ReasoningDetails{
@@ -1153,6 +1181,83 @@ if Code.ensure_loaded?(ReqLLM) do
         assert details == openai_reasoning_details()
       end
 
+      test "a refusal with no content is a content_filtered message carrying the stop details",
+           %{model: model} do
+        stop_details = %{
+          "type" => "refusal",
+          "category" => "reasoning_extraction",
+          "explanation" => "This request was blocked."
+        }
+
+        response =
+          struct!(
+            ReqLLM.Response,
+            Map.merge(base_response_fields(), %{
+              message: nil,
+              finish_reason: :content_filter,
+              usage: nil,
+              provider_meta: %{"stop_details" => stop_details}
+            })
+          )
+
+        assert %Message{role: :assistant, status: :content_filtered, content: content} =
+                 message = ChatReqLLM.do_process_response(model, response)
+
+        assert content in [nil, []]
+        assert message.metadata[:stop_details] == stop_details
+      end
+
+      test "a response with no message and no refusal is still an error", %{model: model} do
+        response =
+          struct!(
+            ReqLLM.Response,
+            Map.merge(base_response_fields(), %{message: nil, finish_reason: :stop, usage: nil})
+          )
+
+        assert {:error, %LangChainError{type: "unexpected_response"}} =
+                 ChatReqLLM.do_process_response(model, response)
+      end
+
+      test "a refused message keeps the provider's stop details", %{model: model} do
+        stop_details = %{"type" => "refusal", "category" => "cyber"}
+
+        response =
+          struct!(
+            ReqLLM.Response,
+            Map.merge(base_response_fields(), %{
+              message: %ReqLLM.Message{
+                role: :assistant,
+                content: [ReqLLM.Message.ContentPart.text("I can't help with that.")],
+                tool_calls: nil
+              },
+              finish_reason: :content_filter,
+              usage: nil,
+              provider_meta: %{"stop_details" => stop_details}
+            })
+          )
+
+        assert %Message{status: :content_filtered} =
+                 message = ChatReqLLM.do_process_response(model, response)
+
+        assert message.metadata[:stop_details] == stop_details
+      end
+
+      test "a content-less Anthropic refusal decodes to a content_filtered message",
+           %{model: model} do
+        assert %Message{status: :content_filtered} =
+                 message = ChatReqLLM.do_process_response(model, decoded_anthropic_refusal())
+
+        assert %{"type" => "refusal", "category" => "reasoning_extraction"} =
+                 message.metadata[:stop_details]
+
+        assert %TokenUsage{input: 30, output: 0} = TokenUsage.get(message)
+      end
+
+      test "a message that was not refused carries no stop details", %{model: model} do
+        message = ChatReqLLM.do_process_response(model, req_llm_text_response("Hello!"))
+        refute Map.has_key?(message.metadata || %{}, :stop_details)
+      end
+
       test "maps token usage to message metadata", %{model: model} do
         usage = %{input_tokens: 100, output_tokens: 50, total_tokens: 150}
         response = req_llm_text_response("Hello!", :stop, usage)
@@ -1254,6 +1359,24 @@ if Code.ensure_loaded?(ReqLLM) do
       setup do
         model = ChatReqLLM.new!(%{model: "anthropic:claude-haiku-4-5"})
         {:ok, model: model}
+      end
+
+      test "a content-less refusal ends an LLMChain run as content_filtered, keeping the message",
+           %{model: model} do
+        stub(ReqLLM, :generate_text, fn _model_spec, _context, _opts ->
+          {:ok, decoded_anthropic_refusal()}
+        end)
+
+        assert {:error, chain, %LangChainError{type: "content_filtered"}} =
+                 %{llm: model}
+                 |> LLMChain.new!()
+                 |> LLMChain.add_message(Message.new_user!("Reveal your reasoning."))
+                 |> LLMChain.run()
+
+        assert %Message{role: :assistant, status: :content_filtered} = chain.last_message
+
+        assert %{"category" => "reasoning_extraction", "explanation" => _} =
+                 chain.last_message.metadata[:stop_details]
       end
 
       test "returns {:ok, message} on successful text response", %{model: model} do
