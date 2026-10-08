@@ -61,11 +61,12 @@ defmodule LangChain.MixProject do
       {:ex_doc, "~> 0.40", only: :dev, runtime: false},
       {:mimic, "~> 1.8", only: :test},
       {:dotenvy, "~> 1.1"},
-      # 1.11.0 is the first release that decodes and re-encodes the assistant
-      # `phase` the OpenAI Responses API puts on each message item. Below it,
-      # `LangChain.ChatModels.ChatReqLLM` has nothing to read the narration
-      # marker from and nothing that would send it back.
-      {:req_llm, ">= 1.11.0", optional: true},
+      # 1.25.0 is the first release that labels each content part, and each
+      # streamed text chunk, with the assistant `phase` of the OpenAI Responses
+      # API message item it belongs to, and sends each part's label back.
+      # `LangChain.ChatModels.ChatReqLLM` reads and writes the narration marker
+      # only through those per-part labels.
+      {:req_llm, ">= 1.25.0", optional: true},
       {:sobelow, "~> 0.14", only: [:dev, :test], runtime: false, warn_if_outdated: true},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:mix_audit, "~> 2.1", only: [:dev, :test], runtime: false}

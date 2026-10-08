@@ -165,9 +165,13 @@ defmodule LangChain.Chains.NarrationToolLoopTest do
     end
   end
 
+  # What req_llm's Responses encoder puts on the wire for the context it was
+  # handed. Its assistant message items carry a role and no item type.
   defp last_sent_phase(_req_llm_path, context) do
-    case List.last(context.messages) do
-      %{role: :assistant, metadata: metadata} -> metadata[:phase]
+    body = ReqLLM.Providers.OpenAI.ResponsesAPI.build_request_body(context, "gpt-5.4", [], nil)
+
+    case List.last(body["input"]) do
+      %{"role" => "assistant"} = item -> item["phase"]
       other -> {:not_an_assistant_message, other}
     end
   end
@@ -235,16 +239,11 @@ defmodule LangChain.Chains.NarrationToolLoopTest do
         assert {:ok, chain} = run_path(path, @turns)
         assert ScriptedResponsesAdapter.remaining() == []
 
-        # Streamed through req_llm, the text of the two commentary items in
-        # turn four arrives without an item boundary and merges into one part.
-        fourth_turn_labels =
-          if path == :req_llm_stream, do: ["narration"], else: ["narration", "narration"]
-
         assert trajectory(chain) == [
                  {:tools, 3, ["narration"]},
                  {:tools, 2, ["narration"]},
                  {:narration, ["narration"]},
-                 {:narration, fourth_turn_labels},
+                 {:narration, ["narration", "narration"]},
                  {:tools, 1, ["narration"]},
                  {:stop, ["answer"]}
                ]

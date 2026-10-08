@@ -4,8 +4,9 @@ if Code.ensure_loaded?(ReqLLM) do
     The narration marker, decoded from recorded Responses API bodies through
     `req_llm` rather than from structs built by hand.
 
-    `req_llm` reports the assistant `phase` differently depending on its
-    version. Going through its own decoder is what pins down which shape these
+    `req_llm` reports the assistant `phase` on each content part, and on each
+    streamed text chunk along with the index of the item it belongs to. Going
+    through its own decoders, streamed and not, is what pins down what these
     bodies produce and what `ChatReqLLM` makes of it.
     """
     use LangChain.BaseCase
@@ -58,30 +59,88 @@ if Code.ensure_loaded?(ReqLLM) do
       }
     end
 
-    defp stream_to_parts(model, chunks) do
+    # The server-sent events of a recorded body, streamed through the
+    # provider's own stream decoder: each message item is announced with its
+    # phase, its text streams, and the completed response closes the stream.
+    defp stream_fixture_chunks(name) do
+      body = @fixture_dir |> Path.join(name) |> File.read!() |> Jason.decode!()
+      model = %LLMDB.Model{provider: :openai, id: body["model"]}
+      decoder = ReqLLM.Providers.OpenAI.ResponsesAPI
+
+      item_events =
+        body["output"]
+        |> Enum.with_index()
+        |> Enum.flat_map(fn
+          {%{"type" => "message"} = item, index} ->
+            text = Enum.map_join(item["content"], "", & &1["text"])
+
+            [
+              %{
+                "type" => "response.output_item.added",
+                "output_index" => index,
+                "item" => Map.put(item, "content", [])
+              },
+              %{
+                "type" => "response.output_text.delta",
+                "output_index" => index,
+                "content_index" => 0,
+                "item_id" => item["id"],
+                "delta" => text
+              },
+              %{"type" => "response.output_item.done", "output_index" => index, "item" => item}
+            ]
+
+          {item, index} ->
+            [
+              %{"type" => "response.output_item.added", "output_index" => index, "item" => item},
+              %{"type" => "response.output_item.done", "output_index" => index, "item" => item}
+            ]
+        end)
+
+      events = item_events ++ [%{"type" => "response.completed", "response" => body}]
+
+      {chunks, _state} =
+        Enum.flat_map_reduce(events, decoder.init_stream_state(), fn data, state ->
+          decoder.decode_stream_event(%{data: data}, model, state)
+        end)
+
+      chunks
+    end
+
+    defp stream_fixture(model, name) do
+      chunks = stream_fixture_chunks(name)
+
       stub(ReqLLM, :stream_text, fn _model, _context, _opts ->
         {:ok, fake_stream_response(chunks)}
       end)
 
-      model
+      %{model | stream: true}
       |> ChatReqLLM.do_api_request([Message.new_user!("why did it fail")], [], 3)
       |> MessageDelta.merge_deltas()
-      |> Map.fetch!(:merged_content)
+    end
+
+    # The assistant message items req_llm's Responses encoder sends for a
+    # message, as `{phase, text}`.
+    defp sent_assistant_items(%Message{} = message) do
+      context = ChatReqLLM.messages_to_req_llm_context([Message.new_user!("hi"), message])
+      body = ReqLLM.Providers.OpenAI.ResponsesAPI.build_request_body(context, "gpt-5.4", [], nil)
+
+      for %{"role" => "assistant", "content" => content} = item <- body["input"] do
+        {item["phase"], Enum.map_join(content, "", & &1["text"])}
+      end
     end
 
     describe "non-streaming, from recorded bodies" do
-      test "a commentary item and an answer item arrive as one joined part", %{model: model} do
-        # The shape this repair exists for. The provider reports the two items'
-        # text joined into a single part, with no separator between them, and
-        # records the items themselves alongside it.
+      test "a commentary item and an answer item arrive as separate labeled parts",
+           %{model: model} do
+        # Without the labels, the preamble would read as the start of the answer.
         response = decode_fixture("commentary_then_answer.json")
         [commentary, answer] = message_item_texts("commentary_then_answer.json")
 
-        assert [%ReqLLM.Message.ContentPart{type: :text, text: joined}] = response.message.content
-        assert joined == commentary <> answer
-
-        assert %{phase_items: [%{"phase" => "commentary"}, %{"phase" => "final_answer"}]} =
-                 response.message.metadata
+        assert [
+                 %ReqLLM.Message.ContentPart{text: ^commentary, metadata: %{phase: "commentary"}},
+                 %ReqLLM.Message.ContentPart{text: ^answer, metadata: %{phase: "final_answer"}}
+               ] = response.message.content
 
         message = ChatReqLLM.do_process_response(model, response)
 
@@ -114,7 +173,8 @@ if Code.ensure_loaded?(ReqLLM) do
       test "commentary sent with tool calls is a tool call, not narration", %{model: model} do
         response = decode_fixture("commentary_with_tool_calls.json")
 
-        assert %{phase: "commentary"} = response.message.metadata
+        assert [%ReqLLM.Message.ContentPart{metadata: %{phase: "commentary"}}] =
+                 response.message.content
 
         message = ChatReqLLM.do_process_response(model, response)
 
@@ -125,91 +185,62 @@ if Code.ensure_loaded?(ReqLLM) do
       end
 
       test "a recorded turn re-encodes to the phases it arrived with", %{model: model} do
-        [req_msg] =
-          model
-          |> ChatReqLLM.do_process_response(decode_fixture("commentary_then_answer.json"))
-          |> ChatReqLLM.message_to_req_llm_messages()
+        message =
+          ChatReqLLM.do_process_response(model, decode_fixture("commentary_then_answer.json"))
 
-        assert Enum.map(req_msg.content, & &1.metadata) == [
-                 %{phase: "commentary"},
-                 %{phase: "final_answer"}
+        [commentary, answer] = message_item_texts("commentary_then_answer.json")
+
+        assert sent_assistant_items(message) == [
+                 {"commentary", commentary},
+                 {"final_answer", answer}
                ]
-
-        assert %{phase_items: [%{"phase" => "commentary"}, %{"phase" => "final_answer"}]} =
-                 req_msg.metadata
       end
     end
 
-    describe "streaming, with the terminal metadata a recorded body produces" do
-      # Streamed text arrives with nothing marking where one message item ends,
-      # so it merges into a single part before the terminal chunk names the
-      # items. These tests use the terminal metadata the recorded bodies
-      # produce, against that single merged part.
-      defp terminal_chunk(fixture) do
-        metadata =
-          fixture
-          |> decode_fixture()
-          |> Map.fetch!(:message)
-          |> Map.fetch!(:metadata)
-          |> Map.take([:phase, :phase_items])
-          |> Map.merge(%{finish_reason: :stop, terminal?: true})
+    describe "streaming, from recorded bodies" do
+      test "a commentary item and an answer item stream as separate labeled parts",
+           %{model: model} do
+        [commentary, answer] = message_item_texts("commentary_then_answer.json")
 
-        %ReqLLM.StreamChunk{type: :meta, metadata: metadata}
+        merged = stream_fixture(model, "commentary_then_answer.json")
+
+        assert %MessageDelta{status: :complete} = merged
+        assert {:ok, message} = MessageDelta.to_message(merged)
+
+        assert [narration_part, answer_part] = message.content
+        assert narration_part.content == commentary
+        assert ContentPart.utterance(narration_part) == "narration"
+        assert answer_part.content == answer
+        assert ContentPart.utterance(answer_part) == "answer"
+        refute Message.narration?(message)
       end
 
-      test "items that share a phase mark the merged part", %{model: model} do
-        model = %{model | stream: true}
+      test "several commentary items stream as separate parts", %{model: model} do
+        texts = message_item_texts("two_commentary_items.json")
 
-        chunks = [
-          %ReqLLM.StreamChunk{type: :content, text: "Checking the deployment."},
-          terminal_chunk("two_commentary_items.json")
-        ]
+        assert {:ok, message} =
+                 model
+                 |> stream_fixture("two_commentary_items.json")
+                 |> MessageDelta.to_message()
 
-        assert [part] = stream_to_parts(model, chunks)
-        assert ContentPart.utterance(part) == "narration"
+        text_parts = for %ContentPart{type: :text} = part <- message.content, do: part
+
+        assert Enum.map(text_parts, & &1.content) == texts
+        assert Enum.map(text_parts, &ContentPart.utterance/1) == ["narration", "narration"]
       end
 
-      test "items that disagree leave the merged part unmarked", %{model: model} do
-        model = %{model | stream: true}
+      test "a streamed turn re-encodes to the phases it arrived with", %{model: model} do
+        [commentary, answer] = message_item_texts("commentary_then_answer.json")
 
-        # The merged part holds an item of narration and an item of answer, so
-        # no single marker is true of it.
-        chunks = [
-          %ReqLLM.StreamChunk{type: :content, text: "Progress report.The answer."},
-          terminal_chunk("commentary_then_answer.json")
-        ]
+        assert {:ok, message} =
+                 model
+                 |> stream_fixture("commentary_then_answer.json")
+                 |> MessageDelta.to_message()
 
-        assert [part] = stream_to_parts(model, chunks)
-        assert ContentPart.utterance(part) == nil
-      end
-
-      test "a single reported phase marks the merged part", %{model: model} do
-        model = %{model | stream: true}
-
-        chunks = [
-          %ReqLLM.StreamChunk{type: :content, text: "Looking into it."},
-          terminal_chunk("commentary_with_tool_calls.json")
-        ]
-
-        assert [part] = stream_to_parts(model, chunks)
-        assert ContentPart.utterance(part) == "narration"
-      end
-
-      test "the terminal chunk still closes the turn", %{model: model} do
-        model = %{model | stream: true}
-
-        chunks = [
-          %ReqLLM.StreamChunk{type: :content, text: "Looking into it."},
-          terminal_chunk("two_commentary_items.json")
-        ]
-
-        stub(ReqLLM, :stream_text, fn _model, _context, _opts ->
-          {:ok, fake_stream_response(chunks)}
-        end)
-
-        deltas = ChatReqLLM.do_api_request(model, [Message.new_user!("hi")], [], 3)
-
-        assert List.last(deltas).status == :complete
+        assert sent_assistant_items(message) == [
+                 {"commentary", commentary},
+                 {"final_answer", answer}
+               ]
       end
     end
   end
