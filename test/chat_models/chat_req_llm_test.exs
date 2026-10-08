@@ -50,6 +50,20 @@ if Code.ensure_loaded?(ReqLLM) do
       )
     end
 
+    defp openai_reasoning_details() do
+      [
+        %ReqLLM.Message.ReasoningDetails{
+          text: nil,
+          signature: "ENCRYPTED_REASONING",
+          encrypted?: true,
+          provider: :openai,
+          format: "openai-responses-v1",
+          index: 0,
+          provider_data: %{"id" => "rs_1", "type" => "reasoning"}
+        }
+      ]
+    end
+
     defp req_llm_tool_call_response(tool_calls) do
       struct!(
         ReqLLM.Response,
@@ -389,6 +403,31 @@ if Code.ensure_loaded?(ReqLLM) do
     # ============================================================
 
     describe "message_to_req_llm_messages/1" do
+      test "sends kept reasoning details back with an assistant tool call" do
+        msg =
+          Message.new_assistant!(%{
+            tool_calls: [
+              ToolCall.new!(%{
+                call_id: "c1",
+                name: "search",
+                arguments: %{"q" => "x"},
+                status: :complete
+              })
+            ],
+            metadata: %{reasoning_details: openai_reasoning_details()}
+          })
+
+        [result] = ChatReqLLM.message_to_req_llm_messages(msg)
+
+        assert %ReqLLM.Message{role: :assistant, reasoning_details: details} = result
+        assert details == openai_reasoning_details()
+      end
+
+      test "an assistant message without kept reasoning sends none" do
+        [result] = ChatReqLLM.message_to_req_llm_messages(Message.new_assistant!("Answer"))
+        assert result.reasoning_details == nil
+      end
+
       test "translates a system message with string content" do
         msg = Message.new_system!("You are helpful.")
         [result] = ChatReqLLM.message_to_req_llm_messages(msg)
@@ -740,6 +779,28 @@ if Code.ensure_loaded?(ReqLLM) do
                  result.content
 
         assert opts[:signature] == "SIG_FROM_DETAILS"
+      end
+
+      test "keeps reasoning details so a tool loop can send them back", %{model: model} do
+        response =
+          req_llm_tool_call_response([ReqLLM.ToolCall.new("c1", "search", ~s({"q":"x"}))])
+
+        response = %{
+          response
+          | message: %{response.message | reasoning_details: openai_reasoning_details()}
+        }
+
+        result = ChatReqLLM.do_process_response(model, response)
+
+        assert result.metadata[:reasoning_details] == openai_reasoning_details()
+        assert %TokenUsage{input: 20, output: 10} = result.metadata[:usage]
+      end
+
+      test "a response without reasoning details keeps none", %{model: model} do
+        result =
+          ChatReqLLM.do_process_response(model, req_llm_text_response("Hello!", :stop, nil))
+
+        refute Map.has_key?(result.metadata || %{}, :reasoning_details)
       end
 
       test "maps token usage to message metadata", %{model: model} do
