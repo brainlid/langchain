@@ -47,7 +47,7 @@ if Code.ensure_loaded?(ReqLLM) do
 
         ChatReqLLM.new!(%{
           model: "anthropic:claude-haiku-4-5",
-          provider_opts: %{"thinking" => %{"type" => "enabled", "budget_tokens" => 2000}}
+          provider_opts: %{thinking: %{type: "enabled", budget_tokens: 2000}}
         })
 
     ## Narration (Assistant Phase)
