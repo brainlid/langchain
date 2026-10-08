@@ -1202,15 +1202,15 @@ if Code.ensure_loaded?(ReqLLM) do
       ]
     end
 
-    defp reasoning_details(%Message{metadata: %{reasoning_details: [_ | _] = details}}),
-      do: details
-
-    defp reasoning_details(_msg), do: nil
-
     def message_to_req_llm_messages(%Message{} = msg) do
       content = lc_content_to_req_llm(msg.content)
       [%ReqLLM.Message{role: msg.role, content: content}]
     end
+
+    defp reasoning_details(%Message{metadata: %{reasoning_details: [_ | _] = details}}),
+      do: details
+
+    defp reasoning_details(_msg), do: nil
 
     # The narration marker goes back to the provider two ways at once: on each
     # content part, and on the message. A provider version that reads only the
