@@ -1331,10 +1331,16 @@ if Code.ensure_loaded?(ReqLLM) do
     """
     @spec content_part_to_req_llm(ContentPart.t()) :: ReqLLM.Message.ContentPart.t() | nil
     def content_part_to_req_llm(%ContentPart{type: :text, content: text} = part) do
-      case Map.get(@utterance_to_phase, ContentPart.utterance(part)) do
-        nil -> ReqLLM.Message.ContentPart.text(text || "")
-        phase -> ReqLLM.Message.ContentPart.text(text || "", %{phase: phase})
-      end
+      metadata =
+        %{}
+        |> put_present(:phase, Map.get(@utterance_to_phase, ContentPart.utterance(part)))
+        |> put_present(:cache_control, cache_control(part.options))
+        |> put_present(
+          :prompt_cache_breakpoint,
+          Keyword.get(part.options || [], :prompt_cache_breakpoint)
+        )
+
+      ReqLLM.Message.ContentPart.text(text || "", metadata)
     end
 
     # Anthropic refuses replayed thinking blocks that lack their original
@@ -1391,6 +1397,20 @@ if Code.ensure_loaded?(ReqLLM) do
 
       nil
     end
+
+    # A text part's cache options, in the form each req_llm encoder reads from the part's
+    # metadata: `cache_control` for Anthropic and `prompt_cache_breakpoint` for the OpenAI
+    # Responses API. `cache_control: true` is the default ephemeral block, as in ChatAnthropic.
+    defp cache_control(options) do
+      case Keyword.get(options || [], :cache_control) do
+        true -> %{"type" => "ephemeral"}
+        setting when is_map(setting) -> setting
+        _other -> nil
+      end
+    end
+
+    defp put_present(metadata, _key, nil), do: metadata
+    defp put_present(metadata, key, value), do: Map.put(metadata, key, value)
 
     defp tool_result_content_to_req_llm(nil) do
       [ReqLLM.Message.ContentPart.text("")]
