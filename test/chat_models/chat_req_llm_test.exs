@@ -2914,5 +2914,231 @@ if Code.ensure_loaded?(ReqLLM) do
         assert ContentPart.utterance(part) == nil
       end
     end
+
+    describe "live: reasoning continuity across a tool loop" do
+      # Each test runs the first step of a tool loop against the real provider,
+      # then sends the second step with that assistant message stored and
+      # reloaded through JSON. The contexts handed to req_llm are recorded so
+      # the reasoning that went out can be compared.
+      #
+      # A provider accepting the turn proves little on its own, since neither
+      # requires the reasoning to come back. Each test also sends the reloaded
+      # turn with its reasoning signature corrupted, which the provider refuses
+      # only when it actually reads the reasoning part. OpenAI runs without
+      # stored responses so it decrypts what it is sent instead of looking the
+      # item up by id.
+
+      defp order_tool() do
+        Function.new!(%{
+          name: "lookup_order",
+          description: "Look up the shipping status of an order by its id.",
+          parameters_schema: %{
+            "type" => "object",
+            "properties" => %{"order_id" => %{"type" => "string"}},
+            "required" => ["order_id"]
+          },
+          function: fn _args, _ctx -> {:ok, "shipped"} end
+        })
+      end
+
+      defp record_req_llm_contexts() do
+        test_pid = self()
+        original = Mimic.Module.original(ReqLLM)
+
+        stub(ReqLLM, :generate_text, fn model, context, opts ->
+          send(test_pid, {:req_llm_context, context})
+          original.generate_text(model, context, opts)
+        end)
+
+        stub(ReqLLM, :stream_text, fn model, context, opts ->
+          send(test_pid, {:req_llm_context, context})
+          original.stream_text(model, context, opts)
+        end)
+      end
+
+      defp sent_context() do
+        assert_received {:req_llm_context, context}
+        context
+      end
+
+      # One step of the loop, as a complete message in either mode.
+      defp live_step(model, messages) do
+        assert {:ok, result} = ChatReqLLM.call(model, messages, [order_tool()])
+
+        case result do
+          %Message{} = message ->
+            message
+
+          deltas when is_list(deltas) ->
+            assert {:ok, message} =
+                     deltas
+                     |> List.flatten()
+                     |> MessageDelta.merge_deltas()
+                     |> MessageDelta.to_message()
+
+            message
+        end
+      end
+
+      defp sent_assistant_reasoning(%ReqLLM.Context{messages: messages}) do
+        assert [%ReqLLM.Message{reasoning_details: details}] =
+                 Enum.filter(messages, &(&1.role == :assistant))
+
+        details
+      end
+
+      defp tool_result_for(%Message{tool_calls: [%ToolCall{call_id: call_id} | _]}) do
+        Message.new_tool_result!(%{
+          tool_results: [
+            ToolResult.new!(%{tool_call_id: call_id, name: "lookup_order", content: "shipped"})
+          ]
+        })
+      end
+
+      # The message with every kept reasoning signature replaced by one the
+      # provider cannot verify. Nothing else in the message changes.
+      defp corrupt_reasoning(%Message{content: parts} = message) do
+        corrupted =
+          Enum.map(parts, fn
+            %ContentPart{type: :unsupported, options: [reasoning_details: details]} = part ->
+              details = Enum.map(details, &Map.put(&1, "signature", "not-a-valid-signature"))
+              %ContentPart{part | options: [reasoning_details: details]}
+
+            part ->
+              part
+          end)
+
+        %Message{message | content: corrupted}
+      end
+
+      defp reasoning_part?(%ContentPart{type: :unsupported, options: options}),
+        do: Keyword.has_key?(options || [], :reasoning_details)
+
+      defp reasoning_part?(_part), do: false
+
+      defp run_openai_loop(stream?) do
+        record_req_llm_contexts()
+
+        model =
+          ChatReqLLM.new!(%{
+            model: "openai:gpt-5.4-mini",
+            stream: stream?,
+            provider_opts: %{reasoning_effort: :low, store: false}
+          })
+
+        user = Message.new_user!("Use lookup_order to check the status of order A-1001.")
+
+        assistant = live_step(model, [user])
+        _first = sent_context()
+
+        assert [%ToolCall{name: "lookup_order"} | _] = assistant.tool_calls
+        assert Enum.any?(assistant.content, &reasoning_part?/1)
+
+        tool_result = tool_result_for(assistant)
+
+        fresh = live_step(model, [user, assistant, tool_result])
+        fresh_reasoning = sent_assistant_reasoning(sent_context())
+
+        assert [%ReqLLM.Message.ReasoningDetails{provider: :openai, encrypted?: true} | _] =
+                 fresh_reasoning
+
+        assert fresh.role == :assistant
+
+        reloaded = live_step(model, [user, json_round_trip(assistant), tool_result])
+        reloaded_context = sent_context()
+
+        assert sent_assistant_reasoning(reloaded_context) == fresh_reasoning
+        assert reloaded.role == :assistant
+
+        # The encoder req_llm uses for this request puts the reasoning item, with
+        # its encrypted content, ahead of the function call it led to.
+        input =
+          ReqLLM.Providers.OpenAI.ResponsesAPI.build_request_body(
+            reloaded_context,
+            "gpt-5.4-mini",
+            [],
+            nil
+          )["input"]
+
+        reasoning = Enum.find_index(input, &(&1["type"] == "reasoning"))
+        call = Enum.find_index(input, &(&1["type"] == "function_call"))
+
+        assert %{"encrypted_content" => encrypted} = Enum.at(input, reasoning)
+        assert is_binary(encrypted) and encrypted != ""
+        assert reasoning < call
+
+        # Control: without stored responses, OpenAI decrypts the reasoning it is
+        # sent rather than looking the item up by id. Corrupting it only
+        # inside the reasoning part gets the turn refused, so the reasoning part
+        # is what reached the provider.
+        tampered = assistant |> json_round_trip() |> corrupt_reasoning()
+
+        assert {:error,
+                %LangChainError{original: %ReqLLM.Error.API.Request{status: 400, reason: reason}}} =
+                 ChatReqLLM.call(model, [user, tampered, tool_result], [order_tool()])
+
+        assert reason =~ "encrypted content"
+      end
+
+      @tag :live_call
+      @tag :live_open_ai
+      @tag live_api: :open_ai
+      test "OpenAI non-streaming: reasoning goes back fresh and after a reload" do
+        run_openai_loop(false)
+      end
+
+      @tag :live_call
+      @tag :live_open_ai
+      @tag live_api: :open_ai
+      test "OpenAI streaming: reasoning goes back fresh and after a reload" do
+        run_openai_loop(true)
+      end
+
+      # Anthropic checks the signature on every thinking block it is sent, so a
+      # turn whose reloaded reasoning reaches it intact is one it accepts.
+      @tag :live_call
+      @tag :live_anthropic
+      @tag live_api: :anthropic
+      test "Anthropic streaming with thinking: a reloaded turn sends a signature Anthropic verifies" do
+        record_req_llm_contexts()
+
+        model =
+          ChatReqLLM.new!(%{
+            model: @live_model,
+            stream: true,
+            max_tokens: 4000,
+            provider_opts: %{thinking: %{type: "enabled", budget_tokens: 1024}}
+          })
+
+        user = Message.new_user!("Use lookup_order to check the status of order A-1001.")
+
+        assistant = live_step(model, [user])
+        _first = sent_context()
+
+        assert [%ToolCall{name: "lookup_order"} | _] = assistant.tool_calls
+        assert Enum.any?(assistant.content, &reasoning_part?/1)
+
+        tool_result = tool_result_for(assistant)
+
+        reloaded = live_step(model, [user, json_round_trip(assistant), tool_result])
+
+        assert [%ReqLLM.Message.ReasoningDetails{provider: :anthropic, signature: signature} | _] =
+                 sent_assistant_reasoning(sent_context())
+
+        assert is_binary(signature) and signature != ""
+        assert reloaded.role == :assistant
+
+        # Control: Anthropic verifies a thinking block's signature when one is
+        # sent. Corrupting it only inside the reasoning part gets the turn
+        # refused, so the reasoning part is what reached the provider.
+        tampered = assistant |> json_round_trip() |> corrupt_reasoning()
+
+        assert {:error,
+                %LangChainError{original: %ReqLLM.Error.API.Request{status: 400, reason: reason}}} =
+                 ChatReqLLM.call(model, [user, tampered, tool_result], [order_tool()])
+
+        assert reason =~ "signature"
+      end
+    end
   end
 end
