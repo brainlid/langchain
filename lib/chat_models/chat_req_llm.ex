@@ -1604,32 +1604,71 @@ if Code.ensure_loaded?(ReqLLM) do
     # In non-streaming responses the signature lives on the message's
     # reasoning_details, not on the thinking content part. Copy it over so
     # tool-loop replays send a signed block.
+    #
+    # A response can carry several thinking blocks (adaptive and interleaved
+    # thinking). Each one has its own signature, and Anthropic rejects a replay
+    # where any block carries another block's signature. Each thinking part
+    # takes the signature of the detail holding the same thinking text, and
+    # each detail is used once, in order, so blocks with identical text pair by
+    # position. A part with no matching detail stays unsigned rather than take
+    # another block's signature. A lone thinking part takes the first
+    # signature, the shape of a provider that reports a single detail.
     defp attach_reasoning_signature(parts, %ReqLLM.Message{reasoning_details: details})
          when is_list(details) do
-      signature =
-        Enum.find_value(details, fn
-          %{signature: signature} when is_binary(signature) and signature != "" -> signature
-          _ -> nil
-        end)
+      case Enum.count(parts, &match?(%ContentPart{type: :thinking}, &1)) do
+        1 ->
+          signature = Enum.find_value(details, &detail_signature/1)
 
-      if is_nil(signature) do
-        parts
-      else
-        Enum.map(parts, fn
-          %ContentPart{type: :thinking, options: opts} = part ->
-            if Keyword.has_key?(opts || [], :signature) do
-              part
-            else
-              %ContentPart{part | options: Keyword.put(opts || [], :signature, signature)}
-            end
+          Enum.map(parts, fn
+            %ContentPart{type: :thinking} = part -> put_thinking_signature(part, signature)
+            part -> part
+          end)
 
-          part ->
-            part
-        end)
+        _count ->
+          sign_thinking_parts_by_text(parts, details)
       end
     end
 
     defp attach_reasoning_signature(parts, _message), do: parts
+
+    defp sign_thinking_parts_by_text(parts, details) do
+      {signed, _unused} =
+        Enum.map_reduce(parts, details, fn
+          %ContentPart{type: :thinking} = part, remaining ->
+            case Enum.split_while(remaining, &(not same_thinking_text?(&1, part))) do
+              {before, [detail | rest]} ->
+                {put_thinking_signature(part, detail_signature(detail)), before ++ rest}
+
+              {_no_match, []} ->
+                {part, remaining}
+            end
+
+          part, remaining ->
+            {part, remaining}
+        end)
+
+      signed
+    end
+
+    defp same_thinking_text?(%{text: detail_text}, %ContentPart{content: part_text}),
+      do: (detail_text || "") == (part_text || "")
+
+    defp same_thinking_text?(_detail, _part), do: false
+
+    defp put_thinking_signature(%ContentPart{} = part, nil), do: part
+
+    defp put_thinking_signature(%ContentPart{options: opts} = part, signature) do
+      if Keyword.has_key?(opts || [], :signature) do
+        part
+      else
+        %ContentPart{part | options: Keyword.put(opts || [], :signature, signature)}
+      end
+    end
+
+    defp detail_signature(%{signature: signature}) when is_binary(signature) and signature != "",
+      do: signature
+
+    defp detail_signature(_detail), do: nil
 
     # A provider that labels its assistant message items reports the label on
     # each text part. A provider version that reports it only on the message

@@ -64,6 +64,34 @@ if Code.ensure_loaded?(ReqLLM) do
       ]
     end
 
+    defp anthropic_detail(text, signature, index) do
+      %ReqLLM.Message.ReasoningDetails{
+        text: text,
+        signature: signature,
+        encrypted?: true,
+        provider: :anthropic,
+        format: "anthropic-thinking-v1",
+        index: index
+      }
+    end
+
+    # A tool-calling response whose content and reasoning details are given.
+    defp thinking_response(content, details) do
+      struct!(
+        ReqLLM.Response,
+        Map.merge(base_response_fields(), %{
+          message: %ReqLLM.Message{
+            role: :assistant,
+            content: content,
+            tool_calls: [ReqLLM.ToolCall.new("c1", "assign_issue", "{}")],
+            reasoning_details: details
+          },
+          finish_reason: :tool_calls,
+          usage: nil
+        })
+      )
+    end
+
     # The reasoning part do_process_response/2 builds from openai_reasoning_details/0.
     defp openai_reasoning_part() do
       ContentPart.new!(%{
@@ -896,6 +924,95 @@ if Code.ensure_loaded?(ReqLLM) do
                ] = result.content
 
         assert opts[:signature] == "SIG_FROM_DETAILS"
+      end
+
+      test "gives each thinking part its own reasoning-details signature", %{model: model} do
+        response =
+          thinking_response(
+            [
+              ReqLLM.Message.ContentPart.thinking("Find the issue."),
+              ReqLLM.Message.ContentPart.text("Looking it up."),
+              ReqLLM.Message.ContentPart.thinking("Then assign it.")
+            ],
+            [
+              anthropic_detail("Find the issue.", "SIG_FIRST", 0),
+              anthropic_detail("Then assign it.", "SIG_SECOND", 1)
+            ]
+          )
+
+        result = ChatReqLLM.do_process_response(model, response)
+
+        assert [
+                 %ContentPart{type: :thinking} = first,
+                 %ContentPart{type: :text},
+                 %ContentPart{type: :thinking} = second,
+                 %ContentPart{type: :unsupported}
+               ] = result.content
+
+        assert first.options[:signature] == "SIG_FIRST"
+        assert second.options[:signature] == "SIG_SECOND"
+      end
+
+      test "pairs thinking parts by text when there are more details than parts",
+           %{model: model} do
+        # A detail with no thinking part of its own, such as a redacted block,
+        # must not shift the pairing of the parts after it.
+        response =
+          thinking_response(
+            [
+              ReqLLM.Message.ContentPart.thinking("Find the issue."),
+              ReqLLM.Message.ContentPart.thinking("Then assign it.")
+            ],
+            [
+              anthropic_detail("Find the issue.", "SIG_FIRST", 0),
+              anthropic_detail(nil, "SIG_REDACTED", 1),
+              anthropic_detail("Then assign it.", "SIG_THIRD", 2)
+            ]
+          )
+
+        result = ChatReqLLM.do_process_response(model, response)
+
+        assert [first, second, %ContentPart{type: :unsupported}] = result.content
+        assert first.options[:signature] == "SIG_FIRST"
+        assert second.options[:signature] == "SIG_THIRD"
+      end
+
+      test "leaves a thinking part unsigned when no detail holds its text", %{model: model} do
+        response =
+          thinking_response(
+            [
+              ReqLLM.Message.ContentPart.thinking("Find the issue."),
+              ReqLLM.Message.ContentPart.thinking("Something else entirely.")
+            ],
+            [anthropic_detail("Find the issue.", "SIG_FIRST", 0)]
+          )
+
+        result = ChatReqLLM.do_process_response(model, response)
+
+        assert [first, second, %ContentPart{type: :unsupported}] = result.content
+        assert first.options[:signature] == "SIG_FIRST"
+        refute Keyword.has_key?(second.options, :signature)
+      end
+
+      test "pairs thinking parts with identical text by position", %{model: model} do
+        # Thinking that is not displayed arrives with empty text in every block.
+        response =
+          thinking_response(
+            [
+              ReqLLM.Message.ContentPart.thinking(""),
+              ReqLLM.Message.ContentPart.text("Looking it up."),
+              ReqLLM.Message.ContentPart.thinking("")
+            ],
+            [anthropic_detail("", "SIG_FIRST", 0), anthropic_detail("", "SIG_SECOND", 1)]
+          )
+
+        result = ChatReqLLM.do_process_response(model, response)
+
+        assert [first, %ContentPart{type: :text}, second, %ContentPart{type: :unsupported}] =
+                 result.content
+
+        assert first.options[:signature] == "SIG_FIRST"
+        assert second.options[:signature] == "SIG_SECOND"
       end
 
       test "keeps reasoning details as a content part so a tool loop can send them back",
