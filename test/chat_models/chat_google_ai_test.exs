@@ -1054,6 +1054,27 @@ defmodule ChatModels.ChatGoogleAITest do
              ] = merged.tool_calls
     end
 
+    test "marks a streamed function call complete", %{model: model} do
+      response = %{
+        "candidates" => [
+          %{
+            "content" => %{
+              "role" => "model",
+              "parts" => [
+                %{"functionCall" => %{"args" => %{"city" => "Denver"}, "name" => "get_weather"}}
+              ]
+            },
+            "index" => 0
+          }
+        ]
+      }
+
+      assert [%MessageDelta{} = delta] =
+               ChatGoogleAI.do_process_response(model, response, MessageDelta)
+
+      assert [%ToolCall{status: :complete, name: "get_weather"}] = delta.tool_calls
+    end
+
     test "handles no parts in content", %{model: model} do
       response = %{
         "candidates" => [

@@ -909,7 +909,6 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     %{
       role: unmap_role(role),
       content: text_part,
-      complete: true,
       index: data["index"],
       metadata: build_grounding_message_metadata(grounding_metadata)
     }
@@ -976,7 +975,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
       call_id: call["id"] || Utils.generate_tool_call_id(),
       name: name,
       arguments: raw_args,
-      complete: true,
+      status: :complete,
       metadata:
         if(data["thoughtSignature"],
           do: %{thought_signature: data["thoughtSignature"]},

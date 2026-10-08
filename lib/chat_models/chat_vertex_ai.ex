@@ -800,7 +800,6 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     %{
       role: unmap_role(content_data["role"]),
       content: text_part,
-      complete: false,
       index: data["index"]
     }
     |> Utils.conditionally_add_to_map(:tool_calls, tool_calls_from_parts)
@@ -840,7 +839,6 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     %{
       role: unmap_role(content_data["role"]),
       content: text_content,
-      complete: true,
       index: data["index"]
     }
     |> Utils.conditionally_add_to_map(:tool_calls, tool_calls_from_parts)
@@ -863,7 +861,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
       call_id: call["id"] || Utils.generate_tool_call_id(),
       name: name,
       arguments: raw_args,
-      complete: true,
+      status: :complete,
       metadata:
         if(data["thoughtSignature"],
           do: %{thought_signature: data["thoughtSignature"]},

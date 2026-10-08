@@ -320,10 +320,8 @@ defmodule LangChain.Utils do
         #         %LangChain.MessageDelta{
         #           content: nil,
         #           index: 0,
-        #           function_name: nil,
         #           role: :assistant,
-        #           arguments: nil,
-        #           complete: false
+        #           status: :incomplete
         #         },
         #         ...
         #       ]
