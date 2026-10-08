@@ -68,12 +68,10 @@ if Code.ensure_loaded?(ReqLLM) do
     when its own commentary is replayed unlabelled. Keep it wherever the
     conversation is stored.
 
-    How much of this a given `req_llm` reports depends on its version. When it
-    labels each content part, two items stay two parts and a streaming consumer
-    knows a part is narration from its first token. When it labels only the
-    message, the parts are rebuilt from the per-item text it reports alongside,
-    and while streaming the marker arrives with the terminal chunk, after the
-    text.
+    req_llm labels each content part, so two items stay two parts, and a
+    streaming consumer knows a part is narration from its first token. Going
+    back, each text part carries its label, and req_llm groups consecutive
+    parts that share one into a single message item.
 
     ## Reasoning Continuity
 
@@ -755,53 +753,6 @@ if Code.ensure_loaded?(ReqLLM) do
       {[delta], state}
     end
 
-    # A provider version that labels the message rather than each chunk reports
-    # the label on the terminal meta chunk, after the text has streamed. Mark
-    # the text slot from there so the marker is on the assembled message and
-    # goes back with the history, even though a consumer could not know while
-    # the text arrived.
-    #
-    # The terminal chunk also carries usage, the finish reason and possibly the
-    # thinking signature, so the phase is stripped and the chunk re-dispatched
-    # rather than consumed here.
-    defp process_stream_chunk(
-           %ReqLLM.StreamChunk{type: :meta, metadata: %{phase: phase} = meta} = chunk,
-           state
-         )
-         when is_binary(phase) do
-      {deltas, new_state} =
-        process_stream_chunk(%{chunk | metadata: Map.delete(meta, :phase)}, state)
-
-      {utterance_deltas(state, phase) ++ deltas, new_state}
-    end
-
-    # A terminal chunk describing several message items reports them as
-    # `phase_items`. Text that has already streamed arrived without anything
-    # marking where one item ended, so it has merged into a single part and
-    # cannot be split back apart here.
-    #
-    # When every item carries the same phase, that merged part is wholly that
-    # phase and takes the marker. When the items disagree, the part holds both
-    # an item of narration and an item of answer, and no single marker is true
-    # of it, so it stays unmarked. A message holding an answer is not narration
-    # either way, so the loop still ends on it; what is lost is the replay
-    # label and the split.
-    defp process_stream_chunk(
-           %ReqLLM.StreamChunk{type: :meta, metadata: %{phase_items: items} = meta} = chunk,
-           state
-         )
-         when is_list(items) and items != [] do
-      meta = Map.delete(meta, :phase_items)
-
-      meta =
-        case uniform_phase(items) do
-          nil -> meta
-          phase -> Map.put(meta, :phase, phase)
-        end
-
-      process_stream_chunk(%{chunk | metadata: meta}, state)
-    end
-
     # Reasoning details arrive on meta chunks; there is no signature
     # StreamChunk. Anthropic reports each thinking block's details as that
     # block stops, so a response with several thinking blocks streams several
@@ -927,45 +878,6 @@ if Code.ensure_loaded?(ReqLLM) do
             })
 
           {[delta], new_state}
-      end
-    end
-
-    # The phase every item shares, or nil when they differ or any is missing.
-    defp uniform_phase(items) do
-      items
-      |> Enum.map(fn
-        %{"phase" => phase} when is_binary(phase) -> phase
-        _item -> nil
-      end)
-      |> Enum.uniq()
-      |> case do
-        [phase] when is_binary(phase) -> phase
-        _mixed -> nil
-      end
-    end
-
-    # A marker delta for the text slot, carrying no text of its own. Empty
-    # string content would be dropped before the merge, so the content is nil.
-    defp utterance_deltas(state, phase) do
-      index = Map.get(state.type_index_map, :content)
-      utterance = Map.get(@phase_to_utterance, phase)
-
-      if is_nil(index) or is_nil(utterance) do
-        []
-      else
-        part =
-          %{type: :text, content: nil}
-          |> ContentPart.new!()
-          |> ContentPart.put_utterance(utterance)
-
-        [
-          MessageDelta.new!(%{
-            role: :assistant,
-            content: part,
-            status: :incomplete,
-            index: index
-          })
-        ]
       end
     end
 
@@ -1271,7 +1183,6 @@ if Code.ensure_loaded?(ReqLLM) do
           role: :assistant,
           content: content,
           tool_calls: req_tool_calls,
-          metadata: assistant_phase_metadata(msg.content),
           reasoning_details: reasoning_details(msg)
         }
       ]
@@ -1284,7 +1195,6 @@ if Code.ensure_loaded?(ReqLLM) do
         %ReqLLM.Message{
           role: :assistant,
           content: content,
-          metadata: assistant_phase_metadata(msg.content),
           reasoning_details: reasoning_details(msg)
         }
       ]
@@ -1401,54 +1311,6 @@ if Code.ensure_loaded?(ReqLLM) do
     end
 
     defp decode_reasoning_detail(_stored), do: []
-
-    # The narration marker goes back to the provider two ways at once: on each
-    # content part, and on the message. A provider version that reads only the
-    # message needs the second form; one that reads the parts produces the same
-    # items from either. A message with no marked part gets neither, so every
-    # provider behind this adapter sees the structs it has always seen.
-    #
-    # `phase_items` replaces a message's content wholesale and an entry without
-    # a phase is discarded, so a message that mixes marked and unmarked text
-    # cannot use it without losing the unmarked text. That message sends no
-    # message-level metadata: its text replays in full, and only the labels
-    # wait for the part-level form.
-    defp assistant_phase_metadata(content) when is_list(content) do
-      text_parts = Enum.filter(content, &match?(%ContentPart{type: :text}, &1))
-      utterances = Enum.map(text_parts, &ContentPart.utterance/1)
-
-      cond do
-        utterances == [] or Enum.all?(utterances, &is_nil/1) ->
-          %{}
-
-        Enum.any?(utterances, &is_nil/1) ->
-          %{}
-
-        match?([_single], Enum.uniq(utterances)) ->
-          %{phase: Map.fetch!(@utterance_to_phase, hd(utterances))}
-
-        true ->
-          %{phase_items: phase_items_for_api(text_parts)}
-      end
-    end
-
-    defp assistant_phase_metadata(_content), do: %{}
-
-    # Consecutive parts sharing a marker become one item, so the order the
-    # model produced them in is what goes back.
-    defp phase_items_for_api(text_parts) do
-      text_parts
-      |> Enum.chunk_by(&ContentPart.utterance/1)
-      |> Enum.map(fn [first | _] = group ->
-        %{
-          "phase" => Map.fetch!(@utterance_to_phase, ContentPart.utterance(first)),
-          "content" =>
-            Enum.map(group, fn part ->
-              %{"type" => "output_text", "text" => part.content || ""}
-            end)
-        }
-      end)
-    end
 
     defp lc_content_to_req_llm(nil), do: []
 
@@ -1663,7 +1525,6 @@ if Code.ensure_loaded?(ReqLLM) do
         response.message.content
         |> translate_response_content()
         |> attach_reasoning_signature(response.message)
-        |> attach_assistant_phase(response.message)
         |> append_reasoning_details_part(response.message)
 
       status = translate_finish_reason(response.finish_reason)
@@ -1766,78 +1627,6 @@ if Code.ensure_loaded?(ReqLLM) do
       do: signature
 
     defp detail_signature(_detail), do: nil
-
-    # A provider that labels its assistant message items reports the label on
-    # each text part. A provider version that reports it only on the message
-    # takes the two fallbacks below, which reconstruct what the part-level
-    # label would have said.
-    defp attach_assistant_phase(parts, %ReqLLM.Message{metadata: metadata})
-         when is_map(metadata) do
-      if Enum.any?(parts, &(ContentPart.utterance(&1) != nil)) do
-        parts
-      else
-        phase_from_message_metadata(parts, metadata)
-      end
-    end
-
-    defp attach_assistant_phase(parts, _message), do: parts
-
-    # `phase_items` holds one entry per assistant message item, each with its
-    # own text. The message's own `content` holds those same items' text joined
-    # into a single part, so the answer arrives with the preamble on the front
-    # of it. Rebuilding the parts from the items is what separates them again.
-    defp phase_from_message_metadata(parts, %{phase_items: items})
-         when is_list(items) and items != [] do
-      case Enum.flat_map(items, &phase_item_to_content_part/1) do
-        [] -> parts
-        rebuilt -> replace_text_parts(parts, rebuilt)
-      end
-    end
-
-    # A single item labels the whole message, so every text part takes its
-    # marker.
-    defp phase_from_message_metadata(parts, %{phase: phase}) when is_binary(phase) do
-      Enum.map(parts, fn
-        %ContentPart{type: :text} = part -> put_utterance_from_phase(part, phase)
-        part -> part
-      end)
-    end
-
-    defp phase_from_message_metadata(parts, _metadata), do: parts
-
-    defp phase_item_to_content_part(%{"phase" => phase, "content" => content})
-         when is_list(content) do
-      case phase_item_text(content) do
-        "" -> []
-        text -> [put_utterance_from_phase(ContentPart.text!(text), phase)]
-      end
-    end
-
-    defp phase_item_to_content_part(_item), do: []
-
-    defp phase_item_text(content) do
-      Enum.map_join(content, "", fn
-        %{"text" => text} when is_binary(text) -> text
-        _part -> ""
-      end)
-    end
-
-    # The rebuilt parts stand where the joined text part stood, so any thinking
-    # part keeps its position relative to them.
-    defp replace_text_parts(parts, rebuilt) do
-      if Enum.any?(parts, &match?(%ContentPart{type: :text}, &1)) do
-        {spliced, _seen} =
-          Enum.flat_map_reduce(parts, false, fn
-            %ContentPart{type: :text}, false -> {rebuilt, true}
-            %ContentPart{type: :text}, true -> {[], true}
-            part, seen -> {[part], seen}
-          end)
-
-        spliced
-      else
-        parts ++ rebuilt
-      end
-    end
 
     defp phase_from_part_metadata(%{phase: phase}) when is_binary(phase), do: phase
     defp phase_from_part_metadata(_meta), do: nil
