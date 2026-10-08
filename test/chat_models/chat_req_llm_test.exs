@@ -50,6 +50,20 @@ if Code.ensure_loaded?(ReqLLM) do
       )
     end
 
+    defp openai_reasoning_details() do
+      [
+        %ReqLLM.Message.ReasoningDetails{
+          text: nil,
+          signature: "ENCRYPTED_REASONING",
+          encrypted?: true,
+          provider: :openai,
+          format: "openai-responses-v1",
+          index: 0,
+          provider_data: %{"id" => "rs_1", "type" => "reasoning"}
+        }
+      ]
+    end
+
     defp req_llm_tool_call_response(tool_calls) do
       struct!(
         ReqLLM.Response,
@@ -389,6 +403,96 @@ if Code.ensure_loaded?(ReqLLM) do
     # ============================================================
 
     describe "message_to_req_llm_messages/1" do
+      test "sends kept reasoning details back with an assistant tool call" do
+        msg =
+          Message.new_assistant!(%{
+            tool_calls: [
+              ToolCall.new!(%{
+                call_id: "c1",
+                name: "search",
+                arguments: %{"q" => "x"},
+                status: :complete
+              })
+            ],
+            metadata: %{reasoning_details: openai_reasoning_details()}
+          })
+
+        [result] = ChatReqLLM.message_to_req_llm_messages(msg)
+
+        assert %ReqLLM.Message{role: :assistant, reasoning_details: details} = result
+        assert details == openai_reasoning_details()
+      end
+
+      test "an OpenAI Responses request carries the kept reasoning item before its function call" do
+        messages = [
+          Message.new_user!("Find a family SUV."),
+          Message.new_assistant!(%{
+            tool_calls: [
+              ToolCall.new!(%{
+                call_id: "c1",
+                name: "search",
+                arguments: %{"q" => "suv"},
+                status: :complete
+              })
+            ],
+            metadata: %{reasoning_details: openai_reasoning_details()}
+          }),
+          Message.new_tool_result!(%{
+            tool_results: [ToolResult.new!(%{tool_call_id: "c1", name: "search", content: "[]"})]
+          })
+        ]
+
+        body =
+          messages
+          |> ChatReqLLM.messages_to_req_llm_context()
+          |> ReqLLM.Providers.OpenAI.ResponsesAPI.build_request_body("gpt-5", [], nil)
+
+        input = body["input"]
+        reasoning = Enum.find_index(input, &(&1["type"] == "reasoning"))
+        call = Enum.find_index(input, &(&1["type"] == "function_call"))
+
+        assert %{"id" => "rs_1", "encrypted_content" => "ENCRYPTED_REASONING"} =
+                 Enum.at(input, reasoning)
+
+        assert reasoning < call
+      end
+
+      test "an assistant message without kept reasoning sends none" do
+        [result] = ChatReqLLM.message_to_req_llm_messages(Message.new_assistant!("Answer"))
+        assert result.reasoning_details == nil
+      end
+
+      test "reasoning details restored from JSON are not sent back" do
+        restored = openai_reasoning_details() |> Jason.encode!() |> Jason.decode!()
+
+        messages = [
+          Message.new_user!("Find a family SUV."),
+          Message.new_assistant!(%{
+            tool_calls: [
+              ToolCall.new!(%{
+                call_id: "c1",
+                name: "search",
+                arguments: %{"q" => "suv"},
+                status: :complete
+              })
+            ],
+            metadata: %{reasoning_details: restored}
+          }),
+          Message.new_tool_result!(%{
+            tool_results: [ToolResult.new!(%{tool_call_id: "c1", name: "search", content: "[]"})]
+          })
+        ]
+
+        context = ChatReqLLM.messages_to_req_llm_context(messages)
+
+        assert [_user, %ReqLLM.Message{role: :assistant, reasoning_details: nil}, _tool] =
+                 context.messages
+
+        body = ReqLLM.Providers.OpenAI.ResponsesAPI.build_request_body(context, "gpt-5", [], nil)
+
+        refute Enum.any?(body["input"], &(&1["type"] == "reasoning"))
+      end
+
       test "translates a system message with string content" do
         msg = Message.new_system!("You are helpful.")
         [result] = ChatReqLLM.message_to_req_llm_messages(msg)
@@ -740,6 +844,28 @@ if Code.ensure_loaded?(ReqLLM) do
                  result.content
 
         assert opts[:signature] == "SIG_FROM_DETAILS"
+      end
+
+      test "keeps reasoning details so a tool loop can send them back", %{model: model} do
+        response =
+          req_llm_tool_call_response([ReqLLM.ToolCall.new("c1", "search", ~s({"q":"x"}))])
+
+        response = %{
+          response
+          | message: %{response.message | reasoning_details: openai_reasoning_details()}
+        }
+
+        result = ChatReqLLM.do_process_response(model, response)
+
+        assert result.metadata[:reasoning_details] == openai_reasoning_details()
+        assert %TokenUsage{input: 20, output: 10} = result.metadata[:usage]
+      end
+
+      test "a response without reasoning details keeps none", %{model: model} do
+        result =
+          ChatReqLLM.do_process_response(model, req_llm_text_response("Hello!", :stop, nil))
+
+        refute Map.has_key?(result.metadata || %{}, :reasoning_details)
       end
 
       test "maps token usage to message metadata", %{model: model} do

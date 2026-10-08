@@ -1183,7 +1183,8 @@ if Code.ensure_loaded?(ReqLLM) do
           role: :assistant,
           content: content,
           tool_calls: req_tool_calls,
-          metadata: assistant_phase_metadata(msg.content)
+          metadata: assistant_phase_metadata(msg.content),
+          reasoning_details: reasoning_details(msg)
         }
       ]
     end
@@ -1195,7 +1196,8 @@ if Code.ensure_loaded?(ReqLLM) do
         %ReqLLM.Message{
           role: :assistant,
           content: content,
-          metadata: assistant_phase_metadata(msg.content)
+          metadata: assistant_phase_metadata(msg.content),
+          reasoning_details: reasoning_details(msg)
         }
       ]
     end
@@ -1204,6 +1206,18 @@ if Code.ensure_loaded?(ReqLLM) do
       content = lc_content_to_req_llm(msg.content)
       [%ReqLLM.Message{role: msg.role, content: content}]
     end
+
+    # Only ReasoningDetails structs go back. A message restored from JSON holds
+    # string-keyed maps here, and ReqLLM's encoders read struct fields directly,
+    # so passing them on raises while building the request.
+    defp reasoning_details(%Message{metadata: %{reasoning_details: [_ | _] = details}}) do
+      case Enum.filter(details, &match?(%ReqLLM.Message.ReasoningDetails{}, &1)) do
+        [] -> nil
+        kept -> kept
+      end
+    end
+
+    defp reasoning_details(_msg), do: nil
 
     # The narration marker goes back to the provider two ways at once: on each
     # content part, and on the message. A provider version that reads only the
@@ -1454,10 +1468,27 @@ if Code.ensure_loaded?(ReqLLM) do
         status: status
       }
       |> Utils.conditionally_add_to_map(:metadata, end_turn_metadata(response.provider_meta))
+      |> keep_reasoning_details(response.message)
       |> Message.new()
       |> TokenUsage.set_wrapped(usage)
       |> unwrap_message()
     end
+
+    # ReqLLM rebuilds a provider's reasoning from the message's reasoning_details
+    # when the message goes back as context: OpenAI's Responses API needs its
+    # encrypted reasoning items with the function call outputs, and Anthropic
+    # encodes its signed thinking blocks from them. Keep them on the message so
+    # a tool loop can send them back.
+    defp keep_reasoning_details(attrs, %ReqLLM.Message{reasoning_details: [_ | _] = details}) do
+      Map.update(
+        attrs,
+        :metadata,
+        %{reasoning_details: details},
+        &Map.put(&1, :reasoning_details, details)
+      )
+    end
+
+    defp keep_reasoning_details(attrs, _message), do: attrs
 
     defp unwrap_message({:ok, message}), do: message
 
