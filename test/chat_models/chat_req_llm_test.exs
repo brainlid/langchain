@@ -64,6 +64,48 @@ if Code.ensure_loaded?(ReqLLM) do
       ]
     end
 
+    # The reasoning part do_process_response/2 builds from openai_reasoning_details/0.
+    defp openai_reasoning_part() do
+      ContentPart.new!(%{
+        type: :unsupported,
+        options: [
+          reasoning_details: [
+            %{
+              "text" => nil,
+              "signature" => "ENCRYPTED_REASONING",
+              "encrypted" => true,
+              "provider" => "openai",
+              "format" => "openai-responses-v1",
+              "index" => 0,
+              "provider_data" => %{"id" => "rs_1", "type" => "reasoning"}
+            }
+          ]
+        ]
+      })
+    end
+
+    # Stores and reloads a message the way a JSON-backed store does: option keys
+    # become strings, every value goes through JSON, and the keys come back as
+    # atoms. Metadata holds arbitrary terms that do not encode as JSON, so a
+    # store keeps only the keys it knows and none of them is reasoning.
+    defp json_round_trip(%Message{content: parts} = message) do
+      restored =
+        Enum.map(parts, fn %ContentPart{options: options} = part ->
+          stored =
+            options
+            |> Map.new(fn {key, value} -> {Atom.to_string(key), value} end)
+            |> Jason.encode!()
+            |> Jason.decode!()
+
+          %ContentPart{
+            part
+            | options: Enum.map(stored, fn {key, value} -> {String.to_atom(key), value} end)
+          }
+        end)
+
+      %Message{message | content: restored, metadata: nil}
+    end
+
     defp req_llm_tool_call_response(tool_calls) do
       struct!(
         ReqLLM.Response,
@@ -403,7 +445,7 @@ if Code.ensure_loaded?(ReqLLM) do
     # ============================================================
 
     describe "message_to_req_llm_messages/1" do
-      test "sends kept reasoning details back with an assistant tool call" do
+      test "sends a kept reasoning part back as the message's reasoning details" do
         msg =
           Message.new_assistant!(%{
             tool_calls: [
@@ -414,7 +456,7 @@ if Code.ensure_loaded?(ReqLLM) do
                 status: :complete
               })
             ],
-            metadata: %{reasoning_details: openai_reasoning_details()}
+            content: [openai_reasoning_part()]
           })
 
         [result] = ChatReqLLM.message_to_req_llm_messages(msg)
@@ -435,7 +477,7 @@ if Code.ensure_loaded?(ReqLLM) do
                 status: :complete
               })
             ],
-            metadata: %{reasoning_details: openai_reasoning_details()}
+            content: [openai_reasoning_part()]
           }),
           Message.new_tool_result!(%{
             tool_results: [ToolResult.new!(%{tool_call_id: "c1", name: "search", content: "[]"})]
@@ -462,35 +504,42 @@ if Code.ensure_loaded?(ReqLLM) do
         assert result.reasoning_details == nil
       end
 
-      test "reasoning details restored from JSON are not sent back" do
-        restored = openai_reasoning_details() |> Jason.encode!() |> Jason.decode!()
-
-        messages = [
-          Message.new_user!("Find a family SUV."),
+      test "the reasoning part is not sent as content" do
+        msg =
           Message.new_assistant!(%{
-            tool_calls: [
-              ToolCall.new!(%{
-                call_id: "c1",
-                name: "search",
-                arguments: %{"q" => "suv"},
-                status: :complete
-              })
-            ],
-            metadata: %{reasoning_details: restored}
-          }),
-          Message.new_tool_result!(%{
-            tool_results: [ToolResult.new!(%{tool_call_id: "c1", name: "search", content: "[]"})]
+            content: [ContentPart.text!("Answer"), openai_reasoning_part()]
           })
-        ]
 
-        context = ChatReqLLM.messages_to_req_llm_context(messages)
+        {[result], log} =
+          ExUnit.CaptureLog.with_log(fn -> ChatReqLLM.message_to_req_llm_messages(msg) end)
 
-        assert [_user, %ReqLLM.Message{role: :assistant, reasoning_details: nil}, _tool] =
-                 context.messages
+        assert [%ReqLLM.Message.ContentPart{type: :text, text: "Answer"}] = result.content
+        refute log =~ "Unsupported ContentPart"
+      end
 
-        body = ReqLLM.Providers.OpenAI.ResponsesAPI.build_request_body(context, "gpt-5", [], nil)
+      test "a reasoning part reloaded from JSON sends its reasoning back unchanged" do
+        msg =
+          %{content: [ContentPart.text!("Answer"), openai_reasoning_part()]}
+          |> Message.new_assistant!()
+          |> json_round_trip()
 
-        refute Enum.any?(body["input"], &(&1["type"] == "reasoning"))
+        assert [%ReqLLM.Message{reasoning_details: details}] =
+                 ChatReqLLM.message_to_req_llm_messages(msg)
+
+        assert details == openai_reasoning_details()
+      end
+
+      test "a kept detail from an unknown provider is dropped" do
+        part =
+          ContentPart.new!(%{
+            type: :unsupported,
+            options: [reasoning_details: [%{"provider" => "not_a_known_provider_atom"}]]
+          })
+
+        assert [%ReqLLM.Message{reasoning_details: nil}] =
+                 ChatReqLLM.message_to_req_llm_messages(
+                   Message.new_assistant!(%{content: [part]})
+                 )
       end
 
       test "translates a system message with string content" do
@@ -840,13 +889,17 @@ if Code.ensure_loaded?(ReqLLM) do
 
         result = ChatReqLLM.do_process_response(model, response)
 
-        assert [%ContentPart{type: :thinking, options: opts}, %ContentPart{type: :text}] =
-                 result.content
+        assert [
+                 %ContentPart{type: :thinking, options: opts},
+                 %ContentPart{type: :text},
+                 %ContentPart{type: :unsupported}
+               ] = result.content
 
         assert opts[:signature] == "SIG_FROM_DETAILS"
       end
 
-      test "keeps reasoning details so a tool loop can send them back", %{model: model} do
+      test "keeps reasoning details as a content part so a tool loop can send them back",
+           %{model: model} do
         response =
           req_llm_tool_call_response([ReqLLM.ToolCall.new("c1", "search", ~s({"q":"x"}))])
 
@@ -857,7 +910,8 @@ if Code.ensure_loaded?(ReqLLM) do
 
         result = ChatReqLLM.do_process_response(model, response)
 
-        assert result.metadata[:reasoning_details] == openai_reasoning_details()
+        assert [part] = result.content
+        assert part == openai_reasoning_part()
         assert %TokenUsage{input: 20, output: 10} = result.metadata[:usage]
       end
 
@@ -865,7 +919,28 @@ if Code.ensure_loaded?(ReqLLM) do
         result =
           ChatReqLLM.do_process_response(model, req_llm_text_response("Hello!", :stop, nil))
 
-        refute Map.has_key?(result.metadata || %{}, :reasoning_details)
+        refute Enum.any?(result.content, &(&1.type == :unsupported))
+      end
+
+      test "a stored and reloaded response sends back the reasoning it arrived with",
+           %{model: model} do
+        response =
+          req_llm_tool_call_response([ReqLLM.ToolCall.new("c1", "search", ~s({"q":"x"}))])
+
+        response = %{
+          response
+          | message: %{response.message | reasoning_details: openai_reasoning_details()}
+        }
+
+        reloaded =
+          model
+          |> ChatReqLLM.do_process_response(response)
+          |> json_round_trip()
+
+        assert [%ReqLLM.Message{reasoning_details: details}] =
+                 ChatReqLLM.message_to_req_llm_messages(reloaded)
+
+        assert details == openai_reasoning_details()
       end
 
       test "maps token usage to message metadata", %{model: model} do
@@ -2302,6 +2377,31 @@ if Code.ensure_loaded?(ReqLLM) do
 
         assert %MessageDelta{status: :complete} = merged
         assert %TokenUsage{input: 120, output: 30} = TokenUsage.get(merged)
+      end
+
+      test "keeps the details as a reasoning part a tool loop sends back" do
+        chunks = [
+          %ReqLLM.StreamChunk{type: :content, text: "Searching."},
+          terminal_chunk(openai_reasoning_details())
+        ]
+
+        assert {:ok, message} = chunks |> stream_and_merge() |> MessageDelta.to_message()
+        assert [%ContentPart{type: :text}, part] = message.content
+        assert part == openai_reasoning_part()
+
+        assert [%ReqLLM.Message{reasoning_details: details}] =
+                 ChatReqLLM.message_to_req_llm_messages(message)
+
+        assert details == openai_reasoning_details()
+      end
+
+      test "a reasoning-only turn keeps its details" do
+        merged = stream_and_merge([terminal_chunk(openai_reasoning_details())])
+
+        assert %MessageDelta{status: :complete} = merged
+        assert {:ok, message} = MessageDelta.to_message(merged)
+        assert [part] = message.content
+        assert part == openai_reasoning_part()
       end
     end
 
