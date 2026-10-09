@@ -517,15 +517,26 @@ defmodule LangChain.FunctionTest do
       assert fun.parse_args == parser
     end
 
+    test "accepts a 2-arity anonymous function" do
+      parser = fn args, _context -> {:ok, args} end
+
+      assert {:ok, %Function{parse_args: ^parser}} =
+               Function.new(%{
+                 name: "with_context_parser",
+                 function: &hello_world/2,
+                 parse_args: parser
+               })
+    end
+
     test "rejects an anonymous function with the wrong arity" do
       assert {:error, changeset} =
                Function.new(%{
                  name: "bad_parser",
                  function: &hello_world/2,
-                 parse_args: fn _a, _b -> :ok end
+                 parse_args: fn _a, _b, _c -> :ok end
                })
 
-      assert {"expected arity of 1 but has arity 2", _} = changeset.errors[:parse_args]
+      assert {"expected arity of 1 or 2 but has arity 3", _} = changeset.errors[:parse_args]
     end
 
     test "rejects something that isn't an Elixir function" do
@@ -744,6 +755,175 @@ defmodule LangChain.FunctionTest do
 
       assert message =~ "KeyError"
       refute message =~ "does not accept"
+    end
+  end
+
+  describe "execute/3 with a 2-arity :parse_args" do
+    test "the parser receives the same context as the function body" do
+      parent = self()
+
+      function =
+        Function.new!(%{
+          name: "context_parser",
+          function: fn args, context ->
+            send(parent, {:body_context, context})
+            {:ok, "ok", args}
+          end,
+          parse_args: fn args, context ->
+            send(parent, {:parser_context, context})
+            {:ok, args}
+          end
+        })
+
+      context = %{scope: :tenant_1, tool_call_id: "call_1"}
+      assert {:ok, "ok", %{}} = Function.execute(function, %{}, context)
+
+      assert_received {:parser_context, ^context}
+      assert_received {:body_context, ^context}
+    end
+
+    test "the parsed result, built from the context, is what the body receives" do
+      records = %{tenant_1: %{"tx_1" => %{id: "tx_1", category: "food"}}}
+
+      function =
+        Function.new!(%{
+          name: "resolving_parser",
+          function: fn %{record: record}, _context -> {:ok, "found", record} end,
+          parse_args: fn %{"id" => id}, %{scope: scope} ->
+            case get_in(records, [scope, id]) do
+              nil -> {:error, "No transaction #{id} for this account."}
+              record -> {:ok, %{record: record}}
+            end
+          end
+        })
+
+      assert {:ok, "found", %{id: "tx_1", category: "food"}} =
+               Function.execute(function, %{"id" => "tx_1"}, %{scope: :tenant_1})
+
+      assert {:error, "No transaction tx_1 for this account."} =
+               Function.execute(function, %{"id" => "tx_1"}, %{scope: :tenant_2})
+    end
+
+    test "replaces the built-in required-params check" do
+      function =
+        Function.new!(%{
+          name: "parser_owns_validation",
+          parameters: [FunctionParam.new!(%{name: "id", type: :string, required: true})],
+          function: &echo_args/2,
+          parse_args: fn args, _context -> {:ok, args} end
+        })
+
+      assert {:ok, _llm_result, %{}} = Function.execute(function, %{}, nil)
+    end
+
+    test "a :parse_args value that is not a callable parser does not skip the required-key check" do
+      # Function.new/1 refuses such a value, but a struct updated directly
+      # bypasses the changeset. It must not be mistaken for a parser that owns
+      # validation.
+      function =
+        Function.new!(%{
+          name: "needs_id",
+          parameters: [FunctionParam.new!(%{name: "id", type: :string, required: true})],
+          function: &echo_args/2
+        })
+
+      for not_a_parser <- ["not a function at all!", fn _a, _b, _c -> :ok end] do
+        function = %Function{function | parse_args: not_a_parser}
+
+        assert {:error, message} = Function.execute(function, %{}, nil)
+        assert message =~ "Missing required parameters"
+      end
+    end
+
+    test "an exception from the body keeps its original formatting" do
+      function =
+        Function.new!(%{
+          name: "parser_owns_validation",
+          parameters_schema: %{
+            type: "object",
+            properties: %{path: %{type: "string"}, limit: %{type: "integer"}},
+            required: ["path"]
+          },
+          function: fn args, _ctx -> Map.fetch!(args, "limit") end,
+          parse_args: fn args, _context -> {:ok, args} end
+        })
+
+      assert {:error, message, {_exception, _stacktrace}} =
+               Function.execute(function, %{"path" => "/a.md"}, nil)
+
+      assert message =~ "KeyError"
+      refute message =~ "does not accept"
+    end
+  end
+
+  describe "parse_arguments/3" do
+    defp fail_if_run(_args, _context), do: raise("the function body must not run")
+
+    test "returns the parser's converted arguments without running the body" do
+      function =
+        Function.new!(%{
+          name: "converter",
+          function: &fail_if_run/2,
+          parse_args: fn %{"value" => v}, %{offset: offset} ->
+            {:ok, %{value: String.to_integer(v) + offset}}
+          end
+        })
+
+      assert {:ok, %{value: 43}} =
+               Function.parse_arguments(function, %{"value" => "42"}, %{offset: 1})
+    end
+
+    test "returns the raw arguments when the parser returns :ok" do
+      function =
+        Function.new!(%{
+          name: "accepting",
+          function: &fail_if_run/2,
+          parse_args: fn _args -> :ok end
+        })
+
+      assert {:ok, %{"a" => 1}} = Function.parse_arguments(function, %{"a" => 1}, nil)
+    end
+
+    test "returns the parser's refusal" do
+      function =
+        Function.new!(%{
+          name: "refusing",
+          function: &fail_if_run/2,
+          parse_args: fn _args, _context -> {:error, "That charge is split."} end
+        })
+
+      assert {:error, "That charge is split."} = Function.parse_arguments(function, %{}, %{})
+    end
+
+    test "applies the required-key check when there is no parser" do
+      function =
+        Function.new!(%{
+          name: "needs_id",
+          parameters: [FunctionParam.new!(%{name: "id", type: :string, required: true})],
+          function: &fail_if_run/2
+        })
+
+      assert {:error, message} = Function.parse_arguments(function, %{}, nil)
+      assert message =~ "Missing required parameters"
+      assert {:ok, %{"id" => "1"}} = Function.parse_arguments(function, %{"id" => "1"}, nil)
+    end
+
+    test "treats nil arguments as an empty map" do
+      function = Function.new!(%{name: "no_args", function: &fail_if_run/2})
+
+      assert {:ok, %{}} = Function.parse_arguments(function, nil, nil)
+    end
+
+    test "reports a raising parser as an error message" do
+      function =
+        Function.new!(%{
+          name: "raiser",
+          function: &fail_if_run/2,
+          parse_args: fn _args, _context -> raise ArgumentError, "bad args" end
+        })
+
+      assert {:error, message} = Function.parse_arguments(function, %{}, nil)
+      assert message =~ "bad args"
     end
   end
 

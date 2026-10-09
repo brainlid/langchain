@@ -1765,7 +1765,11 @@ defmodule LangChain.Chains.LLMChain do
 
   - `:approve` - Execute the tool with original arguments
   - `:edit` - Execute the tool with modified arguments from the decision
-  - `:reject` - Create an error result without executing the tool
+  - `:reject` - Create a result without executing the tool. By default it says
+    a human reviewer rejected the call and is not an error. A decision may
+    carry `:message` to replace that text, and `:is_error` to mark the result
+    as an error, for a rejection made because the call could not run. An error
+    result counts toward the chain's failure count like any other tool error.
 
   An approved or edited call is still put to any `:on_tool_call_review`
   handlers, which are told the answer the user gave. A user agreeing to a call is
@@ -1782,13 +1786,18 @@ defmodule LangChain.Chains.LLMChain do
     * `decisions` - List of decision maps, one per tool call. Each decision must have:
       - `:type` - One of `:approve`, `:edit`, or `:reject`
       - `:arguments` - (optional, required for `:edit`) The modified arguments map
+      - `:message` - (optional, `:reject` only) The result's content in place of
+        the default rejection text
+      - `:is_error` - (optional, `:reject` only) Whether the result is an error.
+        Defaults to `false`
 
   ## Examples
 
       decisions = [
         %{type: :approve},
         %{type: :edit, arguments: %{"path" => "modified.txt"}},
-        %{type: :reject}
+        %{type: :reject},
+        %{type: :reject, message: "That account is closed.", is_error: true}
       ]
 
       updated_chain = LLMChain.execute_tool_calls_with_decisions(chain, tool_calls, decisions)
@@ -1816,7 +1825,9 @@ defmodule LangChain.Chains.LLMChain do
 
           :reject ->
             # Create rejection result without executing
-            rejection_msg = "Tool call '#{tool_call.name}' was rejected by a human reviewer."
+            rejection_msg =
+              Map.get(decision, :message) ||
+                "Tool call '#{tool_call.name}' was rejected by a human reviewer."
 
             # Fire failed callback for rejected tools
             Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
@@ -1829,7 +1840,7 @@ defmodule LangChain.Chains.LLMChain do
               tool_call_id: tool_call.call_id,
               name: tool_call.name,
               content: rejection_msg,
-              is_error: false
+              is_error: Map.get(decision, :is_error, false)
             })
         end
       end)
@@ -2085,7 +2096,7 @@ defmodule LangChain.Chains.LLMChain do
         end
 
       nil ->
-        error_msg = "Tool '#{call.name}' not found"
+        error_msg = decided_tool_not_found_message(call)
 
         Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [chain, call, error_msg])
 
@@ -2097,6 +2108,42 @@ defmodule LangChain.Chains.LLMChain do
         })
     end
   end
+
+  @doc """
+  Parse a tool call's arguments with its tool's parser, without executing it.
+
+  Looks the tool up by name and runs `LangChain.Function.parse_arguments/3`
+  with the context the tool body would receive for this call: the chain's
+  `custom_context` with the call's `:tool_call_id` added. A caller deciding
+  something about a call before it runs, such as whether to ask a human to
+  approve it, gets the same answer execution would give.
+
+  Returns `{:ok, parsed_arguments}`, or `{:error, message}` with the message
+  the model would be given, including when the chain has no tool by that name.
+  """
+  @spec parse_tool_call_arguments(t(), ToolCall.t()) :: {:ok, map()} | {:error, String.t()}
+  def parse_tool_call_arguments(%LLMChain{} = chain, %ToolCall{} = call) do
+    case chain._tool_map[call.name] do
+      %Function{} = func ->
+        Function.parse_arguments(func, call.arguments, tool_context(chain.custom_context, call))
+
+      nil ->
+        {:error, decided_tool_not_found_message(call)}
+    end
+  end
+
+  # The context a tool receives for one call. The call's tool_call_id is added
+  # so tool implementations can correlate side-effects (e.g. spawned
+  # sub-processes) back to the originating tool call without threading it
+  # through arguments.
+  defp tool_context(nil, %ToolCall{} = call), do: %{tool_call_id: call.call_id}
+
+  defp tool_context(context, %ToolCall{} = call) when is_map(context),
+    do: Map.put(context, :tool_call_id, call.call_id)
+
+  defp tool_context(context, _call), do: context
+
+  defp decided_tool_not_found_message(%ToolCall{} = call), do: "Tool '#{call.name}' not found"
 
   @doc """
   Execute the tool call with the tool. Returns the tool's message response.
@@ -2119,15 +2166,7 @@ defmodule LangChain.Chains.LLMChain do
       %{tool_result: result}
     end
 
-    # Enrich the context with the current call's tool_call_id so tool
-    # implementations can correlate side-effects (e.g. spawned sub-processes)
-    # back to the originating tool call without threading it through arguments.
-    enriched_context =
-      case context do
-        nil -> %{tool_call_id: call.call_id}
-        ctx when is_map(ctx) -> Map.put(ctx, :tool_call_id, call.call_id)
-        other -> other
-      end
+    enriched_context = tool_context(context, call)
 
     LangChain.Telemetry.span(
       [:langchain, :tool, :call],
