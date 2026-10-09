@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.15.2
+
+`ChatReqLLM` now passes prompt caching options on text content parts through
+to `req_llm`, so `cache_control` and `prompt_cache_breakpoint` take effect when
+a model is used through `ChatReqLLM`.
+
+No breaking changes.
+
+### Upgrading from v0.15.1 - v0.15.2
+
+- **Cache options are now sent.** A text `ContentPart` with `cache_control` or
+  `prompt_cache_breakpoint` set used to have those options dropped by
+  `ChatReqLLM`. They now reach the request. `req_llm`'s default Chat
+  Completions encoder (OpenAI chat, Groq, xAI and other OpenAI-compatible
+  providers) forwards both keys as given, so a part marked for Anthropic
+  caching also sends `cache_control` to those providers. Only text parts carry
+  the options; image and file parts do not.
+
+### Added
+
+- `ChatReqLLM` passes a text part's `cache_control` (Anthropic, OpenRouter,
+  Bedrock) and `prompt_cache_breakpoint` (OpenAI Responses) to `req_llm`.
+  `cache_control: true` expands to `%{"type" => "ephemeral"}`, as in
+  `ChatAnthropic`.
+  https://github.com/brainlid/langchain/pull/682
+
 ## v0.15.1
 
 `ChatReqLLM` now sends a reasoning model's own reasoning back in tool loops.
