@@ -522,6 +522,66 @@ if Code.ensure_loaded?(ReqLLM) do
         result = ChatReqLLM.content_part_to_req_llm(part)
         assert nil == result
       end
+
+      test "keeps a text part's cache_control, with true as the default ephemeral block" do
+        default =
+          ChatReqLLM.content_part_to_req_llm(ContentPart.text!("Doc", cache_control: true))
+
+        assert default.metadata == %{cache_control: %{"type" => "ephemeral"}}
+
+        setting = %{"type" => "ephemeral", "ttl" => "1h"}
+
+        custom =
+          ChatReqLLM.content_part_to_req_llm(ContentPart.text!("Doc", cache_control: setting))
+
+        assert custom.metadata == %{cache_control: setting}
+      end
+
+      test "keeps a text part's prompt_cache_breakpoint" do
+        part = ContentPart.text!("Doc", prompt_cache_breakpoint: %{mode: "explicit"})
+        result = ChatReqLLM.content_part_to_req_llm(part)
+        assert result.metadata == %{prompt_cache_breakpoint: %{mode: "explicit"}}
+      end
+
+      test "a text part without cache options has no metadata" do
+        assert ChatReqLLM.content_part_to_req_llm(ContentPart.text!("Doc")).metadata == %{}
+      end
+
+      test "an OpenAI Responses request puts the breakpoint on the part that has it" do
+        message =
+          Message.new_user!([
+            ContentPart.text!("Store context", prompt_cache_breakpoint: %{mode: "explicit"}),
+            ContentPart.text!("Question")
+          ])
+
+        body =
+          [message]
+          |> ChatReqLLM.messages_to_req_llm_context()
+          |> ReqLLM.Providers.OpenAI.ResponsesAPI.build_request_body("gpt-5", [], nil)
+
+        assert [%{"content" => [cached, question]}] = body["input"]
+        assert cached["prompt_cache_breakpoint"] == %{mode: "explicit"}
+        refute Map.has_key?(question, "prompt_cache_breakpoint")
+      end
+
+      test "an Anthropic request puts cache_control on the part that has it" do
+        {:ok, model} = ReqLLM.model("anthropic:claude-haiku-4-5")
+
+        message =
+          Message.new_user!([
+            ContentPart.text!("Store context", cache_control: true),
+            ContentPart.text!("Question")
+          ])
+
+        body =
+          [message]
+          |> ChatReqLLM.messages_to_req_llm_context()
+          |> ReqLLM.Providers.Anthropic.Context.encode_request(model)
+
+        assert [%{role: "user", content: [cached, question]}] = body.messages
+        assert cached[:cache_control] == %{"type" => "ephemeral"}
+        refute Map.has_key?(question, :cache_control)
+      end
     end
 
     # ============================================================
