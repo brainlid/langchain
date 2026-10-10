@@ -22,8 +22,9 @@ defmodule LangChain.Function do
     `%ToolResult{}` struct for advanced control. Returning a ToolResult allows
     for multi-modal responses (list of ContentParts), cache control, and
     processed_content.
-  * `parse_args` - An optional 1-arity function that runs **before** `function`
-    to parse, coerce, and validate the raw arguments handed back by the LLM.
+  * `parse_args` - An optional 1- or 2-arity function that runs **before**
+    `function` to parse, coerce, and validate the raw arguments handed back by
+    the LLM. The 2-arity form also receives the tool context.
     See "Parsing arguments before execution" below for the full contract.
   * `async` - Boolean value that flags if this can function can be executed
     asynchronously, potentially concurrently with other calls to the same
@@ -242,6 +243,28 @@ defmodule LangChain.Function do
   arguments parse once here and pattern-match the parsed result in `function`,
   rather than re-parsing inside the body.
 
+  ### Parsing with the tool context
+
+  A 2-arity parser is called as `parser.(arguments, context)` with the same
+  context the tool body receives: the chain's `custom_context` with
+  `:tool_call_id` added. That lets a parser resolve what the arguments refer
+  to, not just check their shape. It can look up a record for the current
+  tenant, refuse an id that does not exist, or compute the change a call would
+  make, and return the resolved data for `function` to use:
+
+      defp parse_args(args, %{scope: scope}) do
+        with {:ok, input} <- cast_input(args),
+             {:ok, record} <- Records.fetch(scope, input.id) do
+          {:ok, %{record: record, changes: input.changes}}
+        end
+      end
+
+  A parser may **read** but must **never write**. It can run more than once
+  for a single call: a caller can run it ahead of execution through
+  `parse_arguments/3` (for example, to decide whether a call is worth putting
+  to a human for approval), and `execute/3` runs it again when the call
+  executes. Only the execution-time result reaches `function`.
+
   LangChain takes no dependency on any specific schema library. Adapters for
   `Zoi`, `NimbleOptions`, `Ecto.Changeset`, `JSV`, or hand-rolled checks all
   conform to the same `:ok | {:ok, map()} | {:error, String.t()}` contract.
@@ -266,6 +289,12 @@ defmodule LangChain.Function do
   alias __MODULE__
   alias LangChain.FunctionParam
   alias LangChain.LangChainError
+
+  # A `:parse_args` value that can be called: the raw arguments, or the raw
+  # arguments and the tool context. Every place that asks "does this tool have
+  # a parser?" uses this, so a value that is not a callable parser is never
+  # treated as one.
+  defguardp parser?(parse_args) when is_function(parse_args, 1) or is_function(parse_args, 2)
 
   @primary_key false
   embedded_schema do
@@ -314,10 +343,12 @@ defmodule LangChain.Function do
           | {:error, reason :: String.t()}
 
   @typedoc """
-  Pre-execution argument parser. A 1-arity function that takes the raw
-  arguments map handed back by the LLM and returns a `t:parse_result/0`.
+  Pre-execution argument parser. Takes the raw arguments map handed back by the
+  LLM, and optionally the tool context, and returns a `t:parse_result/0`.
   """
-  @type parse_args :: (arguments() -> parse_result())
+  @type parse_args ::
+          (arguments() -> parse_result())
+          | (arguments(), context() -> parse_result())
 
   @create_fields [
     :name,
@@ -392,15 +423,50 @@ defmodule LangChain.Function do
   def execute(%Function{function: fun} = function, arguments, context) do
     Logger.debug("Executing function #{inspect(function.name)}")
 
+    with {:ok, parsed_arguments} <- do_parse_arguments(function, arguments, context) do
+      execute_with_error_handling(function, fun, parsed_arguments, context)
+    end
+  end
+
+  @doc """
+  Parse the arguments for a call to this function, without executing it.
+
+  Runs exactly the argument handling `execute/3` runs before the tool body:
+  the `:parse_args` parser when one is supplied, otherwise the required-key
+  check. Pass the same `context` the body would receive.
+
+  Returns `{:ok, parsed_arguments}` with the arguments the body would be given:
+  the parser's converted result, or the raw arguments when the parser returns
+  `:ok` or there is no parser. Returns `{:error, message}` with the message the
+  model would be given when the arguments are refused. An exception raised by
+  the parser is rescued and reported as `{:error, message}`.
+
+  A parser may run more than once for one call, so it must not write. See
+  "Parsing with the tool context" in the module doc.
+  """
+  @spec parse_arguments(t(), arguments() | nil, context()) ::
+          {:ok, map()} | {:error, String.t()}
+  def parse_arguments(%Function{} = function, arguments, context) do
+    case do_parse_arguments(function, arguments, context) do
+      {:ok, parsed_arguments} -> {:ok, parsed_arguments}
+      {:error, message} -> {:error, message}
+      {:error, message, _exception} -> {:error, message}
+    end
+  end
+
+  @spec do_parse_arguments(t(), arguments() | nil, context()) ::
+          {:ok, map()}
+          | {:error, String.t()}
+          | {:error, String.t(), execution_exception()}
+  defp do_parse_arguments(%Function{} = function, arguments, context) do
     # An LLM can hand back `nil` instead of an empty map for a no-argument
     # call. Normalize once, here, so everything downstream can rely on being
     # given a map: the required-key check, any `:parse_args` parser, and the
     # tool body itself.
     args = if is_map(arguments), do: arguments, else: %{}
 
-    with :ok <- validate_required_params(function, args),
-         {:ok, parsed_arguments} <- run_parse_args(function, args) do
-      execute_with_error_handling(function, fun, parsed_arguments, context)
+    with :ok <- validate_required_params(function, args) do
+      run_parse_args(function, args, context)
     end
   end
 
@@ -412,16 +478,17 @@ defmodule LangChain.Function do
   # `:on_tool_response_created` callbacks and `[:langchain, :tool, :call]`
   # telemetry firing on parse failures, which downstream consumers rely on for
   # token usage accounting and trajectory analysis.
-  @spec run_parse_args(t(), arguments()) ::
+  @spec run_parse_args(t(), arguments(), context()) ::
           {:ok, map()}
           | {:error, String.t()}
           | {:error, String.t(), execution_exception()}
-  defp run_parse_args(%Function{parse_args: nil}, arguments), do: {:ok, arguments}
+  defp run_parse_args(%Function{parse_args: nil}, arguments, _context), do: {:ok, arguments}
 
-  defp run_parse_args(%Function{parse_args: parser, name: name}, arguments)
-       when is_function(parser, 1) do
+  defp run_parse_args(%Function{parse_args: parser, name: name}, arguments, context)
+       when parser?(parser) do
     try do
-      parser.(arguments)
+      parser
+      |> call_parser(arguments, context)
       |> normalize_parse_result(name, arguments)
     rescue
       err ->
@@ -434,6 +501,12 @@ defmodule LangChain.Function do
          {err, __STACKTRACE__}}
     end
   end
+
+  defp call_parser(parser, arguments, _context) when is_function(parser, 1),
+    do: parser.(arguments)
+
+  defp call_parser(parser, arguments, context) when is_function(parser, 2),
+    do: parser.(arguments, context)
 
   defp normalize_parse_result(:ok, _name, arguments), do: {:ok, arguments}
   defp normalize_parse_result({:ok, %{} = parsed}, _name, _arguments), do: {:ok, parsed}
@@ -597,19 +670,24 @@ defmodule LangChain.Function do
     add_error(changeset, :function, "is not an Elixir function")
   end
 
-  # Validates that :parse_args, if set, is a 1-arity function.
+  # Validates that :parse_args, if set, is a 1- or 2-arity function.
   @spec validate_parse_args(Ecto.Changeset.t()) :: Ecto.Changeset.t()
   defp validate_parse_args(changeset) do
     case get_field(changeset, :parse_args) do
       nil ->
         changeset
 
-      parser when is_function(parser, 1) ->
+      parser when parser?(parser) ->
         changeset
 
       parser when is_function(parser) ->
         {:arity, arity} = Elixir.Function.info(parser, :arity)
-        add_error(changeset, :parse_args, "expected arity of 1 but has arity #{inspect(arity)}")
+
+        add_error(
+          changeset,
+          :parse_args,
+          "expected arity of 1 or 2 but has arity #{inspect(arity)}"
+        )
 
       _other ->
         add_error(changeset, :parse_args, "is not an Elixir function")
@@ -669,7 +747,7 @@ defmodule LangChain.Function do
   # place.
   @spec argument_error_message(Exception.t(), t(), function(), arguments()) :: String.t() | nil
   defp argument_error_message(_err, %Function{parse_args: parser}, _fun, _arguments)
-       when is_function(parser, 1) do
+       when parser?(parser) do
     # The parser owns the argument contract. Two reasons to stay out of the way
     # here: `arguments` at this point is the *parsed* map, which may have
     # coerced keys or injected defaults that no longer match the declared
@@ -818,7 +896,7 @@ defmodule LangChain.Function do
   # missing, which is exactly the situation a renamed argument produces.
   @spec validate_required_params(t(), arguments()) :: :ok | {:error, String.t()}
   defp validate_required_params(%Function{parse_args: parser}, _arguments)
-       when is_function(parser, 1) do
+       when parser?(parser) do
     # A supplied parser owns argument validation outright. Answering the
     # missing-key case here would split one tool's errors across two formats
     # and would keep the parser from reporting missing keys and type

@@ -4303,6 +4303,56 @@ defmodule LangChain.Chains.LLMChainTest do
     end
   end
 
+  describe "parse_tool_call_arguments/2" do
+    test "parses with the context the tool body receives for that call" do
+      parent = self()
+
+      tool =
+        Function.new!(%{
+          name: "lookup",
+          function: fn _args, _context -> raise "the tool body must not run" end,
+          parse_args: fn %{"id" => id}, context ->
+            send(parent, {:parser_context, context})
+            {:ok, %{id: String.to_integer(id)}}
+          end
+        })
+
+      chain =
+        LLMChain.new!(%{llm: ChatOpenAI.new!(%{stream: false}), custom_context: %{scope: :t1}})
+        |> LLMChain.add_tools(tool)
+
+      call = ToolCall.new!(%{call_id: "call_1", name: "lookup", arguments: %{"id" => "7"}})
+
+      assert {:ok, %{id: 7}} = LLMChain.parse_tool_call_arguments(chain, call)
+      assert_received {:parser_context, %{scope: :t1, tool_call_id: "call_1"}}
+    end
+
+    test "returns the parser's refusal" do
+      tool =
+        Function.new!(%{
+          name: "lookup",
+          function: fn _args, _context -> {:ok, "ran"} end,
+          parse_args: fn _args, _context -> {:error, "No such record."} end
+        })
+
+      chain =
+        LLMChain.new!(%{llm: ChatOpenAI.new!(%{stream: false})})
+        |> LLMChain.add_tools(tool)
+
+      call = ToolCall.new!(%{call_id: "call_1", name: "lookup", arguments: %{}})
+
+      assert {:error, "No such record."} = LLMChain.parse_tool_call_arguments(chain, call)
+    end
+
+    test "answers a call to a tool the chain does not have" do
+      chain = LLMChain.new!(%{llm: ChatOpenAI.new!(%{stream: false})})
+      call = ToolCall.new!(%{call_id: "call_1", name: "missing", arguments: %{}})
+
+      assert {:error, "Tool 'missing' not found"} =
+               LLMChain.parse_tool_call_arguments(chain, call)
+    end
+  end
+
   describe "execute_tool_calls_with_decisions/3" do
     test "executes single tool call with approve decision", %{hello_world: hello_world} do
       chain =
@@ -4408,6 +4458,54 @@ defmodule LangChain.Chains.LLMChainTest do
       assert result.tool_call_id == "call_789"
       # Critical: reject is NOT an error (to prevent retries)
       assert result.is_error == false
+    end
+
+    test "a reject decision can carry its own message and mark the result as an error" do
+      parent = self()
+
+      not_run =
+        Function.new!(%{
+          name: "update_record",
+          function: fn _args, _context ->
+            send(parent, :tool_ran)
+            {:ok, "ran"}
+          end
+        })
+
+      chain =
+        LLMChain.new!(%{llm: ChatOpenAI.new!(%{stream: false})})
+        |> LLMChain.add_tools(not_run)
+        |> LLMChain.add_message(Message.new_user!("Update it"))
+
+      tool_calls = [ToolCall.new!(%{call_id: "call_1", name: "update_record", arguments: %{}})]
+      decisions = [%{type: :reject, message: "Record 9 does not exist.", is_error: true}]
+
+      updated_chain = LLMChain.execute_tool_calls_with_decisions(chain, tool_calls, decisions)
+
+      assert [%ToolResult{tool_call_id: "call_1", is_error: true} = result] =
+               updated_chain.last_message.tool_results
+
+      assert result.content == [ContentPart.text!("Record 9 does not exist.")]
+      assert updated_chain.current_failure_count == 1
+      refute_received :tool_ran
+    end
+
+    test "a reject decision with only a message is not an error" do
+      tool = Function.new!(%{name: "update_record", function: fn _a, _c -> {:ok, "ran"} end})
+
+      chain =
+        LLMChain.new!(%{llm: ChatOpenAI.new!(%{stream: false})})
+        |> LLMChain.add_tools(tool)
+        |> LLMChain.add_message(Message.new_user!("Update it"))
+
+      tool_calls = [ToolCall.new!(%{call_id: "call_1", name: "update_record", arguments: %{}})]
+      decisions = [%{type: :reject, message: "The $28 is not a loan."}]
+
+      updated_chain = LLMChain.execute_tool_calls_with_decisions(chain, tool_calls, decisions)
+
+      assert [%ToolResult{is_error: false} = result] = updated_chain.last_message.tool_results
+      assert result.content == [ContentPart.text!("The $28 is not a loan.")]
+      assert updated_chain.current_failure_count == 0
     end
 
     test "handles multiple tool calls with mixed decisions", %{
