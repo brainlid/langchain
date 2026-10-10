@@ -1,5 +1,34 @@
 # Changelog
 
+## v0.15.3
+
+A tool's `parse_args` parser can now receive the tool context, so it can
+resolve what the arguments refer to (for example, look up a record for the
+current tenant) and not only check their shape. A call's arguments can also be
+parsed ahead of execution, letting a host learn that a call would fail before
+asking a human to approve it.
+
+No breaking changes. Existing 1-arity parsers and `:reject` decisions behave
+as before.
+
+### Added
+
+- `parse_args` accepts a 2-arity function, called with the raw arguments and
+  the same context the tool body receives (the chain's `custom_context` plus
+  `:tool_call_id`). A parser may run more than once for one call, so it should
+  read but never write.
+  https://github.com/brainlid/langchain/pull/684
+- `LangChain.Function.parse_arguments/3` and
+  `LLMChain.parse_tool_call_arguments/2` run a call's argument parsing without
+  executing the tool, returning `{:ok, parsed}` or the `{:error, message}` the
+  model would be given.
+  https://github.com/brainlid/langchain/pull/684
+- A `:reject` decision passed to `LLMChain.execute_tool_calls_with_decisions/3`
+  can carry `:message` to replace the default rejection text and `:is_error`
+  to mark the result as an error. An error result counts toward the chain's
+  failure count.
+  https://github.com/brainlid/langchain/pull/684
+
 ## v0.15.2
 
 `ChatReqLLM` now passes prompt caching options on text content parts through
