@@ -820,7 +820,8 @@ defmodule LangChain.FunctionTest do
       # Function.new/1 refuses such a value, but a struct updated directly
       # bypasses the changeset. It must not be mistaken for a parser that owns
       # validation.
-      function =
+      %Function{} =
+        function =
         Function.new!(%{
           name: "needs_id",
           parameters: [FunctionParam.new!(%{name: "id", type: :string, required: true})],
