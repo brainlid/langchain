@@ -1036,6 +1036,13 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       {:ok, %Req.Response{status: 529}} ->
         {:error, LangChainError.exception(type: "overloaded", message: "Overloaded")}
 
+      # Any other error status with an API error body. The body names the error
+      # type and explains what was wrong with the request (for example a 400
+      # `invalid_request_error`), and both become the returned error.
+      {:ok, %Req.Response{status: status, body: %{"error" => %{}} = data}}
+      when status in 400..599 ->
+        do_process_response(anthropic, data)
+
       {:error, %Req.TransportError{reason: :timeout} = err} ->
         {:error,
          LangChainError.exception(type: "timeout", message: "Request timed out", original: err)}
