@@ -5177,6 +5177,62 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
     end
   end
 
+  describe "non-streamed API error responses" do
+    test "returns the API's error type and message for a 400" do
+      stub(Req, :post, fn _req_struct ->
+        {:ok,
+         %Req.Response{
+           status: 400,
+           body: %{
+             "type" => "error",
+             "error" => %{
+               "type" => "invalid_request_error",
+               "message" =>
+                 "messages.1.content.0: Invalid `signature` in `thinking` block. " <>
+                   "The block is bound to a different conversation."
+             }
+           }
+         }}
+      end)
+
+      model = ChatAnthropic.new!(%{stream: false, model: @test_model})
+
+      assert {:error, %LangChainError{type: "invalid_request_error", message: message}} =
+               ChatAnthropic.call(model, "prompt", [])
+
+      assert message =~ "bound to a different conversation"
+    end
+
+    test "returns the API's error type and message for a 5xx" do
+      stub(Req, :post, fn _req_struct ->
+        {:ok,
+         %Req.Response{
+           status: 500,
+           body: %{
+             "type" => "error",
+             "error" => %{"type" => "api_error", "message" => "Internal server error"}
+           }
+         }}
+      end)
+
+      model = ChatAnthropic.new!(%{stream: false, model: @test_model})
+
+      assert {:error, %LangChainError{type: "api_error", message: "Internal server error"}} =
+               ChatAnthropic.call(model, "prompt", [])
+    end
+
+    test "returns an unexpected_response error for an error status without an error body" do
+      stub(Req, :post, fn _req_struct ->
+        {:ok, %Req.Response{status: 502, body: "Bad Gateway"}}
+      end)
+
+      model = ChatAnthropic.new!(%{stream: false, model: @test_model})
+
+      assert {:error, %LangChainError{type: "unexpected_response"}} =
+               ChatAnthropic.call(model, "prompt", [])
+    end
+  end
+
   describe "retry_count" do
     test "defaults to 2" do
       model = ChatAnthropic.new!(%{model: @test_model})
