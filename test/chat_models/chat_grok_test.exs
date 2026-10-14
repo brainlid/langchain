@@ -136,6 +136,69 @@ defmodule LangChain.ChatModels.ChatGrokTest do
       assert tool_data.function.name == "hello_world"
     end
 
+    test "sends each tool result as its own message with JSON-encoded arguments", %{grok: grok} do
+      messages = [
+        Message.new_user!("Weather in SF and NYC?"),
+        Message.new_assistant!(%{
+          tool_calls: [
+            ToolCall.new!(%{
+              call_id: "call_1",
+              name: "get_weather",
+              arguments: %{"city" => "SF"}
+            }),
+            ToolCall.new!(%{
+              call_id: "call_2",
+              name: "get_weather",
+              arguments: %{"city" => "NYC"}
+            })
+          ]
+        }),
+        Message.new_tool_result!(%{
+          tool_results: [
+            ToolResult.new!(%{tool_call_id: "call_1", content: "Sunny"}),
+            ToolResult.new!(%{tool_call_id: "call_2", content: "Rainy"})
+          ]
+        })
+      ]
+
+      result = ChatGrok.for_api(grok, messages)
+
+      assert [user, assistant, sf, nyc] = result.messages
+      assert user.role == "user"
+
+      assert [
+               %{function: %{arguments: "{\"city\":\"SF\"}"}},
+               %{function: %{arguments: "{\"city\":\"NYC\"}"}}
+             ] =
+               assistant.tool_calls
+
+      assert %{role: "tool", tool_call_id: "call_1", content: "Sunny"} = sf
+      assert %{role: "tool", tool_call_id: "call_2", content: "Rainy"} = nyc
+    end
+
+    test "sends a tool's parameters as its JSON schema", %{
+      grok: grok,
+      messages: messages,
+      weather: weather
+    } do
+      result = ChatGrok.for_api(grok, messages, [weather])
+
+      assert [
+               %{
+                 function: %{
+                   parameters: %{
+                     "type" => "object",
+                     "properties" => %{"city" => _},
+                     "required" => required
+                   }
+                 }
+               }
+             ] =
+               result.tools
+
+      assert "city" in required
+    end
+
     test "excludes nil optional fields", %{grok: grok, messages: messages} do
       result = ChatGrok.for_api(grok, messages)
 
@@ -250,6 +313,27 @@ defmodule LangChain.ChatModels.ChatGrokTest do
       assert %Message{role: :assistant} = message
       assert is_binary(message.content)
       assert String.length(message.content) > 0
+    end
+
+    @tag live_call: true, live_grok: true
+    test "completes a tool call round trip" do
+      product_count =
+        Function.new!(%{
+          name: "get_product_count",
+          description: "Returns how many products the team has.",
+          function: fn _args, _context -> {:ok, "42"} end
+        })
+
+      {:ok, chain} =
+        %{llm: ChatGrok.new!(%{model: @test_model})}
+        |> LLMChain.new!()
+        |> LLMChain.add_tools([product_count])
+        |> LLMChain.add_message(Message.new_system!("You are a helpful assistant."))
+        |> LLMChain.add_message(Message.new_user!("How many products do we have? Use the tool."))
+        |> LLMChain.run(mode: :while_needs_response)
+
+      assert Enum.any?(chain.messages, &(&1.role == :tool))
+      assert chain.last_message.content =~ "42"
     end
 
     @tag live_call: true, live_grok: true
@@ -544,6 +628,40 @@ defmodule LangChain.ChatModels.ChatGrokTest do
       assert {:ok, [%Message{}]} = ChatGrok.call(grok, [Message.new_user!("Hi")], [])
 
       assert_received {:usage, %TokenUsage{input: 11, output: 22}}
+    end
+
+    test "parses the arguments of a non-streamed tool call" do
+      grok = ChatGrok.new!(%{model: "grok-4", api_key: "test-xai-key"})
+
+      response_body = %{
+        "choices" => [
+          %{
+            "message" => %{
+              "role" => "assistant",
+              "content" => "",
+              "tool_calls" => [
+                %{
+                  "id" => "call_1",
+                  "type" => "function",
+                  "function" => %{"name" => "get_weather", "arguments" => "{\"city\":\"Paris\"}"}
+                }
+              ]
+            },
+            "finish_reason" => "tool_calls",
+            "index" => 0
+          }
+        ]
+      }
+
+      expect(Req, :post, fn _opts ->
+        {:ok, %Req.Response{status: 200, body: response_body}}
+      end)
+
+      assert {:ok, [%Message{tool_calls: [tool_call]}]} =
+               ChatGrok.call(grok, [Message.new_user!("Weather in Paris?")], [])
+
+      assert %ToolCall{status: :complete, call_id: "call_1", arguments: %{"city" => "Paris"}} =
+               tool_call
     end
 
     test "carries the finish reason onto a non-streamed message" do
