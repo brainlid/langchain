@@ -437,8 +437,14 @@ defmodule LangChain.ChatModels.ChatCompletionsFormat do
   # collapse them together.
   def process_response(%{"delta" => %{"reasoning_content" => _} = delta_body} = msg) do
     {index, content} =
-      case delta_body["reasoning_content"] do
-        reasoning when is_binary(reasoning) and reasoning != "" ->
+      case {delta_body["reasoning_content"], delta_body["content"]} do
+        # A chunk can carry the last of the thinking and the first of the
+        # answer. The text lands after the thinking when the delta merges.
+        {reasoning, text}
+        when is_binary(reasoning) and reasoning != "" and is_binary(text) and text != "" ->
+          {0, [ContentPart.thinking!(reasoning), ContentPart.text!(text)]}
+
+        {reasoning, _text} when is_binary(reasoning) and reasoning != "" ->
           {0, ContentPart.thinking!(reasoning)}
 
         _no_reasoning ->
