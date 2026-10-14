@@ -273,6 +273,8 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   end
 
   def for_api(%ChatGoogleAI{} = google_ai, messages, functions) do
+    functions = LangChain.NativeTool.drop_tool_search(functions)
+
     {system, messages} =
       Utils.split_system_message(messages, "Google AI only supports a single System message")
 

@@ -155,18 +155,15 @@ defmodule LangChain.ChatModels.ChatCompletionsFormat do
   def tools_for_api(nil), do: []
 
   def tools_for_api(tools) when is_list(tools) do
-    {native_tools, functions} = Enum.split_with(tools, &match?(%NativeTool{}, &1))
+    {native_tools, functions} =
+      tools
+      |> NativeTool.drop_tool_search()
+      |> Enum.split_with(&match?(%NativeTool{}, &1))
 
-    Enum.each(native_tools, fn
-      %NativeTool{name: "tool_search"} ->
-        Logger.debug(fn ->
-          "Chat Completions has no tool search; deferred tools are sent as ordinary tools."
-        end)
-
-      %NativeTool{name: name} ->
-        raise LangChainError,
-          type: "invalid_tools",
-          message: "The native tool #{inspect(name)} is not supported by Chat Completions."
+    Enum.each(native_tools, fn %NativeTool{name: name} ->
+      raise LangChainError,
+        type: "invalid_tools",
+        message: "The native tool #{inspect(name)} is not supported by Chat Completions."
     end)
 
     Enum.map(functions, fn %Function{} = function ->

@@ -137,6 +137,8 @@ defmodule LangChain.ChatModels.ChatMistralAI do
   """
   @spec for_api(t(), [Message.t()], ChatModel.tools()) :: %{atom() => any()}
   def for_api(%ChatMistralAI{} = mistral, messages, tools) do
+    tools = LangChain.NativeTool.drop_tool_search(tools)
+
     %{
       model: mistral.model,
       temperature: mistral.temperature,

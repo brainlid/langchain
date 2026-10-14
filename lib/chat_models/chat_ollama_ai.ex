@@ -394,6 +394,8 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   Return the params formatted for an API request.
   """
   def for_api(%ChatOllamaAI{} = model, messages, tools) do
+    tools = LangChain.NativeTool.drop_tool_search(tools)
+
     %{
       model: model.model,
       messages: messages_for_api(messages),

@@ -259,6 +259,8 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   end
 
   def for_api(%ChatVertexAI{} = vertex_ai, messages, functions) do
+    functions = LangChain.NativeTool.drop_tool_search(functions)
+
     {sys_instructions, other_messages} = Utils.split_system_message(messages)
 
     messages_for_api =

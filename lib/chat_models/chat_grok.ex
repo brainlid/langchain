@@ -246,6 +246,8 @@ defmodule LangChain.ChatModels.ChatGrok do
   Return the params formatted for an API request.
   """
   def for_api(%ChatGrok{} = grok, messages, tools \\ []) do
+    tools = LangChain.NativeTool.drop_tool_search(tools)
+
     base_params =
       %{
         model: grok.model,

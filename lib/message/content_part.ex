@@ -75,16 +75,21 @@ defmodule LangChain.Message.ContentPart do
 
   Some provider responses contain blocks that only the provider understands
   and that must be sent back exactly as they arrived, in the same position,
-  when the conversation continues. Anthropic's `server_tool_use` and
-  `tool_search_tool_result` blocks are an example: a conversation that searched
-  for tools once replays the search on every later request, which is how the
-  loaded tools stay loaded.
+  when the conversation continues. Tool search produces them: Anthropic's
+  `server_tool_use` and `tool_search_tool_result` blocks, and OpenAI's
+  `tool_search_call` and `tool_search_output` items. A conversation that
+  searched for tools once replays the search on every later request, which is
+  how the loaded tools stay loaded.
 
   A `:provider_item` part holds one such block. Build one with
   `provider_item!/2`:
 
-  - `:provider` option - the string name of the provider that produced it, for
-    example `"anthropic"`.
+  - `:provider` option - the string name of the provider that produced it:
+    `"anthropic"` or `"openai"`. It names the provider's API, not the chat
+    model, so any chat model that speaks that API replays the item. An item
+    `LangChain.ChatModels.ChatAnthropic` decoded replays through
+    `LangChain.ChatModels.ChatReqLLM` on an Anthropic model, and the other way
+    around.
   - `:item` option - the block itself, as a string-keyed map of JSON values.
   - `:content` - `nil` for a complete item. While a streamed item is still
     arriving, a chat model may accumulate a fragment of it here.
@@ -92,7 +97,8 @@ defmodule LangChain.Message.ContentPart do
   The chat model for the named provider sends the item back. Every other chat
   model leaves it out of the request, and the text helpers such as
   `content_to_string/2` skip it. Keep provider items wherever the conversation
-  is stored.
+  is stored: a stored conversation without them replays calls to tools whose
+  search is gone, which the provider may reject.
 
   ## Tool references
 
@@ -104,7 +110,12 @@ defmodule LangChain.Message.ContentPart do
   On a provider that loads referenced tools, the reference becomes the
   provider's own reference block. Any other chat model sends every deferred
   function as an ordinary tool already, so it renders the reference as a line
-  of text naming the tool.
+  of text naming the tool (`tool_reference_text/1`).
+
+  The text helpers read a reference the same way. When asked for `:text`,
+  `content_to_string/2` and `parts_to_string/2` include the
+  `"Tool available: <name>"` line, so a tool result that only loads tools
+  still reads as something.
 
   ## Image mime types
 

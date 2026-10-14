@@ -76,14 +76,17 @@ defmodule LangChain.Function do
   Three `options` keys describe how a function takes part in provider tool
   search. Each chat model translates them for its provider, and a chat model
   without tool search ignores them and sends the function as an ordinary tool.
+  "Tool Search" in `LangChain.NativeTool` lists which chat models search and
+  which use namespaces.
 
   * `:defer_loading` - When `true`, the function is declared on every request
     but kept out of the model's context until the model finds it through tool
     search. Add a search tool (`LangChain.NativeTool.tool_search/1`) to the
     chain alongside deferred functions.
   * `:namespace` - The name of a group of related functions. Providers that
-    group deferred tools present the group to the model by this name. It never
-    changes the function's `name`, which tool calls are matched on.
+    group deferred tools present the group to the model by this name, and the
+    model can load the whole group with one search. It never changes the
+    function's `name`, which tool calls are matched on.
   * `:namespace_description` - What the group named by `:namespace` is for.
     The model searches against it, so describe what the group's functions do
     together. Set it on any one function in the group; the first one found is

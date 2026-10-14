@@ -196,6 +196,8 @@ defmodule LangChain.ChatModels.ChatOrq do
           atom() => any()
         }
   def for_api(%ChatOrq{} = orq, messages, tools) do
+    tools = LangChain.NativeTool.drop_tool_search(tools)
+
     base =
       %{
         key: orq.key,
