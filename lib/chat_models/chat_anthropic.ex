@@ -480,6 +480,86 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   - **Haiku considerations**: Haiku has a high minimum (4096 tokens) which can mean low initial utilization. However, enabling `:cache_messages` has minimal cost impact, so it's safe to enable.
   - **TTL tradeoff**: Default TTL is 5m (1.25x write cost). Setting TTL to 1h increases write cost to 3x but may improve utilization for longer sessions.
 
+  ## Tool Search
+
+  With many tools, declaring them all to the model costs accuracy and context.
+  Tool search keeps most of them out of the model's context until it asks for
+  them, without changing the request prefix, so prompt caching and earlier
+  thinking blocks keep working.
+
+  Mark the functions to hide with `defer_loading: true` and add the search
+  tool:
+
+      deferred =
+        Function.new!(%{
+          name: "devices_list",
+          description: "List managed devices.",
+          parameters_schema: %{type: "object", properties: %{}},
+          function: &list_devices/2,
+          options: [defer_loading: true]
+        })
+
+      %{llm: ChatAnthropic.new!(%{model: "claude-sonnet-5-5"})}
+      |> LLMChain.new!()
+      |> LLMChain.add_tools([NativeTool.tool_search(), deferred, other_tools])
+
+  `LangChain.NativeTool.tool_search/1` takes `variant: :bm25` (the default,
+  natural language queries) or `variant: :regex`. Every tool is sent on every
+  request, but the model sees only the tools that are not deferred, plus the
+  search tool. When it needs one of the others it searches, and the API loads
+  the matching tools into the conversation where the search took place.
+
+  - At least one tool must not be deferred. The search tool counts. A request
+    where every tool is deferred raises a `LangChain.LangChainError` before it
+    is sent.
+  - A deferred function cannot carry `cache_control`. It is left out, with a
+    warning. Put the cache breakpoint on a tool that is not deferred.
+  - The model sees nothing about a deferred tool until it finds it. Tell it
+    what it can search for in the system prompt, and give related tools a
+    shared name prefix (`devices_list`, `devices_get`) so one search finds the
+    group.
+  - Keep tool descriptions fixed for the life of a conversation. Every
+    definition is part of every request.
+
+  ### Search blocks in the conversation
+
+  A search adds a `server_tool_use` block and a `tool_search_tool_result`
+  block to the assistant message. Each becomes a
+  `LangChain.Message.ContentPart` of type `:provider_item` and is sent back
+  unchanged, in the same position, on every later request. That is how a
+  loaded tool stays loaded, so keep these parts wherever the conversation is
+  stored. Other chat models leave them out.
+
+  The search runs on Anthropic's servers within the same response. It is never
+  a `LangChain.Message.ToolCall`, and the chain never executes it.
+
+  A response can stop with `stop_reason: "pause_turn"` while a server tool
+  works. The message is `:complete` with `metadata[:end_turn]` set to `false`,
+  so `LangChain.Chains.LLMChain` sends it back and the model continues.
+
+  ### Loading tools from your own tool
+
+  A function can do the search itself and load tools by returning
+  `:tool_reference` parts in its result:
+
+      function: fn %{"ability" => ability}, _context ->
+        parts =
+          ability
+          |> tool_names_for()
+          |> Enum.map(&ContentPart.tool_reference!/1)
+
+        {:ok, [ContentPart.text!("Loaded.") | parts]}
+      end
+
+  Each reference becomes a `tool_reference` block in the `tool_result`, and the
+  API loads that tool. Every referenced tool must be in the request's tools,
+  normally deferred, or the API answers "Tool reference 'name' not found".
+
+  A `tool_result` holding references cannot hold anything else; the API
+  rejects the mix. The result's other content, such as the text above, is sent
+  after the tool results in the same user message, so the model still reads
+  it.
+
   ## Refusals
 
   Anthropic's safety classifiers can decline a request. A declined request is a
@@ -547,6 +627,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   alias LangChain.TokenUsage
   alias LangChain.Function
   alias LangChain.FunctionParam
+  alias LangChain.NativeTool
   alias LangChain.Utils
   alias LangChain.Callbacks
   alias LangChain.Utils.BedrockStreamDecoder
@@ -557,6 +638,14 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   @current_config_version 1
 
   @default_cache_control_block %{"type" => "ephemeral"}
+
+  # The content blocks a server-side tool search adds to an assistant message.
+  @tool_search_block_types ["server_tool_use", "tool_search_tool_result"]
+
+  # The delta type `decode_stream/2` gives a `server_tool_use` block's input
+  # fragments, so they are not read as a tool call's arguments. It never comes
+  # from the API.
+  @server_tool_input_delta "langchain_server_tool_input_json_delta"
 
   # Added "thinking" support - https://docs.anthropic.com/en/api/messages#body-thinking
 
@@ -788,7 +877,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       # the messages list.
       system: get_system_text(system)
     }
-    |> Utils.conditionally_add_to_map(:tools, get_tools_for_api(tools))
+    |> Utils.conditionally_add_to_map(:tools, tools |> validate_tools!() |> get_tools_for_api())
     |> Utils.conditionally_add_to_map(:tool_choice, get_tool_choice(anthropic))
     |> Utils.conditionally_add_to_map(:max_tokens, anthropic.max_tokens)
     |> Utils.conditionally_add_to_map(:top_p, anthropic.top_p)
@@ -848,7 +937,68 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     Enum.map(tools, fn
       %Function{} = function ->
         function_for_api(function)
+
+      %NativeTool{} = tool ->
+        native_tool_for_api(tool)
     end)
+  end
+
+  # The API requires at least one tool that is not deferred. The search tool
+  # and any other native tool count. A request where every tool is deferred is
+  # rejected with a 400, so it is reported here with a message that names the
+  # fix.
+  defp validate_tools!(nil), do: nil
+  defp validate_tools!([]), do: []
+
+  defp validate_tools!(tools) when is_list(tools) do
+    if Enum.all?(tools, &match?(%Function{}, &1)) and Enum.all?(tools, &Function.deferred?/1) do
+      raise LangChainError,
+        type: "invalid_tools",
+        message:
+          "Every tool is deferred. Anthropic requires at least one tool that is not. " <>
+            "Add `LangChain.NativeTool.tool_search/1` or leave a function undeferred."
+    end
+
+    tools
+  end
+
+  @tool_search_tools %{
+    "bm25" => %{"type" => "tool_search_tool_bm25_20251119", "name" => "tool_search_tool_bm25"},
+    "regex" => %{"type" => "tool_search_tool_regex_20251119", "name" => "tool_search_tool_regex"}
+  }
+
+  @doc """
+  Convert a `LangChain.NativeTool` to the format expected by the Anthropic API.
+
+  - The tool built by `LangChain.NativeTool.tool_search/1` becomes Anthropic's
+    BM25 or regex tool search tool.
+  - Any other native tool whose `configuration` holds a `"type"` is sent as its
+    configuration, with the tool's `name` added when the configuration has
+    none. This reaches Anthropic's other server tools, such as web search.
+
+  Raises a `LangChain.LangChainError` for a native tool with no `"type"`.
+  """
+  @spec native_tool_for_api(NativeTool.t()) :: map() | no_return()
+  def native_tool_for_api(%NativeTool{name: "tool_search", configuration: config}) do
+    variant = Map.get(config || %{}, "variant", "bm25")
+
+    case Map.fetch(@tool_search_tools, variant) do
+      {:ok, tool} ->
+        tool
+
+      :error ->
+        raise LangChainError,
+              "Unsupported tool search variant #{inspect(variant)} for Anthropic."
+    end
+  end
+
+  def native_tool_for_api(%NativeTool{name: name, configuration: %{"type" => _} = config}) do
+    Map.put_new(config, "name", name)
+  end
+
+  def native_tool_for_api(%NativeTool{name: name}) do
+    raise LangChainError,
+          "Native tool #{inspect(name)} needs a \"type\" in its configuration to be sent to Anthropic."
   end
 
   @doc """
@@ -1272,7 +1422,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
         content: [],
         status: stop_reason_to_status(stop_reason)
       }
-      |> Map.merge(stop_details_metadata(data["stop_details"]))
+      |> Map.merge(stop_metadata(stop_reason, data["stop_details"]))
       |> Message.new()
       |> TokenUsage.set_wrapped(get_token_usage(usage))
       |> to_response()
@@ -1483,7 +1633,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       content: nil,
       status: stop_reason_to_status(stop_reason)
     }
-    |> Map.merge(stop_details_metadata(delta["stop_details"] || data["stop_details"]))
+    |> Map.merge(stop_metadata(stop_reason, delta["stop_details"] || data["stop_details"]))
     |> MessageDelta.new()
     |> TokenUsage.set_wrapped(get_token_usage(usage))
     |> to_response()
@@ -1540,6 +1690,43 @@ defmodule LangChain.ChatModels.ChatAnthropic do
        message: "Stream exception received: #{inspect(exceptions)}",
        original: response
      )}
+  end
+
+  # A server tool's input streams as JSON fragments. `decode_stream/2` relabels
+  # them so they are not read as a tool call's arguments, and each fragment is
+  # appended to the content of the provider item opened by the block's start.
+  def do_process_response(_model, %{
+        "type" => "content_block_delta",
+        "index" => index,
+        "delta" => %{"type" => @server_tool_input_delta, "partial_json" => partial_json}
+      }) do
+    %{
+      role: :assistant,
+      status: :incomplete,
+      index: index,
+      content: ContentPart.new!(%{type: :provider_item, content: partial_json})
+    }
+    |> MessageDelta.new()
+    |> to_response()
+  end
+
+  # Any other content block, such as the `server_tool_use` and
+  # `tool_search_tool_result` blocks of a tool search, is kept whole as a
+  # provider item so it can be sent back unchanged.
+  def do_process_response(_model, %{
+        "type" => "content_block_start",
+        "index" => index,
+        "content_block" => %{"type" => type} = block
+      })
+      when is_binary(type) do
+    %{
+      role: :assistant,
+      status: :incomplete,
+      index: index,
+      content: provider_item(block)
+    }
+    |> MessageDelta.new()
+    |> to_response()
   end
 
   def do_process_response(_model, other) do
@@ -1645,8 +1832,24 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     }
   end
 
+  # Any other block, such as the `server_tool_use` and `tool_search_tool_result`
+  # blocks of a tool search, is kept whole as a provider item so it can be sent
+  # back unchanged, in place.
+  defp do_process_content_response(%Message{} = message, %{"type" => type} = block)
+       when is_binary(type) do
+    %Message{message | content: (message.content || []) ++ [provider_item(block)]}
+  end
+
   defp do_process_content_response({:error, _reason} = error, _content) do
     error
+  end
+
+  defp provider_item(%{"type" => type} = block) do
+    unless type in @tool_search_block_types do
+      Logger.debug(fn -> "Keeping unrecognized Anthropic content block #{inspect(type)}" end)
+    end
+
+    ContentPart.provider_item!(provider(), block)
   end
 
   # Under `thinking: %{display: "updates"}` the model writes a progress update
@@ -1701,18 +1904,34 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   defp stop_reason_to_status("max_tokens"), do: :length
   defp stop_reason_to_status("stop_sequence"), do: :complete
   defp stop_reason_to_status("refusal"), do: :content_filtered
+  # A server tool, such as tool search, can pause a long-running turn. The turn
+  # is not over: `stop_metadata/2` marks it open, so the chain sends the paused
+  # content back and the model continues.
+  defp stop_reason_to_status("pause_turn"), do: :complete
 
   defp stop_reason_to_status(other) do
     Logger.warning("Unsupported stop_reason. Reason: #{inspect(other)}")
     nil
   end
 
-  # `stop_details` names the policy category behind a refusal and is null for
-  # every other stop reason, so only a refusal contributes metadata.
-  defp stop_details_metadata(details) when is_map(details),
-    do: %{metadata: %{stop_details: details}}
+  # Message metadata a stop reason contributes, as attributes to merge into the
+  # message or delta being built.
+  #
+  # - `stop_details` names the policy category behind a refusal and is null for
+  #   every other stop reason, so only a refusal contributes it.
+  # - `pause_turn` leaves the model's turn open (`end_turn: false`), which
+  #   `LangChain.Message.continues_turn?/1` reads so the chain calls the model
+  #   again.
+  defp stop_metadata(stop_reason, details) do
+    metadata =
+      %{}
+      |> then(fn m -> if is_map(details), do: Map.put(m, :stop_details, details), else: m end)
+      |> then(fn m ->
+        if stop_reason == "pause_turn", do: Map.put(m, :end_turn, false), else: m
+      end)
 
-  defp stop_details_metadata(_details), do: %{}
+    if map_size(metadata) == 0, do: %{}, else: %{metadata: metadata}
+  end
 
   @doc false
   def parse_stream_events(%ChatAnthropic{bedrock: nil}, {chunk, buffer}) do
@@ -1763,19 +1982,73 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       IO.inspect(chunk, label: "RCVD RAW CHUNK")
     end
 
+    {buffer, server_indexes} = split_stream_buffer(buffer)
     {to_process, incomplete} = parse_stream_events(model, {chunk, buffer})
 
     if model.verbose_api do
       IO.inspect(to_process, label: "RAW TO PROCESS")
     end
 
-    processed = Enum.filter(to_process, &relevant_event?/1)
+    {processed, server_indexes} =
+      to_process
+      |> Enum.filter(&relevant_event?/1)
+      |> label_server_tool_input(server_indexes)
 
     if model.verbose_api do
       IO.inspect(processed, label: "READY TO PROCESS")
     end
 
-    {processed, incomplete}
+    {processed, join_stream_buffer(incomplete, server_indexes)}
+  end
+
+  # A `server_tool_use` block streams its input as `input_json_delta`
+  # fragments, the same delta type a `tool_use` block streams its arguments in.
+  # Only the block's start says which kind a content index holds, and the
+  # fragments can arrive in later chunks. The indexes of open server tool
+  # blocks therefore travel with the stream buffer, which the stream handler
+  # passes back unchanged on the next chunk.
+  #
+  # The buffer stays a plain string while no server tool block is open.
+  defp split_stream_buffer({buffer, server_indexes}) when is_binary(buffer),
+    do: {buffer, server_indexes}
+
+  defp split_stream_buffer(buffer), do: {buffer || "", MapSet.new()}
+
+  defp join_stream_buffer(incomplete, server_indexes) do
+    if MapSet.size(server_indexes) == 0, do: incomplete, else: {incomplete, server_indexes}
+  end
+
+  # Relabels the input fragments of server tool blocks, tracking which content
+  # indexes hold one.
+  defp label_server_tool_input(events, server_indexes) do
+    Enum.map_reduce(events, server_indexes, fn
+      %{"type" => "message_start"} = event, _indexes ->
+        {event, MapSet.new()}
+
+      %{
+        "type" => "content_block_start",
+        "index" => index,
+        "content_block" => %{"type" => "server_tool_use"}
+      } = event,
+      indexes ->
+        {event, MapSet.put(indexes, index)}
+
+      %{
+        "type" => "content_block_delta",
+        "index" => index,
+        "delta" => %{"type" => "input_json_delta"}
+      } =
+          event,
+      indexes ->
+        if MapSet.member?(indexes, index) do
+          {put_in(event, ["delta", "type"], @server_tool_input_delta), indexes}
+        else
+          {event, indexes}
+        end
+
+      event, indexes ->
+        {event, indexes}
+    end)
   end
 
   def relevant_event?(%{"type" => "message_start"}), do: true
@@ -1798,14 +2071,17 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
   @doc false
   def decode_stream(%ChatAnthropic{bedrock: %BedrockConfig{}}, {chunk, buffer}, chunks \\ []) do
+    {buffer, server_indexes} = split_stream_buffer(buffer)
     {chunks, remaining} = BedrockStreamDecoder.decode_stream({chunk, buffer}, chunks)
 
-    chunks =
-      Enum.filter(chunks, fn chunk ->
+    {chunks, server_indexes} =
+      chunks
+      |> Enum.filter(fn chunk ->
         Map.has_key?(chunk, :bedrock_exception) || relevant_event?(chunk)
       end)
+      |> label_server_tool_input(server_indexes)
 
-    {chunks, remaining}
+    {chunks, join_stream_buffer(remaining, server_indexes)}
   end
 
   @doc """
@@ -1883,22 +2159,50 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   end
 
   # ToolResult support
+  #
+  # A result holding tool references sends only the references here. Its other
+  # content follows the tool results in the same user message; see
+  # `message_for_api/1`.
   def for_api(%ToolResult{} = result) do
+    {content, _following} = split_tool_result_content(result.content)
+
     %{
       "type" => "tool_result",
       "tool_use_id" => result.tool_call_id,
-      "content" => content_parts_for_api(result.content)
+      "content" => content
     }
     |> Utils.conditionally_add_to_map("is_error", result.is_error)
     |> Utils.conditionally_add_to_map("cache_control", get_cache_control_setting(result.options))
   end
+
+  # A tool result is the one place a tool reference has a block of its own: the
+  # API loads each referenced tool, which must be declared in `tools`, normally
+  # deferred. A `tool_result` holding references cannot hold anything else, so
+  # the result's other parts are returned separately, to be sent after the
+  # tool results in the same user message.
+  #
+  # Returns `{tool_result_content, following_blocks}`.
+  defp split_tool_result_content(parts) when is_list(parts) do
+    if Enum.any?(parts, &match?(%ContentPart{type: :tool_reference}, &1)) do
+      {references, others} =
+        Enum.split_with(parts, &match?(%ContentPart{type: :tool_reference}, &1))
+
+      {Enum.map(references, &tool_reference_for_api/1), content_parts_for_api(others)}
+    else
+      {content_parts_for_api(parts), []}
+    end
+  end
+
+  defp split_tool_result_content(content), do: {content_parts_for_api(content), []}
+
+  defp tool_reference_for_api(%ContentPart{type: :tool_reference, content: name}),
+    do: %{"type" => "tool_reference", "tool_name" => name}
 
   @doc """
   Convert a Function to the format expected by the Anthropic API.
   """
   @spec function_for_api(Function.t()) :: map() | no_return()
   def function_for_api(%Function{} = fun) do
-    # I'm here
     %{
       "name" => fun.name,
       "input_schema" => get_parameters(fun)
@@ -1913,7 +2217,28 @@ defmodule LangChain.ChatModels.ChatAnthropic do
       end
     end)
     |> Utils.conditionally_add_to_map("description", fun.description)
-    |> Utils.conditionally_add_to_map("cache_control", get_cache_control_setting(fun.options))
+    |> put_tool_loading(fun)
+  end
+
+  # A deferred tool cannot carry `cache_control`; the API rejects the request.
+  # Deferred tools are never part of the cached prefix anyway, so the setting
+  # is dropped and the breakpoint belongs on a tool that is not deferred.
+  defp put_tool_loading(map, %Function{} = fun) do
+    cache_control = get_cache_control_setting(fun.options)
+
+    if Function.deferred?(fun) do
+      if cache_control do
+        Logger.warning(
+          "Deferred function #{inspect(fun.name)} has cache_control set. A deferred tool " <>
+            "cannot carry cache_control, so it is left out. Put the cache breakpoint on a " <>
+            "tool that is not deferred."
+        )
+      end
+
+      Map.put(map, "defer_loading", true)
+    else
+      Utils.conditionally_add_to_map(map, "cache_control", cache_control)
+    end
   end
 
   @doc """
@@ -1935,11 +2260,18 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     # convert ToolResult into the expected format for Anthropic.
     #
     # A tool result is returned as a list within the content of a user message.
+    # The API requires the tool results first, so the content a result holding
+    # tool references cannot carry itself follows all of them.
     tool_results = Enum.map(results, &for_api(&1))
+
+    following =
+      Enum.flat_map(results, fn %ToolResult{content: content} ->
+        content |> split_tool_result_content() |> elem(1)
+      end)
 
     %{
       "role" => "user",
-      "content" => tool_results
+      "content" => tool_results ++ following
     }
   end
 
@@ -2107,13 +2439,24 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     end
   end
 
-  # Provider items are not replayed by this model yet, so every one is omitted.
-  def content_part_for_api(%ContentPart{type: :provider_item}), do: nil
+  # An Anthropic block goes back as it arrived. A block whose input streamed in
+  # holds the accumulated JSON in `content`, which becomes its `"input"`. A
+  # provider item from any other provider is omitted.
+  def content_part_for_api(%ContentPart{type: :provider_item} = part) do
+    if ContentPart.provider_item?(part, provider()) do
+      provider_item_for_api(part)
+    else
+      nil
+    end
+  end
 
-  # This model does not yet send tool references as reference blocks, so every
-  # deferred function is declared as an ordinary tool. The reference reads as
-  # text.
+  # A tool reference has a block of its own only inside a tool result (see
+  # `tool_result_content_for_api/1`). Anywhere else it reads as text.
   def content_part_for_api(%ContentPart{type: :tool_reference} = part) do
+    Logger.warning(
+      "A tool reference outside a tool result is sent as text: #{inspect(part.content)}"
+    )
+
     %{"type" => "text", "text" => ContentPart.tool_reference_text(part)}
   end
 
@@ -2250,6 +2593,25 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
   def content_part_for_api(%ContentPart{type: :image_url} = _part) do
     raise LangChainError, "Anthropic does not support image_url"
+  end
+
+  defp provider_item_for_api(%ContentPart{content: input_json, options: options}) do
+    item = Keyword.get(options, :item, %{})
+
+    case input_json do
+      json when is_binary(json) and json != "" ->
+        case Jason.decode(json) do
+          {:ok, input} when is_map(input) ->
+            Map.put(item, "input", input)
+
+          _other ->
+            Logger.warning("Provider item input is not a JSON object: #{inspect(json)}")
+            item
+        end
+
+      _none ->
+        item
+    end
   end
 
   defp get_parameters(%Function{parameters: [], parameters_schema: nil} = _fun) do

@@ -4,10 +4,12 @@ defmodule LangChain.ChatModels.ToolSearchPartsTest do
   assistant messages and `:tool_reference` parts in its tool results. Every
   chat model encodes such a conversation: provider items from another provider
   are left out, and tool references read as text naming the tool.
+
+  `ChatAnthropic` loads tools by reference and replays its own provider items.
+  Its tool search tests cover it.
   """
   use ExUnit.Case
 
-  alias LangChain.ChatModels.ChatAnthropic
   alias LangChain.ChatModels.ChatAwsMantle
   alias LangChain.ChatModels.ChatDeepSeek
   alias LangChain.ChatModels.ChatGoogleAI
@@ -70,8 +72,6 @@ defmodule LangChain.ChatModels.ToolSearchPartsTest do
   # `references?` is false for a model whose request carries no tool results.
   defp encoders do
     [
-      {"ChatAnthropic", fn msgs -> ChatAnthropic.for_api(ChatAnthropic.new!(%{}), msgs, []) end,
-       true},
       {"ChatOpenAI", fn msgs -> ChatOpenAI.for_api(ChatOpenAI.new!(%{}), msgs, []) end, true},
       {"ChatOpenAICompatible",
        fn msgs ->
@@ -113,7 +113,7 @@ defmodule LangChain.ChatModels.ToolSearchPartsTest do
     ]
   end
 
-  @model_names ~w(ChatAnthropic ChatOpenAI ChatOpenAICompatible ChatAwsMantle
+  @model_names ~w(ChatOpenAI ChatOpenAICompatible ChatAwsMantle
                   ChatOpenAIResponses ChatGoogleAI ChatVertexAI ChatGrok ChatMistralAI
                   ChatOllamaAI ChatOrq ChatDeepSeek ChatPerplexity)
 
