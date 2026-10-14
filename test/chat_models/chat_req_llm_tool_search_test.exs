@@ -192,6 +192,19 @@ if Code.ensure_loaded?(ReqLLM) do
                  )
       end
 
+      test "a deferred function without the search tool on an OpenAI model is an error" do
+        reject(&ReqLLM.generate_text/3)
+
+        assert {:error, %LangChainError{type: "invalid_tools", message: message}} =
+                 ChatReqLLM.call(
+                   ChatReqLLM.new!(%{model: "openai:gpt-5.4"}),
+                   [Message.new_user!("hi")],
+                   [function("get_time"), function("devices_list", defer_loading: true)]
+                 )
+
+        assert message =~ "OpenAI requires the search tool"
+      end
+
       test "another native tool is an error" do
         assert {:error, %LangChainError{message: message}} =
                  ChatReqLLM.call(

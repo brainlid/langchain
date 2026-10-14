@@ -164,6 +164,18 @@ defmodule LangChain.ChatModels.ChatOpenAI do
         tool_choice: %{"type" => "function", "function" => %{"name" => "get_weather"}}
       })
 
+  ## Tool Search
+
+  OpenAI's tool search, with deferred functions and namespaces, is a feature
+  of the Responses API. The Chat Completions API rejects the search tool. Use
+  `LangChain.ChatModels.ChatOpenAIResponses` for tool search.
+
+  A chain configured for tool search still runs here, with every tool
+  available from the start: deferred functions are sent as ordinary
+  functions, and the `LangChain.NativeTool.tool_search/1` tool is left out.
+  Search items another model added to the conversation are not sent. Any
+  other `LangChain.NativeTool` is an error.
+
   ## Log Probabilities
 
   OpenAI can return log probability information for output tokens, which is

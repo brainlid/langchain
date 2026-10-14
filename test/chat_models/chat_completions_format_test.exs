@@ -8,6 +8,8 @@ defmodule LangChain.ChatModels.ChatCompletionsFormatTest do
   alias LangChain.Message.ToolResult
   alias LangChain.MessageDelta
   alias LangChain.Function
+  alias LangChain.LangChainError
+  alias LangChain.NativeTool
 
   describe "item_for_api/2 system role" do
     test "sends system messages as :system by default" do
@@ -112,6 +114,27 @@ defmodule LangChain.ChatModels.ChatCompletionsFormatTest do
                  }
                }
              ] = ChatCompletionsFormat.tools_for_api([fun])
+    end
+
+    test "sends a deferred function as an ordinary function and drops the search tool" do
+      fun =
+        Function.new!(%{
+          name: "devices_list",
+          parameters_schema: %{"type" => "object", "properties" => %{}},
+          function: fn _args, _context -> {:ok, "17"} end,
+          options: [defer_loading: true, namespace: "devices", namespace_description: "Devices."]
+        })
+
+      assert [%{"type" => "function", "function" => function}] =
+               ChatCompletionsFormat.tools_for_api([NativeTool.tool_search(), fun])
+
+      assert Enum.sort(Map.keys(function)) == ["name", "parameters", "strict"]
+    end
+
+    test "raises for any other native tool" do
+      assert_raise LangChainError, ~r/"web_search" is not supported by Chat Completions/, fn ->
+        ChatCompletionsFormat.tools_for_api([NativeTool.new!(%{name: "web_search"})])
+      end
     end
   end
 

@@ -70,9 +70,15 @@ if Code.ensure_loaded?(ReqLLM) do
       request where every function is deferred and there is no search tool is
       an error before it is sent.
     - **OpenAI** (`openai:` models): the hosted `tool_search` tool, and
-      `defer_loading` on each deferred function. Requires `gpt-5.4` or later.
-      req_llm does not yet keep OpenAI's search items in the response, so a
-      conversation cannot replay a search.
+      `defer_loading` on each deferred function. A deferred function without
+      the search tool is an error before the request is sent, because the API
+      rejects it. req_llm does not keep OpenAI's `tool_search_call` and
+      `tool_search_output` items, or the `namespace` on a function call, so
+      the replayed history holds each call to a deferred tool without the
+      search that loaded it. The API accepts that, and the model calls the
+      tool again on later turns. A function's `:namespace` option is not
+      sent. For namespaces and replayed searches, use
+      `LangChain.ChatModels.ChatOpenAIResponses`.
     - **Any other provider**: the search tool is left out and deferred
       functions are sent as ordinary tools.
 
@@ -1239,17 +1245,28 @@ if Code.ensure_loaded?(ReqLLM) do
     defp search_variant(_bm25), do: :bm25
 
     # Anthropic rejects a request where every tool is deferred. The search tool
-    # counts as a tool that is not deferred.
+    # counts as a tool that is not deferred. OpenAI rejects any deferred
+    # function unless the request also declares the search tool.
     defp validate_deferred_tools!(%ChatReqLLM{} = model, [_ | _] = functions, []) do
-      if anthropic_model?(model.model) and Enum.all?(functions, &Function.deferred?/1) do
-        raise LangChainError,
-          type: "invalid_tools",
-          message:
-            "Every tool is deferred. Anthropic requires at least one tool that is not. " <>
-              "Add `LangChain.NativeTool.tool_search/1` or leave a function undeferred."
-      end
+      cond do
+        anthropic_model?(model.model) and Enum.all?(functions, &Function.deferred?/1) ->
+          raise LangChainError,
+            type: "invalid_tools",
+            message:
+              "Every tool is deferred. Anthropic requires at least one tool that is not. " <>
+                "Add `LangChain.NativeTool.tool_search/1` or leave a function undeferred."
 
-      :ok
+        provider_from_model_spec(model.model) == "openai" and
+            Enum.any?(functions, &Function.deferred?/1) ->
+          raise LangChainError,
+            type: "invalid_tools",
+            message:
+              "OpenAI requires the search tool when a function is deferred. " <>
+                "Add `LangChain.NativeTool.tool_search/1` or leave every function undeferred."
+
+        true ->
+          :ok
+      end
     end
 
     defp validate_deferred_tools!(_model, _functions, _native_tools), do: :ok

@@ -1138,6 +1138,35 @@ defmodule LangChain.FunctionTest do
     end
   end
 
+  describe "namespace_description/1" do
+    test "returns the description when set" do
+      function =
+        Function.new!(%{
+          function: &hello_world/2,
+          name: "devices_list",
+          options: [namespace: "devices", namespace_description: "Manage devices."]
+        })
+
+      assert Function.namespace_description(function) == "Manage devices."
+    end
+
+    test "returns nil when unset, blank, or not a string" do
+      assert Function.namespace_description(
+               Function.new!(%{function: &hello_world/2, name: "plain"})
+             ) == nil
+
+      assert Function.namespace_description(
+               Function.new!(%{
+                 function: &hello_world/2,
+                 name: "blank",
+                 options: [namespace_description: ""]
+               })
+             ) == nil
+
+      assert Function.namespace_description(%Function{name: "bare", options: nil}) == nil
+    end
+  end
+
   describe "namespace/1" do
     test "returns the namespace when set" do
       function =

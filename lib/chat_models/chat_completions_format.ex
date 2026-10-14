@@ -19,6 +19,7 @@ defmodule LangChain.ChatModels.ChatCompletionsFormat do
   alias LangChain.Function
   alias LangChain.FunctionParam
   alias LangChain.LangChainError
+  alias LangChain.NativeTool
   alias LangChain.Utils
   alias LangChain.MessageDelta
 
@@ -142,12 +143,33 @@ defmodule LangChain.ChatModels.ChatCompletionsFormat do
 
   @doc """
   Encode functions for the request's `tools` field.
+
+  Tool search does not exist on this API surface; OpenAI rejects its search
+  tool here. A deferred function is encoded like any other, without
+  `defer_loading`, and the `"tool_search"` native tool
+  (`LangChain.NativeTool.tool_search/1`) is left out. A chain configured for
+  tool search therefore runs with every tool available from the start. Any
+  other `LangChain.NativeTool` raises a `LangChain.LangChainError`.
   """
-  @spec tools_for_api(nil | [Function.t()]) :: [%{String.t() => any()}]
+  @spec tools_for_api(nil | [Function.t() | NativeTool.t()]) :: [%{String.t() => any()}]
   def tools_for_api(nil), do: []
 
   def tools_for_api(tools) when is_list(tools) do
-    Enum.map(tools, fn %Function{} = function ->
+    {native_tools, functions} = Enum.split_with(tools, &match?(%NativeTool{}, &1))
+
+    Enum.each(native_tools, fn
+      %NativeTool{name: "tool_search"} ->
+        Logger.debug(fn ->
+          "Chat Completions has no tool search; deferred tools are sent as ordinary tools."
+        end)
+
+      %NativeTool{name: name} ->
+        raise LangChainError,
+          type: "invalid_tools",
+          message: "The native tool #{inspect(name)} is not supported by Chat Completions."
+    end)
+
+    Enum.map(functions, fn %Function{} = function ->
       %{"type" => "function", "function" => item_for_api(function)}
     end)
   end

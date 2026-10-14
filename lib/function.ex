@@ -73,7 +73,7 @@ defmodule LangChain.Function do
 
   ## Tool search options
 
-  Two `options` keys describe how a function takes part in provider tool
+  Three `options` keys describe how a function takes part in provider tool
   search. Each chat model translates them for its provider, and a chat model
   without tool search ignores them and sends the function as an ordinary tool.
 
@@ -84,16 +84,24 @@ defmodule LangChain.Function do
   * `:namespace` - The name of a group of related functions. Providers that
     group deferred tools present the group to the model by this name. It never
     changes the function's `name`, which tool calls are matched on.
+  * `:namespace_description` - What the group named by `:namespace` is for.
+    The model searches against it, so describe what the group's functions do
+    together. Set it on any one function in the group; the first one found is
+    used.
 
         Function.new!(%{
           name: "devices_list",
           description: "List managed devices.",
           parameters_schema: %{type: "object", properties: %{}},
           function: &list_devices/2,
-          options: [defer_loading: true, namespace: "devices"]
+          options: [
+            defer_loading: true,
+            namespace: "devices",
+            namespace_description: "Inspect and manage devices."
+          ]
         })
 
-  Read them with `deferred?/1` and `namespace/1`.
+  Read them with `deferred?/1`, `namespace/1` and `namespace_description/1`.
 
   ## Function Parameters
 
@@ -589,6 +597,20 @@ defmodule LangChain.Function do
   end
 
   def namespace(%Function{}), do: nil
+
+  @doc """
+  Return the description of the function's tool search namespace, or `nil`
+  when it has none. Set with the `:namespace_description` option.
+  """
+  @spec namespace_description(t()) :: String.t() | nil
+  def namespace_description(%Function{options: options}) when is_list(options) do
+    case Keyword.get(options, :namespace_description) do
+      description when is_binary(description) and description != "" -> description
+      _other -> nil
+    end
+  end
+
+  def namespace_description(%Function{}), do: nil
 
   @doc """
   Return the names of the function's required top-level parameters.

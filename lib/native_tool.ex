@@ -56,10 +56,12 @@ defmodule LangChain.NativeTool do
 
   Keep at least one function, normally the most-used ones, not deferred.
 
-  A chat model that offers tool search translates the tool for its provider.
-  A chat model without tool search leaves it out of the request and sends
-  deferred functions as ordinary tools, so every tool is available from the
-  start.
+  A chat model that offers tool search translates the tool for its provider:
+  `LangChain.ChatModels.ChatAnthropic`,
+  `LangChain.ChatModels.ChatOpenAIResponses`, and
+  `LangChain.ChatModels.ChatReqLLM` with Anthropic and OpenAI models. A chat
+  model without tool search leaves it out of the request and sends deferred
+  functions as ordinary tools, so every tool is available from the start.
   """
   use Ecto.Schema
   import Ecto.Changeset

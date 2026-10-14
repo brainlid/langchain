@@ -134,6 +134,15 @@ defmodule LangChain.ChatModels.ChatOpenAICompatible do
 
   Groq's endpoint is `https://api.groq.com/openai/v1/chat/completions`.
 
+  ## Tool search
+
+  No common tool search shape exists across compatible services, so deferral
+  is not sent. Deferred functions go out as ordinary functions, the
+  `LangChain.NativeTool.tool_search/1` tool is left out, and search items
+  another model added to the conversation are not sent. A chain configured for
+  tool search runs with every tool available from the start. Any other
+  `LangChain.NativeTool` is an error.
+
   ## Token usage
 
   Usage is reported as a `LangChain.TokenUsage` in the `:usage` key of the
