@@ -249,7 +249,7 @@ defmodule LangChain.ChatModels.ChatGrok do
     base_params =
       %{
         model: grok.model,
-        messages: messages |> Enum.map(&for_api_message/1),
+        messages: messages |> Enum.flat_map(&List.wrap(for_api_message(&1))),
         stream: grok.stream
       }
       |> Utils.conditionally_add_to_map(:max_tokens, grok.max_tokens)
@@ -466,7 +466,7 @@ defmodule LangChain.ChatModels.ChatGrok do
       type: "function",
       function: %{
         name: tool_call.name,
-        arguments: tool_call.arguments
+        arguments: Jason.encode!(tool_call.arguments)
       }
     }
   end
@@ -509,7 +509,7 @@ defmodule LangChain.ChatModels.ChatGrok do
       function: %{
         name: function.name,
         description: function.description,
-        parameters: function.parameters_schema || %{}
+        parameters: ChatCompletionsFormat.get_parameters(function)
       }
     }
   end
@@ -779,7 +779,7 @@ defmodule LangChain.ChatModels.ChatGrok do
       role: :assistant,
       content: message_data["content"],
       status: finish_reason_to_status(choice["finish_reason"]),
-      tool_calls: parse_tool_calls(message_data["tool_calls"]),
+      tool_calls: parse_tool_calls(message_data["tool_calls"], :complete),
       metadata: %{usage: usage}
     }
   end
@@ -796,7 +796,7 @@ defmodule LangChain.ChatModels.ChatGrok do
       content: delta["content"] || "",
       status: finish_reason_to_status(choice["finish_reason"]),
       index: choice["index"],
-      tool_calls: parse_tool_calls(delta["tool_calls"]),
+      tool_calls: parse_tool_calls(delta["tool_calls"], :incomplete),
       metadata: metadata
     }
   end
@@ -838,15 +838,19 @@ defmodule LangChain.ChatModels.ChatGrok do
     nil
   end
 
-  defp parse_tool_calls(nil), do: []
+  defp parse_tool_calls(nil, _status), do: []
 
-  defp parse_tool_calls(tool_calls) when is_list(tool_calls) do
+  # A non-streamed tool call arrives whole, so it is built `:complete`, which
+  # parses its JSON arguments. Streamed ones are completed after merging.
+  defp parse_tool_calls(tool_calls, status) when is_list(tool_calls) do
     Enum.map(tool_calls, fn tool_call ->
-      %ToolCall{
+      ToolCall.new!(%{
+        status: status,
+        type: :function,
         call_id: tool_call["id"],
         name: tool_call["function"]["name"],
         arguments: tool_call["function"]["arguments"]
-      }
+      })
     end)
   end
 
