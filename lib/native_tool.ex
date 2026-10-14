@@ -39,6 +39,27 @@ defmodule LangChain.NativeTool do
      |> LLMChain.add_tools(NativeTool.new!(%{name: "google_search", configuration: %{}}))
      |> LLMChain.run()
   ```
+
+  ## Tool Search
+
+  `tool_search/1` builds a provider-neutral search tool. Add it to a chain
+  alongside functions marked `defer_loading: true` (see "Tool search options"
+  in `LangChain.Function`). Deferred functions are declared on every request
+  but kept out of the model's context until the model searches for them, so
+  the request prefix never changes and prompt caching keeps working.
+
+  ```elixir
+  chain
+  |> LLMChain.add_tools(NativeTool.tool_search())
+  |> LLMChain.add_tools(deferred_functions)
+  ```
+
+  Keep at least one function, normally the most-used ones, not deferred.
+
+  A chat model that offers tool search translates the tool for its provider.
+  A chat model without tool search leaves it out of the request and sends
+  deferred functions as ordinary tools, so every tool is available from the
+  start.
   """
   use Ecto.Schema
   import Ecto.Changeset
@@ -84,6 +105,39 @@ defmodule LangChain.NativeTool do
         raise LangChainError, changeset
     end
   end
+
+  @tool_search_name "tool_search"
+  @tool_search_variants [:bm25, :regex]
+
+  @doc """
+  Build the provider-neutral tool search tool.
+
+  ## Options
+
+  * `:variant` - How the model writes its search, on providers that offer a
+    choice. `:bm25` (default) searches with natural language queries; `:regex`
+    searches with regular expressions. Providers with a single kind of search
+    ignore it.
+  """
+  @spec tool_search(keyword()) :: t()
+  def tool_search(opts \\ []) do
+    variant = Keyword.get(opts, :variant, :bm25)
+
+    unless variant in @tool_search_variants do
+      raise LangChainError,
+            "Unsupported tool search variant #{inspect(variant)}. " <>
+              "Expected one of #{inspect(@tool_search_variants)}."
+    end
+
+    new!(%{name: @tool_search_name, configuration: %{"variant" => Atom.to_string(variant)}})
+  end
+
+  @doc """
+  Return `true` when the tool is the tool search tool built by `tool_search/1`.
+  """
+  @spec tool_search?(any()) :: boolean()
+  def tool_search?(%NativeTool{name: @tool_search_name}), do: true
+  def tool_search?(_tool), do: false
 
   defp common_validation(changeset) do
     changeset

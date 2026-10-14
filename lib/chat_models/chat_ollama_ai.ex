@@ -484,9 +484,13 @@ defmodule LangChain.ChatModels.ChatOllamaAI do
   end
 
   def for_api(%Message{role: :user, content: content} = msg) when is_list(content) do
+    # A provider item belongs to the provider that produced it, and a tool
+    # reference reads as text, since Ollama does not load tools by reference.
     {text_parts, image_parts} =
-      Enum.split_with(content, fn
-        %ContentPart{type: :text} -> true
+      content
+      |> Enum.reject(&match?(%ContentPart{type: :provider_item}, &1))
+      |> Enum.split_with(fn
+        %ContentPart{type: type} when type in [:text, :tool_reference] -> true
         _ -> false
       end)
 

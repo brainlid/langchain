@@ -18,6 +18,12 @@ defmodule LangChain.Message.ContentPart do
     being displayed because it is encrypted, but can be provided back to the LLM
     to maintain reasoning continuity. The specific parts of the data are stored
     in `:options`.
+  - `:provider_item` - An opaque block or item a provider produced that must go
+    back to that provider unchanged, such as the blocks a tool search leaves in
+    an assistant message. See "Provider items".
+  - `:tool_reference` - Names a tool for the provider to load into the model's
+    context, placed in a tool result. The tool name is the `content`. See
+    "Tool references".
 
   ## Fields
 
@@ -65,6 +71,41 @@ defmodule LangChain.Message.ContentPart do
   `LangChain.Message.narration?/1` answers the question for a whole message,
   and `LangChain.Chains.LLMChain` uses it to keep a turn open.
 
+  ## Provider items
+
+  Some provider responses contain blocks that only the provider understands
+  and that must be sent back exactly as they arrived, in the same position,
+  when the conversation continues. Anthropic's `server_tool_use` and
+  `tool_search_tool_result` blocks are an example: a conversation that searched
+  for tools once replays the search on every later request, which is how the
+  loaded tools stay loaded.
+
+  A `:provider_item` part holds one such block. Build one with
+  `provider_item!/2`:
+
+  - `:provider` option - the string name of the provider that produced it, for
+    example `"anthropic"`.
+  - `:item` option - the block itself, as a string-keyed map of JSON values.
+  - `:content` - `nil` for a complete item. While a streamed item is still
+    arriving, a chat model may accumulate a fragment of it here.
+
+  The chat model for the named provider sends the item back. Every other chat
+  model leaves it out of the request, and the text helpers such as
+  `content_to_string/2` skip it. Keep provider items wherever the conversation
+  is stored.
+
+  ## Tool references
+
+  A tool can load other tools for the model by returning `:tool_reference`
+  parts in its result, built with `tool_reference!/1`. This is client-side
+  tool search: each referenced tool must be declared to the provider, normally
+  as a deferred function (see "Tool search options" in `LangChain.Function`).
+
+  On a provider that loads referenced tools, the reference becomes the
+  provider's own reference block. Any other chat model sends every deferred
+  function as an ordinary tool already, so it renders the reference as a line
+  of text naming the tool.
+
   ## Image mime types
 
   The `:media` option is used to specify the mime type of the image. Various
@@ -95,7 +136,17 @@ defmodule LangChain.Message.ContentPart do
   @primary_key false
   embedded_schema do
     field :type, Ecto.Enum,
-      values: [:text, :image_url, :image, :file, :file_url, :thinking, :unsupported],
+      values: [
+        :text,
+        :image_url,
+        :image,
+        :file,
+        :file_url,
+        :thinking,
+        :unsupported,
+        :provider_item,
+        :tool_reference
+      ],
       default: :text
 
     field :content, :string
@@ -329,6 +380,55 @@ defmodule LangChain.Message.ContentPart do
 
   def reasoning?(%ContentPart{}), do: false
 
+  @doc """
+  Create a `:provider_item` part holding a block that `provider` produced and
+  expects back unchanged. See "Provider items". Raises an exception if not
+  valid.
+
+  ## Example
+
+      ContentPart.provider_item!("anthropic", %{
+        "type" => "tool_search_tool_result",
+        "tool_use_id" => "srvtoolu_01ABC123",
+        "content" => %{"type" => "tool_search_tool_search_result", "tool_references" => []}
+      })
+  """
+  @spec provider_item!(String.t(), map()) :: t() | no_return()
+  def provider_item!(provider, %{} = item) when is_binary(provider) and provider != "" do
+    new!(%{type: :provider_item, options: [provider: provider, item: item]})
+  end
+
+  @doc """
+  Return `true` when the part is a `:provider_item` produced by `provider`.
+  """
+  @spec provider_item?(t(), String.t()) :: boolean()
+  def provider_item?(%ContentPart{type: :provider_item, options: options}, provider)
+      when is_list(options) and is_binary(provider),
+      do: Keyword.get(options, :provider) == provider
+
+  def provider_item?(%ContentPart{}, _provider), do: false
+
+  @doc """
+  Create a `:tool_reference` part naming a tool for the provider to load. See
+  "Tool references". Raises an exception if not valid.
+
+  ## Example
+
+      ContentPart.tool_reference!("devices_list")
+  """
+  @spec tool_reference!(String.t()) :: t() | no_return()
+  def tool_reference!(tool_name) when is_binary(tool_name) and tool_name != "" do
+    new!(%{type: :tool_reference, content: tool_name})
+  end
+
+  @doc """
+  Render a `:tool_reference` part as the text a chat model without client-side
+  tool loading sends in its place.
+  """
+  @spec tool_reference_text(t()) :: String.t()
+  def tool_reference_text(%ContentPart{type: :tool_reference, content: tool_name}),
+    do: "Tool available: #{tool_name}"
+
   @doc false
   def changeset(message, attrs) do
     message
@@ -417,6 +517,8 @@ defmodule LangChain.Message.ContentPart do
         # The utterance marker is a label, not streamed text. Every delta that
         # carries it carries the whole value, so the latest one stands.
         :utterance, _v1, v2 -> v2
+        # A provider item's provider name is a label too.
+        :provider, _v1, v2 -> v2
         _k, v1, v2 when is_binary(v1) and is_binary(v2) -> v1 <> v2
         _k, _v1, v2 -> v2
       end)
@@ -460,8 +562,10 @@ defmodule LangChain.Message.ContentPart do
   Helper function for easily getting plain text from a list of ContentParts.
 
   This function processes a list of ContentParts and joins the text parts together
-  using "\n\n" characters. Only parts where `type: :text` are used. All other parts
-  are ignored.
+  using "\n\n" characters. Only parts where `type: :text` are used, plus
+  `:tool_reference` parts, which read as the line `tool_reference_text/1`
+  renders. A tool result made only of references therefore still reads as
+  text. All other parts are ignored.
 
   ## Examples
 
@@ -484,13 +588,19 @@ defmodule LangChain.Message.ContentPart do
     # inspecting `.type` so callers don't need to sanitize first.
     parts
     |> Enum.reject(&is_nil/1)
-    |> Enum.filter(fn part -> part.type == type end)
-    |> Enum.map_join("\n\n", fn part -> part.content end)
+    |> Enum.filter(fn part -> part.type == type or text_reference?(part, type) end)
+    |> Enum.map_join("\n\n", fn
+      %ContentPart{type: :tool_reference} = part when type == :text -> tool_reference_text(part)
+      part -> part.content
+    end)
     |> case do
       "" -> nil
       content -> content
     end
   end
+
+  defp text_reference?(%ContentPart{type: :tool_reference}, :text), do: true
+  defp text_reference?(_part, _type), do: false
 
   @doc """
   Convert "content" to a string. Content may be `nil`, a string, or a list of ContentParts.

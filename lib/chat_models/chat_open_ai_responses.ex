@@ -1268,6 +1268,25 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
       ),
       do: nil
 
+  # A provider item belongs to the provider that produced it. This model does
+  # not replay provider items, so every one is omitted.
+  def content_part_for_api(
+        %ChatOpenAIResponses{} = _model,
+        %ContentPart{type: :provider_item},
+        _role
+      ),
+      do: nil
+
+  # This model does not load tools by reference, so every deferred function is
+  # already declared as an ordinary tool. The reference reads as text.
+  def content_part_for_api(
+        %ChatOpenAIResponses{} = model,
+        %ContentPart{type: :tool_reference} = part,
+        role
+      ) do
+    content_part_for_api(model, ContentPart.text!(ContentPart.tool_reference_text(part)), role)
+  end
+
   defp add_prompt_cache_breakpoint(output, %ContentPart{options: options}) do
     Utils.conditionally_add_to_map(
       output,

@@ -342,7 +342,9 @@ defmodule LangChain.ChatModels.ChatOrq do
   Convert a list of ContentParts to the expected map of data for the API.
   """
   def content_parts_for_api(content_parts) when is_list(content_parts) do
-    Enum.map(content_parts, &content_part_for_api(&1))
+    content_parts
+    |> Enum.map(&content_part_for_api(&1))
+    |> Enum.reject(&is_nil/1)
   end
 
   @doc """
@@ -353,6 +355,8 @@ defmodule LangChain.ChatModels.ChatOrq do
     content_parts
     |> Enum.map(fn
       %ContentPart{type: :text, content: text} -> text
+      %ContentPart{type: :tool_reference} = part -> ContentPart.tool_reference_text(part)
+      %ContentPart{type: :provider_item} -> ""
       %ContentPart{type: _other, content: content} -> content
     end)
     |> Enum.join("")
@@ -412,6 +416,15 @@ defmodule LangChain.ChatModels.ChatOrq do
   def content_part_for_api(%ContentPart{type: :text} = part) do
     %{"type" => "text", "text" => part.content}
   end
+
+  # ORQ does not load tools by reference, so every deferred function is already
+  # declared. The reference reads as text.
+  def content_part_for_api(%ContentPart{type: :tool_reference} = part) do
+    %{"type" => "text", "text" => ContentPart.tool_reference_text(part)}
+  end
+
+  # A provider item belongs to the provider that produced it.
+  def content_part_for_api(%ContentPart{type: :provider_item}), do: nil
 
   def content_part_for_api(%ContentPart{type: :file, options: opts} = part) do
     # orq requires file_data + filename (no file_id in schema)

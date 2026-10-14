@@ -1398,6 +1398,16 @@ if Code.ensure_loaded?(ReqLLM) do
       nil
     end
 
+    # Provider items are not replayed through req_llm yet, so every one is
+    # omitted.
+    def content_part_to_req_llm(%ContentPart{type: :provider_item}), do: nil
+
+    # Tools are not loaded by reference through req_llm yet, so every deferred
+    # function is declared as an ordinary tool. The reference reads as text.
+    def content_part_to_req_llm(%ContentPart{type: :tool_reference} = part) do
+      ReqLLM.Message.ContentPart.text(ContentPart.tool_reference_text(part))
+    end
+
     # A text part's cache options, in the form each req_llm encoder reads from the part's
     # metadata: `cache_control` for Anthropic and `prompt_cache_breakpoint` for the OpenAI
     # Responses API. `cache_control: true` is the default ephemeral block, as in ChatAnthropic.

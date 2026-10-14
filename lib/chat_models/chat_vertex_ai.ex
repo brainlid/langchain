@@ -358,7 +358,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   defp for_api(%Message{role: :user, content: content}) when is_list(content) do
     %{
       "role" => map_role(:user),
-      "parts" => Enum.map(content, &for_api(&1))
+      "parts" => content |> Enum.map(&for_api(&1)) |> List.flatten()
     }
   end
 
@@ -380,6 +380,16 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     # included in future generation requests.
     # See https://docs.cloud.google.com/vertex-ai/generative-ai/docs/thinking#thought-summaries
     []
+  end
+
+  # A provider item belongs to the provider that produced it and has no
+  # representation here.
+  defp for_api(%ContentPart{type: :provider_item}), do: []
+
+  # Vertex AI does not load tools by reference, so every deferred function is
+  # already declared. The reference reads as text.
+  defp for_api(%ContentPart{type: :tool_reference} = part) do
+    %{"text" => ContentPart.tool_reference_text(part)}
   end
 
   defp for_api(%ContentPart{type: :image} = part) do
@@ -480,7 +490,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   end
 
   defp tool_result_response_for_api(content_parts) when is_list(content_parts) do
-    text_parts = Enum.filter(content_parts, &(&1.type == :text))
+    text_parts = Enum.filter(content_parts, &(&1.type in [:text, :tool_reference]))
 
     case ContentPart.parts_to_string(text_parts) do
       nil ->
@@ -985,8 +995,12 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     [%{"text" => content}]
   end
 
+  # A part with no representation here encodes as `[]`, which the flatten
+  # removes.
   def get_message_contents(%{content: contents} = _message) when is_list(contents) do
-    Enum.map(contents, &for_api/1)
+    contents
+    |> Enum.map(&for_api/1)
+    |> List.flatten()
   end
 
   def get_message_contents(%{content: nil} = _message) do

@@ -2107,6 +2107,16 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     end
   end
 
+  # Provider items are not replayed by this model yet, so every one is omitted.
+  def content_part_for_api(%ContentPart{type: :provider_item}), do: nil
+
+  # This model does not yet send tool references as reference blocks, so every
+  # deferred function is declared as an ordinary tool. The reference reads as
+  # text.
+  def content_part_for_api(%ContentPart{type: :tool_reference} = part) do
+    %{"type" => "text", "text" => ContentPart.tool_reference_text(part)}
+  end
+
   def content_part_for_api(%ContentPart{type: :image} = part) do
     opts = part.options || []
 

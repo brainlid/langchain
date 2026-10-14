@@ -30,7 +30,8 @@ defmodule LangChain.Function do
     asynchronously, potentially concurrently with other calls to the same
     function. Defaults to `false`.
   * `options` - A Keyword list of options that can be passed to the LLM. For
-    example, this can be used for passing caching config to Anthropic.
+    example, this can be used for passing caching config to Anthropic. See
+    "Tool search options" for the provider-neutral keys.
 
   When passing arguments from an LLM to a function, they go through a single
   `map` argument. This allows for multiple keys or named parameters.
@@ -69,6 +70,30 @@ defmodule LangChain.Function do
 
   Context examples could be data like user_id, account_id, account struct,
   billing level, etc.
+
+  ## Tool search options
+
+  Two `options` keys describe how a function takes part in provider tool
+  search. Each chat model translates them for its provider, and a chat model
+  without tool search ignores them and sends the function as an ordinary tool.
+
+  * `:defer_loading` - When `true`, the function is declared on every request
+    but kept out of the model's context until the model finds it through tool
+    search. Add a search tool (`LangChain.NativeTool.tool_search/1`) to the
+    chain alongside deferred functions.
+  * `:namespace` - The name of a group of related functions. Providers that
+    group deferred tools present the group to the model by this name. It never
+    changes the function's `name`, which tool calls are matched on.
+
+        Function.new!(%{
+          name: "devices_list",
+          description: "List managed devices.",
+          parameters_schema: %{type: "object", properties: %{}},
+          function: &list_devices/2,
+          options: [defer_loading: true, namespace: "devices"]
+        })
+
+  Read them with `deferred?/1` and `namespace/1`.
 
   ## Function Parameters
 
@@ -539,6 +564,31 @@ defmodule LangChain.Function do
       %Function{display_text: display_text} -> display_text
     end
   end
+
+  @doc """
+  Return `true` when the function is deferred for tool search: declared to the
+  provider, but kept out of the model's context until the model searches for
+  it. Set with the `:defer_loading` option.
+  """
+  @spec deferred?(t()) :: boolean()
+  def deferred?(%Function{options: options}) when is_list(options),
+    do: Keyword.get(options, :defer_loading) == true
+
+  def deferred?(%Function{}), do: false
+
+  @doc """
+  Return the function's tool search namespace, or `nil` when it has none. Set
+  with the `:namespace` option.
+  """
+  @spec namespace(t()) :: String.t() | nil
+  def namespace(%Function{options: options}) when is_list(options) do
+    case Keyword.get(options, :namespace) do
+      namespace when is_binary(namespace) and namespace != "" -> namespace
+      _other -> nil
+    end
+  end
+
+  def namespace(%Function{}), do: nil
 
   @doc """
   Return the names of the function's required top-level parameters.

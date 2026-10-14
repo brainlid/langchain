@@ -622,4 +622,94 @@ defmodule LangChain.Message.ContentPartTest do
              )
     end
   end
+
+  describe "provider_item!/2" do
+    test "holds the provider and the item in options" do
+      item = %{"type" => "tool_search_tool_result", "tool_use_id" => "srvtoolu_1"}
+
+      assert %ContentPart{type: :provider_item, content: nil, options: options} =
+               ContentPart.provider_item!("anthropic", item)
+
+      assert Keyword.get(options, :provider) == "anthropic"
+      assert Keyword.get(options, :item) == item
+    end
+  end
+
+  describe "provider_item?/2" do
+    test "matches only items from the named provider" do
+      part = ContentPart.provider_item!("anthropic", %{"type" => "server_tool_use"})
+
+      assert ContentPart.provider_item?(part, "anthropic")
+      refute ContentPart.provider_item?(part, "openai")
+      refute ContentPart.provider_item?(ContentPart.text!("hi"), "anthropic")
+    end
+  end
+
+  describe "tool_reference!/1" do
+    test "holds the tool name as content" do
+      assert %ContentPart{type: :tool_reference, content: "devices_list"} =
+               ContentPart.tool_reference!("devices_list")
+    end
+
+    test "renders as text" do
+      part = ContentPart.tool_reference!("devices_list")
+      assert ContentPart.tool_reference_text(part) == "Tool available: devices_list"
+    end
+  end
+
+  describe "merge_part/2 with provider items" do
+    test "keeps a single provider name across merged deltas" do
+      first =
+        ContentPart.new!(%{
+          type: :provider_item,
+          content: "{\"query\":",
+          options: [provider: "anthropic", item: %{"type" => "server_tool_use", "input" => %{}}]
+        })
+
+      second =
+        ContentPart.new!(%{
+          type: :provider_item,
+          content: "\"devices\"}",
+          options: [provider: "anthropic"]
+        })
+
+      merged = ContentPart.merge_part(first, second)
+
+      assert merged.content == "{\"query\":\"devices\"}"
+      assert Keyword.get(merged.options, :provider) == "anthropic"
+      assert Keyword.get(merged.options, :item) == %{"type" => "server_tool_use", "input" => %{}}
+    end
+
+    test "a later item replaces the earlier one" do
+      first = ContentPart.provider_item!("anthropic", %{"type" => "server_tool_use"})
+
+      second =
+        ContentPart.provider_item!("anthropic", %{"type" => "server_tool_use", "id" => "x"})
+
+      merged = ContentPart.merge_part(first, second)
+
+      assert Keyword.get(merged.options, :item) == %{"type" => "server_tool_use", "id" => "x"}
+    end
+  end
+
+  describe "text helpers with tool search parts" do
+    test "parts_to_string/1 reads tool references and skips provider items" do
+      parts = [
+        ContentPart.text!("Loaded."),
+        ContentPart.provider_item!("anthropic", %{"type" => "server_tool_use"}),
+        ContentPart.tool_reference!("devices_list")
+      ]
+
+      assert ContentPart.parts_to_string(parts) == "Loaded.\n\nTool available: devices_list"
+    end
+
+    test "a result made only of references still reads as text" do
+      assert ContentPart.content_to_string([ContentPart.tool_reference!("devices_list")]) ==
+               "Tool available: devices_list"
+    end
+
+    test "references are not included when asking for another type" do
+      assert ContentPart.parts_to_string([ContentPart.tool_reference!("x")], :thinking) == nil
+    end
+  end
 end
