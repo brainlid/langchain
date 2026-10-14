@@ -409,6 +409,38 @@ defmodule LangChain.Message.ContentPart do
   def provider_item?(%ContentPart{}, _provider), do: false
 
   @doc """
+  Return the block a `:provider_item` part holds, ready to send back.
+
+  A streamed item can arrive as its opening block plus the block's `"input"`
+  in JSON fragments, which a chat model accumulates in the part's `content`.
+  When `content` holds a JSON object, it becomes the block's `"input"`. A
+  complete item, with `content: nil`, is returned as stored.
+  """
+  @spec provider_item_block(t()) :: map()
+  def provider_item_block(%ContentPart{
+        type: :provider_item,
+        content: input_json,
+        options: options
+      }) do
+    item = Keyword.get(options || [], :item, %{})
+
+    case input_json do
+      json when is_binary(json) and json != "" ->
+        case Jason.decode(json) do
+          {:ok, input} when is_map(input) ->
+            Map.put(item, "input", input)
+
+          _other ->
+            Logger.warning("Provider item input is not a JSON object: #{inspect(json)}")
+            item
+        end
+
+      _none ->
+        item
+    end
+  end
+
+  @doc """
   Create a `:tool_reference` part naming a tool for the provider to load. See
   "Tool references". Raises an exception if not valid.
 

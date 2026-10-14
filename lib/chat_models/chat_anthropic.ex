@@ -2444,7 +2444,7 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   # provider item from any other provider is omitted.
   def content_part_for_api(%ContentPart{type: :provider_item} = part) do
     if ContentPart.provider_item?(part, provider()) do
-      provider_item_for_api(part)
+      ContentPart.provider_item_block(part)
     else
       nil
     end
@@ -2593,25 +2593,6 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
   def content_part_for_api(%ContentPart{type: :image_url} = _part) do
     raise LangChainError, "Anthropic does not support image_url"
-  end
-
-  defp provider_item_for_api(%ContentPart{content: input_json, options: options}) do
-    item = Keyword.get(options, :item, %{})
-
-    case input_json do
-      json when is_binary(json) and json != "" ->
-        case Jason.decode(json) do
-          {:ok, input} when is_map(input) ->
-            Map.put(item, "input", input)
-
-          _other ->
-            Logger.warning("Provider item input is not a JSON object: #{inspect(json)}")
-            item
-        end
-
-      _none ->
-        item
-    end
   end
 
   defp get_parameters(%Function{parameters: [], parameters_schema: nil} = _fun) do
