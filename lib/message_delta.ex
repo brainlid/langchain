@@ -358,20 +358,27 @@ defmodule LangChain.MessageDelta do
       end
 
     # Get the content part at the specified index from the primary's content list
-    primary_part = Enum.at(padded_list, position)
+    case Enum.at(padded_list, position) do
+      # Some providers stream thinking and then the answer text at the same
+      # index (xAI omits `reasoning_content` on answer chunks instead of
+      # sending nil). The text belongs after the thinking, not merged into it.
+      %ContentPart{type: :thinking} when new_content_part.type == :text ->
+        merge_content_part_at_index(primary, new_content_part, position + 1)
 
-    # Merge the parts if we have an existing part, otherwise use the new part
-    merged_part =
-      if primary_part do
-        ContentPart.merge_part(primary_part, new_content_part)
-      else
-        new_content_part
-      end
+      primary_part ->
+        # Merge the parts if we have an existing part, otherwise use the new part
+        merged_part =
+          if primary_part do
+            ContentPart.merge_part(primary_part, new_content_part)
+          else
+            new_content_part
+          end
 
-    # Replace the part at the specified index
-    updated_list = List.replace_at(padded_list, position, merged_part)
+        # Replace the part at the specified index
+        updated_list = List.replace_at(padded_list, position, merged_part)
 
-    %MessageDelta{primary | merged_content: updated_list}
+        %MessageDelta{primary | merged_content: updated_list}
+    end
   end
 
   # Merge tool call deltas by matching on each fragment's index value (not
