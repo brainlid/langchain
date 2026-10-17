@@ -768,6 +768,7 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
                "version" => 1,
                "json_response" => false,
                "json_schema" => nil,
+               "json_schema_name" => nil,
                "verbose_api" => false
              }
     end
@@ -787,25 +788,18 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
   describe "structured output support" do
     test "new/1 accepts json_response and json_schema fields" do
       schema = %{
-        "type" => "json_schema",
-        "json_schema" => %{
-          "schema" => %{
-            "properties" => %{
-              "name" => %{"title" => "Name", "type" => "string"},
-              "authors" => %{
-                "items" => %{"type" => "string"},
-                "title" => "Authors",
-                "type" => "array"
-              }
-            },
-            "required" => ["name", "authors"],
-            "title" => "Book",
-            "type" => "object",
-            "additionalProperties" => false
-          },
-          "name" => "book",
-          "strict" => true
-        }
+        "properties" => %{
+          "name" => %{"title" => "Name", "type" => "string"},
+          "authors" => %{
+            "items" => %{"type" => "string"},
+            "title" => "Authors",
+            "type" => "array"
+          }
+        },
+        "required" => ["name", "authors"],
+        "title" => "Book",
+        "type" => "object",
+        "additionalProperties" => false
       }
 
       assert {:ok, %ChatMistralAI{} = mistral_ai} =
@@ -821,21 +815,77 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
 
     test "for_api/3 includes response_format when json_response is true with schema" do
       schema = %{
+        "properties" => %{
+          "name" => %{"title" => "Name", "type" => "string"},
+          "authors" => %{
+            "items" => %{"type" => "string"},
+            "title" => "Authors",
+            "type" => "array"
+          }
+        },
+        "required" => ["name", "authors"],
+        "title" => "Book",
+        "type" => "object",
+        "additionalProperties" => false
+      }
+
+      mistral_ai =
+        ChatMistralAI.new!(%{
+          "model" => "ministral-8b-latest",
+          "json_response" => true,
+          "json_schema" => schema
+        })
+
+      data = ChatMistralAI.for_api(mistral_ai, [], [])
+
+      assert data.response_format == %{
+               "type" => "json_schema",
+               "json_schema" => %{
+                 "schema" => schema,
+                 "name" => "output",
+                 "strict" => true
+               }
+             }
+    end
+
+    test "for_api/3 uses json_schema_name when set" do
+      schema = %{
+        "type" => "object",
+        "properties" => %{"name" => %{"type" => "string"}},
+        "required" => ["name"]
+      }
+
+      mistral_ai =
+        ChatMistralAI.new!(%{
+          "model" => "ministral-8b-latest",
+          "json_response" => true,
+          "json_schema" => schema,
+          "json_schema_name" => "book"
+        })
+
+      data = ChatMistralAI.for_api(mistral_ai, [], [])
+
+      assert data.response_format == %{
+               "type" => "json_schema",
+               "json_schema" => %{
+                 "schema" => schema,
+                 "name" => "book",
+                 "strict" => true
+               }
+             }
+    end
+
+    test "for_api/3 passes through a pre-wrapped json_schema unchanged with a deprecation warning" do
+      schema = %{
         "type" => "json_schema",
         "json_schema" => %{
           "schema" => %{
             "properties" => %{
-              "name" => %{"title" => "Name", "type" => "string"},
-              "authors" => %{
-                "items" => %{"type" => "string"},
-                "title" => "Authors",
-                "type" => "array"
-              }
+              "name" => %{"title" => "Name", "type" => "string"}
             },
-            "required" => ["name", "authors"],
+            "required" => ["name"],
             "title" => "Book",
-            "type" => "object",
-            "additionalProperties" => false
+            "type" => "object"
           },
           "name" => "book",
           "strict" => true
@@ -849,9 +899,11 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
           "json_schema" => schema
         })
 
-      data = ChatMistralAI.for_api(mistral_ai, [], [])
+      {data, log} =
+        ExUnit.CaptureLog.with_log(fn -> ChatMistralAI.for_api(mistral_ai, [], []) end)
 
       assert data.response_format == schema
+      assert log =~ "deprecated"
     end
 
     test "for_api/3 includes response_format when json_response is true without schema" do
@@ -880,19 +932,12 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
 
     test "serialize_config/1 includes json_response and json_schema fields" do
       schema = %{
-        "type" => "json_schema",
-        "json_schema" => %{
-          "schema" => %{
-            "properties" => %{
-              "name" => %{"title" => "Name", "type" => "string"}
-            },
-            "required" => ["name"],
-            "title" => "Book",
-            "type" => "object"
-          },
-          "name" => "book",
-          "strict" => true
-        }
+        "properties" => %{
+          "name" => %{"title" => "Name", "type" => "string"}
+        },
+        "required" => ["name"],
+        "title" => "Book",
+        "type" => "object"
       }
 
       model =
@@ -910,19 +955,12 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
 
     test "restore_from_map/1 restores json_response and json_schema fields" do
       schema = %{
-        "type" => "json_schema",
-        "json_schema" => %{
-          "schema" => %{
-            "properties" => %{
-              "name" => %{"title" => "Name", "type" => "string"}
-            },
-            "required" => ["name"],
-            "title" => "Book",
-            "type" => "object"
-          },
-          "name" => "book",
-          "strict" => true
-        }
+        "properties" => %{
+          "name" => %{"title" => "Name", "type" => "string"}
+        },
+        "required" => ["name"],
+        "title" => "Book",
+        "type" => "object"
       }
 
       config = %{
@@ -1062,25 +1100,18 @@ defmodule LangChain.ChatModels.ChatMistralAITest do
     @tag live_call: true, live_mistral_ai: true
     test "structured output with JSON schema works" do
       schema = %{
-        "type" => "json_schema",
-        "json_schema" => %{
-          "schema" => %{
-            "properties" => %{
-              "name" => %{"title" => "Name", "type" => "string"},
-              "authors" => %{
-                "items" => %{"type" => "string"},
-                "title" => "Authors",
-                "type" => "array"
-              }
-            },
-            "required" => ["name", "authors"],
-            "title" => "Book",
-            "type" => "object",
-            "additionalProperties" => false
-          },
-          "name" => "book",
-          "strict" => true
-        }
+        "properties" => %{
+          "name" => %{"title" => "Name", "type" => "string"},
+          "authors" => %{
+            "items" => %{"type" => "string"},
+            "title" => "Authors",
+            "type" => "array"
+          }
+        },
+        "required" => ["name", "authors"],
+        "title" => "Book",
+        "type" => "object",
+        "additionalProperties" => false
       }
 
       chat =
