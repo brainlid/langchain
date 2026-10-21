@@ -373,6 +373,9 @@ defmodule LangChain.Message.ContentPart do
   - an `:unsupported` part carrying `:reasoning_details`
     (`LangChain.ChatModels.ChatReqLLM`)
 
+  Provider items, such as the blocks a tool search leaves behind, are not
+  reasoning.
+
   ## Examples
 
       iex> alias LangChain.Message.ContentPart

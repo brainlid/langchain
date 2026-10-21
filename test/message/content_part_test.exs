@@ -614,8 +614,9 @@ defmodule LangChain.Message.ContentPartTest do
       assert ContentPart.reasoning?(part)
     end
 
-    test "is false for output" do
+    test "is false for output and provider items" do
       refute ContentPart.reasoning?(ContentPart.text!("Hello"))
+      refute ContentPart.reasoning?(ContentPart.provider_item!("anthropic", %{"type" => "x"}))
 
       refute ContentPart.reasoning?(
                ContentPart.new!(%{type: :unsupported, options: [type: "other"]})
