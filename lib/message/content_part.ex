@@ -298,6 +298,37 @@ defmodule LangChain.Message.ContentPart do
     new!(%{type: :thinking, content: content, options: opts})
   end
 
+  @doc """
+  Return `true` when the part holds a model's reasoning rather than its output.
+
+  Reasoning arrives in several shapes, depending on the chat model that decoded
+  it:
+
+  - any `:thinking` part: Anthropic thinking, `reasoning_content` from
+    OpenAI-compatible services, and streamed OpenAI Responses reasoning items
+  - an `:unsupported` part whose `:type` option is `"redacted_thinking"`
+    (Anthropic) or `"reasoning"` (a non-streamed OpenAI Responses item)
+  - an `:unsupported` part carrying `:reasoning_details`
+    (`LangChain.ChatModels.ChatReqLLM`)
+
+  ## Examples
+
+      iex> alias LangChain.Message.ContentPart
+      iex> ContentPart.reasoning?(ContentPart.thinking!("Let me think."))
+      true
+      iex> ContentPart.reasoning?(ContentPart.text!("Hello"))
+      false
+  """
+  @spec reasoning?(t()) :: boolean()
+  def reasoning?(%ContentPart{type: :thinking}), do: true
+
+  def reasoning?(%ContentPart{type: :unsupported, options: options}) when is_list(options) do
+    Keyword.get(options, :type) in ["redacted_thinking", "reasoning"] or
+      Keyword.has_key?(options, :reasoning_details)
+  end
+
+  def reasoning?(%ContentPart{}), do: false
+
   @doc false
   def changeset(message, attrs) do
     message

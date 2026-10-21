@@ -965,4 +965,57 @@ defmodule LangChain.MessageTest do
       assert Message.all_citations(message) == []
     end
   end
+
+  describe "strip_reasoning/1" do
+    test "leaves a message with no reasoning unchanged" do
+      message = Message.new_assistant!("Hello")
+      assert Message.strip_reasoning(message) == message
+      assert Message.strip_reasoning([message]) == [message]
+    end
+
+    test "leaves string content unchanged" do
+      %Message{} = message = Message.new_user!("Hi")
+      message = %Message{message | content: "Hi"}
+      assert Message.strip_reasoning(message) == message
+    end
+
+    test "removes reasoning parts and keeps the rest" do
+      message =
+        Message.new_assistant!([
+          ContentPart.thinking!("hmm", signature: "SIG"),
+          ContentPart.text!("Done")
+        ])
+
+      assert %Message{content: [%ContentPart{type: :text, content: "Done"}]} =
+               Message.strip_reasoning(message)
+    end
+
+    test "keeps a tool call message whose only other part is reasoning" do
+      message =
+        Message.new_assistant!(%{
+          content: [ContentPart.thinking!("hmm")],
+          tool_calls: [ToolCall.new!(%{call_id: "1", name: "hello", arguments: %{}})]
+        })
+
+      assert [%Message{content: [], tool_calls: [%ToolCall{call_id: "1"}]}] =
+               Message.strip_reasoning([message])
+    end
+
+    test "drops a message left empty without tool calls" do
+      reasoning_only = Message.new_assistant!([ContentPart.thinking!("hmm")])
+      user = Message.new_user!("Hi")
+
+      assert [^user] = Message.strip_reasoning([reasoning_only, user])
+    end
+
+    test "is idempotent" do
+      messages = [
+        Message.new_user!("Hi"),
+        Message.new_assistant!([ContentPart.thinking!("hmm"), ContentPart.text!("Hello")])
+      ]
+
+      once = Message.strip_reasoning(messages)
+      assert Message.strip_reasoning(once) == once
+    end
+  end
 end

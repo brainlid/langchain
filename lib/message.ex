@@ -534,6 +534,48 @@ defmodule LangChain.Message do
   def is_tool_call?(%Message{}), do: false
 
   @doc """
+  Remove the model's reasoning from a message, or from a list of messages.
+
+  Reasoning parts are the ones `LangChain.Message.ContentPart.reasoning?/1`
+  recognizes. A message with no reasoning comes back unchanged.
+
+  Given a list, a message left with no content once its reasoning is removed is
+  dropped, unless it carries tool calls: the tool results that follow it need
+  the call they answer.
+
+  A provider that signs or encrypts reasoning rejects a replayed block once the
+  system prompt or tool list it was produced under has changed. Stripping it is
+  how a conversation continues under a new prompt or tool list.
+  """
+  @spec strip_reasoning(t()) :: t()
+  @spec strip_reasoning([t()]) :: [t()]
+  def strip_reasoning(messages) when is_list(messages) do
+    Enum.flat_map(messages, fn message ->
+      if has_reasoning?(message) do
+        case strip_reasoning(message) do
+          %Message{content: [], tool_calls: calls} when calls in [nil, []] -> []
+          stripped -> [stripped]
+        end
+      else
+        [message]
+      end
+    end)
+  end
+
+  def strip_reasoning(%Message{content: parts} = message) when is_list(parts) do
+    if has_reasoning?(message),
+      do: %Message{message | content: Enum.reject(parts, &ContentPart.reasoning?/1)},
+      else: message
+  end
+
+  def strip_reasoning(%Message{} = message), do: message
+
+  defp has_reasoning?(%Message{content: parts}) when is_list(parts),
+    do: Enum.any?(parts, &ContentPart.reasoning?/1)
+
+  defp has_reasoning?(%Message{}), do: false
+
+  @doc """
   Return `true` when an assistant message is narration only: the model spoke
   without answering, and its turn is not over.
 
