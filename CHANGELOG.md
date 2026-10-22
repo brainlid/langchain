@@ -1,5 +1,42 @@
 # Changelog
 
+## v0.15.4
+
+Reasoning can now be stripped from a message or a conversation in one call,
+for continuing a conversation under a new system prompt or tool set. Providers
+that sign or encrypt reasoning reject a replayed reasoning block once either
+changes. Non-streamed `ChatAnthropic` calls also now return the API's own
+error type and message for error responses.
+
+No breaking changes.
+
+### Upgrading from v0.15.3 - v0.15.4
+
+- **Non-streamed `ChatAnthropic` error types.** An error status other than
+  401, 429 or 529 whose body carries an API error object (for example a 400
+  `invalid_request_error` or a 500 `api_error`) used to return a
+  `LangChainError` with type `"unexpected_response"`. It now returns the API's
+  `type` and `message`, matching the streaming path. Code that matched on
+  `"unexpected_response"` for these responses should match on the API's error
+  type instead. Error statuses without an API error body still return
+  `"unexpected_response"`.
+
+### Added
+
+- `Message.strip_reasoning/1` removes reasoning content parts from a message
+  or a list of messages. In a list, a message left with no content is dropped
+  unless it carries tool calls. `ContentPart.reasoning?/1` recognizes every
+  reasoning shape the chat models produce (`:thinking` parts, Anthropic
+  `redacted_thinking`, OpenAI Responses `reasoning`, and `ChatReqLLM`
+  `:reasoning_details`).
+  https://github.com/brainlid/langchain/pull/690
+
+### Fixed
+
+- `ChatAnthropic` non-streamed calls return the API's error type and message
+  for error responses, instead of a generic "Unexpected response".
+  https://github.com/brainlid/langchain/pull/686
+
 ## v0.15.3
 
 A tool's `parse_args` parser can now receive the tool context, so it can
