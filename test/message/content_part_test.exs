@@ -572,4 +572,54 @@ defmodule LangChain.Message.ContentPartTest do
       refute ContentPart.has_citations?(part)
     end
   end
+
+  describe "reasoning?/1" do
+    test "is true for thinking parts" do
+      assert ContentPart.reasoning?(ContentPart.thinking!("hmm", signature: "SIG"))
+    end
+
+    test "is true for Anthropic redacted thinking" do
+      part =
+        ContentPart.new!(%{
+          type: :unsupported,
+          content: "x",
+          options: [type: "redacted_thinking"]
+        })
+
+      assert ContentPart.reasoning?(part)
+    end
+
+    test "is true for OpenAI Responses reasoning items" do
+      unsupported =
+        ContentPart.new!(%{
+          type: :unsupported,
+          options: [type: "reasoning", id: "rs_1", encrypted_content: "enc"]
+        })
+
+      streamed =
+        ContentPart.new!(%{
+          type: :thinking,
+          content: "",
+          options: [type: "reasoning", id: "rs_1"]
+        })
+
+      assert ContentPart.reasoning?(unsupported)
+      assert ContentPart.reasoning?(streamed)
+    end
+
+    test "is true for req_llm reasoning details" do
+      part =
+        ContentPart.new!(%{type: :unsupported, options: [reasoning_details: [%{"text" => "t"}]]})
+
+      assert ContentPart.reasoning?(part)
+    end
+
+    test "is false for output" do
+      refute ContentPart.reasoning?(ContentPart.text!("Hello"))
+
+      refute ContentPart.reasoning?(
+               ContentPart.new!(%{type: :unsupported, options: [type: "other"]})
+             )
+    end
+  end
 end
