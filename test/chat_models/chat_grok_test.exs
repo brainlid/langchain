@@ -785,6 +785,24 @@ defmodule LangChain.ChatModels.ChatGrokTest do
       assert_received {:delta, [%TokenUsage{input: 11, output: 22}]}
     end
 
+    test "streamed parallel tool calls keep their argument fragments apart" do
+      chunks = [
+        ~s|data: {"choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{\\"city\\":"}}]},"finish_reason":null}]}\n\n|,
+        ~s|data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"call_2","type":"function","function":{"name":"get_weather","arguments":"{\\"city\\":"}}]},"finish_reason":null}]}\n\n|,
+        ~s|data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\\"SF\\"}"}}]},"finish_reason":null}]}\n\n|,
+        ~s|data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"function":{"arguments":"\\"NYC\\"}"}}]},"finish_reason":"tool_calls"}]}\n\n|
+      ]
+
+      expect_streamed_post(chunks)
+
+      assert {:ok, items} = ChatGrok.call(streaming_grok(), [Message.new_user!("Hi")], [])
+
+      merged = items |> List.flatten() |> MessageDelta.merge_deltas()
+      assert {:ok, %Message{tool_calls: [sf, nyc]}} = MessageDelta.to_message(merged)
+      assert %ToolCall{call_id: "call_1", arguments: %{"city" => "SF"}} = sf
+      assert %ToolCall{call_id: "call_2", arguments: %{"city" => "NYC"}} = nyc
+    end
+
     test "a truncated stream reports the length status" do
       truncated =
         ~s|data: {"choices":[{"index":0,"delta":{"content":"Hel"},"finish_reason":"length"}]}\n\n|

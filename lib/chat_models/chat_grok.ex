@@ -841,7 +841,8 @@ defmodule LangChain.ChatModels.ChatGrok do
   defp parse_tool_calls(nil, _status), do: []
 
   # A non-streamed tool call arrives whole, so it is built `:complete`, which
-  # parses its JSON arguments. Streamed ones are completed after merging.
+  # parses its JSON arguments. Streamed ones are completed after merging, and
+  # their `index` routes each argument fragment to the call it belongs to.
   defp parse_tool_calls(tool_calls, status) when is_list(tool_calls) do
     Enum.map(tool_calls, fn tool_call ->
       ToolCall.new!(%{
@@ -849,7 +850,8 @@ defmodule LangChain.ChatModels.ChatGrok do
         type: :function,
         call_id: tool_call["id"],
         name: tool_call["function"]["name"],
-        arguments: tool_call["function"]["arguments"]
+        arguments: tool_call["function"]["arguments"],
+        index: tool_call["index"]
       })
     end)
   end
