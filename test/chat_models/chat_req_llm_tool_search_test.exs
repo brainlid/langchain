@@ -13,6 +13,7 @@ if Code.ensure_loaded?(ReqLLM) do
     alias LangChain.Message.ToolResult
     alias LangChain.MessageDelta
     alias LangChain.NativeTool
+    alias LangChain.Utils
     alias ReqLLM.Providers.Anthropic
 
     @anthropic "anthropic:claude-sonnet-5-5"
@@ -487,6 +488,90 @@ if Code.ensure_loaded?(ReqLLM) do
       end
     end
 
+    describe "a paused turn is decided by its stop reason" do
+      defp response(finish_reason, provider_meta) do
+        struct!(ReqLLM.Response,
+          id: "msg_1",
+          model: "claude-sonnet-5-5",
+          context: ReqLLM.Context.new([]),
+          message: %ReqLLM.Message{
+            role: :assistant,
+            content: [ReqLLM.Message.ContentPart.text("Working on it.")],
+            tool_calls: nil
+          },
+          object: nil,
+          stream?: false,
+          stream: nil,
+          usage: nil,
+          finish_reason: finish_reason,
+          provider_meta: provider_meta,
+          error: nil
+        )
+      end
+
+      defp process(response, spec \\ @anthropic),
+        do: ChatReqLLM.do_process_response(ChatReqLLM.new!(%{model: spec}), response)
+
+      defp terminal_delta(finish_reason, provider_meta) do
+        metadata =
+          Utils.conditionally_add_to_map(
+            %{finish_reason: finish_reason, terminal?: true},
+            :provider_meta,
+            provider_meta
+          )
+
+        [delta] =
+          ChatReqLLM.translate_stream_chunk(%ReqLLM.StreamChunk{type: :meta, metadata: metadata})
+
+        delta
+      end
+
+      test "pause_turn is complete with the turn left open" do
+        message = process(response(:incomplete, %{"stop_reason" => "pause_turn"}))
+        assert %Message{status: :complete, metadata: %{end_turn: false}} = message
+        assert Message.continues_turn?(message)
+
+        delta = terminal_delta(:incomplete, %{"stop_reason" => "pause_turn"})
+        assert %MessageDelta{status: :complete, metadata: %{end_turn: false}} = delta
+      end
+
+      test "an atom :stop_reason key is read the same way" do
+        assert %Message{status: :complete, metadata: %{end_turn: false}} =
+                 process(response(:incomplete, %{stop_reason: "pause_turn"}))
+
+        assert %MessageDelta{status: :complete, metadata: %{end_turn: false}} =
+                 terminal_delta(:incomplete, %{stop_reason: "pause_turn"})
+      end
+
+      test ":incomplete with another stop reason did not finish" do
+        message =
+          process(response(:incomplete, %{"stop_reason" => "model_context_window_exceeded"}))
+
+        assert %Message{status: :length} = message
+        refute Message.continues_turn?(message)
+
+        delta = terminal_delta(:incomplete, %{"stop_reason" => "model_context_window_exceeded"})
+        assert %MessageDelta{status: :length} = delta
+        assert delta.metadata == nil
+      end
+
+      test ":incomplete with no stop reason did not finish, on any provider" do
+        for spec <- [@anthropic, "openai:gpt-5.4"] do
+          message = process(response(:incomplete, %{}), spec)
+          assert %Message{status: :length} = message
+          refute Message.continues_turn?(message)
+        end
+
+        assert %MessageDelta{status: :length, metadata: nil} = terminal_delta(:incomplete, nil)
+      end
+
+      test "a finished turn is unaffected by its stop reason" do
+        message = process(response(:stop, %{"stop_reason" => "end_turn"}))
+        assert %Message{status: :complete} = message
+        refute Map.has_key?(message.metadata || %{}, :end_turn)
+      end
+    end
+
     describe "thinking after a search block" do
       test "streams for display and is skipped on replay without a warning" do
         part =
@@ -627,6 +712,393 @@ if Code.ensure_loaded?(ReqLLM) do
                  "Loaded the devices tools.",
                  "Tool available: devices_list"
                ]
+      end
+    end
+
+    describe "OpenAI tool search" do
+      @openai "openai:gpt-5.4"
+
+      # Items as the Responses API returns them for a hosted search that loads
+      # `devices_list` from the `devices` namespace.
+      @openai_search_call %{
+        "arguments" => %{"paths" => ["devices"]},
+        "call_id" => nil,
+        "execution" => "server",
+        "id" => "tsc_0578",
+        "status" => "completed",
+        "type" => "tool_search_call"
+      }
+
+      @openai_search_output %{
+        "call_id" => nil,
+        "execution" => "server",
+        "id" => "tso_0578",
+        "status" => "completed",
+        "tools" => [
+          %{
+            "type" => "namespace",
+            "name" => "devices",
+            "description" => "Managed devices.",
+            "tools" => [
+              %{
+                "defer_loading" => true,
+                "description" => "Tool devices_list",
+                "name" => "devices_list",
+                "parameters" => %{"type" => "object", "properties" => %{}},
+                "strict" => false,
+                "type" => "function"
+              }
+            ]
+          }
+        ],
+        "type" => "tool_search_output"
+      }
+
+      @openai_function_call %{
+        "arguments" => ~s({"site":"hq"}),
+        "call_id" => "call_Hx2A",
+        "id" => "fc_0578",
+        "name" => "devices_list",
+        "namespace" => "devices",
+        "status" => "completed",
+        "type" => "function_call"
+      }
+
+      defp openai_model do
+        {:ok, model} = ReqLLM.model(@openai)
+        model
+      end
+
+      # The Responses API body req_llm's OpenAI provider would send.
+      defp openai_body(messages, tools) do
+        {context, opts} = captured_request(@openai, messages, tools)
+
+        {:ok, request} =
+          ReqLLM.Providers.OpenAI.prepare_request(
+            :chat,
+            @openai,
+            context,
+            Keyword.put(opts, :api_key, "k")
+          )
+
+        request
+        |> ReqLLM.Providers.OpenAI.encode_body()
+        |> Map.fetch!(:body)
+        |> Jason.decode!()
+      end
+
+      defp openai_decode(output) do
+        body = %{
+          "id" => "resp_1",
+          "object" => "response",
+          "model" => "gpt-5.4",
+          "status" => "completed",
+          "output" => output,
+          "usage" => %{"input_tokens" => 10, "output_tokens" => 5}
+        }
+
+        request =
+          Req.Request.new(options: %{model: "gpt-5.4"})
+          |> Req.Request.put_private(:req_llm_model, openai_model())
+
+        {_request, %{body: response}} =
+          ReqLLM.Providers.OpenAI.ResponsesAPI.decode_response(
+            {request, Req.Response.new(status: 200, body: body)}
+          )
+
+        ChatReqLLM.do_process_response(ChatReqLLM.new!(%{model: @openai}), response)
+      end
+
+      defp openai_stream_message(events) do
+        model = openai_model()
+
+        {chunks, _state} =
+          Enum.reduce(events, {[], nil}, fn event, {acc, state} ->
+            {chunks, state} =
+              ReqLLM.Providers.OpenAI.ResponsesAPI.decode_stream_event(
+                %{data: event},
+                model,
+                state
+              )
+
+            {acc ++ chunks, state}
+          end)
+
+        stub(ReqLLM, :stream_text, fn _spec, _context, _opts ->
+          {:ok,
+           %ReqLLM.StreamResponse{
+             stream: chunks,
+             metadata_handle: self(),
+             cancel: fn -> :ok end,
+             model: nil,
+             context: ReqLLM.Context.new([])
+           }}
+        end)
+
+        llm = ChatReqLLM.new!(%{model: @openai, stream: true})
+        {:ok, deltas} = ChatReqLLM.call(llm, [Message.new_user!("hi")], [])
+
+        {:ok, message} = deltas |> MessageDelta.merge_deltas() |> MessageDelta.to_message()
+        message
+      end
+
+      # The events the API streams for a search followed by a function call,
+      # with the argument deltas trimmed to two.
+      defp openai_stream_events do
+        [
+          %{"type" => "response.created", "response" => %{"id" => "resp_1"}},
+          %{
+            "type" => "response.output_item.added",
+            "output_index" => 0,
+            "item" => %{@openai_search_call | "arguments" => %{}, "status" => "in_progress"}
+          },
+          %{
+            "type" => "response.output_item.done",
+            "output_index" => 0,
+            "item" => @openai_search_call
+          },
+          %{
+            "type" => "response.output_item.added",
+            "output_index" => 1,
+            "item" => %{@openai_search_output | "status" => "in_progress"}
+          },
+          %{
+            "type" => "response.output_item.done",
+            "output_index" => 1,
+            "item" => @openai_search_output
+          },
+          %{
+            "type" => "response.output_item.added",
+            "output_index" => 2,
+            "item" => %{@openai_function_call | "arguments" => "", "status" => "in_progress"}
+          },
+          %{
+            "type" => "response.function_call_arguments.delta",
+            "output_index" => 2,
+            "item_id" => "fc_0578",
+            "delta" => ~s({"site":)
+          },
+          %{
+            "type" => "response.function_call_arguments.delta",
+            "output_index" => 2,
+            "item_id" => "fc_0578",
+            "delta" => ~s("hq"})
+          },
+          %{
+            "type" => "response.function_call_arguments.done",
+            "output_index" => 2,
+            "arguments" => ~s({"site":"hq"})
+          },
+          %{
+            "type" => "response.output_item.done",
+            "output_index" => 2,
+            "item" => @openai_function_call
+          },
+          %{
+            "type" => "response.completed",
+            "response" => %{
+              "id" => "resp_1",
+              "status" => "completed",
+              "usage" => %{"input_tokens" => 10, "output_tokens" => 5}
+            }
+          }
+        ]
+      end
+
+      test "a function's namespace and its description reach req_llm's OpenAI options" do
+        {_context, opts} =
+          captured_request(@openai, [Message.new_user!("hi")], [
+            NativeTool.tool_search(),
+            function("devices_list",
+              defer_loading: true,
+              namespace: "devices",
+              namespace_description: "Managed devices."
+            ),
+            function("devices_reboot", defer_loading: true, namespace: "devices")
+          ])
+
+        assert [list_tool, reboot_tool] = Enum.filter(opts[:tools], &match?(%ReqLLM.Tool{}, &1))
+
+        assert ReqLLM.Tool.provider_options(list_tool, :openai) == %{
+                 defer_loading: true,
+                 namespace: "devices",
+                 namespace_description: "Managed devices."
+               }
+
+        assert ReqLLM.Tool.provider_options(reboot_tool, :openai) == %{
+                 defer_loading: true,
+                 namespace: "devices"
+               }
+
+        # A namespace means nothing to Anthropic.
+        assert ReqLLM.Tool.provider_options(list_tool, :anthropic) == %{defer_loading: true}
+      end
+
+      test "functions sharing a namespace go out as one namespace tool" do
+        %{"tools" => tools} =
+          openai_body([Message.new_user!("hi")], [
+            function("get_time"),
+            function("devices_list",
+              defer_loading: true,
+              namespace: "devices",
+              namespace_description: "Managed devices."
+            ),
+            NativeTool.tool_search(),
+            function("devices_reboot", defer_loading: true, namespace: "devices")
+          ])
+
+        assert [
+                 %{"type" => "function", "name" => "get_time"},
+                 %{
+                   "type" => "namespace",
+                   "name" => "devices",
+                   "description" => "Managed devices.",
+                   "tools" => [
+                     %{"name" => "devices_list", "defer_loading" => true},
+                     %{"name" => "devices_reboot", "defer_loading" => true}
+                   ]
+                 },
+                 %{"type" => "tool_search"}
+               ] = tools
+      end
+
+      test "a function with neither deferral nor namespace has no provider options" do
+        {_context, opts} =
+          captured_request(@openai, [Message.new_user!("hi")], [function("get_time")])
+
+        assert [%ReqLLM.Tool{} = tool] = opts[:tools]
+        assert ReqLLM.Tool.provider_options(tool, :openai) == %{}
+      end
+
+      test "a decoded response keeps the search items and the call's namespace" do
+        message =
+          openai_decode([@openai_search_call, @openai_search_output, @openai_function_call])
+
+        assert %Message{
+                 status: :complete,
+                 content: [
+                   %ContentPart{
+                     type: :provider_item,
+                     options: [provider: "openai", item: @openai_search_call]
+                   },
+                   %ContentPart{
+                     type: :provider_item,
+                     options: [provider: "openai", item: @openai_search_output]
+                   }
+                 ],
+                 tool_calls: [
+                   %ToolCall{
+                     call_id: "call_Hx2A",
+                     name: "devices_list",
+                     arguments: %{"site" => "hq"},
+                     metadata: %{"namespace" => "devices"}
+                   }
+                 ]
+               } = message
+      end
+
+      test "a streamed response keeps the search items and the call's namespace" do
+        message = openai_stream_message(openai_stream_events())
+
+        assert [
+                 %ContentPart{
+                   type: :provider_item,
+                   options: [provider: "openai", item: @openai_search_call]
+                 },
+                 %ContentPart{
+                   type: :provider_item,
+                   options: [provider: "openai", item: @openai_search_output]
+                 }
+               ] = message.content
+
+        assert [
+                 %ToolCall{
+                   status: :complete,
+                   call_id: "call_Hx2A",
+                   name: "devices_list",
+                   arguments: %{"site" => "hq"},
+                   metadata: %{"namespace" => "devices"}
+                 }
+               ] = message.tool_calls
+      end
+
+      test "the namespace arriving only when the call's item is done still lands on the call" do
+        events =
+          List.update_at(openai_stream_events(), 5, fn event ->
+            update_in(event, ["item"], &Map.delete(&1, "namespace"))
+          end)
+
+        assert [%ToolCall{name: "devices_list", metadata: %{"namespace" => "devices"}}] =
+                 openai_stream_message(events).tool_calls
+      end
+
+      test "a searched turn replays its items and the call's namespace in place" do
+        for assistant <- [
+              openai_decode([@openai_search_call, @openai_search_output, @openai_function_call]),
+              openai_stream_message(openai_stream_events())
+            ] do
+          result =
+            Message.new_tool_result!(%{
+              tool_results: [
+                ToolResult.new!(%{
+                  tool_call_id: "call_Hx2A",
+                  content: "2 devices",
+                  name: "devices_list"
+                })
+              ]
+            })
+
+          %{"input" => input} =
+            openai_body([Message.new_user!("List hq devices"), assistant, result], [
+              NativeTool.tool_search(),
+              function("devices_list", defer_loading: true, namespace: "devices")
+            ])
+
+          assert [
+                   %{"role" => "user"},
+                   @openai_search_call,
+                   @openai_search_output,
+                   %{
+                     "type" => "function_call",
+                     "call_id" => "call_Hx2A",
+                     "name" => "devices_list",
+                     "namespace" => "devices"
+                   },
+                   %{"type" => "function_call_output", "call_id" => "call_Hx2A"}
+                 ] = input
+        end
+      end
+
+      test "a namespace stored under an atom key goes back with the call" do
+        call =
+          ToolCall.new!(%{
+            call_id: "call_Hx2A",
+            name: "devices_list",
+            arguments: %{"site" => "hq"},
+            metadata: %{namespace: "devices"}
+          })
+
+        assistant = Message.new_assistant!(%{tool_calls: [call]})
+
+        result =
+          Message.new_tool_result!(%{
+            tool_results: [
+              ToolResult.new!(%{
+                tool_call_id: "call_Hx2A",
+                content: "2 devices",
+                name: "devices_list"
+              })
+            ]
+          })
+
+        %{"input" => input} =
+          openai_body([Message.new_user!("List hq devices"), assistant, result], [
+            NativeTool.tool_search(),
+            function("devices_list", defer_loading: true, namespace: "devices")
+          ])
+
+        assert %{"namespace" => "devices"} =
+                 Enum.find(input, &(&1["type"] == "function_call"))
       end
     end
 

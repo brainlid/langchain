@@ -89,7 +89,8 @@ defmodule LangChain.Message.ContentPart do
     model, so any chat model that speaks that API replays the item. An item
     `LangChain.ChatModels.ChatAnthropic` decoded replays through
     `LangChain.ChatModels.ChatReqLLM` on an Anthropic model, and the other way
-    around.
+    around. Likewise, an item `LangChain.ChatModels.ChatOpenAIResponses`
+    decoded replays through `ChatReqLLM` on an OpenAI model.
   - `:item` option - the block itself, as a string-keyed map of JSON values.
   - `:content` - `nil` for a complete item. While a streamed item is still
     arriving, a chat model may accumulate a fragment of it here.

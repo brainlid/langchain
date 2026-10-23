@@ -70,7 +70,7 @@ defmodule LangChain.NativeTool do
   | `LangChain.ChatModels.ChatOpenAIResponses` | OpenAI's hosted search; `:variant` does not apply | Yes | Live |
   | `LangChain.ChatModels.ChatReqLLM`, `anthropic:` models | Server-side and client-side, as `ChatAnthropic` | Not used | Live |
   | `LangChain.ChatModels.ChatReqLLM`, Anthropic models on `amazon_bedrock:` | Server-side and client-side | Not used | Request encoding only |
-  | `LangChain.ChatModels.ChatReqLLM`, `openai:` models | OpenAI's hosted search. The search items and each call's namespace are not kept, so a replayed conversation holds the calls without the searches. | Not sent | Live |
+  | `LangChain.ChatModels.ChatReqLLM`, `openai:` models | OpenAI's hosted search; `:variant` does not apply | Yes | Live |
   | `LangChain.ChatModels.ChatReqLLM`, any other provider | Falls back | | Request encoding |
   | `LangChain.ChatModels.ChatOpenAI`, `LangChain.ChatModels.ChatOpenAICompatible`, `LangChain.ChatModels.ChatAwsMantle` | Falls back. The Chat Completions API rejects the search tool. | | Request encoding and replay |
   | `LangChain.ChatModels.ChatDeepSeek`, `LangChain.ChatModels.ChatGoogleAI`, `LangChain.ChatModels.ChatVertexAI`, `LangChain.ChatModels.ChatGrok`, `LangChain.ChatModels.ChatMistralAI`, `LangChain.ChatModels.ChatOllamaAI`, `LangChain.ChatModels.ChatOrq`, `LangChain.ChatModels.ChatPerplexity` | Falls back | | Request encoding |

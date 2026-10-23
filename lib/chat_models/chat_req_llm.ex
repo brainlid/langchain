@@ -72,13 +72,9 @@ if Code.ensure_loaded?(ReqLLM) do
     - **OpenAI** (`openai:` models): the hosted `tool_search` tool, and
       `defer_loading` on each deferred function. A deferred function without
       the search tool is an error before the request is sent, because the API
-      rejects it. req_llm does not keep OpenAI's `tool_search_call` and
-      `tool_search_output` items, or the `namespace` on a function call, so
-      the replayed history holds each call to a deferred tool without the
-      search that loaded it. The API accepts that, and the model calls the
-      tool again on later turns. A function's `:namespace` option is not
-      sent. For namespaces and replayed searches, use
-      `LangChain.ChatModels.ChatOpenAIResponses`.
+      rejects it. Functions that share a `:namespace` option go out as one
+      `namespace` tool, described by `:namespace_description` from any of
+      them, or "Tools for <namespace>." without one.
     - **Any other provider**: the search tool is left out and deferred
       functions are sent as ordinary tools.
 
@@ -87,20 +83,31 @@ if Code.ensure_loaded?(ReqLLM) do
     ### Search blocks in the conversation
 
     On Anthropic models a search adds `server_tool_use` and
-    `tool_search_tool_result` blocks to the assistant message. Each becomes a
-    `LangChain.Message.ContentPart` of type `:provider_item` in the position
-    it arrived, and goes back unchanged, in place, on every later request.
-    That is how a loaded tool stays loaded, so keep these parts wherever the
-    conversation is stored.
+    `tool_search_tool_result` blocks to the assistant message. On OpenAI
+    models it adds `tool_search_call` and `tool_search_output` items. Each
+    becomes a `LangChain.Message.ContentPart` of type `:provider_item` in the
+    position it arrived, and goes back unchanged, in place, on every later
+    request. That is how a loaded tool stays loaded, so keep these parts
+    wherever the conversation is stored.
+
+    On OpenAI, a call to a function that a search loaded carries a
+    `namespace`: the namespace's name, or the function's own name when it has
+    none. It is kept in the `LangChain.Message.ToolCall`'s `metadata` under
+    `"namespace"`, as `LangChain.ChatModels.ChatOpenAIResponses` keeps it, and
+    sent back with the call. The API rejects a replayed search whose call
+    comes back without its namespace.
 
     When streaming, thinking that follows a search block arrives twice: as
     thinking text for display, marked `stream_only: true`, and as a
     `:provider_item` holding the signed block. Only the provider item goes
     back.
 
-    A response paused by a server tool (Anthropic's `pause_turn`) is
-    `:complete` with `metadata[:end_turn]` set to `false`, so
-    `LangChain.Chains.LLMChain` sends it back and the model continues.
+    A response paused by a server tool is identified by Anthropic's
+    `pause_turn` stop reason, which req_llm reports in
+    `provider_meta["stop_reason"]`. It is `:complete` with
+    `metadata[:end_turn]` set to `false`, so `LangChain.Chains.LLMChain` sends
+    it back and the model continues. Any other `:incomplete` response is
+    `:length`.
 
     ### Loading tools from your own tool
 
@@ -847,12 +854,12 @@ if Code.ensure_loaded?(ReqLLM) do
          when is_binary(name) and is_integer(block_index) do
       id = meta[:id] || Utils.generate_tool_call_id()
 
-      base_attrs = %{
-        type: :function,
-        call_id: id,
-        name: name,
-        index: block_index
-      }
+      base_attrs =
+        Utils.conditionally_add_to_map(
+          %{type: :function, call_id: id, name: name, index: block_index},
+          :metadata,
+          tool_call_namespace_metadata(meta)
+        )
 
       attrs =
         if is_map(args) and map_size(args) > 0 do
@@ -941,6 +948,42 @@ if Code.ensure_loaded?(ReqLLM) do
         })
 
       {[delta], state}
+    end
+
+    # Metadata req_llm learns about a call once its item is done, such as the
+    # namespace of a function OpenAI tool search loaded. It merges into the
+    # call at that index.
+    defp process_stream_chunk(
+           %ReqLLM.StreamChunk{
+             type: :meta,
+             metadata: %{tool_call_metadata: %{index: block_index, metadata: call_meta}}
+           },
+           state
+         )
+         when is_integer(block_index) do
+      case tool_call_namespace_metadata(call_meta) do
+        nil ->
+          {[], state}
+
+        metadata ->
+          tool_call =
+            ToolCall.new!(%{
+              type: :function,
+              status: :incomplete,
+              index: block_index,
+              metadata: metadata
+            })
+
+          delta =
+            MessageDelta.new!(%{
+              role: :assistant,
+              tool_calls: [tool_call],
+              status: :incomplete,
+              index: 0
+            })
+
+          {[delta], state}
+      end
     end
 
     # All other chunks: delegate to stateless translation
@@ -1074,13 +1117,9 @@ if Code.ensure_loaded?(ReqLLM) do
       args_map = if is_map(args), do: args, else: %{}
 
       tool_call =
-        ToolCall.new!(%{
-          type: :function,
-          status: :complete,
-          call_id: id,
-          name: name,
-          arguments: args_map
-        })
+        %{type: :function, status: :complete, call_id: id, name: name, arguments: args_map}
+        |> Utils.conditionally_add_to_map(:metadata, tool_call_namespace_metadata(meta))
+        |> ToolCall.new!()
 
       delta =
         MessageDelta.new!(%{
@@ -1131,15 +1170,16 @@ if Code.ensure_loaded?(ReqLLM) do
             ]
 
           true ->
-            status = translate_finish_reason(meta[:finish_reason])
+            provider_meta = meta[:provider_meta]
+            status = message_status(meta[:finish_reason], provider_meta)
 
             [
               %{role: :assistant, status: status, index: 0}
               |> Utils.conditionally_add_to_map(
                 :metadata,
-                meta[:provider_meta]
+                provider_meta
                 |> provider_message_metadata()
-                |> turn_open_metadata(meta[:finish_reason])
+                |> turn_open_metadata(provider_meta)
               )
               |> MessageDelta.new!()
             ]
@@ -1169,13 +1209,29 @@ if Code.ensure_loaded?(ReqLLM) do
 
     defp provider_message_metadata(_provider_meta), do: nil
 
-    # A paused turn leaves the model's turn open (`end_turn: false`), which
-    # `LangChain.Message.continues_turn?/1` reads so the chain calls the model
-    # again with the paused content.
-    defp turn_open_metadata(metadata, :incomplete),
-      do: Map.put(metadata || %{}, :end_turn, false)
+    # A server tool can pause a turn partway: Anthropic's `pause_turn` stop
+    # reason, which req_llm reports in `provider_meta["stop_reason"]` beside a
+    # finish reason of `:incomplete`. The message is whole and the turn is
+    # not. It is `:complete`, and `end_turn: false` makes
+    # `LangChain.Message.continues_turn?/1` true, so the chain calls the model
+    # again with the paused content. Any other `:incomplete` response did not
+    # finish and keeps the status `translate_finish_reason/1` gives it.
+    defp message_status(finish_reason, provider_meta) do
+      if paused_turn?(provider_meta),
+        do: :complete,
+        else: translate_finish_reason(finish_reason)
+    end
 
-    defp turn_open_metadata(metadata, _finish_reason), do: metadata
+    defp turn_open_metadata(metadata, provider_meta) do
+      if paused_turn?(provider_meta),
+        do: Map.put(metadata || %{}, :end_turn, false),
+        else: metadata
+    end
+
+    defp paused_turn?(%{} = provider_meta),
+      do: provider_meta_field(provider_meta, :stop_reason) == "pause_turn"
+
+    defp paused_turn?(_provider_meta), do: false
 
     defp provider_meta_field(provider_meta, key),
       do: Map.get(provider_meta, Atom.to_string(key), Map.get(provider_meta, key))
@@ -1728,10 +1784,41 @@ if Code.ensure_loaded?(ReqLLM) do
       |> Enum.reject(&is_nil/1)
     end
 
-    defp lc_tool_call_to_req_llm(%ToolCall{call_id: id, name: name, arguments: args}) do
+    defp lc_tool_call_to_req_llm(%ToolCall{call_id: id, name: name, arguments: args} = call) do
       args_json = Jason.encode!(args || %{})
-      ReqLLM.ToolCall.new(id, name, args_json)
+
+      id
+      |> ReqLLM.ToolCall.new(name, args_json)
+      |> ReqLLM.ToolCall.put_metadata(req_llm_namespace_metadata(call))
     end
+
+    # A call to a function that OpenAI tool search loaded carries the namespace
+    # it was loaded under, and the API rejects the call on replay without it.
+    # It is kept in `ToolCall.metadata["namespace"]`, the key
+    # `LangChain.ChatModels.ChatOpenAIResponses` uses, so it survives JSON
+    # persistence. req_llm carries it as `%{namespace: name}`.
+    defp req_llm_namespace_metadata(%ToolCall{metadata: metadata}) do
+      case namespace_from_metadata(metadata) do
+        nil -> %{}
+        namespace -> %{namespace: namespace}
+      end
+    end
+
+    defp tool_call_namespace_metadata(metadata) do
+      case namespace_from_metadata(metadata) do
+        nil -> nil
+        namespace -> %{"namespace" => namespace}
+      end
+    end
+
+    defp namespace_from_metadata(%{} = metadata) do
+      case Map.get(metadata, "namespace", Map.get(metadata, :namespace)) do
+        namespace when is_binary(namespace) and namespace != "" -> namespace
+        _other -> nil
+      end
+    end
+
+    defp namespace_from_metadata(_metadata), do: nil
 
     @doc """
     Convert a list of LangChain `Function` structs to `ReqLLM.Tool` structs.
@@ -1772,12 +1859,22 @@ if Code.ensure_loaded?(ReqLLM) do
     end
 
     # A deferred function is marked for every provider whose tool search req_llm
-    # encodes. Each provider reads only its own key.
+    # encodes. Each provider reads only its own key. A namespace applies only to
+    # OpenAI, which sends the functions sharing one as a single `namespace` tool.
     defp tool_provider_options(%Function{} = fun) do
-      if Function.deferred?(fun) do
-        [anthropic: [defer_loading: true], openai: [defer_loading: true]]
-      else
-        %{}
+      defer_loading = if Function.deferred?(fun), do: true
+
+      anthropic = maybe_put([], :defer_loading, defer_loading)
+
+      openai =
+        []
+        |> maybe_put(:defer_loading, defer_loading)
+        |> maybe_put(:namespace, Function.namespace(fun))
+        |> maybe_put(:namespace_description, Function.namespace_description(fun))
+
+      case Enum.reject([anthropic: anthropic, openai: openai], &match?({_provider, []}, &1)) do
+        [] -> %{}
+        options -> options
       end
     end
 
@@ -1862,7 +1959,7 @@ if Code.ensure_loaded?(ReqLLM) do
         |> attach_reasoning_signature(response.message)
         |> append_reasoning_details_part(response.message)
 
-      status = translate_finish_reason(response.finish_reason)
+      status = message_status(response.finish_reason, response.provider_meta)
       tool_calls = translate_response_tool_calls(response.message.tool_calls, status)
       usage = translate_usage(response.usage)
 
@@ -1876,7 +1973,7 @@ if Code.ensure_loaded?(ReqLLM) do
         :metadata,
         response.provider_meta
         |> provider_message_metadata()
-        |> turn_open_metadata(response.finish_reason)
+        |> turn_open_metadata(response.provider_meta)
       )
       |> Message.new()
       |> TokenUsage.set_wrapped(usage)
@@ -2078,7 +2175,7 @@ if Code.ensure_loaded?(ReqLLM) do
       Enum.map(tool_calls, fn %ReqLLM.ToolCall{
                                 id: id,
                                 function: %{name: name, arguments: args_json}
-                              } ->
+                              } = req_llm_call ->
         {call_status, arguments} =
           case Jason.decode(args_json || "{}") do
             {:ok, map} when is_map(map) ->
@@ -2091,13 +2188,18 @@ if Code.ensure_loaded?(ReqLLM) do
               {:complete, %{}}
           end
 
-        ToolCall.new!(%{
+        %{
           type: :function,
           status: call_status,
           call_id: id,
           name: name,
           arguments: arguments
-        })
+        }
+        |> Utils.conditionally_add_to_map(
+          :metadata,
+          tool_call_namespace_metadata(ReqLLM.ToolCall.metadata(req_llm_call))
+        )
+        |> ToolCall.new!()
       end)
     end
 
@@ -2110,10 +2212,10 @@ if Code.ensure_loaded?(ReqLLM) do
     def translate_finish_reason(:length), do: :length
     def translate_finish_reason(:content_filter), do: :content_filtered
     def translate_finish_reason(:cancelled), do: :complete
-    # req_llm reports a turn the provider paused mid-way (Anthropic's
-    # `pause_turn`) as `:incomplete`. The message is whole; the turn is not,
-    # and `turn_open_metadata/2` marks it open so the chain continues it.
-    def translate_finish_reason(:incomplete), do: :complete
+    # A response that did not finish. A turn paused by a server tool is also
+    # reported as `:incomplete`; its stop reason identifies it where the
+    # message is built, and it becomes `:complete` there.
+    def translate_finish_reason(:incomplete), do: :length
     def translate_finish_reason(:error), do: :complete
     def translate_finish_reason(:unknown), do: :complete
     def translate_finish_reason(nil), do: :complete

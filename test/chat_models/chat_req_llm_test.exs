@@ -391,6 +391,10 @@ if Code.ensure_loaded?(ReqLLM) do
         assert :content_filtered == ChatReqLLM.translate_finish_reason(:content_filter)
       end
 
+      test "maps :incomplete to :length" do
+        assert :length == ChatReqLLM.translate_finish_reason(:incomplete)
+      end
+
       test "maps nil to :complete" do
         assert :complete == ChatReqLLM.translate_finish_reason(nil)
       end
