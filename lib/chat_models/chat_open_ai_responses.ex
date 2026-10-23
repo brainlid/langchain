@@ -214,6 +214,46 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
 
   Note: Not all Open AI models support `web_search_preview`. OpenAI will return an error if you request web_search_preview for when using a model that doesn't support it.
 
+  ## Tool Search
+
+  Functions marked `defer_loading: true` (see "Tool search options" in
+  `LangChain.Function`) are declared on every request but kept out of the
+  model's context until it finds them with OpenAI's hosted search tool. Add
+  the search tool to the chain's tools:
+
+      %{llm: ChatOpenAIResponses.new!(%{model: "gpt-5.4"})}
+      |> LLMChain.new!()
+      |> LLMChain.add_tools([NativeTool.tool_search(), deferred_functions, other_tools])
+
+  - `LangChain.NativeTool.tool_search/1` becomes the `tool_search` tool. The
+    `:variant` option does not apply; OpenAI has one kind of search.
+  - A deferred function without the search tool is an error before the
+    request is sent, because the API rejects it.
+  - Functions that share a `:namespace` option are sent as one `namespace`
+    tool, in the position of the first of them. The API requires a
+    description for every namespace; set `:namespace_description` on one of
+    the functions. Without one, the description is "Tools for <namespace>.".
+    The namespace never changes a function's `name`, so tool calls match the
+    function as declared.
+
+  ### Search items in the conversation
+
+  A search adds `tool_search_call` and `tool_search_output` items to the
+  response. Each becomes a `LangChain.Message.ContentPart` of type
+  `:provider_item` in the position it arrived, and goes back unchanged, in
+  place, on every later request. Keep these parts wherever the conversation
+  is stored.
+
+  A call to a function that a search loaded carries a `namespace`: the
+  namespace's name, or the function's own name when it has none. It is kept
+  in the `LangChain.Message.ToolCall`'s `metadata` under `"namespace"` and
+  sent back with the call. Once the search items are in the history, the API
+  rejects a call that comes back without its namespace.
+
+  This works with `store: false`. The items carry everything the API needs.
+  Client-executed search (`execution: "client"`) is not supported, so a
+  `:tool_reference` part in a tool result is sent as text naming the tool.
+
   ## Tool Choice
 
   OpenAI's ChatGPT API supports forcing a tool to be used.
@@ -434,6 +474,13 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   @behaviour ChatModel
 
   @current_config_version 1
+
+  # The provider recorded on the items this model keeps for replay. It names
+  # the API, not this module, so items that `LangChain.ChatModels.ChatReqLLM`
+  # keeps from an OpenAI model replay here too, and the other way around.
+  @provider_item_name "openai"
+
+  @tool_search_item_types ["tool_search_call", "tool_search_output"]
 
   @receive_timeout 60_000
 
@@ -822,14 +869,75 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
 
   defp get_tools_for_api(%ChatOpenAIResponses{} = _model, nil), do: []
 
+  # Functions that share a `:namespace` go out as one `namespace` tool holding
+  # them, in the position of the first one. Every other tool keeps its place,
+  # so the list is the same on every request and the cached prefix holds.
   defp get_tools_for_api(%ChatOpenAIResponses{} = model, tools) do
-    Enum.map(tools, fn
-      %Function{} = function ->
-        for_api(model, function)
+    validate_deferred_tools!(tools)
 
-      %NativeTool{} = tool ->
-        for_api(model, tool)
+    {entries, namespaces} =
+      Enum.reduce(tools, {[], %{}}, fn
+        %Function{} = function, {entries, namespaces} ->
+          encoded = for_api(model, function)
+
+          case Function.namespace(function) do
+            nil ->
+              {[{:tool, encoded} | entries], namespaces}
+
+            name ->
+              description = Function.namespace_description(function)
+
+              case namespaces do
+                %{^name => {group_description, group_tools}} ->
+                  {entries,
+                   Map.put(
+                     namespaces,
+                     name,
+                     {group_description || description, [encoded | group_tools]}
+                   )}
+
+                _new ->
+                  {[{:namespace, name} | entries],
+                   Map.put(namespaces, name, {description, [encoded]})}
+              end
+          end
+
+        %NativeTool{} = tool, {entries, namespaces} ->
+          {[{:tool, for_api(model, tool)} | entries], namespaces}
+      end)
+
+    entries
+    |> Enum.reverse()
+    |> Enum.map(fn
+      {:tool, encoded} ->
+        encoded
+
+      {:namespace, name} ->
+        {description, group_tools} = Map.fetch!(namespaces, name)
+
+        %{
+          "type" => "namespace",
+          "name" => name,
+          # The API requires a description on every namespace.
+          "description" => description || "Tools for #{name}.",
+          "tools" => Enum.reverse(group_tools)
+        }
     end)
+  end
+
+  # The API rejects a deferred function unless the request also declares the
+  # search tool.
+  defp validate_deferred_tools!(tools) do
+    if Enum.any?(tools, &(match?(%Function{}, &1) and Function.deferred?(&1))) and
+         not Enum.any?(tools, &NativeTool.tool_search?/1) do
+      raise LangChainError,
+        type: "invalid_tools",
+        message:
+          "OpenAI requires the search tool when a function is deferred. " <>
+            "Add `LangChain.NativeTool.tool_search/1` or leave every function undeferred."
+    end
+
+    :ok
   end
 
   # JSON schema + optional verbosity
@@ -910,6 +1018,13 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     }
     |> Utils.conditionally_add_to_map("description", fun.description)
     |> Utils.conditionally_add_to_map("strict", fun.strict)
+    |> Utils.conditionally_add_to_map("defer_loading", if(Function.deferred?(fun), do: true))
+  end
+
+  # OpenAI's hosted search has a single kind of search, so the variant that
+  # `NativeTool.tool_search/1` records is not sent. The API rejects it.
+  def for_api(%ChatOpenAIResponses{} = _model, %NativeTool{name: "tool_search"}) do
+    %{"type" => "tool_search"}
   end
 
   def for_api(
@@ -1021,7 +1136,9 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
     }
   end
 
-  # ToolCall support
+  # ToolCall support. A call to a function loaded by tool search goes back with
+  # the `namespace` the API gave it, which the API requires once the search
+  # items are in the history.
   def for_api(%ChatOpenAIResponses{} = _model, %ToolCall{type: :function} = fun) do
     %{
       "arguments" => Jason.encode!(fun.arguments),
@@ -1029,6 +1146,7 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
       "name" => fun.name,
       "type" => "function_call"
     }
+    |> Utils.conditionally_add_to_map("namespace", tool_call_namespace(fun))
     |> Utils.conditionally_add_to_map("status", "completed")
   end
 
@@ -1085,10 +1203,33 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   # The stand-alone input item a content part represents, or `nil` when the
   # part is not one.
   defp stand_alone_item_for_api(%ChatOpenAIResponses{} = model, %ContentPart{} = part) do
-    reasoning_item_for_api(part) || native_tool_call_for_api(model, part)
+    reasoning_item_for_api(part) || native_tool_call_for_api(model, part) ||
+      provider_item_for_api(part)
   end
 
   defp stand_alone_item_for_api(%ChatOpenAIResponses{}, _part), do: nil
+
+  # An item OpenAI produced and expects back unchanged, such as a
+  # `tool_search_call` or `tool_search_output`. Items from any other provider
+  # are not replayed.
+  defp provider_item_for_api(%ContentPart{type: :provider_item} = part) do
+    if ContentPart.provider_item?(part, @provider_item_name),
+      do: ContentPart.provider_item_block(part)
+  end
+
+  defp provider_item_for_api(%ContentPart{}), do: nil
+
+  # The namespace kept on a tool call, under a string key or, after a round
+  # trip through storage that restores atoms, an atom key.
+  defp tool_call_namespace(%ToolCall{metadata: %{"namespace" => namespace}})
+       when is_binary(namespace),
+       do: namespace
+
+  defp tool_call_namespace(%ToolCall{metadata: %{namespace: namespace}})
+       when is_binary(namespace),
+       do: namespace
+
+  defp tool_call_namespace(%ToolCall{}), do: nil
 
   @doc """
   Convert a content part holding a reasoning item back into the reasoning entry
@@ -1267,6 +1408,26 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
         _role
       ),
       do: nil
+
+  # A provider item from OpenAI is its own input item and is replayed by
+  # `stand_alone_items_for_api/2`, never as message content. Items from any
+  # other provider are omitted.
+  def content_part_for_api(
+        %ChatOpenAIResponses{} = _model,
+        %ContentPart{type: :provider_item},
+        _role
+      ),
+      do: nil
+
+  # This model does not load tools by reference, so every deferred function is
+  # already declared as an ordinary tool. The reference reads as text.
+  def content_part_for_api(
+        %ChatOpenAIResponses{} = model,
+        %ContentPart{type: :tool_reference} = part,
+        role
+      ) do
+    content_part_for_api(model, ContentPart.text!(ContentPart.tool_reference_text(part)), role)
+  end
 
   defp add_prompt_cache_breakpoint(output, %ContentPart{options: options}) do
     Utils.conditionally_add_to_map(
@@ -1895,12 +2056,13 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
   def do_process_response(_model, %{
         "type" => "response.output_item.added",
         "output_index" => output_index,
-        "item" => %{
-          "type" => "function_call",
-          "call_id" => call_id,
-          "name" => name,
-          "arguments" => args
-        }
+        "item" =>
+          %{
+            "type" => "function_call",
+            "call_id" => call_id,
+            "name" => name,
+            "arguments" => args
+          } = item
       }) do
     data = %{
       status: :incomplete,
@@ -1908,7 +2070,8 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
       call_id: call_id,
       name: name,
       arguments: args,
-      index: output_index
+      index: output_index,
+      metadata: namespace_metadata(item)
     }
 
     with {:ok, %ToolCall{} = call} <- ToolCall.new(data),
@@ -1992,7 +2155,8 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
       index: output_index,
       call_id: item["call_id"],
       arguments: item["arguments"],
-      name: item["name"]
+      name: item["name"],
+      metadata: namespace_metadata(item)
     }
 
     with {:ok, call} <- ToolCall.new(data),
@@ -2004,6 +2168,32 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
            }) do
       message
     else
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:error, LangChainError.exception(changeset)}
+    end
+  end
+
+  # A tool search item streams as a whole item on `response.output_item.added`
+  # and again, completed, on `response.output_item.done`. Only the completed
+  # item is kept. It takes the item's `output_index`, so it stays in place
+  # among the text and reasoning around it.
+  def do_process_response(_model, %{
+        "type" => "response.output_item.done",
+        "output_index" => output_index,
+        "item" => %{"type" => type} = item
+      })
+      when type in @tool_search_item_types do
+    data = %{
+      content: ContentPart.provider_item!(@provider_item_name, item),
+      status: :incomplete,
+      role: :assistant,
+      index: output_index
+    }
+
+    case MessageDelta.new(data) do
+      {:ok, delta} ->
+        delta
+
       {:error, %Ecto.Changeset{} = changeset} ->
         {:error, LangChainError.exception(changeset)}
     end
@@ -2263,6 +2453,14 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
 
   defp maybe_add_end_turn(metadata, _response), do: metadata
 
+  # A call to a function that tool search loaded carries the `namespace` it
+  # was loaded under: the namespace's name, or the function's own name for a
+  # function outside any namespace. It is kept so the call replays with it.
+  defp namespace_metadata(%{"namespace" => namespace}) when is_binary(namespace),
+    do: %{"namespace" => namespace}
+
+  defp namespace_metadata(_item), do: nil
+
   defp content_items_to_content_parts_and_tool_calls(content_items) do
     Enum.reduce(content_items, {[], []}, fn content_item, {content_parts, tool_calls} ->
       case content_item_to_content_part_or_tool_call(content_item) do
@@ -2316,7 +2514,8 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
            status: status,
            name: name,
            arguments: args,
-           call_id: call_id
+           call_id: call_id,
+           metadata: namespace_metadata(item)
          }) do
       {:ok, %ToolCall{} = call} ->
         call
@@ -2324,6 +2523,14 @@ defmodule LangChain.ChatModels.ChatOpenAIResponses do
       {:error, %Ecto.Changeset{} = changeset} ->
         {:error, LangChainError.exception(changeset)}
     end
+  end
+
+  # Hosted tool search adds a `tool_search_call` and a `tool_search_output`
+  # item ahead of the call to the tool it loaded. Each is kept whole as a
+  # provider item and replayed unchanged by `stand_alone_items_for_api/2`.
+  defp content_item_to_content_part_or_tool_call(%{"type" => type} = item)
+       when type in @tool_search_item_types do
+    ContentPart.provider_item!(@provider_item_name, item)
   end
 
   # The Responses API returns web_search_call as a sibling of assistant messages, as

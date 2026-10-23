@@ -246,6 +246,8 @@ defmodule LangChain.ChatModels.ChatGrok do
   Return the params formatted for an API request.
   """
   def for_api(%ChatGrok{} = grok, messages, tools \\ []) do
+    tools = LangChain.NativeTool.drop_tool_search(tools)
+
     base_params =
       %{
         model: grok.model,
@@ -375,8 +377,11 @@ defmodule LangChain.ChatModels.ChatGrok do
         content_parts when is_list(content_parts) ->
           # If it's just a single text part, extract the text
           case content_parts do
-            [%ContentPart{type: :text, content: text}] -> text
-            _ -> Enum.map(content_parts, &format_content_part_for_api/1)
+            [%ContentPart{type: :text, content: text}] ->
+              text
+
+            _ ->
+              content_parts |> Enum.map(&format_content_part_for_api/1) |> Enum.reject(&is_nil/1)
           end
       end
 
@@ -407,8 +412,8 @@ defmodule LangChain.ChatModels.ChatGrok do
 
           content_parts when is_list(content_parts) ->
             content_parts
-            |> Enum.filter(&(&1.type == :text))
-            |> Enum.map(& &1.content)
+            |> Enum.filter(&(&1.type in [:text, :tool_reference]))
+            |> Enum.map(&part_text/1)
             |> Enum.join(" ")
         end
 
@@ -479,6 +484,15 @@ defmodule LangChain.ChatModels.ChatGrok do
     %{type: "image_url", image_url: %{url: url}}
   end
 
+  # Grok does not load tools by reference, so every deferred function is already
+  # declared. The reference reads as text.
+  defp format_content_part_for_api(%ContentPart{type: :tool_reference} = part) do
+    %{type: "text", text: ContentPart.tool_reference_text(part)}
+  end
+
+  # A provider item belongs to the provider that produced it.
+  defp format_content_part_for_api(%ContentPart{type: :provider_item}), do: nil
+
   defp format_content_part_for_api(%ContentPart{type: :image, content: data, options: options}) do
     %{
       type: "image_url",
@@ -487,6 +501,11 @@ defmodule LangChain.ChatModels.ChatGrok do
       }
     }
   end
+
+  defp part_text(%ContentPart{type: :tool_reference} = part),
+    do: ContentPart.tool_reference_text(part)
+
+  defp part_text(%ContentPart{content: content}), do: content
 
   defp get_content_string(%Message{content: content}) when is_binary(content), do: content
 

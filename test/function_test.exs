@@ -1099,4 +1099,113 @@ defmodule LangChain.FunctionTest do
       assert message =~ "KeyError"
     end
   end
+
+  describe "deferred?/1" do
+    test "is false by default" do
+      refute Function.deferred?(Function.new!(%{function: &hello_world/2, name: "plain"}))
+    end
+
+    test "is true when defer_loading is set" do
+      assert Function.deferred?(
+               Function.new!(%{
+                 function: &hello_world/2,
+                 name: "hidden",
+                 options: [defer_loading: true]
+               })
+             )
+    end
+
+    test "is false for any other defer_loading value" do
+      refute Function.deferred?(
+               Function.new!(%{
+                 function: &hello_world/2,
+                 name: "shown",
+                 options: [defer_loading: false]
+               })
+             )
+
+      refute Function.deferred?(
+               Function.new!(%{
+                 function: &hello_world/2,
+                 name: "odd",
+                 options: [defer_loading: "true"]
+               })
+             )
+    end
+
+    test "is false when options are nil" do
+      refute Function.deferred?(%Function{name: "bare", options: nil})
+    end
+  end
+
+  describe "namespace_description/1" do
+    test "returns the description when set" do
+      function =
+        Function.new!(%{
+          function: &hello_world/2,
+          name: "devices_list",
+          options: [namespace: "devices", namespace_description: "Manage devices."]
+        })
+
+      assert Function.namespace_description(function) == "Manage devices."
+    end
+
+    test "returns nil when unset, blank, or not a string" do
+      assert Function.namespace_description(
+               Function.new!(%{function: &hello_world/2, name: "plain"})
+             ) == nil
+
+      assert Function.namespace_description(
+               Function.new!(%{
+                 function: &hello_world/2,
+                 name: "blank",
+                 options: [namespace_description: ""]
+               })
+             ) == nil
+
+      assert Function.namespace_description(%Function{name: "bare", options: nil}) == nil
+    end
+  end
+
+  describe "namespace/1" do
+    test "returns the namespace when set" do
+      function =
+        Function.new!(%{
+          function: &hello_world/2,
+          name: "devices_list",
+          options: [namespace: "devices"]
+        })
+
+      assert Function.namespace(function) == "devices"
+    end
+
+    test "returns nil when unset, blank, or not a string" do
+      assert Function.namespace(Function.new!(%{function: &hello_world/2, name: "plain"})) == nil
+
+      assert Function.namespace(
+               Function.new!(%{function: &hello_world/2, name: "blank", options: [namespace: ""]})
+             ) == nil
+
+      assert Function.namespace(
+               Function.new!(%{
+                 function: &hello_world/2,
+                 name: "atom",
+                 options: [namespace: :devices]
+               })
+             ) == nil
+
+      assert Function.namespace(%Function{name: "bare", options: nil}) == nil
+    end
+
+    test "leaves the function name unchanged" do
+      function =
+        Function.new!(%{
+          function: &hello_world/2,
+          name: "devices_list",
+          options: [namespace: "devices"]
+        })
+
+      assert function.name == "devices_list"
+    end
+  end
 end

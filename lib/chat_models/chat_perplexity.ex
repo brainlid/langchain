@@ -220,6 +220,8 @@ defmodule LangChain.ChatModels.ChatPerplexity do
   """
   @spec for_api(t(), [Message.t()], ChatModel.tools()) :: %{atom() => any()}
   def for_api(%ChatPerplexity{} = perplexity, messages, tools) do
+    tools = LangChain.NativeTool.drop_tool_search(tools)
+
     response_format =
       if tools && !Enum.empty?(tools) do
         %{

@@ -294,6 +294,8 @@ defmodule LangChain.ChatModels.ChatDeepSeek do
           atom() => any()
         }
   def for_api(%ChatDeepSeek{} = deepseek, messages, tools) do
+    tools = LangChain.NativeTool.drop_tool_search(tools)
+
     %{
       model: deepseek.model,
       temperature: deepseek.temperature,

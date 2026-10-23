@@ -19,6 +19,7 @@ defmodule LangChain.ChatModels.ChatCompletionsFormat do
   alias LangChain.Function
   alias LangChain.FunctionParam
   alias LangChain.LangChainError
+  alias LangChain.NativeTool
   alias LangChain.Utils
   alias LangChain.MessageDelta
 
@@ -142,12 +143,30 @@ defmodule LangChain.ChatModels.ChatCompletionsFormat do
 
   @doc """
   Encode functions for the request's `tools` field.
+
+  Tool search does not exist on this API surface; OpenAI rejects its search
+  tool here. A deferred function is encoded like any other, without
+  `defer_loading`, and the `"tool_search"` native tool
+  (`LangChain.NativeTool.tool_search/1`) is left out. A chain configured for
+  tool search therefore runs with every tool available from the start. Any
+  other `LangChain.NativeTool` raises a `LangChain.LangChainError`.
   """
-  @spec tools_for_api(nil | [Function.t()]) :: [%{String.t() => any()}]
+  @spec tools_for_api(nil | [Function.t() | NativeTool.t()]) :: [%{String.t() => any()}]
   def tools_for_api(nil), do: []
 
   def tools_for_api(tools) when is_list(tools) do
-    Enum.map(tools, fn %Function{} = function ->
+    {native_tools, functions} =
+      tools
+      |> NativeTool.drop_tool_search()
+      |> Enum.split_with(&match?(%NativeTool{}, &1))
+
+    Enum.each(native_tools, fn %NativeTool{name: name} ->
+      raise LangChainError,
+        type: "invalid_tools",
+        message: "The native tool #{inspect(name)} is not supported by Chat Completions."
+    end)
+
+    Enum.map(functions, fn %Function{} = function ->
       %{"type" => "function", "function" => item_for_api(function)}
     end)
   end
@@ -155,9 +174,15 @@ defmodule LangChain.ChatModels.ChatCompletionsFormat do
   @doc """
   Encode a list of content parts.
 
-  Thinking and unsupported parts are omitted. Both are response-side artifacts
-  that this API surface has no request representation for, and both reach it by
-  round-tripping a message the provider itself produced.
+  Thinking, unsupported and provider item parts are omitted. All three are
+  response-side artifacts that this API surface has no request representation
+  for, and all three reach it by round-tripping a message a provider produced.
+  A provider item, such as an Anthropic tool search block, belongs to another
+  provider entirely.
+
+  A tool reference part is sent as a line of text naming the tool. Tool search
+  does not exist on this API surface, so every deferred function is already
+  sent as an ordinary tool, and the line is accurate.
 
   There is no agreed request representation for thinking across the services
   that speak this API. A provider returning it in `reasoning_content` may
@@ -182,7 +207,7 @@ defmodule LangChain.ChatModels.ChatCompletionsFormat do
   @spec content_parts_for_api([ContentPart.t()]) :: [%{String.t() => any()}]
   def content_parts_for_api(content_parts) when is_list(content_parts) do
     content_parts
-    |> Enum.reject(&(&1.type in [:thinking, :unsupported]))
+    |> Enum.reject(&(&1.type in [:thinking, :unsupported, :provider_item]))
     |> Enum.map(&content_part_for_api/1)
   end
 
@@ -192,6 +217,10 @@ defmodule LangChain.ChatModels.ChatCompletionsFormat do
   @spec content_part_for_api(ContentPart.t()) :: %{String.t() => any()}
   def content_part_for_api(%ContentPart{type: :text} = part) do
     %{"type" => "text", "text" => part.content}
+  end
+
+  def content_part_for_api(%ContentPart{type: :tool_reference} = part) do
+    %{"type" => "text", "text" => ContentPart.tool_reference_text(part)}
   end
 
   def content_part_for_api(%ContentPart{type: :file, options: opts} = part) do

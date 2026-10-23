@@ -273,6 +273,8 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   end
 
   def for_api(%ChatGoogleAI{} = google_ai, messages, functions) do
+    functions = LangChain.NativeTool.drop_tool_search(functions)
+
     {system, messages} =
       Utils.split_system_message(messages, "Google AI only supports a single System message")
 
@@ -397,6 +399,16 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     # included in future generation requests.
     # See https://ai.google.dev/gemini-api/docs/thinking#summaries.
     []
+  end
+
+  # A provider item belongs to the provider that produced it and has no
+  # representation here.
+  def for_api(%ContentPart{type: :provider_item}), do: []
+
+  # Gemini does not load tools by reference, so every deferred function is
+  # already declared. The reference reads as text.
+  def for_api(%ContentPart{type: :tool_reference} = part) do
+    %{"text" => ContentPart.tool_reference_text(part)}
   end
 
   def for_api(%ContentPart{type: :file_url} = part) do

@@ -50,6 +50,74 @@ if Code.ensure_loaded?(ReqLLM) do
           provider_opts: %{thinking: %{type: "enabled", budget_tokens: 2000}}
         })
 
+    ## Tool Search
+
+    Functions marked `defer_loading: true` (see "Tool search options" in
+    `LangChain.Function`) are declared on every request but kept out of the
+    model's context until it searches for them. Add the search tool to the
+    chain's tools:
+
+        %{llm: ChatReqLLM.new!(%{model: "anthropic:claude-sonnet-5-5"})}
+        |> LLMChain.new!()
+        |> LLMChain.add_tools([NativeTool.tool_search(), deferred_functions, other_tools])
+
+    What reaches the provider depends on the model:
+
+    - **Anthropic** (`anthropic:` models, and Anthropic models on
+      `amazon_bedrock:`): the search tool is req_llm's `:tool_search` provider
+      option, BM25 or regex as `LangChain.NativeTool.tool_search/1` sets it.
+      At least one tool must not be deferred; the search tool counts. A
+      request where every function is deferred and there is no search tool is
+      an error before it is sent.
+    - **OpenAI** (`openai:` models): the hosted `tool_search` tool, and
+      `defer_loading` on each deferred function. A deferred function without
+      the search tool is an error before the request is sent, because the API
+      rejects it. Functions that share a `:namespace` option go out as one
+      `namespace` tool, described by `:namespace_description` from any of
+      them, or "Tools for <namespace>." without one.
+    - **Any other provider**: the search tool is left out and deferred
+      functions are sent as ordinary tools.
+
+    Any other `LangChain.NativeTool` is an error.
+
+    ### Search blocks in the conversation
+
+    On Anthropic models a search adds `server_tool_use` and
+    `tool_search_tool_result` blocks to the assistant message. On OpenAI
+    models it adds `tool_search_call` and `tool_search_output` items. Each
+    becomes a `LangChain.Message.ContentPart` of type `:provider_item` in the
+    position it arrived, and goes back unchanged, in place, on every later
+    request. That is how a loaded tool stays loaded, so keep these parts
+    wherever the conversation is stored.
+
+    On OpenAI, a call to a function that a search loaded carries a
+    `namespace`: the namespace's name, or the function's own name when it has
+    none. It is kept in the `LangChain.Message.ToolCall`'s `metadata` under
+    `"namespace"`, as `LangChain.ChatModels.ChatOpenAIResponses` keeps it, and
+    sent back with the call. The API rejects a replayed search whose call
+    comes back without its namespace.
+
+    When streaming, thinking that follows a search block arrives twice: as
+    thinking text for display, marked `stream_only: true`, and as a
+    `:provider_item` holding the signed block. Only the provider item goes
+    back.
+
+    A response paused by a server tool is identified by Anthropic's
+    `pause_turn` stop reason, which req_llm reports in
+    `provider_meta["stop_reason"]`. It is `:complete` with
+    `metadata[:end_turn]` set to `false`, so `LangChain.Chains.LLMChain` sends
+    it back and the model continues. Any other `:incomplete` response is
+    `:length`.
+
+    ### Loading tools from your own tool
+
+    A function can load tools by returning `:tool_reference` parts. On an
+    Anthropic model each becomes a `tool_reference` block, and the API loads
+    that tool. Every referenced tool must be declared, normally deferred. A
+    tool result that holds references cannot hold anything else, so the
+    result's other content is sent after the tool results as a user message.
+    On other providers a reference reads as text naming the tool.
+
     ## Narration (Assistant Phase)
 
     The OpenAI Responses API labels each assistant `message` item with a
@@ -145,6 +213,7 @@ if Code.ensure_loaded?(ReqLLM) do
     alias LangChain.TokenUsage
     alias LangChain.Function
     alias LangChain.FunctionParam
+    alias LangChain.NativeTool
     alias LangChain.Callbacks
     alias LangChain.Utils
 
@@ -349,9 +418,8 @@ if Code.ensure_loaded?(ReqLLM) do
 
     def do_api_request(%ChatReqLLM{stream: false} = model, messages, tools, retry_count) do
       retry_count = retry_count || model.retry_count + 1
-      context = messages_to_req_llm_context(messages)
-      req_llm_tools = functions_to_req_llm_tools(tools)
-      opts = build_req_llm_opts(model, req_llm_tools)
+      context = messages_to_req_llm_context(messages, model)
+      opts = build_req_llm_opts(model, tools)
 
       if model.verbose_api do
         IO.inspect(context, label: "CHAT_REQ_LLM CONTEXT")
@@ -393,9 +461,8 @@ if Code.ensure_loaded?(ReqLLM) do
 
     def do_api_request(%ChatReqLLM{stream: true} = model, messages, tools, retry_count) do
       retry_count = retry_count || model.retry_count + 1
-      context = messages_to_req_llm_context(messages)
-      req_llm_tools = functions_to_req_llm_tools(tools)
-      opts = build_req_llm_opts(model, req_llm_tools)
+      context = messages_to_req_llm_context(messages, model)
+      opts = build_req_llm_opts(model, tools)
 
       if model.verbose_api do
         IO.inspect(context, label: "CHAT_REQ_LLM STREAM CONTEXT")
@@ -605,6 +672,67 @@ if Code.ensure_loaded?(ReqLLM) do
     # (thinking, text, image, etc.) gets a stable merged_content slot.
     # Emits tool call start and argument fragment deltas incrementally (mirroring ChatAnthropic).
 
+    # Thinking that follows a tool search block. req_llm streams its text for
+    # display and returns the block itself as a provider block when it stops,
+    # so the text part is marked to be skipped on replay.
+    defp process_stream_chunk(
+           %ReqLLM.StreamChunk{type: :thinking, text: text, metadata: %{stream_only?: true}},
+           state
+         )
+         when is_binary(text) do
+      {index, new_state} = get_or_assign_content_index(state, :thinking)
+
+      delta =
+        MessageDelta.new!(%{
+          role: :assistant,
+          content:
+            ContentPart.new!(%{type: :thinking, content: text, options: [stream_only: true]}),
+          status: :incomplete,
+          index: index
+        })
+
+      {[delta], new_state}
+    end
+
+    # A provider block, such as a tool search's `server_tool_use` or
+    # `tool_search_tool_result`, arrives whole and takes a content slot of its
+    # own. It must go back in the same position relative to the text and
+    # thinking around it, so the text and thinking slots are released: what
+    # streams after the block gets parts after it.
+    defp process_stream_chunk(
+           %ReqLLM.StreamChunk{
+             type: :content_part,
+             content_part: %ReqLLM.Message.ContentPart{type: :provider_block} = part
+           } = chunk,
+           state
+         ) do
+      case {chunk.metadata, provider_item_from_block(part)} do
+        {%{stream_only?: true}, _item} ->
+          {[], state}
+
+        {_metadata, nil} ->
+          {[], state}
+
+        {_metadata, item} ->
+          index = state.next_content_index
+
+          delta =
+            MessageDelta.new!(%{
+              role: :assistant,
+              content: item,
+              status: :incomplete,
+              index: index
+            })
+
+          new_state =
+            state
+            |> Map.put(:next_content_index, index + 1)
+            |> close_thinking_block()
+
+          {[delta], new_state}
+      end
+    end
+
     # Thinking chunk: get or assign a stable index for :thinking blocks
     defp process_stream_chunk(
            %ReqLLM.StreamChunk{type: :thinking, text: text},
@@ -726,12 +854,12 @@ if Code.ensure_loaded?(ReqLLM) do
          when is_binary(name) and is_integer(block_index) do
       id = meta[:id] || Utils.generate_tool_call_id()
 
-      base_attrs = %{
-        type: :function,
-        call_id: id,
-        name: name,
-        index: block_index
-      }
+      base_attrs =
+        Utils.conditionally_add_to_map(
+          %{type: :function, call_id: id, name: name, index: block_index},
+          :metadata,
+          tool_call_namespace_metadata(meta)
+        )
 
       attrs =
         if is_map(args) and map_size(args) > 0 do
@@ -820,6 +948,42 @@ if Code.ensure_loaded?(ReqLLM) do
         })
 
       {[delta], state}
+    end
+
+    # Metadata req_llm learns about a call once its item is done, such as the
+    # namespace of a function OpenAI tool search loaded. It merges into the
+    # call at that index.
+    defp process_stream_chunk(
+           %ReqLLM.StreamChunk{
+             type: :meta,
+             metadata: %{tool_call_metadata: %{index: block_index, metadata: call_meta}}
+           },
+           state
+         )
+         when is_integer(block_index) do
+      case tool_call_namespace_metadata(call_meta) do
+        nil ->
+          {[], state}
+
+        metadata ->
+          tool_call =
+            ToolCall.new!(%{
+              type: :function,
+              status: :incomplete,
+              index: block_index,
+              metadata: metadata
+            })
+
+          delta =
+            MessageDelta.new!(%{
+              role: :assistant,
+              tool_calls: [tool_call],
+              status: :incomplete,
+              index: 0
+            })
+
+          {[delta], state}
+      end
     end
 
     # All other chunks: delegate to stateless translation
@@ -953,13 +1117,9 @@ if Code.ensure_loaded?(ReqLLM) do
       args_map = if is_map(args), do: args, else: %{}
 
       tool_call =
-        ToolCall.new!(%{
-          type: :function,
-          status: :complete,
-          call_id: id,
-          name: name,
-          arguments: args_map
-        })
+        %{type: :function, status: :complete, call_id: id, name: name, arguments: args_map}
+        |> Utils.conditionally_add_to_map(:metadata, tool_call_namespace_metadata(meta))
+        |> ToolCall.new!()
 
       delta =
         MessageDelta.new!(%{
@@ -1010,13 +1170,16 @@ if Code.ensure_loaded?(ReqLLM) do
             ]
 
           true ->
-            status = translate_finish_reason(meta[:finish_reason])
+            provider_meta = meta[:provider_meta]
+            status = message_status(meta[:finish_reason], provider_meta)
 
             [
               %{role: :assistant, status: status, index: 0}
               |> Utils.conditionally_add_to_map(
                 :metadata,
-                provider_message_metadata(meta[:provider_meta])
+                provider_meta
+                |> provider_message_metadata()
+                |> turn_open_metadata(provider_meta)
               )
               |> MessageDelta.new!()
             ]
@@ -1046,6 +1209,30 @@ if Code.ensure_loaded?(ReqLLM) do
 
     defp provider_message_metadata(_provider_meta), do: nil
 
+    # A server tool can pause a turn partway: Anthropic's `pause_turn` stop
+    # reason, which req_llm reports in `provider_meta["stop_reason"]` beside a
+    # finish reason of `:incomplete`. The message is whole and the turn is
+    # not. It is `:complete`, and `end_turn: false` makes
+    # `LangChain.Message.continues_turn?/1` true, so the chain calls the model
+    # again with the paused content. Any other `:incomplete` response did not
+    # finish and keeps the status `translate_finish_reason/1` gives it.
+    defp message_status(finish_reason, provider_meta) do
+      if paused_turn?(provider_meta),
+        do: :complete,
+        else: translate_finish_reason(finish_reason)
+    end
+
+    defp turn_open_metadata(metadata, provider_meta) do
+      if paused_turn?(provider_meta),
+        do: Map.put(metadata || %{}, :end_turn, false),
+        else: metadata
+    end
+
+    defp paused_turn?(%{} = provider_meta),
+      do: provider_meta_field(provider_meta, :stop_reason) == "pause_turn"
+
+    defp paused_turn?(_provider_meta), do: false
+
     defp provider_meta_field(provider_meta, key),
       do: Map.get(provider_meta, Atom.to_string(key), Map.get(provider_meta, key))
 
@@ -1060,9 +1247,14 @@ if Code.ensure_loaded?(ReqLLM) do
     defp put_stop_details(metadata, _details), do: metadata
 
     defp build_req_llm_opts(%ChatReqLLM{} = model, tools) do
+      {native_tools, functions} = Enum.split_with(tools || [], &match?(%NativeTool{}, &1))
+      validate_deferred_tools!(model, functions, native_tools)
+      {search_tools, search_opts} = tool_search_for_provider(model, native_tools)
+      req_llm_tools = functions_to_req_llm_tools(functions) ++ search_tools
+
       []
       |> then(fn opts ->
-        if tools != [], do: Keyword.put(opts, :tools, tools), else: opts
+        if req_llm_tools != [], do: Keyword.put(opts, :tools, req_llm_tools), else: opts
       end)
       |> maybe_put(:max_tokens, model.max_tokens)
       |> maybe_put(:temperature, model.temperature)
@@ -1070,7 +1262,96 @@ if Code.ensure_loaded?(ReqLLM) do
       |> maybe_put(:base_url, model.base_url)
       |> maybe_put(:receive_timeout, model.receive_timeout)
       |> merge_provider_opts(model.provider_opts)
+      |> merge_request_provider_options(search_opts)
     end
+
+    # The search tool reaches each provider in the form req_llm reads for it.
+    # Anthropic takes a request option, OpenAI a built-in tool in the tools
+    # list. A provider without tool search gets nothing, and its deferred
+    # functions go out as ordinary tools.
+    #
+    # Returns `{extra_tools, extra_provider_options}`.
+    defp tool_search_for_provider(%ChatReqLLM{} = model, native_tools) do
+      Enum.reduce(native_tools, {[], []}, fn tool, {tools, provider_options} ->
+        cond do
+          not NativeTool.tool_search?(tool) ->
+            raise LangChainError,
+                  "ChatReqLLM does not support the native tool #{inspect(tool.name)}."
+
+          anthropic_model?(model.model) ->
+            variant = Map.get(tool.configuration || %{}, "variant", "bm25")
+
+            {tools,
+             Keyword.put(provider_options, :tool_search, %{variant: search_variant(variant)})}
+
+          provider_from_model_spec(model.model) == "openai" ->
+            {tools ++ [%{"type" => "tool_search"}], provider_options}
+
+          true ->
+            Logger.debug(fn ->
+              "#{model.model} has no tool search; deferred tools are sent as ordinary tools."
+            end)
+
+            {tools, provider_options}
+        end
+      end)
+    end
+
+    defp search_variant("regex"), do: :regex
+    defp search_variant(_bm25), do: :bm25
+
+    # Anthropic rejects a request where every tool is deferred. The search tool
+    # counts as a tool that is not deferred. OpenAI rejects any deferred
+    # function unless the request also declares the search tool.
+    defp validate_deferred_tools!(%ChatReqLLM{} = model, [_ | _] = functions, []) do
+      cond do
+        anthropic_model?(model.model) and Enum.all?(functions, &Function.deferred?/1) ->
+          raise LangChainError,
+            type: "invalid_tools",
+            message:
+              "Every tool is deferred. Anthropic requires at least one tool that is not. " <>
+                "Add `LangChain.NativeTool.tool_search/1` or leave a function undeferred."
+
+        provider_from_model_spec(model.model) == "openai" and
+            Enum.any?(functions, &Function.deferred?/1) ->
+          raise LangChainError,
+            type: "invalid_tools",
+            message:
+              "OpenAI requires the search tool when a function is deferred. " <>
+                "Add `LangChain.NativeTool.tool_search/1` or leave every function undeferred."
+
+        true ->
+          :ok
+      end
+    end
+
+    defp validate_deferred_tools!(_model, _functions, _native_tools), do: :ok
+
+    # Adds options to the request's `:provider_options`, keeping any the caller
+    # set through `provider_opts`, whether given as a keyword list or a map.
+    defp merge_request_provider_options(opts, []), do: opts
+
+    defp merge_request_provider_options(opts, extra) do
+      Keyword.update(opts, :provider_options, extra, fn
+        existing when is_list(existing) -> Keyword.merge(existing, extra)
+        existing when is_map(existing) -> Map.merge(existing, Map.new(extra))
+      end)
+    end
+
+    # Models served through Anthropic's Messages API, where tool search blocks
+    # and tool references are understood. Bedrock serves Anthropic models under
+    # ids starting `anthropic.` or a regional prefix such as `us.anthropic.`.
+    @doc false
+    @spec anthropic_model?(String.t() | nil) :: boolean()
+    def anthropic_model?(model_spec) when is_binary(model_spec) do
+      case String.split(model_spec, ":", parts: 2) do
+        ["anthropic", _id] -> true
+        ["amazon_bedrock", id] -> String.contains?(id, "anthropic.")
+        _other -> false
+      end
+    end
+
+    def anthropic_model?(_model_spec), do: false
 
     defp maybe_put(opts, _key, nil), do: opts
     defp maybe_put(opts, key, value), do: Keyword.put(opts, key, value)
@@ -1144,12 +1425,18 @@ if Code.ensure_loaded?(ReqLLM) do
     Tool messages are expanded: a single LangChain `:tool` message (which may carry
     multiple `ToolResult` structs) becomes one `ReqLLM.Message` per result, matching
     the one-result-per-message convention expected by OpenAI-compatible providers.
+
+    Pass the model so tool references are encoded for its provider. On an
+    Anthropic model they become `tool_reference` blocks; see
+    `message_to_req_llm_messages/2`. Without a model they read as text.
     """
-    @spec messages_to_req_llm_context([Message.t()]) :: ReqLLM.Context.t()
-    def messages_to_req_llm_context(messages) do
+    @spec messages_to_req_llm_context([Message.t()], t() | nil) :: ReqLLM.Context.t()
+    def messages_to_req_llm_context(messages, model \\ nil) do
+      references? = match?(%ChatReqLLM{}, model) and anthropic_model?(model.model)
+
       req_llm_messages =
         messages
-        |> Enum.flat_map(&message_to_req_llm_messages/1)
+        |> Enum.flat_map(&message_to_req_llm_messages(&1, references?))
 
       ReqLLM.Context.new(req_llm_messages)
     end
@@ -1158,22 +1445,40 @@ if Code.ensure_loaded?(ReqLLM) do
     Convert a single LangChain `Message` to a list of `ReqLLM.Message` structs.
 
     Most roles map 1-to-1. The `:tool` role expands to one message per `ToolResult`.
-    """
-    @spec message_to_req_llm_messages(Message.t()) :: [ReqLLM.Message.t()]
-    def message_to_req_llm_messages(%Message{role: :tool, tool_results: results})
-        when is_list(results) do
-      Enum.map(results, fn %ToolResult{} = result ->
-        content = tool_result_content_to_req_llm(result.content)
 
-        %ReqLLM.Message{
-          role: :tool,
-          tool_call_id: result.tool_call_id,
-          content: content
-        }
-      end)
+    With `references?` true (an Anthropic model), a result's `:tool_reference`
+    parts become `tool_reference` blocks, which make the API load those tools.
+    A tool result holding references cannot hold anything else, so the result's
+    other parts follow all the tool results as a user message.
+    """
+    @spec message_to_req_llm_messages(Message.t(), boolean()) :: [ReqLLM.Message.t()]
+    def message_to_req_llm_messages(message, references? \\ false)
+
+    def message_to_req_llm_messages(%Message{role: :tool, tool_results: results}, references?)
+        when is_list(results) do
+      {tool_messages, following} =
+        Enum.map_reduce(results, [], fn %ToolResult{} = result, following ->
+          {content, others} = tool_result_parts(result.content, references?)
+
+          message = %ReqLLM.Message{
+            role: :tool,
+            tool_call_id: result.tool_call_id,
+            content: content
+          }
+
+          {message, following ++ others}
+        end)
+
+      case following do
+        [] -> tool_messages
+        parts -> tool_messages ++ [%ReqLLM.Message{role: :user, content: parts}]
+      end
     end
 
-    def message_to_req_llm_messages(%Message{role: :assistant, tool_calls: calls} = msg)
+    def message_to_req_llm_messages(
+          %Message{role: :assistant, tool_calls: calls} = msg,
+          _references?
+        )
         when is_list(calls) and calls != [] do
       content = lc_content_to_req_llm(msg.content)
       req_tool_calls = Enum.map(calls, &lc_tool_call_to_req_llm/1)
@@ -1188,7 +1493,7 @@ if Code.ensure_loaded?(ReqLLM) do
       ]
     end
 
-    def message_to_req_llm_messages(%Message{role: :assistant} = msg) do
+    def message_to_req_llm_messages(%Message{role: :assistant} = msg, _references?) do
       content = lc_content_to_req_llm(msg.content)
 
       [
@@ -1200,7 +1505,7 @@ if Code.ensure_loaded?(ReqLLM) do
       ]
     end
 
-    def message_to_req_llm_messages(%Message{} = msg) do
+    def message_to_req_llm_messages(%Message{} = msg, _references?) do
       content = lc_content_to_req_llm(msg.content)
       [%ReqLLM.Message{role: msg.role, content: content}]
     end
@@ -1348,11 +1653,20 @@ if Code.ensure_loaded?(ReqLLM) do
     # tool loop. Do what ChatAnthropic does: pass the signature through,
     # and drop unsigned blocks rather than send one the API will reject.
     def content_part_to_req_llm(%ContentPart{type: :thinking, content: text} = part) do
-      case Keyword.fetch(part.options || [], :signature) do
-        {:ok, signature} when is_binary(signature) and signature != "" ->
-          ReqLLM.Message.ContentPart.thinking(text || "", %{signature: signature})
+      options = part.options || []
 
-        _ ->
+      cond do
+        # Thinking that follows a tool search block streams for display only.
+        # The block itself goes back as its provider item.
+        Keyword.get(options, :stream_only) == true ->
+          nil
+
+        is_binary(Keyword.get(options, :signature)) and Keyword.get(options, :signature) != "" ->
+          ReqLLM.Message.ContentPart.thinking(text || "", %{
+            signature: Keyword.get(options, :signature)
+          })
+
+        true ->
           Logger.warning(
             "Thinking ContentPart without signature will be omitted: #{inspect(part)}"
           )
@@ -1398,6 +1712,27 @@ if Code.ensure_loaded?(ReqLLM) do
       nil
     end
 
+    # A provider item goes back as the provider block it came from. req_llm's
+    # encoder for that provider replays it in place, and every other encoder
+    # drops it. An item naming a provider req_llm does not know is dropped
+    # here.
+    def content_part_to_req_llm(%ContentPart{type: :provider_item, options: options} = part) do
+      ReqLLM.Message.ContentPart.provider_block(
+        String.to_existing_atom(Keyword.get(options || [], :provider, "")),
+        ContentPart.provider_item_block(part)
+      )
+    rescue
+      ArgumentError -> nil
+    end
+
+    # A tool reference outside an Anthropic tool result has no block of its
+    # own. Every deferred function is declared to providers that cannot load
+    # by reference, so the reference reads as text. Tool results for Anthropic
+    # models are handled in `message_to_req_llm_messages/2`.
+    def content_part_to_req_llm(%ContentPart{type: :tool_reference} = part) do
+      ReqLLM.Message.ContentPart.text(ContentPart.tool_reference_text(part))
+    end
+
     # A text part's cache options, in the form each req_llm encoder reads from the part's
     # metadata: `cache_control` for Anthropic and `prompt_cache_breakpoint` for the OpenAI
     # Responses API. `cache_control: true` is the default ephemeral block, as in ChatAnthropic.
@@ -1411,6 +1746,29 @@ if Code.ensure_loaded?(ReqLLM) do
 
     defp put_present(metadata, _key, nil), do: metadata
     defp put_present(metadata, key, value), do: Map.put(metadata, key, value)
+
+    # A tool result's content, and the parts to send after the tool results.
+    # Only a result holding tool references for an Anthropic model has any.
+    defp tool_result_parts(parts, true = _references?) when is_list(parts) do
+      if Enum.any?(parts, &match?(%ContentPart{type: :tool_reference}, &1)) do
+        {references, others} =
+          Enum.split_with(parts, &match?(%ContentPart{type: :tool_reference}, &1))
+
+        {Enum.map(references, &tool_reference_block/1), tool_result_content_to_req_llm(others)}
+      else
+        {tool_result_content_to_req_llm(parts), []}
+      end
+    end
+
+    defp tool_result_parts(content, _references?),
+      do: {tool_result_content_to_req_llm(content), []}
+
+    defp tool_reference_block(%ContentPart{type: :tool_reference, content: name}) do
+      ReqLLM.Message.ContentPart.provider_block(:anthropic, %{
+        "type" => "tool_reference",
+        "tool_name" => name
+      })
+    end
 
     defp tool_result_content_to_req_llm(nil) do
       [ReqLLM.Message.ContentPart.text("")]
@@ -1426,10 +1784,41 @@ if Code.ensure_loaded?(ReqLLM) do
       |> Enum.reject(&is_nil/1)
     end
 
-    defp lc_tool_call_to_req_llm(%ToolCall{call_id: id, name: name, arguments: args}) do
+    defp lc_tool_call_to_req_llm(%ToolCall{call_id: id, name: name, arguments: args} = call) do
       args_json = Jason.encode!(args || %{})
-      ReqLLM.ToolCall.new(id, name, args_json)
+
+      id
+      |> ReqLLM.ToolCall.new(name, args_json)
+      |> ReqLLM.ToolCall.put_metadata(req_llm_namespace_metadata(call))
     end
+
+    # A call to a function that OpenAI tool search loaded carries the namespace
+    # it was loaded under, and the API rejects the call on replay without it.
+    # It is kept in `ToolCall.metadata["namespace"]`, the key
+    # `LangChain.ChatModels.ChatOpenAIResponses` uses, so it survives JSON
+    # persistence. req_llm carries it as `%{namespace: name}`.
+    defp req_llm_namespace_metadata(%ToolCall{metadata: metadata}) do
+      case namespace_from_metadata(metadata) do
+        nil -> %{}
+        namespace -> %{namespace: namespace}
+      end
+    end
+
+    defp tool_call_namespace_metadata(metadata) do
+      case namespace_from_metadata(metadata) do
+        nil -> nil
+        namespace -> %{"namespace" => namespace}
+      end
+    end
+
+    defp namespace_from_metadata(%{} = metadata) do
+      case Map.get(metadata, "namespace", Map.get(metadata, :namespace)) do
+        namespace when is_binary(namespace) and namespace != "" -> namespace
+        _other -> nil
+      end
+    end
+
+    defp namespace_from_metadata(_metadata), do: nil
 
     @doc """
     Convert a list of LangChain `Function` structs to `ReqLLM.Tool` structs.
@@ -1451,7 +1840,9 @@ if Code.ensure_loaded?(ReqLLM) do
     definition is only used for schema generation (telling the LLM what tools exist).
 
     The `:strict` flag is passed through so providers that support it (e.g. OpenAI
-    structured outputs) can enforce the parameter schema. Both the `:parameters`
+    structured outputs) can enforce the parameter schema. A function deferred
+    for tool search (`LangChain.Function.deferred?/1`) is marked
+    `defer_loading` for Anthropic and OpenAI. Both the `:parameters`
     (list of `LangChain.FunctionParam`) and `:parameters_schema` (raw JSONSchema
     map) forms are supported, mirroring `LangChain.ChatModels.ChatOpenAI`.
     """
@@ -1462,8 +1853,29 @@ if Code.ensure_loaded?(ReqLLM) do
         description: fun.description || "",
         parameter_schema: get_parameter_schema(fun),
         strict: fun.strict,
+        provider_options: tool_provider_options(fun),
         callback: fn _ -> {:ok, "stub"} end
       )
+    end
+
+    # A deferred function is marked for every provider whose tool search req_llm
+    # encodes. Each provider reads only its own key. A namespace applies only to
+    # OpenAI, which sends the functions sharing one as a single `namespace` tool.
+    defp tool_provider_options(%Function{} = fun) do
+      defer_loading = if Function.deferred?(fun), do: true
+
+      anthropic = maybe_put([], :defer_loading, defer_loading)
+
+      openai =
+        []
+        |> maybe_put(:defer_loading, defer_loading)
+        |> maybe_put(:namespace, Function.namespace(fun))
+        |> maybe_put(:namespace_description, Function.namespace_description(fun))
+
+      case Enum.reject([anthropic: anthropic, openai: openai], &match?({_provider, []}, &1)) do
+        [] -> %{}
+        options -> options
+      end
     end
 
     # Build the JSONSchema parameter map for a Function, supporting both the
@@ -1547,7 +1959,7 @@ if Code.ensure_loaded?(ReqLLM) do
         |> attach_reasoning_signature(response.message)
         |> append_reasoning_details_part(response.message)
 
-      status = translate_finish_reason(response.finish_reason)
+      status = message_status(response.finish_reason, response.provider_meta)
       tool_calls = translate_response_tool_calls(response.message.tool_calls, status)
       usage = translate_usage(response.usage)
 
@@ -1559,7 +1971,9 @@ if Code.ensure_loaded?(ReqLLM) do
       }
       |> Utils.conditionally_add_to_map(
         :metadata,
-        provider_message_metadata(response.provider_meta)
+        response.provider_meta
+        |> provider_message_metadata()
+        |> turn_open_metadata(response.provider_meta)
       )
       |> Message.new()
       |> TokenUsage.set_wrapped(usage)
@@ -1648,6 +2062,30 @@ if Code.ensure_loaded?(ReqLLM) do
 
     defp detail_signature(_detail), do: nil
 
+    # A provider block becomes a provider item naming its provider, or nil when
+    # the block has no provider or is not a map.
+    defp provider_item_from_block(%ReqLLM.Message.ContentPart{
+           type: :provider_block,
+           data: block,
+           metadata: %{provider: provider}
+         })
+         when is_map(block) and is_atom(provider) and not is_nil(provider) do
+      ContentPart.provider_item!(Atom.to_string(provider), stringify_keys(block))
+    end
+
+    defp provider_item_from_block(other) do
+      Logger.warning("Provider block without a provider skipped: #{inspect(other)}")
+      nil
+    end
+
+    # Provider blocks come from decoded JSON and have string keys. Normalizing
+    # keeps a block built in code the same shape as one reloaded from storage.
+    defp stringify_keys(%{} = map),
+      do: Map.new(map, fn {k, v} -> {to_string(k), stringify_keys(v)} end)
+
+    defp stringify_keys(list) when is_list(list), do: Enum.map(list, &stringify_keys/1)
+    defp stringify_keys(value), do: value
+
     defp phase_from_part_metadata(%{phase: phase}) when is_binary(phase), do: phase
     defp phase_from_part_metadata(_meta), do: nil
 
@@ -1717,6 +2155,10 @@ if Code.ensure_loaded?(ReqLLM) do
       })
     end
 
+    defp req_llm_content_part_to_lc(%ReqLLM.Message.ContentPart{type: :provider_block} = part) do
+      provider_item_from_block(part)
+    end
+
     defp req_llm_content_part_to_lc(other) do
       Logger.warning("Unknown ReqLLM ContentPart type skipped: #{inspect(other)}")
       nil
@@ -1733,7 +2175,7 @@ if Code.ensure_loaded?(ReqLLM) do
       Enum.map(tool_calls, fn %ReqLLM.ToolCall{
                                 id: id,
                                 function: %{name: name, arguments: args_json}
-                              } ->
+                              } = req_llm_call ->
         {call_status, arguments} =
           case Jason.decode(args_json || "{}") do
             {:ok, map} when is_map(map) ->
@@ -1746,13 +2188,18 @@ if Code.ensure_loaded?(ReqLLM) do
               {:complete, %{}}
           end
 
-        ToolCall.new!(%{
+        %{
           type: :function,
           status: call_status,
           call_id: id,
           name: name,
           arguments: arguments
-        })
+        }
+        |> Utils.conditionally_add_to_map(
+          :metadata,
+          tool_call_namespace_metadata(ReqLLM.ToolCall.metadata(req_llm_call))
+        )
+        |> ToolCall.new!()
       end)
     end
 
@@ -1765,6 +2212,9 @@ if Code.ensure_loaded?(ReqLLM) do
     def translate_finish_reason(:length), do: :length
     def translate_finish_reason(:content_filter), do: :content_filtered
     def translate_finish_reason(:cancelled), do: :complete
+    # A response that did not finish. A turn paused by a server tool is also
+    # reported as `:incomplete`; its stop reason identifies it where the
+    # message is built, and it becomes `:complete` there.
     def translate_finish_reason(:incomplete), do: :length
     def translate_finish_reason(:error), do: :complete
     def translate_finish_reason(:unknown), do: :complete

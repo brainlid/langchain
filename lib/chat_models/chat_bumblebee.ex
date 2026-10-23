@@ -236,6 +236,8 @@ defmodule LangChain.ChatModels.ChatBumblebee do
   end
 
   def call(%ChatBumblebee{} = model, messages, functions) when is_list(messages) do
+    functions = LangChain.NativeTool.drop_tool_search(functions)
+
     metadata = %{
       model: inspect(model.serving),
       provider: provider(),
