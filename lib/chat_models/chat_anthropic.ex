@@ -110,30 +110,72 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
   ## Thinking
 
-  Models like Claude 3.7 Sonnet introduced a hybrid approach which allows for "thinking" and reasoning.
-  See the [Anthropic thinking documentation](https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking)
-  for up-to-date instructions on the usage.
+  The `:thinking` attribute is a map matching the
+  [Anthropic `thinking` request field](https://docs.anthropic.com/en/api/messages#body-thinking).
+  It is forwarded to the API as given, so the values it accepts depend on the
+  model. See the [Anthropic thinking documentation](https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking)
+  for details.
 
-  For instance, enabling thinking may require the `temperature` to be set to `1` and other settings like `topP` may not be allowed.
+  Adaptive thinking, with depth set through `output_config` effort, works on
+  current models (Sonnet 4.6, Opus 4.6 and later) without per-model changes:
 
-  The model supports a `:thinking` attribute where the data is a map that matches the structure in the
-  [Anthropic documentation](https://docs.anthropic.com/en/api/messages#body-thinking). It is passed along as-is.
-
-  **Example:**
-
-      # Enable thinking and budget 2,000 tokens for the thinking space.
       model = ChatAnthropic.new!(%{
-        model: "claude-3-7-sonnet-latest",
+        model: "claude-sonnet-5-5",
+        thinking: %{type: "adaptive", display: "summarized"},
+        output_config: %{"effort" => "medium"},
+        max_tokens: 16_000
+      })
+
+  Effort levels `low`, `medium`, `high` and `max` are accepted by all models
+  that support effort. `xhigh` is accepted by Sonnet 5 and later only.
+
+  When `:thinking` is unset, Sonnet 5 and later think adaptively anyway.
+  Sonnet 4.6 and earlier and Haiku 4.5 do not think.
+
+  On Sonnet 5.5 the lowest thinking setting is `between_tools`. It takes no
+  other keys, accepts effort `low`, `medium` or `high`, and the effort cannot
+  change partway through a conversation:
+
+      model = ChatAnthropic.new!(%{
+        model: "claude-sonnet-5-5",
+        thinking: %{type: "between_tools"},
+        output_config: %{"effort" => "low"}
+      })
+
+  Accepted `type` values by model family:
+
+  | `type` | Models |
+  |---|---|
+  | `"adaptive"` | Sonnet 4.6, Opus 4.6 and later |
+  | `"between_tools"` | Sonnet 5.5 only. Takes no other keys; effort must be `high` or below |
+  | `"disabled"` | Rejected by Sonnet 5.5 and Opus 5.5 |
+  | `"enabled"` with `budget_tokens` | Haiku 4.5, Sonnet 4.5 and earlier. Deprecated on 4.6; rejected by Sonnet 5 and later |
+
+  Models that still need a token budget take the `"enabled"` form. The
+  minimum budget is 1024 tokens:
+
+      model = ChatAnthropic.new!(%{
+        model: "claude-haiku-4-5",
         thinking: %{type: "enabled", budget_tokens: 2000}
       })
 
-      # Disable thinking
-      model = ChatAnthropic.new!(%{
-        model: "claude-3-7-sonnet-latest",
-        thinking: %{type: "disabled"}
-      })
+  Things to know when thinking is on:
 
-  As of the documentation for Claude 3.7 Sonnet, the minimum budget for thinking is 1024 tokens.
+  - Adaptive thinking decides per request whether to think. Simple prompts
+    often get no thinking block at all.
+  - `display` defaults to `"omitted"` on Sonnet 5 and later, so thinking blocks
+    arrive with empty text. Set `display: "summarized"` to receive readable
+    thinking text.
+  - `max_tokens` covers both thinking and the reply. A `status: :length`
+    result from a thinking model usually means `max_tokens` is too low for the
+    effort level.
+  - A non-streaming response arrives only after all thinking is done, which
+    can take longer than the default `receive_timeout` of 60 seconds. Stream,
+    or raise `receive_timeout`, for higher effort levels.
+  - Thinking parts with empty text still carry a signature and are sent back to
+    the API automatically. Do not strip them from the message history.
+  - Sonnet 5 and later reject a non-default `temperature`, `top_p` or `top_k`.
+    Thinking on earlier models requires `temperature` to be `1`.
 
   ### Progress Updates
 
@@ -152,8 +194,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
   It needs a beta header, which is set by the caller:
 
       model = ChatAnthropic.new!(%{
-        model: "claude-haiku-4-5",
-        thinking: %{type: "enabled", budget_tokens: 2000, display: "updates"},
+        model: "claude-sonnet-5-5",
+        thinking: %{type: "adaptive", display: "updates"},
         beta_headers: ["structured-outputs-2025-11-13", "thinking-display-updates-2026-08-18"]
       })
 
@@ -627,7 +669,9 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     # A list of maps for callback handlers (treat as private)
     field :callbacks, {:array, :map}, default: []
 
-    # Supported on "thinking" models like Claude 3.7 and later.
+    # Forwarded to the API as given. `type` is one of "adaptive",
+    # "between_tools", "disabled" or "enabled" (with `budget_tokens`); which
+    # ones a model accepts varies. See the "Thinking" section of the moduledoc.
     field :thinking, :map
 
     # Tool choice option
@@ -658,7 +702,8 @@ defmodule LangChain.ChatModels.ChatAnthropic do
     field :cache_control, :map
 
     # Whether to request a JSON-formatted response with a specific schema.
-    # Only supported on Claude Opus 4.6, Sonnet 4.6, Sonnet 4.5, Opus 4.5, Haiku 4.5.
+    # For supported models see
+    # https://docs.anthropic.com/en/docs/build-with-claude/structured-outputs
     # When set to true, json_schema is required.
     field :json_response, :boolean, default: false
 
@@ -668,6 +713,9 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
     # Output configuration for controlling model behavior.
     # e.g., %{"effort" => "medium"} for adaptive thinking effort control.
+    # Effort levels are "low", "medium", "high", "xhigh" (Sonnet 5 and later)
+    # and "max". When `json_response` is true, the JSON schema "format" is
+    # merged into this map.
     field :output_config, :map
 
     # Req options to merge into the request.
@@ -829,18 +877,29 @@ defmodule LangChain.ChatModels.ChatAnthropic do
 
   defp get_tool_choice(%ChatAnthropic{}), do: nil
 
-  defp set_output_config(%ChatAnthropic{json_response: true, json_schema: schema})
+  # The JSON schema format is merged into any caller-supplied `output_config`
+  # so settings like `"effort"` are kept alongside it. Top-level keys are
+  # stringified first so `%{effort: "low"}` and `"format"` cannot produce
+  # mixed or duplicate keys.
+  defp set_output_config(%ChatAnthropic{
+         json_response: true,
+         json_schema: schema,
+         output_config: config
+       })
        when not is_nil(schema) do
-    %{
-      "format" => %{
-        "type" => "json_schema",
-        "schema" => schema
-      }
-    }
+    config
+    |> stringify_top_level_keys()
+    |> Map.put("format", %{"type" => "json_schema", "schema" => schema})
   end
 
   defp set_output_config(%ChatAnthropic{output_config: config}) when is_map(config), do: config
   defp set_output_config(%ChatAnthropic{}), do: nil
+
+  defp stringify_top_level_keys(nil), do: %{}
+
+  defp stringify_top_level_keys(map) when is_map(map) do
+    Map.new(map, fn {key, value} -> {to_string(key), value} end)
+  end
 
   defp get_tools_for_api(nil), do: []
 
