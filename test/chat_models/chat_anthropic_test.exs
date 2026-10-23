@@ -585,6 +585,142 @@ defmodule LangChain.ChatModels.ChatAnthropicTest do
                }
              }
     end
+
+    test "sends output_config as given when json_response is false" do
+      {:ok, anthropic} =
+        ChatAnthropic.new(%{"model" => @test_model, "output_config" => %{"effort" => "medium"}})
+
+      data = ChatAnthropic.for_api(anthropic, [], [])
+
+      assert data.output_config == %{"effort" => "medium"}
+    end
+
+    test "merges the json_response format into a caller's output_config" do
+      json_schema = %{"type" => "object", "properties" => %{"name" => %{"type" => "string"}}}
+
+      {:ok, anthropic} =
+        ChatAnthropic.new(%{
+          "model" => @test_model,
+          "json_response" => true,
+          "json_schema" => json_schema,
+          "output_config" => %{"effort" => "medium"}
+        })
+
+      data = ChatAnthropic.for_api(anthropic, [], [])
+
+      assert data.output_config == %{
+               "effort" => "medium",
+               "format" => %{"type" => "json_schema", "schema" => json_schema}
+             }
+    end
+
+    test "stringifies atom keys in output_config when merging the json_response format" do
+      json_schema = %{"type" => "object"}
+
+      {:ok, anthropic} =
+        ChatAnthropic.new(%{
+          model: @test_model,
+          json_response: true,
+          json_schema: json_schema,
+          output_config: %{effort: "low", format: %{"type" => "other"}}
+        })
+
+      data = ChatAnthropic.for_api(anthropic, [], [])
+
+      assert data.output_config == %{
+               "effort" => "low",
+               "format" => %{"type" => "json_schema", "schema" => json_schema}
+             }
+    end
+  end
+
+  describe "for_api/3 with a streamed thinking block that has empty text" do
+    test "sends the merged block back with empty text and its signature" do
+      model = ChatAnthropic.new!(%{model: "claude-sonnet-5-5", stream: true})
+
+      # Under `display: "omitted"` a tool-using turn streams a thinking block
+      # whose text stays empty and whose signature arrives in one delta.
+      events = [
+        %{
+          "type" => "message_start",
+          "message" => %{
+            "id" => "msg_01",
+            "type" => "message",
+            "role" => "assistant",
+            "model" => "claude-sonnet-5-5",
+            "content" => [],
+            "stop_reason" => nil,
+            "stop_sequence" => nil,
+            "usage" => %{"input_tokens" => 20, "output_tokens" => 1}
+          }
+        },
+        %{
+          "type" => "content_block_start",
+          "index" => 0,
+          "content_block" => %{"type" => "thinking", "thinking" => "", "signature" => ""}
+        },
+        %{
+          "type" => "content_block_delta",
+          "index" => 0,
+          "delta" => %{"type" => "signature_delta", "signature" => "SIG"}
+        },
+        %{"type" => "content_block_stop", "index" => 0},
+        %{
+          "type" => "content_block_start",
+          "index" => 1,
+          "content_block" => %{
+            "type" => "tool_use",
+            "id" => "toolu_01",
+            "name" => "get_weather",
+            "input" => %{}
+          }
+        },
+        %{
+          "type" => "content_block_delta",
+          "index" => 1,
+          "delta" => %{"type" => "input_json_delta", "partial_json" => "{\"city\": \"Paris\"}"}
+        },
+        %{"type" => "content_block_stop", "index" => 1},
+        %{
+          "type" => "message_delta",
+          "delta" => %{"stop_reason" => "tool_use", "stop_sequence" => nil},
+          "usage" => %{"output_tokens" => 30}
+        },
+        %{"type" => "message_stop"}
+      ]
+
+      {:ok, assistant_msg} =
+        events
+        |> Enum.filter(&ChatAnthropic.relevant_event?/1)
+        |> Enum.map(&ChatAnthropic.do_process_response(model, &1))
+        |> List.flatten()
+        |> MessageDelta.merge_deltas()
+        |> MessageDelta.to_message()
+
+      tool_msg =
+        Message.new_tool_result!(%{
+          tool_results: [ToolResult.new!(%{tool_call_id: "toolu_01", content: "Sunny"})]
+        })
+
+      data =
+        ChatAnthropic.for_api(
+          model,
+          [Message.new_user!("Weather in Paris?"), assistant_msg, tool_msg],
+          []
+        )
+
+      assert [_user, %{"role" => "assistant", "content" => content}, _tool] = data.messages
+
+      assert [
+               %{"type" => "thinking", "thinking" => "", "signature" => "SIG"},
+               %{
+                 "type" => "tool_use",
+                 "id" => "toolu_01",
+                 "name" => "get_weather",
+                 "input" => %{"city" => "Paris"}
+               }
+             ] = content
+    end
   end
 
   describe "do_process_response/2 with Bedrock" do
