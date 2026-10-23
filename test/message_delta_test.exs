@@ -730,6 +730,41 @@ defmodule LangChain.MessageDeltaTest do
              }
     end
 
+    test "text arriving at the index of a thinking part merges after it" do
+      merged =
+        [
+          %MessageDelta{
+            content: ContentPart.thinking!("Counting."),
+            status: :incomplete,
+            index: 0,
+            role: :assistant
+          },
+          %MessageDelta{
+            content: ContentPart.text!("You have "),
+            status: :incomplete,
+            index: 0,
+            role: :unknown
+          },
+          %MessageDelta{
+            content: ContentPart.thinking!(" Done."),
+            status: :incomplete,
+            index: 0,
+            role: :unknown
+          },
+          %MessageDelta{
+            content: ContentPart.text!("42."),
+            status: :complete,
+            index: 0,
+            role: :unknown
+          }
+        ]
+        |> MessageDelta.merge_deltas()
+
+      assert %MessageDelta{merged_content: [thinking, text], status: :complete} = merged
+      assert %ContentPart{type: :thinking, content: "Counting. Done."} = thinking
+      assert %ContentPart{type: :text, content: "You have 42."} = text
+    end
+
     test "handles merging content parts with gaps in indices" do
       merged =
         [

@@ -426,11 +426,13 @@ defmodule LangChain.ChatModels.ChatCompletionsFormat do
 
   # Delta carrying a reasoning model's thinking.
   #
-  # Providers streaming a reasoning model send `reasoning_content` alongside
-  # `content` on every chunk, carrying the thinking while it is being produced
-  # and `nil` once the answer begins. Thinking accumulates as a content part at
-  # position 0 and the answer text at position 1, keeping them distinct in the
-  # assembled message.
+  # Providers streaming a reasoning model send `reasoning_content` while the
+  # thinking is being produced. Once the answer begins, some set it to `nil` on
+  # every chunk and others (xAI) leave the key out. Thinking accumulates as a
+  # content part at position 0 and the answer text at position 1, keeping them
+  # distinct in the assembled message. Answer chunks without the key take the
+  # generic delta clause at position 0, and `MessageDelta` moves text that
+  # meets a thinking part to the position after it.
   #
   # `index` selects the position to merge into, so this repurposes the choice
   # index. A request asking for multiple choices from a reasoning model would
