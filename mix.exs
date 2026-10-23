@@ -66,7 +66,7 @@ defmodule LangChain.MixProject do
       # API message item it belongs to, and sends each part's label back.
       # `LangChain.ChatModels.ChatReqLLM` reads and writes the narration marker
       # only through those per-part labels.
-      {:req_llm, ">= 1.25.0", optional: true},
+      {:req_llm, ">= 1.29.0", optional: true},
       {:sobelow, "~> 0.14", only: [:dev, :test], runtime: false, warn_if_outdated: true},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:mix_audit, "~> 2.1", only: [:dev, :test], runtime: false}
