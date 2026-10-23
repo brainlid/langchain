@@ -199,6 +199,19 @@ defmodule LangChain.ChatModels.ChatCompletionsFormatTest do
       assert %MessageDelta{index: 1, content: "Answer"} =
                ChatCompletionsFormat.process_response(data)
     end
+
+    test "a delta carrying both thinking and answer text keeps both, thinking first" do
+      data = %{
+        "index" => 0,
+        "delta" => %{"content" => "You have ", "reasoning_content" => " Done."}
+      }
+
+      assert %MessageDelta{index: 0, content: [thinking, text]} =
+               ChatCompletionsFormat.process_response(data)
+
+      assert %ContentPart{type: :thinking, content: " Done."} = thinking
+      assert %ContentPart{type: :text, content: "You have "} = text
+    end
   end
 
   describe "decode_stream/2" do

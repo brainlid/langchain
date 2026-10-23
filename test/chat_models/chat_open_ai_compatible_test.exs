@@ -346,6 +346,75 @@ defmodule LangChain.ChatModels.ChatOpenAICompatibleTest do
     end
   end
 
+  describe "streamed reasoning without reasoning_content on answer chunks" do
+    # xAI sends `reasoning_content` only while thinking. The answer chunks
+    # leave the key out instead of setting it to nil.
+    test "keeps the answer text after the thinking" do
+      expect_streamed_post([
+        sse(%{
+          "choices" => [
+            %{
+              "index" => 0,
+              "delta" => %{"role" => "assistant", "reasoning_content" => "The tool returned 42."}
+            }
+          ]
+        }),
+        sse(%{"choices" => [%{"index" => 0, "delta" => %{"content" => "You have "}}]}),
+        sse(%{
+          "choices" => [
+            %{"index" => 0, "delta" => %{"content" => "42 products."}, "finish_reason" => "stop"}
+          ]
+        })
+      ])
+
+      {:ok, chain} =
+        %{llm: model(%{stream: true})}
+        |> LLMChain.new!()
+        |> LLMChain.add_message(Message.new_user!("How many products?"))
+        |> LLMChain.run()
+
+      assert %Message{status: :complete, content: [thinking, text]} = chain.last_message
+      assert %ContentPart{type: :thinking, content: "The tool returned 42."} = thinking
+      assert %ContentPart{type: :text, content: "You have 42 products."} = text
+    end
+
+    test "keeps answer text that arrives in the same chunk as the last thinking" do
+      expect_streamed_post([
+        sse(%{
+          "choices" => [
+            %{
+              "index" => 0,
+              "delta" => %{"role" => "assistant", "reasoning_content" => "Counting."}
+            }
+          ]
+        }),
+        sse(%{
+          "choices" => [
+            %{
+              "index" => 0,
+              "delta" => %{"reasoning_content" => " Done.", "content" => "You have "}
+            }
+          ]
+        }),
+        sse(%{
+          "choices" => [
+            %{"index" => 0, "delta" => %{"content" => "42 products."}, "finish_reason" => "stop"}
+          ]
+        })
+      ])
+
+      {:ok, chain} =
+        %{llm: model(%{stream: true})}
+        |> LLMChain.new!()
+        |> LLMChain.add_message(Message.new_user!("How many products?"))
+        |> LLMChain.run()
+
+      assert %Message{content: [thinking, text]} = chain.last_message
+      assert %ContentPart{type: :thinking, content: "Counting. Done."} = thinking
+      assert %ContentPart{type: :text, content: "You have 42 products."} = text
+    end
+  end
+
   describe "serialize_config/1 and restore_from_map/1" do
     test "round-trips the configuration without credentials" do
       original =
