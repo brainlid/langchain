@@ -1,5 +1,81 @@
 # Changelog
 
+## v0.15.5
+
+Tool search: functions can be marked deferred, so their definitions stay out
+of the model's context until the model searches for them. This keeps large
+tool sets from costing accuracy and tokens on every request, and the request
+prefix stays stable for prompt caching. It works on `ChatAnthropic`,
+`ChatOpenAIResponses` and `ChatReqLLM`. Every other chat model sends deferred
+functions as ordinary tools. `ChatAnthropic` also supports adaptive thinking
+on Claude Sonnet 5.5, and `ChatGrok` tool calls work end to end.
+
+No API breaking changes. The optional `req_llm` dependency now requires
+`>= 1.29.0`, and a few behavior changes are worth checking before upgrading.
+
+### Upgrading from v0.15.4 - v0.15.5
+
+- **`req_llm` >= 1.29.0.** If you use `ChatReqLLM`, run
+  `mix deps.update req_llm`. 1.29.0 keeps OpenAI's tool search items and each
+  call's namespace, and reports Anthropic's raw stop reason. Tool search
+  through `ChatReqLLM` relies on both. It also verifies TLS certificates for
+  WebSocket streaming URLs.
+- **Keep `:provider_item` parts when storing conversations.** Tool search adds
+  two `ContentPart` types: `:provider_item`, an opaque block a provider expects
+  back unchanged and in place, and `:tool_reference`. A stored conversation
+  that drops `:provider_item` parts replays calls to tools whose search is
+  gone, and the provider may reject it. Code that walks content parts should
+  allow for both types.
+- **Claude Sonnet 5.5 thinking.** Sonnet 5.5 rejects
+  `thinking: %{type: "enabled", budget_tokens: N}` with a 400. Use
+  `thinking: %{type: "adaptive"}` with `output_config: %{"effort" => ...}`,
+  which Sonnet 4.6 also accepts. `:thinking` is still passed through as given.
+- **`ChatAnthropic` `json_response` keeps `output_config`.** With
+  `json_response: true`, the JSON schema `"format"` is now merged into the
+  caller's `output_config`. Other keys such as `"effort"` used to be dropped
+  and are now sent.
+
+### Added
+
+- Tool search with deferred functions and namespaces. `Function` gains the
+  `:defer_loading`, `:namespace` and `:namespace_description` options, and
+  `NativeTool.tool_search/1` builds the search tool (`variant: :bm25 | :regex`).
+  A function can load tools itself by returning `ContentPart.tool_reference!/1`
+  parts in its result. Supported by `ChatAnthropic`, `ChatOpenAIResponses` and
+  `ChatReqLLM` (Anthropic, Bedrock and OpenAI models). Other chat models leave
+  the search tool out, send deferred functions as ordinary tools, drop provider
+  items and read tool references as text, so a chain keeps working when it
+  falls back to one of them. The `NativeTool` moduledoc has the support matrix.
+  https://github.com/brainlid/langchain/pull/689
+
+### Changed
+
+- `ChatAnthropic` and `ChatReqLLM` treat Anthropic's `stop_reason:
+  "pause_turn"` as `:complete` with `metadata[:end_turn]` set to `false`, so
+  `LLMChain` continues the turn.
+  https://github.com/brainlid/langchain/pull/689
+- `ChatAnthropic` documentation leads with adaptive thinking, with a table of
+  accepted `thinking` types by model family.
+  https://github.com/brainlid/langchain/pull/692
+
+### Fixed
+
+- `ChatAnthropic` `json_response: true` no longer drops the caller's
+  `output_config` keys, such as `"effort"`.
+  https://github.com/brainlid/langchain/pull/692
+- Streamed answer text from a reasoning model is kept when the provider leaves
+  `reasoning_content` out of answer chunks (as xAI does) and when one chunk
+  carries both thinking and answer text. It used to be dropped, leaving a reply
+  with only thinking. Affects `ChatOpenAICompatible` and any provider streaming
+  through `ChatCompletionsFormat`.
+  https://github.com/brainlid/langchain/pull/688
+- `ChatGrok` tool call round trips. Tool results are sent as flat messages
+  (fixing an HTTP 422), call arguments are sent as JSON strings, non-streamed
+  tool calls are parsed and complete, tools defined with a `FunctionParam` list
+  send their parameters, and streamed parallel tool calls keep their argument
+  fragments apart.
+  https://github.com/brainlid/langchain/pull/687
+
 ## v0.15.4
 
 Reasoning can now be stripped from a message or a conversation in one call,
