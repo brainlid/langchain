@@ -1631,7 +1631,6 @@ defmodule LangChain.Chains.LLMChain do
     if Message.is_tool_call?(message) do
       # context to use
       use_context = context || chain.custom_context
-      verbose = chain.verbose
 
       # What review handlers are told about the circumstances of the call. On
       # this path no human has weighed in on it.
@@ -1655,102 +1654,7 @@ defmodule LangChain.Chains.LLMChain do
           end
         end)
 
-      # Announce every call that is going to run, before any of them does. This
-      # is the ONLY place :on_tool_execution_started fires; :on_tool_call_identified
-      # already fired during streaming. A call review settled is not announced.
-      Enum.each(dispositions, fn
-        {:execute, call, func} ->
-          Callbacks.fire(chain.callbacks, :on_tool_execution_started, [chain, call, func])
-
-        {:settled, _result} ->
-          :ok
-      end)
-
-      # Start a Task for each async call, leaving it in the slot its call
-      # occupies. Everything downstream stays in call order as a result.
-      spawned =
-        Enum.map(dispositions, fn
-          {:execute, call, %Function{async: true} = func} ->
-            # Capture the current OpenTelemetry context in THIS (parent) process. It
-            # lives in the process dictionary and is NOT inherited by a spawned Task,
-            # so without this the async tool's span would orphan into its own root
-            # trace instead of nesting under the chain span. Re-attached inside the
-            # Task below. No-op (returns nil) when OTel isn't loaded or set up.
-            otel_ctx = capture_otel_context()
-
-            task =
-              Task.async(fn ->
-                # Re-attach the parent OTel context before anything telemetry-bearing
-                # runs, so the tool-call span (opened inside execute_tool_call) and any
-                # callback work parent correctly.
-                attach_otel_context(otel_ctx)
-
-                # Fires inside the spawned Task so handlers (e.g. tenancy/OTel
-                # propagation) can re-apply per-process state before the tool runs.
-                Callbacks.fire(chain.callbacks, :on_tool_pre_execution, [chain, call, func])
-                execute_tool_call(call, func, verbose: verbose, context: use_context)
-              end)
-
-            {:await, call, task}
-
-          disposition ->
-            disposition
-        end)
-
-      # One shared deadline covers the whole async batch, and it is awaited
-      # before any sync tool runs.
-      awaited =
-        for({:await, _call, task} <- spawned, do: task)
-        |> Task.await_many(chain.async_tool_timeout || default_async_tool_timeout())
-
-      # Walk the slots in call order, taking each async result off the awaited
-      # list and running each sync call in place. The empty accumulator match
-      # holds the two lists to the same length.
-      {combined_results, []} =
-        Enum.map_reduce(spawned, awaited, fn
-          {:await, call, _task}, [result | rest] ->
-            {fire_tool_execution_callbacks(chain, call, result), rest}
-
-          {:execute, call, func}, rest ->
-            Callbacks.fire(chain.callbacks, :on_tool_pre_execution, [chain, call, func])
-            result = execute_tool_call(call, func, verbose: verbose, context: use_context)
-            {fire_tool_execution_callbacks(chain, call, result), rest}
-
-          {:settled, result}, rest ->
-            {result, rest}
-        end)
-
-      # Fire interrupt callback if any tools interrupted
-      interrupted_results = Enum.filter(combined_results, & &1.is_interrupt)
-
-      if interrupted_results != [] do
-        Callbacks.fire(chain.callbacks, :on_tool_interrupted, [chain, interrupted_results])
-      end
-
-      # create a single tool message that contains all the tool results
-      result_message =
-        Message.new_tool_result!(%{content: nil, tool_results: combined_results})
-
-      # add the tool result message to the chain
-      updated_chain = LLMChain.add_message(chain, result_message)
-
-      # if the tool results had an error, increment the failure counter. If not,
-      # clear it.
-      updated_chain =
-        if Message.tool_had_errors?(result_message) do
-          # something failed, increment our error counter
-          LLMChain.increment_current_failure_count(updated_chain)
-        else
-          # no errors, clear any errors
-          LLMChain.reset_current_failure_count(updated_chain)
-        end
-
-      # fire the callbacks
-      if chain.verbose, do: IO.inspect(result_message, label: "TOOL RESULTS")
-
-      updated_chain
-      |> fire_callback_and_return(:on_message_processed, [result_message])
-      |> fire_callback_and_return(:on_tool_response_created, [result_message])
+      run_dispositions(chain, dispositions, use_context)
     else
       # Not a complete tool call
       chain
@@ -1776,6 +1680,13 @@ defmodule LangChain.Chains.LLMChain do
   not the same as policy agreeing to it, and a handler that asked the user about
   the call reads the answer to know not to ask again. A rejected call is not
   reviewed, since it does not run.
+
+  The calls that will run are executed the way `execute_tool_calls/2` executes
+  them. Every one is announced with `:on_tool_execution_started` before any of
+  them runs. Calls to `async: true` tools run concurrently, each in its own
+  Task, under one shared `async_tool_timeout` deadline; the rest run after
+  them, in call order. Results keep the order of `tool_calls` whatever order
+  the calls finish in.
 
   Returns the updated chain with tool results added and callbacks fired.
 
@@ -1806,67 +1717,119 @@ defmodule LangChain.Chains.LLMChain do
   def execute_tool_calls_with_decisions(%LLMChain{} = chain, tool_calls, decisions)
       when is_list(tool_calls) and is_list(decisions) do
     use_context = chain.custom_context
-    verbose = chain.verbose
 
-    # Execute each tool based on its decision
-    results =
+    # Resolve every call to a disposition from its decision, keeping call
+    # order. From here a decided call runs exactly as a model-requested one
+    # does, including concurrently with other async calls.
+    dispositions =
       tool_calls
       |> Enum.zip(decisions)
       |> Enum.map(fn {tool_call, decision} ->
-        case decision.type do
-          :approve ->
-            dispatch_decided_call(chain, tool_call, use_context, verbose, :approve)
+        decided_disposition(chain, tool_call, decision, use_context)
+      end)
 
-          :edit ->
-            # Execute with edited arguments
-            edited_args = Map.get(decision, :arguments, %{})
-            edited_call = %{tool_call | arguments: edited_args}
-            dispatch_decided_call(chain, edited_call, use_context, verbose, :edit)
+    run_dispositions(chain, dispositions, use_context)
+  end
 
-          :reject ->
-            # Create rejection result without executing
-            rejection_msg =
-              Map.get(decision, :message) ||
-                "Tool call '#{tool_call.name}' was rejected by a human reviewer."
+  # Runs tool calls that have been resolved to dispositions, one per call in the
+  # order the calls were made: `{:execute, call, func}` for a call that will
+  # run, `{:settled, result}` for one whose result is already decided (refused
+  # by review, rejected by a human, or naming a tool the chain does not have).
+  # Both the model-driven and the human-decided paths end here, so a call runs
+  # the same way whichever path it came from.
+  defp run_dispositions(%LLMChain{} = chain, dispositions, use_context) do
+    verbose = chain.verbose
+    # Announce every call that is going to run, before any of them does. This
+    # is the ONLY place :on_tool_execution_started fires; :on_tool_call_identified
+    # already fired during streaming. A call review settled is not announced.
+    Enum.each(dispositions, fn
+      {:execute, call, func} ->
+        Callbacks.fire(chain.callbacks, :on_tool_execution_started, [chain, call, func])
 
-            # Fire failed callback for rejected tools
-            Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [
-              chain,
-              tool_call,
-              rejection_msg
-            ])
+      {:settled, _result} ->
+        :ok
+    end)
 
-            ToolResult.new!(%{
-              tool_call_id: tool_call.call_id,
-              name: tool_call.name,
-              content: rejection_msg,
-              is_error: Map.get(decision, :is_error, false)
-            })
-        end
+    # Start a Task for each async call, leaving it in the slot its call
+    # occupies. Everything downstream stays in call order as a result.
+    spawned =
+      Enum.map(dispositions, fn
+        {:execute, call, %Function{async: true} = func} ->
+          # Capture the current OpenTelemetry context in THIS (parent) process. It
+          # lives in the process dictionary and is NOT inherited by a spawned Task,
+          # so without this the async tool's span would orphan into its own root
+          # trace instead of nesting under the chain span. Re-attached inside the
+          # Task below. No-op (returns nil) when OTel isn't loaded or set up.
+          otel_ctx = capture_otel_context()
+
+          task =
+            Task.async(fn ->
+              # Re-attach the parent OTel context before anything telemetry-bearing
+              # runs, so the tool-call span (opened inside execute_tool_call) and any
+              # callback work parent correctly.
+              attach_otel_context(otel_ctx)
+
+              # Fires inside the spawned Task so handlers (e.g. tenancy/OTel
+              # propagation) can re-apply per-process state before the tool runs.
+              Callbacks.fire(chain.callbacks, :on_tool_pre_execution, [chain, call, func])
+              execute_tool_call(call, func, verbose: verbose, context: use_context)
+            end)
+
+          {:await, call, task}
+
+        disposition ->
+          disposition
+      end)
+
+    # One shared deadline covers the whole async batch, and it is awaited
+    # before any sync tool runs.
+    awaited =
+      for({:await, _call, task} <- spawned, do: task)
+      |> Task.await_many(chain.async_tool_timeout || default_async_tool_timeout())
+
+    # Walk the slots in call order, taking each async result off the awaited
+    # list and running each sync call in place. The empty accumulator match
+    # holds the two lists to the same length.
+    {combined_results, []} =
+      Enum.map_reduce(spawned, awaited, fn
+        {:await, call, _task}, [result | rest] ->
+          {fire_tool_execution_callbacks(chain, call, result), rest}
+
+        {:execute, call, func}, rest ->
+          Callbacks.fire(chain.callbacks, :on_tool_pre_execution, [chain, call, func])
+          result = execute_tool_call(call, func, verbose: verbose, context: use_context)
+          {fire_tool_execution_callbacks(chain, call, result), rest}
+
+        {:settled, result}, rest ->
+          {result, rest}
       end)
 
     # Fire interrupt callback if any tools interrupted
-    interrupted_results = Enum.filter(results, & &1.is_interrupt)
+    interrupted_results = Enum.filter(combined_results, & &1.is_interrupt)
 
     if interrupted_results != [] do
       Callbacks.fire(chain.callbacks, :on_tool_interrupted, [chain, interrupted_results])
     end
 
-    # Create tool result message
-    result_message = Message.new_tool_result!(%{content: nil, tool_results: results})
+    # create a single tool message that contains all the tool results
+    result_message =
+      Message.new_tool_result!(%{content: nil, tool_results: combined_results})
 
-    # Add to chain
+    # add the tool result message to the chain
     updated_chain = LLMChain.add_message(chain, result_message)
 
-    # Update failure counter based on errors
+    # if the tool results had an error, increment the failure counter. If not,
+    # clear it.
     updated_chain =
       if Message.tool_had_errors?(result_message) do
+        # something failed, increment our error counter
         LLMChain.increment_current_failure_count(updated_chain)
       else
+        # no errors, clear any errors
         LLMChain.reset_current_failure_count(updated_chain)
       end
 
-    # Fire callbacks (same as execute_tool_calls does)
+    # fire the callbacks
     if chain.verbose, do: IO.inspect(result_message, label: "TOOL RESULTS")
 
     updated_chain
@@ -2061,38 +2024,45 @@ defmodule LangChain.Chains.LLMChain do
     })
   end
 
-  # Resolve and run one call that a human decision cleared. Review still
-  # applies: an approval says a person agreed, not that policy did. The decision
-  # is passed on so a handler that escalated to a human can recognize the
-  # answer coming back and stand aside rather than escalating the same call again.
-  defp dispatch_decided_call(
-         %LLMChain{} = chain,
-         %ToolCall{} = call,
-         use_context,
-         verbose,
-         human_decision
-       ) do
+  # The disposition for one call given the human decision about it.
+  defp decided_disposition(chain, %ToolCall{} = call, %{type: :approve}, use_context) do
+    resolve_decided_call(chain, call, use_context, :approve)
+  end
+
+  defp decided_disposition(chain, %ToolCall{} = call, %{type: :edit} = decision, use_context) do
+    edited_call = %{call | arguments: Map.get(decision, :arguments, %{})}
+    resolve_decided_call(chain, edited_call, use_context, :edit)
+  end
+
+  # A rejected call does not run, so its result is settled here.
+  defp decided_disposition(chain, %ToolCall{} = call, %{type: :reject} = decision, _use_context) do
+    rejection_msg =
+      Map.get(decision, :message) ||
+        "Tool call '#{call.name}' was rejected by a human reviewer."
+
+    Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [chain, call, rejection_msg])
+
+    {:settled,
+     ToolResult.new!(%{
+       tool_call_id: call.call_id,
+       name: call.name,
+       content: rejection_msg,
+       is_error: Map.get(decision, :is_error, false)
+     })}
+  end
+
+  # Resolve one call that a human decision cleared. Review still applies: an
+  # approval says a person agreed, not that policy did. The decision is passed
+  # on so a handler that escalated to a human can recognize the answer coming
+  # back and stand aside rather than escalating the same call again.
+  defp resolve_decided_call(%LLMChain{} = chain, %ToolCall{} = call, use_context, human_decision) do
     case chain._tool_map[call.name] do
       %Function{} = func ->
         review_context = %{human_decision: human_decision, custom_context: use_context}
 
         case review_tool_call(chain, call, func, review_context) do
-          {:execute, reviewed_call} ->
-            Callbacks.fire(chain.callbacks, :on_tool_execution_started, [
-              chain,
-              reviewed_call,
-              func
-            ])
-
-            Callbacks.fire(chain.callbacks, :on_tool_pre_execution, [chain, reviewed_call, func])
-
-            result =
-              execute_tool_call(reviewed_call, func, verbose: verbose, context: use_context)
-
-            fire_tool_execution_callbacks(chain, reviewed_call, result)
-
-          settled ->
-            reviewed_tool_result(chain, settled, func)
+          {:execute, reviewed_call} -> {:execute, reviewed_call, func}
+          settled -> {:settled, reviewed_tool_result(chain, settled, func)}
         end
 
       nil ->
@@ -2100,12 +2070,13 @@ defmodule LangChain.Chains.LLMChain do
 
         Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [chain, call, error_msg])
 
-        ToolResult.new!(%{
-          tool_call_id: call.call_id,
-          name: call.name,
-          content: error_msg,
-          is_error: true
-        })
+        {:settled,
+         ToolResult.new!(%{
+           tool_call_id: call.call_id,
+           name: call.name,
+           content: error_msg,
+           is_error: true
+         })}
     end
   end
 

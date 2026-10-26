@@ -4944,6 +4944,286 @@ defmodule LangChain.Chains.LLMChainTest do
       refute_receive {:completed, "task"}
       assert_receive {:interrupted, [%ToolResult{is_interrupt: true}]}
     end
+
+    # A tool that tells the test it has started, then waits to be released, so
+    # a test can see which calls are running at the same moment without timing.
+    defp blocking_tool(name, test_pid, opts \\ []) do
+      Function.new!(%{
+        name: name,
+        description: "Blocks until released",
+        async: Keyword.get(opts, :async, true),
+        function: fn _args, _context ->
+          send(test_pid, {:entered, name, self()})
+
+          receive do
+            :release -> {:ok, "#{name} done"}
+          end
+        end
+      })
+    end
+
+    # A tool that reports it ran and returns at once.
+    defp recording_tool(name, test_pid, opts \\ []) do
+      Function.new!(%{
+        name: name,
+        description: "Records that it ran",
+        async: Keyword.get(opts, :async, false),
+        function: fn args, _context ->
+          send(test_pid, {:ran, name, args, self()})
+          {:ok, "#{name} ran"}
+        end
+      })
+    end
+
+    defp decided_chain(tools, callbacks \\ %{}) do
+      LLMChain.new!(%{llm: ChatOpenAI.new!(%{stream: false})})
+      |> LLMChain.add_tools(tools)
+      |> LLMChain.add_callback(callbacks)
+      |> LLMChain.add_message(Message.new_user!("Go"))
+    end
+
+    defp calls_for(names) do
+      for name <- names, do: ToolCall.new!(%{call_id: "call_#{name}", name: name, arguments: %{}})
+    end
+
+    test "approved async tools run at the same time and keep call order" do
+      test_pid = self()
+      names = ["first", "second", "third"]
+      chain = decided_chain(Enum.map(names, &blocking_tool(&1, test_pid)))
+      decisions = Enum.map(names, fn _ -> %{type: :approve} end)
+
+      runner =
+        Task.async(fn ->
+          LLMChain.execute_tool_calls_with_decisions(chain, calls_for(names), decisions)
+        end)
+
+      # All three are running before any is released.
+      tool_pids =
+        for name <- names do
+          assert_receive {:entered, ^name, pid}, 1_000
+          pid
+        end
+
+      # Release them in reverse, so completion order differs from call order.
+      tool_pids |> Enum.reverse() |> Enum.each(&send(&1, :release))
+
+      updated_chain = Task.await(runner)
+
+      assert [first, second, third] = updated_chain.last_message.tool_results
+
+      assert {first.tool_call_id, second.tool_call_id, third.tool_call_id} ==
+               {"call_first", "call_second", "call_third"}
+
+      assert first.content == [ContentPart.text!("first done")]
+      assert third.content == [ContentPart.text!("third done")]
+    end
+
+    test "a mixed batch keeps call order and runs only what was approved or edited" do
+      test_pid = self()
+
+      chain =
+        decided_chain([
+          recording_tool("async_tool", test_pid, async: true),
+          recording_tool("sync_tool", test_pid),
+          recording_tool("edited_tool", test_pid, async: true),
+          recording_tool("rejected_tool", test_pid, async: true)
+        ])
+
+      tool_calls =
+        calls_for(["async_tool", "sync_tool", "edited_tool", "rejected_tool", "missing"])
+
+      decisions = [
+        %{type: :approve},
+        %{type: :approve},
+        %{type: :edit, arguments: %{"target" => "edited"}},
+        %{type: :reject},
+        %{type: :approve}
+      ]
+
+      updated_chain = LLMChain.execute_tool_calls_with_decisions(chain, tool_calls, decisions)
+
+      assert [async_r, sync_r, edited_r, rejected_r, missing_r] =
+               updated_chain.last_message.tool_results
+
+      assert async_r.content == [ContentPart.text!("async_tool ran")]
+      assert sync_r.content == [ContentPart.text!("sync_tool ran")]
+      assert edited_r.content == [ContentPart.text!("edited_tool ran")]
+
+      assert rejected_r.content == [
+               ContentPart.text!("Tool call 'rejected_tool' was rejected by a human reviewer.")
+             ]
+
+      assert missing_r.is_error
+      assert missing_r.content == [ContentPart.text!("Tool 'missing' not found")]
+
+      assert_received {:ran, "edited_tool", %{"target" => "edited"}, _pid}
+      refute_received {:ran, "rejected_tool", _args, _pid}
+    end
+
+    test "an approved async call that review refuses is never started" do
+      test_pid = self()
+
+      callbacks = %{
+        on_tool_call_review: fn _chain, call, _func, %{human_decision: :approve} ->
+          if call.name == "refused", do: {:deny, "Policy says no"}, else: :ok
+        end,
+        on_tool_execution_started: fn _chain, call, _func ->
+          send(test_pid, {:started, call.name})
+        end
+      }
+
+      chain =
+        decided_chain(
+          [
+            recording_tool("allowed", test_pid, async: true),
+            recording_tool("refused", test_pid, async: true)
+          ],
+          callbacks
+        )
+
+      decisions = [%{type: :approve}, %{type: :approve}]
+
+      updated_chain =
+        LLMChain.execute_tool_calls_with_decisions(
+          chain,
+          calls_for(["allowed", "refused"]),
+          decisions
+        )
+
+      assert [_allowed, refused] = updated_chain.last_message.tool_results
+      assert refused.content == [ContentPart.text!("Policy says no")]
+
+      assert_received {:started, "allowed"}
+      refute_received {:started, "refused"}
+      refute_received {:ran, "refused", _args, _pid}
+    end
+
+    test ":on_tool_pre_execution fires in the Task for async calls and in the caller for sync" do
+      test_pid = self()
+
+      callbacks = %{
+        on_tool_pre_execution: fn _chain, call, _func ->
+          send(test_pid, {:pre_execution, call.name, self()})
+        end
+      }
+
+      chain =
+        decided_chain(
+          [
+            recording_tool("async_tool", test_pid, async: true),
+            recording_tool("sync_tool", test_pid)
+          ],
+          callbacks
+        )
+
+      LLMChain.execute_tool_calls_with_decisions(
+        chain,
+        calls_for(["async_tool", "sync_tool"]),
+        [%{type: :approve}, %{type: :approve}]
+      )
+
+      assert_received {:pre_execution, "async_tool", async_pid}
+      assert_received {:ran, "async_tool", _args, ^async_pid}
+      refute async_pid == test_pid
+
+      assert_received {:pre_execution, "sync_tool", ^test_pid}
+    end
+
+    test "every call that will run is announced before any of them runs" do
+      {:ok, log} = Elixir.Agent.start_link(fn -> [] end)
+      record = fn entry -> Elixir.Agent.update(log, &[entry | &1]) end
+
+      logging_tool = fn name, async ->
+        Function.new!(%{
+          name: name,
+          description: "Logs that it ran",
+          async: async,
+          function: fn _args, _context ->
+            record.({:ran, name})
+            {:ok, "ok"}
+          end
+        })
+      end
+
+      callbacks = %{
+        on_tool_execution_started: fn _chain, call, _func -> record.({:started, call.name}) end
+      }
+
+      chain =
+        decided_chain(
+          [logging_tool.("a", true), logging_tool.("b", true), logging_tool.("c", false)],
+          callbacks
+        )
+
+      LLMChain.execute_tool_calls_with_decisions(
+        chain,
+        calls_for(["a", "b", "c"]),
+        [%{type: :approve}, %{type: :approve}, %{type: :approve}]
+      )
+
+      entries = log |> Elixir.Agent.get(& &1) |> Enum.reverse()
+
+      assert Enum.take(entries, 3) == [{:started, "a"}, {:started, "b"}, {:started, "c"}]
+      assert entries |> Enum.drop(3) |> Enum.sort() == [{:ran, "a"}, {:ran, "b"}, {:ran, "c"}]
+    end
+
+    test "an approved async tool that interrupts still surfaces the interrupt" do
+      test_pid = self()
+
+      interrupting_tool =
+        Function.new!(%{
+          name: "task",
+          description: "Runs a sub-agent",
+          async: true,
+          function: fn _args, _context ->
+            {:interrupt, "Needs approval", %{type: :subagent_hitl}}
+          end
+        })
+
+      callbacks = %{
+        on_tool_interrupted: fn _chain, interrupted ->
+          send(test_pid, {:interrupted, interrupted})
+        end
+      }
+
+      chain = decided_chain([interrupting_tool], callbacks)
+
+      updated_chain =
+        LLMChain.execute_tool_calls_with_decisions(chain, calls_for(["task"]), [
+          %{type: :approve}
+        ])
+
+      assert [%ToolResult{is_interrupt: true, interrupt_data: %{type: :subagent_hitl}}] =
+               updated_chain.last_message.tool_results
+
+      assert_received {:interrupted, [%ToolResult{is_interrupt: true}]}
+    end
+
+    test "killing the caller stops the async tools it started" do
+      test_pid = self()
+      names = ["first", "second"]
+      chain = decided_chain(Enum.map(names, &blocking_tool(&1, test_pid)))
+
+      runner =
+        spawn(fn ->
+          LLMChain.execute_tool_calls_with_decisions(chain, calls_for(names), [
+            %{type: :approve},
+            %{type: :approve}
+          ])
+        end)
+
+      refs =
+        for name <- names do
+          assert_receive {:entered, ^name, pid}, 1_000
+          {Process.monitor(pid), pid}
+        end
+
+      Process.exit(runner, :kill)
+
+      for {ref, pid} <- refs do
+        assert_receive {:DOWN, ^ref, :process, ^pid, _reason}, 1_000
+      end
+    end
   end
 
   describe "add_callback/2" do
