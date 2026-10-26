@@ -1,5 +1,46 @@
 # Changelog
 
+## v0.15.6
+
+Tools approved through Human-in-the-Loop now run the same way as tools the
+model calls directly. `async: true` tools run concurrently after approval
+instead of one after another.
+
+No API breaking changes. The order of tool callbacks on the decided path has
+changed.
+
+### Upgrading from v0.15.5 - v0.15.6
+
+- **Callback order in `LLMChain.execute_tool_calls_with_decisions/3`.** This
+  is the path a Human-in-the-Loop resume takes. Callbacks no longer interleave
+  per call (started, run, started, run). They now fire in the same order as
+  `execute_tool_calls/2`:
+  1. `:on_tool_execution_failed` for rejected calls and unknown tools.
+  2. `:on_tool_execution_started` for every call that will run, before any of
+     them runs.
+  3. Completion and failure callbacks, in call order, after the async batch
+     finishes.
+
+  If a callback handler expects each call to start and finish before the next
+  one starts, update it.
+
+### Changed
+
+- `LLMChain.execute_tool_calls/2` and `execute_tool_calls_with_decisions/3`
+  now share one execution pipeline, so approved and edited calls follow the
+  callback order described above.
+  https://github.com/brainlid/langchain/pull/694
+
+### Fixed
+
+- `LLMChain.execute_tool_calls_with_decisions/3` runs approved and edited
+  `async: true` tools concurrently. They share the `async_tool_timeout`
+  deadline and `:on_tool_pre_execution` fires inside each Task. Sync tools
+  still run afterward in call order, and results keep call order. The calls
+  used to run one after another: ten approved one-minute tools took ten
+  minutes. Cancelling the caller now also stops in-flight approved tools.
+  https://github.com/brainlid/langchain/pull/694
+
 ## v0.15.5
 
 Tool search: functions can be marked deferred, so their definitions stay out
