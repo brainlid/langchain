@@ -456,11 +456,32 @@ defmodule LangChain.Function do
   deliberately.
   """
   @spec execute(t(), arguments(), context()) :: any() | no_return()
-  def execute(%Function{function: fun} = function, arguments, context) do
+  def execute(%Function{} = function, arguments, context) do
+    case execute_call(function, arguments, context) do
+      {:refused, message} -> {:error, message}
+      other -> other
+    end
+  end
+
+  # Runs a call exactly as `execute/3` does, but reports arguments the
+  # required-key check or a `:parse_args` parser turned down as
+  # `{:refused, message}`. The tool body has not run, so nothing changed. A
+  # parser that raised still gives `{:error, message, {exception, stacktrace}}`.
+  # `LangChain.Chains.LLMChain` uses this to mark refusals on the `ToolResult`.
+  @doc false
+  @spec execute_call(t(), arguments(), context()) :: any() | no_return()
+  def execute_call(%Function{function: fun} = function, arguments, context) do
     Logger.debug("Executing function #{inspect(function.name)}")
 
-    with {:ok, parsed_arguments} <- do_parse_arguments(function, arguments, context) do
-      execute_with_error_handling(function, fun, parsed_arguments, context)
+    case do_parse_arguments(function, arguments, context) do
+      {:ok, parsed_arguments} ->
+        execute_with_error_handling(function, fun, parsed_arguments, context)
+
+      {:error, message} ->
+        {:refused, message}
+
+      {:error, _message, _rescued} = raised ->
+        raised
     end
   end
 

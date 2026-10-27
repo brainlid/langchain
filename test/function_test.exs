@@ -857,6 +857,62 @@ defmodule LangChain.FunctionTest do
     end
   end
 
+  describe "execute_call/3" do
+    defp required_path_function(body) do
+      Function.new!(%{
+        name: "edit",
+        function: body,
+        parameters: [FunctionParam.new!(%{name: "path", type: :string, required: true})]
+      })
+    end
+
+    test "tags a missing required parameter as refused" do
+      function = required_path_function(fn _args, _ctx -> raise "must not run" end)
+
+      assert {:refused, message} = Function.execute_call(function, %{}, nil)
+      assert message =~ "Missing required parameters"
+
+      # execute/3 keeps its public shape for the same call
+      assert {:error, ^message} = Function.execute(function, %{}, nil)
+    end
+
+    test "tags a :parse_args error as refused" do
+      function =
+        Function.new!(%{
+          name: "edit",
+          function: fn _args, _ctx -> raise "must not run" end,
+          parse_args: fn _args -> {:error, "document_path is required."} end
+        })
+
+      assert {:refused, "document_path is required."} = Function.execute_call(function, %{}, nil)
+      assert {:error, "document_path is required."} = Function.execute(function, %{}, nil)
+    end
+
+    test "a :parse_args parser that raises is not a refusal" do
+      function =
+        Function.new!(%{
+          name: "edit",
+          function: fn _args, _ctx -> {:ok, "ran"} end,
+          parse_args: fn _args -> raise ArgumentError, "bad parser" end
+        })
+
+      assert {:error, _message, {%ArgumentError{}, _stacktrace}} =
+               Function.execute_call(function, %{}, nil)
+    end
+
+    test "an error returned by the body is not a refusal" do
+      function = required_path_function(fn _args, _ctx -> {:error, "disk full"} end)
+
+      assert {:error, "disk full"} = Function.execute_call(function, %{"path" => "a"}, nil)
+    end
+
+    test "a successful call returns the body's result" do
+      function = required_path_function(fn _args, _ctx -> {:ok, "done"} end)
+
+      assert {:ok, "done"} = Function.execute_call(function, %{"path" => "a"}, nil)
+    end
+  end
+
   describe "parse_arguments/3" do
     defp fail_if_run(_args, _context), do: raise("the function body must not run")
 

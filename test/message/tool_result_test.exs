@@ -125,6 +125,38 @@ defmodule LangChain.Message.ToolResultTest do
     end
   end
 
+  describe "is_refusal" do
+    test "defaults to false" do
+      assert {:ok, %ToolResult{is_refusal: false}} =
+               ToolResult.new(%{tool_call_id: "c1", content: "ok"})
+    end
+
+    test "a refusal is always an error" do
+      assert {:ok, %ToolResult{is_refusal: true, is_error: true}} =
+               ToolResult.new(%{tool_call_id: "c1", content: "no", is_refusal: true})
+
+      assert {:ok, %ToolResult{is_refusal: true, is_error: true}} =
+               ToolResult.new(%{
+                 tool_call_id: "c1",
+                 content: "no",
+                 is_refusal: true,
+                 is_error: false
+               })
+    end
+
+    test "a rescued exception cannot be a refusal" do
+      assert {:error, changeset} =
+               ToolResult.new(%{
+                 tool_call_id: "c1",
+                 content: "boom",
+                 is_refusal: true,
+                 is_exception: true
+               })
+
+      assert {"cannot be set on a rescued exception", _opts} = changeset.errors[:is_refusal]
+    end
+  end
+
   describe "interrupt fields" do
     test "is_interrupt defaults to false" do
       {:ok, result} = ToolResult.new(%{tool_call_id: "call_1", content: "OK"})

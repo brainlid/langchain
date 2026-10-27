@@ -33,6 +33,21 @@ defmodule LangChain.Message.ToolResult do
   Because `content` carries LangChain's formatted exception message and source
   location, tools should not put secrets in exception messages.
 
+  ## Refusals
+
+  `is_refusal` narrows `is_error` to a call that was turned down before it changed
+  anything, so resending a corrected call is safe. A refusal is always also an
+  error, so every check of `is_error` still sees it as one. LangChain sets it for
+  arguments the required-key check or a `:parse_args` parser turned down, for a
+  call naming a tool that doesn't exist, and for a rejected human review reported
+  as an error. A tool sets it on a `ToolResult` it returns, and should do so only
+  when it has written nothing.
+
+  A rescued exception is never a refusal: code that raised may have done part of
+  its work. A refusal is also not a review denial. A call turned away by an
+  `:on_tool_call_review` handler reports `is_error: false`, because it is a
+  decision about the call, not a fault in it.
+
   ## Message expansion
 
   `message_expansion` holds a `LangChain.MessageExpansion`: a request to insert
@@ -71,6 +86,9 @@ defmodule LangChain.Message.ToolResult do
     field :is_error, :boolean, default: false
     # flag if the result came from an exception LangChain rescued
     field :is_exception, :boolean, default: false
+    # flag if the call was turned down before it changed anything. Always also
+    # an error.
+    field :is_refusal, :boolean, default: false
     # the rescued `{exception, stacktrace}`. Not sent to the LLM, virtual only, and
     # absent from a result restored from storage even when `is_exception` is true.
     field :exception, :any, virtual: true
@@ -96,6 +114,7 @@ defmodule LangChain.Message.ToolResult do
     :display_text,
     :is_error,
     :is_exception,
+    :is_refusal,
     :exception,
     :is_interrupt,
     :interrupt_data,
@@ -132,6 +151,21 @@ defmodule LangChain.Message.ToolResult do
   end
 
   defp common_validations(changeset) do
-    validate_required(changeset, @required_fields)
+    changeset
+    |> validate_required(@required_fields)
+    |> validate_refusal()
+  end
+
+  defp validate_refusal(changeset) do
+    cond do
+      get_field(changeset, :is_refusal) != true ->
+        changeset
+
+      get_field(changeset, :is_exception) == true ->
+        add_error(changeset, :is_refusal, "cannot be set on a rescued exception")
+
+      true ->
+        put_change(changeset, :is_error, true)
+    end
   end
 end

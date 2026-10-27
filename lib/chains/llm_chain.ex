@@ -247,6 +247,29 @@ defmodule LangChain.Chains.LLMChain do
   - `:infinity` - No timeout (wait forever)
   - Integer - Milliseconds (e.g., `300_000` for 5 minutes)
 
+  ## Failure Limits
+
+  A chain stops with an `"exceeded_failure_count"` error, and fires
+  `:on_retries_exceeded`, once too many rounds in a row have failed. The check
+  runs before each LLM call.
+
+  - `:max_retry_count` (default `3`) - Consecutive failed rounds allowed. A tool
+    round fails when any of its results is an error. An LLM response a message
+    processor rejects also fails. A clean tool round, or an assistant message that
+    is not tool related, resets the count.
+
+  - `:max_refusal_count` (default `nil`) - Consecutive refusal rounds allowed: tool
+    rounds whose errors are all refusals, calls turned down before they changed
+    anything (see `LangChain.Message.ToolResult`). With `nil`, a refusal round
+    counts as a failed round. When set, refusal rounds are counted apart and stop
+    the chain with the message `"Exceeded max refusal count"`.
+
+  When `:max_refusal_count` is set, a round with any error that is not a refusal
+  counts against `:max_retry_count` and leaves the refusal count as it is. A
+  refusal round leaves the failure count as it is. A chain therefore makes at
+  most `max_retry_count + max_refusal_count - 1` failing rounds in a row before
+  it stops.
+
   """
   use Ecto.Schema
   import Ecto.Changeset
@@ -293,6 +316,12 @@ defmodule LangChain.Chains.LLMChain do
     # Internal failure count tracker. Is reset on a successful assistant
     # response.
     field :current_failure_count, :integer, default: 0
+    # The maximum consecutive refusal rounds (tool rounds whose errors are all
+    # refusals) permitted before failing the process. When nil, a refusal round
+    # counts as a failure.
+    field :max_refusal_count, :integer
+    # Internal refusal count tracker. Only used when max_refusal_count is set.
+    field :current_refusal_count, :integer, default: 0
 
     # Track the current merged `%MessageDelta{}` struct received when streamed.
     # Set to `nil` when there is no current delta being tracked. This happens
@@ -368,6 +397,7 @@ defmodule LangChain.Chains.LLMChain do
     :tools,
     :custom_context,
     :max_retry_count,
+    :max_refusal_count,
     :callbacks,
     :verbose,
     :verbose_deltas,
@@ -413,6 +443,7 @@ defmodule LangChain.Chains.LLMChain do
   def common_validation(changeset) do
     changeset
     |> validate_required(@required_fields)
+    |> validate_number(:max_refusal_count, greater_than: 0)
     |> Utils.validate_llm_is_struct()
     |> build_tools_map_from_tools()
   end
@@ -927,21 +958,42 @@ defmodule LangChain.Chains.LLMChain do
 
   # internal reusable function for running the chain
   @spec do_run(t()) :: {:ok, t()} | {:error, t(), LangChainError.t()}
-  defp do_run(%LLMChain{current_failure_count: current_count, max_retry_count: max} = chain)
-       when current_count >= max do
-    Callbacks.fire(chain.callbacks, :on_retries_exceeded, [chain])
+  defp do_run(%LLMChain{} = chain) do
+    case exceeded_retry_limit(chain) do
+      nil ->
+        chain
+        |> call_llm_and_process()
+        |> end_on_truncated_response()
 
-    {:error, chain,
-     LangChainError.exception(
-       type: "exceeded_failure_count",
-       message: "Exceeded max failure count"
-     )}
+      stop ->
+        stop
+    end
   end
 
-  defp do_run(%LLMChain{} = chain) do
-    chain
-    |> call_llm_and_process()
-    |> end_on_truncated_response()
+  @doc false
+  # The stop for a chain that has reached a failure limit, or `nil` when it may
+  # call the LLM again. Fires `:on_retries_exceeded` when it stops. Every mode
+  # that checks the limits goes through here, so they stop the same way.
+  @spec exceeded_retry_limit(t()) :: nil | {:error, t(), LangChainError.t()}
+  def exceeded_retry_limit(%LLMChain{} = chain) do
+    message =
+      cond do
+        chain.current_failure_count >= chain.max_retry_count ->
+          "Exceeded max failure count"
+
+        is_integer(chain.max_refusal_count) and
+            chain.current_refusal_count >= chain.max_refusal_count ->
+          "Exceeded max refusal count"
+
+        true ->
+          nil
+      end
+
+    if message do
+      Callbacks.fire(chain.callbacks, :on_retries_exceeded, [chain])
+
+      {:error, chain, LangChainError.exception(type: "exceeded_failure_count", message: message)}
+    end
   end
 
   # A received assistant message whose status says the provider cut the
@@ -1455,7 +1507,7 @@ defmodule LangChain.Chains.LLMChain do
         chain
         |> add_message(augmented_message)
         |> report_turn_without_answer(augmented_message)
-        |> reset_current_failure_count_if(fn -> !Message.is_tool_related?(augmented_message) end)
+        |> reset_failure_counts_if(!Message.is_tool_related?(augmented_message))
         |> fire_callback_and_return(:on_message_processed, [augmented_message])
         |> fire_usage_callback_and_return(:on_llm_token_usage, [augmented_message])
     end
@@ -1619,6 +1671,11 @@ defmodule LangChain.Chains.LLMChain do
   The `context` is additional data that will be passed to the executed tool.
   The value given here will override any `custom_context` set on the LLMChain.
   If not set, the global `custom_context` is used.
+
+  When the model resends a call that failed in the round just before, with the
+  same name and arguments, and it fails again, its error is prefixed with a
+  sentence telling the model so. The call still runs. The same applies to
+  calls run by `execute_tool_calls_with_decisions/3`.
   """
   @spec execute_tool_calls(t(), context :: nil | %{atom() => any()}) :: t()
   def execute_tool_calls(chain, context \\ nil)
@@ -1638,7 +1695,7 @@ defmodule LangChain.Chains.LLMChain do
 
       # Resolve every tool call to a disposition, keeping the order the model
       # asked for them in. Review settles a call here, so one it turns away is
-      # never announced as started and never reaches a Task: a refusal leaves
+      # never announced as started and never reaches a Task: a denial leaves
       # no trace of a tool that appeared to run.
       dispositions =
         Enum.map(message.tool_calls, fn call ->
@@ -1700,7 +1757,8 @@ defmodule LangChain.Chains.LLMChain do
       - `:message` - (optional, `:reject` only) The result's content in place of
         the default rejection text
       - `:is_error` - (optional, `:reject` only) Whether the result is an error.
-        Defaults to `false`
+        Defaults to `false`. A rejected call never runs, so a rejection reported
+        as an error is also marked `is_refusal: true` (see `LangChain.Message.ToolResult`)
 
   ## Examples
 
@@ -1733,7 +1791,7 @@ defmodule LangChain.Chains.LLMChain do
 
   # Runs tool calls that have been resolved to dispositions, one per call in the
   # order the calls were made: `{:execute, call, func}` for a call that will
-  # run, `{:settled, result}` for one whose result is already decided (refused
+  # run, `{:settled, result}` for one whose result is already decided (denied
   # by review, rejected by a human, or naming a tool the chain does not have).
   # Both the model-driven and the human-decided paths end here, so a call runs
   # the same way whichever path it came from.
@@ -1790,14 +1848,23 @@ defmodule LangChain.Chains.LLMChain do
     # Walk the slots in call order, taking each async result off the awaited
     # list and running each sync call in place. The empty accumulator match
     # holds the two lists to the same length.
+    # An executed call's result is checked for an identical retry before its
+    # callbacks fire, so they report the content the model is given. A settled
+    # result was checked where it was made.
     {combined_results, []} =
       Enum.map_reduce(spawned, awaited, fn
         {:await, call, _task}, [result | rest] ->
+          result = note_identical_retry(chain, result)
           {fire_tool_execution_callbacks(chain, call, result), rest}
 
         {:execute, call, func}, rest ->
           Callbacks.fire(chain.callbacks, :on_tool_pre_execution, [chain, call, func])
-          result = execute_tool_call(call, func, verbose: verbose, context: use_context)
+
+          result =
+            call
+            |> execute_tool_call(func, verbose: verbose, context: use_context)
+            |> then(&note_identical_retry(chain, &1))
+
           {fire_tool_execution_callbacks(chain, call, result), rest}
 
         {:settled, result}, rest ->
@@ -1818,16 +1885,7 @@ defmodule LangChain.Chains.LLMChain do
     # add the tool result message to the chain
     updated_chain = LLMChain.add_message(chain, result_message)
 
-    # if the tool results had an error, increment the failure counter. If not,
-    # clear it.
-    updated_chain =
-      if Message.tool_had_errors?(result_message) do
-        # something failed, increment our error counter
-        LLMChain.increment_current_failure_count(updated_chain)
-      else
-        # no errors, clear any errors
-        LLMChain.reset_current_failure_count(updated_chain)
-      end
+    updated_chain = count_tool_round(updated_chain, result_message)
 
     # fire the callbacks
     if chain.verbose, do: IO.inspect(result_message, label: "TOOL RESULTS")
@@ -1934,15 +1992,96 @@ defmodule LangChain.Chains.LLMChain do
     text = "Tool call made to #{call.name} but tool not found"
     Logger.warning(text)
 
+    text = note_identical_retry_text(chain, call, text)
+
     Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [chain, call, text])
 
     ToolResult.new!(%{
       tool_call_id: call.call_id,
       name: call.name,
       content: text,
-      is_error: true
+      is_error: true,
+      is_refusal: true
     })
   end
+
+  @identical_retry_notice "This is the same call that just failed, with the same arguments. " <>
+                            "Change it before trying again."
+
+  # Prefixes an error result with a notice when the model sent the same call,
+  # by name and arguments, that failed in the round just before this one. A
+  # model that resends a failed call unchanged usually gets the same error, and
+  # a second identical error message does not tell it that it repeated itself.
+  #
+  # The call still ran: a transient failure such as a timeout can succeed on a
+  # retry, so only the message changes. The comparison uses the arguments the
+  # model sent, found by `tool_call_id` in the assistant message, so a review
+  # handler's argument rewrite neither hides nor creates a match.
+  @spec note_identical_retry(t(), ToolResult.t()) :: ToolResult.t()
+  defp note_identical_retry(%LLMChain{} = chain, %ToolResult{is_error: true} = result) do
+    if identical_retry?(chain, result.tool_call_id) do
+      %ToolResult{result | content: prefix_content(@identical_retry_notice, result.content)}
+    else
+      result
+    end
+  end
+
+  defp note_identical_retry(%LLMChain{}, %ToolResult{} = result), do: result
+
+  # The same check for an error result that is settled before it is built,
+  # whose callbacks are given the message as a string.
+  @spec note_identical_retry_text(t(), ToolCall.t(), String.t()) :: String.t()
+  defp note_identical_retry_text(%LLMChain{} = chain, %ToolCall{} = call, text) do
+    if identical_retry?(chain, call.call_id),
+      do: prefix_content(@identical_retry_notice, text),
+      else: text
+  end
+
+  defp identical_retry?(%LLMChain{} = chain, tool_call_id) do
+    with %Message{role: :assistant, tool_calls: [_ | _] = calls} <- chain.last_message,
+         %ToolCall{} = call <- Enum.find(calls, &(&1.call_id == tool_call_id)) do
+      MapSet.member?(previous_failed_calls(chain), call_signature(call))
+    else
+      _no_match -> false
+    end
+  end
+
+  # The `{name, arguments}` of each call that failed in the previous round. The
+  # previous round is strictly the assistant message and tool message just
+  # before the current assistant message. Anything else between the rounds means
+  # there is no previous round to compare with.
+  defp previous_failed_calls(%LLMChain{messages: messages}) do
+    case Enum.take(messages, -3) do
+      [
+        %Message{role: :assistant, tool_calls: [_ | _] = calls},
+        %Message{role: :tool, tool_results: [_ | _] = results},
+        %Message{role: :assistant}
+      ] ->
+        failed_ids = for %ToolResult{is_error: true} = r <- results, do: r.tool_call_id
+
+        for %ToolCall{} = call <- calls,
+            call.call_id in failed_ids,
+            into: MapSet.new(),
+            do: call_signature(call)
+
+      _other ->
+        MapSet.new()
+    end
+  end
+
+  # An LLM can send `nil` instead of an empty map for a no-argument call.
+  defp call_signature(%ToolCall{name: name, arguments: arguments}),
+    do: {name, arguments || %{}}
+
+  defp prefix_content(notice, content) when is_binary(content),
+    do: notice <> "\n\n" <> content
+
+  defp prefix_content(notice, [%ContentPart{type: :text, content: text} = part | rest])
+       when is_binary(text),
+       do: [%ContentPart{part | content: notice <> "\n\n" <> text} | rest]
+
+  defp prefix_content(notice, parts) when is_list(parts),
+    do: [ContentPart.text!(notice) | parts]
 
   # Consult every :on_tool_call_review handler in turn. Argument rewrites thread
   # forward so a later handler reviews what an earlier one produced; the first
@@ -1990,7 +2129,7 @@ defmodule LangChain.Chains.LLMChain do
     end
   end
 
-  # A refusal is a decision about the call, not a fault in it, so it reports
+  # A denial is a decision about the call, not a fault in it, so it reports
   # `is_error: false` and leaves the chain's failure counter untouched. A policy
   # that turns down many calls in a row must not exhaust `max_retry_count`.
   defp reviewed_tool_result(
@@ -2040,14 +2179,21 @@ defmodule LangChain.Chains.LLMChain do
       Map.get(decision, :message) ||
         "Tool call '#{call.name}' was rejected by a human reviewer."
 
+    is_error = Map.get(decision, :is_error, false)
+
+    rejection_msg =
+      if is_error, do: note_identical_retry_text(chain, call, rejection_msg), else: rejection_msg
+
     Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [chain, call, rejection_msg])
 
+    # A rejected call never ran, so as an error it is a refusal.
     {:settled,
      ToolResult.new!(%{
        tool_call_id: call.call_id,
        name: call.name,
        content: rejection_msg,
-       is_error: Map.get(decision, :is_error, false)
+       is_error: is_error,
+       is_refusal: is_error
      })}
   end
 
@@ -2066,7 +2212,7 @@ defmodule LangChain.Chains.LLMChain do
         end
 
       nil ->
-        error_msg = decided_tool_not_found_message(call)
+        error_msg = note_identical_retry_text(chain, call, decided_tool_not_found_message(call))
 
         Callbacks.fire(chain.callbacks, :on_tool_execution_failed, [chain, call, error_msg])
 
@@ -2075,7 +2221,8 @@ defmodule LangChain.Chains.LLMChain do
            tool_call_id: call.call_id,
            name: call.name,
            content: error_msg,
-           is_error: true
+           is_error: true,
+           is_refusal: true
          })}
     end
   end
@@ -2146,16 +2293,19 @@ defmodule LangChain.Chains.LLMChain do
         try do
           if verbose, do: IO.inspect(function.name, label: "EXECUTING FUNCTION")
 
-          case Function.execute(function, call.arguments, enriched_context) do
+          case Function.execute_call(function, call.arguments, enriched_context) do
             {:ok, %ToolResult{} = result} ->
               # allow the tool execution to return a ToolResult. Just set the
               # tool_call_id and fallback settings for name and display_text. This
               # allows the tool to explicitly set the options for the ToolResult.
+              # A refusal is always an error, including in a struct the tool
+              # built without `ToolResult.new/1`.
               %{
                 result
                 | tool_call_id: call.call_id,
                   name: result.name || function.name,
-                  display_text: result.display_text || function.display_text
+                  display_text: result.display_text || function.display_text,
+                  is_error: result.is_error or result.is_refusal
               }
 
             {:ok, llm_result, processed_result} ->
@@ -2189,6 +2339,18 @@ defmodule LangChain.Chains.LLMChain do
                 display_text: function.display_text,
                 is_interrupt: true,
                 interrupt_data: interrupt_data
+              })
+
+            {:refused, reason} ->
+              if verbose, do: IO.inspect(reason, label: "FUNCTION ARGUMENTS REFUSED")
+
+              ToolResult.new!(%{
+                tool_call_id: call.call_id,
+                content: reason,
+                name: function.name,
+                display_text: function.display_text,
+                is_error: true,
+                is_refusal: true
               })
 
             {:error, reason} when is_binary(reason) ->
@@ -2291,6 +2453,30 @@ defmodule LangChain.Chains.LLMChain do
     end
   end
 
+  # A clean round resets both counts. A round whose errors are all refusals
+  # counts as a refusal round when the chain has a refusal limit. Any other
+  # error is a failure. Each count leaves the other alone, so a refusal round
+  # between two failures does not reset the failure count.
+  defp count_tool_round(%LLMChain{} = chain, %Message{tool_results: results}) do
+    errors = Enum.filter(results || [], & &1.is_error)
+
+    cond do
+      errors == [] ->
+        reset_failure_counts_if(chain, true)
+
+      is_integer(chain.max_refusal_count) and Enum.all?(errors, & &1.is_refusal) ->
+        increment_current_refusal_count(chain)
+
+      true ->
+        increment_current_failure_count(chain)
+    end
+  end
+
+  defp reset_failure_counts_if(%LLMChain{} = chain, true),
+    do: %LLMChain{chain | current_failure_count: 0, current_refusal_count: 0}
+
+  defp reset_failure_counts_if(%LLMChain{} = chain, false), do: chain
+
   @doc """
   Increments the internal current_failure_count. Returns and incremented and
   updated struct.
@@ -2320,6 +2506,23 @@ defmodule LangChain.Chains.LLMChain do
     else
       chain
     end
+  end
+
+  @doc """
+  Increments the internal current_refusal_count. Only consulted when
+  `max_refusal_count` is set.
+  """
+  @spec increment_current_refusal_count(t()) :: t()
+  def increment_current_refusal_count(%LLMChain{} = chain) do
+    %LLMChain{chain | current_refusal_count: chain.current_refusal_count + 1}
+  end
+
+  @doc """
+  Reset the internal current_refusal_count to 0.
+  """
+  @spec reset_current_refusal_count(t()) :: t()
+  def reset_current_refusal_count(%LLMChain{} = chain) do
+    %LLMChain{chain | current_refusal_count: 0}
   end
 
   @doc """
