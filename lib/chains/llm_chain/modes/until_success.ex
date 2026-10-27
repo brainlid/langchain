@@ -33,7 +33,6 @@ defmodule LangChain.Chains.LLMChain.Modes.UntilSuccess do
 
   alias LangChain.Chains.LLMChain
   alias LangChain.Message
-  alias LangChain.LangChainError
 
   @impl true
   def run(%LLMChain{} = chain, opts) do
@@ -50,12 +49,8 @@ defmodule LangChain.Chains.LLMChain.Modes.UntilSuccess do
         force_recurse ->
           :recurse
 
-        chain.current_failure_count >= chain.max_retry_count ->
-          {:error, chain,
-           LangChainError.exception(
-             type: "exceeded_failure_count",
-             message: "Exceeded max failure count"
-           )}
+        stop = LLMChain.exceeded_retry_limit(chain) ->
+          stop
 
         last_message.role == :tool && !Message.tool_had_errors?(last_message) ->
           {:ok, chain}

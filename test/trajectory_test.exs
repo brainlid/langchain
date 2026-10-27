@@ -376,7 +376,8 @@ defmodule LangChain.TrajectoryTest do
                      name: "search",
                      content: "Result text",
                      is_error: false,
-                     is_exception: false
+                     is_exception: false,
+                     is_refusal: false
                    }
                  ]
                }

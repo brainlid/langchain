@@ -3907,8 +3907,8 @@ defmodule LangChain.Chains.LLMChainTest do
     end
 
     test "outer rescue in execute_tool_call/2 produces a ToolResult tagged with the function name" do
-      # Function.execute/3 has its own inner rescue, so the outer rescue in
-      # execute_tool_call/2 only fires if Function.execute/3 itself raises.
+      # Function.execute_call/3 has its own inner rescue, so the outer rescue in
+      # execute_tool_call/2 only fires if Function.execute_call/3 itself raises.
       # Stub it to raise so we exercise that defensive branch and verify the
       # produced ToolResult carries the function's name
       tool =
@@ -3918,7 +3918,7 @@ defmodule LangChain.Chains.LLMChainTest do
           function: fn _args, _context -> :unreachable end
         })
 
-      Mimic.expect(Function, :execute, fn _function, _args, _context ->
+      Mimic.expect(Function, :execute_call, fn _function, _args, _context ->
         raise RuntimeError, "boom outside inner rescue"
       end)
 
