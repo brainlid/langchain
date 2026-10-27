@@ -1,5 +1,55 @@
 # Changelog
 
+## v0.15.7
+
+Tool results can now mark a refusal: a call turned down before it changed
+anything. `LLMChain` can give refusals their own retry budget, and it tells a
+model when it resends a call that just failed with the same arguments.
+
+No API breaking changes. The new refusal budget is opt-in. Two behaviors
+change for existing chains, listed below.
+
+### Upgrading from v0.15.6 - v0.15.7
+
+- **Error content of an identical retry starts with a notice.** A failing call
+  may be resent with the same tool name and arguments in the round right after
+  it failed. If it fails again, its error content now starts with "This is the
+  same call that just failed, with the same arguments. Change it before trying
+  again." This also applies to `:on_tool_execution_failed` and to the
+  messages sent to the model. Update any code or test that matches this
+  error text exactly.
+- **`:until_success` mode fires `:on_retries_exceeded`.** It now fires the
+  callback when it stops on a retry limit, the same as the other run modes.
+- **`Function.execute/3` mocks.** `LLMChain` now calls the internal
+  `Function.execute_call/3`. A Mimic or similar mock of `Function.execute/3`
+  will no longer intercept tool calls made by a chain.
+
+### Added
+
+- `ToolResult.is_refusal` marks a call turned down before it changed anything.
+  A refusal is always also `is_error: true`, so it can't be set together with
+  `is_exception`. LangChain sets it when:
+  - the required-key check or a `:parse_args` parser rejects the arguments;
+  - a call names a tool that doesn't exist;
+  - a human review rejects the call with `is_error: true`.
+
+  A tool can also set it on a `ToolResult` it returns. `Trajectory.to_map/1`
+  records it. https://github.com/brainlid/langchain/pull/696
+- `LLMChain` option `max_refusal_count`, opt-in (default `nil`). When it is
+  set, a tool round whose errors are all refusals counts against this limit
+  instead of `max_retry_count`, and the chain stops with "Exceeded max refusal
+  count". https://github.com/brainlid/langchain/pull/696
+- Error content of an identical failed retry starts with a notice telling the
+  model to change the call. This applies to `execute_tool_calls/2` and
+  `execute_tool_calls_with_decisions/3`.
+  https://github.com/brainlid/langchain/pull/696
+
+### Changed
+
+- `do_run/1` and `Modes.UntilSuccess` share one retry-limit check, so
+  `:until_success` fires `:on_retries_exceeded`.
+  https://github.com/brainlid/langchain/pull/696
+
 ## v0.15.6
 
 Tools approved through Human-in-the-Loop now run the same way as tools the
