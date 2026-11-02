@@ -19,6 +19,10 @@ defmodule LangChain.ChatModels.ChatOpenAICompatibleTest do
     ChatOpenAICompatible.new!(Map.merge(%{endpoint: @endpoint, model: "test-model"}, attrs))
   end
 
+  defp cloudflare_model(attrs \\ %{}) do
+    model(Map.put(attrs, :error_code_types, ChatOpenAICompatible.error_code_types(:cloudflare)))
+  end
+
   defp completion(message, extra \\ %{}) do
     Map.merge(
       %{
@@ -75,6 +79,35 @@ defmodule LangChain.ChatModels.ChatOpenAICompatibleTest do
 
     test "accepts any reasoning_effort string" do
       assert %ChatOpenAICompatible{reasoning_effort: "max"} = model(%{reasoning_effort: "max"})
+    end
+
+    test "maps no error codes by default" do
+      assert %ChatOpenAICompatible{error_code_types: types} = model()
+      assert types == %{}
+    end
+
+    test "stores error codes as strings" do
+      assert %ChatOpenAICompatible{error_code_types: types} =
+               model(%{error_code_types: %{3040 => "overloaded", "busy" => "overloaded"}})
+
+      assert types == %{"3040" => "overloaded", "busy" => "overloaded"}
+    end
+
+    test "treats nil error_code_types as no mapping" do
+      assert %ChatOpenAICompatible{error_code_types: types} = model(%{error_code_types: nil})
+      assert types == %{}
+    end
+
+    test "rejects error_code_types whose types are not strings" do
+      assert {:error, changeset} =
+               ChatOpenAICompatible.new(%{
+                 endpoint: @endpoint,
+                 model: "test-model",
+                 error_code_types: %{3040 => :overloaded}
+               })
+
+      assert {"must map integer or string codes to string error types", _} =
+               changeset.errors[:error_code_types]
     end
   end
 
@@ -305,7 +338,7 @@ defmodule LangChain.ChatModels.ChatOpenAICompatibleTest do
       })
 
       assert {:error, %LangChainError{type: "overloaded"} = error} =
-               ChatOpenAICompatible.call(model(), [Message.new_user!("Hi")], [])
+               ChatOpenAICompatible.call(cloudflare_model(), [Message.new_user!("Hi")], [])
 
       assert error.message =~ "Capacity temporarily exceeded"
       assert ChatOpenAICompatible.retry_on_fallback?(error)
@@ -315,7 +348,7 @@ defmodule LangChain.ChatModels.ChatOpenAICompatibleTest do
       expect_post(500, %{"error" => %{"code" => 3040, "message" => "AiError: try again."}})
 
       assert {:error, %LangChainError{type: "overloaded"}} =
-               ChatOpenAICompatible.call(model(), [Message.new_user!("Hi")], [])
+               ChatOpenAICompatible.call(cloudflare_model(), [Message.new_user!("Hi")], [])
     end
 
     test "recognizes a Cloudflare capacity code sent as a string, in any entry" do
@@ -324,14 +357,14 @@ defmodule LangChain.ChatModels.ChatOpenAICompatibleTest do
       })
 
       assert {:error, %LangChainError{type: "overloaded", message: "Other"}} =
-               ChatOpenAICompatible.call(model(), [Message.new_user!("Hi")], [])
+               ChatOpenAICompatible.call(cloudflare_model(), [Message.new_user!("Hi")], [])
     end
 
     test "reports a Cloudflare error entry that carries only a code" do
       expect_post(500, %{"errors" => [%{"code" => 3040}]})
 
       assert {:error, %LangChainError{type: "overloaded", message: "Service returned an error"}} =
-               ChatOpenAICompatible.call(model(), [Message.new_user!("Hi")], [])
+               ChatOpenAICompatible.call(cloudflare_model(), [Message.new_user!("Hi")], [])
     end
 
     test "types a 503 or 529 from any service as overloaded" do
@@ -354,6 +387,116 @@ defmodule LangChain.ChatModels.ChatOpenAICompatibleTest do
       assert ChatOpenAICompatible.retry_on_fallback?(error)
     end
 
+    # Cloudflare Workers AI reports a failure on its own side with code 4009.
+    # Unlike an ordinary 500, the code says the request was not at fault.
+    test "types a Cloudflare internal error as a server error so fallbacks may retry it" do
+      expect_post(500, %{
+        "errors" => [
+          %{
+            "code" => 4009,
+            "message" =>
+              "AiError: AiError: An internal server error occured. (67bdf0c1-c3e2-435b-b9c7-f67bc3fd9477)"
+          }
+        ],
+        "messages" => [],
+        "result" => %{},
+        "success" => false
+      })
+
+      assert {:error, %LangChainError{type: "server_error"} = error} =
+               ChatOpenAICompatible.call(cloudflare_model(), [Message.new_user!("Hi")], [])
+
+      assert error.message =~ "An internal server error"
+      assert ChatOpenAICompatible.retry_on_fallback?(error)
+    end
+
+    test "types a Cloudflare internal error sent mid-stream on a 200 connection" do
+      expect_streamed_post([
+        sse(%{
+          "choices" => [%{"index" => 0, "delta" => %{"role" => "assistant", "content" => "Hi"}}]
+        }),
+        sse(%{"errors" => [%{"code" => 4009, "message" => "An internal server error occured."}]})
+      ])
+
+      assert {:error, %LangChainError{type: "server_error"}} =
+               ChatOpenAICompatible.call(
+                 cloudflare_model(%{stream: true}),
+                 [Message.new_user!("Hi")],
+                 []
+               )
+    end
+
+    test "recognizes a Cloudflare internal error code sent as a string in the gateway's error shape" do
+      expect_post(500, %{"error" => %{"code" => "4009", "message" => "AiError: internal"}})
+
+      assert {:error, %LangChainError{type: "server_error"}} =
+               ChatOpenAICompatible.call(cloudflare_model(), [Message.new_user!("Hi")], [])
+    end
+
+    test "matches a code only as written" do
+      for code <- ["4009x", "+4009", "04009"] do
+        expect_post(500, %{"errors" => [%{"code" => code, "message" => "Odd"}]})
+
+        assert {:error, %LangChainError{type: nil, message: "Odd"}} =
+                 ChatOpenAICompatible.call(cloudflare_model(), [Message.new_user!("Hi")], [])
+      end
+    end
+
+    # The same numbers can mean something else on another service, so a code
+    # is only typed when the model was configured with a mapping for it.
+    test "leaves service error codes untyped when the model maps none" do
+      for code <- [3040, 4009] do
+        expect_post(500, %{"errors" => [%{"code" => code, "message" => "Failed"}]})
+
+        assert {:error, %LangChainError{type: nil} = error} =
+                 ChatOpenAICompatible.call(model(), [Message.new_user!("Hi")], [])
+
+        refute ChatOpenAICompatible.retry_on_fallback?(error)
+      end
+    end
+
+    test "types codes the user maps, alongside a preset" do
+      types =
+        Map.merge(ChatOpenAICompatible.error_code_types(:cloudflare), %{
+          "model_overloaded" => "overloaded"
+        })
+
+      expect_post(200, %{"error" => %{"code" => "model_overloaded", "message" => "Busy"}})
+
+      assert {:error, %LangChainError{type: "overloaded"} = error} =
+               ChatOpenAICompatible.call(
+                 model(%{error_code_types: types}),
+                 [Message.new_user!("Hi")],
+                 []
+               )
+
+      assert ChatOpenAICompatible.retry_on_fallback?(error)
+    end
+
+    test "a mapped code takes precedence over the HTTP status" do
+      expect_post(503, %{"errors" => [%{"code" => 4009, "message" => "Internal"}]})
+
+      assert {:error, %LangChainError{type: "server_error"}} =
+               ChatOpenAICompatible.call(cloudflare_model(), [Message.new_user!("Hi")], [])
+    end
+
+    test "types an error the streamed request itself returns" do
+      expect(Req, :post, fn _req, _opts ->
+        {:error,
+         LangChainError.exception(
+           message: "Capacity temporarily exceeded",
+           original: %{"errors" => [%{"code" => 3040}]}
+         )}
+      end)
+
+      assert {:error, %LangChainError{type: "overloaded"}} =
+               ChatOpenAICompatible.call(
+                 cloudflare_model(%{stream: true}),
+                 [Message.new_user!("Hi")],
+                 []
+               )
+    end
+
     test "leaves an ordinary server error untyped so fallbacks do not retry it" do
       expect_post(500, %{"error" => %{"message" => "Internal error"}})
 
@@ -372,7 +515,7 @@ defmodule LangChain.ChatModels.ChatOpenAICompatibleTest do
 
       assert {:error, %LangChainError{type: "overloaded"}} =
                ChatOpenAICompatible.call(
-                 model(%{stream: true}),
+                 cloudflare_model(%{stream: true}),
                  [Message.new_user!("Hi")],
                  []
                )
@@ -388,7 +531,7 @@ defmodule LangChain.ChatModels.ChatOpenAICompatibleTest do
 
       assert {:error, %LangChainError{type: "overloaded"}} =
                ChatOpenAICompatible.call(
-                 model(%{stream: true}),
+                 cloudflare_model(%{stream: true}),
                  [Message.new_user!("Hi")],
                  []
                )
@@ -575,6 +718,20 @@ defmodule LangChain.ChatModels.ChatOpenAICompatibleTest do
                api_key: nil,
                req_config: %{}
              } = restored
+    end
+
+    test "round-trips error_code_types through JSON" do
+      original = cloudflare_model()
+
+      serialized =
+        original
+        |> ChatOpenAICompatible.serialize_config()
+        |> Jason.encode!()
+        |> Jason.decode!()
+
+      assert {:ok, restored} = ChatOpenAICompatible.restore_from_map(serialized)
+      assert restored.error_code_types == %{"3040" => "overloaded", "4009" => "server_error"}
+      assert restored.error_code_types == original.error_code_types
     end
   end
 end

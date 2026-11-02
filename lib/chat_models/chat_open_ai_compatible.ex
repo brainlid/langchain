@@ -86,6 +86,7 @@ defmodule LangChain.ChatModels.ChatOpenAICompatible do
         api_key: api_token,
         model: "@cf/zai-org/glm-5.3-flash",
         reasoning_effort: "low",
+        error_code_types: ChatOpenAICompatible.error_code_types(:cloudflare),
         req_config: %{
           headers: [
             {"cf-aig-gateway-id", gateway_id},
@@ -103,6 +104,9 @@ defmodule LangChain.ChatModels.ChatOpenAICompatible do
   - `reasoning_effort` controls how long the model thinks, which affects
     latency and output tokens.
   - AI Gateway can answer a byte-identical request from its response cache.
+  - `error_code_types` types Cloudflare's capacity (3040) and internal (4009)
+    error codes so a chain's fallback models are tried for them. See
+    "Errors and fallbacks".
 
   ### Ollama and LM Studio
 
@@ -148,6 +152,33 @@ defmodule LangChain.ChatModels.ChatOpenAICompatible do
   Usage is reported as a `LangChain.TokenUsage` in the `:usage` key of the
   returned message's `metadata`. When streaming, most services report usage
   only when `stream_options: %{include_usage: true}` is set.
+
+  ## Errors and fallbacks
+
+  `retry_on_fallback?/1` lets a chain's fallback models handle a temporary
+  service condition, and returns any other error to the caller. An error the
+  service did not type itself is typed this way:
+
+  1. A `code` in the error body found in `error_code_types` gets the mapped
+     type. The code is read from `%{"error" => %{"code" => ...}}` or from any
+     entry of an `%{"errors" => [...]}` list, as an integer or a string.
+  2. HTTP 503 or 529 is `"overloaded"`.
+  3. HTTP 429 is `"rate_limit_exceeded"`.
+
+  Anything else, an ordinary 500 included, stays untyped and is not retried.
+  The types that fall back are `"overloaded"`, `"server_error"`,
+  `"rate_limit_exceeded"`, `"rate_limited"`, `"too_many_requests"` and
+  `"timeout"`.
+
+  Error codes mean different things on different services, so none are
+  mapped by default. `error_code_types/1` returns the mappings for known
+  services. Add codes of your own for a service it does not cover:
+
+      error_code_types: %{"model_overloaded" => "overloaded", 1302 => "rate_limit_exceeded"}
+
+  A streamed response can fail after some deltas have already been sent to
+  callbacks. When a fallback model then runs, its deltas follow the partial
+  ones.
 
   ## Connection Retry Behavior
 
@@ -228,6 +259,11 @@ defmodule LangChain.ChatModels.ChatOpenAICompatible do
     # request always runs; this controls additional attempts only.
     field :retry_count, :integer, default: 2
 
+    # Maps a service's own error `code` to a `LangChainError` type, for
+    # services that report temporary failures with codes rather than an HTTP
+    # status. Keys are stored as strings. See `error_code_types/1`.
+    field :error_code_types, :map, default: %{}
+
     # A list of maps for callback handlers (treated as internal)
     field :callbacks, {:array, :map}, default: []
 
@@ -259,6 +295,7 @@ defmodule LangChain.ChatModels.ChatOpenAICompatible do
     :req_config,
     :receive_timeout,
     :retry_count,
+    :error_code_types,
     :callbacks,
     :verbose_api
   ]
@@ -275,8 +312,58 @@ defmodule LangChain.ChatModels.ChatOpenAICompatible do
     |> validate_number(:receive_timeout, greater_than_or_equal_to: 0)
     |> validate_number(:retry_count, greater_than_or_equal_to: 0)
     |> validate_number(:max_tokens, greater_than: 0)
+    |> normalize_error_code_types()
     |> apply_action(:insert)
   end
+
+  # Codes arrive as integers or strings, both in service error bodies and in a
+  # config restored from JSON, so they are stored as strings and looked up the
+  # same way.
+  defp normalize_error_code_types(changeset) do
+    case fetch_change(changeset, :error_code_types) do
+      {:ok, nil} ->
+        put_change(changeset, :error_code_types, %{})
+
+      {:ok, types} ->
+        if Enum.all?(types, &valid_error_code_type?/1) do
+          put_change(
+            changeset,
+            :error_code_types,
+            Map.new(types, fn {code, type} -> {to_string(code), type} end)
+          )
+        else
+          add_error(
+            changeset,
+            :error_code_types,
+            "must map integer or string codes to string error types"
+          )
+        end
+
+      :error ->
+        changeset
+    end
+  end
+
+  defp valid_error_code_type?({code, type}),
+    do: (is_integer(code) or is_binary(code)) and is_binary(type)
+
+  @doc """
+  Error code mappings for services known to report temporary failures with
+  their own error codes. Pass the result as the `error_code_types` option,
+  merged with any codes of your own:
+
+      error_code_types:
+        Map.merge(ChatOpenAICompatible.error_code_types(:cloudflare), %{3050 => "overloaded"})
+
+  - `:cloudflare` - Cloudflare Workers AI. 3040 is "Capacity temporarily
+    exceeded" and is typed `"overloaded"`. 4009 is an internal error on
+    Cloudflare's side and is typed `"server_error"`.
+
+  The map is copied into the model, so a config saved with
+  `serialize_config/1` keeps the codes known when it was saved.
+  """
+  @spec error_code_types(:cloudflare) :: %{integer() => String.t()}
+  def error_code_types(:cloudflare), do: %{3040 => "overloaded", 4009 => "server_error"}
 
   @doc """
   Setup a ChatOpenAICompatible client configuration and return it or raise an
@@ -440,7 +527,7 @@ defmodule LangChain.ChatModels.ChatOpenAICompatible do
 
         case do_process_response(data) do
           {:error, %LangChainError{} = reason} ->
-            {:error, classify_error(reason, response.status)}
+            {:error, classify_error(reason, response.status, model)}
 
           result ->
             Callbacks.fire(model.callbacks, :on_llm_new_message, [result])
@@ -499,14 +586,14 @@ defmodule LangChain.ChatModels.ChatOpenAICompatible do
 
         case stream_error(data, response) do
           {:error, %LangChainError{} = reason} ->
-            {:error, classify_error(reason, response.status)}
+            {:error, classify_error(reason, response.status, model)}
 
           nil ->
             data
         end
 
       {:error, %LangChainError{} = error} ->
-        {:error, error}
+        {:error, classify_error(error, nil, model)}
 
       {:error, %Req.TransportError{reason: :timeout} = err} ->
         {:error,
@@ -572,36 +659,47 @@ defmodule LangChain.ChatModels.ChatOpenAICompatible do
   defp stream_error(_data, _response), do: nil
 
   # Errors the body did not type, or whose body could not be parsed, are typed
-  # from the HTTP status so `retry_on_fallback?/1` can tell a temporary service
-  # condition apart from a request that is wrong. `overloaded` is the type
-  # `ChatAnthropic` and `ChatDeepSeek` use for a service with no capacity.
-  defp classify_error(%LangChainError{type: type} = error, status)
+  # from the model's `error_code_types` and then the HTTP status, so
+  # `retry_on_fallback?/1` can tell a temporary service condition apart from a
+  # request that is wrong. A mapped code wins over the status because services
+  # that use their own codes send them whatever the status, including 200 for
+  # an error that arrives mid-stream. `overloaded` is the type `ChatAnthropic`
+  # and `ChatDeepSeek` use for a service with no capacity, and `server_error`
+  # the type `ChatDeepSeek` uses for a failure on the service's side.
+  defp classify_error(%LangChainError{type: type} = error, status, model)
        when type in [nil, "unexpected_response"] do
     cond do
-      cloudflare_capacity_exceeded?(error.original) -> %LangChainError{error | type: "overloaded"}
-      status in [503, 529] -> %LangChainError{error | type: "overloaded"}
-      status == 429 -> %LangChainError{error | type: "rate_limit_exceeded"}
-      true -> error
+      mapped_type = mapped_code_type(error.original, model.error_code_types) ->
+        %LangChainError{error | type: mapped_type}
+
+      status in [503, 529] ->
+        %LangChainError{error | type: "overloaded"}
+
+      status == 429 ->
+        %LangChainError{error | type: "rate_limit_exceeded"}
+
+      true ->
+        error
     end
   end
 
-  defp classify_error(%LangChainError{} = error, _status), do: error
+  defp classify_error(%LangChainError{} = error, _status, _model), do: error
 
-  # Cloudflare Workers AI error code for "Capacity temporarily exceeded". It is
-  # sent whatever the HTTP status, including 200 and 500, and in either error
-  # shape depending on whether the AI Gateway wrapped it.
-  @cloudflare_capacity_exceeded_code 3040
+  # The code is read from either error shape: the OpenAI-style
+  # `%{"error" => %{"code" => ...}}` or a `%{"errors" => [...]}` list, where
+  # the first entry with a mapped code decides.
+  defp mapped_code_type(_original, types) when types == %{}, do: nil
 
-  defp cloudflare_capacity_exceeded?(%{"errors" => errors}) when is_list(errors),
-    do: Enum.any?(errors, &cloudflare_capacity_code?/1)
+  defp mapped_code_type(%{"errors" => errors}, types) when is_list(errors),
+    do: Enum.find_value(errors, &code_type(&1, types))
 
-  defp cloudflare_capacity_exceeded?(%{"error" => error}), do: cloudflare_capacity_code?(error)
-  defp cloudflare_capacity_exceeded?(_original), do: false
+  defp mapped_code_type(%{"error" => error}, types), do: code_type(error, types)
+  defp mapped_code_type(_original, _types), do: nil
 
-  defp cloudflare_capacity_code?(%{"code" => code}),
-    do: code in [@cloudflare_capacity_exceeded_code, "#{@cloudflare_capacity_exceeded_code}"]
+  defp code_type(%{"code" => code}, types) when is_integer(code) or is_binary(code),
+    do: Map.get(types, to_string(code))
 
-  defp cloudflare_capacity_code?(_error), do: false
+  defp code_type(_error, _types), do: nil
 
   # Cloudflare reports failures as `%{"errors" => [%{"message" => ...}]}`
   # rather than the `%{"error" => ...}` shape the shared parser reads. An entry
@@ -633,6 +731,7 @@ defmodule LangChain.ChatModels.ChatOpenAICompatible do
   def retry_on_fallback?(%LangChainError{type: "rate_limited"}), do: true
   def retry_on_fallback?(%LangChainError{type: "rate_limit_exceeded"}), do: true
   def retry_on_fallback?(%LangChainError{type: "overloaded"}), do: true
+  def retry_on_fallback?(%LangChainError{type: "server_error"}), do: true
   def retry_on_fallback?(%LangChainError{type: "timeout"}), do: true
   def retry_on_fallback?(%LangChainError{type: "too_many_requests"}), do: true
   def retry_on_fallback?(_), do: false
@@ -667,7 +766,8 @@ defmodule LangChain.ChatModels.ChatOpenAICompatible do
         :parallel_tool_calls,
         :extra_body,
         :receive_timeout,
-        :retry_count
+        :retry_count,
+        :error_code_types
       ],
       @current_config_version
     )
