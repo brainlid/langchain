@@ -1,5 +1,41 @@
 # Changelog
 
+## v0.15.8
+
+`ChatOpenAICompatible` now types temporary service failures, so a chain's
+`with_fallbacks` models are tried for them. Services that report these
+failures with their own error codes, such as Cloudflare Workers AI, opt in
+through a new `error_code_types` option.
+
+No breaking changes. A chain that uses `ChatOpenAICompatible` with fallbacks
+may now fall back in cases where it used to return the error, listed below.
+
+### Upgrading from v0.15.7 - v0.15.8
+
+- **More `ChatOpenAICompatible` errors fall back.** An untyped error with HTTP
+  503 or 529 is now typed `"overloaded"`, and `retry_on_fallback?/1` accepts
+  `"overloaded"` and `"server_error"`. An ordinary 500 still does not fall
+  back.
+- **Cloudflare Workers AI users** add
+  `error_code_types: ChatOpenAICompatible.error_code_types(:cloudflare)` to
+  have capacity (3040) and internal (4009) errors fall back.
+
+### Added
+
+- `ChatOpenAICompatible` option `error_code_types` maps a service's error
+  `code` to a `LangChainError` type. It is empty by default. The new
+  `ChatOpenAICompatible.error_code_types/1` returns presets for known
+  services, starting with `:cloudflare`, and can be merged with your own
+  codes. https://github.com/brainlid/langchain/pull/698
+
+### Fixed
+
+- `ChatOpenAICompatible` returns a streamed failure as
+  `{:error, %LangChainError{}}`. An error event that arrived mid-stream on a
+  200 connection used to come back inside an `{:ok, ...}` result, and a non-JSON
+  error body was lost. It also reads Cloudflare `"errors"` entries that carry
+  only a `code`. https://github.com/brainlid/langchain/pull/698
+
 ## v0.15.7
 
 Tool results can now mark a refusal: a call turned down before it changed
