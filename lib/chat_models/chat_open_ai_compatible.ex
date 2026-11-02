@@ -438,9 +438,9 @@ defmodule LangChain.ChatModels.ChatOpenAICompatible do
 
         fire_response_callbacks(model, response)
 
-        case response_with_status(do_process_response(data), response.status) do
+        case do_process_response(data) do
           {:error, %LangChainError{} = reason} ->
-            {:error, reason}
+            {:error, classify_error(reason, response.status)}
 
           result ->
             Callbacks.fire(model.callbacks, :on_llm_new_message, [result])
@@ -496,7 +496,14 @@ defmodule LangChain.ChatModels.ChatOpenAICompatible do
     |> case do
       {:ok, %Req.Response{body: data} = response} ->
         fire_response_callbacks(model, response)
-        response_with_status(data, response.status)
+
+        case stream_error(data, response) do
+          {:error, %LangChainError{} = reason} ->
+            {:error, classify_error(reason, response.status)}
+
+          nil ->
+            data
+        end
 
       {:error, %LangChainError{} = error} ->
         {:error, error}
@@ -544,18 +551,69 @@ defmodule LangChain.ChatModels.ChatOpenAICompatible do
     ])
   end
 
-  # A rate-limited request whose body carried no error type of its own is
-  # reported as `rate_limit_exceeded`, which `retry_on_fallback?/1` accepts.
-  defp response_with_status({:error, %LangChainError{type: nil} = error}, 429),
-    do: {:error, %LangChainError{error | type: "rate_limit_exceeded"}}
+  # The error a finished stream carries, or `nil` when it completed normally.
+  # An error event that arrives on a 200 connection is collected into the body
+  # list alongside any deltas. A 4xx/5xx body that is not JSON never decodes,
+  # so it stays in the `:error_buffer` and the body is left empty.
+  defp stream_error({:error, %LangChainError{}} = error, _response), do: error
 
-  defp response_with_status(result, _status), do: result
+  defp stream_error(data, _response) when is_list(data) do
+    data
+    |> List.flatten()
+    |> Enum.find(&match?({:error, %LangChainError{}}, &1))
+  end
+
+  defp stream_error(_data, %Req.Response{status: status} = response) when status >= 400 do
+    response
+    |> Req.Response.get_private(:error_buffer, "")
+    |> do_process_response()
+  end
+
+  defp stream_error(_data, _response), do: nil
+
+  # Errors the body did not type, or whose body could not be parsed, are typed
+  # from the HTTP status so `retry_on_fallback?/1` can tell a temporary service
+  # condition apart from a request that is wrong. `overloaded` is the type
+  # `ChatAnthropic` and `ChatDeepSeek` use for a service with no capacity.
+  defp classify_error(%LangChainError{type: type} = error, status)
+       when type in [nil, "unexpected_response"] do
+    cond do
+      cloudflare_capacity_exceeded?(error.original) -> %LangChainError{error | type: "overloaded"}
+      status in [503, 529] -> %LangChainError{error | type: "overloaded"}
+      status == 429 -> %LangChainError{error | type: "rate_limit_exceeded"}
+      true -> error
+    end
+  end
+
+  defp classify_error(%LangChainError{} = error, _status), do: error
+
+  # Cloudflare Workers AI error code for "Capacity temporarily exceeded". It is
+  # sent whatever the HTTP status, including 200 and 500, and in either error
+  # shape depending on whether the AI Gateway wrapped it.
+  @cloudflare_capacity_exceeded_code 3040
+
+  defp cloudflare_capacity_exceeded?(%{"errors" => errors}) when is_list(errors),
+    do: Enum.any?(errors, &cloudflare_capacity_code?/1)
+
+  defp cloudflare_capacity_exceeded?(%{"error" => error}), do: cloudflare_capacity_code?(error)
+  defp cloudflare_capacity_exceeded?(_original), do: false
+
+  defp cloudflare_capacity_code?(%{"code" => code}),
+    do: code in [@cloudflare_capacity_exceeded_code, "#{@cloudflare_capacity_exceeded_code}"]
+
+  defp cloudflare_capacity_code?(_error), do: false
 
   # Cloudflare reports failures as `%{"errors" => [%{"message" => ...}]}`
-  # rather than the `%{"error" => ...}` shape the shared parser reads.
+  # rather than the `%{"error" => ...}` shape the shared parser reads. An entry
+  # may carry only a `code`.
   @doc false
-  def do_process_response(%{"errors" => [%{"message" => message} | _]} = response)
-      when is_binary(message) do
+  def do_process_response(%{"errors" => [_ | _] = errors} = response) do
+    message =
+      Enum.find_value(errors, "Service returned an error", fn
+        %{"message" => message} when is_binary(message) -> message
+        _entry -> nil
+      end)
+
     {:error, LangChainError.exception(message: message, original: response)}
   end
 
@@ -574,6 +632,7 @@ defmodule LangChain.ChatModels.ChatOpenAICompatible do
   @spec retry_on_fallback?(LangChainError.t()) :: boolean()
   def retry_on_fallback?(%LangChainError{type: "rate_limited"}), do: true
   def retry_on_fallback?(%LangChainError{type: "rate_limit_exceeded"}), do: true
+  def retry_on_fallback?(%LangChainError{type: "overloaded"}), do: true
   def retry_on_fallback?(%LangChainError{type: "timeout"}), do: true
   def retry_on_fallback?(%LangChainError{type: "too_many_requests"}), do: true
   def retry_on_fallback?(_), do: false

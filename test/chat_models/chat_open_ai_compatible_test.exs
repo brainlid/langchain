@@ -43,10 +43,10 @@ defmodule LangChain.ChatModels.ChatOpenAICompatibleTest do
   # A streamed request hands Req an `:into` collector, so a mocked post has to
   # drive that collector the way a real response would rather than handing back
   # a buffered body.
-  defp expect_streamed_post(chunks) do
+  defp expect_streamed_post(status \\ 200, chunks) do
     expect(Req, :post, fn req, opts ->
       collector = Keyword.fetch!(opts, :into)
-      start = {req, %Req.Response{status: 200, headers: %{}, body: ""}}
+      start = {req, %Req.Response{status: status, headers: %{}, body: ""}}
 
       {_req, response} =
         Enum.reduce(chunks, start, fn chunk, acc ->
@@ -287,6 +287,135 @@ defmodule LangChain.ChatModels.ChatOpenAICompatibleTest do
                ChatOpenAICompatible.call(model(), [Message.new_user!("Hi")], [])
 
       assert ChatOpenAICompatible.retry_on_fallback?(error)
+    end
+
+    # Cloudflare Workers AI reports a model with no room for the request this
+    # way, and the AI Gateway prefixes the message. It is a temporary condition
+    # of the service, not a problem with the request.
+    test "types a Cloudflare capacity error as overloaded so fallbacks may retry it" do
+      expect_post(500, %{
+        "errors" => [
+          %{
+            "code" => 3040,
+            "message" =>
+              "AiError: AiError: Capacity temporarily exceeded, please try again. (4e8a)"
+          }
+        ],
+        "success" => false
+      })
+
+      assert {:error, %LangChainError{type: "overloaded"} = error} =
+               ChatOpenAICompatible.call(model(), [Message.new_user!("Hi")], [])
+
+      assert error.message =~ "Capacity temporarily exceeded"
+      assert ChatOpenAICompatible.retry_on_fallback?(error)
+    end
+
+    test "recognizes a Cloudflare capacity code in the gateway's error shape" do
+      expect_post(500, %{"error" => %{"code" => 3040, "message" => "AiError: try again."}})
+
+      assert {:error, %LangChainError{type: "overloaded"}} =
+               ChatOpenAICompatible.call(model(), [Message.new_user!("Hi")], [])
+    end
+
+    test "recognizes a Cloudflare capacity code sent as a string, in any entry" do
+      expect_post(500, %{
+        "errors" => [%{"code" => 1000, "message" => "Other"}, %{"code" => "3040"}]
+      })
+
+      assert {:error, %LangChainError{type: "overloaded", message: "Other"}} =
+               ChatOpenAICompatible.call(model(), [Message.new_user!("Hi")], [])
+    end
+
+    test "reports a Cloudflare error entry that carries only a code" do
+      expect_post(500, %{"errors" => [%{"code" => 3040}]})
+
+      assert {:error, %LangChainError{type: "overloaded", message: "Service returned an error"}} =
+               ChatOpenAICompatible.call(model(), [Message.new_user!("Hi")], [])
+    end
+
+    test "types a 503 or 529 from any service as overloaded" do
+      for status <- [503, 529] do
+        expect_post(status, %{"error" => %{"message" => "Service unavailable"}})
+
+        assert {:error, %LangChainError{type: "overloaded"} = error} =
+                 ChatOpenAICompatible.call(model(), [Message.new_user!("Hi")], [])
+
+        assert ChatOpenAICompatible.retry_on_fallback?(error)
+      end
+    end
+
+    test "types a rate-limited error from its status when the body is not JSON" do
+      expect_post(429, "Too many requests, please try again later.")
+
+      assert {:error, %LangChainError{type: "rate_limit_exceeded"} = error} =
+               ChatOpenAICompatible.call(model(), [Message.new_user!("Hi")], [])
+
+      assert ChatOpenAICompatible.retry_on_fallback?(error)
+    end
+
+    test "leaves an ordinary server error untyped so fallbacks do not retry it" do
+      expect_post(500, %{"error" => %{"message" => "Internal error"}})
+
+      assert {:error, %LangChainError{type: nil, message: "Internal error"} = error} =
+               ChatOpenAICompatible.call(model(), [Message.new_user!("Hi")], [])
+
+      refute ChatOpenAICompatible.retry_on_fallback?(error)
+    end
+
+    test "types a capacity error on a streamed request as overloaded" do
+      expect_streamed_post(429, [
+        Jason.encode!(%{
+          "errors" => [%{"code" => 3040, "message" => "Capacity temporarily exceeded"}]
+        })
+      ])
+
+      assert {:error, %LangChainError{type: "overloaded"}} =
+               ChatOpenAICompatible.call(
+                 model(%{stream: true}),
+                 [Message.new_user!("Hi")],
+                 []
+               )
+    end
+
+    test "types a capacity error sent mid-stream on a 200 connection as overloaded" do
+      expect_streamed_post([
+        sse(%{
+          "choices" => [%{"index" => 0, "delta" => %{"role" => "assistant", "content" => "Hi"}}]
+        }),
+        sse(%{"errors" => [%{"code" => 3040, "message" => "Capacity temporarily exceeded"}]})
+      ])
+
+      assert {:error, %LangChainError{type: "overloaded"}} =
+               ChatOpenAICompatible.call(
+                 model(%{stream: true}),
+                 [Message.new_user!("Hi")],
+                 []
+               )
+    end
+
+    test "returns an error for a streamed failure whose body is not JSON" do
+      expect_streamed_post(503, ["<html>Service Unavailable</html>"])
+
+      assert {:error, %LangChainError{type: "overloaded"} = error} =
+               ChatOpenAICompatible.call(
+                 model(%{stream: true}),
+                 [Message.new_user!("Hi")],
+                 []
+               )
+
+      assert error.original == "<html>Service Unavailable</html>"
+    end
+
+    test "returns an untyped error for a streamed 500 whose body is not JSON" do
+      expect_streamed_post(500, ["Internal error"])
+
+      assert {:error, %LangChainError{type: "unexpected_response"}} =
+               ChatOpenAICompatible.call(
+                 model(%{stream: true}),
+                 [Message.new_user!("Hi")],
+                 []
+               )
     end
   end
 
