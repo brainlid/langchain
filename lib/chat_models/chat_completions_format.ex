@@ -578,18 +578,14 @@ defmodule LangChain.ChatModels.ChatCompletionsFormat do
     end
   end
 
-  def process_response(
-        %{
-          "finish_reason" => finish_reason,
-          "message" => message,
-          "index" => index
-        } = data
-      ) do
+  # Full message. Some services, such as GitHub Copilot, leave out the choice
+  # `index` in a non-streamed response, so it defaults to the first choice.
+  def process_response(%{"finish_reason" => finish_reason, "message" => message} = data) do
     status = finish_reason_to_status(finish_reason)
 
     merged =
       message
-      |> Map.merge(%{"status" => status, "index" => index})
+      |> Map.merge(%{"status" => status, "index" => Map.get(data, "index", 0)})
       |> Map.merge(logprobs_metadata(data))
 
     case Message.new(merged) do

@@ -138,6 +138,33 @@ defmodule LangChain.ChatModels.ChatCompletionsFormatTest do
     end
   end
 
+  describe "process_response/1 with a choice that has no index" do
+    # Some OpenAI-compatible services, such as GitHub Copilot, leave `index`
+    # out of the choices in a non-streamed response.
+    test "a full message is processed as choice 0" do
+      data = %{
+        "finish_reason" => "stop",
+        "message" => %{"role" => "assistant", "content" => "ok"}
+      }
+
+      assert %Message{role: :assistant, status: :complete, index: 0, content: [text]} =
+               ChatCompletionsFormat.process_response(data)
+
+      assert %ContentPart{type: :text, content: "ok"} = text
+    end
+
+    test "a response's choices are processed into messages" do
+      data = %{
+        "choices" => [
+          %{"finish_reason" => "stop", "message" => %{"role" => "assistant", "content" => "ok"}}
+        ]
+      }
+
+      assert [%Message{role: :assistant, status: :complete, index: 0}] =
+               ChatCompletionsFormat.process_response(data)
+    end
+  end
+
   describe "process_response/1 with reasoning_content" do
     test "a full message puts thinking ahead of the answer" do
       data = %{
