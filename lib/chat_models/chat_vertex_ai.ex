@@ -49,6 +49,35 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   validate a tool call's arguments inside the tool's own function where that
   matters.
 
+  **Tool Choice**
+
+  By default Gemini decides for itself whether to call a function or answer in
+  text (its `AUTO` mode). Set `tool_choice` to change that. It takes the same
+  map shape as `LangChain.ChatModels.ChatOpenAI` and is sent as Gemini's
+  `toolConfig.functionCallingConfig`. It is documented in:
+
+  - [Vertex AI function calling: tool config](https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/function-calling#tool-config)
+  - [Gemini Enterprise Agent Platform: FunctionCallingConfig reference](https://docs.cloud.google.com/gemini-enterprise-agent-platform/reference/models/function-calling#functioncallingconfig)
+
+  To make the response call one specific function:
+
+  ```elixir
+  ChatVertexAI.new!(%{
+    model: "...",
+    endpoint: ...,
+    tool_choice: %{"type" => "function", "function" => %{"name" => "get_weather"}}
+  })
+  ```
+
+  This sends mode `ANY` with `allowedFunctionNames: ["get_weather"]`, so the
+  model must call that function rather than reply in text.
+
+  To set a mode directly, give its name as the `"type"`: `"auto"`, `"any"` (must
+  call one of the declared functions), `"none"` (must not call any) or
+  `"validated"`. The name is upper-cased and sent as the mode.
+
+  `tool_choice` is only sent when the request declares functions.
+
   **Structured Output**
 
   Google's Gemini models can return
@@ -197,6 +226,11 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     # for the list of categories and thresholds. Defaults to `[]` (the
     # provider's own defaults apply).
     field :safety_settings, {:array, :map}, default: []
+
+    # Controls whether and which function the model must call. Sent as the
+    # API's `toolConfig.functionCallingConfig`. See **Tool Choice** in the
+    # moduledoc. e.g. %{"type" => "function", "function" => %{"name" => "get_weather"}}
+    field :tool_choice, :map
   end
 
   @type t :: %ChatVertexAI{}
@@ -215,6 +249,7 @@ defmodule LangChain.ChatModels.ChatVertexAI do
     :stream,
     :req_config,
     :safety_settings,
+    :tool_choice,
     :callbacks
   ]
   @required_fields [
@@ -310,10 +345,28 @@ defmodule LangChain.ChatModels.ChatVertexAI do
             |> Enum.map(&function_declaration_for_api/1)
         }
       ])
+      |> Utils.conditionally_add_to_map("toolConfig", get_tool_config(vertex_ai))
     else
       req
     end
   end
+
+  # Maps the shared `tool_choice` shape onto Gemini's function calling modes.
+  # A named function becomes mode `ANY` restricted to that function, which is
+  # how Gemini forces a specific call.
+  defp get_tool_config(%ChatVertexAI{
+         tool_choice: %{"type" => "function", "function" => %{"name" => name}}
+       })
+       when is_binary(name) and byte_size(name) > 0 do
+    %{"functionCallingConfig" => %{"mode" => "ANY", "allowedFunctionNames" => [name]}}
+  end
+
+  defp get_tool_config(%ChatVertexAI{tool_choice: %{"type" => type}})
+       when is_binary(type) and byte_size(type) > 0 do
+    %{"functionCallingConfig" => %{"mode" => String.upcase(type)}}
+  end
+
+  defp get_tool_config(%ChatVertexAI{}), do: nil
 
   # Vertex AI reaches the same Gemini `Schema` type as `ChatGoogleAI`, so a
   # declaration carrying a keyword outside Google's subset is rejected the same
@@ -1073,7 +1126,8 @@ defmodule LangChain.ChatModels.ChatVertexAI do
         :json_response,
         :json_schema,
         :stream,
-        :safety_settings
+        :safety_settings,
+        :tool_choice
       ],
       @current_config_version
     )

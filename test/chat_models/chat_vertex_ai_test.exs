@@ -824,6 +824,54 @@ defmodule ChatModels.ChatVertexAITest do
       refute Map.has_key?(declaration, "parameters")
     end
 
+    test "sends no toolConfig when tool_choice is not set", %{
+      vertex_ai: vertex_ai,
+      hello_world: hello_world
+    } do
+      data = ChatVertexAI.for_api(vertex_ai, [], [hello_world])
+      refute Map.has_key?(data, "toolConfig")
+    end
+
+    test "forces a call to the named function", %{params: params, hello_world: hello_world} do
+      vertex_ai =
+        ChatVertexAI.new!(
+          Map.put(params, "tool_choice", %{
+            "type" => "function",
+            "function" => %{"name" => "hello_world"}
+          })
+        )
+
+      data = ChatVertexAI.for_api(vertex_ai, [], [hello_world])
+
+      assert data["toolConfig"] == %{
+               "functionCallingConfig" => %{
+                 "mode" => "ANY",
+                 "allowedFunctionNames" => ["hello_world"]
+               }
+             }
+    end
+
+    test "sends a tool_choice type as the function calling mode", %{
+      params: params,
+      hello_world: hello_world
+    } do
+      for {type, mode} <- [{"auto", "AUTO"}, {"any", "ANY"}, {"none", "NONE"}] do
+        vertex_ai = ChatVertexAI.new!(Map.put(params, "tool_choice", %{"type" => type}))
+        data = ChatVertexAI.for_api(vertex_ai, [], [hello_world])
+
+        assert data["toolConfig"] == %{"functionCallingConfig" => %{"mode" => mode}}
+      end
+    end
+
+    test "sends no toolConfig when the request declares no functions", %{params: params} do
+      vertex_ai = ChatVertexAI.new!(Map.put(params, "tool_choice", %{"type" => "any"}))
+
+      data = ChatVertexAI.for_api(vertex_ai, [], [])
+
+      refute Map.has_key?(data, "toolConfig")
+      refute Map.has_key?(data, "tools")
+    end
+
     test "removes schema keywords Google does not support from declarations", %{
       vertex_ai: vertex_ai
     } do
@@ -1250,8 +1298,27 @@ defmodule ChatModels.ChatVertexAITest do
                "version" => 1,
                "json_response" => false,
                "json_schema" => nil,
-               "safety_settings" => []
+               "safety_settings" => [],
+               "tool_choice" => nil
              }
+    end
+
+    test "survives a serialize/restore round-trip with tool_choice" do
+      tool_choice = %{"type" => "function", "function" => %{"name" => "hello_world"}}
+
+      model =
+        ChatVertexAI.new!(%{
+          model: @test_model,
+          endpoint: "http://localhost:1234/",
+          tool_choice: tool_choice
+        })
+
+      {:ok, restored} =
+        model
+        |> ChatVertexAI.serialize_config()
+        |> ChatVertexAI.restore_from_map()
+
+      assert restored.tool_choice == tool_choice
     end
 
     test "survives a serialize/restore round-trip with safety settings" do
