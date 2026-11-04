@@ -131,7 +131,7 @@ defmodule LangChain.Chains.DataExtractionChain do
   alias LangChain.LangChainError
   alias LangChain.Chains.LLMChain
   alias LangChain.ChatModels.ChatAnthropic
-  alias LangChain.ChatModels.ChatOpenAI
+  alias LangChain.ChatModels.ChatModel
   alias LangChain.ChatModels.ChatOpenAIResponses
 
   @function_name "information_extraction"
@@ -181,7 +181,7 @@ Passage:
     internally run `LLMChain`. See `LangChain.Chains.ChainCallbacks` for the
     available events. Defaults to `[]`.
   """
-  @spec run_chain(ChatOpenAI.t(), json_schema :: map(), prompt :: [any()], opts :: Keyword.t()) ::
+  @spec run_chain(ChatModel.t(), json_schema :: map(), prompt :: [any()], opts :: Keyword.t()) ::
           {:ok, LLMChain.t()} | {:error, LLMChain.t(), LangChainError.t()}
   def run_chain(llm, json_schema, prompt, opts \\ []) do
     verbose = Keyword.get(opts, :verbose, false)
@@ -237,7 +237,7 @@ Passage:
 
   Accepts the same options as `run_chain/4`.
   """
-  @spec run(ChatOpenAI.t(), json_schema :: map(), prompt :: [any()], opts :: Keyword.t()) ::
+  @spec run(ChatModel.t(), json_schema :: map(), prompt :: [any()], opts :: Keyword.t()) ::
           {:ok, result :: [any()]} | {:error, LangChainError.t()}
   def run(llm, json_schema, prompt, opts \\ []) do
     try do

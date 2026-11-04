@@ -74,7 +74,9 @@ defmodule LangChain.ChatModels.ChatVertexAI do
 
   To set a mode directly, give its name as the `"type"`: `"auto"`, `"any"` (must
   call one of the declared functions), `"none"` (must not call any) or
-  `"validated"`. The name is upper-cased and sent as the mode.
+  `"validated"`. The name is upper-cased and sent as the mode. `"required"`, the
+  Chat Completions name for `"any"`, is sent as `ANY`. Any other `"type"` is
+  rejected by `new/1`.
 
   `tool_choice` is only sent when the request declares functions.
 
@@ -235,6 +237,16 @@ defmodule LangChain.ChatModels.ChatVertexAI do
 
   @type t :: %ChatVertexAI{}
 
+  # The `tool_choice` types accepted, and the Gemini function calling mode each
+  # is sent as. `"required"` is the Chat Completions name for Gemini's `ANY`.
+  @tool_choice_modes %{
+    "auto" => "AUTO",
+    "any" => "ANY",
+    "required" => "ANY",
+    "none" => "NONE",
+    "validated" => "VALIDATED"
+  }
+
   @create_fields [
     :endpoint,
     :model,
@@ -291,6 +303,23 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   defp common_validation(changeset) do
     changeset
     |> validate_required(@required_fields)
+    |> validate_change(:tool_choice, &validate_tool_choice/2)
+  end
+
+  defp validate_tool_choice(_field, %{"type" => "function", "function" => %{"name" => name}})
+       when is_binary(name) and byte_size(name) > 0,
+       do: []
+
+  defp validate_tool_choice(_field, %{"type" => type}) when is_map_key(@tool_choice_modes, type),
+    do: []
+
+  defp validate_tool_choice(field, _tool_choice) do
+    modes = @tool_choice_modes |> Map.keys() |> Enum.sort() |> Enum.join(", ")
+
+    [
+      {field,
+       "must name a function or have a \"type\" of one of: #{modes}, as in %{\"type\" => \"auto\"}"}
+    ]
   end
 
   def for_api(%ChatVertexAI{} = vertex_ai, messages, functions) do
@@ -362,8 +391,8 @@ defmodule LangChain.ChatModels.ChatVertexAI do
   end
 
   defp get_tool_config(%ChatVertexAI{tool_choice: %{"type" => type}})
-       when is_binary(type) and byte_size(type) > 0 do
-    %{"functionCallingConfig" => %{"mode" => String.upcase(type)}}
+       when is_map_key(@tool_choice_modes, type) do
+    %{"functionCallingConfig" => %{"mode" => Map.fetch!(@tool_choice_modes, type)}}
   end
 
   defp get_tool_config(%ChatVertexAI{}), do: nil

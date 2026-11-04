@@ -8,7 +8,11 @@ defmodule LangChain.Chains.DataExtractionChainTest do
   alias LangChain.Function
   alias LangChain.FunctionParam
   alias LangChain.Chains.DataExtractionChain
+  alias LangChain.ChatModels.ChatAnthropic
+  alias LangChain.ChatModels.ChatGoogleAI
   alias LangChain.ChatModels.ChatOpenAI
+  alias LangChain.ChatModels.ChatOpenAIResponses
+  alias LangChain.ChatModels.ChatVertexAI
   alias LangChain.LangChainError
   alias LangChain.Message
   alias LangChain.Message.ToolCall
@@ -258,6 +262,111 @@ defmodule LangChain.Chains.DataExtractionChainTest do
                )
 
       assert_received {:usage, %TokenUsage{input: 12, output: 3}}
+    end
+  end
+
+  describe "forcing the extraction call" do
+    setup do
+      schema_parameters =
+        [FunctionParam.new!(%{name: "person_name", type: :string})]
+        |> FunctionParam.to_parameters_schema()
+
+      %{schema_parameters: schema_parameters}
+    end
+
+    @forced_function %{"type" => "function", "function" => %{"name" => "information_extraction"}}
+
+    test "sets tool_choice on an OpenAI-shaped model", %{schema_parameters: schema_parameters} do
+      chat = ChatOpenAI.new!(%{model: "gpt-4o-mini-2024-07-18", stream: false})
+
+      expect(ChatOpenAI, :call, fn model, _messages, _tools ->
+        send(self(), {:tool_choice, model.tool_choice})
+        {:ok, [extraction_message()]}
+      end)
+
+      assert {:ok, [%{"person_name" => "Alex"}]} =
+               DataExtractionChain.run(chat, schema_parameters, "Alex is here.")
+
+      assert_received {:tool_choice, @forced_function}
+    end
+
+    test "names the function as a string for ChatOpenAIResponses", %{
+      schema_parameters: schema_parameters
+    } do
+      chat = ChatOpenAIResponses.new!(%{model: "gpt-4o-mini", stream: false})
+
+      expect(ChatOpenAIResponses, :call, fn model, _messages, _tools ->
+        send(self(), {:tool_choice, model.tool_choice})
+        {:ok, [extraction_message()]}
+      end)
+
+      assert {:ok, [%{"person_name" => "Alex"}]} =
+               DataExtractionChain.run(chat, schema_parameters, "Alex is here.")
+
+      assert_received {:tool_choice, "information_extraction"}
+    end
+
+    test "keeps a tool_choice the caller set", %{schema_parameters: schema_parameters} do
+      chat =
+        ChatOpenAI.new!(%{
+          model: "gpt-4o-mini-2024-07-18",
+          stream: false,
+          tool_choice: %{"type" => "auto"}
+        })
+
+      expect(ChatOpenAI, :call, fn model, _messages, _tools ->
+        send(self(), {:tool_choice, model.tool_choice})
+        {:ok, [extraction_message()]}
+      end)
+
+      assert {:ok, [_]} = DataExtractionChain.run(chat, schema_parameters, "Alex is here.")
+
+      assert_received {:tool_choice, %{"type" => "auto"}}
+    end
+
+    test "leaves ChatAnthropic unforced", %{schema_parameters: schema_parameters} do
+      chat = ChatAnthropic.new!(%{model: "claude-sonnet-5-5", stream: false})
+
+      expect(ChatAnthropic, :call, fn model, _messages, _tools ->
+        send(self(), {:tool_choice, model.tool_choice})
+        {:ok, [extraction_message()]}
+      end)
+
+      assert {:ok, [_]} = DataExtractionChain.run(chat, schema_parameters, "Alex is here.")
+
+      assert_received {:tool_choice, nil}
+    end
+
+    test "sends a forced function calling config from the Gemini models", %{
+      schema_parameters: schema_parameters
+    } do
+      forced_config = %{
+        "functionCallingConfig" => %{
+          "mode" => "ANY",
+          "allowedFunctionNames" => ["information_extraction"]
+        }
+      }
+
+      google_ai = ChatGoogleAI.new!(%{model: "gemini-2.5-flash", stream: false})
+
+      expect(ChatGoogleAI, :call, fn model, messages, tools ->
+        send(self(), {:tool_config, ChatGoogleAI.for_api(model, messages, tools)["toolConfig"]})
+        {:ok, [extraction_message()]}
+      end)
+
+      assert {:ok, [_]} = DataExtractionChain.run(google_ai, schema_parameters, "Alex is here.")
+      assert_received {:tool_config, ^forced_config}
+
+      vertex_ai =
+        ChatVertexAI.new!(%{model: "gemini-2.5-flash", endpoint: "http://localhost:1234/"})
+
+      expect(ChatVertexAI, :call, fn model, messages, tools ->
+        send(self(), {:tool_config, ChatVertexAI.for_api(model, messages, tools)["toolConfig"]})
+        {:ok, [extraction_message()]}
+      end)
+
+      assert {:ok, [_]} = DataExtractionChain.run(vertex_ai, schema_parameters, "Alex is here.")
+      assert_received {:tool_config, ^forced_config}
     end
   end
 

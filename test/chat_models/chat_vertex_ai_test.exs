@@ -855,11 +855,35 @@ defmodule ChatModels.ChatVertexAITest do
       params: params,
       hello_world: hello_world
     } do
-      for {type, mode} <- [{"auto", "AUTO"}, {"any", "ANY"}, {"none", "NONE"}] do
+      modes = [
+        {"auto", "AUTO"},
+        {"any", "ANY"},
+        {"none", "NONE"},
+        {"validated", "VALIDATED"},
+        # the Chat Completions name for ANY
+        {"required", "ANY"}
+      ]
+
+      for {type, mode} <- modes do
         vertex_ai = ChatVertexAI.new!(Map.put(params, "tool_choice", %{"type" => type}))
         data = ChatVertexAI.for_api(vertex_ai, [], [hello_world])
 
         assert data["toolConfig"] == %{"functionCallingConfig" => %{"mode" => mode}}
+      end
+    end
+
+    test "rejects a tool_choice Gemini has no mode for", %{params: params} do
+      for tool_choice <- [
+            %{"type" => "REQUIRED"},
+            %{"type" => "sometimes"},
+            %{"type" => "function", "function" => %{"name" => ""}},
+            %{"mode" => "ANY"}
+          ] do
+        assert {:error, changeset} =
+                 ChatVertexAI.new(Map.put(params, "tool_choice", tool_choice))
+
+        assert {"must name a function or have a \"type\" of one of: " <> _, _} =
+                 changeset.errors[:tool_choice]
       end
     end
 
