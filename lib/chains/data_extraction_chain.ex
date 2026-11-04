@@ -80,6 +80,20 @@ defmodule LangChain.Chains.DataExtractionChain do
       usage = LangChain.TokenUsage.get(chain.last_message)
       {:ok, result} = LangChain.Chains.DataExtractionChain.extract_result(chain)
 
+  ## Forcing the Extraction Call
+
+  When the chat model has a `tool_choice` setting and it is not already set,
+  it is set so the model must call the extraction function rather than answer
+  in text. A `tool_choice` you set yourself is left as it is.
+  `LangChain.ChatModels.ChatGoogleAI` and `LangChain.ChatModels.ChatVertexAI`
+  send it as Gemini's `toolConfig.functionCallingConfig` with mode `ANY`,
+  limited to the extraction function.
+
+  Models without a `tool_choice` setting are left to decide for themselves.
+  `LangChain.ChatModels.ChatAnthropic` is not forced either, because Anthropic
+  rejects a forced tool call while thinking is on, and Sonnet 5 and later think
+  by default.
+
   ## Callbacks
 
   The `LLMChain` used for the extraction is built internally, so handlers
@@ -116,7 +130,9 @@ defmodule LangChain.Chains.DataExtractionChain do
   alias LangChain.Message.ToolCall
   alias LangChain.LangChainError
   alias LangChain.Chains.LLMChain
-  alias LangChain.ChatModels.ChatOpenAI
+  alias LangChain.ChatModels.ChatAnthropic
+  alias LangChain.ChatModels.ChatModel
+  alias LangChain.ChatModels.ChatOpenAIResponses
 
   @function_name "information_extraction"
   @extraction_template ~s"Extract and save the relevant entities mentioned in the following passage together with their properties. Use the value `null` when missing in the passage.
@@ -165,7 +181,7 @@ Passage:
     internally run `LLMChain`. See `LangChain.Chains.ChainCallbacks` for the
     available events. Defaults to `[]`.
   """
-  @spec run_chain(ChatOpenAI.t(), json_schema :: map(), prompt :: [any()], opts :: Keyword.t()) ::
+  @spec run_chain(ChatModel.t(), json_schema :: map(), prompt :: [any()], opts :: Keyword.t()) ::
           {:ok, LLMChain.t()} | {:error, LLMChain.t(), LangChainError.t()}
   def run_chain(llm, json_schema, prompt, opts \\ []) do
     verbose = Keyword.get(opts, :verbose, false)
@@ -180,7 +196,7 @@ Passage:
       ]
       |> PromptTemplate.to_messages!(%{input: prompt})
 
-    %{llm: llm, verbose: verbose, callbacks: callbacks}
+    %{llm: force_extraction_call(llm), verbose: verbose, callbacks: callbacks}
     |> LLMChain.new!()
     |> LLMChain.add_tools(build_extract_function(json_schema))
     |> LLMChain.add_messages(messages)
@@ -221,7 +237,7 @@ Passage:
 
   Accepts the same options as `run_chain/4`.
   """
-  @spec run(ChatOpenAI.t(), json_schema :: map(), prompt :: [any()], opts :: Keyword.t()) ::
+  @spec run(ChatModel.t(), json_schema :: map(), prompt :: [any()], opts :: Keyword.t()) ::
           {:ok, result :: [any()]} | {:error, LangChainError.t()}
   def run(llm, json_schema, prompt, opts \\ []) do
     try do
@@ -272,4 +288,21 @@ Passage:
       }
     })
   end
+
+  # Forces the extraction call on any model with an unset `tool_choice`. A
+  # caller's own `tool_choice` is kept. Anthropic is skipped because it rejects
+  # a forced tool call while thinking is on. The Responses API names the
+  # function with a plain string, and the other models take the Chat
+  # Completions map.
+  defp force_extraction_call(%ChatAnthropic{} = llm), do: llm
+
+  defp force_extraction_call(%ChatOpenAIResponses{tool_choice: nil} = llm) do
+    %ChatOpenAIResponses{llm | tool_choice: @function_name}
+  end
+
+  defp force_extraction_call(%_{tool_choice: nil} = llm) do
+    %{llm | tool_choice: %{"type" => "function", "function" => %{"name" => @function_name}}}
+  end
+
+  defp force_extraction_call(llm), do: llm
 end
