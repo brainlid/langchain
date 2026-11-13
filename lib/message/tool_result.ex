@@ -5,8 +5,14 @@ defmodule LangChain.Message.ToolResult do
   application back to the AI.
 
   ## Content
-  The `content` can be a string or a list of ContentParts for multi-modal
-  responses (text, images, etc.) that gets returned to the LLM as the result.
+  The `content` is a list of `LangChain.Message.ContentPart` structs returned to
+  the LLM as the result. It can hold text, images, and other multi-modal parts.
+
+  `new/1` and `new!/1` also accept a string or a single `ContentPart` and convert
+  it to a list of content parts. Code that sets `content` directly on the struct,
+  as in `%ToolResult{result | content: ...}`, skips that conversion and must
+  supply the list itself, for example `[ContentPart.text!("done")]`. Some chat
+  model encoders accept only content parts and raise on a string.
 
   ## Processed Content
   The `processed_content` field is optional. When you want to keep the results
@@ -76,7 +82,8 @@ defmodule LangChain.Message.ToolResult do
     field :tool_call_id, :string
     # the name of the tool that was run.
     field :name, :string
-    # the content returned to the LLM/AI.
+    # the content returned to the LLM/AI: a list of ContentParts. `new/1` converts
+    # a given string; a direct struct update must supply the list itself.
     field :content, :any, virtual: true
     # optional stored results of tool result
     field :processed_content, :any, virtual: true
