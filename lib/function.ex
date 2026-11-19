@@ -26,6 +26,12 @@ defmodule LangChain.Function do
     `function` to parse, coerce, and validate the raw arguments handed back by
     the LLM. The 2-arity form also receives the tool context.
     See "Parsing arguments before execution" below for the full contract.
+  * `display_text` - Optional text a UI shows for a call to this function, such
+    as "Searching the web". When it is not set, the label is the humanized
+    function name.
+  * `display_text_from_args` - An optional 1-arity function that labels a call
+    from its arguments, such as "Searching for Chrome". See "Labelling a call
+    from its arguments" below.
   * `async` - Boolean value that flags if this can function can be executed
     asynchronously, potentially concurrently with other calls to the same
     function. Defaults to `false`.
@@ -224,6 +230,46 @@ defmodule LangChain.Function do
   passed through to the chat model's API conversion layer. If an LLM does not
   support it, it will be ignored.
 
+  ## Labelling a call from its arguments
+
+  `display_text` is one fixed label for every call to the function. When the
+  label should name what a particular call does, supply
+  `display_text_from_args`, a 1-arity function that receives the call's parsed
+  arguments map and returns the label, or `nil` to keep `display_text`:
+
+      Function.new!(%{
+        name: "search_software",
+        display_text: "Searching software",
+        display_text_from_args: fn
+          %{"query" => query} when is_binary(query) -> "Searching for \#{query}"
+          _args -> nil
+        end,
+        parameters_schema: %{
+          type: "object",
+          properties: %{query: %{type: "string"}},
+          required: ["query"]
+        },
+        function: fn %{"query" => query}, _context -> {:ok, search(query)} end
+      })
+
+  `LLMChain` calls it once a tool call's arguments are complete, and writes the
+  result to the call's `display_text`, so everything that reads the processed
+  message (callbacks, persistence, review) sees the same label:
+
+  * For a message received whole, the call is labelled from its arguments when
+    it is first identified, and `:on_tool_call_identified` fires once with that
+    label.
+  * For a streamed message, the call is identified as soon as its name arrives,
+    before its arguments, so it first gets the static `display_text`. When the
+    message completes the call is labelled from its arguments, and
+    `:on_tool_call_identified` fires a second time with the updated call when
+    the label changed.
+
+  A `nil`, blank or non-string result keeps the static label, as does a
+  resolver that raises (a warning is logged and the run continues). The result
+  is trimmed. The function runs for every completed assistant message that
+  calls the tool, so keep it cheap and free of side effects.
+
   ## Parsing arguments before execution
 
   Unless a `:parse_args` parser is supplied, both parameter declarations,
@@ -357,6 +403,10 @@ defmodule LangChain.Function do
     # Optional pre-execution argument parser. See module doc for the contract.
     field :parse_args, :any, virtual: true
 
+    # Optional 1-arity function that labels a call from its parsed arguments.
+    # See "Labelling a call from its arguments" in the module doc.
+    field :display_text_from_args, :any, virtual: true
+
     field :options, :any, virtual: true, default: []
   end
 
@@ -395,6 +445,7 @@ defmodule LangChain.Function do
     :parameters,
     :function,
     :parse_args,
+    :display_text_from_args,
     :async,
     :options
   ]
@@ -433,6 +484,7 @@ defmodule LangChain.Function do
     |> validate_parameter_exclusivity()
     |> validate_function_arity()
     |> validate_parse_args()
+    |> validate_display_text_from_args()
   end
 
   @doc """
@@ -787,6 +839,30 @@ defmodule LangChain.Function do
 
       _other ->
         add_error(changeset, :parse_args, "is not an Elixir function")
+    end
+  end
+
+  # Validates that :display_text_from_args, if set, is a 1-arity function.
+  @spec validate_display_text_from_args(Ecto.Changeset.t()) :: Ecto.Changeset.t()
+  defp validate_display_text_from_args(changeset) do
+    case get_field(changeset, :display_text_from_args) do
+      nil ->
+        changeset
+
+      resolver when is_function(resolver, 1) ->
+        changeset
+
+      resolver when is_function(resolver) ->
+        {:arity, arity} = Elixir.Function.info(resolver, :arity)
+
+        add_error(
+          changeset,
+          :display_text_from_args,
+          "expected arity of 1 but has arity #{inspect(arity)}"
+        )
+
+      _other ->
+        add_error(changeset, :display_text_from_args, "is not an Elixir function")
     end
   end
 
