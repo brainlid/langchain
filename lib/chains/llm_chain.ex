@@ -1266,13 +1266,21 @@ defmodule LangChain.Chains.LLMChain do
           call.name == nil ->
             call
 
-          # New tool call to augment
+          # New tool call to augment. A call whose arguments are already parsed
+          # (a message received whole) is labelled from them right away; a
+          # streamed call's arguments are still a partial string here, so it
+          # gets the static label and is relabelled when the message completes.
           true ->
-            display_text = resolve_display_text(chain._tool_map, call.name)
+            func = chain._tool_map[call.name]
+
+            display_text =
+              display_text_from_args(func, call.arguments) ||
+                resolve_display_text(chain._tool_map, call.name)
+
             augmented_call = %{call | display_text: display_text}
 
             if notify do
-              case chain._tool_map[call.name] do
+              case func do
                 %Function{} = func ->
                   Callbacks.fire(chain.callbacks, :on_tool_call_identified, [
                     chain,
@@ -1293,6 +1301,69 @@ defmodule LangChain.Chains.LLMChain do
   end
 
   defp augment_and_notify_tool_calls(_chain, struct, _opts), do: struct
+
+  # Relabel tool calls that were labelled before their arguments were complete
+  # (a streamed message), using each Function's `display_text_from_args`. A
+  # call whose label changes is announced again through
+  # :on_tool_call_identified so live observers update it.
+  #
+  # Runs only on a message the model just produced. Messages added through
+  # `add_message/2`, such as restored history, keep the label they carry.
+  @spec relabel_tool_calls_from_args(t(), Message.t()) :: Message.t()
+  defp relabel_tool_calls_from_args(
+         %LLMChain{} = chain,
+         %Message{tool_calls: tool_calls} = message
+       )
+       when is_list(tool_calls) and tool_calls != [] do
+    relabelled =
+      Enum.map(tool_calls, fn call ->
+        with %Function{display_text_from_args: resolver} = func when resolver != nil <-
+               chain._tool_map[call.name],
+             label when is_binary(label) <- display_text_from_args(func, call.arguments),
+             true <- label != call.display_text do
+          updated_call = %{call | display_text: label}
+          Callbacks.fire(chain.callbacks, :on_tool_call_identified, [chain, updated_call, func])
+          updated_call
+        else
+          _unchanged -> call
+        end
+      end)
+
+    %Message{message | tool_calls: relabelled}
+  end
+
+  defp relabel_tool_calls_from_args(_chain, message), do: message
+
+  # The label a Function's `display_text_from_args` gives a call, or nil when
+  # there is no resolver, the arguments are not parsed yet, or the resolver
+  # returns nothing usable or raises.
+  @spec display_text_from_args(Function.t() | nil, any()) :: String.t() | nil
+  defp display_text_from_args(
+         %Function{display_text_from_args: resolver, name: name},
+         arguments
+       )
+       when is_function(resolver, 1) and is_map(arguments) do
+    case resolver.(arguments) do
+      label when is_binary(label) ->
+        case String.trim(label) do
+          "" -> nil
+          trimmed -> trimmed
+        end
+
+      _other ->
+        nil
+    end
+  rescue
+    err ->
+      Logger.warning(fn ->
+        "Function #{name} :display_text_from_args raised an exception. " <>
+          "Keeping the static display_text. Exception: #{Exception.message(err)}"
+      end)
+
+      nil
+  end
+
+  defp display_text_from_args(_func, _arguments), do: nil
 
   @doc """
   Drop the current delta. This is useful when needing to ignore a partial or
@@ -1500,9 +1571,14 @@ defmodule LangChain.Chains.LLMChain do
         if chain.verbose, do: IO.inspect(updated_message, label: "MESSAGE PROCESSED")
 
         # Augment tool_calls with display_text and fire :on_tool_call_identified.
-        # For streaming, display_text was already set during merge_delta so this is a no-op.
-        # For non-streaming, this is the first time we see the tool calls.
-        augmented_message = augment_and_notify_tool_calls(chain, updated_message)
+        # For non-streaming, this is the first time we see the tool calls. For
+        # streaming, display_text was set during merge_delta, before the
+        # arguments were complete, so calls are relabelled from their
+        # now-complete arguments.
+        augmented_message =
+          chain
+          |> augment_and_notify_tool_calls(updated_message)
+          |> then(&relabel_tool_calls_from_args(chain, &1))
 
         chain
         |> add_message(augmented_message)
@@ -1596,8 +1672,10 @@ defmodule LangChain.Chains.LLMChain do
   """
   @spec add_message(t(), Message.t()) :: t()
   def add_message(%LLMChain{} = chain, %Message{} = new_message) do
-    # Augment tool_calls with display_text. (no callback — callbacks fire in
-    # merge_delta for streaming or process_message for non-streaming).
+    # Label tool calls that have no display_text yet and fire
+    # :on_tool_call_identified for each. Calls labelled earlier (in
+    # merge_delta or process_message, or restored with a label) are left as
+    # they are and not announced again.
     new_message = augment_and_notify_tool_calls(chain, new_message, notify: true)
 
     needs_response =

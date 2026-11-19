@@ -556,6 +556,47 @@ defmodule LangChain.FunctionTest do
     end
   end
 
+  describe "new/1 with :display_text_from_args" do
+    test "accepts a 1-arity anonymous function" do
+      resolver = fn _args -> "Labelled" end
+
+      assert {:ok, %Function{display_text_from_args: ^resolver}} =
+               Function.new(%{
+                 name: "with_resolver",
+                 function: &hello_world/2,
+                 display_text_from_args: resolver
+               })
+    end
+
+    test "rejects a function with the wrong arity" do
+      assert {:error, changeset} =
+               Function.new(%{
+                 name: "bad_resolver",
+                 function: &hello_world/2,
+                 display_text_from_args: fn _args, _context -> "Labelled" end
+               })
+
+      assert {"expected arity of 1 but has arity 2", _} =
+               changeset.errors[:display_text_from_args]
+    end
+
+    test "rejects something that isn't an Elixir function" do
+      assert {:error, changeset} =
+               Function.new(%{
+                 name: "bad_resolver",
+                 function: &hello_world/2,
+                 display_text_from_args: "Labelled"
+               })
+
+      assert {"is not an Elixir function", _} = changeset.errors[:display_text_from_args]
+    end
+
+    test "defaults to nil" do
+      assert {:ok, %Function{display_text_from_args: nil}} =
+               Function.new(%{name: "no_resolver", function: &hello_world/2})
+    end
+  end
+
   describe "execute/3 with :parse_args" do
     # A tool body that returns the parsed arguments it was handed. Lets us
     # observe whether `parse_args` actually transformed the arguments.

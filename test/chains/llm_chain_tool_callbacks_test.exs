@@ -1046,4 +1046,227 @@ defmodule LangChain.Chains.LLMChainToolCallbacksTest do
       assert [%{is_exception: false}] = updated_chain.last_message.tool_results
     end
   end
+
+  describe "display_text_from_args" do
+    import ExUnit.CaptureLog
+
+    alias LangChain.MessageDelta
+
+    defp labelling_tool(resolver) do
+      Function.new!(%{
+        name: "search_software",
+        description: "Search software",
+        display_text: "Searching software",
+        display_text_from_args: resolver,
+        parameters_schema: %{
+          type: "object",
+          properties: %{query: %{type: "string"}},
+          required: ["query"]
+        },
+        function: fn _args, _ctx -> {:ok, "found"} end
+      })
+    end
+
+    defp search_label(%{"query" => query}), do: "Searching for #{query}"
+
+    defp labelling_chain(tool) do
+      test_pid = self()
+
+      callbacks = %{
+        on_tool_call_identified: fn _chain, tool_call, _function ->
+          send(test_pid, {:identified, tool_call.call_id, tool_call.display_text})
+        end,
+        on_tool_execution_started: fn _chain, tool_call, _function ->
+          send(test_pid, {:started, tool_call.call_id, tool_call.display_text})
+        end
+      }
+
+      LLMChain.new!(%{
+        llm: ChatAnthropic.new!(%{model: "claude-sonnet-4-5-20250929"}),
+        tools: [tool],
+        callbacks: [callbacks]
+      })
+    end
+
+    # Streams a call to `search_software` with `query`, then completes the
+    # message the way a chat model's stream ends.
+    defp stream_search(chain, query) do
+      opening =
+        MessageDelta.new!(%{
+          role: :assistant,
+          status: :incomplete,
+          tool_calls: [
+            ToolCall.new!(%{
+              index: 0,
+              call_id: "call_1",
+              name: "search_software",
+              arguments: "{\"query\":"
+            })
+          ]
+        })
+
+      closing =
+        MessageDelta.new!(%{
+          role: :assistant,
+          status: :complete,
+          tool_calls: [ToolCall.new!(%{index: 0, arguments: ~s("#{query}"})})]
+        })
+
+      chain = chain |> LLMChain.merge_delta(opening) |> LLMChain.merge_delta(closing)
+      {:ok, chain} = LLMChain.delta_to_message_when_complete(chain)
+      chain
+    end
+
+    defp whole_search_message(query) do
+      Message.new_assistant!(%{
+        tool_calls: [
+          ToolCall.new!(%{
+            call_id: "call_1",
+            name: "search_software",
+            arguments: %{"query" => query}
+          })
+        ]
+      })
+    end
+
+    test "a streamed call is relabelled from its arguments when the message completes" do
+      chain =
+        labelling_tool(&search_label/1)
+        |> labelling_chain()
+        |> stream_search("Chrome")
+
+      assert_received {:identified, "call_1", "Searching software"}
+      assert_received {:identified, "call_1", "Searching for Chrome"}
+      refute_received {:identified, _, _}
+
+      assert %Message{tool_calls: [%ToolCall{display_text: "Searching for Chrome"}]} =
+               chain.last_message
+    end
+
+    test "a call received whole is identified once, with the label from its arguments" do
+      chain =
+        labelling_tool(&search_label/1)
+        |> labelling_chain()
+        |> LLMChain.process_message(whole_search_message("Chrome"))
+
+      assert_received {:identified, "call_1", "Searching for Chrome"}
+      refute_received {:identified, _, _}
+
+      assert %Message{tool_calls: [%ToolCall{display_text: "Searching for Chrome"}]} =
+               chain.last_message
+    end
+
+    test "tool execution starts with the label from the arguments" do
+      labelling_tool(&search_label/1)
+      |> labelling_chain()
+      |> stream_search("Chrome")
+      |> LLMChain.execute_tool_calls()
+
+      assert_received {:started, "call_1", "Searching for Chrome"}
+    end
+
+    for {description, result} <- [
+          {"nil", nil},
+          {"an empty string", ""},
+          {"only whitespace", "   "},
+          {"a non-string", :not_a_label}
+        ] do
+      test "a resolver returning #{description} keeps the static label" do
+        result = unquote(Macro.escape(result))
+
+        chain =
+          labelling_tool(fn _args -> result end)
+          |> labelling_chain()
+          |> stream_search("Chrome")
+
+        assert_received {:identified, "call_1", "Searching software"}
+        refute_received {:identified, _, _}
+
+        assert %Message{tool_calls: [%ToolCall{display_text: "Searching software"}]} =
+                 chain.last_message
+      end
+    end
+
+    test "a resolver that raises keeps the static label and the run continues" do
+      log =
+        capture_log(fn ->
+          chain =
+            labelling_tool(fn _args -> raise "boom" end)
+            |> labelling_chain()
+            |> stream_search("Chrome")
+
+          assert %Message{tool_calls: [%ToolCall{display_text: "Searching software"}]} =
+                   chain.last_message
+
+          LLMChain.execute_tool_calls(chain)
+        end)
+
+      assert log =~ "search_software :display_text_from_args raised an exception"
+      assert_received {:identified, "call_1", "Searching software"}
+      refute_received {:identified, _, _}
+      assert_received {:started, "call_1", "Searching software"}
+    end
+
+    test "the resolved label is trimmed" do
+      chain =
+        labelling_tool(fn _args -> "  Searching for Chrome \n" end)
+        |> labelling_chain()
+        |> stream_search("Chrome")
+
+      assert %Message{tool_calls: [%ToolCall{display_text: "Searching for Chrome"}]} =
+               chain.last_message
+    end
+
+    test "a resolved label equal to the static one is not announced again" do
+      labelling_tool(fn _args -> "Searching software" end)
+      |> labelling_chain()
+      |> stream_search("Chrome")
+
+      assert_received {:identified, "call_1", "Searching software"}
+      refute_received {:identified, _, _}
+    end
+
+    test "a labelled call added with add_message/2 keeps its label and is not announced" do
+      message =
+        Message.new_assistant!(%{
+          tool_calls: [
+            ToolCall.new!(%{
+              call_id: "call_1",
+              name: "search_software",
+              arguments: %{"query" => "Chrome"},
+              display_text: "Restored label"
+            })
+          ]
+        })
+
+      chain =
+        labelling_tool(&search_label/1)
+        |> labelling_chain()
+        |> LLMChain.add_message(message)
+
+      refute_received {:identified, _, _}
+
+      assert %Message{tool_calls: [%ToolCall{display_text: "Restored label"}]} =
+               chain.last_message
+    end
+
+    test "a tool without a resolver keeps its static label" do
+      tool =
+        Function.new!(%{
+          name: "search_software",
+          description: "Search software",
+          display_text: "Searching software",
+          parameters_schema: %{type: "object", properties: %{}},
+          function: fn _args, _ctx -> {:ok, "found"} end
+        })
+
+      chain = tool |> labelling_chain() |> stream_search("Chrome")
+
+      assert_received {:identified, "call_1", "Searching software"}
+      refute_received {:identified, _, _}
+
+      assert %Message{tool_calls: [%ToolCall{display_text: "Searching software"}]} =
+               chain.last_message
+    end
+  end
 end
