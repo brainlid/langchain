@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.15.9
+
+A tool call can now be labelled from its arguments, so a UI can show
+"Searching for Chrome" instead of the same "Searching the web" for every call.
+
+No breaking changes. Functions without the new option behave as before.
+
+### Added
+
+- `Function` option `display_text_from_args`, a 1-arity function that receives
+  a call's parsed arguments and returns its label, or `nil` to keep the static
+  `display_text`. `LLMChain` writes the result to the call's `display_text`
+  once the arguments are complete. A streamed call first gets the static label
+  and is relabelled when the message completes, so `:on_tool_call_identified`
+  fires a second time when the label changes. A blank or non-string result,
+  or a resolver that raises, keeps the static label.
+  https://github.com/brainlid/langchain/pull/705
+
+### Changed
+
+- `ToolResult` docs state that `content` is always a list of `ContentPart`
+  structs once built. `new/1` and `new!/1` convert a string, but a direct
+  struct update must supply the list itself, because some chat model encoders
+  accept only content parts. https://github.com/brainlid/langchain/pull/704
+
 ## v0.15.8
 
 `ChatOpenAICompatible` now types temporary service failures, so a chain's
