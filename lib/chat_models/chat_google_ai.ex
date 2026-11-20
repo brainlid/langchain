@@ -57,6 +57,36 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   that matters, validate the arguments inside the tool's own function. See
   `LangChain.Utils.GoogleSchema` for the full list of removed keywords.
 
+  **Tool Choice**
+
+  By default Gemini decides for itself whether to call a function or answer in
+  text (its `AUTO` mode). Set `tool_choice` to change that. It takes the same
+  map shape as `LangChain.ChatModels.ChatOpenAI` and is sent as Gemini's
+  `toolConfig.functionCallingConfig`. It is documented in:
+
+  - [Google Gen AI SDK: function calling](https://googleapis.github.io/python-genai/#function-calling)
+  - [Google Gen AI SDK: function calling with `ANY` tools config mode](https://googleapis.github.io/python-genai/#function-calling-with-any-tools-config-mode)
+
+  To make the response call one specific function:
+
+  ```elixir
+  ChatGoogleAI.new!(%{
+    model: "...",
+    tool_choice: %{"type" => "function", "function" => %{"name" => "get_weather"}}
+  })
+  ```
+
+  This sends mode `ANY` with `allowedFunctionNames: ["get_weather"]`, so the
+  model must call that function rather than reply in text.
+
+  To set a mode directly, give its name as the `"type"`: `"auto"`, `"any"` (must
+  call one of the declared functions), `"none"` (must not call any) or
+  `"validated"`. The name is upper-cased and sent as the mode. `"required"`, the
+  Chat Completions name for `"any"`, is sent as `ANY`. Any other `"type"` is
+  rejected by `new/1`.
+
+  `tool_choice` is only sent when the request declares functions.
+
   **Structured Output**
 
   Google's Gemini models can return
@@ -199,6 +229,11 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     # for the list of categories and thresholds
     field :safety_settings, {:array, :map}, default: []
 
+    # Controls whether and which function the model must call. Sent as the
+    # API's `toolConfig.functionCallingConfig`. See **Tool Choice** in the
+    # moduledoc. e.g. %{"type" => "function", "function" => %{"name" => "get_weather"}}
+    field :tool_choice, :map
+
     # A list of maps for callback handlers (treat as private)
     field :callbacks, {:array, :map}, default: []
 
@@ -212,6 +247,16 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   end
 
   @type t :: %ChatGoogleAI{}
+
+  # The `tool_choice` types accepted, and the Gemini function calling mode each
+  # is sent as. `"required"` is the Chat Completions name for Gemini's `ANY`.
+  @tool_choice_modes %{
+    "auto" => "AUTO",
+    "any" => "ANY",
+    "required" => "ANY",
+    "none" => "NONE",
+    "validated" => "VALIDATED"
+  }
 
   @create_fields [
     :endpoint,
@@ -227,6 +272,7 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
     :json_schema,
     :stream,
     :safety_settings,
+    :tool_choice,
     :req_config,
     :callbacks
   ]
@@ -270,6 +316,23 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
   defp common_validation(changeset) do
     changeset
     |> validate_required(@required_fields)
+    |> validate_change(:tool_choice, &validate_tool_choice/2)
+  end
+
+  defp validate_tool_choice(_field, %{"type" => "function", "function" => %{"name" => name}})
+       when is_binary(name) and byte_size(name) > 0,
+       do: []
+
+  defp validate_tool_choice(_field, %{"type" => type}) when is_map_key(@tool_choice_modes, type),
+    do: []
+
+  defp validate_tool_choice(field, _tool_choice) do
+    modes = @tool_choice_modes |> Map.keys() |> Enum.sort() |> Enum.join(", ")
+
+    [
+      {field,
+       "must name a function or have a \"type\" of one of: #{modes}, as in %{\"type\" => \"auto\"}"}
+    ]
   end
 
   def for_api(%ChatGoogleAI{} = google_ai, messages, functions) do
@@ -350,11 +413,34 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
           tools_array
         end
 
-      Map.put(req, "tools", tools_array)
+      # The function calling config only applies to declared functions, so it
+      # is left out when the request carries native tools alone.
+      tool_config = if function_tools != [], do: get_tool_config(google_ai)
+
+      req
+      |> Map.put("tools", tools_array)
+      |> Utils.conditionally_add_to_map("toolConfig", tool_config)
     else
       req
     end
   end
+
+  # Maps the shared `tool_choice` shape onto Gemini's function calling modes.
+  # A named function becomes mode `ANY` restricted to that function, which is
+  # how Gemini forces a specific call.
+  defp get_tool_config(%ChatGoogleAI{
+         tool_choice: %{"type" => "function", "function" => %{"name" => name}}
+       })
+       when is_binary(name) and byte_size(name) > 0 do
+    %{"functionCallingConfig" => %{"mode" => "ANY", "allowedFunctionNames" => [name]}}
+  end
+
+  defp get_tool_config(%ChatGoogleAI{tool_choice: %{"type" => type}})
+       when is_map_key(@tool_choice_modes, type) do
+    %{"functionCallingConfig" => %{"mode" => Map.fetch!(@tool_choice_modes, type)}}
+  end
+
+  defp get_tool_config(%ChatGoogleAI{}), do: nil
 
   @doc false
   def for_api(%Message{role: :assistant} = message) do
@@ -1116,7 +1202,8 @@ defmodule LangChain.ChatModels.ChatGoogleAI do
         :json_response,
         :json_schema,
         :stream,
-        :safety_settings
+        :safety_settings,
+        :tool_choice
       ],
       @current_config_version
     )

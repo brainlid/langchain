@@ -13,6 +13,7 @@ defmodule ChatModels.ChatGoogleAITest do
   alias LangChain.MessageDelta
   alias LangChain.Function
   alias LangChain.FunctionParam
+  alias LangChain.NativeTool
   alias LangChain.LangChainError
   alias LangChain.ChatModels.ChatGoogleAI
 
@@ -643,6 +644,83 @@ defmodule ChatModels.ChatGoogleAITest do
                  }
                ]
              } = tool_call
+    end
+
+    test "sends no toolConfig when tool_choice is not set", %{
+      google_ai: google_ai,
+      hello_world: hello_world
+    } do
+      data = ChatGoogleAI.for_api(google_ai, [], [hello_world])
+      refute Map.has_key?(data, "toolConfig")
+    end
+
+    test "forces a call to the named function", %{params: params, hello_world: hello_world} do
+      google_ai =
+        ChatGoogleAI.new!(
+          Map.put(params, "tool_choice", %{
+            "type" => "function",
+            "function" => %{"name" => "hello_world"}
+          })
+        )
+
+      data = ChatGoogleAI.for_api(google_ai, [], [hello_world])
+
+      assert data["toolConfig"] == %{
+               "functionCallingConfig" => %{
+                 "mode" => "ANY",
+                 "allowedFunctionNames" => ["hello_world"]
+               }
+             }
+    end
+
+    test "sends a tool_choice type as the function calling mode", %{
+      params: params,
+      hello_world: hello_world
+    } do
+      modes = [
+        {"auto", "AUTO"},
+        {"any", "ANY"},
+        {"none", "NONE"},
+        {"validated", "VALIDATED"},
+        # the Chat Completions name for ANY
+        {"required", "ANY"}
+      ]
+
+      for {type, mode} <- modes do
+        google_ai = ChatGoogleAI.new!(Map.put(params, "tool_choice", %{"type" => type}))
+        data = ChatGoogleAI.for_api(google_ai, [], [hello_world])
+
+        assert data["toolConfig"] == %{"functionCallingConfig" => %{"mode" => mode}}
+      end
+    end
+
+    test "rejects a tool_choice Gemini has no mode for", %{params: params} do
+      for tool_choice <- [
+            %{"type" => "REQUIRED"},
+            %{"type" => "sometimes"},
+            %{"type" => "function", "function" => %{"name" => ""}},
+            %{"mode" => "ANY"}
+          ] do
+        assert {:error, changeset} =
+                 ChatGoogleAI.new(Map.put(params, "tool_choice", tool_choice))
+
+        assert {"must name a function or have a \"type\" of one of: " <> _, _} =
+                 changeset.errors[:tool_choice]
+      end
+    end
+
+    test "sends no toolConfig when the request declares no functions", %{params: params} do
+      google_ai = ChatGoogleAI.new!(Map.put(params, "tool_choice", %{"type" => "any"}))
+
+      data = ChatGoogleAI.for_api(google_ai, [], [])
+      refute Map.has_key?(data, "toolConfig")
+      refute Map.has_key?(data, "tools")
+
+      # native tools alone are not functions the config could apply to
+      google_search = NativeTool.new!(%{name: "google_search", configuration: %{}})
+      data = ChatGoogleAI.for_api(google_ai, [], [google_search])
+      assert %{"tools" => [_]} = data
+      refute Map.has_key?(data, "toolConfig")
     end
 
     test "handles converting functions with parameters" do
@@ -1378,8 +1456,21 @@ defmodule ChatModels.ChatGoogleAITest do
                "top_p" => 1.0,
                "safety_settings" => [],
                "json_response" => false,
-               "json_schema" => nil
+               "json_schema" => nil,
+               "tool_choice" => nil
              }
+    end
+
+    test "survives a serialize/restore round-trip with tool_choice" do
+      tool_choice = %{"type" => "function", "function" => %{"name" => "hello_world"}}
+      model = ChatGoogleAI.new!(%{model: @test_model, tool_choice: tool_choice})
+
+      {:ok, restored} =
+        model
+        |> ChatGoogleAI.serialize_config()
+        |> ChatGoogleAI.restore_from_map()
+
+      assert restored.tool_choice == tool_choice
     end
   end
 
