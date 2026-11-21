@@ -127,6 +127,8 @@ defmodule LangChain.ChatModels.ChatDeepSeek do
     field :endpoint, :string, default: "https://api.deepseek.com/chat/completions"
     field :model, :string, default: "deepseek-chat"
 
+    field :title, :boolean, default: false
+
     # API key for DeepSeek. If not set, will use global api key. Allows for usage
     # of a different API key per-call if desired. For instance, allowing a
     # customer to provide their own.
@@ -198,6 +200,7 @@ defmodule LangChain.ChatModels.ChatDeepSeek do
   @create_fields [
     :endpoint,
     :model,
+    :title,
     :temperature,
     :frequency_penalty,
     :api_key,
@@ -296,6 +299,8 @@ defmodule LangChain.ChatModels.ChatDeepSeek do
   def for_api(%ChatDeepSeek{} = deepseek, messages, tools) do
     tools = LangChain.NativeTool.drop_tool_search(tools)
 
+    title = if deepseek.title, do: %{"enabled" => true}
+
     %{
       model: deepseek.model,
       temperature: deepseek.temperature,
@@ -328,6 +333,7 @@ defmodule LangChain.ChatModels.ChatDeepSeek do
     |> Utils.conditionally_add_to_map(:parallel_tool_calls, deepseek.parallel_tool_calls)
     |> Utils.conditionally_add_to_map(:logprobs, deepseek.logprobs)
     |> Utils.conditionally_add_to_map(:top_logprobs, deepseek.top_logprobs)
+    |> Utils.conditionally_add_to_map(:title, title)
   end
 
   defp get_tools_for_api(%_{} = _model, nil), do: []
@@ -991,6 +997,11 @@ defmodule LangChain.ChatModels.ChatDeepSeek do
 
     # Extract DeepSeek-specific metadata for streaming responses
     metadata = extract_response_metadata(msg)
+
+    metadata = case delta_body["title"] do
+      nil -> metadata
+      title -> Map.put(metadata, :title, title)
+    end
 
     {index, content} =
       case delta_body["reasoning_content"] do
