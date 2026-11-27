@@ -1,5 +1,61 @@
 # Changelog
 
+## v0.16.0
+
+Tools that interrupt a run, and runs that wait for a specific tool, now behave
+the way the tool asked. A tool that returns `{:interrupt, ...}` ends the run
+instead of being handed back to the model, and `run_until_tool_used` keeps
+going past a failed call to its target tool so the model can correct it.
+`ChatDeepSeek` can also ask DeepSeek to generate a conversation title.
+
+Breaking changes: two default behaviors change, listed below. Neither changes
+a function signature.
+
+### Upgrading from v0.15.9 - v0.16.0
+
+- **A tool interrupt now ends the run.** Under `mode: :while_needs_response`
+  and `run_until_tool_used`, a tool that returns
+  `{:interrupt, display_message, interrupt_data}` makes `LLMChain.run/2`
+  return `{:interrupt, chain, interrupt_data}`, and the LLM is not called
+  again. The interrupt used to be sent to the LLM as an ordinary tool result.
+  Code that only matches `{:ok, _}` and `{:error, _, _}` needs a clause for
+  `{:interrupt, chain, data}` if any of its tools interrupt. To continue, add a
+  message that answers the interrupt (such as the user's reply) and run the
+  chain again.
+- **`run_until_tool_used` stops only on a successful call.** A failed call to
+  the target tool, including one whose arguments `:parse_args` rejected, no
+  longer ends the run as `{:ok, chain, %ToolResult{is_error: true}}`. The
+  error goes back to the LLM, and a model that keeps failing stops with
+  `%LangChainError{type: "exceeded_failure_count"}` at `max_retry_count`. Pass
+  `require_tool_success: false` to keep ending the run on any call:
+
+      LLMChain.run_until_tool_used(chain, "extract_city", require_tool_success: false)
+
+### Added
+
+- `ChatDeepSeek` option `title`. When `true`, DeepSeek generates a short title
+  for the conversation and it is placed in the message `metadata` under
+  `:title`, for complete and streamed responses. While it is enabled, DeepSeek
+  ignores sampling settings such as `temperature` and `top_p`.
+  https://github.com/brainlid/langchain/pull/707
+- `run_until_tool_used` and the `UntilToolUsed` mode option
+  `require_tool_success` (default `true`), and the matching
+  `Steps.check_until_tool/2` option (default `false`).
+  https://github.com/brainlid/langchain/pull/709
+
+### Changed
+
+- `WhileNeedsResponse` and `UntilToolUsed` run `check_tool_interrupts/2` after
+  executing tools. https://github.com/brainlid/langchain/pull/708
+- `UntilToolUsed` requires a successful result from the target tool by
+  default. https://github.com/brainlid/langchain/pull/709
+
+### Fixed
+
+- `Steps.check_tool_interrupts/2` checks only the chain's last message, so an
+  interrupted tool result that has been answered no longer interrupts a later
+  run. https://github.com/brainlid/langchain/pull/708
+
 ## v0.15.9
 
 A tool call can now be labelled from its arguments, so a UI can show
