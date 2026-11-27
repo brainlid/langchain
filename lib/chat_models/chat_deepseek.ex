@@ -70,6 +70,22 @@ defmodule LangChain.ChatModels.ChatDeepSeek do
 
   The `TokenUsage` data is accumulated for `MessageDelta` structs and the final usage information will be on the `LangChain.Message`.
 
+  ### Conversation Title
+
+  DeepSeek can generate a short title for the conversation alongside the
+  response. Enable it with `title: true`:
+
+      ChatDeepSeek.new!(%{model: "deepseek-chat", title: true})
+
+  The generated title is placed in the `metadata` of the returned
+  `LangChain.Message` under the `:title` key. When streaming, DeepSeek sends the
+  title once in the final chunk and it is carried onto the merged message.
+
+  While title generation is enabled, DeepSeek chooses the sampling settings
+  itself and ignores request values such as `temperature`, `top_p`,
+  `frequency_penalty`, `presence_penalty`, `stop`, `seed`, `n`, and
+  `parallel_tool_calls`.
+
   ## Connection Retry Behavior
 
   The `retry_count` option controls how many times a request is retried when
@@ -127,8 +143,6 @@ defmodule LangChain.ChatModels.ChatDeepSeek do
     field :endpoint, :string, default: "https://api.deepseek.com/chat/completions"
     field :model, :string, default: "deepseek-chat"
 
-    field :title, :boolean, default: false
-
     # API key for DeepSeek. If not set, will use global api key. Allows for usage
     # of a different API key per-call if desired. For instance, allowing a
     # customer to provide their own.
@@ -173,6 +187,11 @@ defmodule LangChain.ChatModels.ChatDeepSeek do
 
     # Include the log probabilities on most likely tokens, as well the chosen tokens
     field :top_logprobs, :integer, default: nil
+
+    # When true, DeepSeek generates a short title for the conversation and
+    # returns it with the response. The title is placed in the message
+    # `metadata` under the `:title` key.
+    field :title, :boolean, default: false
 
     # A list of maps for callback handlers (treated as internal)
     field :callbacks, {:array, :map}, default: []
@@ -299,8 +318,6 @@ defmodule LangChain.ChatModels.ChatDeepSeek do
   def for_api(%ChatDeepSeek{} = deepseek, messages, tools) do
     tools = LangChain.NativeTool.drop_tool_search(tools)
 
-    title = if deepseek.title, do: %{"enabled" => true}
-
     %{
       model: deepseek.model,
       temperature: deepseek.temperature,
@@ -333,8 +350,11 @@ defmodule LangChain.ChatModels.ChatDeepSeek do
     |> Utils.conditionally_add_to_map(:parallel_tool_calls, deepseek.parallel_tool_calls)
     |> Utils.conditionally_add_to_map(:logprobs, deepseek.logprobs)
     |> Utils.conditionally_add_to_map(:top_logprobs, deepseek.top_logprobs)
-    |> Utils.conditionally_add_to_map(:title, title)
+    |> Utils.conditionally_add_to_map(:title, title_for_api(deepseek))
   end
+
+  defp title_for_api(%ChatDeepSeek{title: true}), do: %{"enabled" => true}
+  defp title_for_api(%ChatDeepSeek{}), do: nil
 
   defp get_tools_for_api(%_{} = _model, nil), do: []
 
@@ -998,11 +1018,6 @@ defmodule LangChain.ChatModels.ChatDeepSeek do
     # Extract DeepSeek-specific metadata for streaming responses
     metadata = extract_response_metadata(msg)
 
-    metadata = case delta_body["title"] do
-      nil -> metadata
-      title -> Map.put(metadata, :title, title)
-    end
-
     {index, content} =
       case delta_body["reasoning_content"] do
         nil ->
@@ -1199,6 +1214,16 @@ defmodule LangChain.ChatModels.ChatDeepSeek do
         object -> Map.put(metadata, :object, object)
       end
 
+    # Add the generated conversation title if present. It is on the choice's
+    # `message` for a complete response and on the `delta` of the final chunk
+    # when streaming.
+    metadata =
+      case get_in(response_data, ["message", "title"]) ||
+             get_in(response_data, ["delta", "title"]) do
+        title when is_binary(title) -> Map.put(metadata, :title, title)
+        _other -> metadata
+      end
+
     # Add logprobs information from choices (include even if nil)
     logprobs =
       case Map.get(response_data, "choices") do
@@ -1266,7 +1291,8 @@ defmodule LangChain.ChatModels.ChatDeepSeek do
         :json_schema,
         :stream,
         :max_tokens,
-        :stream_options
+        :stream_options,
+        :title
       ],
       @current_config_version
     )
