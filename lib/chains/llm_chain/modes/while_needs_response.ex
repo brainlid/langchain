@@ -4,19 +4,35 @@ defmodule LangChain.Chains.LLMChain.Modes.WhileNeedsResponse do
 
   After each LLM call, if the response contains tool calls, this mode:
   1. Executes the pending tool calls
-  2. Applies any `LangChain.MessageExpansion` those tools asked for
-  3. Calls the LLM again with the tool results
-  4. Repeats until `needs_response` is false (no more tool calls)
+  2. Stops with `{:interrupt, chain, interrupt_data}` if any of those tools
+     returned an interrupt
+  3. Applies any `LangChain.MessageExpansion` those tools asked for
+  4. Calls the LLM again with the tool results
+  5. Repeats until `needs_response` is false (no more tool calls)
 
-  The LLM always gets the last word after tool execution.
+  The LLM gets the last word after tool execution unless a tool interrupted.
 
   An assistant message that leaves the model's turn open (see
   `LangChain.Message.continues_turn?/1`) also leaves `needs_response` true, so
   the LLM is called again to finish its turn.
 
-  Step 2 costs nothing for a tool that asks for no expansion, which is every
-  tool that has not opted in. It is included so that a tool carrying one is
-  honoured under the standard mode rather than silently ignored.
+  Steps 2 and 3 cost nothing for a tool that neither interrupts nor asks for
+  an expansion, which is every tool that has not opted in. They are included
+  so that a tool returning either is honoured under the standard mode rather
+  than silently ignored.
+
+  ## Tool Interrupts
+
+  A tool interrupts by returning `{:interrupt, display_message, interrupt_data}`,
+  for example to ask the user a question and wait for the answer. The run
+  returns `{:interrupt, chain, interrupt_data}` with the tool's result recorded
+  as the chain's last message, and the LLM is not called. `interrupt_data` is
+  the tool's data with its `:tool_call_id` added; when several tools interrupt
+  at once it is `%{type: :multiple_interrupts, interrupts: [...]}`.
+
+  To continue, add a message that answers the interrupt (typically the user's
+  reply) and run the chain again. An interrupted tool message that is no longer
+  the last message does not interrupt again.
 
   ## Options
 
@@ -57,6 +73,7 @@ defmodule LangChain.Chains.LLMChain.Modes.WhileNeedsResponse do
     {:continue, chain}
     |> check_max_runs(opts)
     |> execute_tools()
+    |> check_tool_interrupts(opts)
     |> expand_tool_results(opts)
     |> call_llm()
     |> continue_or_done(&do_run/2, opts)

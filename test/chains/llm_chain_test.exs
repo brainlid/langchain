@@ -5267,4 +5267,97 @@ defmodule LangChain.Chains.LLMChainTest do
 
   # TODO: Other Chains
   # https://js.langchain.com/docs/modules/chains/other_chains/
+
+  describe "tool interrupts in built-in modes" do
+    setup do
+      ask_user =
+        Function.new!(%{
+          name: "ask_user",
+          description: "Ask the user a question and wait for the answer",
+          parameters_schema: %{
+            type: "object",
+            properties: %{question: %{type: "string"}},
+            required: ["question"]
+          },
+          function: fn %{"question" => question}, _ctx ->
+            {:interrupt, "Waiting for the user to answer.", %{question: question}}
+          end
+        })
+
+      chain =
+        LLMChain.new!(%{llm: ChatOpenAI.new!(%{})})
+        |> LLMChain.add_tools(ask_user)
+        |> LLMChain.add_message(Message.new_user!("Plan my trip."))
+
+      ask_msg =
+        Message.new_assistant!(%{
+          tool_calls: [
+            ToolCall.new!(%{
+              call_id: "call_ask",
+              name: "ask_user",
+              arguments: %{"question" => "Where to?"}
+            })
+          ]
+        })
+
+      %{chain: chain, ask_msg: ask_msg}
+    end
+
+    test "returns the interrupt instead of calling the LLM again", %{
+      chain: chain,
+      ask_msg: ask_msg
+    } do
+      expect(ChatOpenAI, :call, 1, fn _model, _messages, _tools -> {:ok, [ask_msg]} end)
+
+      assert {:interrupt, interrupted_chain, interrupt_data} =
+               LLMChain.run(chain, mode: :while_needs_response)
+
+      assert interrupt_data == %{question: "Where to?", tool_call_id: "call_ask"}
+
+      assert [_user, _assistant, %Message{role: :tool, tool_results: [result]}] =
+               interrupted_chain.messages
+
+      assert %ToolResult{tool_call_id: "call_ask", is_interrupt: true} = result
+    end
+
+    test "a later run continues once the user has answered", %{
+      chain: chain,
+      ask_msg: ask_msg
+    } do
+      expect(ChatOpenAI, :call, 1, fn _model, _messages, _tools -> {:ok, [ask_msg]} end)
+
+      assert {:interrupt, interrupted_chain, _data} =
+               LLMChain.run(chain, mode: :while_needs_response)
+
+      expect(ChatOpenAI, :call, 1, fn _model, _messages, _tools ->
+        {:ok, [Message.new_assistant!("Lisbon it is.")]}
+      end)
+
+      assert {:ok, final_chain} =
+               interrupted_chain
+               |> LLMChain.add_message(Message.new_user!("Lisbon."))
+               |> LLMChain.run(mode: :while_needs_response)
+
+      assert ContentPart.content_to_string(final_chain.last_message.content) == "Lisbon it is."
+    end
+
+    test "run_until_tool_used returns the interrupt before the target tool is used", %{
+      chain: chain,
+      ask_msg: ask_msg
+    } do
+      submit =
+        Function.new!(%{
+          name: "submit",
+          description: "Submit the plan",
+          function: fn _args, _ctx -> {:ok, "submitted"} end
+        })
+
+      expect(ChatOpenAI, :call, 1, fn _model, _messages, _tools -> {:ok, [ask_msg]} end)
+
+      assert {:interrupt, _chain, %{tool_call_id: "call_ask", question: "Where to?"}} =
+               chain
+               |> LLMChain.add_tools(submit)
+               |> LLMChain.run_until_tool_used("submit")
+    end
+  end
 end
