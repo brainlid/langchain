@@ -997,8 +997,18 @@ defmodule LangChain.ChatModels.ChatDeepSeekTest do
                "temperature" => 0.0,
                "version" => 1,
                "json_schema" => nil,
+               "title" => false,
                "module" => "Elixir.LangChain.ChatModels.ChatDeepSeek"
              }
+    end
+
+    test "round-trips the title setting" do
+      model = ChatDeepSeek.new!(%{model: @test_model, title: true})
+
+      assert {:ok, %ChatDeepSeek{title: true}} =
+               model
+               |> ChatDeepSeek.serialize_config()
+               |> ChatDeepSeek.restore_from_map()
     end
   end
 
@@ -1217,6 +1227,103 @@ defmodule LangChain.ChatModels.ChatDeepSeekTest do
 
       # DeepSeek metadata is preserved
       assert delta.metadata.system_fingerprint == "fp_3d5141a69a_prod0225"
+    end
+  end
+
+  describe "conversation title" do
+    test "for_api omits title by default" do
+      model = ChatDeepSeek.new!(%{model: @test_model})
+      data = ChatDeepSeek.for_api(model, [], [])
+      refute Map.has_key?(data, :title)
+    end
+
+    test "for_api requests a title when enabled" do
+      model = ChatDeepSeek.new!(%{model: @test_model, title: true})
+      data = ChatDeepSeek.for_api(model, [], [])
+      assert data.title == %{"enabled" => true}
+    end
+
+    test "puts the title from a complete response into message metadata" do
+      model = ChatDeepSeek.new!(%{model: @test_model, title: true})
+
+      response = %{
+        "object" => "chat.completion",
+        "choices" => [
+          %{
+            "index" => 0,
+            "message" => %{
+              "role" => "assistant",
+              "content" => "Fibonacci numbers start 0, 1, 1, 2...",
+              "title" => "Fibonacci Basics"
+            },
+            "finish_reason" => "stop"
+          }
+        ]
+      }
+
+      assert [%Message{metadata: %{title: "Fibonacci Basics"}}] =
+               ChatDeepSeek.do_process_response(model, response)
+    end
+
+    test "complete response without a title has no title metadata" do
+      model = ChatDeepSeek.new!(%{model: @test_model})
+
+      response = %{
+        "choices" => [
+          %{
+            "index" => 0,
+            "message" => %{"role" => "assistant", "content" => "Hi"},
+            "finish_reason" => "stop"
+          }
+        ]
+      }
+
+      assert [%Message{metadata: metadata}] = ChatDeepSeek.do_process_response(model, response)
+      refute Map.has_key?(metadata, :title)
+    end
+
+    for model_name <- ["deepseek-chat", "deepseek-reasoner"] do
+      test "carries the streamed title onto the merged message for #{model_name}" do
+        model = ChatDeepSeek.new!(%{model: unquote(model_name), stream: true, title: true})
+
+        chunks = [
+          %{
+            "object" => "chat.completion.chunk",
+            "choices" => [
+              %{
+                "index" => 0,
+                "delta" => %{"role" => "assistant", "content" => "Hello"},
+                "finish_reason" => nil
+              }
+            ]
+          },
+          %{
+            "object" => "chat.completion.chunk",
+            "choices" => [
+              %{
+                "index" => 0,
+                "delta" => %{"content" => "", "title" => "Friendly Greeting"},
+                "finish_reason" => "stop"
+              }
+            ]
+          }
+        ]
+
+        deltas = Enum.flat_map(chunks, &ChatDeepSeek.do_process_response(model, &1))
+
+        assert [
+                 %MessageDelta{metadata: first},
+                 %MessageDelta{metadata: %{title: "Friendly Greeting"}}
+               ] =
+                 deltas
+
+        refute Map.has_key?(first, :title)
+
+        assert {:ok, %Message{metadata: %{title: "Friendly Greeting"}}} =
+                 deltas
+                 |> MessageDelta.merge_deltas()
+                 |> MessageDelta.to_message()
+      end
     end
   end
 end
