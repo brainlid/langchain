@@ -5360,4 +5360,138 @@ defmodule LangChain.Chains.LLMChainTest do
                |> LLMChain.run_until_tool_used("submit")
     end
   end
+
+  describe "run_until_tool_used/3 with a failing target tool" do
+    setup do
+      submit =
+        Function.new!(%{
+          name: "submit",
+          description: "Submit the final plan",
+          parameters_schema: %{
+            type: "object",
+            properties: %{valid: %{type: "boolean"}},
+            required: ["valid"]
+          },
+          function: fn
+            %{"valid" => true}, _ctx -> {:ok, "submitted"}
+            _args, _ctx -> {:error, "The plan is incomplete."}
+          end
+        })
+
+      chain =
+        %{llm: ChatOpenAI.new!(%{stream: false}), max_retry_count: 2}
+        |> LLMChain.new!()
+        |> LLMChain.add_tools(submit)
+        |> LLMChain.add_message(Message.new_user!("Make a plan and submit it."))
+
+      %{chain: chain}
+    end
+
+    defp submit_call(call_id, valid) do
+      new_function_calls!([
+        ToolCall.new!(%{call_id: call_id, name: "submit", arguments: %{"valid" => valid}})
+      ])
+    end
+
+    test "returns the error to the model and stops on the successful call", %{chain: chain} do
+      test_pid = self()
+
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:ok, submit_call("call_1", false)}
+      end)
+
+      expect(ChatOpenAI, :call, fn _model, messages, _tools ->
+        send(test_pid, {:second_call_messages, messages})
+        {:ok, submit_call("call_2", true)}
+      end)
+
+      assert {:ok, updated_chain, %ToolResult{tool_call_id: "call_2", is_error: false}} =
+               LLMChain.run_until_tool_used(chain, "submit")
+
+      assert_received {:second_call_messages, messages}
+
+      assert %Message{role: :tool, tool_results: [%ToolResult{tool_call_id: "call_1"} = failed]} =
+               List.last(messages)
+
+      assert failed.is_error
+      assert updated_chain.current_failure_count == 0
+    end
+
+    test "stops at the chain's failure limit when the target tool keeps failing", %{
+      chain: chain
+    } do
+      expect(ChatOpenAI, :call, 2, fn _model, _messages, _tools ->
+        {:ok, submit_call("call_x", false)}
+      end)
+
+      assert {:error, _chain, %LangChainError{type: "exceeded_failure_count"}} =
+               LLMChain.run_until_tool_used(chain, "submit")
+    end
+
+    test "retries when parse_args rejects the arguments of an extraction tool" do
+      test_pid = self()
+
+      extract_city =
+        Function.new!(%{
+          name: "extract_city",
+          description: "Record the city the user wants to visit",
+          parameters_schema: %{
+            type: "object",
+            properties: %{city: %{type: "string"}},
+            required: ["city"]
+          },
+          parse_args: fn
+            %{"city" => city} when is_binary(city) and city != "" -> {:ok, %{city: city}}
+            _args -> {:error, "city must be a non-empty string"}
+          end,
+          function: fn parsed, _ctx -> {:ok, "recorded", parsed} end
+        })
+
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:ok,
+         new_function_calls!([
+           ToolCall.new!(%{call_id: "call_1", name: "extract_city", arguments: %{"city" => ""}})
+         ])}
+      end)
+
+      expect(ChatOpenAI, :call, fn _model, messages, _tools ->
+        send(test_pid, {:second_call_messages, messages})
+
+        {:ok,
+         new_function_calls!([
+           ToolCall.new!(%{
+             call_id: "call_2",
+             name: "extract_city",
+             arguments: %{"city" => "Lisbon"}
+           })
+         ])}
+      end)
+
+      assert {:ok, _chain,
+              %ToolResult{tool_call_id: "call_2", processed_content: %{city: "Lisbon"}}} =
+               %{llm: ChatOpenAI.new!(%{stream: false})}
+               |> LLMChain.new!()
+               |> LLMChain.add_tools(extract_city)
+               |> LLMChain.add_message(Message.new_user!("I want to go to Lisbon."))
+               |> LLMChain.run_until_tool_used("extract_city")
+
+      assert_received {:second_call_messages, messages}
+
+      assert %Message{
+               role: :tool,
+               tool_results: [%ToolResult{tool_call_id: "call_1", is_refusal: true} = refused]
+             } = List.last(messages)
+
+      assert ContentPart.parts_to_string(refused.content) == "city must be a non-empty string"
+    end
+
+    test "require_tool_success: false stops on any call to the target tool", %{chain: chain} do
+      expect(ChatOpenAI, :call, fn _model, _messages, _tools ->
+        {:ok, submit_call("call_1", false)}
+      end)
+
+      assert {:ok, _chain, %ToolResult{tool_call_id: "call_1", is_error: true}} =
+               LLMChain.run_until_tool_used(chain, "submit", require_tool_success: false)
+    end
+  end
 end

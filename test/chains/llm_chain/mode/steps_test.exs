@@ -203,6 +203,59 @@ defmodule LangChain.Chains.LLMChain.Mode.StepsTest do
                Steps.check_until_tool({:continue, chain}, tool_names: ["submit"])
     end
 
+    test "matches a failed result by default", %{chain: chain} do
+      tool_result =
+        ToolResult.new!(%{
+          tool_call_id: "call_1",
+          name: "submit",
+          content: "invalid",
+          is_error: true
+        })
+
+      chain = %{chain | last_message: %Message{role: :tool, tool_results: [tool_result]}}
+
+      assert {:ok, ^chain, ^tool_result} =
+               Steps.check_until_tool({:continue, chain}, tool_names: ["submit"])
+    end
+
+    test "require_tool_success skips a failed result", %{chain: chain} do
+      tool_result =
+        ToolResult.new!(%{
+          tool_call_id: "call_1",
+          name: "submit",
+          content: "invalid",
+          is_error: true
+        })
+
+      chain = %{chain | last_message: %Message{role: :tool, tool_results: [tool_result]}}
+
+      assert {:continue, ^chain} =
+               Steps.check_until_tool({:continue, chain},
+                 tool_names: ["submit"],
+                 require_tool_success: true
+               )
+    end
+
+    test "require_tool_success finds a successful result alongside a failed one", %{
+      chain: chain
+    } do
+      failed =
+        ToolResult.new!(%{tool_call_id: "call_1", name: "submit", content: "x", is_error: true})
+
+      succeeded = ToolResult.new!(%{tool_call_id: "call_2", name: "submit", content: "ok"})
+
+      chain = %{
+        chain
+        | last_message: %Message{role: :tool, tool_results: [failed, succeeded]}
+      }
+
+      assert {:ok, ^chain, ^succeeded} =
+               Steps.check_until_tool({:continue, chain},
+                 tool_names: ["submit"],
+                 require_tool_success: true
+               )
+    end
+
     test "returns continue when no matching tool found", %{chain: chain} do
       tool_result =
         ToolResult.new!(%{

@@ -292,7 +292,14 @@ defmodule LangChain.Chains.LLMChain.Mode.Steps do
   @doc """
   Check if a target tool was called in the most recent tool results.
 
-  Reads `:tool_names` from opts — a list of tool name strings.
+  Reads from opts:
+
+  - `:tool_names` - a list of tool name strings.
+  - `:require_tool_success` - when `true`, only a result with `is_error: false`
+    matches, so a failed call to a target tool leaves the loop running and the
+    error goes back to the model. Default: `false`, where any call to a target
+    tool matches.
+
   If a matching tool result is found, returns `{:ok, chain, tool_result}`.
   """
   def check_until_tool({:continue, chain}, opts) do
@@ -301,7 +308,9 @@ defmodule LangChain.Chains.LLMChain.Mode.Steps do
         {:continue, chain}
 
       names when is_list(names) ->
-        case find_matching_tool_result(chain, names) do
+        require_success = Keyword.get(opts, :require_tool_success, false)
+
+        case find_matching_tool_result(chain, names, require_success) do
           {:found, tool_result} -> {:ok, chain, tool_result}
           :not_found -> {:continue, chain}
         end
@@ -380,10 +389,17 @@ defmodule LangChain.Chains.LLMChain.Mode.Steps do
     LLMChain.update_custom_context(chain, %{mode_state: updated_mode_state})
   end
 
-  defp find_matching_tool_result(%LLMChain{last_message: last_message}, tool_names) do
+  defp find_matching_tool_result(
+         %LLMChain{last_message: last_message},
+         tool_names,
+         require_success
+       ) do
     case last_message do
       %{role: :tool, tool_results: tool_results} when is_list(tool_results) ->
-        case Enum.find(tool_results, &(&1.name in tool_names)) do
+        case Enum.find(
+               tool_results,
+               &(&1.name in tool_names and not (require_success and &1.is_error))
+             ) do
           nil -> :not_found
           tool_result -> {:found, tool_result}
         end
