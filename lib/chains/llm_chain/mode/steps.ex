@@ -235,11 +235,16 @@ defmodule LangChain.Chains.LLMChain.Mode.Steps do
   # ── Tool Interrupts ────────────────────────────────────────────
 
   @doc """
-  Check if any tool results in the most recent tool message are interrupts.
+  Check if any tool results in the chain's last message are interrupts.
 
-  Returns `{:interrupt, chain, interrupt_data}` if any tool results have
-  `is_interrupt: true`. The `interrupt_data` is extracted from the first
-  interrupted result (for single interrupts) or aggregated (for multiple).
+  Returns `{:interrupt, chain, interrupt_data}` if the last message is a tool
+  message and any of its results have `is_interrupt: true`. The
+  `interrupt_data` is extracted from the first interrupted result (for single
+  interrupts) or aggregated (for multiple).
+
+  Only the last message is checked. Once anything follows an interrupted tool
+  message, such as the user's answer, that interrupt has been responded to and
+  the chain can continue.
 
   This step is generic — it doesn't know *why* a tool interrupted. The
   consumer (e.g., Sagents) interprets the interrupt data.
@@ -257,18 +262,14 @@ defmodule LangChain.Chains.LLMChain.Mode.Steps do
 
   def check_tool_interrupts(terminal, _opts), do: terminal
 
-  defp find_interrupted_results(chain) do
-    case Enum.find(Enum.reverse(chain.messages), &(&1.role == :tool)) do
-      nil ->
-        []
-
-      %{tool_results: tool_results} when is_list(tool_results) ->
-        Enum.filter(tool_results, & &1.is_interrupt)
-
-      _ ->
-        []
-    end
+  defp find_interrupted_results(%LLMChain{
+         last_message: %Message{role: :tool, tool_results: tool_results}
+       })
+       when is_list(tool_results) do
+    Enum.filter(tool_results, & &1.is_interrupt)
   end
+
+  defp find_interrupted_results(%LLMChain{}), do: []
 
   defp extract_interrupt_data([single]) do
     data = single.interrupt_data || %{}

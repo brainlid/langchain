@@ -365,6 +365,25 @@ defmodule LangChain.Chains.LLMChain.Mode.StepsTest do
       assert Enum.at(data.interrupts, 1).tool_call_id == "call_2"
     end
 
+    test "ignores an interrupted tool message that has been answered", %{chain: chain} do
+      tool_result =
+        ToolResult.new!(%{
+          tool_call_id: "call_1",
+          name: "ask_user",
+          content: "Waiting for user response...",
+          is_interrupt: true
+        })
+
+      chain =
+        chain
+        |> LLMChain.add_message(
+          Message.new_tool_result!(%{content: nil, tool_results: [tool_result]})
+        )
+        |> LLMChain.add_message(Message.new_user!("Here is my answer."))
+
+      assert {:continue, ^chain} = Steps.check_tool_interrupts({:continue, chain}, [])
+    end
+
     test "passes through terminal results", %{chain: chain} do
       ok = {:ok, chain}
       assert ^ok = Steps.check_tool_interrupts(ok, [])

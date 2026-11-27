@@ -5,6 +5,11 @@ defmodule LangChain.Chains.LLMChain.Modes.UntilToolUsed do
   Repeatedly calls the LLM and executes tools until a tool result
   matching one of the target tool names is found.
 
+  A tool that returns `{:interrupt, display_message, interrupt_data}` stops the
+  run with `{:interrupt, chain, interrupt_data}` before the LLM is called again.
+  See `LangChain.Chains.LLMChain.Modes.WhileNeedsResponse` for the shape of the
+  interrupt data and how to continue.
+
   ## Options
 
   - `:tool_names` — (required) List of tool name strings to watch for.
@@ -63,6 +68,7 @@ defmodule LangChain.Chains.LLMChain.Modes.UntilToolUsed do
     {:continue, chain}
     |> call_llm()
     |> execute_tools()
+    |> check_tool_interrupts(opts)
     |> check_until_tool(opts)
     |> check_max_runs(opts)
     |> continue_or_done(&do_run/2, opts)
