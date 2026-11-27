@@ -2,8 +2,16 @@ defmodule LangChain.Chains.LLMChain.Modes.UntilToolUsed do
   @moduledoc """
   Execution mode that loops until a specific tool is called.
 
-  Repeatedly calls the LLM and executes tools until a tool result
+  Repeatedly calls the LLM and executes tools until a successful tool result
   matching one of the target tool names is found.
+
+  A failed call to a target tool does not end the run. That includes a call
+  whose arguments the tool's `:parse_args` parser rejected, which makes this
+  mode suitable for a tool whose job is to receive structured arguments: the
+  parser validates them, and invalid arguments go back to the model as an error
+  to correct. The failure is counted like any other tool error, so a model
+  that keeps failing stops at the chain's `max_retry_count` with
+  `%LangChainError{type: "exceeded_failure_count"}`.
 
   A tool that returns `{:interrupt, display_message, interrupt_data}` stops the
   run with `{:interrupt, chain, interrupt_data}` before the LLM is called again.
@@ -14,6 +22,9 @@ defmodule LangChain.Chains.LLMChain.Modes.UntilToolUsed do
 
   - `:tool_names` — (required) List of tool name strings to watch for.
   - `:max_runs` — Maximum LLM calls before error. Default: 25.
+  - `:require_tool_success` — When `false`, any call to a target tool ends the
+    run, including a failed one, and its error result is returned. Default:
+    `true`.
 
   ## Usage
 
@@ -53,7 +64,7 @@ defmodule LangChain.Chains.LLMChain.Modes.UntilToolUsed do
        )}
     else
       chain = ensure_mode_state(chain)
-      do_run(chain, opts)
+      do_run(chain, Keyword.put_new(opts, :require_tool_success, true))
     end
   end
 

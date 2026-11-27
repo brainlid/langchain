@@ -866,7 +866,12 @@ defmodule LangChain.Chains.LLMChain do
 
   This function accepts either a single tool name as a string, or a list of tool
   names. When provided with a list, the chain stops when any one of the specified
-  tools is called.
+  tools is called successfully.
+
+  A call to a target tool that fails, including one whose arguments the tool's
+  `:parse_args` parser rejected, does not stop the chain. The error goes back to
+  the LLM so it can correct the call, and counts toward the chain's
+  `max_retry_count` like any other tool error.
 
   ## Examples
 
@@ -887,6 +892,10 @@ defmodule LangChain.Chains.LLMChain do
   - `max_runs`: The maximum number of times to run the chain. To prevent runaway
     calls, it defaults to 25. When exceeded, a `%LangChainError{type: "exceeded_max_runs"}`
     is returned in the error response.
+
+  - `require_tool_success`: When `false`, any call to a target tool stops the
+    chain, including a failed one, and its error `ToolResult` is returned.
+    Defaults to `true`.
 
   - `with_fallbacks: [...]` - Provide a list of chat models to use as a fallback
     when one fails. This helps a production system remain operational when an
