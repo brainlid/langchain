@@ -352,6 +352,14 @@ defmodule LangChain.ChatModels.ChatOpenAI do
   overloaded (529), authentication errors, and invalid requests all return
   immediately -- they are not problems that a simple retry will fix.
 
+  Timeouts and rate limits are not retried at this level, but
+  `retry_on_fallback?/1` reports them as retryable. To retry them, run the chain
+  with the `:with_fallbacks` option of `LangChain.Chains.LLMChain.run/2`. Listing
+  the chain's own model retries it once; listing a different model fails over to
+  it:
+
+      LLMChain.run(chain, with_fallbacks: [chain.llm])
+
   | `retry_count` | Total HTTP requests |
   |---|---|
   | `0` | 1 (no retries) |
