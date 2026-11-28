@@ -186,6 +186,14 @@ defmodule LangChain.ChatModels.ChatOpenAICompatible do
   HTTP connection turns out to be stale (the server closed it between
   requests). Only closed-connection errors are retried. Timeouts, rate limits,
   authentication errors and invalid requests are returned immediately.
+
+  Timeouts and rate limits are not retried at this level, but
+  `retry_on_fallback?/1` reports them as retryable. To retry them, run the chain
+  with the `:with_fallbacks` option of `LangChain.Chains.LLMChain.run/2`. Listing
+  the chain's own model retries it once; listing a different model fails over to
+  it:
+
+      LLMChain.run(chain, with_fallbacks: [chain.llm])
   """
   use Ecto.Schema
   require Logger
