@@ -103,7 +103,11 @@ defmodule LangChain.MixProject do
       extra_section: "Guides",
       extras: extras(),
       groups_for_extras: [
-        Guides: ["guides/evaluation.md", "guides/observability.md"],
+        Guides: [
+          "guides/parsing_tool_arguments.md",
+          "guides/evaluation.md",
+          "guides/observability.md"
+        ],
         Notebooks: Path.wildcard("notebooks/*.livemd")
       ],
       groups_for_modules: [
@@ -221,6 +225,7 @@ defmodule LangChain.MixProject do
     [
       "README.md",
       "CHANGELOG.md",
+      "guides/parsing_tool_arguments.md",
       "guides/evaluation.md",
       "guides/observability.md",
       "notebooks/getting_started.livemd",
